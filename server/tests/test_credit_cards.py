@@ -182,3 +182,31 @@ def test_existing_card_debt_can_be_funded_without_creating_income(
     assert summary["ready_to_assign_minor"] == 60000
     assert rows["Visa Payment"]["available_minor"] == 0
     assert account_balance(client, owner_token, budget["id"], card["id"]) == -60000
+
+
+def test_refund_cannot_release_manual_old_debt_funding_or_another_category_reserve(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    card = create_credit_card(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], checking["id"], amount=100000)
+    client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{card['payment_category_id']}/assignment",
+        headers=auth(owner_token),
+        json={"month": "2026-09-01", "assigned_minor": 40000},
+    )
+
+    # This purchase is unfunded. Its refund must not release the manual 40,000
+    # reserved for existing debt.
+    record(
+        client, owner_token, budget["id"], account_id=card["id"],
+        category_id=groceries["id"], amount_minor=-10000,
+    )
+    record(
+        client, owner_token, budget["id"], account_id=card["id"],
+        category_id=groceries["id"], amount_minor=5000,
+    )
+    _, rows = category_rows(client, owner_token, budget["id"])
+    assert rows["Visa Payment"]["available_minor"] == 40000
+    assert rows["Groceries"]["available_minor"] == -5000

@@ -356,6 +356,9 @@ class CreditCardReserveEvent(Base):
     budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
     credit_account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), index=True)
     payment_category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), index=True)
+    spending_category_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("categories.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
     source_transaction_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("transactions.id", ondelete="RESTRICT"), index=True, nullable=True
     )

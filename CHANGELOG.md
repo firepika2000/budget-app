@@ -21,6 +21,7 @@
 - Added recurring allowance plans with calendar-safe weekly/monthly schedules and split destinations.
 - Added explicit allowance issuance with rollover and use-it-or-lose-it policies; every run links to one balanced allocation operation.
 - Added a capability-protected, versioned JSON audit export containing the records needed to reconstruct budget and authorization history.
+- Attributed credit-card purchase reserves to spending categories so refunds cannot release manual old-debt funding or another category's reserve.
 
 ## 0.1.0 - 2026-09-04
 

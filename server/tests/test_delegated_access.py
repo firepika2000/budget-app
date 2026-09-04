@@ -73,9 +73,11 @@ def test_scoped_child_cannot_discover_hidden_financial_resources(
     )
     assert [item["id"] for item in categories.json()] == [child_category["id"]]
     assert groceries["id"] not in categories.text
-    assert client.get(
+    scoped_accounts = client.get(
         f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(child_token)
-    ).json()[0]["id"] == checking["id"]
+    ).json()
+    assert scoped_accounts[0]["id"] == checking["id"]
+    assert scoped_accounts[0]["reconciled_balance_minor"] is None
     assert client.get(
         f"/api/v1/budgets/{budget['id']}/accounts/{checking['id']}/balance",
         headers=auth(child_token),

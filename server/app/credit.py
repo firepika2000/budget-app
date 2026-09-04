@@ -56,12 +56,18 @@ def reserve_event_balance(
     *,
     before: date | None = None,
     through: date | None = None,
+    credit_account_id: str | None = None,
+    spending_category_id: str | None = None,
 ) -> int:
     conditions = [CreditCardReserveEvent.payment_category_id == payment_category_id]
     if before is not None:
         conditions.append(CreditCardReserveEvent.occurred_on < before)
     if through is not None:
         conditions.append(CreditCardReserveEvent.occurred_on <= through)
+    if credit_account_id is not None:
+        conditions.append(CreditCardReserveEvent.credit_account_id == credit_account_id)
+    if spending_category_id is not None:
+        conditions.append(CreditCardReserveEvent.spending_category_id == spending_category_id)
     return int(db.scalar(select(
         func.coalesce(func.sum(CreditCardReserveEvent.amount_minor), 0)
     ).where(*conditions)) or 0)
@@ -77,10 +83,10 @@ def add_purchase_reserve_events(
 ) -> None:
     if account.account_type != "credit" or account.payment_category_id is None:
         return
-    existing_reserve = category_available_balance(
+    existing_payment_money = category_available_balance(
         db, account.budget_id, account.payment_category_id, through=transaction.occurred_on
     )
-    refund_remaining_reserve = max(existing_reserve, 0)
+    refund_remaining_payment_money = max(existing_payment_money, 0)
     for category, amount_minor in category_amounts:
         if category.system_type == "credit_payment":
             raise HTTPException(status_code=422, detail="Card purchases cannot use a payment category")
@@ -96,8 +102,19 @@ def add_purchase_reserve_events(
             reserve_amount = funded
             kind = "funded_purchase"
         else:
-            reserve_amount = -min(amount_minor, refund_remaining_reserve)
-            refund_remaining_reserve += reserve_amount
+            category_purchase_reserve = max(reserve_event_balance(
+                db,
+                account.payment_category_id,
+                through=transaction.occurred_on,
+                credit_account_id=account.id,
+                spending_category_id=category.id,
+            ), 0)
+            reserve_amount = -min(
+                amount_minor,
+                category_purchase_reserve,
+                refund_remaining_payment_money,
+            )
+            refund_remaining_payment_money += reserve_amount
             kind = "refund_release"
         if reserve_amount == 0:
             continue
@@ -105,6 +122,7 @@ def add_purchase_reserve_events(
             budget_id=account.budget_id,
             credit_account_id=account.id,
             payment_category_id=account.payment_category_id,
+            spending_category_id=category.id,
             source_transaction_id=transaction.id,
             occurred_on=transaction.occurred_on,
             amount_minor=reserve_amount,
@@ -138,6 +156,7 @@ def add_payment_reserve_event(
         budget_id=credit_account.budget_id,
         credit_account_id=credit_account.id,
         payment_category_id=credit_account.payment_category_id,
+        spending_category_id=None,
         transfer_id=transfer_id,
         occurred_on=occurred_on,
         amount_minor=amount_minor,

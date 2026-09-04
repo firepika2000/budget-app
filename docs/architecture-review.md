@@ -178,6 +178,8 @@ Migration `0008` adds one linked system payment category per credit account and 
 
 This implementation deliberately keeps three quantities distinct: the signed credit-account liability, the allocation available for card payment, and physical cash in on-budget asset accounts. None can be inferred by silently mutating another. Reconciliation follows the same rule: a mismatch is rejected unless the owner explicitly requests a visible adjustment transaction with actor and reason.
 
+Migration `0011` adds spending-category attribution to credit reserve events. Direct legacy events are backfilled where attribution is unambiguous; split legacy events remain explicitly unattributed rather than guessed. New refunds release no more than the remaining funded-purchase reserve for their own spending category, so manually allocated old-debt payment money and other categories' reserves are protected.
+
 ### Implemented delegated-access checkpoint
 
 Migration `0009` layers configurable capabilities and resource scopes over the existing grant model. Existing grants remain compatible bundles until an owner creates an explicit profile. Profiles can independently restrict account and category IDs; every affected server query applies those restrictions, and balance/forecast access is separate from account-name visibility. A delegated category points to a household user but remains in the same authoritative budget and allocation ledger.

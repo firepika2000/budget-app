@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import csv
 from datetime import date, datetime, timezone
 from io import StringIO
@@ -104,13 +106,31 @@ def list_accounts(
     budget_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> list[Account]:
+) -> list[Account | dict]:
     budget = require_budget_capability(db, user, budget_id, "view_accounts")
     query = select(Account).where(Account.budget_id == budget_id).order_by(Account.name)
     visible = visible_resource_ids(db, user, budget, "account")
     if visible is not None:
         query = query.where(Account.id.in_(visible))
-    return list(db.scalars(query))
+    accounts = list(db.scalars(query))
+    if has_capability(db, user, budget, "view_account_balances"):
+        return accounts
+    return [{
+        "id": account.id,
+        "budget_id": account.budget_id,
+        "name": account.name,
+        "account_type": account.account_type,
+        "is_on_budget": account.is_on_budget,
+        "is_closed": account.is_closed,
+        "reconciled_balance_minor": None,
+        "payment_category_id": (
+            account.payment_category_id
+            if account.payment_category_id is None or can_access_resource(
+                db, user, budget, "category", account.payment_category_id
+            )
+            else None
+        ),
+    } for account in accounts]
 
 
 def safe_csv_text(value: str) -> str:
@@ -264,13 +284,30 @@ def list_categories(
     budget_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> list[Category]:
+) -> list[Category | dict]:
     budget = require_budget_capability(db, user, budget_id, "view_categories")
     query = select(Category).where(Category.budget_id == budget_id)
     visible = visible_resource_ids(db, user, budget, "category")
     if visible is not None:
         query = query.where(Category.id.in_(visible))
-    return list(db.scalars(query.order_by(Category.group_id, Category.sort_order, Category.name)))
+    categories = list(db.scalars(query.order_by(Category.group_id, Category.sort_order, Category.name)))
+    return [{
+        "id": category.id,
+        "budget_id": category.budget_id,
+        "group_id": category.group_id,
+        "name": category.name,
+        "sort_order": category.sort_order,
+        "is_archived": category.is_archived,
+        "system_type": category.system_type,
+        "linked_account_id": (
+            category.linked_account_id
+            if category.linked_account_id is None or can_access_resource(
+                db, user, budget, "account", category.linked_account_id
+            )
+            else None
+        ),
+        "delegated_user_id": category.delegated_user_id,
+    } for category in categories]
 
 
 @router.post("/categories", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
