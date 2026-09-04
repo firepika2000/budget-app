@@ -8,11 +8,13 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .library(name: "BudgetCore", targets: ["BudgetCore"])
+        .library(name: "BudgetCore", targets: ["BudgetCore"]),
+        .library(name: "BudgetAPI", targets: ["BudgetAPI"])
     ],
     targets: [
         .target(name: "BudgetCore"),
-        .testTarget(name: "BudgetCoreTests", dependencies: ["BudgetCore"])
+        .target(name: "BudgetAPI"),
+        .testTarget(name: "BudgetCoreTests", dependencies: ["BudgetCore"]),
+        .testTarget(name: "BudgetAPITests", dependencies: ["BudgetAPI"])
     ]
 )
-

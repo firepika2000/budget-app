@@ -9,6 +9,7 @@ The repository contains the first two domain slices:
 - Strongly typed household and budget identities with deny-by-default authorization.
 - Exact minor-unit money arithmetic and zero-based monthly budget calculations.
 - A FastAPI/PostgreSQL server with authentication, private budget APIs, accounts, categories, monthly assignments, split transactions, transfers, reconciliation, monthly summaries, migrations, and a container deployment definition.
+- A native SwiftUI iPhone client foundation with server setup, bootstrap/login, Keychain token storage, and privacy-filtered budget discovery.
 
 Product and architecture decisions are recorded in `docs/`.
 
@@ -22,6 +23,7 @@ swift test
 
 - [Product brief](docs/product-brief.md)
 - [Architecture direction](docs/architecture.md)
+- [iPhone app](ios/README.md)
 
 ## Near-term milestone
 

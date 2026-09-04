@@ -1,0 +1,445 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 63;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1C7D1E60B9E1C0ED2B68695C /* BudgetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 345B8B1D2F7640B5BD488CC5 /* BudgetApp.swift */; };
+		75327D5040AB839F991E0054 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEFFDD801DC18A01D2C2C6FF /* KeychainStore.swift */; };
+		924CF4BFFBE2D5F48825FA53 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 601308601949744C902D3365 /* RootView.swift */; };
+		EDE2F76D4FC3C4F524640DA1 /* BudgetAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 8DA19D636EEAAB0BA449F759 /* BudgetAPI */; };
+		F7F6130787A7D2A0DAF13030 /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10F6752E4E2DAAB5F30C155 /* AppSession.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A3CD3E08C7B85D0DE2E3A332 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AD37C1DD4FBCA4DC6B085CD1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DE51103439BB9A5389F0B595;
+			remoteInfo = BudgetApp;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		1B486F81EC877C3437C19C5C /* BudgetAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = BudgetAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		345B8B1D2F7640B5BD488CC5 /* BudgetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetApp.swift; sourceTree = "<group>"; };
+		5BFB0C057E916CC469E975D1 /* Budget App */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "Budget App"; path = ..; sourceTree = SOURCE_ROOT; };
+		5D4070DC93D13B19958B946B /* BudgetApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = BudgetApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		601308601949744C902D3365 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		B10F6752E4E2DAAB5F30C155 /* AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSession.swift; sourceTree = "<group>"; };
+		DEFFDD801DC18A01D2C2C6FF /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		32B48C46C55E631622718C8B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EDE2F76D4FC3C4F524640DA1 /* BudgetAPI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		4FD519930AF57FD856DB07D3 /* BudgetAppTests */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = BudgetAppTests;
+			sourceTree = "<group>";
+		};
+		57F785105A3E16BE29FE4152 = {
+			isa = PBXGroup;
+			children = (
+				E7B3E1F17E00FB7963AA3BF8 /* BudgetApp */,
+				4FD519930AF57FD856DB07D3 /* BudgetAppTests */,
+				A9D39F70725EDBD6AC98239E /* Packages */,
+				D022D078AB2D1CC929A0E9B5 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A9D39F70725EDBD6AC98239E /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				5BFB0C057E916CC469E975D1 /* Budget App */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		D022D078AB2D1CC929A0E9B5 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5D4070DC93D13B19958B946B /* BudgetApp.app */,
+				1B486F81EC877C3437C19C5C /* BudgetAppTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E7B3E1F17E00FB7963AA3BF8 /* BudgetApp */ = {
+			isa = PBXGroup;
+			children = (
+				B10F6752E4E2DAAB5F30C155 /* AppSession.swift */,
+				345B8B1D2F7640B5BD488CC5 /* BudgetApp.swift */,
+				DEFFDD801DC18A01D2C2C6FF /* KeychainStore.swift */,
+				601308601949744C902D3365 /* RootView.swift */,
+			);
+			path = BudgetApp;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4852D5FBC10BDDC4D7231FCE /* BudgetAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A60C1A4E5DAB7DF9E7A5748E /* Build configuration list for PBXNativeTarget "BudgetAppTests" */;
+			buildPhases = (
+				4BD683A8D415D1003CD8EC49 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				58BD6BA5896DA4CCF88F1A2F /* PBXTargetDependency */,
+			);
+			name = BudgetAppTests;
+			packageProductDependencies = (
+			);
+			productName = BudgetAppTests;
+			productReference = 1B486F81EC877C3437C19C5C /* BudgetAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		DE51103439BB9A5389F0B595 /* BudgetApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3AEA90FA53A09785181AAB36 /* Build configuration list for PBXNativeTarget "BudgetApp" */;
+			buildPhases = (
+				99EB62D84F2C312B4DC5C0BC /* Sources */,
+				32B48C46C55E631622718C8B /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BudgetApp;
+			packageProductDependencies = (
+				8DA19D636EEAAB0BA449F759 /* BudgetAPI */,
+			);
+			productName = BudgetApp;
+			productReference = 5D4070DC93D13B19958B946B /* BudgetApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AD37C1DD4FBCA4DC6B085CD1 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1540;
+				TargetAttributes = {
+					DE51103439BB9A5389F0B595 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = EDEA1E200035DB87626E68D9 /* Build configuration list for PBXProject "BudgetApp" */;
+			compatibilityVersion = "Xcode 15.3";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 57F785105A3E16BE29FE4152;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				C0A91CEB958C9C50C4690F06 /* XCLocalSwiftPackageReference ".." */,
+			);
+			productRefGroup = D022D078AB2D1CC929A0E9B5 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				DE51103439BB9A5389F0B595 /* BudgetApp */,
+				4852D5FBC10BDDC4D7231FCE /* BudgetAppTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4BD683A8D415D1003CD8EC49 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		99EB62D84F2C312B4DC5C0BC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F7F6130787A7D2A0DAF13030 /* AppSession.swift in Sources */,
+				1C7D1E60B9E1C0ED2B68695C /* BudgetApp.swift in Sources */,
+				75327D5040AB839F991E0054 /* KeychainStore.swift in Sources */,
+				924CF4BFFBE2D5F48825FA53 /* RootView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		58BD6BA5896DA4CCF88F1A2F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DE51103439BB9A5389F0B595 /* BudgetApp */;
+			targetProxy = A3CD3E08C7B85D0DE2E3A332 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		16D099F03B584F1B882FCFE8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetAppTests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BudgetApp.app/BudgetApp";
+			};
+			name = Release;
+		};
+		780E591594E0D950055B6213 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetAppTests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BudgetApp.app/BudgetApp";
+			};
+			name = Debug;
+		};
+		7C2647C2DEC68A6FA740A621 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Budget App";
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Budget App connects to your self-hosted budget server on the local network.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp;
+				PRODUCT_NAME = "Budget App";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		C64B2F3D0BFA69E2DEEF78BD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		EED9580D3231581FFC9B93D3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Budget App";
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Budget App connects to your self-hosted budget server on the local network.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp;
+				PRODUCT_NAME = "Budget App";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		F7F73AD2E5860F442EDE1D93 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3AEA90FA53A09785181AAB36 /* Build configuration list for PBXNativeTarget "BudgetApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7C2647C2DEC68A6FA740A621 /* Debug */,
+				EED9580D3231581FFC9B93D3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A60C1A4E5DAB7DF9E7A5748E /* Build configuration list for PBXNativeTarget "BudgetAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				780E591594E0D950055B6213 /* Debug */,
+				16D099F03B584F1B882FCFE8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EDEA1E200035DB87626E68D9 /* Build configuration list for PBXProject "BudgetApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C64B2F3D0BFA69E2DEEF78BD /* Debug */,
+				F7F73AD2E5860F442EDE1D93 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		C0A91CEB958C9C50C4690F06 /* XCLocalSwiftPackageReference ".." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		8DA19D636EEAAB0BA449F759 /* BudgetAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BudgetAPI;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = AD37C1DD4FBCA4DC6B085CD1 /* Project object */;
+}
