@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import uuid4
 
 from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
 
@@ -96,6 +96,8 @@ class Account(Base):
     account_type: Mapped[str] = mapped_column(String(30))
     is_on_budget: Mapped[bool] = mapped_column(Boolean, default=True)
     is_closed: Mapped[bool] = mapped_column(Boolean, default=False)
+    reconciled_balance_minor: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    reconciled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
@@ -137,10 +139,28 @@ class Transaction(Base):
     budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
     account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), index=True)
     category_id: Mapped[Optional[str]] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), index=True, nullable=True)
+    transfer_id: Mapped[Optional[str]] = mapped_column(String(36), index=True, nullable=True)
     amount_minor: Mapped[int] = mapped_column(BigInteger)
     occurred_on: Mapped[date] = mapped_column(Date, index=True)
     payee_name: Mapped[str] = mapped_column(String(150), default="")
     memo: Mapped[str] = mapped_column(String(500), default="")
     is_cleared: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_reconciled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    splits: Mapped[list["TransactionSplit"]] = relationship(
+        back_populates="transaction",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class TransactionSplit(Base):
+    __tablename__ = "transaction_splits"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.id", ondelete="CASCADE"), index=True)
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), index=True)
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    memo: Mapped[str] = mapped_column(String(500), default="")
+    transaction: Mapped[Transaction] = relationship(back_populates="splits")

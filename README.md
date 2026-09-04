@@ -8,7 +8,7 @@ The repository contains the first two domain slices:
 
 - Strongly typed household and budget identities with deny-by-default authorization.
 - Exact minor-unit money arithmetic and zero-based monthly budget calculations.
-- A FastAPI/PostgreSQL server with authentication, private budget APIs, accounts, categories, monthly assignments, transactions, migrations, and a container deployment definition.
+- A FastAPI/PostgreSQL server with authentication, private budget APIs, accounts, categories, monthly assignments, split transactions, transfers, reconciliation, monthly summaries, migrations, and a container deployment definition.
 
 Product and architecture decisions are recorded in `docs/`.
 

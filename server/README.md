@@ -22,7 +22,7 @@ uvicorn --factory app.main:create_app --reload
 
 The first owner calls `POST /api/v1/auth/bootstrap`. That endpoint becomes permanently unavailable after successful setup.
 
-The versioned API currently supports budgets, explicit grants, accounts, category groups, categories, monthly assignments, and transaction entry. View, Contribute, and Manage permissions are checked independently for every budget-scoped route.
+The versioned API supports budgets, explicit grants, accounts, category groups, categories, monthly assignments, split transactions, balanced account transfers, reconciliation, and monthly zero-based summaries. View, Contribute, and Manage permissions are checked independently for every budget-scoped route.
 
 ## Container deployment
 

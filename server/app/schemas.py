@@ -1,7 +1,11 @@
 from datetime import date
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+MIN_INT64 = -(2**63)
+MAX_INT64 = 2**63 - 1
 
 
 class BootstrapRequest(BaseModel):
@@ -77,6 +81,7 @@ class AccountResponse(BaseModel):
     account_type: str
     is_on_budget: bool
     is_closed: bool
+    reconciled_balance_minor: Optional[int]
 
 
 class CategoryGroupCreate(BaseModel):
@@ -112,7 +117,7 @@ class CategoryResponse(BaseModel):
 
 class AssignmentUpsert(BaseModel):
     month: date
-    assigned_minor: int
+    assigned_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
 
     @field_validator("month")
     @classmethod
@@ -131,14 +136,38 @@ class AssignmentResponse(BaseModel):
     assigned_minor: int
 
 
+class TransactionSplitCreate(BaseModel):
+    category_id: str
+    amount_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
+    memo: str = Field(default="", max_length=500)
+
+
+class TransactionSplitResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    category_id: str
+    amount_minor: int
+    memo: str
+
+
 class TransactionCreate(BaseModel):
     account_id: str
     category_id: Optional[str] = None
-    amount_minor: int
+    amount_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
     occurred_on: date
     payee_name: str = Field(default="", max_length=150)
     memo: str = Field(default="", max_length=500)
     is_cleared: bool = False
+    splits: list[TransactionSplitCreate] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_category_shape(self) -> "TransactionCreate":
+        if self.category_id is not None and self.splits:
+            raise ValueError("use either category_id or splits, not both")
+        if self.splits and sum(split.amount_minor for split in self.splits) != self.amount_minor:
+            raise ValueError("split amounts must equal transaction amount")
+        return self
 
 
 class TransactionResponse(BaseModel):
@@ -153,4 +182,58 @@ class TransactionResponse(BaseModel):
     payee_name: str
     memo: str
     is_cleared: bool
+    is_reconciled: bool
     created_by_user_id: str
+    transfer_id: Optional[str]
+    splits: list[TransactionSplitResponse] = Field(default_factory=list)
+
+
+class TransferCreate(BaseModel):
+    source_account_id: str
+    destination_account_id: str
+    amount_minor: int = Field(gt=0, le=MAX_INT64)
+    occurred_on: date
+    memo: str = Field(default="", max_length=500)
+    is_cleared: bool = False
+
+    @model_validator(mode="after")
+    def require_distinct_accounts(self) -> "TransferCreate":
+        if self.source_account_id == self.destination_account_id:
+            raise ValueError("transfer accounts must be different")
+        return self
+
+
+class TransferResponse(BaseModel):
+    transfer_id: str
+    source: TransactionResponse
+    destination: TransactionResponse
+
+
+class ReconcileRequest(BaseModel):
+    statement_balance_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
+    through_date: date
+
+
+class ReconcileResponse(BaseModel):
+    account_id: str
+    reconciled_balance_minor: int
+    reconciled_transaction_count: int
+
+
+class CategoryMonthSummary(BaseModel):
+    category_id: str
+    name: str
+    assigned_minor: int
+    activity_minor: int
+    carried_available_minor: int
+    available_minor: int
+    is_overspent: bool
+
+
+class MonthSummaryResponse(BaseModel):
+    month: date
+    currency_code: str
+    ready_to_assign_minor: int
+    total_assigned_minor: int
+    total_overspent_minor: int
+    categories: list[CategoryMonthSummary]
