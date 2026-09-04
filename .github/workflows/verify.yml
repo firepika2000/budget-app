@@ -10,9 +10,23 @@ permissions:
 jobs:
   server:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: budget_test
+          POSTGRES_USER: budget
+          POSTGRES_PASSWORD: test-database-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U budget -d budget_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
@@ -23,11 +37,18 @@ jobs:
         working-directory: server
       - run: python -m compileall -q app tests migrations
         working-directory: server
+      - run: alembic upgrade head
+        working-directory: server
+        env:
+          BUDGET_APP_DATABASE_URL: postgresql+psycopg://budget:test-database-password@127.0.0.1:5432/budget_test
+          BUDGET_APP_JWT_SECRET: ci-only-secret-that-is-longer-than-32-characters
       - run: bash -n scripts/backup.sh scripts/restore.sh
+        working-directory: server
+      - run: docker build --tag budget-app-server:test .
         working-directory: server
 
   swift:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: swift test

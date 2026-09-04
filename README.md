@@ -26,8 +26,10 @@ swift test
 - [Product brief](docs/product-brief.md)
 - [Architecture direction](docs/architecture.md)
 - [Self-hosting guide](docs/deployment.md)
+- [MVP release checklist](docs/release-checklist.md)
+- [Security policy](SECURITY.md)
 - [iPhone app](ios/README.md)
 
 ## Active milestone
 
-Complete end-to-end release verification, accessibility polish, and reproducible release packaging.
+Version 0.1.0 is the feature-complete self-hosted MVP. Owner acceptance on the final server and a physically signed iPhone build remain deployment-specific checklist items.
