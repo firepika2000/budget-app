@@ -127,7 +127,7 @@ def upsert_grant(
         Membership.is_active.is_(True),
     ))
     if member is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="User is not an active household member")
+        raise HTTPException(status_code=422, detail="User is not an active household member")
     grant = db.scalar(select(BudgetGrant).where(
         BudgetGrant.budget_id == budget.id,
         BudgetGrant.user_id == body.user_id,
@@ -144,4 +144,3 @@ def upsert_grant(
     db.commit()
     db.refresh(grant)
     return grant
-
