@@ -20,9 +20,11 @@ from .schemas import (
     GrantResponse,
     GrantUpsert,
     LoginRequest,
+    RefreshRequest,
     TokenResponse,
 )
-from .security import create_access_token, hash_password, verify_password
+from .security import hash_password, verify_password
+from .sessions import issue_session, revoke_session, rotate_session
 
 
 router = APIRouter(prefix="/api/v1")
@@ -61,8 +63,7 @@ def bootstrap(
         user_id=user.id,
         role=HouseholdRole.OWNER.value,
     ))
-    db.commit()
-    return TokenResponse(access_token=create_access_token(user.id, settings))
+    return issue_session(db, user, settings)
 
 
 @router.post("/auth/login", response_model=TokenResponse)
@@ -74,7 +75,21 @@ def login(
     user = db.scalar(select(User).where(User.email == body.email.strip().lower()))
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
-    return TokenResponse(access_token=create_access_token(user.id, settings))
+    return issue_session(db, user, settings)
+
+
+@router.post("/auth/refresh", response_model=TokenResponse)
+def refresh(
+    body: RefreshRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TokenResponse:
+    return rotate_session(db, body.refresh_token, settings)
+
+
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(body: RefreshRequest, db: Session = Depends(get_db)) -> None:
+    revoke_session(db, body.refresh_token)
 
 
 @router.get("/budgets", response_model=list[BudgetResponse])

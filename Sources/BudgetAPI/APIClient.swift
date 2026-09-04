@@ -40,31 +40,44 @@ public struct APIClient {
         let _: [String: String] = try await send(path: "api/v1/health")
     }
 
-    public func login(email: String, password: String) async throws -> String {
-        let response: TokenResponse = try await send(
+    public func login(email: String, password: String) async throws -> APIAuthTokens {
+        try await send(
             path: "api/v1/auth/login",
             method: "POST",
             body: LoginRequest(email: email, password: password)
         )
-        return response.accessToken
     }
 
-    public func bootstrap(_ request: BootstrapRequest) async throws -> String {
-        let response: TokenResponse = try await send(
+    public func bootstrap(_ request: BootstrapRequest) async throws -> APIAuthTokens {
+        try await send(
             path: "api/v1/auth/bootstrap",
             method: "POST",
             body: request
         )
-        return response.accessToken
     }
 
-    public func acceptInvitation(_ request: APIInvitationAccept) async throws -> String {
-        let response: TokenResponse = try await send(
+    public func acceptInvitation(_ request: APIInvitationAccept) async throws -> APIAuthTokens {
+        try await send(
             path: "api/v1/auth/accept-invitation",
             method: "POST",
             body: request
         )
-        return response.accessToken
+    }
+
+    public func refresh(_ refreshToken: String) async throws -> APIAuthTokens {
+        try await send(
+            path: "api/v1/auth/refresh",
+            method: "POST",
+            body: APIRefreshRequest(refreshToken: refreshToken)
+        )
+    }
+
+    public func logout(_ refreshToken: String) async throws {
+        let _: EmptyResponse = try await send(
+            path: "api/v1/auth/logout",
+            method: "POST",
+            body: APIRefreshRequest(refreshToken: refreshToken)
+        )
     }
 
     public func profile(token: String) async throws -> APIProfile {
@@ -214,6 +227,9 @@ public struct APIClient {
                 ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
             throw APIClientError.server(status: http.statusCode, message: message)
         }
+        if Response.self == EmptyResponse.self, data.isEmpty {
+            return EmptyResponse() as! Response
+        }
         do {
             return try JSONDecoder().decode(Response.self, from: data)
         } catch {
@@ -226,3 +242,5 @@ public struct APIClient {
         return host == "localhost" || host == "127.0.0.1" || host == "::1"
     }
 }
+
+private struct EmptyResponse: Decodable {}

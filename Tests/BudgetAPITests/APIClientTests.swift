@@ -123,6 +123,35 @@ final class APIClientTests: XCTestCase {
             token: "secret"
         )
     }
+
+    func testRefreshRotatesTokensAndLogoutAcceptsEmptyResponse() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var requestCount = 0
+        MockURLProtocol.handler = { request in
+            requestCount += 1
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: String]
+            )
+            XCTAssertEqual(json["refresh_token"], requestCount == 1 ? "old-refresh" : "new-refresh")
+            if requestCount == 1 {
+                XCTAssertEqual(request.url?.path, "/api/v1/auth/refresh")
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data(#"{"access_token":"new-access","refresh_token":"new-refresh","token_type":"bearer"}"#.utf8)
+                )
+            }
+            XCTAssertEqual(request.url?.path, "/api/v1/auth/logout")
+            return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+
+        let tokens = try await client.refresh("old-refresh")
+        XCTAssertEqual(tokens, APIAuthTokens(accessToken: "new-access", refreshToken: "new-refresh"))
+        try await client.logout(tokens.refreshToken)
+        XCTAssertEqual(requestCount, 2)
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

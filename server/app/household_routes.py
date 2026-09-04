@@ -20,7 +20,8 @@ from .schemas import (
     MemberResponse,
     TokenResponse,
 )
-from .security import create_access_token, hash_password, verify_password
+from .security import hash_password, verify_password
+from .sessions import issue_session
 
 
 router = APIRouter(prefix="/api/v1")
@@ -137,7 +138,7 @@ def accept_invitation(
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User is already a household member")
-    return TokenResponse(access_token=create_access_token(user.id, settings))
+    return issue_session(db, user, settings)
 
 
 @router.get("/households/{household_id}/members", response_model=list[MemberResponse])

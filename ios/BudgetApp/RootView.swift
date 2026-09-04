@@ -3,6 +3,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var session: AppSession
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -21,6 +22,11 @@ struct RootView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(session.errorMessage ?? "Unknown error")
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, session.token != nil {
+                Task { await session.loadBudgets() }
+            }
         }
     }
 }

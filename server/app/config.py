@@ -8,6 +8,7 @@ class Settings:
     jwt_secret: str
     jwt_issuer: str = "budget-app"
     access_token_minutes: int = 30
+    refresh_token_days: int = 30
     allowed_hosts: tuple[str, ...] = ("localhost", "127.0.0.1", "testserver")
 
     @classmethod

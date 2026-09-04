@@ -1,18 +1,27 @@
 (() => {
   "use strict";
 
-  const state = { token: null, me: null, budgets: [], selected: null, accounts: [], categories: [], summary: null };
+  const state = { token: null, refreshToken: null, me: null, budgets: [], selected: null, accounts: [], categories: [], summary: null };
   const $ = (id) => document.getElementById(id);
   const authView = $("auth-view");
   const appView = $("app-view");
   const dialog = $("form-dialog");
   let authMode = "login";
 
-  async function api(path, options = {}) {
+  async function api(path, options = {}, mayRefresh = true) {
     const headers = { Accept: "application/json", ...(options.headers || {}) };
     if (state.token) headers.Authorization = `Bearer ${state.token}`;
     if (options.body) headers["Content-Type"] = "application/json";
     const response = await fetch(`/api/v1${path}`, { ...options, headers });
+    if (response.status === 401 && mayRefresh && state.refreshToken && !path.startsWith("/auth/")) {
+      const tokens = await api("/auth/refresh", {
+        method: "POST",
+        body: JSON.stringify({ refresh_token: state.refreshToken }),
+      }, false);
+      state.token = tokens.access_token;
+      state.refreshToken = tokens.refresh_token;
+      return api(path, options, false);
+    }
     if (response.status === 204) return null;
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -59,6 +68,7 @@
         }) });
       }
       state.token = result.access_token;
+      state.refreshToken = result.refresh_token;
       await loadSession();
       authView.classList.add("hidden");
       appView.classList.remove("hidden");
@@ -183,7 +193,15 @@
     });
   }
 
-  $("sign-out").addEventListener("click", () => { state.token = null; state.selected = null; appView.classList.add("hidden"); authView.classList.remove("hidden"); $("password").value = ""; });
+  $("sign-out").addEventListener("click", async () => {
+    const refreshToken = state.refreshToken;
+    state.token = null; state.refreshToken = null; state.selected = null;
+    appView.classList.add("hidden"); authView.classList.remove("hidden"); $("password").value = "";
+    if (refreshToken) {
+      try { await api("/auth/logout", { method: "POST", body: JSON.stringify({ refresh_token: refreshToken }) }, false); }
+      catch { /* Local sign-out still succeeds if the server is unavailable. */ }
+    }
+  });
   $("new-budget-button").addEventListener("click", () => openFields("New budget", [{ id: "name", label: "Budget name" }, { id: "currency", label: "Currency code", value: "USD" }], async (values) => {
     const household = state.me.households.find((item) => item.role === "owner" && item.is_active);
     await api("/budgets", { method: "POST", body: JSON.stringify({ household_id: household.id, name: values.name, currency_code: values.currency }) }); await loadSession(); toast("Budget created");

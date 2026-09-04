@@ -5,6 +5,7 @@ import BudgetAPI
 final class AppSession: ObservableObject {
     @Published private(set) var serverURL: URL?
     @Published private(set) var token: String?
+    @Published private(set) var refreshToken: String?
     @Published private(set) var profile: APIProfile?
     @Published var budgets: [APIBudget] = []
     @Published var isWorking = false
@@ -14,6 +15,7 @@ final class AppSession: ObservableObject {
     private let keychain: KeychainStore
     private let serverKey = "budget.serverURL"
     private let tokenAccount = "access-token"
+    private let refreshTokenAccount = "refresh-token"
 
     init(defaults: UserDefaults = .standard, keychain: KeychainStore = KeychainStore()) {
         self.defaults = defaults
@@ -22,6 +24,7 @@ final class AppSession: ObservableObject {
             self.serverURL = URL(string: stored)
         }
         self.token = keychain.read(account: tokenAccount)
+        self.refreshToken = keychain.read(account: refreshTokenAccount)
     }
 
     func configureServer(_ rawValue: String) async {
@@ -64,8 +67,9 @@ final class AppSession: ObservableObject {
     }
 
     func loadBudgets() async {
-        guard let serverURL, let token else { return }
         await perform {
+            try await self.refreshIfNeeded()
+            guard let serverURL = self.serverURL, let token = self.token else { return }
             let client = try APIClient(baseURL: serverURL)
             async let profile = client.profile(token: token)
             async let budgets = client.budgets(token: token)
@@ -86,8 +90,13 @@ final class AppSession: ObservableObject {
     }
 
     func signOut() {
+        if let serverURL, let refreshToken {
+            Task { try? await APIClient(baseURL: serverURL).logout(refreshToken) }
+        }
         keychain.delete(account: tokenAccount)
+        keychain.delete(account: refreshTokenAccount)
         token = nil
+        refreshToken = nil
         budgets = []
         profile = nil
     }
@@ -98,17 +107,46 @@ final class AppSession: ObservableObject {
         serverURL = nil
     }
 
-    private func authenticate(_ operation: (APIClient) async throws -> String) async {
+    private func authenticate(_ operation: (APIClient) async throws -> APIAuthTokens) async {
         guard let serverURL else { return }
         await perform {
-            let newToken = try await operation(APIClient(baseURL: serverURL))
-            try self.keychain.save(newToken, account: self.tokenAccount)
-            self.token = newToken
+            let tokens = try await operation(APIClient(baseURL: serverURL))
+            try self.save(tokens)
             let client = try APIClient(baseURL: serverURL)
-            async let profile = client.profile(token: newToken)
-            async let budgets = client.budgets(token: newToken)
+            async let profile = client.profile(token: tokens.accessToken)
+            async let budgets = client.budgets(token: tokens.accessToken)
             (self.profile, self.budgets) = try await (profile, budgets)
         }
+    }
+
+    func refreshIfNeeded(force: Bool = false) async throws {
+        guard let serverURL, let refreshToken else { return }
+        if !force, let token, Self.secondsUntilExpiration(token) > 90 { return }
+        let tokens = try await APIClient(baseURL: serverURL).refresh(refreshToken)
+        try save(tokens)
+    }
+
+    private func save(_ tokens: APIAuthTokens) throws {
+        try keychain.save(tokens.accessToken, account: tokenAccount)
+        do {
+            try keychain.save(tokens.refreshToken, account: refreshTokenAccount)
+        } catch {
+            keychain.delete(account: tokenAccount)
+            throw error
+        }
+        token = tokens.accessToken
+        refreshToken = tokens.refreshToken
+    }
+
+    private static func secondsUntilExpiration(_ token: String) -> TimeInterval {
+        let parts = token.split(separator: ".")
+        guard parts.count == 3 else { return 0 }
+        var encoded = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        encoded.append(String(repeating: "=", count: (4 - encoded.count % 4) % 4))
+        guard let data = Data(base64Encoded: encoded),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let expiration = object["exp"] as? TimeInterval else { return 0 }
+        return expiration - Date().timeIntervalSince1970
     }
 
     private func perform(_ operation: () async throws -> Void) async {

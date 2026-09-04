@@ -1,10 +1,20 @@
 import Foundation
 
-struct TokenResponse: Decodable {
-    let accessToken: String
+public struct APIAuthTokens: Decodable, Equatable, Sendable {
+    public let accessToken: String
+    public let refreshToken: String
 
     enum CodingKeys: String, CodingKey {
         case accessToken = "access_token"
+        case refreshToken = "refresh_token"
+    }
+}
+
+struct APIRefreshRequest: Encodable {
+    let refreshToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case refreshToken = "refresh_token"
     }
 }
 
