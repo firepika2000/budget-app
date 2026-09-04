@@ -28,6 +28,8 @@ from .dependencies import get_current_user
 from .credit import add_payment_reserve_event, add_purchase_reserve_events, ensure_credit_payment_category
 from .models import (
     Account,
+    AllowancePlan,
+    AllowanceSplit,
     AllocationOperation,
     AllocationPosting,
     Budget,
@@ -50,6 +52,7 @@ from .schemas import (
     AssignmentResponse,
     AssignmentUpsert,
     CategoryCreate,
+    CategoryDelegationUpdate,
     CategoryGroupCreate,
     CategoryGroupResponse,
     CategoryMonthSummary,
@@ -291,6 +294,40 @@ def create_category(
             raise HTTPException(status_code=422, detail="Delegated user must be an active household member")
     category = Category(budget_id=budget_id, **body.model_dump())
     db.add(category)
+    db.commit()
+    db.refresh(category)
+    return category
+
+
+@router.put("/categories/{category_id}/delegation", response_model=CategoryResponse)
+def update_category_delegation(
+    budget_id: str,
+    category_id: str,
+    body: CategoryDelegationUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Category:
+    budget = require_budget_capability(db, user, budget_id, "manage_allowances")
+    category = db.get(Category, category_id)
+    if category is None or category.budget_id != budget_id or category.system_type is not None:
+        raise HTTPException(status_code=404, detail="Category not found")
+    if body.delegated_user_id is not None:
+        member = db.scalar(select(Membership).where(
+            Membership.household_id == budget.household_id,
+            Membership.user_id == body.delegated_user_id,
+            Membership.is_active.is_(True),
+        ))
+        if member is None:
+            raise HTTPException(status_code=422, detail="Delegated user must be an active household member")
+    active_plan = db.scalar(select(AllowancePlan.id).join(
+        AllowanceSplit, AllowanceSplit.plan_id == AllowancePlan.id
+    ).where(
+        AllowanceSplit.destination_category_id == category_id,
+        AllowancePlan.is_active.is_(True),
+    ))
+    if active_plan is not None and body.delegated_user_id != category.delegated_user_id:
+        raise HTTPException(status_code=409, detail="Deactivate the category's allowance plan first")
+    category.delegated_user_id = body.delegated_user_id
     db.commit()
     db.refresh(category)
     return category

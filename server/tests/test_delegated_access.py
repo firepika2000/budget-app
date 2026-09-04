@@ -22,6 +22,7 @@ def add_child(session_factory, client):
 
 
 def configure_child(client, owner_token, budget_id, child_id, account_id, category_id):
+    category_ids = category_id if isinstance(category_id, list) else [category_id]
     grant = client.put(
         f"/api/v1/budgets/{budget_id}/grants",
         headers=auth(owner_token),
@@ -39,7 +40,7 @@ def configure_child(client, owner_token, budget_id, child_id, account_id, catego
             "restrict_accounts": True,
             "account_ids": [account_id],
             "restrict_categories": True,
-            "category_ids": [category_id],
+            "category_ids": category_ids,
         },
     )
     assert profile.status_code == 200, profile.text
@@ -199,6 +200,11 @@ def test_partial_request_approval_moves_existing_allocation_once_and_is_auditabl
         },
     )
     assert stale.status_code == 409
+
+    child_view = client.get(
+        f"/api/v1/budgets/{budget['id']}/requests", headers=auth(child_token)
+    ).json()[0]
+    assert child_view["source_category_id"] is None
 
     summary = client.get(
         f"/api/v1/budgets/{budget['id']}/months/2026-09-01",

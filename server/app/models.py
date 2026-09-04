@@ -367,6 +367,71 @@ class CreditCardReserveEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class AllowancePlan(Base):
+    __tablename__ = "allowance_plans"
+    __table_args__ = (
+        CheckConstraint("amount_minor > 0", name="ck_allowance_plan_amount_positive"),
+        CheckConstraint("interval_count > 0", name="ck_allowance_plan_interval_positive"),
+        CheckConstraint("recurrence_unit IN ('week', 'month')", name="ck_allowance_plan_recurrence"),
+        CheckConstraint(
+            "rollover_policy IN ('rollover', 'use_it_or_lose_it')",
+            name="ck_allowance_plan_rollover_policy",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    delegated_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    source_category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    next_issue_date: Mapped[date] = mapped_column(Date, index=True)
+    recurrence_unit: Mapped[str] = mapped_column(String(20))
+    interval_count: Mapped[int] = mapped_column(Integer, default=1)
+    rollover_policy: Mapped[str] = mapped_column(String(30), default="rollover")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    splits: Mapped[list["AllowanceSplit"]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class AllowanceSplit(Base):
+    __tablename__ = "allowance_splits"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "destination_category_id"),
+        CheckConstraint("amount_minor > 0", name="ck_allowance_split_amount_positive"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    plan_id: Mapped[str] = mapped_column(ForeignKey("allowance_plans.id", ondelete="CASCADE"), index=True)
+    destination_category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), index=True)
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    plan: Mapped[AllowancePlan] = relationship(back_populates="splits")
+
+
+class AllowanceIssuance(Base):
+    __tablename__ = "allowance_issuances"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "issued_on"),
+        CheckConstraint("amount_minor > 0", name="ck_allowance_issuance_amount_positive"),
+        CheckConstraint("reclaimed_minor >= 0", name="ck_allowance_issuance_reclaimed_nonnegative"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    plan_id: Mapped[str] = mapped_column(ForeignKey("allowance_plans.id", ondelete="RESTRICT"), index=True)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    issued_on: Mapped[date] = mapped_column(Date, index=True)
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    reclaimed_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    allocation_operation_id: Mapped[str] = mapped_column(
+        ForeignKey("allocation_operations.id", ondelete="RESTRICT"), unique=True
+    )
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 class FinancialRequest(Base):
     __tablename__ = "financial_requests"
     __table_args__ = (

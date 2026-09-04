@@ -52,7 +52,7 @@ class BudgetCreate(BaseModel):
 CapabilityName = Literal[
     "view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports", "view_allocation_history",
     "create_transaction", "request_money", "assign_money", "move_money", "reconcile_account",
-    "manage_budget_structure", "manage_planning", "approve_request",
+    "manage_budget_structure", "manage_planning", "manage_allowances", "approve_request", "export_data",
 ]
 
 
@@ -169,6 +169,10 @@ class CategoryResponse(BaseModel):
     system_type: Optional[str]
     linked_account_id: Optional[str]
     delegated_user_id: Optional[str]
+
+
+class CategoryDelegationUpdate(BaseModel):
+    delegated_user_id: Optional[str] = None
 
 
 class CategoryTargetUpsert(BaseModel):
@@ -483,6 +487,71 @@ class FinancialRequestDecision(BaseModel):
 class FinancialRequestCancel(BaseModel):
     expected_request_version: int = Field(ge=0)
     note: str = Field(default="", max_length=500)
+
+
+class AllowanceSplitCreate(BaseModel):
+    destination_category_id: str
+    amount_minor: int = Field(gt=0, le=MAX_INT64)
+
+
+class AllowancePlanCreate(BaseModel):
+    delegated_user_id: str
+    source_category_id: str
+    name: str = Field(min_length=1, max_length=100)
+    amount_minor: int = Field(gt=0, le=MAX_INT64)
+    next_issue_date: date
+    recurrence_unit: Literal["week", "month"]
+    interval_count: int = Field(default=1, ge=1, le=52)
+    rollover_policy: Literal["rollover", "use_it_or_lose_it"] = "rollover"
+    splits: list[AllowanceSplitCreate] = Field(min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def validate_splits(self) -> "AllowancePlanCreate":
+        if len({split.destination_category_id for split in self.splits}) != len(self.splits):
+            raise ValueError("allowance destination categories must be unique")
+        if sum(split.amount_minor for split in self.splits) != self.amount_minor:
+            raise ValueError("allowance splits must equal the plan amount")
+        return self
+
+
+class AllowanceSplitResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    destination_category_id: str
+    amount_minor: int
+
+
+class AllowancePlanResponse(BaseModel):
+    id: str
+    budget_id: str
+    delegated_user_id: str
+    source_category_id: Optional[str]
+    name: str
+    amount_minor: int
+    next_issue_date: date
+    recurrence_unit: str
+    interval_count: int
+    rollover_policy: str
+    is_active: bool
+    splits: list[AllowanceSplitResponse]
+
+
+class AllowanceIssueRequest(BaseModel):
+    issue_date: date
+    expected_allocation_version: int = Field(ge=0)
+
+
+class AllowanceIssuanceResponse(BaseModel):
+    id: str
+    plan_id: str
+    budget_id: str
+    issued_on: date
+    amount_minor: int
+    reclaimed_minor: int
+    allocation_operation_id: str
+    actor_user_id: str
+    created_at: datetime
+    next_issue_date: date
 
 
 class CategoryMonthSummary(BaseModel):

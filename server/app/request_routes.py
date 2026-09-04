@@ -31,7 +31,7 @@ def require_request_capability(
     return budget
 
 
-def serialize_request(db: Session, item: FinancialRequest) -> dict:
+def serialize_request(db: Session, item: FinancialRequest, *, reveal_source: bool = True) -> dict:
     actions = list(db.scalars(select(RequestAction).where(
         RequestAction.request_id == item.id
     ).order_by(RequestAction.created_at, RequestAction.id)))
@@ -47,7 +47,7 @@ def serialize_request(db: Session, item: FinancialRequest) -> dict:
         "status": item.status,
         "version": item.version,
         "approved_amount_minor": item.approved_amount_minor,
-        "source_category_id": item.source_category_id,
+        "source_category_id": item.source_category_id if reveal_source else None,
         "allocation_operation_id": item.allocation_operation_id,
         "created_at": item.created_at,
         "resolved_at": item.resolved_at,
@@ -88,7 +88,7 @@ def create_request(
     ))
     db.commit()
     db.refresh(item)
-    return serialize_request(db, item)
+    return serialize_request(db, item, reveal_source=False)
 
 
 @router.get("", response_model=list[FinancialRequestResponse])
@@ -101,12 +101,13 @@ def list_requests(
     if budget is None:
         raise HTTPException(status_code=404, detail="Budget not found")
     query = select(FinancialRequest).where(FinancialRequest.budget_id == budget_id)
-    if not has_capability(db, user, budget, "approve_request"):
+    can_approve = has_capability(db, user, budget, "approve_request")
+    if not can_approve:
         if not has_capability(db, user, budget, "request_money"):
             raise HTTPException(status_code=403, detail="Insufficient capability")
         query = query.where(FinancialRequest.requester_user_id == user.id)
     items = list(db.scalars(query.order_by(FinancialRequest.created_at.desc())))
-    return [serialize_request(db, item) for item in items]
+    return [serialize_request(db, item, reveal_source=can_approve) for item in items]
 
 
 @router.post("/{request_id}/decision", response_model=FinancialRequestResponse)
@@ -181,7 +182,7 @@ def decide_request(
     ))
     db.commit()
     db.refresh(item)
-    return serialize_request(db, item)
+    return serialize_request(db, item, reveal_source=True)
 
 
 @router.post("/{request_id}/cancel", response_model=FinancialRequestResponse)
@@ -212,4 +213,4 @@ def cancel_request(
     ))
     db.commit()
     db.refresh(item)
-    return serialize_request(db, item)
+    return serialize_request(db, item, reveal_source=False)

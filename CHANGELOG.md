@@ -18,6 +18,9 @@
 - Added delegated category ownership without duplicating household cash or ledgers.
 - Added first-class funding requests, partial approvals, rejection/cancellation states, optimistic request versions, and immutable action history.
 - Approved requests now link to a balanced allocation operation funded by an explicit source category.
+- Added recurring allowance plans with calendar-safe weekly/monthly schedules and split destinations.
+- Added explicit allowance issuance with rollover and use-it-or-lose-it policies; every run links to one balanced allocation operation.
+- Added a capability-protected, versioned JSON audit export containing the records needed to reconstruct budget and authorization history.
 
 ## 0.1.0 - 2026-09-04
 

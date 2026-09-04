@@ -20,7 +20,7 @@ ALL_CAPABILITIES = {
     "view_budget", "view_accounts", "view_account_balances", "view_categories",
     "view_transactions", "view_reports", "view_allocation_history", "create_transaction",
     "request_money", "assign_money", "move_money", "reconcile_account",
-    "manage_budget_structure", "manage_planning", "approve_request",
+    "manage_budget_structure", "manage_planning", "manage_allowances", "approve_request", "export_data",
 }
 
 PERMISSION_LEVEL = {
@@ -38,7 +38,7 @@ LEGACY_CAPABILITIES = {
     "manage": {
         "view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports", "view_allocation_history",
         "create_transaction", "request_money", "assign_money", "move_money", "reconcile_account",
-        "manage_budget_structure", "manage_planning", "approve_request",
+        "manage_budget_structure", "manage_planning", "manage_allowances", "approve_request", "export_data",
     },
 }
 

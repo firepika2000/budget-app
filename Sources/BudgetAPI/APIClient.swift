@@ -221,6 +221,13 @@ public struct APIClient {
         )
     }
 
+    public func allowancePlans(
+        budgetID: String,
+        token: String
+    ) async throws -> [APIAllowancePlan] {
+        try await send(path: "api/v1/budgets/\(budgetID)/allowances", token: token)
+    }
+
     private func send<Response: Decodable>(
         path: String,
         method: String = "GET",

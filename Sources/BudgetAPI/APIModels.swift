@@ -66,7 +66,7 @@ public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
         if let capabilities { return capabilities.contains(capability) }
         switch capability {
         case "create_transaction", "request_money": return effectivePermission.canContribute
-        case "assign_money", "move_money", "reconcile_account", "manage_budget_structure", "manage_planning", "approve_request":
+        case "assign_money", "move_money", "reconcile_account", "manage_budget_structure", "manage_planning", "manage_allowances", "approve_request":
             return effectivePermission.canManage
         default: return true
         }
@@ -417,6 +417,42 @@ public struct APIFinancialRequest: Identifiable, Decodable, Equatable, Sendable 
         case approvedAmountMinor = "approved_amount_minor"
         case sourceCategoryID = "source_category_id"
         case allocationOperationID = "allocation_operation_id"
+    }
+}
+
+public struct APIAllowanceSplit: Decodable, Equatable, Sendable {
+    public let destinationCategoryID: String
+    public let amountMinor: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case destinationCategoryID = "destination_category_id"
+        case amountMinor = "amount_minor"
+    }
+}
+
+public struct APIAllowancePlan: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let delegatedUserID: String
+    public let sourceCategoryID: String?
+    public let name: String
+    public let amountMinor: Int64
+    public let nextIssueDate: String
+    public let recurrenceUnit: String
+    public let intervalCount: Int
+    public let rolloverPolicy: String
+    public let isActive: Bool
+    public let splits: [APIAllowanceSplit]
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, splits
+        case delegatedUserID = "delegated_user_id"
+        case sourceCategoryID = "source_category_id"
+        case amountMinor = "amount_minor"
+        case nextIssueDate = "next_issue_date"
+        case recurrenceUnit = "recurrence_unit"
+        case intervalCount = "interval_count"
+        case rolloverPolicy = "rollover_policy"
+        case isActive = "is_active"
     }
 }
 

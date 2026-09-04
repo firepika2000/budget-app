@@ -33,4 +33,4 @@ swift test
 
 ## Active milestone
 
-Version 0.1.0 is the self-hosted MVP. The active architecture pass now includes an auditable balanced allocation ledger, targets, isolated planning forecasts, and funded credit-card payment reserves. Delegated household workflows and finer capability scopes are the next implementation stage.
+Version 0.1.0 is the original self-hosted MVP. The active architecture pass now includes an auditable balanced allocation ledger, targets, isolated planning forecasts, funded credit-card payment reserves, capability-scoped delegation, requests and approvals, recurring allowances, and a portable audit export.

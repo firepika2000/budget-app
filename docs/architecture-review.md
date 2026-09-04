@@ -184,6 +184,14 @@ Migration `0009` layers configurable capabilities and resource scopes over the e
 
 Funding and purchase requests are durable domain records with status, version, requester, amount, category, reason, timestamps, resolution data, and immutable actions. Approval locks both the request and allocation budget, verifies the request version and source availability, then creates a balanced category-to-category allocation operation. The unique operation link and terminal request state make approval single-winner under concurrent PostgreSQL requests. Rejection, change requests, cancellation, partial approval, and deactivated-user attribution remain preserved without inventing money.
 
+### Implemented allowance checkpoint
+
+Migration `0010` adds explicit recurring allowance plans, positive split destinations, and immutable issuance records. Destination categories are dedicated to and visible to the delegated member, preventing use-it-or-lose-it reclamation from sweeping unrelated household allocation. Weekly and calendar-month recurrence is date-only and month-end safe. Rollover leaves prior availability in place; use-it-or-lose-it records both the reclaim and new grant as nonzero postings in the same balanced operation, even when their net balance change is zero. Issuance requires the current allocation version, locks the plan and budget, is unique per plan/date, and cannot post before its due date.
+
+### Implemented portability checkpoint
+
+The structured audit export is schema-versioned and capability-protected. It contains household identity metadata plus the domain rows and stable IDs needed to explain or reconstruct the budget ledger, planning layer, credit reserve, approvals, allowance history, and authorization scopes. It deliberately excludes password hashes, invitation tokens, and refresh sessions. CSV remains a scoped convenience export rather than an authoritative backup format.
+
 ## Implementation order
 
 1. Allocation ledger, assignment compatibility, category transfers, versions/locking, rollover and invariant tests.

@@ -10,6 +10,7 @@ struct BudgetDetailView: View {
     @State private var categoryGroups: [APICategoryGroup] = []
     @State private var transactions: [APITransaction] = []
     @State private var requests: [APIFinancialRequest] = []
+    @State private var allowances: [APIAllowancePlan] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showingTransactionEntry = false
@@ -24,6 +25,7 @@ struct BudgetDetailView: View {
             monthSection
             planSection
             requestsSection
+            allowancesSection
             accountsSection
             transactionsSection
         }
@@ -227,6 +229,26 @@ struct BudgetDetailView: View {
     }
 
     @ViewBuilder
+    private var allowancesSection: some View {
+        if !allowances.isEmpty {
+            Section("Allowance") {
+                ForEach(allowances) { plan in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(plan.name)
+                            Spacer()
+                            Text(format(plan.amountMinor))
+                        }
+                        Text("Next \(plan.nextIssueDate) · \(plan.rolloverPolicy.replacingOccurrences(of: "_", with: " "))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private func moneyRow(
         _ label: String,
         _ value: Int64,
@@ -266,6 +288,7 @@ struct BudgetDetailView: View {
             if budget.can("request_money") || budget.can("approve_request") {
                 requests = (try? await client.financialRequests(budgetID: budget.id, token: token)) ?? []
             }
+            allowances = (try? await client.allowancePlans(budgetID: budget.id, token: token)) ?? []
         } catch {
             errorMessage = error.localizedDescription
         }

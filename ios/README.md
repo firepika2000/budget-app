@@ -1,6 +1,6 @@
 # iPhone app
 
-`BudgetApp` is a native SwiftUI iPhone client. It supports server selection, first-owner bootstrap, sign-in, Keychain token storage, privacy-filtered budget listing, monthly budget details, transaction entry, and assignment editing. Editing controls follow the effective View, Contribute, Manage, or Owner permission returned by the server; the server independently enforces every operation.
+`BudgetApp` is a native SwiftUI iPhone client. It supports server selection, first-owner bootstrap, sign-in, Keychain token storage, privacy-filtered budget listing, monthly budget details, transaction entry, assignment editing, funding requests, and delegated allowance summaries. Controls follow the server's effective capability list (with legacy grant fallback); the server independently enforces every operation and resource scope.
 
 ## Generate the Xcode project
 
