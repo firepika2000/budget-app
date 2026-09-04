@@ -62,6 +62,22 @@ public struct APIClient {
         try await send(path: "api/v1/budgets", token: token)
     }
 
+    public func accounts(budgetID: String, token: String) async throws -> [APIAccount] {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts", token: token)
+    }
+
+    public func transactions(budgetID: String, token: String) async throws -> [APITransaction] {
+        try await send(path: "api/v1/budgets/\(budgetID)/transactions", token: token)
+    }
+
+    public func monthSummary(
+        budgetID: String,
+        month: String,
+        token: String
+    ) async throws -> APIMonthSummary {
+        try await send(path: "api/v1/budgets/\(budgetID)/months/\(month)", token: token)
+    }
+
     private func send<Response: Decodable>(
         path: String,
         method: String = "GET",

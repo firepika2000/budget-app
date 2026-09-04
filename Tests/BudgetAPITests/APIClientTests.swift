@@ -37,6 +37,27 @@ final class APIClientTests: XCTestCase {
 
         XCTAssertEqual(budgets, [APIBudget(id: "b1", householdID: "h1", name: "Family", currencyCode: "USD")])
     }
+
+    func testMonthSummaryUsesBudgetScopedPathAndDecodesMinorUnits() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/months/2026-09-01")
+            let body = Data(#"{"month":"2026-09-01","currency_code":"USD","ready_to_assign_minor":12500,"total_assigned_minor":5000,"total_overspent_minor":0,"categories":[]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+
+        let summary = try await client.monthSummary(
+            budgetID: "b1",
+            month: "2026-09-01",
+            token: "secret"
+        )
+
+        XCTAssertEqual(summary.readyToAssignMinor, 12500)
+        XCTAssertEqual(summary.currencyCode, "USD")
+    }
 }
 
 private final class MockURLProtocol: URLProtocol {

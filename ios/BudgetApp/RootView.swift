@@ -105,9 +105,13 @@ private struct BudgetListView: View {
     var body: some View {
         NavigationStack {
             List(session.budgets) { budget in
-                VStack(alignment: .leading) {
-                    Text(budget.name).font(.headline)
-                    Text(budget.currencyCode).font(.caption).foregroundStyle(.secondary)
+                NavigationLink {
+                    BudgetDetailView(budget: budget)
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text(budget.name).font(.headline)
+                        Text(budget.currencyCode).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
             .overlay {
@@ -135,4 +139,3 @@ private struct BudgetListView: View {
         }
     }
 }
-

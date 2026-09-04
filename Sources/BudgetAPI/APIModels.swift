@@ -56,3 +56,99 @@ public struct BootstrapRequest: Encodable, Sendable {
 struct APIErrorBody: Decodable {
     let detail: String?
 }
+
+public struct APIAccount: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let budgetID: String
+    public let name: String
+    public let accountType: String
+    public let isOnBudget: Bool
+    public let isClosed: Bool
+    public let reconciledBalanceMinor: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case budgetID = "budget_id"
+        case accountType = "account_type"
+        case isOnBudget = "is_on_budget"
+        case isClosed = "is_closed"
+        case reconciledBalanceMinor = "reconciled_balance_minor"
+    }
+}
+
+public struct APITransactionSplit: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let categoryID: String
+    public let amountMinor: Int64
+    public let memo: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, memo
+        case categoryID = "category_id"
+        case amountMinor = "amount_minor"
+    }
+}
+
+public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let accountID: String
+    public let categoryID: String?
+    public let amountMinor: Int64
+    public let occurredOn: String
+    public let payeeName: String
+    public let memo: String
+    public let isCleared: Bool
+    public let isReconciled: Bool
+    public let transferID: String?
+    public let splits: [APITransactionSplit]
+
+    enum CodingKeys: String, CodingKey {
+        case id, memo, splits
+        case accountID = "account_id"
+        case categoryID = "category_id"
+        case amountMinor = "amount_minor"
+        case occurredOn = "occurred_on"
+        case payeeName = "payee_name"
+        case isCleared = "is_cleared"
+        case isReconciled = "is_reconciled"
+        case transferID = "transfer_id"
+    }
+}
+
+public struct APICategoryMonth: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { categoryID }
+    public let categoryID: String
+    public let name: String
+    public let assignedMinor: Int64
+    public let activityMinor: Int64
+    public let carriedAvailableMinor: Int64
+    public let availableMinor: Int64
+    public let isOverspent: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case categoryID = "category_id"
+        case assignedMinor = "assigned_minor"
+        case activityMinor = "activity_minor"
+        case carriedAvailableMinor = "carried_available_minor"
+        case availableMinor = "available_minor"
+        case isOverspent = "is_overspent"
+    }
+}
+
+public struct APIMonthSummary: Decodable, Equatable, Sendable {
+    public let month: String
+    public let currencyCode: String
+    public let readyToAssignMinor: Int64
+    public let totalAssignedMinor: Int64
+    public let totalOverspentMinor: Int64
+    public let categories: [APICategoryMonth]
+
+    enum CodingKeys: String, CodingKey {
+        case month, categories
+        case currencyCode = "currency_code"
+        case readyToAssignMinor = "ready_to_assign_minor"
+        case totalAssignedMinor = "total_assigned_minor"
+        case totalOverspentMinor = "total_overspent_minor"
+    }
+}
