@@ -69,6 +69,66 @@ public struct BootstrapRequest: Encodable, Sendable {
     }
 }
 
+public struct APIInvitationAccept: Encodable, Sendable {
+    public let invitationToken: String
+    public let password: String
+    public let displayName: String
+
+    public init(invitationToken: String, password: String, displayName: String) {
+        self.invitationToken = invitationToken
+        self.password = password
+        self.displayName = displayName
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case password
+        case invitationToken = "invitation_token"
+        case displayName = "display_name"
+    }
+}
+
+public struct APIHousehold: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let role: String
+    public let isActive: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, role
+        case isActive = "is_active"
+    }
+}
+
+public struct APIProfile: Decodable, Equatable, Sendable {
+    public let id: String
+    public let email: String
+    public let displayName: String
+    public let households: [APIHousehold]
+
+    enum CodingKeys: String, CodingKey {
+        case id, email, households
+        case displayName = "display_name"
+    }
+}
+
+public struct APIBudgetCreate: Encodable, Sendable {
+    public let householdID: String
+    public let name: String
+    public let currencyCode: String
+
+    public init(householdID: String, name: String, currencyCode: String) {
+        self.householdID = householdID
+        self.name = name
+        self.currencyCode = currencyCode
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case householdID = "household_id"
+        case currencyCode = "currency_code"
+    }
+}
+
 struct APIErrorBody: Decodable {
     let detail: String?
 }
@@ -89,6 +149,70 @@ public struct APIAccount: Identifiable, Decodable, Equatable, Sendable {
         case isOnBudget = "is_on_budget"
         case isClosed = "is_closed"
         case reconciledBalanceMinor = "reconciled_balance_minor"
+    }
+}
+
+public struct APIAccountCreate: Encodable, Sendable {
+    public let name: String
+    public let accountType: String
+    public let isOnBudget: Bool
+
+    public init(name: String, accountType: String, isOnBudget: Bool = true) {
+        self.name = name
+        self.accountType = accountType
+        self.isOnBudget = isOnBudget
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case accountType = "account_type"
+        case isOnBudget = "is_on_budget"
+    }
+}
+
+public struct APICategoryGroup: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let budgetID: String
+    public let name: String
+    public let sortOrder: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case budgetID = "budget_id"
+        case sortOrder = "sort_order"
+    }
+}
+
+public struct APICategoryGroupCreate: Encodable, Sendable {
+    public let name: String
+    public let sortOrder: Int
+
+    public init(name: String, sortOrder: Int = 0) {
+        self.name = name
+        self.sortOrder = sortOrder
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case sortOrder = "sort_order"
+    }
+}
+
+public struct APICategoryCreate: Encodable, Sendable {
+    public let groupID: String
+    public let name: String
+    public let sortOrder: Int
+
+    public init(groupID: String, name: String, sortOrder: Int = 0) {
+        self.groupID = groupID
+        self.name = name
+        self.sortOrder = sortOrder
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case groupID = "group_id"
+        case sortOrder = "sort_order"
     }
 }
 
@@ -194,6 +318,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
     public let payeeName: String
     public let memo: String
     public let isCleared: Bool
+    public let splits: [APITransactionSplitCreate]
 
     public init(
         accountID: String,
@@ -202,7 +327,8 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         occurredOn: String,
         payeeName: String,
         memo: String = "",
-        isCleared: Bool = false
+        isCleared: Bool = false,
+        splits: [APITransactionSplitCreate] = []
     ) {
         self.accountID = accountID
         self.categoryID = categoryID
@@ -211,16 +337,35 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         self.payeeName = payeeName
         self.memo = memo
         self.isCleared = isCleared
+        self.splits = splits
     }
 
     enum CodingKeys: String, CodingKey {
-        case memo
+        case memo, splits
         case accountID = "account_id"
         case categoryID = "category_id"
         case amountMinor = "amount_minor"
         case occurredOn = "occurred_on"
         case payeeName = "payee_name"
         case isCleared = "is_cleared"
+    }
+}
+
+public struct APITransactionSplitCreate: Encodable, Equatable, Sendable {
+    public let categoryID: String
+    public let amountMinor: Int64
+    public let memo: String
+
+    public init(categoryID: String, amountMinor: Int64, memo: String = "") {
+        self.categoryID = categoryID
+        self.amountMinor = amountMinor
+        self.memo = memo
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case memo
+        case categoryID = "category_id"
+        case amountMinor = "amount_minor"
     }
 }
 

@@ -7,11 +7,14 @@ struct BudgetDetailView: View {
     @State private var summary: APIMonthSummary?
     @State private var accounts: [APIAccount] = []
     @State private var categories: [APICategory] = []
+    @State private var categoryGroups: [APICategoryGroup] = []
     @State private var transactions: [APITransaction] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showingTransactionEntry = false
     @State private var editingCategory: APICategoryMonth?
+    @State private var showingAccountCreation = false
+    @State private var showingCategoryCreation = false
 
     var body: some View {
         List {
@@ -28,6 +31,16 @@ struct BudgetDetailView: View {
                         Label("New transaction", systemImage: "plus")
                     }
                     .disabled(accounts.filter { !$0.isClosed }.isEmpty)
+                }
+            }
+            if budget.effectivePermission.canManage {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Add account", systemImage: "wallet.pass") { showingAccountCreation = true }
+                        Button("Add category", systemImage: "folder.badge.plus") { showingCategoryCreation = true }
+                    } label: {
+                        Label("Budget setup", systemImage: "ellipsis.circle")
+                    }
                 }
             }
         }
@@ -60,6 +73,22 @@ struct BudgetDetailView: View {
                     budget: budget,
                     category: category,
                     month: currentMonth(),
+                    serverURL: serverURL,
+                    token: token,
+                    onSaved: load
+                )
+            }
+        }
+        .sheet(isPresented: $showingAccountCreation) {
+            if let serverURL = session.serverURL, let token = session.token {
+                AccountCreationView(budget: budget, serverURL: serverURL, token: token, onSaved: load)
+            }
+        }
+        .sheet(isPresented: $showingCategoryCreation) {
+            if let serverURL = session.serverURL, let token = session.token {
+                CategoryCreationView(
+                    budget: budget,
+                    groups: categoryGroups,
                     serverURL: serverURL,
                     token: token,
                     onSaved: load
@@ -155,15 +184,17 @@ struct BudgetDetailView: View {
             async let loadedAccounts = client.accounts(budgetID: budget.id, token: token)
             async let loadedTransactions = client.transactions(budgetID: budget.id, token: token)
             async let loadedCategories = client.categories(budgetID: budget.id, token: token)
+            async let loadedCategoryGroups = client.categoryGroups(budgetID: budget.id, token: token)
             async let loadedSummary = client.monthSummary(
                 budgetID: budget.id,
                 month: currentMonth(),
                 token: token
             )
-            (accounts, transactions, categories, summary) = try await (
+            (accounts, transactions, categories, categoryGroups, summary) = try await (
                 loadedAccounts,
                 loadedTransactions,
                 loadedCategories,
+                loadedCategoryGroups,
                 loadedSummary
             )
         } catch {

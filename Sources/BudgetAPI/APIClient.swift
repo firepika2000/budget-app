@@ -58,12 +58,59 @@ public struct APIClient {
         return response.accessToken
     }
 
+    public func acceptInvitation(_ request: APIInvitationAccept) async throws -> String {
+        let response: TokenResponse = try await send(
+            path: "api/v1/auth/accept-invitation",
+            method: "POST",
+            body: request
+        )
+        return response.accessToken
+    }
+
+    public func profile(token: String) async throws -> APIProfile {
+        try await send(path: "api/v1/me", token: token)
+    }
+
     public func budgets(token: String) async throws -> [APIBudget] {
         try await send(path: "api/v1/budgets", token: token)
     }
 
+    public func createBudget(_ budget: APIBudgetCreate, token: String) async throws -> APIBudget {
+        try await send(path: "api/v1/budgets", method: "POST", token: token, body: budget)
+    }
+
     public func accounts(budgetID: String, token: String) async throws -> [APIAccount] {
         try await send(path: "api/v1/budgets/\(budgetID)/accounts", token: token)
+    }
+
+    public func createAccount(
+        budgetID: String,
+        account: APIAccountCreate,
+        token: String
+    ) async throws -> APIAccount {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/accounts",
+            method: "POST",
+            token: token,
+            body: account
+        )
+    }
+
+    public func categoryGroups(budgetID: String, token: String) async throws -> [APICategoryGroup] {
+        try await send(path: "api/v1/budgets/\(budgetID)/category-groups", token: token)
+    }
+
+    public func createCategoryGroup(
+        budgetID: String,
+        group: APICategoryGroupCreate,
+        token: String
+    ) async throws -> APICategoryGroup {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/category-groups",
+            method: "POST",
+            token: token,
+            body: group
+        )
     }
 
     public func transactions(budgetID: String, token: String) async throws -> [APITransaction] {
@@ -72,6 +119,19 @@ public struct APIClient {
 
     public func categories(budgetID: String, token: String) async throws -> [APICategory] {
         try await send(path: "api/v1/budgets/\(budgetID)/categories", token: token)
+    }
+
+    public func createCategory(
+        budgetID: String,
+        category: APICategoryCreate,
+        token: String
+    ) async throws -> APICategory {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/categories",
+            method: "POST",
+            token: token,
+            body: category
+        )
     }
 
     public func createTransaction(

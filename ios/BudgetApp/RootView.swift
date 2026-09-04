@@ -1,3 +1,4 @@
+import BudgetAPI
 import SwiftUI
 
 struct RootView: View {
@@ -58,6 +59,7 @@ private struct AuthenticationView: View {
     @State private var password = ""
     @State private var displayName = ""
     @State private var householdName = ""
+    @State private var invitationToken = ""
 
     var body: some View {
         NavigationStack {
@@ -65,42 +67,73 @@ private struct AuthenticationView: View {
                 Picker("Mode", selection: $mode) {
                     Text("Sign in").tag(0)
                     Text("First-time setup").tag(1)
+                    Text("Join family").tag(2)
                 }
                 .pickerStyle(.segmented)
-                if mode == 1 {
+                if mode != 0 {
                     TextField("Your name", text: $displayName)
+                }
+                if mode == 1 {
                     TextField("Household name", text: $householdName)
                 }
-                TextField("Email", text: $email)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.emailAddress)
-                    .autocorrectionDisabled()
+                if mode == 2 {
+                    TextField("Invitation code", text: $invitationToken, axis: .vertical)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                } else {
+                    TextField("Email", text: $email)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                        .autocorrectionDisabled()
+                }
                 SecureField("Password", text: $password)
-                Button(mode == 0 ? "Sign in" : "Create owner account") {
+                Button(actionTitle) {
                     Task {
                         if mode == 0 {
                             await session.login(email: email, password: password)
-                        } else {
+                        } else if mode == 1 {
                             await session.bootstrap(
                                 email: email,
                                 password: password,
                                 displayName: displayName,
                                 householdName: householdName
                             )
+                        } else {
+                            await session.acceptInvitation(
+                                token: invitationToken,
+                                password: password,
+                                displayName: displayName
+                            )
                         }
                     }
                 }
-                .disabled(session.isWorking || email.isEmpty || password.isEmpty)
+                .disabled(session.isWorking || !formIsValid)
                 Button("Use a different server", role: .cancel) { session.changeServer() }
             }
             .navigationTitle("Budget App")
             .overlay { if session.isWorking { ProgressView() } }
         }
     }
+
+    private var actionTitle: String {
+        switch mode {
+        case 1: "Create owner account"
+        case 2: "Join household"
+        default: "Sign in"
+        }
+    }
+
+    private var formIsValid: Bool {
+        guard !password.isEmpty else { return false }
+        if mode == 2 { return !displayName.isEmpty && !invitationToken.isEmpty }
+        if mode == 1 { return !email.isEmpty && !displayName.isEmpty && !householdName.isEmpty }
+        return !email.isEmpty
+    }
 }
 
 private struct BudgetListView: View {
     @EnvironmentObject private var session: AppSession
+    @State private var showingBudgetCreation = false
 
     var body: some View {
         NavigationStack {
@@ -129,13 +162,69 @@ private struct BudgetListView: View {
                     Button("Sign out") { session.signOut() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { Task { await session.loadBudgets() } } label: {
-                        Image(systemName: "arrow.clockwise")
+                    HStack {
+                        if !ownerHouseholds.isEmpty {
+                            Button { showingBudgetCreation = true } label: {
+                                Image(systemName: "plus")
+                            }
+                        }
+                        Button { Task { await session.loadBudgets() } } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
                     }
                 }
             }
             .task { await session.loadBudgets() }
             .refreshable { await session.loadBudgets() }
+            .sheet(isPresented: $showingBudgetCreation) {
+                BudgetCreationView(households: ownerHouseholds)
+            }
+        }
+    }
+
+    private var ownerHouseholds: [APIHousehold] {
+        session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? []
+    }
+}
+
+private struct BudgetCreationView: View {
+    @EnvironmentObject private var session: AppSession
+    @Environment(\.dismiss) private var dismiss
+    let households: [APIHousehold]
+    @State private var name = ""
+    @State private var currencyCode = Locale.current.currency?.identifier ?? "USD"
+    @State private var householdID = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Budget name", text: $name)
+                Picker("Household", selection: $householdID) {
+                    ForEach(households) { Text($0.name).tag($0.id) }
+                }
+                TextField("Currency code", text: $currencyCode)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+            }
+            .navigationTitle("New Budget")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") {
+                        Task {
+                            await session.createBudget(
+                                name: name,
+                                currencyCode: currencyCode.uppercased(),
+                                householdID: householdID
+                            )
+                            if session.errorMessage == nil { dismiss() }
+                        }
+                    }
+                    .disabled(session.isWorking || name.isEmpty || householdID.isEmpty || currencyCode.count != 3)
+                }
+            }
+            .onAppear { if householdID.isEmpty { householdID = households.first?.id ?? "" } }
         }
     }
 }

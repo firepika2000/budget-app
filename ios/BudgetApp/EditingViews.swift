@@ -18,6 +18,8 @@ struct TransactionEntryView: View {
     @State private var date = Date()
     @State private var isInflow = false
     @State private var isCleared = false
+    @State private var isSplit = false
+    @State private var splitRows = [SplitDraft(), SplitDraft()]
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -33,11 +35,34 @@ struct TransactionEntryView: View {
                 TextField("Amount", text: $amount)
                     .keyboardType(.decimalPad)
                 Toggle("Income / inflow", isOn: $isInflow)
-                Picker("Category", selection: $categoryID) {
-                    Text(isInflow ? "Ready to assign" : "Uncategorized")
-                        .tag(nil as String?)
-                    ForEach(categories.filter { !$0.isArchived }) { category in
-                        Text(category.name).tag(Optional(category.id))
+                Toggle("Split across categories", isOn: $isSplit)
+                    .disabled(isInflow)
+                if isSplit {
+                    Section("Splits") {
+                        ForEach($splitRows) { $row in
+                            Picker("Category", selection: $row.categoryID) {
+                                Text("Select category").tag("")
+                                ForEach(categories.filter { !$0.isArchived }) { category in
+                                    Text(category.name).tag(category.id)
+                                }
+                            }
+                            TextField("Split amount", text: $row.amount)
+                                .keyboardType(.decimalPad)
+                            TextField("Split memo", text: $row.memo)
+                        }
+                        Button("Add another split", systemImage: "plus") { splitRows.append(SplitDraft()) }
+                        if let remainingSplitAmount {
+                            LabeledContent("Remaining", value: CurrencyText.editable(remainingSplitAmount, currencyCode: budget.currencyCode))
+                                .foregroundStyle(remainingSplitAmount == 0 ? Color.secondary : Color.red)
+                        }
+                    }
+                } else {
+                    Picker("Category", selection: $categoryID) {
+                        Text(isInflow ? "Ready to assign" : "Uncategorized")
+                            .tag(nil as String?)
+                        ForEach(categories.filter { !$0.isArchived }) { category in
+                            Text(category.name).tag(Optional(category.id))
+                        }
                     }
                 }
                 DatePicker("Date", selection: $date, displayedComponents: .date)
@@ -52,7 +77,7 @@ struct TransactionEntryView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { Task { await save() } }
-                        .disabled(isSaving || accountID.isEmpty || parsedAmount == nil)
+                        .disabled(isSaving || accountID.isEmpty || parsedAmount == nil || !splitsAreValid)
                 }
             }
             .overlay { if isSaving { ProgressView() } }
@@ -68,7 +93,10 @@ struct TransactionEntryView: View {
                 if accountID.isEmpty { accountID = accounts.first(where: { !$0.isClosed })?.id ?? "" }
             }
             .onChange(of: isInflow) { _, inflow in
-                if inflow { categoryID = nil }
+                if inflow {
+                    categoryID = nil
+                    isSplit = false
+                }
             }
         }
     }
@@ -79,8 +107,31 @@ struct TransactionEntryView: View {
         return isInflow ? magnitude : -magnitude
     }
 
+    private var parsedSplits: [APITransactionSplitCreate]? {
+        guard isSplit else { return [] }
+        var result: [APITransactionSplitCreate] = []
+        for row in splitRows {
+            guard !row.categoryID.isEmpty,
+                  let amount = CurrencyText.parseMinorUnits(row.amount, currencyCode: budget.currencyCode),
+                  amount >= 0 else { return nil }
+            result.append(APITransactionSplitCreate(categoryID: row.categoryID, amountMinor: -amount, memo: row.memo))
+        }
+        return result
+    }
+
+    private var splitsAreValid: Bool {
+        guard isSplit else { return true }
+        guard let parsedAmount, let parsedSplits else { return false }
+        return parsedSplits.count >= 2 && parsedSplits.reduce(Int64(0)) { $0 + $1.amountMinor } == parsedAmount
+    }
+
+    private var remainingSplitAmount: Int64? {
+        guard let parsedAmount, let parsedSplits else { return nil }
+        return parsedAmount - parsedSplits.reduce(Int64(0)) { $0 + $1.amountMinor }
+    }
+
     private func save() async {
-        guard let parsedAmount else { return }
+        guard let parsedAmount, let parsedSplits, splitsAreValid else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -93,12 +144,13 @@ struct TransactionEntryView: View {
                 budgetID: budget.id,
                 transaction: APITransactionCreate(
                     accountID: accountID,
-                    categoryID: categoryID,
+                    categoryID: isSplit ? nil : categoryID,
                     amountMinor: parsedAmount,
                     occurredOn: formatter.string(from: date),
                     payeeName: payee,
                     memo: memo,
-                    isCleared: isCleared
+                    isCleared: isCleared,
+                    splits: parsedSplits
                 ),
                 token: token
             )
@@ -108,6 +160,13 @@ struct TransactionEntryView: View {
             errorMessage = error.localizedDescription
         }
     }
+}
+
+private struct SplitDraft: Identifiable {
+    let id = UUID()
+    var categoryID = ""
+    var amount = ""
+    var memo = ""
 }
 
 struct AssignmentEditView: View {
@@ -239,5 +298,131 @@ enum CurrencyText {
         formatter.minimumFractionDigits = digits
         formatter.maximumFractionDigits = digits
         return formatter.string(from: NSNumber(value: Double(minorUnits) / divisor)) ?? ""
+    }
+}
+
+struct AccountCreationView: View {
+    let budget: APIBudget
+    let serverURL: URL
+    let token: String
+    let onSaved: () async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var accountType = "checking"
+    @State private var isOnBudget = true
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Account name", text: $name)
+                Picker("Type", selection: $accountType) {
+                    ForEach(["checking", "savings", "cash", "credit", "loan", "tracking"], id: \.self) {
+                        Text($0.capitalized).tag($0)
+                    }
+                }
+                Toggle("Include in budget", isOn: $isOnBudget)
+            }
+            .navigationTitle("New Account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") { Task { await save() } }.disabled(isSaving || name.isEmpty)
+                }
+            }
+            .overlay { if isSaving { ProgressView() } }
+            .alert("Unable to create account", isPresented: errorBinding) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(errorMessage ?? "Unknown error") }
+        }
+    }
+
+    private var errorBinding: Binding<Bool> {
+        Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            _ = try await APIClient(baseURL: serverURL).createAccount(
+                budgetID: budget.id,
+                account: APIAccountCreate(name: name, accountType: accountType, isOnBudget: isOnBudget),
+                token: token
+            )
+            await onSaved()
+            dismiss()
+        } catch { errorMessage = error.localizedDescription }
+    }
+}
+
+struct CategoryCreationView: View {
+    let budget: APIBudget
+    let groups: [APICategoryGroup]
+    let serverURL: URL
+    let token: String
+    let onSaved: () async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var groupID = ""
+    @State private var newGroupName = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Category name", text: $name)
+                if !groups.isEmpty {
+                    Picker("Group", selection: $groupID) {
+                        ForEach(groups) { Text($0.name).tag($0.id) }
+                    }
+                }
+                TextField(groups.isEmpty ? "First group name" : "Or create a new group", text: $newGroupName)
+            }
+            .navigationTitle("New Category")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") { Task { await save() } }.disabled(isSaving || name.isEmpty || targetGroupMissing)
+                }
+            }
+            .overlay { if isSaving { ProgressView() } }
+            .alert("Unable to create category", isPresented: errorBinding) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(errorMessage ?? "Unknown error") }
+            .onAppear { if groupID.isEmpty { groupID = groups.first?.id ?? "" } }
+        }
+    }
+
+    private var targetGroupMissing: Bool { groupID.isEmpty && newGroupName.isEmpty }
+    private var errorBinding: Binding<Bool> {
+        Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let client = try APIClient(baseURL: serverURL)
+            var targetGroupID = groupID
+            if !newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                targetGroupID = try await client.createCategoryGroup(
+                    budgetID: budget.id,
+                    group: APICategoryGroupCreate(name: newGroupName),
+                    token: token
+                ).id
+            }
+            _ = try await client.createCategory(
+                budgetID: budget.id,
+                category: APICategoryCreate(groupID: targetGroupID, name: name),
+                token: token
+            )
+            await onSaved()
+            dismiss()
+        } catch { errorMessage = error.localizedDescription }
     }
 }

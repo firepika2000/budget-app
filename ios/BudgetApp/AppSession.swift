@@ -5,6 +5,7 @@ import BudgetAPI
 final class AppSession: ObservableObject {
     @Published private(set) var serverURL: URL?
     @Published private(set) var token: String?
+    @Published private(set) var profile: APIProfile?
     @Published var budgets: [APIBudget] = []
     @Published var isWorking = false
     @Published var errorMessage: String?
@@ -52,10 +53,35 @@ final class AppSession: ObservableObject {
         }
     }
 
+    func acceptInvitation(token invitationToken: String, password: String, displayName: String) async {
+        await authenticate { client in
+            try await client.acceptInvitation(APIInvitationAccept(
+                invitationToken: invitationToken,
+                password: password,
+                displayName: displayName
+            ))
+        }
+    }
+
     func loadBudgets() async {
         guard let serverURL, let token else { return }
         await perform {
-            self.budgets = try await APIClient(baseURL: serverURL).budgets(token: token)
+            let client = try APIClient(baseURL: serverURL)
+            async let profile = client.profile(token: token)
+            async let budgets = client.budgets(token: token)
+            (self.profile, self.budgets) = try await (profile, budgets)
+        }
+    }
+
+    func createBudget(name: String, currencyCode: String, householdID: String) async {
+        guard let serverURL, let token else { return }
+        await perform {
+            let client = try APIClient(baseURL: serverURL)
+            _ = try await client.createBudget(
+                APIBudgetCreate(householdID: householdID, name: name, currencyCode: currencyCode),
+                token: token
+            )
+            self.budgets = try await client.budgets(token: token)
         }
     }
 
@@ -63,6 +89,7 @@ final class AppSession: ObservableObject {
         keychain.delete(account: tokenAccount)
         token = nil
         budgets = []
+        profile = nil
     }
 
     func changeServer() {
@@ -77,7 +104,10 @@ final class AppSession: ObservableObject {
             let newToken = try await operation(APIClient(baseURL: serverURL))
             try self.keychain.save(newToken, account: self.tokenAccount)
             self.token = newToken
-            self.budgets = try await APIClient(baseURL: serverURL).budgets(token: newToken)
+            let client = try APIClient(baseURL: serverURL)
+            async let profile = client.profile(token: newToken)
+            async let budgets = client.budgets(token: newToken)
+            (self.profile, self.budgets) = try await (profile, budgets)
         }
     }
 

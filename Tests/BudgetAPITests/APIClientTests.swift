@@ -90,6 +90,39 @@ final class APIClientTests: XCTestCase {
 
         XCTAssertEqual(transaction.amountMinor, -12345)
     }
+
+    func testCreateTransactionEncodesBalancedSplits() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any]
+            )
+            XCTAssertNil(json["category_id"] as? String)
+            let splits = try XCTUnwrap(json["splits"] as? [[String: Any]])
+            XCTAssertEqual(splits.compactMap { $0["amount_minor"] as? Int }.reduce(0, +), -12500)
+            let response = Data(#"{"id":"t1","budget_id":"b1","account_id":"a1","category_id":null,"amount_minor":-12500,"occurred_on":"2026-09-04","payee_name":"Store","memo":"","is_cleared":false,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":null,"splits":[{"id":"s1","category_id":"c1","amount_minor":-10000,"memo":""},{"id":"s2","category_id":"c2","amount_minor":-2500,"memo":""}]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+
+        _ = try await client.createTransaction(
+            budgetID: "b1",
+            transaction: APITransactionCreate(
+                accountID: "a1",
+                categoryID: nil,
+                amountMinor: -12500,
+                occurredOn: "2026-09-04",
+                payeeName: "Store",
+                splits: [
+                    APITransactionSplitCreate(categoryID: "c1", amountMinor: -10000),
+                    APITransactionSplitCreate(categoryID: "c2", amountMinor: -2500),
+                ]
+            ),
+            token: "secret"
+        )
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {
