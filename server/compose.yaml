@@ -1,0 +1,30 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      BUDGET_APP_DATABASE_URL: postgresql+psycopg://budget:${BUDGET_APP_DB_PASSWORD}@database:5432/budget
+      BUDGET_APP_JWT_SECRET: ${BUDGET_APP_JWT_SECRET}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      database:
+        condition: service_healthy
+
+  database:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: budget
+      POSTGRES_USER: budget
+      POSTGRES_PASSWORD: ${BUDGET_APP_DB_PASSWORD}
+    volumes:
+      - budget_database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U budget -d budget"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  budget_database:

@@ -1,0 +1,147 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from .access import find_visible_budget, is_household_owner, visible_budgets_query
+from .config import Settings
+from .database import get_db
+from .dependencies import get_current_user, get_settings
+from .models import Budget, BudgetGrant, Household, HouseholdRole, Membership, SetupState, User
+from .schemas import (
+    BootstrapRequest,
+    BudgetCreate,
+    BudgetResponse,
+    GrantResponse,
+    GrantUpsert,
+    LoginRequest,
+    TokenResponse,
+)
+from .security import create_access_token, hash_password, verify_password
+
+
+router = APIRouter(prefix="/api/v1")
+
+
+@router.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@router.post("/auth/bootstrap", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+def bootstrap(
+    body: BootstrapRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TokenResponse:
+    try:
+        db.add(SetupState(id=1))
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Server is already configured")
+
+    user = User(
+        email=body.email,
+        display_name=body.display_name.strip(),
+        password_hash=hash_password(body.password),
+    )
+    db.add(user)
+    db.flush()
+    household = Household(name=body.household_name.strip(), owner_user_id=user.id)
+    db.add(household)
+    db.flush()
+    db.add(Membership(
+        household_id=household.id,
+        user_id=user.id,
+        role=HouseholdRole.OWNER.value,
+    ))
+    db.commit()
+    return TokenResponse(access_token=create_access_token(user.id, settings))
+
+
+@router.post("/auth/login", response_model=TokenResponse)
+def login(
+    body: LoginRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TokenResponse:
+    user = db.scalar(select(User).where(User.email == body.email.strip().lower()))
+    if user is None or not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+    return TokenResponse(access_token=create_access_token(user.id, settings))
+
+
+@router.get("/budgets", response_model=list[BudgetResponse])
+def list_budgets(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[Budget]:
+    return list(db.scalars(visible_budgets_query(user).order_by(Budget.name, Budget.id)))
+
+
+@router.post("/budgets", response_model=BudgetResponse, status_code=status.HTTP_201_CREATED)
+def create_budget(
+    body: BudgetCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Budget:
+    if not is_household_owner(db, user, body.household_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
+    budget = Budget(
+        household_id=body.household_id,
+        name=body.name.strip(),
+        currency_code=body.currency_code,
+    )
+    db.add(budget)
+    db.commit()
+    db.refresh(budget)
+    return budget
+
+
+@router.get("/budgets/{budget_id}", response_model=BudgetResponse)
+def get_budget(
+    budget_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Budget:
+    budget = find_visible_budget(db, user, budget_id)
+    if budget is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
+    return budget
+
+
+@router.put("/budgets/{budget_id}/grants", response_model=GrantResponse)
+def upsert_grant(
+    budget_id: str,
+    body: GrantUpsert,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BudgetGrant:
+    budget = db.get(Budget, budget_id)
+    if budget is None or not is_household_owner(db, user, budget.household_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
+    member = db.scalar(select(Membership).where(
+        Membership.household_id == budget.household_id,
+        Membership.user_id == body.user_id,
+        Membership.is_active.is_(True),
+    ))
+    if member is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="User is not an active household member")
+    grant = db.scalar(select(BudgetGrant).where(
+        BudgetGrant.budget_id == budget.id,
+        BudgetGrant.user_id == body.user_id,
+    ))
+    if grant is None:
+        grant = BudgetGrant(
+            budget_id=budget.id,
+            user_id=body.user_id,
+            permission=body.permission,
+        )
+        db.add(grant)
+    else:
+        grant.permission = body.permission
+    db.commit()
+    db.refresh(grant)
+    return grant
+
