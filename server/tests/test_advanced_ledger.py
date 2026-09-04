@@ -152,6 +152,97 @@ def test_reconciliation_requires_exact_cleared_balance(
     assert matched.json()["reconciled_transaction_count"] == 2
 
 
+def test_account_balance_separates_cleared_uncleared_and_working(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    record(
+        client,
+        owner_token,
+        budget["id"],
+        account_id=account["id"],
+        amount_minor=50000,
+        is_cleared=True,
+    )
+    record(
+        client,
+        owner_token,
+        budget["id"],
+        account_id=account["id"],
+        category_id=category["id"],
+        amount_minor=-1250,
+        is_cleared=False,
+    )
+
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/balance",
+        headers=auth(owner_token),
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "account_id": account["id"],
+        "currency_code": "USD",
+        "cleared_balance_minor": 50000,
+        "uncleared_balance_minor": -1250,
+        "working_balance_minor": 48750,
+        "reconciled_balance_minor": None,
+    }
+
+
+def test_reconciliation_adjustment_is_an_explicit_auditable_transaction(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    record(
+        client,
+        owner_token,
+        budget["id"],
+        account_id=account["id"],
+        amount_minor=50000,
+        is_cleared=True,
+    )
+
+    response = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/reconcile",
+        headers=auth(owner_token),
+        json={
+            "statement_balance_minor": 48750,
+            "through_date": "2026-09-30",
+            "create_adjustment": True,
+            "adjustment_reason": "Statement correction",
+        },
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["adjustment_amount_minor"] == -1250
+    assert result["adjustment_transaction_id"]
+
+    transactions = client.get(
+        f"/api/v1/budgets/{budget['id']}/transactions",
+        headers=auth(owner_token),
+    ).json()
+    adjustment = next(
+        item for item in transactions
+        if item["id"] == result["adjustment_transaction_id"]
+    )
+    assert adjustment["payee_name"] == "Reconciliation adjustment"
+    assert adjustment["memo"] == "Statement correction"
+    assert adjustment["amount_minor"] == -1250
+    assert adjustment["is_cleared"] is True
+    assert adjustment["is_reconciled"] is True
+    assert adjustment["created_by_user_id"]
+
+    balance = client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/balance",
+        headers=auth(owner_token),
+    ).json()
+    assert balance["cleared_balance_minor"] == 48750
+    assert balance["working_balance_minor"] == 48750
+    assert balance["reconciled_balance_minor"] == 48750
+
+
 def test_split_total_must_equal_transaction_total(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])

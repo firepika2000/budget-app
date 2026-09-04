@@ -19,6 +19,7 @@ from .allocation import (
 )
 from .database import get_db
 from .dependencies import get_current_user
+from .credit import add_payment_reserve_event, add_purchase_reserve_events, ensure_credit_payment_category
 from .models import (
     Account,
     AllocationOperation,
@@ -28,12 +29,14 @@ from .models import (
     Category,
     CategoryGroup,
     CategoryTarget,
+    CreditCardReserveEvent,
     Transaction,
     TransactionSplit,
     User,
 )
 from .schemas import (
     AccountCreate,
+    AccountBalanceResponse,
     AccountResponse,
     AllocationOperationResponse,
     AllocationTransferCreate,
@@ -146,9 +149,39 @@ def create_account(
     require_budget(db, user, budget_id, BudgetPermission.MANAGE)
     account = Account(budget_id=budget_id, **body.model_dump())
     db.add(account)
+    db.flush()
+    if account.account_type == "credit":
+        ensure_credit_payment_category(db, account)
     db.commit()
     db.refresh(account)
     return account
+
+
+@router.get("/accounts/{account_id}/balance", response_model=AccountBalanceResponse)
+def account_balance(
+    budget_id: str,
+    account_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AccountBalanceResponse:
+    budget = require_budget(db, user, budget_id, BudgetPermission.VIEW)
+    account = db.get(Account, account_id)
+    if account is None or account.budget_id != budget_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    cleared = int(db.scalar(select(
+        func.coalesce(func.sum(Transaction.amount_minor), 0)
+    ).where(Transaction.account_id == account_id, Transaction.is_cleared.is_(True))) or 0)
+    uncleared = int(db.scalar(select(
+        func.coalesce(func.sum(Transaction.amount_minor), 0)
+    ).where(Transaction.account_id == account_id, Transaction.is_cleared.is_(False))) or 0)
+    return AccountBalanceResponse(
+        account_id=account.id,
+        currency_code=budget.currency_code,
+        cleared_balance_minor=cleared,
+        uncleared_balance_minor=uncleared,
+        working_balance_minor=cleared + uncleared,
+        reconciled_balance_minor=account.reconciled_balance_minor,
+    )
 
 
 @router.get("/category-groups", response_model=list[CategoryGroupResponse])
@@ -381,7 +414,7 @@ def create_transaction(
     require_budget(db, user, budget_id, BudgetPermission.CONTRIBUTE)
     if body.occurred_on > date.today():
         raise HTTPException(status_code=422, detail="Future transactions belong in the planning layer")
-    account = db.get(Account, body.account_id)
+    account = db.scalar(select(Account).where(Account.id == body.account_id).with_for_update())
     if account is None or account.budget_id != budget_id or account.is_closed:
         raise HTTPException(status_code=422, detail="Invalid account")
     category_ids = ([body.category_id] if body.category_id is not None else []) + [
@@ -391,10 +424,12 @@ def create_transaction(
         raise HTTPException(status_code=422, detail="Tracking accounts cannot affect budget categories")
     if len(category_ids) != len(set(category_ids)):
         raise HTTPException(status_code=422, detail="Duplicate split category")
+    categories_by_id: dict[str, Category] = {}
     for category_id in category_ids:
-        category = db.get(Category, category_id)
+        category = db.scalar(select(Category).where(Category.id == category_id).with_for_update())
         if category is None or category.budget_id != budget_id or category.is_archived:
             raise HTTPException(status_code=422, detail="Invalid category")
+        categories_by_id[category_id] = category
     transaction_values = body.model_dump(exclude={"splits"})
     transaction = Transaction(
         budget_id=budget_id,
@@ -403,6 +438,19 @@ def create_transaction(
     )
     transaction.splits = [TransactionSplit(**split.model_dump()) for split in body.splits]
     db.add(transaction)
+    db.flush()
+    category_amounts = (
+        [(categories_by_id[body.category_id], body.amount_minor)]
+        if body.category_id is not None
+        else [(categories_by_id[split.category_id], split.amount_minor) for split in body.splits]
+    )
+    add_purchase_reserve_events(
+        db,
+        account=account,
+        transaction=transaction,
+        category_amounts=category_amounts,
+        actor=user,
+    )
     db.commit()
     db.refresh(transaction)
     return transaction
@@ -418,8 +466,12 @@ def create_transfer(
     require_budget(db, user, budget_id, BudgetPermission.CONTRIBUTE)
     if body.occurred_on > date.today():
         raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
-    source = db.get(Account, body.source_account_id)
-    destination = db.get(Account, body.destination_account_id)
+    locked_accounts = list(db.scalars(select(Account).where(Account.id.in_([
+        body.source_account_id, body.destination_account_id
+    ])).order_by(Account.id).with_for_update()))
+    by_id = {account.id: account for account in locked_accounts}
+    source = by_id.get(body.source_account_id)
+    destination = by_id.get(body.destination_account_id)
     if any(
         account is None or account.budget_id != budget_id or account.is_closed
         for account in (source, destination)
@@ -446,6 +498,28 @@ def create_transfer(
         **common,
     )
     db.add_all([source_transaction, destination_transaction])
+    if source.account_type == "credit" and destination.account_type == "credit":
+        raise HTTPException(status_code=422, detail="Credit-to-credit transfers are not supported")
+    if destination.account_type == "credit":
+        add_payment_reserve_event(
+            db,
+            credit_account=destination,
+            transfer_id=transfer_id,
+            occurred_on=body.occurred_on,
+            amount_minor=-body.amount_minor,
+            actor=user,
+            kind="payment",
+        )
+    elif source.account_type == "credit":
+        add_payment_reserve_event(
+            db,
+            credit_account=source,
+            transfer_id=transfer_id,
+            occurred_on=body.occurred_on,
+            amount_minor=body.amount_minor,
+            actor=user,
+            kind="payment_reversal",
+        )
     db.commit()
     db.refresh(source_transaction)
     db.refresh(destination_transaction)
@@ -474,7 +548,9 @@ def reconcile_account(
         Transaction.is_cleared.is_(True),
     )))
     cleared_balance = sum(transaction.amount_minor for transaction in transactions)
-    if cleared_balance != body.statement_balance_minor:
+    adjustment_transaction = None
+    adjustment_amount = body.statement_balance_minor - cleared_balance
+    if adjustment_amount != 0 and not body.create_adjustment:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -482,6 +558,20 @@ def reconcile_account(
                 "cleared_balance_minor": cleared_balance,
             },
         )
+    if adjustment_amount != 0:
+        adjustment_transaction = Transaction(
+            budget_id=budget_id,
+            account_id=account_id,
+            amount_minor=adjustment_amount,
+            occurred_on=body.through_date,
+            payee_name="Reconciliation adjustment",
+            memo=body.adjustment_reason.strip(),
+            is_cleared=True,
+            is_reconciled=True,
+            created_by_user_id=user.id,
+        )
+        db.add(adjustment_transaction)
+        transactions.append(adjustment_transaction)
     newly_reconciled = 0
     for transaction in transactions:
         if not transaction.is_reconciled:
@@ -494,6 +584,8 @@ def reconcile_account(
         account_id=account.id,
         reconciled_balance_minor=body.statement_balance_minor,
         reconciled_transaction_count=newly_reconciled,
+        adjustment_transaction_id=adjustment_transaction.id if adjustment_transaction else None,
+        adjustment_amount_minor=adjustment_amount,
     )
 
 
@@ -534,6 +626,11 @@ def month_summary(
         Account.budget_id == budget_id,
         Account.is_on_budget.is_(True),
     )))
+    cash_account_ids = set(db.scalars(select(Account.id).where(
+        Account.budget_id == budget_id,
+        Account.is_on_budget.is_(True),
+        Account.account_type.in_(("checking", "savings", "cash")),
+    )))
 
     assigned_before: dict[str, int] = {}
     assigned_current: dict[str, int] = {}
@@ -550,7 +647,7 @@ def month_summary(
     unassigned_cash_to_date = 0
     for transaction in transactions:
         if (
-            transaction.account_id in on_budget_account_ids
+            transaction.account_id in cash_account_ids
             and transaction.transfer_id is None
             and transaction.category_id is None
             and not transaction.splits
@@ -563,6 +660,14 @@ def month_summary(
             target[transaction.category_id] = target.get(transaction.category_id, 0) + transaction.amount_minor
         for split in transaction.splits:
             target[split.category_id] = target.get(split.category_id, 0) + split.amount_minor
+
+    reserve_events = list(db.scalars(select(CreditCardReserveEvent).where(
+        CreditCardReserveEvent.budget_id == budget_id,
+        CreditCardReserveEvent.occurred_on < next_month,
+    )))
+    for event in reserve_events:
+        target = activity_current if event.occurred_on >= month else activity_before
+        target[event.payment_category_id] = target.get(event.payment_category_id, 0) + event.amount_minor
 
     rows: list[CategoryMonthSummary] = []
     total_overspent = 0

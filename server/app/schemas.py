@@ -89,6 +89,16 @@ class AccountResponse(BaseModel):
     is_on_budget: bool
     is_closed: bool
     reconciled_balance_minor: Optional[int]
+    payment_category_id: Optional[str]
+
+
+class AccountBalanceResponse(BaseModel):
+    account_id: str
+    currency_code: str
+    cleared_balance_minor: int
+    uncleared_balance_minor: int
+    working_balance_minor: int
+    reconciled_balance_minor: Optional[int]
 
 
 class CategoryGroupCreate(BaseModel):
@@ -120,6 +130,8 @@ class CategoryResponse(BaseModel):
     name: str
     sort_order: int
     is_archived: bool
+    system_type: Optional[str]
+    linked_account_id: Optional[str]
 
 
 class CategoryTargetUpsert(BaseModel):
@@ -359,12 +371,16 @@ class TransferResponse(BaseModel):
 class ReconcileRequest(BaseModel):
     statement_balance_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
     through_date: date
+    create_adjustment: bool = False
+    adjustment_reason: str = Field(default="", max_length=500)
 
 
 class ReconcileResponse(BaseModel):
     account_id: str
     reconciled_balance_minor: int
     reconciled_transaction_count: int
+    adjustment_transaction_id: Optional[str] = None
+    adjustment_amount_minor: int = 0
 
 
 class CategoryMonthSummary(BaseModel):

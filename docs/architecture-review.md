@@ -172,6 +172,12 @@ An ordinary shared household budget remains the authoritative book. Individual, 
 7. Add delegated-category ownership, requests/approvals, and audit correlations without copying transactions or cash.
 8. Keep every migration forward-only and data preserving. No destructive reset is justified for the existing repository.
 
+### Implemented liability checkpoint
+
+Migration `0008` adds one linked system payment category per credit account and backfills those links for existing cards without rewriting their historical transactions or asserting that old debt is funded. New categorized purchases create immutable reserve events for the amount that was actually available in the spending category. Refunds release that reserve. Card payments are paired account transfers plus reserve consumption, so they reduce cash and liability without recording a second expense. Existing debt is payable only after an explicit allocation to the linked payment category.
+
+This implementation deliberately keeps three quantities distinct: the signed credit-account liability, the allocation available for card payment, and physical cash in on-budget asset accounts. None can be inferred by silently mutating another. Reconciliation follows the same rule: a mismatch is rejected unless the owner explicitly requests a visible adjustment transaction with actor and reason.
+
 ## Implementation order
 
 1. Allocation ledger, assignment compatibility, category transfers, versions/locking, rollover and invariant tests.

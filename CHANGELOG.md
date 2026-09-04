@@ -10,6 +10,10 @@
 - Added category targets with transparent recommended and underfunded amounts.
 - Added isolated scheduled transactions and one-year account cash-flow forecasts.
 - Scheduled account transfers change projected location without changing projected total cash.
+- Added linked system payment categories and an auditable funded-spending reserve for credit cards.
+- Credit purchases reserve only funded category money; refunds release it and card payments move cash without creating a second expense.
+- Added derived cleared, uncleared, and working account balances.
+- Reconciliation differences remain errors by default and can only become explicit, actor-attributed adjustment transactions when requested.
 
 ## 0.1.0 - 2026-09-04
 

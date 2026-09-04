@@ -72,3 +72,50 @@ def test_existing_monthly_assignment_is_backfilled_into_balanced_ledger(
     assert {item["amount_minor"] for item in postings} == {-125000, 125000}
     assert version == 1
     assert legacy_amount == 125000
+
+
+def test_existing_credit_account_receives_payment_category(tmp_path, monkeypatch):
+    database_path = tmp_path / "credit-migration.db"
+    database_url = f"sqlite:///{database_path}"
+    monkeypatch.setenv("BUDGET_APP_DATABASE_URL", database_url)
+    monkeypatch.setenv(
+        "BUDGET_APP_JWT_SECRET", "migration-test-secret-that-is-longer-than-32-characters"
+    )
+    config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    command.upgrade(config, "0007_targets_planning")
+    engine = create_engine(database_url)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO users (id, email, display_name, password_hash, created_at) "
+            "VALUES ('user-1', 'owner@example.com', 'Owner', 'hash', :now)"
+        ), {"now": now})
+        connection.execute(text(
+            "INSERT INTO households (id, name, owner_user_id, created_at) "
+            "VALUES ('household-1', 'Home', 'user-1', :now)"
+        ), {"now": now})
+        connection.execute(text(
+            "INSERT INTO budgets "
+            "(id, household_id, name, currency_code, allocation_version, created_at) "
+            "VALUES ('budget-1', 'household-1', 'Family', 'USD', 0, :now)"
+        ), {"now": now})
+        connection.execute(text(
+            "INSERT INTO accounts "
+            "(id, budget_id, name, account_type, is_on_budget, is_closed, created_at) "
+            "VALUES ('card-1', 'budget-1', 'Visa', 'credit', 1, 0, :now)"
+        ), {"now": now})
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        payment_category_id = connection.execute(text(
+            "SELECT payment_category_id FROM accounts WHERE id = 'card-1'"
+        )).scalar_one()
+        category = connection.execute(text(
+            "SELECT name, system_type, linked_account_id FROM categories WHERE id = :id"
+        ), {"id": payment_category_id}).mappings().one()
+    assert category == {
+        "name": "Visa Payment",
+        "system_type": "credit_payment",
+        "linked_account_id": "card-1",
+    }

@@ -122,6 +122,11 @@ class Account(Base):
     account_type: Mapped[str] = mapped_column(String(30))
     is_on_budget: Mapped[bool] = mapped_column(Boolean, default=True)
     is_closed: Mapped[bool] = mapped_column(Boolean, default=False)
+    payment_category_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("categories.id", ondelete="RESTRICT", use_alter=True),
+        nullable=True,
+        unique=True,
+    )
     reconciled_balance_minor: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     reconciled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
@@ -145,6 +150,8 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(100))
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    system_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    linked_account_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, unique=True)
 
 
 class CategoryTarget(Base):
@@ -292,3 +299,29 @@ class TransactionSplit(Base):
     amount_minor: Mapped[int] = mapped_column(BigInteger)
     memo: Mapped[str] = mapped_column(String(500), default="")
     transaction: Mapped[Transaction] = relationship(back_populates="splits")
+
+
+class CreditCardReserveEvent(Base):
+    __tablename__ = "credit_card_reserve_events"
+    __table_args__ = (
+        CheckConstraint("amount_minor <> 0", name="ck_credit_reserve_event_nonzero"),
+        CheckConstraint(
+            "(source_transaction_id IS NOT NULL AND transfer_id IS NULL) OR "
+            "(source_transaction_id IS NULL AND transfer_id IS NOT NULL)",
+            name="ck_credit_reserve_event_source",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    credit_account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), index=True)
+    payment_category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), index=True)
+    source_transaction_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("transactions.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
+    transfer_id: Mapped[Optional[str]] = mapped_column(String(36), index=True, nullable=True)
+    occurred_on: Mapped[date] = mapped_column(Date, index=True)
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    kind: Mapped[str] = mapped_column(String(30))
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

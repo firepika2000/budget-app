@@ -13,6 +13,7 @@ from .models import (
     AllocationPosting,
     Budget,
     Category,
+    CreditCardReserveEvent,
     Transaction,
     TransactionSplit,
     User,
@@ -125,6 +126,7 @@ def unassigned_cash_balance(db: Session, budget_id: str, through: date | None = 
         Transaction.category_id.is_(None),
         Transaction.transfer_id.is_(None),
         Account.is_on_budget.is_(True),
+        Account.account_type.in_(("checking", "savings", "cash")),
         ~exists().where(TransactionSplit.transaction_id == Transaction.id),
     ]
     if through is not None:
@@ -178,7 +180,18 @@ def category_activity_balance(
         .join(Account, Account.id == Transaction.account_id)
         .where(*split_conditions)
     )
-    return int(direct or 0) + int(splits or 0)
+    reserve_conditions = [
+        CreditCardReserveEvent.budget_id == budget_id,
+        CreditCardReserveEvent.payment_category_id == category_id,
+    ]
+    if before is not None:
+        reserve_conditions.append(CreditCardReserveEvent.occurred_on < before)
+    if through is not None:
+        reserve_conditions.append(CreditCardReserveEvent.occurred_on <= through)
+    reserves = db.scalar(select(
+        func.coalesce(func.sum(CreditCardReserveEvent.amount_minor), 0)
+    ).where(*reserve_conditions))
+    return int(direct or 0) + int(splits or 0) + int(reserves or 0)
 
 
 def category_available_balance(
