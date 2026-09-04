@@ -7,6 +7,17 @@ struct RootView: View {
 
     var body: some View {
         Group {
+            #if DEBUG
+            if !ProcessInfo.processInfo.arguments.contains("--live") {
+                DemoRootView()
+            } else if session.serverURL == nil {
+                ServerSetupView()
+            } else if session.token == nil {
+                AuthenticationView()
+            } else {
+                BudgetListView()
+            }
+            #else
             if session.serverURL == nil {
                 ServerSetupView()
             } else if session.token == nil {
@@ -14,6 +25,7 @@ struct RootView: View {
             } else {
                 BudgetListView()
             }
+            #endif
         }
         .alert("Something went wrong", isPresented: Binding(
             get: { session.errorMessage != nil },

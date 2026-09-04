@@ -56,3 +56,7 @@ jobs:
           xcodebuild -project ios/BudgetApp.xcodeproj -scheme BudgetApp
           -destination 'generic/platform=iOS' -configuration Debug
           CODE_SIGNING_ALLOWED=NO build
+      - run: >-
+          xcodebuild test -project ios/BudgetApp.xcodeproj -scheme BudgetApp
+          -destination 'platform=iOS Simulator,name=iPhone 15 Pro,OS=latest'
+          CODE_SIGNING_ALLOWED=NO

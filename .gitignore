@@ -1,6 +1,7 @@
 .DS_Store
 .build/
 DerivedData/
+*DerivedData/
 *.xcuserstate
 .env
 server/backups/

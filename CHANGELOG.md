@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-09-04
+
+- Added a five-area native iPhone experience: Home, Plan, Activity, Accounts, and Insights.
+- Added a deterministic, isolated Soto Household simulator demo with twelve months of activity and four permission-distinct personas.
+- Added global Hide Amounts behavior, child/teen presentation, native requests, approval previews, allowance controls, and household access summaries.
+- Added Smart Funding and money-movement previews that do not mutate until confirmation.
+- Added transaction search, state filters, split entry, and local receipt/photo/file picker architecture.
+- Added credit-card reserve presentation, reconciliation preview, goal progress, debt payoff simulation, plan cost, reports, and clearly differentiated cash forecasts.
+- Added full-screen simulator launch metadata, deterministic screenshot routes, and thirteen verified review screenshots.
+- Added feature-capability and bank-sync-readiness reviews; bank synchronization remains explicitly blocked.
+
 ## 0.2.0 - 2026-09-04
 
 - Added a balanced, append-only allocation ledger with actor attribution.
