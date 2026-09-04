@@ -24,6 +24,8 @@ The first owner calls `POST /api/v1/auth/bootstrap`. That endpoint becomes perma
 
 The versioned API supports budgets, explicit grants, accounts, category groups, categories, monthly assignments, split transactions, balanced account transfers, reconciliation, and monthly zero-based summaries. View, Contribute, and Manage permissions are checked independently for every budget-scoped route.
 
+Household owners can issue seven-day, single-use invitation tokens for adults or children, list members, grant only selected budgets, revoke individual grants, and deactivate members. Invitation secrets are stored only as SHA-256 hashes; revocation and deactivation affect existing sessions immediately because every protected query rechecks active membership and grants.
+
 ## Container deployment
 
 Copy `.env.example` to `.env`, replace both example values with independently generated random secrets, and run `docker compose up -d`. The API binds to localhost port 8080 by default so it can sit safely behind a TLS reverse proxy or a private-network VPN.

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -163,3 +163,25 @@ def upsert_grant(
     db.commit()
     db.refresh(grant)
     return grant
+
+
+@router.delete(
+    "/budgets/{budget_id}/grants/{member_user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_grant(
+    budget_id: str,
+    member_user_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    budget = db.get(Budget, budget_id)
+    if budget is None or not is_household_owner(db, user, budget.household_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
+    result = db.execute(delete(BudgetGrant).where(
+        BudgetGrant.budget_id == budget_id,
+        BudgetGrant.user_id == member_user_id,
+    ))
+    if result.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grant not found")
+    db.commit()

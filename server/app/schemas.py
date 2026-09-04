@@ -238,3 +238,51 @@ class MonthSummaryResponse(BaseModel):
     total_assigned_minor: int
     total_overspent_minor: int
     categories: list[CategoryMonthSummary]
+
+
+class HouseholdSummary(BaseModel):
+    id: str
+    name: str
+    role: Literal["owner", "adult", "child"]
+    is_active: bool
+
+
+class MeResponse(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    households: list[HouseholdSummary]
+
+
+class InvitationCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: Literal["adult", "child"]
+
+    @field_validator("email")
+    @classmethod
+    def normalize_invite_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if "@" not in normalized:
+            raise ValueError("must be an email address")
+        return normalized
+
+
+class InvitationResponse(BaseModel):
+    invitation_token: str
+    email: str
+    role: str
+    expires_at: str
+
+
+class InvitationAccept(BaseModel):
+    invitation_token: str = Field(min_length=20, max_length=200)
+    password: str = Field(min_length=12, max_length=256)
+    display_name: str = Field(min_length=1, max_length=100)
+
+
+class MemberResponse(BaseModel):
+    user_id: str
+    email: str
+    display_name: str
+    role: str
+    is_active: bool

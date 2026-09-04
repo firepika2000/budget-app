@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from .config import Settings
 from .budgeting_routes import router as budgeting_router
+from .household_routes import router as household_router
 from .database import build_session_factory
 from .routes import router
 
@@ -20,4 +21,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_factory = build_session_factory(resolved_settings.database_url)
     app.include_router(router)
     app.include_router(budgeting_router)
+    app.include_router(household_router)
     return app
