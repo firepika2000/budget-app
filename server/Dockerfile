@@ -10,6 +10,7 @@ RUN addgroup --system budget && adduser --system --ingroup budget budget
 COPY pyproject.toml README.md alembic.ini ./
 COPY app ./app
 COPY migrations ./migrations
+COPY web ./web
 
 RUN pip install --no-cache-dir .
 

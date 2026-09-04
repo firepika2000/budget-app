@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Budget App — Household Console</title>
+  <link rel="icon" href="/admin-assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin-assets/styles.css">
+</head>
+<body>
+  <main id="auth-view" class="auth-shell">
+    <section class="brand-panel">
+      <p class="eyebrow">YOUR MONEY · YOUR SERVER</p>
+      <h1>A calmer way to run the household.</h1>
+      <p class="lede">Give every dollar a purpose while keeping each family member’s budgets private by default.</p>
+      <div class="principle-grid" aria-label="Product principles">
+        <div><strong>Private</strong><span>Only explicitly shared budgets appear.</span></div>
+        <div><strong>Portable</strong><span>Runs wherever you choose to host it.</span></div>
+        <div><strong>Permanent</strong><span>No subscription required.</span></div>
+      </div>
+    </section>
+    <section class="auth-card">
+      <div class="segmented" role="tablist" aria-label="Account action">
+        <button class="active" data-auth-mode="login">Sign in</button>
+        <button data-auth-mode="setup">First setup</button>
+        <button data-auth-mode="invite">Join family</button>
+      </div>
+      <form id="auth-form">
+        <label id="display-name-field" class="hidden">Your name<input id="display-name" autocomplete="name"></label>
+        <label class="setup-only hidden">Household name<input id="household-name"></label>
+        <label class="invite-only hidden">Invitation code<input id="invite-token" autocomplete="one-time-code"></label>
+        <label id="email-field">Email<input id="email" type="email" autocomplete="email"></label>
+        <label>Password<input id="password" type="password" minlength="12" autocomplete="current-password" required></label>
+        <button class="primary" type="submit" id="auth-submit">Sign in</button>
+        <p class="form-error" id="auth-error" role="alert"></p>
+      </form>
+    </section>
+  </main>
+
+  <div id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="wordmark"><span>◒</span> Budget App</div>
+      <p class="nav-label">BUDGETS</p>
+      <nav id="budget-list" aria-label="Budgets"></nav>
+      <button id="new-budget-button" class="quiet hidden">＋ New budget</button>
+      <div class="sidebar-footer">
+        <span id="user-name"></span>
+        <button id="sign-out" class="text-button">Sign out</button>
+      </div>
+    </aside>
+    <main class="workspace">
+      <header class="topbar">
+        <div><p class="eyebrow" id="month-label"></p><h2 id="budget-title">Choose a budget</h2></div>
+        <span id="permission-badge" class="badge"></span>
+      </header>
+      <div id="empty-state" class="empty-state">
+        <h3>No budget selected</h3><p>Create your first budget or choose one from the sidebar.</p>
+      </div>
+      <div id="budget-content" class="hidden">
+        <section class="metric-grid">
+          <article class="metric hero-metric"><span>Ready to assign</span><strong id="ready-value">—</strong></article>
+          <article class="metric"><span>Assigned this month</span><strong id="assigned-value">—</strong></article>
+          <article class="metric"><span>Overspent</span><strong id="overspent-value">—</strong></article>
+        </section>
+        <div class="dashboard-grid">
+          <section class="panel plan-panel">
+            <div class="panel-heading"><div><p class="eyebrow">MONTHLY PLAN</p><h3>Categories</h3></div><button id="add-category-button" class="quiet">Add category</button></div>
+            <div class="table-wrap"><table><thead><tr><th>Category</th><th>Assigned</th><th>Activity</th><th>Available</th><th></th></tr></thead><tbody id="category-table"></tbody></table></div>
+          </section>
+          <section class="panel accounts-panel"><div class="panel-heading"><div><p class="eyebrow">CASH & CREDIT</p><h3>Accounts</h3></div><button id="add-account-button" class="quiet">Add</button></div><div id="account-list"></div></section>
+          <section class="panel transaction-panel">
+            <div class="panel-heading"><div><p class="eyebrow">LEDGER</p><h3>Recent transactions</h3></div><button id="add-transaction-button" class="primary compact">New transaction</button></div>
+            <div id="transaction-list"></div>
+          </section>
+          <section id="family-panel" class="panel family-panel hidden">
+            <div class="panel-heading"><div><p class="eyebrow">OWNER CONTROLS</p><h3>Family access</h3></div><button id="invite-button" class="quiet">Invite</button></div>
+            <p class="muted">Household membership grants no budget access by itself.</p><div id="member-list"></div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="form-dialog"><form method="dialog" id="dialog-form"><div class="dialog-heading"><h3 id="dialog-title"></h3><button value="cancel" aria-label="Close">×</button></div><div id="dialog-fields"></div><p class="form-error" id="dialog-error"></p><div class="dialog-actions"><button value="cancel" class="quiet">Cancel</button><button id="dialog-submit" value="default" class="primary">Save</button></div></form></dialog>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="/admin-assets/app.js" defer></script>
+</body>
+</html>

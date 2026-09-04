@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Budget App">
+  <rect width="64" height="64" rx="14" fill="#0e4b35"/>
+  <path d="M32 14a18 18 0 1 0 18 18H32V14Z" fill="#dcecdf"/>
+  <path d="M36 14.5A18 18 0 0 1 49.5 28H36V14.5Z" fill="#6cc18e"/>
+</svg>

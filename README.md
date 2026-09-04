@@ -9,8 +9,9 @@ The repository contains the first two domain slices:
 - Strongly typed household and budget identities with deny-by-default authorization.
 - Exact minor-unit money arithmetic and zero-based monthly budget calculations.
 - A FastAPI/PostgreSQL server with authentication, private budget APIs, accounts, categories, monthly assignments, split transactions, transfers, reconciliation, monthly summaries, migrations, and a container deployment definition.
-- A native SwiftUI iPhone client foundation with server setup, bootstrap/login, Keychain token storage, and privacy-filtered budget discovery.
+- A native SwiftUI iPhone client with server setup, bootstrap/login, Keychain token storage, private budget discovery, monthly planning, transaction entry, and assignment editing.
 - Owner-managed household invitations, explicit sharing, grant revocation, and immediate member deactivation.
+- A responsive desktop administration console served directly by the self-hosted backend, with no separate cloud dependency.
 
 Product and architecture decisions are recorded in `docs/`.
 
@@ -26,6 +27,6 @@ swift test
 - [Architecture direction](docs/architecture.md)
 - [iPhone app](ios/README.md)
 
-## Near-term milestone
+## Active milestone
 
-Build the versioned server API and PostgreSQL schema around the tested access and calculation rules, then connect a small SwiftUI client that can configure a server, sign in, and list only the budgets shared with the current user.
+Complete remaining iPhone creation and split-transaction workflows, then add encrypted backup/restore, exports, deployment hardening, and end-to-end release verification.

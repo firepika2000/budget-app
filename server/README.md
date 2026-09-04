@@ -29,3 +29,7 @@ Household owners can issue seven-day, single-use invitation tokens for adults or
 ## Container deployment
 
 Copy `.env.example` to `.env`, replace both example values with independently generated random secrets, and run `docker compose up -d`. The API binds to localhost port 8080 by default so it can sit safely behind a TLS reverse proxy or a private-network VPN.
+
+## Desktop administration
+
+Open `/admin` on the same server. The responsive owner console supports first-time setup, sign-in, invitation acceptance, budget/account/category creation, transaction entry, monthly assignment editing, and family access administration. Its bearer token remains in memory rather than browser storage, and the page uses a restrictive Content Security Policy with no third-party scripts.
