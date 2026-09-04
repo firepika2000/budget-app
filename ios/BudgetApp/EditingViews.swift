@@ -367,6 +367,83 @@ struct AssignmentEditView: View {
     }
 }
 
+struct FundingRequestView: View {
+    let budget: APIBudget
+    let categories: [APICategory]
+    let serverURL: URL
+    let token: String
+    let onSaved: () async -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var categoryID = ""
+    @State private var amount = ""
+    @State private var reason = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Picker("Category", selection: $categoryID) {
+                    ForEach(categories.filter { $0.systemType == nil }) { category in
+                        Text(category.name).tag(category.id)
+                    }
+                }
+                TextField("Amount", text: $amount).keyboardType(.decimalPad)
+                TextField("What is this for?", text: $reason, axis: .vertical)
+            }
+            .navigationTitle("Request Money")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Send") { Task { await save() } }
+                        .disabled(parsedAmount == nil || categoryID.isEmpty || isSaving)
+                }
+            }
+            .overlay { if isSaving { ProgressView() } }
+            .alert("Unable to send request", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) { Button("OK", role: .cancel) {} } message: {
+                Text(errorMessage ?? "Unknown error")
+            }
+            .onAppear {
+                if categoryID.isEmpty {
+                    categoryID = categories.first(where: { $0.systemType == nil })?.id ?? ""
+                }
+            }
+        }
+    }
+
+    private var parsedAmount: Int64? {
+        guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: budget.currencyCode),
+              value > 0 else { return nil }
+        return value
+    }
+
+    private func save() async {
+        guard let parsedAmount else { return }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            _ = try await APIClient(baseURL: serverURL).createFinancialRequest(
+                budgetID: budget.id,
+                request: APIFinancialRequestCreate(
+                    destinationCategoryID: categoryID,
+                    requestedAmountMinor: parsedAmount,
+                    reason: reason
+                ),
+                token: token
+            )
+            await onSaved()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
 enum CurrencyText {
     static func parseMinorUnits(_ text: String, currencyCode: String) -> Int64? {
         let formatter = NumberFormatter()

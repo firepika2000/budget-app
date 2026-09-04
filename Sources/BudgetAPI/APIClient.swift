@@ -201,6 +201,26 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/months/\(month)", token: token)
     }
 
+    public func financialRequests(
+        budgetID: String,
+        token: String
+    ) async throws -> [APIFinancialRequest] {
+        try await send(path: "api/v1/budgets/\(budgetID)/requests", token: token)
+    }
+
+    public func createFinancialRequest(
+        budgetID: String,
+        request: APIFinancialRequestCreate,
+        token: String
+    ) async throws -> APIFinancialRequest {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/requests",
+            method: "POST",
+            token: token,
+            body: request
+        )
+    }
+
     private func send<Response: Decodable>(
         path: String,
         method: String = "GET",

@@ -11,7 +11,17 @@ from .access import is_household_owner
 from .config import Settings
 from .database import get_db
 from .dependencies import get_current_user, get_settings
-from .models import Budget, BudgetGrant, Household, Invitation, Membership, User
+from .models import (
+    Budget,
+    BudgetAccessProfile,
+    BudgetGrant,
+    CapabilityGrant,
+    Household,
+    Invitation,
+    Membership,
+    ResourceGrant,
+    User,
+)
 from .schemas import (
     InvitationAccept,
     InvitationCreate,
@@ -185,6 +195,18 @@ def deactivate_member(
     membership.is_active = False
     membership.authorization_version += 1
     budget_ids = select(Budget.id).where(Budget.household_id == household_id)
+    db.execute(delete(CapabilityGrant).where(
+        CapabilityGrant.user_id == member_user_id,
+        CapabilityGrant.budget_id.in_(budget_ids),
+    ))
+    db.execute(delete(ResourceGrant).where(
+        ResourceGrant.user_id == member_user_id,
+        ResourceGrant.budget_id.in_(budget_ids),
+    ))
+    db.execute(delete(BudgetAccessProfile).where(
+        BudgetAccessProfile.user_id == member_user_id,
+        BudgetAccessProfile.budget_id.in_(budget_ids),
+    ))
     db.execute(delete(BudgetGrant).where(
         BudgetGrant.user_id == member_user_id,
         BudgetGrant.budget_id.in_(budget_ids),

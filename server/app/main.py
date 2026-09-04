@@ -8,6 +8,7 @@ from .config import Settings
 from .budgeting_routes import router as budgeting_router
 from .household_routes import router as household_router
 from .planning_routes import router as planning_router
+from .request_routes import router as request_router
 from .web_routes import ASSET_ROOT, router as web_router
 from .database import build_session_factory
 from .routes import router
@@ -30,6 +31,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(budgeting_router)
     app.include_router(household_router)
     app.include_router(planning_router)
+    app.include_router(request_router)
     app.include_router(web_router)
     app.mount("/admin-assets", StaticFiles(directory=ASSET_ROOT), name="admin-assets")
     return app

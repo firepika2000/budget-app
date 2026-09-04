@@ -4,12 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .budgeting_routes import require_budget
+from .access import can_access_resource, visible_resource_ids
+from .budgeting_routes import require_budget_capability
 from .database import get_db
 from .dependencies import get_current_user
 from .models import (
     Account,
-    BudgetPermission,
     Category,
     CategoryTarget,
     ScheduledTransaction,
@@ -42,9 +42,12 @@ def upsert_category_target(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> CategoryTarget:
-    require_budget(db, user, budget_id, BudgetPermission.MANAGE)
+    budget = require_budget_capability(db, user, budget_id, "manage_planning")
     category = db.get(Category, category_id)
-    if category is None or category.budget_id != budget_id or category.is_archived:
+    if (
+        category is None or category.budget_id != budget_id or category.is_archived
+        or not can_access_resource(db, user, budget, "category", category_id)
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     target = db.scalar(select(CategoryTarget).where(CategoryTarget.category_id == category_id))
     values = body.model_dump()
@@ -71,7 +74,9 @@ def get_category_target(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> CategoryTarget:
-    require_budget(db, user, budget_id, BudgetPermission.VIEW)
+    budget = require_budget_capability(db, user, budget_id, "view_categories")
+    if not can_access_resource(db, user, budget, "category", category_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target not found")
     target = db.scalar(select(CategoryTarget).where(
         CategoryTarget.budget_id == budget_id,
         CategoryTarget.category_id == category_id,
@@ -87,11 +92,18 @@ def list_scheduled_transactions(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ScheduledTransaction]:
-    require_budget(db, user, budget_id, BudgetPermission.VIEW)
-    return list(db.scalars(select(ScheduledTransaction).where(
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    schedules = list(db.scalars(select(ScheduledTransaction).where(
         ScheduledTransaction.budget_id == budget_id,
         ScheduledTransaction.is_active.is_(True),
     ).order_by(ScheduledTransaction.next_date, ScheduledTransaction.name)))
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    return [item for item in schedules if (
+        (visible_accounts is None or item.account_id in visible_accounts)
+        and (item.destination_account_id is None or visible_accounts is None or item.destination_account_id in visible_accounts)
+        and (item.category_id is None or visible_categories is None or item.category_id in visible_categories)
+    )]
 
 
 @router.post(
@@ -105,18 +117,22 @@ def create_scheduled_transaction(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ScheduledTransaction:
-    require_budget(db, user, budget_id, BudgetPermission.MANAGE)
+    budget = require_budget_capability(db, user, budget_id, "manage_planning")
     account = db.get(Account, body.account_id)
     destination = db.get(Account, body.destination_account_id) if body.destination_account_id else None
     category = db.get(Category, body.category_id) if body.category_id else None
     if account is None or account.budget_id != budget_id or account.is_closed:
         raise HTTPException(status_code=422, detail="Invalid scheduled account")
+    if not can_access_resource(db, user, budget, "account", account.id):
+        raise HTTPException(status_code=422, detail="Invalid scheduled account")
     if body.destination_account_id and (
         destination is None or destination.budget_id != budget_id or destination.is_closed
+        or not can_access_resource(db, user, budget, "account", destination.id)
     ):
         raise HTTPException(status_code=422, detail="Invalid scheduled destination account")
     if body.category_id and (
         category is None or category.budget_id != budget_id or category.is_archived
+        or not can_access_resource(db, user, budget, "category", category.id)
     ):
         raise HTTPException(status_code=422, detail="Invalid scheduled category")
     if category is not None and not account.is_on_budget:
@@ -139,13 +155,16 @@ def forecast(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ForecastResponse:
-    budget = require_budget(db, user, budget_id, BudgetPermission.VIEW)
+    budget = require_budget_capability(db, user, budget_id, "view_account_balances")
     today = date.today()
     if through < today or through > today + timedelta(days=366):
         raise HTTPException(status_code=422, detail="Forecast horizon must be between today and one year")
     accounts = list(db.scalars(select(Account).where(
         Account.budget_id == budget_id,
     ).order_by(Account.name)))
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    if visible_accounts is not None:
+        accounts = [account for account in accounts if account.id in visible_accounts]
     accounts_by_id = {account.id: account for account in accounts}
     actual_by_account = {account.id: int(db.scalar(
         select(func.coalesce(func.sum(Transaction.amount_minor), 0)).where(
@@ -157,6 +176,10 @@ def forecast(
         ScheduledTransaction.budget_id == budget_id,
         ScheduledTransaction.is_active.is_(True),
     )))
+    schedules = [schedule for schedule in schedules if (
+        schedule.account_id in accounts_by_id
+        and (schedule.destination_account_id is None or schedule.destination_account_id in accounts_by_id)
+    )]
     occurrences: list[ForecastOccurrence] = []
     expanded: list[tuple[date, ScheduledTransaction]] = []
     for schedule in schedules:

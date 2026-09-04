@@ -14,6 +14,10 @@
 - Credit purchases reserve only funded category money; refunds release it and card payments move cash without creating a second expense.
 - Added derived cleared, uncleared, and working account balances.
 - Reconciliation differences remain errors by default and can only become explicit, actor-attributed adjustment transactions when requested.
+- Added capability-based budget access profiles with independently restricted account and category scopes.
+- Added delegated category ownership without duplicating household cash or ledgers.
+- Added first-class funding requests, partial approvals, rejection/cancellation states, optimistic request versions, and immutable action history.
+- Approved requests now link to a balanced allocation operation funded by an explicit source category.
 
 ## 0.1.0 - 2026-09-04
 

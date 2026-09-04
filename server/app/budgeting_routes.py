@@ -8,7 +8,13 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from .access import find_visible_budget, has_budget_permission
+from .access import (
+    can_access_resource,
+    find_visible_budget,
+    has_budget_permission,
+    has_capability,
+    visible_resource_ids,
+)
 from .allocation import (
     PostingInput,
     append_operation,
@@ -30,6 +36,7 @@ from .models import (
     CategoryGroup,
     CategoryTarget,
     CreditCardReserveEvent,
+    Membership,
     Transaction,
     TransactionSplit,
     User,
@@ -75,14 +82,32 @@ def require_budget(
     return budget
 
 
+def require_budget_capability(
+    db: Session,
+    user: User,
+    budget_id: str,
+    capability: str,
+) -> Budget:
+    budget = find_visible_budget(db, user, budget_id)
+    if budget is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
+    if not has_capability(db, user, budget, capability):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient capability")
+    return budget
+
+
 @router.get("/accounts", response_model=list[AccountResponse])
 def list_accounts(
     budget_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[Account]:
-    require_budget(db, user, budget_id, BudgetPermission.VIEW)
-    return list(db.scalars(select(Account).where(Account.budget_id == budget_id).order_by(Account.name)))
+    budget = require_budget_capability(db, user, budget_id, "view_accounts")
+    query = select(Account).where(Account.budget_id == budget_id).order_by(Account.name)
+    visible = visible_resource_ids(db, user, budget, "account")
+    if visible is not None:
+        query = query.where(Account.id.in_(visible))
+    return list(db.scalars(query))
 
 
 def safe_csv_text(value: str) -> str:
@@ -96,12 +121,20 @@ def export_budget_csv(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
-    budget = require_budget(db, user, budget_id, BudgetPermission.VIEW)
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    visible_categories = visible_resource_ids(db, user, budget, "category")
     accounts = {
-        item.id: item.name for item in db.scalars(select(Account).where(Account.budget_id == budget_id))
+        item.id: item.name for item in db.scalars(select(Account).where(
+            Account.budget_id == budget_id,
+            *([Account.id.in_(visible_accounts)] if visible_accounts is not None else []),
+        ))
     }
     categories = {
-        item.id: item.name for item in db.scalars(select(Category).where(Category.budget_id == budget_id))
+        item.id: item.name for item in db.scalars(select(Category).where(
+            Category.budget_id == budget_id,
+            *([Category.id.in_(visible_categories)] if visible_categories is not None else []),
+        ))
     }
     transactions = list(db.scalars(
         select(Transaction)
@@ -109,6 +142,14 @@ def export_budget_csv(
         .where(Transaction.budget_id == budget_id)
         .order_by(Transaction.occurred_on, Transaction.created_at, Transaction.id)
     ))
+    transactions = [item for item in transactions if (
+        (visible_accounts is None or item.account_id in visible_accounts)
+        and (
+            visible_categories is None
+            or item.category_id in visible_categories
+            or (bool(item.splits) and all(split.category_id in visible_categories for split in item.splits))
+        )
+    )]
     output = StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow([
@@ -146,7 +187,7 @@ def create_account(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Account:
-    require_budget(db, user, budget_id, BudgetPermission.MANAGE)
+    require_budget_capability(db, user, budget_id, "manage_budget_structure")
     account = Account(budget_id=budget_id, **body.model_dump())
     db.add(account)
     db.flush()
@@ -164,9 +205,11 @@ def account_balance(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AccountBalanceResponse:
-    budget = require_budget(db, user, budget_id, BudgetPermission.VIEW)
+    budget = require_budget_capability(db, user, budget_id, "view_account_balances")
     account = db.get(Account, account_id)
-    if account is None or account.budget_id != budget_id:
+    if account is None or account.budget_id != budget_id or not can_access_resource(
+        db, user, budget, "account", account_id
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
     cleared = int(db.scalar(select(
         func.coalesce(func.sum(Transaction.amount_minor), 0)
@@ -190,10 +233,12 @@ def list_category_groups(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[CategoryGroup]:
-    require_budget(db, user, budget_id, BudgetPermission.VIEW)
-    return list(db.scalars(select(CategoryGroup).where(
-        CategoryGroup.budget_id == budget_id
-    ).order_by(CategoryGroup.sort_order, CategoryGroup.name)))
+    budget = require_budget_capability(db, user, budget_id, "view_categories")
+    visible = visible_resource_ids(db, user, budget, "category")
+    query = select(CategoryGroup).where(CategoryGroup.budget_id == budget_id)
+    if visible is not None:
+        query = query.where(CategoryGroup.id.in_(select(Category.group_id).where(Category.id.in_(visible))))
+    return list(db.scalars(query.order_by(CategoryGroup.sort_order, CategoryGroup.name)))
 
 
 @router.post("/category-groups", response_model=CategoryGroupResponse, status_code=status.HTTP_201_CREATED)
@@ -203,7 +248,7 @@ def create_category_group(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> CategoryGroup:
-    require_budget(db, user, budget_id, BudgetPermission.MANAGE)
+    require_budget_capability(db, user, budget_id, "manage_budget_structure")
     group = CategoryGroup(budget_id=budget_id, **body.model_dump())
     db.add(group)
     db.commit()
@@ -217,10 +262,12 @@ def list_categories(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[Category]:
-    require_budget(db, user, budget_id, BudgetPermission.VIEW)
-    return list(db.scalars(select(Category).where(
-        Category.budget_id == budget_id
-    ).order_by(Category.group_id, Category.sort_order, Category.name)))
+    budget = require_budget_capability(db, user, budget_id, "view_categories")
+    query = select(Category).where(Category.budget_id == budget_id)
+    visible = visible_resource_ids(db, user, budget, "category")
+    if visible is not None:
+        query = query.where(Category.id.in_(visible))
+    return list(db.scalars(query.order_by(Category.group_id, Category.sort_order, Category.name)))
 
 
 @router.post("/categories", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
@@ -230,10 +277,18 @@ def create_category(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Category:
-    require_budget(db, user, budget_id, BudgetPermission.MANAGE)
+    budget = require_budget_capability(db, user, budget_id, "manage_budget_structure")
     group = db.get(CategoryGroup, body.group_id)
     if group is None or group.budget_id != budget_id:
         raise HTTPException(status_code=422, detail="Invalid category group")
+    if body.delegated_user_id is not None:
+        member = db.scalar(select(Membership).where(
+            Membership.household_id == budget.household_id,
+            Membership.user_id == body.delegated_user_id,
+            Membership.is_active.is_(True),
+        ))
+        if member is None:
+            raise HTTPException(status_code=422, detail="Delegated user must be an active household member")
     category = Category(budget_id=budget_id, **body.model_dump())
     db.add(category)
     db.commit()
@@ -249,9 +304,13 @@ def upsert_assignment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    require_budget(db, user, budget_id, BudgetPermission.MANAGE)
+    access_budget = require_budget_capability(db, user, budget_id, "assign_money")
     category = db.get(Category, category_id)
-    if category is None or category.budget_id != budget_id:
+    if (
+        category is None
+        or category.budget_id != budget_id
+        or not can_access_resource(db, user, access_budget, "category", category_id)
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     current_month = date.today().replace(day=1)
     if body.month > current_month:
@@ -307,7 +366,7 @@ def list_allocation_operations(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    budget = require_budget(db, user, budget_id, BudgetPermission.VIEW)
+    budget = require_budget_capability(db, user, budget_id, "view_allocation_history")
     operations = list(db.scalars(
         select(AllocationOperation)
         .options(selectinload(AllocationOperation.postings))
@@ -338,7 +397,7 @@ def transfer_allocation(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    require_budget(db, user, budget_id, BudgetPermission.MANAGE)
+    access_budget = require_budget_capability(db, user, budget_id, "move_money")
     if body.occurred_on > date.today():
         raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
     budget = lock_budget(db, budget_id)
@@ -351,6 +410,8 @@ def transfer_allocation(
         for category in transfer_categories
     ):
         raise HTTPException(status_code=422, detail="Invalid allocation category")
+    if any(not can_access_resource(db, user, access_budget, "category", category.id) for category in transfer_categories):
+        raise HTTPException(status_code=404, detail="Allocation category not found")
     if category_available_balance(
         db, budget_id, body.source_category_id, through=body.occurred_on
     ) < body.amount_minor:
@@ -396,12 +457,22 @@ def list_transactions(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[Transaction]:
-    require_budget(db, user, budget_id, BudgetPermission.VIEW)
-    return list(db.scalars(select(Transaction).options(
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    transactions = list(db.scalars(select(Transaction).options(
         selectinload(Transaction.splits)
     ).where(
         Transaction.budget_id == budget_id
     ).order_by(Transaction.occurred_on.desc(), Transaction.created_at.desc())))
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    return [item for item in transactions if (
+        (visible_accounts is None or item.account_id in visible_accounts)
+        and (
+            visible_categories is None
+            or item.category_id in visible_categories
+            or (bool(item.splits) and all(split.category_id in visible_categories for split in item.splits))
+        )
+    )]
 
 
 @router.post("/transactions", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
@@ -411,11 +482,13 @@ def create_transaction(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Transaction:
-    require_budget(db, user, budget_id, BudgetPermission.CONTRIBUTE)
+    budget = require_budget_capability(db, user, budget_id, "create_transaction")
     if body.occurred_on > date.today():
         raise HTTPException(status_code=422, detail="Future transactions belong in the planning layer")
     account = db.scalar(select(Account).where(Account.id == body.account_id).with_for_update())
     if account is None or account.budget_id != budget_id or account.is_closed:
+        raise HTTPException(status_code=422, detail="Invalid account")
+    if not can_access_resource(db, user, budget, "account", account.id):
         raise HTTPException(status_code=422, detail="Invalid account")
     category_ids = ([body.category_id] if body.category_id is not None else []) + [
         split.category_id for split in body.splits
@@ -428,6 +501,8 @@ def create_transaction(
     for category_id in category_ids:
         category = db.scalar(select(Category).where(Category.id == category_id).with_for_update())
         if category is None or category.budget_id != budget_id or category.is_archived:
+            raise HTTPException(status_code=422, detail="Invalid category")
+        if not can_access_resource(db, user, budget, "category", category.id):
             raise HTTPException(status_code=422, detail="Invalid category")
         categories_by_id[category_id] = category
     transaction_values = body.model_dump(exclude={"splits"})
@@ -463,7 +538,7 @@ def create_transfer(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TransferResponse:
-    require_budget(db, user, budget_id, BudgetPermission.CONTRIBUTE)
+    budget = require_budget_capability(db, user, budget_id, "create_transaction")
     if body.occurred_on > date.today():
         raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
     locked_accounts = list(db.scalars(select(Account).where(Account.id.in_([
@@ -476,6 +551,8 @@ def create_transfer(
         account is None or account.budget_id != budget_id or account.is_closed
         for account in (source, destination)
     ):
+        raise HTTPException(status_code=422, detail="Invalid transfer account")
+    if any(not can_access_resource(db, user, budget, "account", account.id) for account in (source, destination)):
         raise HTTPException(status_code=422, detail="Invalid transfer account")
     transfer_id = str(uuid4())
     common = {
@@ -538,9 +615,11 @@ def reconcile_account(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ReconcileResponse:
-    require_budget(db, user, budget_id, BudgetPermission.MANAGE)
+    budget = require_budget_capability(db, user, budget_id, "reconcile_account")
     account = db.get(Account, account_id)
-    if account is None or account.budget_id != budget_id:
+    if account is None or account.budget_id != budget_id or not can_access_resource(
+        db, user, budget, "account", account_id
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
     transactions = list(db.scalars(select(Transaction).where(
         Transaction.account_id == account_id,
@@ -596,7 +675,7 @@ def month_summary(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MonthSummaryResponse:
-    budget = require_budget(db, user, budget_id, BudgetPermission.VIEW)
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
     if month.day != 1:
         raise HTTPException(status_code=422, detail="Month must be the first day of a month")
     next_month = date(month.year + (month.month == 12), 1 if month.month == 12 else month.month + 1, 1)
@@ -604,6 +683,9 @@ def month_summary(
         Category.budget_id == budget_id,
         Category.is_archived.is_(False),
     ).order_by(Category.group_id, Category.sort_order, Category.name)))
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    if visible_categories is not None:
+        categories = [category for category in categories if category.id in visible_categories]
     targets = {target.category_id: target for target in db.scalars(select(CategoryTarget).where(
         CategoryTarget.budget_id == budget_id,
         CategoryTarget.is_active.is_(True),
@@ -622,6 +704,9 @@ def month_summary(
         Transaction.budget_id == budget_id,
         Transaction.occurred_on < next_month,
     )))
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    if visible_accounts is not None:
+        transactions = [transaction for transaction in transactions if transaction.account_id in visible_accounts]
     on_budget_account_ids = set(db.scalars(select(Account.id).where(
         Account.budget_id == budget_id,
         Account.is_on_budget.is_(True),
@@ -702,8 +787,10 @@ def month_summary(
     return MonthSummaryResponse(
         month=month,
         currency_code=budget.currency_code,
-        ready_to_assign_minor=unassigned_cash_to_date + ready_to_assign_postings,
-        total_assigned_minor=sum(assigned_current.values()),
+        ready_to_assign_minor=(
+            0 if visible_categories is not None else unassigned_cash_to_date + ready_to_assign_postings
+        ),
+        total_assigned_minor=sum(row.assigned_minor for row in rows),
         total_overspent_minor=total_overspent,
         allocation_version=budget.allocation_version,
         categories=rows,

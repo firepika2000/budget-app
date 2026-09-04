@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const state = { token: null, refreshToken: null, me: null, budgets: [], selected: null, accounts: [], categories: [], summary: null };
+  const state = { token: null, refreshToken: null, me: null, budgets: [], selected: null, accounts: [], categories: [], summary: null, requests: [] };
   const $ = (id) => document.getElementById(id);
   const authView = $("auth-view");
   const appView = $("app-view");
@@ -108,10 +108,15 @@
     $("month-label").textContent = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(new Date());
     const month = currentMonth();
     const [summary, accounts, categories, transactions] = await Promise.all([
-      api(`/budgets/${id}/months/${month}`), api(`/budgets/${id}/accounts`),
-      api(`/budgets/${id}/categories`), api(`/budgets/${id}/transactions`),
+      can("view_reports") ? api(`/budgets/${id}/months/${month}`) : Promise.resolve({ ready_to_assign_minor: 0, total_assigned_minor: 0, total_overspent_minor: 0, allocation_version: state.selected.allocation_version, categories: [] }),
+      can("view_accounts") ? api(`/budgets/${id}/accounts`) : Promise.resolve([]),
+      can("view_categories") ? api(`/budgets/${id}/categories`) : Promise.resolve([]),
+      can("view_transactions") ? api(`/budgets/${id}/transactions`) : Promise.resolve([]),
     ]);
     Object.assign(state, { summary, accounts, categories, transactions });
+    state.requests = can("request_money") || can("approve_request")
+      ? await api(`/budgets/${id}/requests`)
+      : [];
     renderBudget();
     if (state.selected.effective_permission === "owner") await renderFamily();
     else $("family-panel").classList.add("hidden");
@@ -122,11 +127,17 @@
     $("assigned-value").textContent = money(state.summary.total_assigned_minor);
     $("overspent-value").textContent = money(-state.summary.total_overspent_minor);
     $("overspent-value").classList.toggle("negative", state.summary.total_overspent_minor > 0);
-    renderCategories(); renderAccounts(); renderTransactions();
-    $("add-transaction-button").classList.toggle("hidden", !canContribute());
-    $("add-account-button").classList.toggle("hidden", !canManage());
-    $("add-category-button").classList.toggle("hidden", !canManage());
-    $("move-money-button").classList.toggle("hidden", !canManage());
+    renderCategories(); renderAccounts(); renderTransactions(); renderRequests();
+    $("add-transaction-button").classList.toggle("hidden", !can("create_transaction"));
+    $("add-account-button").classList.toggle("hidden", !can("manage_budget_structure"));
+    $("add-category-button").classList.toggle("hidden", !can("manage_budget_structure"));
+    $("move-money-button").classList.toggle("hidden", !can("move_money"));
+    $("requests-panel").classList.toggle("hidden", !can("request_money") && !can("approve_request"));
+    $("new-request-button").classList.toggle("hidden", !can("request_money"));
+    $("metrics-panel").classList.toggle("hidden", !can("view_reports"));
+    $("plan-panel").classList.toggle("hidden", !can("view_reports"));
+    $("accounts-panel").classList.toggle("hidden", !can("view_accounts"));
+    $("transactions-panel").classList.toggle("hidden", !can("view_transactions"));
   }
 
   function renderCategories() {
@@ -135,7 +146,7 @@
       const row = document.createElement("tr");
       row.append(cell(category.name));
       const assigned = cell(money(category.assigned_minor));
-      if (canManage()) {
+      if (can("assign_money")) {
         assigned.replaceChildren();
         const input = document.createElement("input"); input.value = decimal(category.assigned_minor); input.setAttribute("aria-label", `Assigned to ${category.name}`);
         assigned.append(input);
@@ -175,6 +186,35 @@
     if (!state.transactions.length) list.append(emptyText("No transactions yet."));
   }
 
+  function renderRequests() {
+    const list = $("request-list"); list.replaceChildren();
+    state.requests.forEach((request) => {
+      const category = state.categories.find((item) => item.id === request.destination_category_id);
+      const row = document.createElement("div"); row.className = "transaction-row";
+      row.append(labelBlock(request.reason || "Funding request", `${category?.name || "Category"} · ${request.status.replaceAll("_", " ")}`));
+      const actions = document.createElement("div"); actions.className = "member-actions";
+      const amount = document.createElement("strong"); amount.textContent = money(request.approved_amount_minor ?? request.requested_amount_minor); actions.append(amount);
+      if (can("approve_request") && request.status === "pending") {
+        const approve = button("Review", "quiet compact"); approve.addEventListener("click", () => openFields("Review request", [
+          { id: "source", label: "Fund from", type: "select", options: state.summary.categories.filter((item) => item.category_id !== request.destination_category_id && item.available_minor > 0).map((item) => [item.category_id, `${item.name} · ${money(item.available_minor)}`]) },
+          { id: "amount", label: "Approve amount", value: decimal(request.requested_amount_minor) },
+          { id: "note", label: "Note", optional: true },
+        ], async (values) => {
+          const approved = parseMinor(values.amount); if (approved <= 0 || approved > request.requested_amount_minor) throw new Error("Enter an amount within the request.");
+          await api(`/budgets/${state.selected.id}/requests/${request.id}/decision`, { method: "POST", body: JSON.stringify({ decision: "approve", expected_request_version: request.version, approved_amount_minor: approved, source_category_id: values.source, note: values.note }) });
+          await selectBudget(state.selected.id); toast("Request approved with an allocation entry");
+        }));
+        const reject = button("Reject", "quiet compact"); reject.addEventListener("click", async () => {
+          try { await api(`/budgets/${state.selected.id}/requests/${request.id}/decision`, { method: "POST", body: JSON.stringify({ decision: "reject", expected_request_version: request.version, note: "" }) }); await selectBudget(state.selected.id); toast("Request rejected"); }
+          catch (error) { toast(error.message, true); }
+        });
+        actions.append(approve, reject);
+      }
+      row.append(actions); list.append(row);
+    });
+    if (!state.requests.length) list.append(emptyText("No requests."));
+  }
+
   async function renderFamily() {
     const household = state.me.households.find((item) => item.id === state.selected.household_id && item.role === "owner");
     const panel = $("family-panel"); panel.classList.toggle("hidden", !household); if (!household) return;
@@ -187,8 +227,16 @@
         const select = document.createElement("select"); ["view", "contribute", "manage"].forEach((value) => { const option = document.createElement("option"); option.value = value; option.textContent = value; select.append(option); });
         const share = button("Share", "quiet"); share.addEventListener("click", async () => { try { await api(`/budgets/${state.selected.id}/grants`, { method: "PUT", body: JSON.stringify({ user_id: member.user_id, permission: select.value }) }); toast(`Shared with ${member.display_name}`); } catch (error) { toast(error.message, true); } });
         const revoke = button("Revoke", "quiet"); revoke.addEventListener("click", async () => { try { await api(`/budgets/${state.selected.id}/grants/${member.user_id}`, { method: "DELETE" }); toast("Budget access revoked"); } catch (error) { toast(error.message, true); } });
+        const delegate = button("Delegate", "quiet"); delegate.addEventListener("click", () => openFields(`Delegate to ${member.display_name}`, [
+          { id: "account", label: "Spending account", type: "select", options: state.accounts.map((item) => [item.id, item.name]) },
+          { id: "category", label: "Visible category", type: "select", options: state.categories.filter((item) => !item.is_archived && !item.system_type).map((item) => [item.id, item.name]) },
+        ], async (values) => {
+          await api(`/budgets/${state.selected.id}/grants`, { method: "PUT", body: JSON.stringify({ user_id: member.user_id, permission: "contribute" }) });
+          await api(`/budgets/${state.selected.id}/access/${member.user_id}`, { method: "PUT", body: JSON.stringify({ capabilities: ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "create_transaction", "request_money"], restrict_accounts: true, account_ids: [values.account], restrict_categories: true, category_ids: [values.category] }) });
+          toast(`Delegated one category to ${member.display_name}`);
+        }));
         const remove = button("Remove", "quiet"); remove.addEventListener("click", async () => { if (!confirm(`Remove ${member.display_name} from the household?`)) return; try { await api(`/households/${household.id}/members/${member.user_id}`, { method: "DELETE" }); await renderFamily(); toast("Member removed"); } catch (error) { toast(error.message, true); } });
-        actions.append(select, share, revoke, remove); row.append(actions);
+        actions.append(select, share, delegate, revoke, remove); row.append(actions);
       }
       list.append(row);
     });
@@ -243,6 +291,15 @@
     let amount = Math.abs(parseMinor(values.amount)); if (values.direction === "expense") amount = -amount;
     await api(`/budgets/${state.selected.id}/transactions`, { method: "POST", body: JSON.stringify({ account_id: values.account, category_id: values.category || null, amount_minor: amount, occurred_on: values.date, payee_name: values.payee, memo: values.memo }) }); await selectBudget(state.selected.id); toast("Transaction saved");
   }));
+  $("new-request-button").addEventListener("click", () => openFields("Request money", [
+    { id: "category", label: "Category", type: "select", options: state.categories.filter((item) => !item.is_archived && !item.system_type).map((item) => [item.id, item.name]) },
+    { id: "amount", label: "Amount" },
+    { id: "reason", label: "What is this for?" },
+  ], async (values) => {
+    const amount = parseMinor(values.amount); if (amount <= 0) throw new Error("Enter an amount greater than zero.");
+    await api(`/budgets/${state.selected.id}/requests`, { method: "POST", body: JSON.stringify({ destination_category_id: values.category, requested_amount_minor: amount, reason: values.reason }) });
+    await selectBudget(state.selected.id); toast("Request sent");
+  }));
   $("export-button").addEventListener("click", async () => {
     try {
       const response = await fetch(`/api/v1/budgets/${state.selected.id}/export.csv`, {
@@ -277,8 +334,17 @@
     dialog.showModal();
   }
 
-  function canContribute() { return ["contribute", "manage", "owner"].includes(state.selected?.effective_permission); }
-  function canManage() { return ["manage", "owner"].includes(state.selected?.effective_permission); }
+  function can(capability) {
+    if (state.selected?.effective_permission === "owner") return true;
+    if (Array.isArray(state.selected?.capabilities)) return state.selected.capabilities.includes(capability);
+    if (["create_transaction", "request_money"].includes(capability)) {
+      return ["contribute", "manage"].includes(state.selected?.effective_permission);
+    }
+    if (["view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports", "view_allocation_history"].includes(capability)) {
+      return Boolean(state.selected?.effective_permission);
+    }
+    return state.selected?.effective_permission === "manage";
+  }
   function currentMonth() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`; }
   function localToday() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; }
   function currencyDigits() { return new Intl.NumberFormat(undefined, { style: "currency", currency: state.selected.currency_code }).resolvedOptions().maximumFractionDigits; }

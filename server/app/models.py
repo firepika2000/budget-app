@@ -113,6 +113,43 @@ class BudgetGrant(Base):
     permission: Mapped[str] = mapped_column(String(20))
 
 
+class BudgetAccessProfile(Base):
+    __tablename__ = "budget_access_profiles"
+    __table_args__ = (UniqueConstraint("budget_id", "user_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    restrict_accounts: Mapped[bool] = mapped_column(Boolean, default=False)
+    restrict_categories: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class CapabilityGrant(Base):
+    __tablename__ = "capability_grants"
+    __table_args__ = (UniqueConstraint("budget_id", "user_id", "capability"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    capability: Mapped[str] = mapped_column(String(50), index=True)
+
+
+class ResourceGrant(Base):
+    __tablename__ = "resource_grants"
+    __table_args__ = (
+        UniqueConstraint("budget_id", "user_id", "resource_type", "resource_id"),
+        CheckConstraint("resource_type IN ('account', 'category')", name="ck_resource_grant_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    resource_type: Mapped[str] = mapped_column(String(20), index=True)
+    resource_id: Mapped[str] = mapped_column(String(36), index=True)
+
+
 class Account(Base):
     __tablename__ = "accounts"
 
@@ -152,6 +189,9 @@ class Category(Base):
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     system_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     linked_account_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, unique=True)
+    delegated_user_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
 
 
 class CategoryTarget(Base):
@@ -324,4 +364,58 @@ class CreditCardReserveEvent(Base):
     amount_minor: Mapped[int] = mapped_column(BigInteger)
     kind: Mapped[str] = mapped_column(String(30))
     actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class FinancialRequest(Base):
+    __tablename__ = "financial_requests"
+    __table_args__ = (
+        CheckConstraint("requested_amount_minor > 0", name="ck_financial_request_amount_positive"),
+        CheckConstraint(
+            "approved_amount_minor IS NULL OR approved_amount_minor >= 0",
+            name="ck_financial_request_approved_nonnegative",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'partially_approved', 'rejected', "
+            "'changes_requested', 'cancelled', 'expired')",
+            name="ck_financial_request_status",
+        ),
+        CheckConstraint(
+            "(status IN ('approved', 'partially_approved') AND approved_amount_minor IS NOT NULL "
+            "AND source_category_id IS NOT NULL AND allocation_operation_id IS NOT NULL) OR "
+            "(status NOT IN ('approved', 'partially_approved') AND allocation_operation_id IS NULL)",
+            name="ck_financial_request_approval_link",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    requester_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    request_type: Mapped[str] = mapped_column(String(40), default="additional_allocation")
+    destination_category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), index=True)
+    requested_amount_minor: Mapped[int] = mapped_column(BigInteger)
+    reason: Mapped[str] = mapped_column(String(500), default="")
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    approved_amount_minor: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    source_category_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("categories.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
+    allocation_operation_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("allocation_operations.id", ondelete="RESTRICT"), unique=True, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RequestAction(Base):
+    __tablename__ = "request_actions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    request_id: Mapped[str] = mapped_column(ForeignKey("financial_requests.id", ondelete="CASCADE"), index=True)
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    action: Mapped[str] = mapped_column(String(30), index=True)
+    amount_minor: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    note: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

@@ -178,6 +178,12 @@ Migration `0008` adds one linked system payment category per credit account and 
 
 This implementation deliberately keeps three quantities distinct: the signed credit-account liability, the allocation available for card payment, and physical cash in on-budget asset accounts. None can be inferred by silently mutating another. Reconciliation follows the same rule: a mismatch is rejected unless the owner explicitly requests a visible adjustment transaction with actor and reason.
 
+### Implemented delegated-access checkpoint
+
+Migration `0009` layers configurable capabilities and resource scopes over the existing grant model. Existing grants remain compatible bundles until an owner creates an explicit profile. Profiles can independently restrict account and category IDs; every affected server query applies those restrictions, and balance/forecast access is separate from account-name visibility. A delegated category points to a household user but remains in the same authoritative budget and allocation ledger.
+
+Funding and purchase requests are durable domain records with status, version, requester, amount, category, reason, timestamps, resolution data, and immutable actions. Approval locks both the request and allocation budget, verifies the request version and source availability, then creates a balanced category-to-category allocation operation. The unique operation link and terminal request state make approval single-winner under concurrent PostgreSQL requests. Rejection, change requests, cancellation, partial approval, and deactivated-user attribution remain preserved without inventing money.
+
 ## Implementation order
 
 1. Allocation ledger, assignment compatibility, category transfers, versions/locking, rollover and invariant tests.

@@ -32,6 +32,7 @@ public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
     public let currencyCode: String
     public let effectivePermission: APIBudgetPermission
     public let allocationVersion: Int
+    public let capabilities: [String]?
 
     public init(
         id: String,
@@ -39,7 +40,8 @@ public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
         name: String,
         currencyCode: String,
         effectivePermission: APIBudgetPermission = .owner,
-        allocationVersion: Int = 0
+        allocationVersion: Int = 0,
+        capabilities: [String]? = nil
     ) {
         self.id = id
         self.householdID = householdID
@@ -47,6 +49,7 @@ public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
         self.currencyCode = currencyCode
         self.effectivePermission = effectivePermission
         self.allocationVersion = allocationVersion
+        self.capabilities = capabilities
     }
 
     enum CodingKeys: String, CodingKey {
@@ -55,6 +58,18 @@ public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
         case currencyCode = "currency_code"
         case effectivePermission = "effective_permission"
         case allocationVersion = "allocation_version"
+        case capabilities
+    }
+
+    public func can(_ capability: String) -> Bool {
+        if effectivePermission == .owner { return true }
+        if let capabilities { return capabilities.contains(capability) }
+        switch capability {
+        case "create_transaction", "request_money": return effectivePermission.canContribute
+        case "assign_money", "move_money", "reconcile_account", "manage_budget_structure", "manage_planning", "approve_request":
+            return effectivePermission.canManage
+        default: return true
+        }
     }
 }
 
@@ -155,6 +170,7 @@ public struct APIAccount: Identifiable, Decodable, Equatable, Sendable {
     public let isOnBudget: Bool
     public let isClosed: Bool
     public let reconciledBalanceMinor: Int64?
+    public let paymentCategoryID: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name
@@ -163,6 +179,7 @@ public struct APIAccount: Identifiable, Decodable, Equatable, Sendable {
         case isOnBudget = "is_on_budget"
         case isClosed = "is_closed"
         case reconciledBalanceMinor = "reconciled_balance_minor"
+        case paymentCategoryID = "payment_category_id"
     }
 }
 
@@ -216,17 +233,20 @@ public struct APICategoryCreate: Encodable, Sendable {
     public let groupID: String
     public let name: String
     public let sortOrder: Int
+    public let delegatedUserID: String?
 
-    public init(groupID: String, name: String, sortOrder: Int = 0) {
+    public init(groupID: String, name: String, sortOrder: Int = 0, delegatedUserID: String? = nil) {
         self.groupID = groupID
         self.name = name
         self.sortOrder = sortOrder
+        self.delegatedUserID = delegatedUserID
     }
 
     enum CodingKeys: String, CodingKey {
         case name
         case groupID = "group_id"
         case sortOrder = "sort_order"
+        case delegatedUserID = "delegated_user_id"
     }
 }
 
@@ -316,6 +336,9 @@ public struct APICategory: Identifiable, Decodable, Equatable, Sendable {
     public let name: String
     public let sortOrder: Int
     public let isArchived: Bool
+    public let systemType: String?
+    public let linkedAccountID: String?
+    public let delegatedUserID: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name
@@ -323,6 +346,77 @@ public struct APICategory: Identifiable, Decodable, Equatable, Sendable {
         case groupID = "group_id"
         case sortOrder = "sort_order"
         case isArchived = "is_archived"
+        case systemType = "system_type"
+        case linkedAccountID = "linked_account_id"
+        case delegatedUserID = "delegated_user_id"
+    }
+}
+
+public struct APIFinancialRequestCreate: Encodable, Sendable {
+    public let requestType: String
+    public let destinationCategoryID: String
+    public let requestedAmountMinor: Int64
+    public let reason: String
+
+    public init(
+        requestType: String = "additional_allocation",
+        destinationCategoryID: String,
+        requestedAmountMinor: Int64,
+        reason: String
+    ) {
+        self.requestType = requestType
+        self.destinationCategoryID = destinationCategoryID
+        self.requestedAmountMinor = requestedAmountMinor
+        self.reason = reason
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case reason
+        case requestType = "request_type"
+        case destinationCategoryID = "destination_category_id"
+        case requestedAmountMinor = "requested_amount_minor"
+    }
+}
+
+public struct APIRequestAction: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let actorUserID: String
+    public let action: String
+    public let amountMinor: Int64?
+    public let note: String
+    public let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, action, note
+        case actorUserID = "actor_user_id"
+        case amountMinor = "amount_minor"
+        case createdAt = "created_at"
+    }
+}
+
+public struct APIFinancialRequest: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let requesterUserID: String
+    public let requestType: String
+    public let destinationCategoryID: String
+    public let requestedAmountMinor: Int64
+    public let reason: String
+    public let status: String
+    public let version: Int
+    public let approvedAmountMinor: Int64?
+    public let sourceCategoryID: String?
+    public let allocationOperationID: String?
+    public let actions: [APIRequestAction]
+
+    enum CodingKeys: String, CodingKey {
+        case id, reason, status, version, actions
+        case requesterUserID = "requester_user_id"
+        case requestType = "request_type"
+        case destinationCategoryID = "destination_category_id"
+        case requestedAmountMinor = "requested_amount_minor"
+        case approvedAmountMinor = "approved_amount_minor"
+        case sourceCategoryID = "source_category_id"
+        case allocationOperationID = "allocation_operation_id"
     }
 }
 

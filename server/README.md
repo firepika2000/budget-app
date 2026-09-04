@@ -33,6 +33,10 @@ Every credit account owns a linked system payment category. A categorized card p
 
 `GET /accounts/{account_id}/balance` reports cleared, uncleared, and working balances derived from actual transactions. Reconciliation refuses mismatches by default. When the caller explicitly opts into an adjustment, the difference is stored as a cleared, reconciled, actor-attributed transaction rather than silently changing an account total.
 
+Legacy `view`, `contribute`, and `manage` grants remain supported as capability bundles. An owner can replace a member's bundle with an explicit access profile containing named server-side capabilities and independent account/category allowlists. Once a scope is restricted, omitted resources are deny-by-default across lists, transactions, exports, summaries, targets, schedules, forecasts, reconciliation, and allocation history. Account listing and account-balance visibility are separate capabilities so a delegated user may select an allowed spending account without seeing its household balance.
+
+Funding requests are first-class records with optimistic versions and append-only action history. A requester can target only a visible category. An approver must name the source category; full or partial approval atomically creates one balanced allocation operation and links it back to the request. A stale or repeated approval receives a conflict and cannot move the same allocation twice.
+
 Household owners can issue seven-day, single-use invitation tokens for adults or children, list members, grant only selected budgets, revoke individual grants, and deactivate members. Invitation secrets are stored only as SHA-256 hashes; revocation and deactivation affect existing sessions immediately because every protected query rechecks active membership and grants.
 
 Authentication uses 30-minute access tokens and rotating 30-day refresh tokens. Refresh secrets are stored only as SHA-256 hashes. Every refresh revokes the prior token; attempting to reuse an already rotated token revokes all remaining refresh sessions for that account. The iPhone stores both secrets in Keychain, while the desktop console keeps them only in memory.

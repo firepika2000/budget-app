@@ -186,6 +186,38 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(operation.allocationVersion, 8)
         XCTAssertEqual(operation.postings.reduce(0) { $0 + $1.amountMinor }, 0)
     }
+
+    func testFundingRequestUsesDelegatedCategoryAndExactMinorUnits() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/requests")
+            XCTAssertEqual(request.httpMethod, "POST")
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any]
+            )
+            XCTAssertEqual(json["destination_category_id"] as? String, "child-entertainment")
+            XCTAssertEqual(json["requested_amount_minor"] as? Int, 3500)
+            let response = Data(#"{"id":"r1","requester_user_id":"child","request_type":"additional_allocation","destination_category_id":"child-entertainment","requested_amount_minor":3500,"reason":"New game","status":"pending","version":0,"approved_amount_minor":null,"source_category_id":null,"allocation_operation_id":null,"actions":[{"id":"a1","actor_user_id":"child","action":"submitted","amount_minor":3500,"note":"New game","created_at":"2026-09-04T12:00:00Z"}]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+
+        let request = try await client.createFinancialRequest(
+            budgetID: "b1",
+            request: APIFinancialRequestCreate(
+                destinationCategoryID: "child-entertainment",
+                requestedAmountMinor: 3500,
+                reason: "New game"
+            ),
+            token: "secret"
+        )
+
+        XCTAssertEqual(request.status, "pending")
+        XCTAssertEqual(request.requestedAmountMinor, 3500)
+        XCTAssertEqual(request.actions.map(\.action), ["submitted"])
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -49,6 +49,13 @@ class BudgetCreate(BaseModel):
         return value.upper()
 
 
+CapabilityName = Literal[
+    "view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports", "view_allocation_history",
+    "create_transaction", "request_money", "assign_money", "move_money", "reconcile_account",
+    "manage_budget_structure", "manage_planning", "approve_request",
+]
+
+
 class BudgetResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -58,6 +65,7 @@ class BudgetResponse(BaseModel):
     currency_code: str
     effective_permission: Literal["view", "contribute", "manage", "owner"]
     allocation_version: int
+    capabilities: list[CapabilityName]
 
 
 class GrantUpsert(BaseModel):
@@ -71,6 +79,33 @@ class GrantResponse(BaseModel):
     budget_id: str
     user_id: str
     permission: str
+
+
+class AccessProfileUpsert(BaseModel):
+    capabilities: list[CapabilityName]
+    restrict_accounts: bool = False
+    account_ids: list[str] = Field(default_factory=list)
+    restrict_categories: bool = False
+    category_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_scope_flags(self) -> "AccessProfileUpsert":
+        if self.account_ids and not self.restrict_accounts:
+            raise ValueError("account_ids require restrict_accounts")
+        if self.category_ids and not self.restrict_categories:
+            raise ValueError("category_ids require restrict_categories")
+        if len(self.capabilities) != len(set(self.capabilities)):
+            raise ValueError("capabilities must be unique")
+        if len(self.account_ids) != len(set(self.account_ids)):
+            raise ValueError("account_ids must be unique")
+        if len(self.category_ids) != len(set(self.category_ids)):
+            raise ValueError("category_ids must be unique")
+        return self
+
+
+class AccessProfileResponse(AccessProfileUpsert):
+    budget_id: str
+    user_id: str
 
 
 class AccountCreate(BaseModel):
@@ -119,6 +154,7 @@ class CategoryCreate(BaseModel):
     group_id: str
     name: str = Field(min_length=1, max_length=100)
     sort_order: int = 0
+    delegated_user_id: Optional[str] = None
 
 
 class CategoryResponse(BaseModel):
@@ -132,6 +168,7 @@ class CategoryResponse(BaseModel):
     is_archived: bool
     system_type: Optional[str]
     linked_account_id: Optional[str]
+    delegated_user_id: Optional[str]
 
 
 class CategoryTargetUpsert(BaseModel):
@@ -381,6 +418,71 @@ class ReconcileResponse(BaseModel):
     reconciled_transaction_count: int
     adjustment_transaction_id: Optional[str] = None
     adjustment_amount_minor: int = 0
+
+
+class FinancialRequestCreate(BaseModel):
+    request_type: Literal[
+        "additional_allocation", "purchase_approval", "savings_withdrawal",
+        "category_transfer", "large_purchase", "allowance_exception",
+    ] = "additional_allocation"
+    destination_category_id: str
+    requested_amount_minor: int = Field(gt=0, le=MAX_INT64)
+    reason: str = Field(default="", max_length=500)
+
+
+class RequestActionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    actor_user_id: str
+    action: str
+    amount_minor: Optional[int]
+    note: str
+    created_at: datetime
+
+
+class FinancialRequestResponse(BaseModel):
+    id: str
+    household_id: str
+    budget_id: str
+    requester_user_id: str
+    request_type: str
+    destination_category_id: str
+    requested_amount_minor: int
+    reason: str
+    status: str
+    version: int
+    approved_amount_minor: Optional[int]
+    source_category_id: Optional[str]
+    allocation_operation_id: Optional[str]
+    created_at: datetime
+    resolved_at: Optional[datetime]
+    actions: list[RequestActionResponse]
+
+
+class FinancialRequestDecision(BaseModel):
+    decision: Literal["approve", "reject", "changes_requested"]
+    expected_request_version: int = Field(ge=0)
+    approved_amount_minor: Optional[int] = Field(default=None, gt=0, le=MAX_INT64)
+    source_category_id: Optional[str] = None
+    note: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def validate_approval(self) -> "FinancialRequestDecision":
+        if self.decision == "approve" and (
+            self.approved_amount_minor is None or self.source_category_id is None
+        ):
+            raise ValueError("approval requires amount and source category")
+        if self.decision != "approve" and (
+            self.approved_amount_minor is not None or self.source_category_id is not None
+        ):
+            raise ValueError("only approvals identify funding")
+        return self
+
+
+class FinancialRequestCancel(BaseModel):
+    expected_request_version: int = Field(ge=0)
+    note: str = Field(default="", max_length=500)
 
 
 class CategoryMonthSummary(BaseModel):

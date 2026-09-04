@@ -9,6 +9,7 @@ struct BudgetDetailView: View {
     @State private var categories: [APICategory] = []
     @State private var categoryGroups: [APICategoryGroup] = []
     @State private var transactions: [APITransaction] = []
+    @State private var requests: [APIFinancialRequest] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showingTransactionEntry = false
@@ -16,17 +17,19 @@ struct BudgetDetailView: View {
     @State private var showingAccountCreation = false
     @State private var showingCategoryCreation = false
     @State private var showingAllocationTransfer = false
+    @State private var showingFundingRequest = false
 
     var body: some View {
         List {
             monthSection
             planSection
+            requestsSection
             accountsSection
             transactionsSection
         }
         .navigationTitle(budget.name)
         .toolbar {
-            if budget.effectivePermission.canContribute {
+            if budget.can("create_transaction") {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingTransactionEntry = true } label: {
                         Label("New transaction", systemImage: "plus")
@@ -34,12 +37,24 @@ struct BudgetDetailView: View {
                     .disabled(accounts.filter { !$0.isClosed }.isEmpty)
                 }
             }
-            if budget.effectivePermission.canManage {
+            if budget.can("request_money") {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showingFundingRequest = true } label: {
+                        Label("Request money", systemImage: "hand.raised")
+                    }
+                    .disabled(categories.isEmpty)
+                }
+            }
+            if budget.can("manage_budget_structure") || budget.can("move_money") {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button("Add account", systemImage: "wallet.pass") { showingAccountCreation = true }
-                        Button("Add category", systemImage: "folder.badge.plus") { showingCategoryCreation = true }
-                        Button("Move money", systemImage: "arrow.left.arrow.right") { showingAllocationTransfer = true }
+                        if budget.can("manage_budget_structure") {
+                            Button("Add account", systemImage: "wallet.pass") { showingAccountCreation = true }
+                            Button("Add category", systemImage: "folder.badge.plus") { showingCategoryCreation = true }
+                        }
+                        if budget.can("move_money") {
+                            Button("Move money", systemImage: "arrow.left.arrow.right") { showingAllocationTransfer = true }
+                        }
                     } label: {
                         Label("Budget setup", systemImage: "ellipsis.circle")
                     }
@@ -110,6 +125,17 @@ struct BudgetDetailView: View {
                 )
             }
         }
+        .sheet(isPresented: $showingFundingRequest) {
+            if let serverURL = session.serverURL, let token = session.token {
+                FundingRequestView(
+                    budget: budget,
+                    categories: categories,
+                    serverURL: serverURL,
+                    token: token,
+                    onSaved: load
+                )
+            }
+        }
     }
 
     @ViewBuilder
@@ -133,7 +159,7 @@ struct BudgetDetailView: View {
                     CategoryMonthRow(category: category, formatted: format(category.availableMinor), assigned: format(category.assignedMinor), activity: format(category.activityMinor))
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            if budget.effectivePermission.canManage {
+                            if budget.can("assign_money") {
                                 editingCategory = category
                             }
                         }
@@ -154,6 +180,30 @@ struct BudgetDetailView: View {
                     if account.isClosed {
                         Spacer()
                         Text("Closed").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var requestsSection: some View {
+        if budget.can("request_money") || budget.can("approve_request") {
+            Section("Requests") {
+                if requests.isEmpty {
+                    Text("No requests").foregroundStyle(.secondary)
+                } else {
+                    ForEach(requests) { request in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(request.reason.isEmpty ? "Funding request" : request.reason)
+                                Spacer()
+                                Text(format(request.approvedAmountMinor ?? request.requestedAmountMinor))
+                            }
+                            Text(request.status.replacingOccurrences(of: "_", with: " ").capitalized)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -213,6 +263,9 @@ struct BudgetDetailView: View {
                 loadedCategoryGroups,
                 loadedSummary
             )
+            if budget.can("request_money") || budget.can("approve_request") {
+                requests = (try? await client.financialRequests(budgetID: budget.id, token: token)) ?? []
+            }
         } catch {
             errorMessage = error.localizedDescription
         }

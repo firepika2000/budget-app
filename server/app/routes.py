@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .access import (
+    effective_capabilities,
     effective_budget_permission,
     find_visible_budget,
     is_household_owner,
@@ -12,8 +13,23 @@ from .access import (
 from .config import Settings
 from .database import get_db
 from .dependencies import get_current_user, get_settings
-from .models import Budget, BudgetGrant, Household, HouseholdRole, Membership, SetupState, User
+from .models import (
+    Account,
+    Budget,
+    BudgetAccessProfile,
+    BudgetGrant,
+    CapabilityGrant,
+    Category,
+    Household,
+    HouseholdRole,
+    Membership,
+    ResourceGrant,
+    SetupState,
+    User,
+)
 from .schemas import (
+    AccessProfileResponse,
+    AccessProfileUpsert,
     BootstrapRequest,
     BudgetCreate,
     BudgetResponse,
@@ -149,6 +165,7 @@ def budget_response(db: Session, user: User, budget: Budget) -> dict:
         "currency_code": budget.currency_code,
         "effective_permission": permission,
         "allocation_version": budget.allocation_version,
+        "capabilities": sorted(effective_capabilities(db, user, budget)),
     }
 
 
@@ -206,4 +223,97 @@ def revoke_grant(
     ))
     if result.rowcount == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grant not found")
+    db.execute(delete(CapabilityGrant).where(
+        CapabilityGrant.budget_id == budget_id,
+        CapabilityGrant.user_id == member_user_id,
+    ))
+    db.execute(delete(ResourceGrant).where(
+        ResourceGrant.budget_id == budget_id,
+        ResourceGrant.user_id == member_user_id,
+    ))
+    db.execute(delete(BudgetAccessProfile).where(
+        BudgetAccessProfile.budget_id == budget_id,
+        BudgetAccessProfile.user_id == member_user_id,
+    ))
     db.commit()
+
+
+@router.put(
+    "/budgets/{budget_id}/access/{member_user_id}",
+    response_model=AccessProfileResponse,
+)
+def configure_access_profile(
+    budget_id: str,
+    member_user_id: str,
+    body: AccessProfileUpsert,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AccessProfileResponse:
+    budget = db.get(Budget, budget_id)
+    if budget is None or not is_household_owner(db, user, budget.household_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
+    member = db.scalar(select(Membership).where(
+        Membership.household_id == budget.household_id,
+        Membership.user_id == member_user_id,
+        Membership.is_active.is_(True),
+    ))
+    if member is None:
+        raise HTTPException(status_code=422, detail="User is not an active household member")
+    if not db.scalar(select(BudgetGrant.id).where(
+        BudgetGrant.budget_id == budget_id,
+        BudgetGrant.user_id == member_user_id,
+    )):
+        raise HTTPException(status_code=422, detail="User needs a budget grant before scoped access")
+    valid_accounts = set(db.scalars(select(Account.id).where(
+        Account.budget_id == budget_id,
+        Account.id.in_(body.account_ids),
+    ))) if body.account_ids else set()
+    valid_categories = set(db.scalars(select(Category.id).where(
+        Category.budget_id == budget_id,
+        Category.id.in_(body.category_ids),
+    ))) if body.category_ids else set()
+    if valid_accounts != set(body.account_ids) or valid_categories != set(body.category_ids):
+        raise HTTPException(status_code=422, detail="Scoped resources must belong to the budget")
+
+    profile = db.scalar(select(BudgetAccessProfile).where(
+        BudgetAccessProfile.budget_id == budget_id,
+        BudgetAccessProfile.user_id == member_user_id,
+    ))
+    if profile is None:
+        profile = BudgetAccessProfile(
+            budget_id=budget_id,
+            user_id=member_user_id,
+            updated_by_user_id=user.id,
+        )
+        db.add(profile)
+    profile.restrict_accounts = body.restrict_accounts
+    profile.restrict_categories = body.restrict_categories
+    profile.updated_by_user_id = user.id
+    db.execute(delete(CapabilityGrant).where(
+        CapabilityGrant.budget_id == budget_id,
+        CapabilityGrant.user_id == member_user_id,
+    ))
+    db.execute(delete(ResourceGrant).where(
+        ResourceGrant.budget_id == budget_id,
+        ResourceGrant.user_id == member_user_id,
+    ))
+    db.add_all([
+        CapabilityGrant(budget_id=budget_id, user_id=member_user_id, capability=capability)
+        for capability in body.capabilities
+    ])
+    db.add_all([
+        ResourceGrant(
+            budget_id=budget_id,
+            user_id=member_user_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+        )
+        for resource_type, ids in (("account", body.account_ids), ("category", body.category_ids))
+        for resource_id in ids
+    ])
+    db.commit()
+    return AccessProfileResponse(
+        budget_id=budget_id,
+        user_id=member_user_id,
+        **body.model_dump(),
+    )

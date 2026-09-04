@@ -58,20 +58,24 @@
         <h3>No budget selected</h3><p>Create your first budget or choose one from the sidebar.</p>
       </div>
       <div id="budget-content" class="hidden">
-        <section class="metric-grid">
+        <section id="metrics-panel" class="metric-grid">
           <article class="metric hero-metric"><span>Ready to assign</span><strong id="ready-value">—</strong></article>
           <article class="metric"><span>Assigned this month</span><strong id="assigned-value">—</strong></article>
           <article class="metric"><span>Overspent</span><strong id="overspent-value">—</strong></article>
         </section>
         <div class="dashboard-grid">
-          <section class="panel plan-panel">
+          <section id="plan-panel" class="panel plan-panel">
             <div class="panel-heading"><div><p class="eyebrow">MONTHLY PLAN</p><h3>Categories</h3></div><div><button id="move-money-button" class="quiet">Move money</button> <button id="add-category-button" class="quiet">Add category</button></div></div>
             <div class="table-wrap"><table><thead><tr><th>Category</th><th>Assigned</th><th>Activity</th><th>Available</th><th></th></tr></thead><tbody id="category-table"></tbody></table></div>
           </section>
-          <section class="panel accounts-panel"><div class="panel-heading"><div><p class="eyebrow">CASH & CREDIT</p><h3>Accounts</h3></div><button id="add-account-button" class="quiet">Add</button></div><div id="account-list"></div></section>
-          <section class="panel transaction-panel">
+          <section id="accounts-panel" class="panel accounts-panel"><div class="panel-heading"><div><p class="eyebrow">CASH & CREDIT</p><h3>Accounts</h3></div><button id="add-account-button" class="quiet">Add</button></div><div id="account-list"></div></section>
+          <section id="transactions-panel" class="panel transaction-panel">
             <div class="panel-heading"><div><p class="eyebrow">LEDGER</p><h3>Recent transactions</h3></div><div><button id="export-button" class="quiet compact">Export CSV</button> <button id="add-transaction-button" class="primary compact">New transaction</button></div></div>
             <div id="transaction-list"></div>
+          </section>
+          <section id="requests-panel" class="panel hidden">
+            <div class="panel-heading"><div><p class="eyebrow">DELEGATED MONEY</p><h3>Requests</h3></div><button id="new-request-button" class="quiet">Request money</button></div>
+            <div id="request-list"></div>
           </section>
           <section id="family-panel" class="panel family-panel hidden">
             <div class="panel-heading"><div><p class="eyebrow">OWNER CONTROLS</p><h3>Family access</h3></div><button id="invite-button" class="quiet">Invite</button></div>
