@@ -147,6 +147,63 @@ class Category(Base):
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class CategoryTarget(Base):
+    __tablename__ = "category_targets"
+    __table_args__ = (
+        UniqueConstraint("category_id"),
+        CheckConstraint("target_amount_minor > 0", name="ck_category_target_amount_positive"),
+        CheckConstraint(
+            "minimum_contribution_minor >= 0",
+            name="ck_category_target_minimum_nonnegative",
+        ),
+        CheckConstraint("priority >= 0 AND priority <= 100", name="ck_category_target_priority_range"),
+        CheckConstraint(
+            "recurrence_months IS NULL OR recurrence_months > 0",
+            name="ck_category_target_recurrence_positive",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="CASCADE"), index=True)
+    target_type: Mapped[str] = mapped_column(String(30))
+    target_amount_minor: Mapped[int] = mapped_column(BigInteger)
+    target_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    recurrence_months: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    minimum_contribution_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    priority: Mapped[int] = mapped_column(Integer, default=50)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class ScheduledTransaction(Base):
+    __tablename__ = "scheduled_transactions"
+    __table_args__ = (
+        CheckConstraint("interval_count > 0", name="ck_scheduled_interval_positive"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), index=True)
+    destination_account_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("accounts.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
+    category_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("categories.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(150))
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    next_date: Mapped[date] = mapped_column(Date, index=True)
+    recurrence_unit: Mapped[str] = mapped_column(String(20))
+    interval_count: Mapped[int] = mapped_column(Integer, default=1)
+    memo: Mapped[str] = mapped_column(String(500), default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 class MonthlyAssignment(Base):
     __tablename__ = "monthly_assignments"
     __table_args__ = (UniqueConstraint("category_id", "month"),)

@@ -122,6 +122,107 @@ class CategoryResponse(BaseModel):
     is_archived: bool
 
 
+class CategoryTargetUpsert(BaseModel):
+    target_type: Literal["monthly_funding", "savings_balance", "target_by_date", "recurring_expense"]
+    target_amount_minor: int = Field(gt=0, le=MAX_INT64)
+    target_date: Optional[date] = None
+    recurrence_months: Optional[int] = Field(default=None, gt=0, le=1200)
+    minimum_contribution_minor: int = Field(default=0, ge=0, le=MAX_INT64)
+    priority: int = Field(default=50, ge=0, le=100)
+    is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_target_shape(self) -> "CategoryTargetUpsert":
+        if self.target_type in {"target_by_date", "recurring_expense"} and self.target_date is None:
+            raise ValueError("target_date is required for dated targets")
+        if self.target_type == "recurring_expense" and self.recurrence_months is None:
+            raise ValueError("recurrence_months is required for recurring expense targets")
+        return self
+
+
+class CategoryTargetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    budget_id: str
+    category_id: str
+    target_type: str
+    target_amount_minor: int
+    target_date: Optional[date]
+    recurrence_months: Optional[int]
+    minimum_contribution_minor: int
+    priority: int
+    is_active: bool
+
+
+class ScheduledTransactionCreate(BaseModel):
+    account_id: str
+    destination_account_id: Optional[str] = None
+    category_id: Optional[str] = None
+    name: str = Field(min_length=1, max_length=150)
+    amount_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
+    next_date: date
+    recurrence_unit: Literal["once", "days", "weeks", "months", "years"]
+    interval_count: int = Field(default=1, gt=0, le=365)
+    memo: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def validate_schedule_shape(self) -> "ScheduledTransactionCreate":
+        if self.amount_minor == 0:
+            raise ValueError("scheduled amount must be nonzero")
+        if self.destination_account_id is not None:
+            if self.destination_account_id == self.account_id:
+                raise ValueError("scheduled transfer accounts must be different")
+            if self.category_id is not None or self.amount_minor < 0:
+                raise ValueError("scheduled transfers use a positive amount and no category")
+        return self
+
+
+class ScheduledTransactionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    budget_id: str
+    account_id: str
+    destination_account_id: Optional[str]
+    category_id: Optional[str]
+    name: str
+    amount_minor: int
+    next_date: date
+    recurrence_unit: str
+    interval_count: int
+    memo: str
+    is_active: bool
+
+
+class ForecastOccurrence(BaseModel):
+    scheduled_transaction_id: str
+    name: str
+    occurred_on: date
+    account_id: str
+    destination_account_id: Optional[str]
+    category_id: Optional[str]
+    amount_minor: int
+
+
+class ForecastAccountBalance(BaseModel):
+    account_id: str
+    name: str
+    actual_balance_minor: int
+    projected_balance_minor: int
+
+
+class ForecastResponse(BaseModel):
+    as_of: date
+    through: date
+    currency_code: str
+    actual_total_on_budget_minor: int
+    projected_total_on_budget_minor: int
+    lowest_projected_total_minor: int
+    accounts: list[ForecastAccountBalance]
+    occurrences: list[ForecastOccurrence]
+
+
 class AssignmentUpsert(BaseModel):
     month: date
     assigned_minor: int = Field(ge=MIN_INT64 + 1, le=MAX_INT64)
@@ -274,6 +375,11 @@ class CategoryMonthSummary(BaseModel):
     carried_available_minor: int
     available_minor: int
     is_overspent: bool
+    target_type: Optional[str] = None
+    target_amount_minor: Optional[int] = None
+    target_date: Optional[date] = None
+    recommended_contribution_minor: int = 0
+    underfunded_minor: int = 0
 
 
 class MonthSummaryResponse(BaseModel):

@@ -27,6 +27,7 @@ from .models import (
     BudgetPermission,
     Category,
     CategoryGroup,
+    CategoryTarget,
     Transaction,
     TransactionSplit,
     User,
@@ -51,6 +52,7 @@ from .schemas import (
     TransferCreate,
     TransferResponse,
 )
+from .planning import target_funding
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
@@ -510,6 +512,10 @@ def month_summary(
         Category.budget_id == budget_id,
         Category.is_archived.is_(False),
     ).order_by(Category.group_id, Category.sort_order, Category.name)))
+    targets = {target.category_id: target for target in db.scalars(select(CategoryTarget).where(
+        CategoryTarget.budget_id == budget_id,
+        CategoryTarget.is_active.is_(True),
+    ))}
     allocation_rows = db.execute(
         select(AllocationPosting, AllocationOperation)
         .join(AllocationOperation, AllocationOperation.id == AllocationPosting.operation_id)
@@ -567,6 +573,13 @@ def month_summary(
         available = carried + assigned + activity
         if available < 0:
             total_overspent += -available
+        category_target = targets.get(category.id)
+        funding = target_funding(
+            category_target,
+            month=month,
+            assigned_minor=assigned,
+            available_minor=available,
+        ) if category_target else None
         rows.append(CategoryMonthSummary(
             category_id=category.id,
             name=category.name,
@@ -575,6 +588,11 @@ def month_summary(
             carried_available_minor=carried,
             available_minor=available,
             is_overspent=available < 0,
+            target_type=category_target.target_type if category_target else None,
+            target_amount_minor=category_target.target_amount_minor if category_target else None,
+            target_date=category_target.target_date if category_target else None,
+            recommended_contribution_minor=funding.recommended_contribution_minor if funding else 0,
+            underfunded_minor=funding.underfunded_minor if funding else 0,
         ))
     return MonthSummaryResponse(
         month=month,

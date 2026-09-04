@@ -27,6 +27,8 @@ The versioned API supports budgets, explicit grants, accounts, category groups, 
 
 Assignments and category-to-category moves are persisted as immutable balanced allocation operations. Every operation records its actor and reason, and its postings sum to zero between Ready to Assign and categories. The API uses a budget allocation version plus row locking to reject stale concurrent plan edits. Existing `monthly_assignments` are preserved and backfilled by migration `0006`; new calculations use the allocation ledger.
 
+Category targets support monthly funding, savings balances, target-by-date goals, and recurring expenses. Target recommendations are derived in monthly summaries without changing allocations. Scheduled transactions and transfers are planning-only records; `/forecast` projects account balances for up to one year, while actual balances, activity, and Ready to Assign continue to use only posted transactions and allocation operations.
+
 Household owners can issue seven-day, single-use invitation tokens for adults or children, list members, grant only selected budgets, revoke individual grants, and deactivate members. Invitation secrets are stored only as SHA-256 hashes; revocation and deactivation affect existing sessions immediately because every protected query rechecks active membership and grants.
 
 Authentication uses 30-minute access tokens and rotating 30-day refresh tokens. Refresh secrets are stored only as SHA-256 hashes. Every refresh revokes the prior token; attempting to reuse an already rotated token revokes all remaining refresh sessions for that account. The iPhone stores both secrets in Keychain, while the desktop console keeps them only in memory.
