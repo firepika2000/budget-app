@@ -1,7 +1,10 @@
+import csv
 from datetime import date, datetime, timezone
+from io import StringIO
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -64,6 +67,60 @@ def list_accounts(
 ) -> list[Account]:
     require_budget(db, user, budget_id, BudgetPermission.VIEW)
     return list(db.scalars(select(Account).where(Account.budget_id == budget_id).order_by(Account.name)))
+
+
+def safe_csv_text(value: str) -> str:
+    """Prevent spreadsheet programs from treating user-entered text as a formula."""
+    return f"'{value}" if value.startswith(("=", "+", "-", "@")) else value
+
+
+@router.get("/export.csv")
+def export_budget_csv(
+    budget_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    budget = require_budget(db, user, budget_id, BudgetPermission.VIEW)
+    accounts = {
+        item.id: item.name for item in db.scalars(select(Account).where(Account.budget_id == budget_id))
+    }
+    categories = {
+        item.id: item.name for item in db.scalars(select(Category).where(Category.budget_id == budget_id))
+    }
+    transactions = list(db.scalars(
+        select(Transaction)
+        .options(selectinload(Transaction.splits))
+        .where(Transaction.budget_id == budget_id)
+        .order_by(Transaction.occurred_on, Transaction.created_at, Transaction.id)
+    ))
+    output = StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow([
+        "date", "account", "payee", "category", "amount_minor", "currency", "memo",
+        "cleared", "reconciled", "transaction_id", "split_id",
+    ])
+    for transaction in transactions:
+        rows = transaction.splits or [None]
+        for split in rows:
+            category_id = split.category_id if split else transaction.category_id
+            writer.writerow([
+                transaction.occurred_on.isoformat(),
+                safe_csv_text(accounts.get(transaction.account_id, "")),
+                safe_csv_text(transaction.payee_name),
+                safe_csv_text(categories.get(category_id, "")),
+                split.amount_minor if split else transaction.amount_minor,
+                budget.currency_code,
+                safe_csv_text(split.memo if split else transaction.memo),
+                str(transaction.is_cleared).lower(),
+                str(transaction.is_reconciled).lower(),
+                transaction.id,
+                split.id if split else "",
+            ])
+    return StreamingResponse(
+        iter(["\ufeff", output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="budget-export.csv"'},
+    )
 
 
 @router.post("/accounts", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)

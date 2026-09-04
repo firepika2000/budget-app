@@ -33,3 +33,23 @@ Copy `.env.example` to `.env`, replace both example values with independently ge
 ## Desktop administration
 
 Open `/admin` on the same server. The responsive owner console supports first-time setup, sign-in, invitation acceptance, budget/account/category creation, transaction entry, monthly assignment editing, and family access administration. Its bearer token remains in memory rather than browser storage, and the page uses a restrictive Content Security Policy with no third-party scripts.
+
+## Exports and encrypted backups
+
+Anyone with view permission can download a budget's ledger from `GET /api/v1/budgets/{budget_id}/export.csv`. The export includes exact minor-unit amounts, currency, split rows, clearing state, and stable IDs. User-entered text is escaped to prevent spreadsheet formula injection.
+
+For a full disaster-recovery backup, install [age](https://age-encryption.org) on the Docker host and run:
+
+```sh
+./scripts/backup.sh
+```
+
+The script streams `pg_dump` through gzip and passphrase encryption without writing an unencrypted intermediate file. Backups default to `server/backups/`, which is ignored by Git. Store copies away from the server and keep the passphrase separately.
+
+Restore is intentionally explicit because it replaces current database contents:
+
+```sh
+./scripts/restore.sh --yes /path/to/budget-YYYYMMDDTHHMMSSZ.sql.gz.age
+```
+
+Test recovery periodically on a non-production instance. Database backups do not contain the JWT secret; preserve the deployment `.env` separately in a secure password manager.

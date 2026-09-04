@@ -3,6 +3,7 @@
 DerivedData/
 *.xcuserstate
 .env
+server/backups/
 data/
 .venv/
 __pycache__/

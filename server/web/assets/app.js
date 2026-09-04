@@ -205,6 +205,21 @@
     let amount = Math.abs(parseMinor(values.amount)); if (values.direction === "expense") amount = -amount;
     await api(`/budgets/${state.selected.id}/transactions`, { method: "POST", body: JSON.stringify({ account_id: values.account, category_id: values.category || null, amount_minor: amount, occurred_on: values.date, payee_name: values.payee, memo: values.memo }) }); await selectBudget(state.selected.id); toast("Transaction saved");
   }));
+  $("export-button").addEventListener("click", async () => {
+    try {
+      const response = await fetch(`/api/v1/budgets/${state.selected.id}/export.csv`, {
+        headers: { Authorization: `Bearer ${state.token}` },
+      });
+      if (!response.ok) throw new Error(`Export failed (${response.status})`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${state.selected.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-export.csv`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast("CSV export downloaded");
+    } catch (error) { toast(error.message, true); }
+  });
   $("invite-button").addEventListener("click", () => openFields("Invite family member", [{ id: "email", label: "Email", type: "email" }, { id: "role", label: "Role", type: "select", options: [["adult", "Adult"], ["child", "Child"]] }], async (values) => {
     const household = state.me.households.find((item) => item.id === state.selected.household_id);
     const invitation = await api(`/households/${household.id}/invitations`, { method: "POST", body: JSON.stringify(values) });
