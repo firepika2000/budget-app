@@ -51,6 +51,7 @@ class BudgetResponse(BaseModel):
     household_id: str
     name: str
     currency_code: str
+    effective_permission: Literal["view", "contribute", "manage", "owner"]
 
 
 class GrantUpsert(BaseModel):

@@ -8,23 +8,39 @@ struct TokenResponse: Decodable {
     }
 }
 
+public enum APIBudgetPermission: String, Decodable, Equatable, Sendable {
+    case view, contribute, manage, owner
+
+    public var canContribute: Bool { self != .view }
+    public var canManage: Bool { self == .manage || self == .owner }
+}
+
 public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let householdID: String
     public let name: String
     public let currencyCode: String
+    public let effectivePermission: APIBudgetPermission
 
-    public init(id: String, householdID: String, name: String, currencyCode: String) {
+    public init(
+        id: String,
+        householdID: String,
+        name: String,
+        currencyCode: String,
+        effectivePermission: APIBudgetPermission = .owner
+    ) {
         self.id = id
         self.householdID = householdID
         self.name = name
         self.currencyCode = currencyCode
+        self.effectivePermission = effectivePermission
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name
         case householdID = "household_id"
         case currencyCode = "currency_code"
+        case effectivePermission = "effective_permission"
     }
 }
 
@@ -150,5 +166,84 @@ public struct APIMonthSummary: Decodable, Equatable, Sendable {
         case readyToAssignMinor = "ready_to_assign_minor"
         case totalAssignedMinor = "total_assigned_minor"
         case totalOverspentMinor = "total_overspent_minor"
+    }
+}
+
+public struct APICategory: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let budgetID: String
+    public let groupID: String
+    public let name: String
+    public let sortOrder: Int
+    public let isArchived: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case budgetID = "budget_id"
+        case groupID = "group_id"
+        case sortOrder = "sort_order"
+        case isArchived = "is_archived"
+    }
+}
+
+public struct APITransactionCreate: Encodable, Equatable, Sendable {
+    public let accountID: String
+    public let categoryID: String?
+    public let amountMinor: Int64
+    public let occurredOn: String
+    public let payeeName: String
+    public let memo: String
+    public let isCleared: Bool
+
+    public init(
+        accountID: String,
+        categoryID: String?,
+        amountMinor: Int64,
+        occurredOn: String,
+        payeeName: String,
+        memo: String = "",
+        isCleared: Bool = false
+    ) {
+        self.accountID = accountID
+        self.categoryID = categoryID
+        self.amountMinor = amountMinor
+        self.occurredOn = occurredOn
+        self.payeeName = payeeName
+        self.memo = memo
+        self.isCleared = isCleared
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case memo
+        case accountID = "account_id"
+        case categoryID = "category_id"
+        case amountMinor = "amount_minor"
+        case occurredOn = "occurred_on"
+        case payeeName = "payee_name"
+        case isCleared = "is_cleared"
+    }
+}
+
+struct APIAssignmentUpdate: Encodable {
+    let month: String
+    let assignedMinor: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case month
+        case assignedMinor = "assigned_minor"
+    }
+}
+
+public struct APIAssignment: Decodable, Equatable, Sendable {
+    public let budgetID: String
+    public let categoryID: String
+    public let month: String
+    public let assignedMinor: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case month
+        case budgetID = "budget_id"
+        case categoryID = "category_id"
+        case assignedMinor = "assigned_minor"
     }
 }

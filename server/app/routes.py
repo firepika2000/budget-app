@@ -3,7 +3,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .access import find_visible_budget, is_household_owner, visible_budgets_query
+from .access import (
+    effective_budget_permission,
+    find_visible_budget,
+    is_household_owner,
+    visible_budgets_query,
+)
 from .config import Settings
 from .database import get_db
 from .dependencies import get_current_user, get_settings
@@ -76,8 +81,9 @@ def login(
 def list_budgets(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> list[Budget]:
-    return list(db.scalars(visible_budgets_query(user).order_by(Budget.name, Budget.id)))
+) -> list[dict]:
+    budgets = list(db.scalars(visible_budgets_query(user).order_by(Budget.name, Budget.id)))
+    return [budget_response(db, user, budget) for budget in budgets]
 
 
 @router.post("/budgets", response_model=BudgetResponse, status_code=status.HTTP_201_CREATED)
@@ -85,7 +91,7 @@ def create_budget(
     body: BudgetCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> Budget:
+) -> dict:
     if not is_household_owner(db, user, body.household_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
     budget = Budget(
@@ -96,7 +102,7 @@ def create_budget(
     db.add(budget)
     db.commit()
     db.refresh(budget)
-    return budget
+    return budget_response(db, user, budget)
 
 
 @router.get("/budgets/{budget_id}", response_model=BudgetResponse)
@@ -104,11 +110,24 @@ def get_budget(
     budget_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> Budget:
+) -> dict:
     budget = find_visible_budget(db, user, budget_id)
     if budget is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
-    return budget
+    return budget_response(db, user, budget)
+
+
+def budget_response(db: Session, user: User, budget: Budget) -> dict:
+    permission = effective_budget_permission(db, user, budget)
+    if permission is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
+    return {
+        "id": budget.id,
+        "household_id": budget.household_id,
+        "name": budget.name,
+        "currency_code": budget.currency_code,
+        "effective_permission": permission,
+    }
 
 
 @router.put("/budgets/{budget_id}/grants", response_model=GrantResponse)

@@ -10,6 +10,7 @@
 		1C7D1E60B9E1C0ED2B68695C /* BudgetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 345B8B1D2F7640B5BD488CC5 /* BudgetApp.swift */; };
 		75327D5040AB839F991E0054 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEFFDD801DC18A01D2C2C6FF /* KeychainStore.swift */; };
 		924CF4BFFBE2D5F48825FA53 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 601308601949744C902D3365 /* RootView.swift */; };
+		983A5654DFC35D2D8A62DEF3 /* EditingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0E14E75380CB2C219F61828 /* EditingViews.swift */; };
 		DF86911DCC440FCFE5E1EAE5 /* BudgetDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1E817EBE7BCD6E10FF00EB /* BudgetDetailView.swift */; };
 		EDE2F76D4FC3C4F524640DA1 /* BudgetAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 8DA19D636EEAAB0BA449F759 /* BudgetAPI */; };
 		F7F6130787A7D2A0DAF13030 /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10F6752E4E2DAAB5F30C155 /* AppSession.swift */; };
@@ -32,6 +33,7 @@
 		5D4070DC93D13B19958B946B /* BudgetApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = BudgetApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		601308601949744C902D3365 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		9A1E817EBE7BCD6E10FF00EB /* BudgetDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetDetailView.swift; sourceTree = "<group>"; };
+		B0E14E75380CB2C219F61828 /* EditingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditingViews.swift; sourceTree = "<group>"; };
 		B10F6752E4E2DAAB5F30C155 /* AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSession.swift; sourceTree = "<group>"; };
 		DEFFDD801DC18A01D2C2C6FF /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -88,6 +90,7 @@
 				B10F6752E4E2DAAB5F30C155 /* AppSession.swift */,
 				345B8B1D2F7640B5BD488CC5 /* BudgetApp.swift */,
 				9A1E817EBE7BCD6E10FF00EB /* BudgetDetailView.swift */,
+				B0E14E75380CB2C219F61828 /* EditingViews.swift */,
 				DEFFDD801DC18A01D2C2C6FF /* KeychainStore.swift */,
 				601308601949744C902D3365 /* RootView.swift */,
 			);
@@ -186,6 +189,7 @@
 				F7F6130787A7D2A0DAF13030 /* AppSession.swift in Sources */,
 				1C7D1E60B9E1C0ED2B68695C /* BudgetApp.swift in Sources */,
 				DF86911DCC440FCFE5E1EAE5 /* BudgetDetailView.swift in Sources */,
+				983A5654DFC35D2D8A62DEF3 /* EditingViews.swift in Sources */,
 				75327D5040AB839F991E0054 /* KeychainStore.swift in Sources */,
 				924CF4BFFBE2D5F48825FA53 /* RootView.swift in Sources */,
 			);

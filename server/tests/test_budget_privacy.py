@@ -16,6 +16,7 @@ def test_owner_can_create_and_list_budget(client, owner_token, session_factory):
     assert created.json()["currency_code"] == "USD"
     listed = client.get("/api/v1/budgets", headers=auth(owner_token))
     assert [item["name"] for item in listed.json()] == ["Family"]
+    assert listed.json()[0]["effective_permission"] == "owner"
 
 
 def test_child_cannot_discover_sibling_budget_without_grant(
@@ -120,6 +121,7 @@ def test_only_owner_can_grant_budget_access(client, owner_token, session_factory
     assert owner_grant.status_code == 200
     visible = client.get("/api/v1/budgets", headers=auth(member_token)).json()
     assert [item["id"] for item in visible] == [budget_id]
+    assert visible[0]["effective_permission"] == "view"
 
     forbidden_grant = client.put(
         f"/api/v1/budgets/{budget_id}/grants",

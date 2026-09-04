@@ -67,3 +67,16 @@ def has_budget_permission(
         BudgetGrant.user_id == user.id,
     ))
     return grant is not None and PERMISSION_LEVEL[grant.permission] >= PERMISSION_LEVEL[required.value]
+
+
+def effective_budget_permission(db: Session, user: User, budget: Budget) -> str | None:
+    if is_household_owner(db, user, budget.household_id):
+        return "owner"
+    membership = db.scalar(active_membership_query(user.id, budget.household_id))
+    if membership is None:
+        return None
+    grant = db.scalar(select(BudgetGrant).where(
+        BudgetGrant.budget_id == budget.id,
+        BudgetGrant.user_id == user.id,
+    ))
+    return grant.permission if grant is not None else None

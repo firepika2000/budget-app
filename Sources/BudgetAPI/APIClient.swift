@@ -70,6 +70,38 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/transactions", token: token)
     }
 
+    public func categories(budgetID: String, token: String) async throws -> [APICategory] {
+        try await send(path: "api/v1/budgets/\(budgetID)/categories", token: token)
+    }
+
+    public func createTransaction(
+        budgetID: String,
+        transaction: APITransactionCreate,
+        token: String
+    ) async throws -> APITransaction {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/transactions",
+            method: "POST",
+            token: token,
+            body: transaction
+        )
+    }
+
+    public func updateAssignment(
+        budgetID: String,
+        categoryID: String,
+        month: String,
+        assignedMinor: Int64,
+        token: String
+    ) async throws -> APIAssignment {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/assignment",
+            method: "PUT",
+            token: token,
+            body: APIAssignmentUpdate(month: month, assignedMinor: assignedMinor)
+        )
+    }
+
     public func monthSummary(
         budgetID: String,
         month: String,

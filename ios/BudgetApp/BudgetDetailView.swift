@@ -6,9 +6,12 @@ struct BudgetDetailView: View {
     @EnvironmentObject private var session: AppSession
     @State private var summary: APIMonthSummary?
     @State private var accounts: [APIAccount] = []
+    @State private var categories: [APICategory] = []
     @State private var transactions: [APITransaction] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var showingTransactionEntry = false
+    @State private var editingCategory: APICategoryMonth?
 
     var body: some View {
         List {
@@ -18,6 +21,16 @@ struct BudgetDetailView: View {
             transactionsSection
         }
         .navigationTitle(budget.name)
+        .toolbar {
+            if budget.effectivePermission.canContribute {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showingTransactionEntry = true } label: {
+                        Label("New transaction", systemImage: "plus")
+                    }
+                    .disabled(accounts.filter { !$0.isClosed }.isEmpty)
+                }
+            }
+        }
         .overlay { if isLoading { ProgressView() } }
         .refreshable { await load() }
         .task { await load() }
@@ -28,6 +41,30 @@ struct BudgetDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "Unknown error")
+        }
+        .sheet(isPresented: $showingTransactionEntry) {
+            if let serverURL = session.serverURL, let token = session.token {
+                TransactionEntryView(
+                    budget: budget,
+                    accounts: accounts,
+                    categories: categories,
+                    serverURL: serverURL,
+                    token: token,
+                    onSaved: load
+                )
+            }
+        }
+        .sheet(item: $editingCategory) { category in
+            if let serverURL = session.serverURL, let token = session.token {
+                AssignmentEditView(
+                    budget: budget,
+                    category: category,
+                    month: currentMonth(),
+                    serverURL: serverURL,
+                    token: token,
+                    onSaved: load
+                )
+            }
         }
     }
 
@@ -50,6 +87,12 @@ struct BudgetDetailView: View {
             Section("Plan") {
                 ForEach(summary.categories) { category in
                     CategoryMonthRow(category: category, formatted: format(category.availableMinor), assigned: format(category.assignedMinor), activity: format(category.activityMinor))
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if budget.effectivePermission.canManage {
+                                editingCategory = category
+                            }
+                        }
                 }
             }
         }
@@ -111,14 +154,16 @@ struct BudgetDetailView: View {
             let client = try APIClient(baseURL: serverURL)
             async let loadedAccounts = client.accounts(budgetID: budget.id, token: token)
             async let loadedTransactions = client.transactions(budgetID: budget.id, token: token)
+            async let loadedCategories = client.categories(budgetID: budget.id, token: token)
             async let loadedSummary = client.monthSummary(
                 budgetID: budget.id,
                 month: currentMonth(),
                 token: token
             )
-            (accounts, transactions, summary) = try await (
+            (accounts, transactions, categories, summary) = try await (
                 loadedAccounts,
                 loadedTransactions,
+                loadedCategories,
                 loadedSummary
             )
         } catch {

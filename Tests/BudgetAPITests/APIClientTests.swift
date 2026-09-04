@@ -28,7 +28,7 @@ final class APIClientTests: XCTestCase {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/api/v1/budgets")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
-            let body = Data(#"[{"id":"b1","household_id":"h1","name":"Family","currency_code":"USD"}]"#.utf8)
+            let body = Data(#"[{"id":"b1","household_id":"h1","name":"Family","currency_code":"USD","effective_permission":"owner"}]"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
@@ -58,6 +58,54 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(summary.readyToAssignMinor, 12500)
         XCTAssertEqual(summary.currencyCode, "USD")
     }
+
+    func testCreateTransactionEncodesExactMinorUnits() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions")
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any]
+            )
+            XCTAssertEqual(json["amount_minor"] as? Int, -12345)
+            XCTAssertEqual(json["category_id"] as? String, "c1")
+            let response = Data(#"{"id":"t1","budget_id":"b1","account_id":"a1","category_id":"c1","amount_minor":-12345,"occurred_on":"2026-09-04","payee_name":"Market","memo":"","is_cleared":false,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":null,"splits":[]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+
+        let transaction = try await client.createTransaction(
+            budgetID: "b1",
+            transaction: APITransactionCreate(
+                accountID: "a1",
+                categoryID: "c1",
+                amountMinor: -12345,
+                occurredOn: "2026-09-04",
+                payeeName: "Market"
+            ),
+            token: "secret"
+        )
+
+        XCTAssertEqual(transaction.amountMinor, -12345)
+    }
+}
+
+private func requestBody(_ request: URLRequest) throws -> Data {
+    if let body = request.httpBody { return body }
+    guard let stream = request.httpBodyStream else { throw URLError(.cannotDecodeContentData) }
+    stream.open()
+    defer { stream.close() }
+    var result = Data()
+    var buffer = [UInt8](repeating: 0, count: 1024)
+    while stream.hasBytesAvailable {
+        let count = stream.read(&buffer, maxLength: buffer.count)
+        if count < 0 { throw stream.streamError ?? URLError(.cannotDecodeContentData) }
+        if count == 0 { break }
+        result.append(buffer, count: count)
+    }
+    return result
 }
 
 private final class MockURLProtocol: URLProtocol {
