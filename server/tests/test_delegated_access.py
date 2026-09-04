@@ -224,3 +224,55 @@ def test_partial_request_approval_moves_existing_allocation_once_and_is_auditabl
         assert operation.source == "approval"
         assert sum(posting.amount_minor for posting in operation.postings) == 0
         assert db.query(RequestAction).filter_by(request_id=request["id"]).count() == 2
+
+
+def test_rejected_and_cancelled_requests_survive_member_deactivation(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, _ = create_budget_structure(client, owner_token, budget["id"])
+    destination = add_category(
+        client, owner_token, budget["id"], "Delegated", "Child Requests"
+    )
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(
+        client, owner_token, budget["id"], child_id, checking["id"], destination["id"]
+    )
+
+    cancelled = client.post(
+        f"/api/v1/budgets/{budget['id']}/requests",
+        headers=auth(child_token),
+        json={"destination_category_id": destination["id"], "requested_amount_minor": 1000},
+    ).json()
+    cancelled_response = client.post(
+        f"/api/v1/budgets/{budget['id']}/requests/{cancelled['id']}/cancel",
+        headers=auth(child_token),
+        json={"expected_request_version": 0, "note": "Changed my mind"},
+    )
+    assert cancelled_response.status_code == 200
+    assert cancelled_response.json()["status"] == "cancelled"
+
+    rejected = client.post(
+        f"/api/v1/budgets/{budget['id']}/requests",
+        headers=auth(child_token),
+        json={"destination_category_id": destination["id"], "requested_amount_minor": 2000},
+    ).json()
+    rejected_response = client.post(
+        f"/api/v1/budgets/{budget['id']}/requests/{rejected['id']}/decision",
+        headers=auth(owner_token),
+        json={"decision": "reject", "expected_request_version": 0, "note": "Not this week"},
+    )
+    assert rejected_response.status_code == 200
+    assert rejected_response.json()["status"] == "rejected"
+
+    removed = client.delete(
+        f"/api/v1/households/{budget['household_id']}/members/{child_id}",
+        headers=auth(owner_token),
+    )
+    assert removed.status_code == 204
+    with session_factory() as db:
+        stored = db.query(FinancialRequest).filter_by(requester_user_id=child_id).all()
+        assert {item.status for item in stored} == {"cancelled", "rejected"}
+        assert db.query(RequestAction).filter(
+            RequestAction.request_id.in_([item.id for item in stored])
+        ).count() == 4

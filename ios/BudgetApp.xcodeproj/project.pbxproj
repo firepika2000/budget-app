@@ -255,7 +255,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp;
 				PRODUCT_NAME = "Budget App";
 				SDKROOT = iphoneos;
@@ -342,7 +342,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp;
 				PRODUCT_NAME = "Budget App";
 				SDKROOT = iphoneos;

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-09-04
+
 - Added a balanced, append-only allocation ledger with actor attribution.
 - Added first-class category-to-category transfers and client workflows.
 - Added optimistic allocation versions and database row locking.
