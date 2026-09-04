@@ -29,6 +29,8 @@ Household owners can issue seven-day, single-use invitation tokens for adults or
 
 Authentication uses 30-minute access tokens and rotating 30-day refresh tokens. Refresh secrets are stored only as SHA-256 hashes. Every refresh revokes the prior token; attempting to reuse an already rotated token revokes all remaining refresh sessions for that account. The iPhone stores both secrets in Keychain, while the desktop console keeps them only in memory.
 
+Repeated failed password logins are throttled per client and account identifier. This process-local control is defense in depth for the supported single-API-container deployment; an internet-facing reverse proxy should also enforce a broader request-rate limit.
+
 ## Container deployment
 
 Copy `.env.example` to `.env`, replace both example values with independently generated random secrets, set the public hostname, and run `docker compose up -d`. The API binds to localhost port 8080 by default so it can sit safely behind a TLS reverse proxy or a private-network VPN. See the repository's self-hosting guide and `Caddyfile.example` for a production path.

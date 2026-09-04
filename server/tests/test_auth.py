@@ -33,6 +33,16 @@ def test_wrong_password_and_missing_token_are_rejected(client, owner_token):
     assert client.get("/api/v1/budgets").status_code == 401
 
 
+def test_repeated_login_failures_are_rate_limited(client, owner_token):
+    body = {"email": "owner@example.com", "password": "wrong password"}
+    for _ in range(10):
+        assert client.post("/api/v1/auth/login", json=body).status_code == 401
+
+    limited = client.post("/api/v1/auth/login", json=body)
+    assert limited.status_code == 429
+    assert int(limited.headers["retry-after"]) > 0
+
+
 def test_refresh_token_rotates_and_reuse_revokes_new_session(
     client, owner_token, session_factory
 ):

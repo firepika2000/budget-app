@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -69,12 +69,18 @@ def bootstrap(
 @router.post("/auth/login", response_model=TokenResponse)
 def login(
     body: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> TokenResponse:
+    rate_limiter = request.app.state.auth_rate_limiter
+    rate_key = rate_limiter.key(request, body.email)
+    rate_limiter.check(rate_key)
     user = db.scalar(select(User).where(User.email == body.email.strip().lower()))
     if user is None or not verify_password(body.password, user.password_hash):
+        rate_limiter.failed(rate_key)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+    rate_limiter.succeeded(rate_key)
     return issue_session(db, user, settings)
 
 

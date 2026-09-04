@@ -10,6 +10,7 @@ from .household_routes import router as household_router
 from .web_routes import ASSET_ROOT, router as web_router
 from .database import build_session_factory
 from .routes import router
+from .rate_limit import AuthenticationRateLimiter
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -22,6 +23,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved_settings
     app.state.session_factory = build_session_factory(resolved_settings.database_url)
+    app.state.auth_rate_limiter = AuthenticationRateLimiter()
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(resolved_settings.allowed_hosts))
     app.include_router(router)
     app.include_router(budgeting_router)
