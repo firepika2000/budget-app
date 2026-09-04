@@ -13,6 +13,6 @@ Report suspected vulnerabilities privately to the repository owner. Include the 
 - Use unique passwords and independently generated database and JWT secrets.
 - Keep the host, containers, reverse proxy, and application current.
 - Maintain encrypted off-host backups and test restoration.
-- Treat exported CSV files as sensitive financial records.
+- Treat exported CSV and JSON files as sensitive financial records.
 
-The application deliberately has no bank synchronization or third-party analytics in the MVP.
+The application deliberately has no bank synchronization, third-party analytics, subscription service, or required vendor cloud dependency.

@@ -2,7 +2,7 @@
 
 ## Working idea
 
-A zero-based budgeting app inspired by envelope budgeting, sold without a recurring subscription and deployable on a laptop, home server, or internet-facing host. A native iPhone client connects to the owner's chosen server. A desktop-friendly web administration interface will follow the API.
+A zero-based budgeting app inspired by envelope budgeting, offered without a recurring subscription and deployable on a laptop, home server, or internet-facing host. A native iPhone client and desktop-friendly web console connect to the owner's chosen server.
 
 This project must use its own name, visual identity, copy, and interaction design; “similar to YNAB” describes the budgeting method, not a UI to clone.
 
@@ -17,7 +17,7 @@ This project must use its own name, visual identity, copy, and interaction desig
 
 ## Household and privacy model
 
-A household has one owner and invited members. Members may be adults or children. The owner creates one or more budgets and grants each member access per budget.
+A household has one owner and invited members. Relationship labels such as adult or child guide the experience but do not determine authorization. The owner grants budget discovery, then may replace the legacy permission bundle with explicit capabilities and account/category scopes.
 
 | Permission | See budget/categories/transactions | Add transactions | Edit plan | Change sharing |
 | --- | --- | --- | --- | --- |
@@ -30,7 +30,9 @@ A household has one owner and invited members. Members may be adults or children
 
 If a member lacks a grant, list endpoints omit the budget and direct lookups return the same `404` shape as an unknown ID. Transactions, payees, account balances, category totals, search results, notifications, exports, and audit events must all inherit the budget boundary.
 
-## MVP
+Delegated categories remain part of the authoritative household budget. Requests, approvals, and allowance issuance move existing category allocation and never create income, bank transactions, or a duplicate child ledger. Account-name visibility, account balances, transactions, reports, allocation history, approvals, planning, allowances, and exports are independently grantable capabilities.
+
+## Household-ready foundation
 
 - Create a household and owner account.
 - Create budgets, accounts, categories, monthly assignments, and transactions.
@@ -40,6 +42,10 @@ If a member lacks a grant, list endpoints omit the budget and direct lookups ret
 - Manually enter and reconcile transactions.
 - Export a budget and create/restore an encrypted backup.
 - Run through a documented local or home-server installation.
+- Keep actual transactions separate from schedules and forecasts.
+- Preserve allocation, credit reserve, request, approval, and allowance audit trails.
+- Model funded card spending, refunds, payments, and pre-existing debt without double counting.
+- Export a versioned structured audit record without credential material.
 
 ## Explicitly after MVP
 
@@ -54,4 +60,3 @@ If a member lacks a grant, list endpoints omit the budget and direct lookups ret
 - Whether spouse accounts are normally peers or selectively restricted by default.
 - Minimum supported iOS and macOS/Windows/Linux administration experience.
 - Remote access recommendation: VPN-first versus a built-in secure relay.
-

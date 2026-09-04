@@ -52,3 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: swift test
+      - run: >-
+          xcodebuild -project ios/BudgetApp.xcodeproj -scheme BudgetApp
+          -destination 'generic/platform=iOS' -configuration Debug
+          CODE_SIGNING_ALLOWED=NO build

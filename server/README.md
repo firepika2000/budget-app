@@ -23,7 +23,7 @@ uvicorn --factory app.main:create_app --reload
 
 The first owner calls `POST /api/v1/auth/bootstrap`. That endpoint becomes permanently unavailable after successful setup.
 
-The versioned API supports budgets, explicit grants, accounts, category groups, categories, monthly assignments, split transactions, balanced account transfers, reconciliation, and monthly zero-based summaries. View, Contribute, and Manage permissions are checked independently for every budget-scoped route.
+The versioned API supports budgets, explicit grants and capability scopes, accounts, category groups, categories, targets, split transactions, balanced account and allocation transfers, reconciliation, schedules/forecasts, credit reserves, requests/approvals, allowances, and monthly zero-based summaries. Server-side capabilities and resource scopes are checked for every budget route.
 
 Assignments and category-to-category moves are persisted as immutable balanced allocation operations. Every operation records its actor and reason, and its postings sum to zero between Ready to Assign and categories. The API uses a budget allocation version plus row locking to reject stale concurrent plan edits. Existing `monthly_assignments` are preserved and backfilled by migration `0006`; new calculations use the allocation ledger.
 
@@ -55,11 +55,11 @@ Copy `.env.example` to `.env`, replace both example values with independently ge
 
 ## Desktop administration
 
-Open `/admin` on the same server. The responsive owner console supports first-time setup, sign-in, invitation acceptance, budget/account/category creation, transaction entry, monthly assignment editing, and family access administration. Its bearer token remains in memory rather than browser storage, and the page uses a restrictive Content Security Policy with no third-party scripts.
+Open `/admin` on the same server. The responsive console supports first-time setup, sign-in, invitation acceptance, budget/account/category creation, transaction entry, monthly assignment editing, delegated scopes, requests and approvals, allowance creation/issuance, family access administration, and CSV/JSON exports. Its bearer token remains in memory rather than browser storage, and the page uses a restrictive Content Security Policy with no third-party scripts.
 
 ## Exports and encrypted backups
 
-Anyone with view permission can download a budget's ledger from `GET /api/v1/budgets/{budget_id}/export.csv`. The export includes exact minor-unit amounts, currency, split rows, clearing state, and stable IDs. User-entered text is escaped to prevent spreadsheet formula injection.
+Members with report visibility can download their scoped ledger from `GET /api/v1/budgets/{budget_id}/export.csv`. The export includes exact minor-unit amounts, currency, split rows, clearing state, and stable IDs. User-entered text is escaped to prevent spreadsheet formula injection. Full structured export separately requires `export_data`.
 
 For a full disaster-recovery backup, install [age](https://age-encryption.org) on the Docker host and run:
 

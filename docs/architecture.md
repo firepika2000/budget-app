@@ -15,19 +15,24 @@
 Household
 ├── Membership (user + household role)
 └── Budget
-    ├── BudgetGrant (user + permission)
-    ├── Account
-    ├── CategoryGroup → Category → MonthlyAssignment
-    ├── Payee
-    └── Transaction → Split
+    ├── BudgetGrant → AccessProfile → Capability/ResourceGrant
+    ├── Account → Credit Payment Category → ReserveEvent
+    ├── CategoryGroup → Category → Target
+    ├── AllocationOperation → balanced AllocationPostings
+    ├── Transaction → Split
+    ├── ScheduledTransaction (planning only)
+    ├── FinancialRequest → RequestActions → AllocationOperation
+    └── AllowancePlan → Splits → Issuance → AllocationOperation
 ```
 
-All child records carry or can be joined unambiguously to `budget_id`. API handlers resolve the authenticated membership and budget grant before loading or aggregating protected data. Database queries must be scoped, not fetched broadly and filtered afterward.
+All child records carry or can be joined unambiguously to `budget_id`. API handlers resolve active membership, budget visibility, effective capabilities, and account/category scopes before returning or mutating protected data. Existing View/Contribute/Manage grants remain compatibility bundles; an explicit access profile replaces the bundle with named capabilities and deny-by-default resource allowlists.
+
+Actual transactions and immutable allocation postings are separate authoritative ledgers. Scheduled transactions and forecasts never enter actual balances or Ready to Assign. Delegated categories, requests, approvals, and allowances move existing allocation inside the same budget rather than creating cash or duplicate books. Credit liabilities, physical cash, and payment-category reserves remain distinct quantities.
 
 ## Security invariants
 
 - New members receive no budget grants automatically.
-- Only the owner can grant/revoke access in the MVP.
+- Only the household owner can grant/revoke or scope budget access.
 - Revocation invalidates active sessions or advances a membership authorization version immediately.
 - Unauthorized and nonexistent budget resources are indistinguishable to non-owners.
 - Logs, push notification text, analytics, and crash reports do not contain hidden budget names or transaction details.
@@ -35,7 +40,18 @@ All child records carry or can be joined unambiguously to `budget_id`. API handl
 - Internet exposure requires TLS, rate limiting, secure headers, and documented update/backup procedures.
 - Authorization is tested at API integration level even when equivalent client-side rules exist.
 
-## Suggested delivery slices
+## Financial invariants
+
+- Money uses signed 64-bit minor units; floating point is never authoritative.
+- Every allocation operation has nonzero postings whose signed sum is zero.
+- Account transfers create paired opposite transactions and do not create income or expense.
+- Future schedules and forecasts cannot mutate actual balances or allocations.
+- Funded credit purchases reserve only available category money; payments are transfers, not new expenses.
+- Refunds release only the remaining reserve attributed to their spending category.
+- Approval and allowance issuance lock their source state, use optimistic versions, and link to one auditable allocation operation.
+- Household totals remain unchanged by category transfers, delegation, request approvals, and allowance issuance.
+
+## Implemented delivery slices
 
 1. Domain model and authorization contract.
 2. Server skeleton, PostgreSQL schema, owner authentication, and API integration tests.
@@ -44,4 +60,7 @@ All child records carry or can be joined unambiguously to `budget_id`. API handl
 5. Transactions, splits, and reconciliation.
 6. Invitations and the family permissions UI.
 7. Containerized deployment, backup/restore, and security hardening.
-
+8. Append-only allocation ledger, transfers, rollover, and targets.
+9. Scheduled planning forecasts and funded credit-card accounting.
+10. Capability scopes, delegated categories, requests, and approvals.
+11. Recurring allowance plans and structured audit export.

@@ -4,14 +4,17 @@ A self-hostable, zero-based budgeting system with a native iPhone client and pri
 
 ## Current status
 
-The repository contains the first two domain slices:
+The repository contains the household-ready financial foundation:
 
 - Strongly typed household and budget identities with deny-by-default authorization.
 - Exact minor-unit money arithmetic and zero-based monthly budget calculations.
-- A FastAPI/PostgreSQL server with authentication, private budget APIs, accounts, categories, monthly assignments, split transactions, transfers, reconciliation, monthly summaries, migrations, and a container deployment definition.
+- A FastAPI/PostgreSQL server with authentication, scoped budget APIs, append-only allocations, targets, actual and scheduled transactions, transfers, reconciliation, credit reserves, requests, allowances, migrations, and a container deployment definition.
 - A native SwiftUI iPhone client with server setup, bootstrap/login, Keychain token storage, private budget discovery, monthly planning, transaction entry, and assignment editing.
 - Owner-managed household invitations, explicit sharing, grant revocation, and immediate member deactivation.
 - A responsive desktop administration console served directly by the self-hosted backend, with no separate cloud dependency.
+- Separate actual and planning ledgers, targets, forecasts, funded credit-card reserves, and explicit reconciliation adjustments.
+- Capability-scoped family access, delegated categories, auditable requests/approvals, and recurring allowance policies.
+- Formula-safe CSV plus a versioned JSON audit export for owner-controlled portability.
 
 Product and architecture decisions are recorded in `docs/`.
 
@@ -27,7 +30,7 @@ swift test
 - [Architecture direction](docs/architecture.md)
 - [Architecture review and financial-engine evolution](docs/architecture-review.md)
 - [Self-hosting guide](docs/deployment.md)
-- [MVP release checklist](docs/release-checklist.md)
+- [Foundation release checklist](docs/release-checklist.md)
 - [Security policy](SECURITY.md)
 - [iPhone app](ios/README.md)
 
