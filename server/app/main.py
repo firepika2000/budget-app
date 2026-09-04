@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import Settings
 from .budgeting_routes import router as budgeting_router
@@ -21,6 +22,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved_settings
     app.state.session_factory = build_session_factory(resolved_settings.database_url)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(resolved_settings.allowed_hosts))
     app.include_router(router)
     app.include_router(budgeting_router)
     app.include_router(household_router)

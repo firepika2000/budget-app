@@ -25,8 +25,9 @@ swift test
 
 - [Product brief](docs/product-brief.md)
 - [Architecture direction](docs/architecture.md)
+- [Self-hosting guide](docs/deployment.md)
 - [iPhone app](ios/README.md)
 
 ## Active milestone
 
-Complete remaining iPhone creation and split-transaction workflows, then add encrypted backup/restore, exports, deployment hardening, and end-to-end release verification.
+Complete end-to-end release verification, accessibility polish, and reproducible release packaging.

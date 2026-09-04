@@ -1,0 +1,33 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: server/pyproject.toml
+      - run: pip install -e '.[dev]'
+        working-directory: server
+      - run: pytest
+        working-directory: server
+      - run: python -m compileall -q app tests migrations
+        working-directory: server
+      - run: bash -n scripts/backup.sh scripts/restore.sh
+        working-directory: server
+
+  swift:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test

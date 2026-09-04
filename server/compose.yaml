@@ -5,8 +5,16 @@ services:
     environment:
       BUDGET_APP_DATABASE_URL: postgresql+psycopg://budget:${BUDGET_APP_DB_PASSWORD}@database:5432/budget
       BUDGET_APP_JWT_SECRET: ${BUDGET_APP_JWT_SECRET}
+      BUDGET_APP_ALLOWED_HOSTS: ${BUDGET_APP_ALLOWED_HOSTS}
     ports:
       - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32M,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       database:
         condition: service_healthy
@@ -20,6 +28,8 @@ services:
       POSTGRES_PASSWORD: ${BUDGET_APP_DB_PASSWORD}
     volumes:
       - budget_database:/var/lib/postgresql/data
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U budget -d budget"]
       interval: 5s

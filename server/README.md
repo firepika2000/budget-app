@@ -6,6 +6,7 @@ The API is a FastAPI service backed by PostgreSQL in production. Authentication 
 
 - `BUDGET_APP_DATABASE_URL`: SQLAlchemy PostgreSQL URL, such as `postgresql+psycopg://budget:password@localhost/budget`
 - `BUDGET_APP_JWT_SECRET`: randomly generated secret of at least 32 characters
+- `BUDGET_APP_ALLOWED_HOSTS`: comma-separated hostnames accepted by the API
 
 ## Development
 
@@ -28,7 +29,7 @@ Household owners can issue seven-day, single-use invitation tokens for adults or
 
 ## Container deployment
 
-Copy `.env.example` to `.env`, replace both example values with independently generated random secrets, and run `docker compose up -d`. The API binds to localhost port 8080 by default so it can sit safely behind a TLS reverse proxy or a private-network VPN.
+Copy `.env.example` to `.env`, replace both example values with independently generated random secrets, set the public hostname, and run `docker compose up -d`. The API binds to localhost port 8080 by default so it can sit safely behind a TLS reverse proxy or a private-network VPN. See the repository's self-hosting guide and `Caddyfile.example` for a production path.
 
 ## Desktop administration
 
