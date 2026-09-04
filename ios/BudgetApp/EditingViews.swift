@@ -169,10 +169,117 @@ private struct SplitDraft: Identifiable {
     var memo = ""
 }
 
+struct AllocationTransferView: View {
+    let budget: APIBudget
+    let categories: [APICategoryMonth]
+    let expectedAllocationVersion: Int
+    let serverURL: URL
+    let token: String
+    let onSaved: () async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var sourceCategoryID = ""
+    @State private var destinationCategoryID = ""
+    @State private var amount = ""
+    @State private var note = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Picker("From", selection: $sourceCategoryID) {
+                    ForEach(categories.filter { $0.availableMinor > 0 }) { category in
+                        Text("\(category.name) · \(CurrencyText.editable(category.availableMinor, currencyCode: budget.currencyCode))")
+                            .tag(category.categoryID)
+                    }
+                }
+                Picker("To", selection: $destinationCategoryID) {
+                    ForEach(categories.filter { $0.categoryID != sourceCategoryID }) { category in
+                        Text(category.name).tag(category.categoryID)
+                    }
+                }
+                TextField("Amount", text: $amount).keyboardType(.decimalPad)
+                TextField("Reason (optional)", text: $note)
+            }
+            .navigationTitle("Move Money")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Move") { Task { await save() } }.disabled(!isValid || isSaving)
+                }
+            }
+            .overlay { if isSaving { ProgressView() } }
+            .alert("Unable to move money", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) { Button("OK", role: .cancel) {} } message: {
+                Text(errorMessage ?? "Unknown error")
+            }
+            .onAppear { selectDefaults() }
+            .onChange(of: sourceCategoryID) { _, _ in selectDestination() }
+        }
+    }
+
+    private var parsedAmount: Int64? {
+        guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: budget.currencyCode), value > 0 else {
+            return nil
+        }
+        return value
+    }
+
+    private var isValid: Bool {
+        guard let parsedAmount,
+              sourceCategoryID != destinationCategoryID,
+              let source = categories.first(where: { $0.categoryID == sourceCategoryID }) else { return false }
+        return parsedAmount <= source.availableMinor
+    }
+
+    private func selectDefaults() {
+        if sourceCategoryID.isEmpty {
+            sourceCategoryID = categories.first(where: { $0.availableMinor > 0 })?.categoryID ?? ""
+        }
+        selectDestination()
+    }
+
+    private func selectDestination() {
+        if destinationCategoryID.isEmpty || destinationCategoryID == sourceCategoryID {
+            destinationCategoryID = categories.first(where: { $0.categoryID != sourceCategoryID })?.categoryID ?? ""
+        }
+    }
+
+    private func save() async {
+        guard let parsedAmount else { return }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let formatter = DateFormatter()
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd"
+            _ = try await APIClient(baseURL: serverURL).transferAllocation(
+                budgetID: budget.id,
+                transfer: APIAllocationTransferCreate(
+                    sourceCategoryID: sourceCategoryID,
+                    destinationCategoryID: destinationCategoryID,
+                    amountMinor: parsedAmount,
+                    occurredOn: formatter.string(from: Date()),
+                    note: note,
+                    expectedAllocationVersion: expectedAllocationVersion
+                ),
+                token: token
+            )
+            await onSaved()
+            dismiss()
+        } catch { errorMessage = error.localizedDescription }
+    }
+}
+
 struct AssignmentEditView: View {
     let budget: APIBudget
     let category: APICategoryMonth
     let month: String
+    let expectedAllocationVersion: Int
     let serverURL: URL
     let token: String
     let onSaved: () async -> Void
@@ -186,6 +293,7 @@ struct AssignmentEditView: View {
         budget: APIBudget,
         category: APICategoryMonth,
         month: String,
+        expectedAllocationVersion: Int,
         serverURL: URL,
         token: String,
         onSaved: @escaping () async -> Void
@@ -193,6 +301,7 @@ struct AssignmentEditView: View {
         self.budget = budget
         self.category = category
         self.month = month
+        self.expectedAllocationVersion = expectedAllocationVersion
         self.serverURL = serverURL
         self.token = token
         self.onSaved = onSaved
@@ -247,6 +356,7 @@ struct AssignmentEditView: View {
                 categoryID: category.categoryID,
                 month: month,
                 assignedMinor: parsedAmount,
+                expectedAllocationVersion: expectedAllocationVersion,
                 token: token
             )
             await onSaved()

@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -99,6 +99,7 @@ class Budget(Base):
     household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(100))
     currency_code: Mapped[str] = mapped_column(String(3))
+    allocation_version: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
@@ -155,6 +156,51 @@ class MonthlyAssignment(Base):
     category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="CASCADE"), index=True)
     month: Mapped[date] = mapped_column(Date)
     assigned_minor: Mapped[int] = mapped_column(BigInteger)
+
+
+class AllocationOperation(Base):
+    __tablename__ = "allocation_operations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    occurred_on: Mapped[date] = mapped_column(Date, index=True)
+    kind: Mapped[str] = mapped_column(String(30), index=True)
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    note: Mapped[str] = mapped_column(String(500), default="")
+    source: Mapped[str] = mapped_column(String(30), default="manual")
+    reversal_of_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("allocation_operations.id", ondelete="RESTRICT"), nullable=True, unique=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    postings: Mapped[list["AllocationPosting"]] = relationship(
+        back_populates="operation",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class AllocationPosting(Base):
+    __tablename__ = "allocation_postings"
+    __table_args__ = (
+        CheckConstraint(
+            "(bucket = 'category' AND category_id IS NOT NULL) OR "
+            "(bucket = 'ready_to_assign' AND category_id IS NULL)",
+            name="ck_allocation_posting_bucket_category",
+        ),
+        CheckConstraint("amount_minor <> 0", name="ck_allocation_posting_nonzero"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    operation_id: Mapped[str] = mapped_column(
+        ForeignKey("allocation_operations.id", ondelete="CASCADE"), index=True
+    )
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    bucket: Mapped[str] = mapped_column(String(30))
+    category_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("categories.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    operation: Mapped[AllocationOperation] = relationship(back_populates="postings")
 
 
 class Transaction(Base):

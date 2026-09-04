@@ -31,19 +31,22 @@ public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
     public let name: String
     public let currencyCode: String
     public let effectivePermission: APIBudgetPermission
+    public let allocationVersion: Int
 
     public init(
         id: String,
         householdID: String,
         name: String,
         currencyCode: String,
-        effectivePermission: APIBudgetPermission = .owner
+        effectivePermission: APIBudgetPermission = .owner,
+        allocationVersion: Int = 0
     ) {
         self.id = id
         self.householdID = householdID
         self.name = name
         self.currencyCode = currencyCode
         self.effectivePermission = effectivePermission
+        self.allocationVersion = allocationVersion
     }
 
     enum CodingKeys: String, CodingKey {
@@ -51,6 +54,7 @@ public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
         case householdID = "household_id"
         case currencyCode = "currency_code"
         case effectivePermission = "effective_permission"
+        case allocationVersion = "allocation_version"
     }
 }
 
@@ -292,6 +296,7 @@ public struct APIMonthSummary: Decodable, Equatable, Sendable {
     public let readyToAssignMinor: Int64
     public let totalAssignedMinor: Int64
     public let totalOverspentMinor: Int64
+    public let allocationVersion: Int
     public let categories: [APICategoryMonth]
 
     enum CodingKeys: String, CodingKey {
@@ -300,6 +305,7 @@ public struct APIMonthSummary: Decodable, Equatable, Sendable {
         case readyToAssignMinor = "ready_to_assign_minor"
         case totalAssignedMinor = "total_assigned_minor"
         case totalOverspentMinor = "total_overspent_minor"
+        case allocationVersion = "allocation_version"
     }
 }
 
@@ -382,10 +388,12 @@ public struct APITransactionSplitCreate: Encodable, Equatable, Sendable {
 struct APIAssignmentUpdate: Encodable {
     let month: String
     let assignedMinor: Int64
+    let expectedAllocationVersion: Int
 
     enum CodingKeys: String, CodingKey {
         case month
         case assignedMinor = "assigned_minor"
+        case expectedAllocationVersion = "expected_allocation_version"
     }
 }
 
@@ -394,11 +402,79 @@ public struct APIAssignment: Decodable, Equatable, Sendable {
     public let categoryID: String
     public let month: String
     public let assignedMinor: Int64
+    public let allocationVersion: Int
 
     enum CodingKeys: String, CodingKey {
         case month
         case budgetID = "budget_id"
         case categoryID = "category_id"
         case assignedMinor = "assigned_minor"
+        case allocationVersion = "allocation_version"
+    }
+}
+
+public struct APIAllocationTransferCreate: Encodable, Sendable {
+    public let sourceCategoryID: String
+    public let destinationCategoryID: String
+    public let amountMinor: Int64
+    public let occurredOn: String
+    public let note: String
+    public let expectedAllocationVersion: Int
+
+    public init(
+        sourceCategoryID: String,
+        destinationCategoryID: String,
+        amountMinor: Int64,
+        occurredOn: String,
+        note: String = "",
+        expectedAllocationVersion: Int
+    ) {
+        self.sourceCategoryID = sourceCategoryID
+        self.destinationCategoryID = destinationCategoryID
+        self.amountMinor = amountMinor
+        self.occurredOn = occurredOn
+        self.note = note
+        self.expectedAllocationVersion = expectedAllocationVersion
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case note
+        case sourceCategoryID = "source_category_id"
+        case destinationCategoryID = "destination_category_id"
+        case amountMinor = "amount_minor"
+        case occurredOn = "occurred_on"
+        case expectedAllocationVersion = "expected_allocation_version"
+    }
+}
+
+public struct APIAllocationPosting: Decodable, Equatable, Sendable {
+    public let bucket: String
+    public let categoryID: String?
+    public let amountMinor: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case bucket
+        case categoryID = "category_id"
+        case amountMinor = "amount_minor"
+    }
+}
+
+public struct APIAllocationOperation: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let budgetID: String
+    public let occurredOn: String
+    public let kind: String
+    public let actorUserID: String
+    public let note: String
+    public let source: String
+    public let allocationVersion: Int
+    public let postings: [APIAllocationPosting]
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, note, source, postings
+        case budgetID = "budget_id"
+        case occurredOn = "occurred_on"
+        case actorUserID = "actor_user_id"
+        case allocationVersion = "allocation_version"
     }
 }

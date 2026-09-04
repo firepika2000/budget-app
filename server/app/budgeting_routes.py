@@ -5,19 +5,28 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from .access import find_visible_budget, has_budget_permission
+from .allocation import (
+    PostingInput,
+    append_operation,
+    category_available_balance,
+    lock_budget,
+    ready_to_assign_balance,
+    require_version,
+)
 from .database import get_db
 from .dependencies import get_current_user
 from .models import (
     Account,
+    AllocationOperation,
+    AllocationPosting,
     Budget,
     BudgetPermission,
     Category,
     CategoryGroup,
-    MonthlyAssignment,
     Transaction,
     TransactionSplit,
     User,
@@ -25,6 +34,8 @@ from .models import (
 from .schemas import (
     AccountCreate,
     AccountResponse,
+    AllocationOperationResponse,
+    AllocationTransferCreate,
     AssignmentResponse,
     AssignmentUpsert,
     CategoryCreate,
@@ -202,28 +213,146 @@ def upsert_assignment(
     body: AssignmentUpsert,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> MonthlyAssignment:
+) -> dict:
     require_budget(db, user, budget_id, BudgetPermission.MANAGE)
     category = db.get(Category, category_id)
     if category is None or category.budget_id != budget_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-    assignment = db.scalar(select(MonthlyAssignment).where(
-        MonthlyAssignment.category_id == category_id,
-        MonthlyAssignment.month == body.month,
-    ))
-    if assignment is None:
-        assignment = MonthlyAssignment(
-            budget_id=budget_id,
-            category_id=category_id,
-            month=body.month,
-            assigned_minor=body.assigned_minor,
+    current_month = date.today().replace(day=1)
+    if body.month > current_month:
+        raise HTTPException(status_code=422, detail="Future allocations belong in the planning layer")
+    budget = lock_budget(db, budget_id)
+    require_version(budget, body.expected_allocation_version)
+    next_month = date(
+        body.month.year + (body.month.month == 12),
+        1 if body.month.month == 12 else body.month.month + 1,
+        1,
+    )
+    current_assigned = int(db.scalar(
+        select(func.coalesce(func.sum(AllocationPosting.amount_minor), 0))
+        .join(AllocationOperation, AllocationOperation.id == AllocationPosting.operation_id)
+        .where(
+            AllocationPosting.budget_id == budget_id,
+            AllocationPosting.category_id == category_id,
+            AllocationOperation.occurred_on >= body.month,
+            AllocationOperation.occurred_on < next_month,
         )
-        db.add(assignment)
-    else:
-        assignment.assigned_minor = body.assigned_minor
+    ) or 0)
+    delta = body.assigned_minor - current_assigned
+    if not -(2**63) + 1 <= delta <= 2**63 - 1:
+        raise HTTPException(status_code=422, detail="Allocation change is outside the supported range")
+    if delta > 0 and ready_to_assign_balance(db, budget_id) < delta:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Not enough real money to assign")
+    if delta != 0:
+        append_operation(
+            db,
+            budget=budget,
+            actor=user,
+            occurred_on=body.month,
+            kind="assignment",
+            note=f"Set {category.name} allocation for {body.month.isoformat()}",
+            postings=[
+                PostingInput(bucket="ready_to_assign", amount_minor=-delta),
+                PostingInput(bucket="category", category_id=category_id, amount_minor=delta),
+            ],
+        )
     db.commit()
-    db.refresh(assignment)
-    return assignment
+    return {
+        "budget_id": budget_id,
+        "category_id": category_id,
+        "month": body.month,
+        "assigned_minor": body.assigned_minor,
+        "allocation_version": budget.allocation_version,
+    }
+
+
+@router.get("/allocations", response_model=list[AllocationOperationResponse])
+def list_allocation_operations(
+    budget_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    budget = require_budget(db, user, budget_id, BudgetPermission.VIEW)
+    operations = list(db.scalars(
+        select(AllocationOperation)
+        .options(selectinload(AllocationOperation.postings))
+        .where(AllocationOperation.budget_id == budget_id)
+        .order_by(AllocationOperation.occurred_on.desc(), AllocationOperation.created_at.desc())
+    ))
+    return [{
+        "id": operation.id,
+        "budget_id": operation.budget_id,
+        "occurred_on": operation.occurred_on,
+        "kind": operation.kind,
+        "actor_user_id": operation.actor_user_id,
+        "note": operation.note,
+        "source": operation.source,
+        "allocation_version": budget.allocation_version,
+        "postings": operation.postings,
+    } for operation in operations]
+
+
+@router.post(
+    "/allocation-transfers",
+    response_model=AllocationOperationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def transfer_allocation(
+    budget_id: str,
+    body: AllocationTransferCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_budget(db, user, budget_id, BudgetPermission.MANAGE)
+    if body.occurred_on > date.today():
+        raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
+    budget = lock_budget(db, budget_id)
+    require_version(budget, body.expected_allocation_version)
+    transfer_categories = [db.get(Category, category_id) for category_id in (
+        body.source_category_id, body.destination_category_id
+    )]
+    if any(
+        category is None or category.budget_id != budget_id or category.is_archived
+        for category in transfer_categories
+    ):
+        raise HTTPException(status_code=422, detail="Invalid allocation category")
+    if category_available_balance(
+        db, budget_id, body.source_category_id, through=body.occurred_on
+    ) < body.amount_minor:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Source category has insufficient funds")
+    operation = append_operation(
+        db,
+        budget=budget,
+        actor=user,
+        occurred_on=body.occurred_on,
+        kind="category_transfer",
+        note=body.note,
+        postings=[
+            PostingInput(
+                bucket="category",
+                category_id=body.source_category_id,
+                amount_minor=-body.amount_minor,
+            ),
+            PostingInput(
+                bucket="category",
+                category_id=body.destination_category_id,
+                amount_minor=body.amount_minor,
+            ),
+        ],
+    )
+    db.commit()
+    db.refresh(operation)
+    return {
+        "id": operation.id,
+        "budget_id": operation.budget_id,
+        "occurred_on": operation.occurred_on,
+        "kind": operation.kind,
+        "actor_user_id": operation.actor_user_id,
+        "note": operation.note,
+        "source": operation.source,
+        "allocation_version": budget.allocation_version,
+        "postings": operation.postings,
+    }
 
 
 @router.get("/transactions", response_model=list[TransactionResponse])
@@ -248,12 +377,16 @@ def create_transaction(
     db: Session = Depends(get_db),
 ) -> Transaction:
     require_budget(db, user, budget_id, BudgetPermission.CONTRIBUTE)
+    if body.occurred_on > date.today():
+        raise HTTPException(status_code=422, detail="Future transactions belong in the planning layer")
     account = db.get(Account, body.account_id)
     if account is None or account.budget_id != budget_id or account.is_closed:
         raise HTTPException(status_code=422, detail="Invalid account")
     category_ids = ([body.category_id] if body.category_id is not None else []) + [
         split.category_id for split in body.splits
     ]
+    if category_ids and not account.is_on_budget:
+        raise HTTPException(status_code=422, detail="Tracking accounts cannot affect budget categories")
     if len(category_ids) != len(set(category_ids)):
         raise HTTPException(status_code=422, detail="Duplicate split category")
     for category_id in category_ids:
@@ -281,6 +414,8 @@ def create_transfer(
     db: Session = Depends(get_db),
 ) -> TransferResponse:
     require_budget(db, user, budget_id, BudgetPermission.CONTRIBUTE)
+    if body.occurred_on > date.today():
+        raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
     source = db.get(Account, body.source_account_id)
     destination = db.get(Account, body.destination_account_id)
     if any(
@@ -375,10 +510,14 @@ def month_summary(
         Category.budget_id == budget_id,
         Category.is_archived.is_(False),
     ).order_by(Category.group_id, Category.sort_order, Category.name)))
-    assignments = list(db.scalars(select(MonthlyAssignment).where(
-        MonthlyAssignment.budget_id == budget_id,
-        MonthlyAssignment.month < next_month,
-    )))
+    allocation_rows = db.execute(
+        select(AllocationPosting, AllocationOperation)
+        .join(AllocationOperation, AllocationOperation.id == AllocationPosting.operation_id)
+        .where(
+            AllocationPosting.budget_id == budget_id,
+            AllocationOperation.occurred_on < next_month,
+        )
+    ).all()
     transactions = list(db.scalars(select(Transaction).options(
         selectinload(Transaction.splits)
     ).where(
@@ -392,9 +531,13 @@ def month_summary(
 
     assigned_before: dict[str, int] = {}
     assigned_current: dict[str, int] = {}
-    for assignment in assignments:
-        target = assigned_current if assignment.month == month else assigned_before
-        target[assignment.category_id] = target.get(assignment.category_id, 0) + assignment.assigned_minor
+    ready_to_assign_postings = 0
+    for posting, operation in allocation_rows:
+        if posting.category_id is None:
+            ready_to_assign_postings += posting.amount_minor
+            continue
+        target = assigned_current if operation.occurred_on >= month else assigned_before
+        target[posting.category_id] = target.get(posting.category_id, 0) + posting.amount_minor
 
     activity_before: dict[str, int] = {}
     activity_current: dict[str, int] = {}
@@ -407,13 +550,14 @@ def month_summary(
             and not transaction.splits
         ):
             unassigned_cash_to_date += transaction.amount_minor
+        if transaction.account_id not in on_budget_account_ids:
+            continue
         target = activity_current if transaction.occurred_on >= month else activity_before
         if transaction.category_id is not None:
             target[transaction.category_id] = target.get(transaction.category_id, 0) + transaction.amount_minor
         for split in transaction.splits:
             target[split.category_id] = target.get(split.category_id, 0) + split.amount_minor
 
-    all_assigned = sum(assignment.assigned_minor for assignment in assignments)
     rows: list[CategoryMonthSummary] = []
     total_overspent = 0
     for category in categories:
@@ -435,11 +579,14 @@ def month_summary(
     return MonthSummaryResponse(
         month=month,
         currency_code=budget.currency_code,
-        ready_to_assign_minor=unassigned_cash_to_date - all_assigned,
+        ready_to_assign_minor=unassigned_cash_to_date + ready_to_assign_postings,
         total_assigned_minor=sum(assigned_current.values()),
         total_overspent_minor=total_overspent,
+        allocation_version=budget.allocation_version,
         categories=rows,
     )
     MonthSummaryResponse,
     ReconcileRequest,
     ReconcileResponse,
+    AllocationOperationResponse,
+    AllocationTransferCreate,

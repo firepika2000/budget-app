@@ -38,11 +38,6 @@ def test_split_activity_and_income_feed_month_summary(
     budget = create_budget(client, owner_token, session_factory)
     account, groceries = create_budget_structure(client, owner_token, budget["id"])
     dining = add_category(client, owner_token, budget["id"], "Wants", "Dining")
-    client.put(
-        f"/api/v1/budgets/{budget['id']}/categories/{groceries['id']}/assignment",
-        headers=auth(owner_token),
-        json={"month": "2026-09-01", "assigned_minor": 40000},
-    )
     record(
         client,
         owner_token,
@@ -50,6 +45,11 @@ def test_split_activity_and_income_feed_month_summary(
         account_id=account["id"],
         amount_minor=100000,
         is_cleared=True,
+    )
+    client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{groceries['id']}/assignment",
+        headers=auth(owner_token),
+        json={"month": "2026-09-01", "assigned_minor": 40000},
     )
     split = record(
         client,

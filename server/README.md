@@ -25,6 +25,8 @@ The first owner calls `POST /api/v1/auth/bootstrap`. That endpoint becomes perma
 
 The versioned API supports budgets, explicit grants, accounts, category groups, categories, monthly assignments, split transactions, balanced account transfers, reconciliation, and monthly zero-based summaries. View, Contribute, and Manage permissions are checked independently for every budget-scoped route.
 
+Assignments and category-to-category moves are persisted as immutable balanced allocation operations. Every operation records its actor and reason, and its postings sum to zero between Ready to Assign and categories. The API uses a budget allocation version plus row locking to reject stale concurrent plan edits. Existing `monthly_assignments` are preserved and backfilled by migration `0006`; new calculations use the allocation ledger.
+
 Household owners can issue seven-day, single-use invitation tokens for adults or children, list members, grant only selected budgets, revoke individual grants, and deactivate members. Invitation secrets are stored only as SHA-256 hashes; revocation and deactivation affect existing sessions immediately because every protected query rechecks active membership and grants.
 
 Authentication uses 30-minute access tokens and rotating 30-day refresh tokens. Refresh secrets are stored only as SHA-256 hashes. Every refresh revokes the prior token; attempting to reuse an already rotated token revokes all remaining refresh sessions for that account. The iPhone stores both secrets in Keychain, while the desktop console keeps them only in memory.

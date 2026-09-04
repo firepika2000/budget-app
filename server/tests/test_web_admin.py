@@ -7,6 +7,7 @@ def test_admin_shell_has_security_headers_and_local_assets(client):
     assert '<script src="/admin-assets/app.js"' in response.text
     assert '<link rel="stylesheet" href="/admin-assets/styles.css"' in response.text
     assert 'id="export-button"' in response.text
+    assert 'id="move-money-button"' in response.text
     assert "https://" not in response.text
 
 

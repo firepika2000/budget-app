@@ -57,6 +57,7 @@ class BudgetResponse(BaseModel):
     name: str
     currency_code: str
     effective_permission: Literal["view", "contribute", "manage", "owner"]
+    allocation_version: int
 
 
 class GrantUpsert(BaseModel):
@@ -123,7 +124,8 @@ class CategoryResponse(BaseModel):
 
 class AssignmentUpsert(BaseModel):
     month: date
-    assigned_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
+    assigned_minor: int = Field(ge=MIN_INT64 + 1, le=MAX_INT64)
+    expected_allocation_version: Optional[int] = Field(default=None, ge=0)
 
     @field_validator("month")
     @classmethod
@@ -140,6 +142,44 @@ class AssignmentResponse(BaseModel):
     category_id: str
     month: date
     assigned_minor: int
+    allocation_version: int
+
+
+class AllocationTransferCreate(BaseModel):
+    source_category_id: str
+    destination_category_id: str
+    amount_minor: int = Field(gt=0, le=MAX_INT64)
+    occurred_on: date
+    note: str = Field(default="", max_length=500)
+    expected_allocation_version: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def require_distinct_categories(self) -> "AllocationTransferCreate":
+        if self.source_category_id == self.destination_category_id:
+            raise ValueError("allocation categories must be different")
+        return self
+
+
+class AllocationPostingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    bucket: str
+    category_id: Optional[str]
+    amount_minor: int
+
+
+class AllocationOperationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    budget_id: str
+    occurred_on: date
+    kind: str
+    actor_user_id: str
+    note: str
+    source: str
+    allocation_version: int
+    postings: list[AllocationPostingResponse]
 
 
 class TransactionSplitCreate(BaseModel):
@@ -242,6 +282,7 @@ class MonthSummaryResponse(BaseModel):
     ready_to_assign_minor: int
     total_assigned_minor: int
     total_overspent_minor: int
+    allocation_version: int
     categories: list[CategoryMonthSummary]
 
 

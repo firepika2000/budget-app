@@ -165,13 +165,31 @@ public struct APIClient {
         categoryID: String,
         month: String,
         assignedMinor: Int64,
+        expectedAllocationVersion: Int,
         token: String
     ) async throws -> APIAssignment {
         try await send(
             path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/assignment",
             method: "PUT",
             token: token,
-            body: APIAssignmentUpdate(month: month, assignedMinor: assignedMinor)
+            body: APIAssignmentUpdate(
+                month: month,
+                assignedMinor: assignedMinor,
+                expectedAllocationVersion: expectedAllocationVersion
+            )
+        )
+    }
+
+    public func transferAllocation(
+        budgetID: String,
+        transfer: APIAllocationTransferCreate,
+        token: String
+    ) async throws -> APIAllocationOperation {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/allocation-transfers",
+            method: "POST",
+            token: token,
+            body: transfer
         )
     }
 

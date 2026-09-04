@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Added a balanced, append-only allocation ledger with actor attribution.
+- Added first-class category-to-category transfers and client workflows.
+- Added optimistic allocation versions and database row locking.
+- Enforced real-money-only assignment and explicit actual-versus-future transaction boundaries.
+- Added data-preserving assignment backfill and multi-month invariant tests.
+
 ## 0.1.0 - 2026-09-04
 
 First self-hosted MVP:

@@ -25,6 +25,7 @@ swift test
 
 - [Product brief](docs/product-brief.md)
 - [Architecture direction](docs/architecture.md)
+- [Architecture review and financial-engine evolution](docs/architecture-review.md)
 - [Self-hosting guide](docs/deployment.md)
 - [MVP release checklist](docs/release-checklist.md)
 - [Security policy](SECURITY.md)
@@ -32,4 +33,4 @@ swift test
 
 ## Active milestone
 
-Version 0.1.0 is the feature-complete self-hosted MVP. Owner acceptance on the final server and a physically signed iPhone build remain deployment-specific checklist items.
+Version 0.1.0 is the self-hosted MVP. The next architecture pass is actively migrating mutable monthly assignments into an auditable balanced allocation ledger, followed by targets, planning, liabilities, and delegated household workflows.

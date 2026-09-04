@@ -62,6 +62,19 @@ def test_owner_can_build_budget_and_record_exact_transaction(
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])
 
+    income = client.post(
+        f"/api/v1/budgets/{budget['id']}/transactions",
+        headers=auth(owner_token),
+        json={
+            "account_id": account["id"],
+            "amount_minor": 100000,
+            "occurred_on": "2026-09-01",
+            "payee_name": "Opening funds",
+            "is_cleared": True,
+        },
+    )
+    assert income.status_code == 201
+
     assignment = client.put(
         f"/api/v1/budgets/{budget['id']}/categories/{category['id']}/assignment",
         headers=auth(owner_token),
@@ -89,7 +102,7 @@ def test_owner_can_build_budget_and_record_exact_transaction(
         f"/api/v1/budgets/{budget['id']}/transactions",
         headers=auth(owner_token),
     )
-    assert [item["payee_name"] for item in listed.json()] == ["Grocery Store"]
+    assert [item["payee_name"] for item in listed.json()] == ["Grocery Store", "Opening funds"]
 
 
 def test_contributor_can_transact_but_cannot_change_plan(

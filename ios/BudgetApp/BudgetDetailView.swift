@@ -15,6 +15,7 @@ struct BudgetDetailView: View {
     @State private var editingCategory: APICategoryMonth?
     @State private var showingAccountCreation = false
     @State private var showingCategoryCreation = false
+    @State private var showingAllocationTransfer = false
 
     var body: some View {
         List {
@@ -38,6 +39,7 @@ struct BudgetDetailView: View {
                     Menu {
                         Button("Add account", systemImage: "wallet.pass") { showingAccountCreation = true }
                         Button("Add category", systemImage: "folder.badge.plus") { showingCategoryCreation = true }
+                        Button("Move money", systemImage: "arrow.left.arrow.right") { showingAllocationTransfer = true }
                     } label: {
                         Label("Budget setup", systemImage: "ellipsis.circle")
                     }
@@ -73,6 +75,7 @@ struct BudgetDetailView: View {
                     budget: budget,
                     category: category,
                     month: currentMonth(),
+                    expectedAllocationVersion: summary?.allocationVersion ?? budget.allocationVersion,
                     serverURL: serverURL,
                     token: token,
                     onSaved: load
@@ -89,6 +92,18 @@ struct BudgetDetailView: View {
                 CategoryCreationView(
                     budget: budget,
                     groups: categoryGroups,
+                    serverURL: serverURL,
+                    token: token,
+                    onSaved: load
+                )
+            }
+        }
+        .sheet(isPresented: $showingAllocationTransfer) {
+            if let serverURL = session.serverURL, let token = session.token, let summary {
+                AllocationTransferView(
+                    budget: budget,
+                    categories: summary.categories,
+                    expectedAllocationVersion: summary.allocationVersion,
                     serverURL: serverURL,
                     token: token,
                     onSaved: load

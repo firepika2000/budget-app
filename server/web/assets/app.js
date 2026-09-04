@@ -126,6 +126,7 @@
     $("add-transaction-button").classList.toggle("hidden", !canContribute());
     $("add-account-button").classList.toggle("hidden", !canManage());
     $("add-category-button").classList.toggle("hidden", !canManage());
+    $("move-money-button").classList.toggle("hidden", !canManage());
   }
 
   function renderCategories() {
@@ -142,7 +143,7 @@
         const available = cell(money(category.available_minor)); if (category.is_overspent) available.className = "negative"; row.append(available);
         const action = cell(""); const save = button("Save", "quiet compact");
         save.addEventListener("click", async () => {
-          try { await api(`/budgets/${state.selected.id}/categories/${category.category_id}/assignment`, { method: "PUT", body: JSON.stringify({ month: currentMonth(), assigned_minor: parseMinor(input.value) }) }); await selectBudget(state.selected.id); toast("Assignment updated"); }
+          try { await api(`/budgets/${state.selected.id}/categories/${category.category_id}/assignment`, { method: "PUT", body: JSON.stringify({ month: currentMonth(), assigned_minor: parseMinor(input.value), expected_allocation_version: state.summary.allocation_version }) }); await selectBudget(state.selected.id); toast("Assignment updated"); }
           catch (error) { toast(error.message, true); }
         }); action.append(save); row.append(action);
       } else {
@@ -213,12 +214,31 @@
     const group = await api(`/budgets/${state.selected.id}/category-groups`, { method: "POST", body: JSON.stringify({ name: values.group }) });
     await api(`/budgets/${state.selected.id}/categories`, { method: "POST", body: JSON.stringify({ group_id: group.id, name: values.name }) }); await selectBudget(state.selected.id); toast("Category added");
   }));
+  $("move-money-button").addEventListener("click", () => openFields("Move money", [
+    { id: "source_category_id", label: "From category", type: "select", options: state.summary.categories.filter((item) => item.available_minor > 0).map((item) => [item.category_id, `${item.name} · ${money(item.available_minor)}`]) },
+    { id: "destination_category_id", label: "To category", type: "select", options: state.summary.categories.map((item) => [item.category_id, item.name]) },
+    { id: "amount", label: "Amount" },
+    { id: "note", label: "Reason", optional: true },
+  ], async (values) => {
+    if (values.source_category_id === values.destination_category_id) throw new Error("Choose two different categories.");
+    const amount = parseMinor(values.amount);
+    if (amount <= 0) throw new Error("Enter an amount greater than zero.");
+    await api(`/budgets/${state.selected.id}/allocation-transfers`, { method: "POST", body: JSON.stringify({
+      source_category_id: values.source_category_id,
+      destination_category_id: values.destination_category_id,
+      amount_minor: amount,
+      occurred_on: localToday(),
+      note: values.note,
+      expected_allocation_version: state.summary.allocation_version,
+    }) });
+    await selectBudget(state.selected.id); toast("Money moved with an audit entry");
+  }));
   $("add-transaction-button").addEventListener("click", () => openFields("New transaction", [
     { id: "account", label: "Account", type: "select", options: state.accounts.filter((item) => !item.is_closed).map((item) => [item.id, item.name]) },
     { id: "payee", label: "Payee" }, { id: "amount", label: "Amount" },
     { id: "direction", label: "Direction", type: "select", options: [["expense", "Expense"], ["income", "Income"]] },
     { id: "category", label: "Category", type: "select", optional: true, options: [["", "Uncategorized / Ready to assign"], ...state.categories.filter((item) => !item.is_archived).map((item) => [item.id, item.name])] },
-    { id: "date", label: "Date", type: "date", value: new Date().toISOString().slice(0, 10) }, { id: "memo", label: "Memo", optional: true },
+    { id: "date", label: "Date", type: "date", value: localToday() }, { id: "memo", label: "Memo", optional: true },
   ], async (values) => {
     let amount = Math.abs(parseMinor(values.amount)); if (values.direction === "expense") amount = -amount;
     await api(`/budgets/${state.selected.id}/transactions`, { method: "POST", body: JSON.stringify({ account_id: values.account, category_id: values.category || null, amount_minor: amount, occurred_on: values.date, payee_name: values.payee, memo: values.memo }) }); await selectBudget(state.selected.id); toast("Transaction saved");
@@ -260,6 +280,7 @@
   function canContribute() { return ["contribute", "manage", "owner"].includes(state.selected?.effective_permission); }
   function canManage() { return ["manage", "owner"].includes(state.selected?.effective_permission); }
   function currentMonth() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`; }
+  function localToday() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; }
   function currencyDigits() { return new Intl.NumberFormat(undefined, { style: "currency", currency: state.selected.currency_code }).resolvedOptions().maximumFractionDigits; }
   function money(value) { return new Intl.NumberFormat(undefined, { style: "currency", currency: state.selected.currency_code }).format(value / (10 ** currencyDigits())); }
   function decimal(value) { return (value / (10 ** currencyDigits())).toFixed(currencyDigits()); }

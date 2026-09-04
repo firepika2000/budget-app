@@ -28,7 +28,7 @@ final class APIClientTests: XCTestCase {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/api/v1/budgets")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
-            let body = Data(#"[{"id":"b1","household_id":"h1","name":"Family","currency_code":"USD","effective_permission":"owner"}]"#.utf8)
+            let body = Data(#"[{"id":"b1","household_id":"h1","name":"Family","currency_code":"USD","effective_permission":"owner","allocation_version":0}]"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
@@ -44,7 +44,7 @@ final class APIClientTests: XCTestCase {
         let session = URLSession(configuration: configuration)
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/months/2026-09-01")
-            let body = Data(#"{"month":"2026-09-01","currency_code":"USD","ready_to_assign_minor":12500,"total_assigned_minor":5000,"total_overspent_minor":0,"categories":[]}"#.utf8)
+            let body = Data(#"{"month":"2026-09-01","currency_code":"USD","ready_to_assign_minor":12500,"total_assigned_minor":5000,"total_overspent_minor":0,"allocation_version":3,"categories":[]}"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
@@ -57,6 +57,7 @@ final class APIClientTests: XCTestCase {
 
         XCTAssertEqual(summary.readyToAssignMinor, 12500)
         XCTAssertEqual(summary.currencyCode, "USD")
+        XCTAssertEqual(summary.allocationVersion, 3)
     }
 
     func testCreateTransactionEncodesExactMinorUnits() async throws {
@@ -151,6 +152,39 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(tokens, APIAuthTokens(accessToken: "new-access", refreshToken: "new-refresh"))
         try await client.logout(tokens.refreshToken)
         XCTAssertEqual(requestCount, 2)
+    }
+
+    func testAllocationTransferCarriesOptimisticVersion() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/allocation-transfers")
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any]
+            )
+            XCTAssertEqual(json["amount_minor"] as? Int, 2500)
+            XCTAssertEqual(json["expected_allocation_version"] as? Int, 7)
+            let response = Data(#"{"id":"op1","budget_id":"b1","occurred_on":"2026-09-04","kind":"category_transfer","actor_user_id":"u1","note":"Priorities changed","source":"manual","allocation_version":8,"postings":[{"bucket":"category","category_id":"c1","amount_minor":-2500},{"bucket":"category","category_id":"c2","amount_minor":2500}]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+
+        let operation = try await client.transferAllocation(
+            budgetID: "b1",
+            transfer: APIAllocationTransferCreate(
+                sourceCategoryID: "c1",
+                destinationCategoryID: "c2",
+                amountMinor: 2500,
+                occurredOn: "2026-09-04",
+                note: "Priorities changed",
+                expectedAllocationVersion: 7
+            ),
+            token: "secret"
+        )
+
+        XCTAssertEqual(operation.allocationVersion, 8)
+        XCTAssertEqual(operation.postings.reduce(0) { $0 + $1.amountMinor }, 0)
     }
 }
 

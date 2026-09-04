@@ -148,6 +148,7 @@ def budget_response(db: Session, user: User, budget: Budget) -> dict:
         "name": budget.name,
         "currency_code": budget.currency_code,
         "effective_permission": permission,
+        "allocation_version": budget.allocation_version,
     }
 
 
