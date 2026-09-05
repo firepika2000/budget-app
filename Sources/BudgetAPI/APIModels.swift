@@ -173,6 +173,24 @@ public struct APIBudgetCreate: Encodable, Sendable {
 
 struct APIErrorBody: Decodable {
     let detail: String?
+
+    private enum CodingKeys: String, CodingKey { case detail }
+    private struct DetailObject: Decodable { let message: String? }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // FastAPI `detail` is usually a string, but several financial-conflict responses
+        // (reconciliation mismatch, allocation/request version conflict, stale balance) return
+        // an object like {"message": ..., "cleared_balance_minor": ...}. Surface either form so
+        // the actionable message reaches the user instead of a generic status string.
+        if let text = try? container.decode(String.self, forKey: .detail) {
+            detail = text
+        } else if let object = try? container.decode(DetailObject.self, forKey: .detail) {
+            detail = object.message
+        } else {
+            detail = nil
+        }
+    }
 }
 
 public struct APIAccount: Identifiable, Decodable, Equatable, Sendable {

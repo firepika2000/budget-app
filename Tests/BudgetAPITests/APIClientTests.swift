@@ -239,6 +239,57 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(report.categories.first?.transactionIDs, ["t1"])
     }
 
+    func testStructuredConflictDetailSurfacesActionableMessage() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            // Allocation version conflicts return `detail` as an object, not a string.
+            let body = Data(#"{"detail":{"message":"The allocation plan changed. Refresh and try again.","current_allocation_version":9}}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 409, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        do {
+            _ = try await client.transferAllocation(
+                budgetID: "b1",
+                transfer: APIAllocationTransferCreate(
+                    sourceCategoryID: "c1", destinationCategoryID: "c2", amountMinor: 2500,
+                    occurredOn: "2026-09-04", note: "", expectedAllocationVersion: 7
+                ),
+                token: "secret"
+            )
+            XCTFail("Expected a server conflict error")
+        } catch let APIClientError.server(status, message) {
+            XCTAssertEqual(status, 409)
+            XCTAssertEqual(message, "The allocation plan changed. Refresh and try again.")
+        }
+    }
+
+    func testStringConflictDetailStillSurfacesMessage() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            let body = Data(#"{"detail":"Source category has insufficient funds"}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 409, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        do {
+            _ = try await client.transferAllocation(
+                budgetID: "b1",
+                transfer: APIAllocationTransferCreate(
+                    sourceCategoryID: "c1", destinationCategoryID: "c2", amountMinor: 2500,
+                    occurredOn: "2026-09-04", note: "", expectedAllocationVersion: 7
+                ),
+                token: "secret"
+            )
+            XCTFail("Expected a server conflict error")
+        } catch let APIClientError.server(status, message) {
+            XCTAssertEqual(status, 409)
+            XCTAssertEqual(message, "Source category has insufficient funds")
+        }
+    }
+
     func testUpdateAndDeleteTransactionUseResourcePath() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
