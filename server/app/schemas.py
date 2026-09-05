@@ -278,6 +278,10 @@ class ScheduledTransactionCreate(BaseModel):
         return self
 
 
+class ScheduledTransactionUpdate(ScheduledTransactionCreate):
+    is_active: bool = True
+
+
 class ScheduledTransactionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -293,6 +297,16 @@ class ScheduledTransactionResponse(BaseModel):
     interval_count: int
     memo: str
     is_active: bool
+    last_realized_on: Optional[date] = None
+
+
+class ScheduledRealizationResponse(BaseModel):
+    scheduled_transaction_id: str
+    transaction_ids: list[str]
+    realized_on: date
+    next_date: Optional[date]
+    is_active: bool
+    last_realized_on: date
 
 
 class ForecastOccurrence(BaseModel):

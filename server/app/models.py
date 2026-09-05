@@ -283,8 +283,10 @@ class ScheduledTransaction(Base):
     interval_count: Mapped[int] = mapped_column(Integer, default=1)
     memo: Mapped[str] = mapped_column(String(500), default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_realized_on: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
 
 class MonthlyAssignment(Base):
@@ -351,6 +353,9 @@ class Transaction(Base):
     account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), index=True)
     category_id: Mapped[Optional[str]] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), index=True, nullable=True)
     transfer_id: Mapped[Optional[str]] = mapped_column(String(36), index=True, nullable=True)
+    # Provenance for transactions realized from a scheduled transaction. Plain string (not an FK)
+    # so the lineage survives deletion of the originating schedule.
+    scheduled_transaction_id: Mapped[Optional[str]] = mapped_column(String(36), index=True, nullable=True)
     amount_minor: Mapped[int] = mapped_column(BigInteger)
     occurred_on: Mapped[date] = mapped_column(Date, index=True)
     payee_name: Mapped[str] = mapped_column(String(150), default="")
