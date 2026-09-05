@@ -574,13 +574,14 @@ public struct APICategoryMonth: Identifiable, Decodable, Equatable, Sendable {
     public let carriedAvailableMinor: Int64
     public let availableMinor: Int64
     public let isOverspent: Bool
-    public let cashOverspentMinor: Int64?
-    public let creditOverspentMinor: Int64?
     public let targetType: String?
     public let targetAmountMinor: Int64?
     public let targetDate: String?
     public let recommendedContributionMinor: Int64?
     public let underfundedMinor: Int64?
+    public let cashOverspentMinor: Int64?
+    public let creditOverspentMinor: Int64?
+    public let fundedCreditSpendingMinor: Int64?
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -590,9 +591,9 @@ public struct APICategoryMonth: Identifiable, Decodable, Equatable, Sendable {
         case carriedAvailableMinor = "carried_available_minor"
         case availableMinor = "available_minor"
         case isOverspent = "is_overspent"
-        case cashOverspentMinor = "cash_overspent_minor", creditOverspentMinor = "credit_overspent_minor"
         case targetType = "target_type", targetAmountMinor = "target_amount_minor", targetDate = "target_date"
         case recommendedContributionMinor = "recommended_contribution_minor", underfundedMinor = "underfunded_minor"
+        case cashOverspentMinor = "cash_overspent_minor", creditOverspentMinor = "credit_overspent_minor", fundedCreditSpendingMinor = "funded_credit_spending_minor"
     }
 }
 

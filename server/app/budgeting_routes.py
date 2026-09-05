@@ -1111,9 +1111,12 @@ def month_summary(
         CreditCardReserveEvent.budget_id == budget_id,
         CreditCardReserveEvent.occurred_on < next_month,
     )))
+    funded_credit_current: dict[str, int] = {}
     for event in reserve_events:
         target = activity_current if event.occurred_on >= month else activity_before
         target[event.payment_category_id] = target.get(event.payment_category_id, 0) + event.amount_minor
+        if event.occurred_on >= month and event.spending_category_id is not None:
+            funded_credit_current[event.spending_category_id] = funded_credit_current.get(event.spending_category_id, 0) + event.amount_minor
 
     rows: list[CategoryMonthSummary] = []
     total_overspent = 0
@@ -1122,16 +1125,11 @@ def month_summary(
         assigned = assigned_current.get(category.id, 0)
         activity = activity_current.get(category.id, 0)
         available = carried + assigned + activity
-        overspent = -available if available < 0 else 0
+        funded_credit = max(funded_credit_current.get(category.id, 0), 0)
+        credit_overspent = max(-credit_activity_current.get(category.id, 0) - funded_credit, 0)
+        cash_overspent = max(-available - credit_overspent, 0)
         if available < 0:
             total_overspent += -available
-        # Attribute overspending: unfunded credit-card spending "became card debt" (credit),
-        # the remainder "needs coverage" from other real money (cash). Credit spending this
-        # month absorbs the overspend first, up to the amount actually spent on credit.
-        credit_spending = -credit_activity_current.get(category.id, 0)
-        credit_spending = credit_spending if credit_spending > 0 else 0
-        credit_overspent = min(overspent, credit_spending)
-        cash_overspent = overspent - credit_overspent
         category_target = targets.get(category.id)
         funding = target_funding(
             category_target,
@@ -1147,13 +1145,14 @@ def month_summary(
             carried_available_minor=carried,
             available_minor=available,
             is_overspent=available < 0,
-            cash_overspent_minor=cash_overspent,
-            credit_overspent_minor=credit_overspent,
             target_type=category_target.target_type if category_target else None,
             target_amount_minor=category_target.target_amount_minor if category_target else None,
             target_date=category_target.target_date if category_target else None,
             recommended_contribution_minor=funding.recommended_contribution_minor if funding else 0,
             underfunded_minor=funding.underfunded_minor if funding else 0,
+            cash_overspent_minor=cash_overspent,
+            credit_overspent_minor=credit_overspent,
+            funded_credit_spending_minor=funded_credit,
         ))
     return MonthSummaryResponse(
         month=month,

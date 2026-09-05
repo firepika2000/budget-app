@@ -33,6 +33,51 @@ def account_balance(client, owner_token, budget_id, account_id):
     return sum(item["amount_minor"] for item in transactions if item["account_id"] == account_id)
 
 
+def test_cash_purchase_reports_cash_overspending_only(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], checking["id"], amount=100000)
+    client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{groceries['id']}/assignment",
+        headers=auth(owner_token),
+        json={"month": "2026-09-01", "assigned_minor": 20000},
+    )
+    record(
+        client,
+        owner_token,
+        budget["id"],
+        account_id=checking["id"],
+        category_id=groceries["id"],
+        amount_minor=-50000,
+    )
+
+    _, rows = category_rows(client, owner_token, budget["id"])
+    assert rows["Groceries"]["available_minor"] == -30000
+    assert rows["Groceries"]["cash_overspent_minor"] == 30000
+    assert rows["Groceries"]["credit_overspent_minor"] == 0
+    assert rows["Groceries"]["funded_credit_spending_minor"] == 0
+
+
+def test_unfunded_card_purchase_reports_credit_debt_only(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    _, groceries = create_budget_structure(client, owner_token, budget["id"])
+    card = create_credit_card(client, owner_token, budget["id"])
+    record(
+        client,
+        owner_token,
+        budget["id"],
+        account_id=card["id"],
+        category_id=groceries["id"],
+        amount_minor=-50000,
+    )
+
+    _, rows = category_rows(client, owner_token, budget["id"])
+    assert rows["Groceries"]["available_minor"] == -50000
+    assert rows["Groceries"]["cash_overspent_minor"] == 0
+    assert rows["Groceries"]["credit_overspent_minor"] == 50000
+    assert rows["Groceries"]["funded_credit_spending_minor"] == 0
+
+
 def test_funded_card_purchase_reserves_cash_and_payment_is_not_a_second_expense(
     client, owner_token, session_factory
 ):
@@ -60,6 +105,8 @@ def test_funded_card_purchase_reserves_cash_and_payment_is_not_a_second_expense(
     assert summary["ready_to_assign_minor"] == 50000
     assert rows["Groceries"]["available_minor"] == 20000
     assert rows["Visa Payment"]["available_minor"] == 30000
+    assert rows["Groceries"]["funded_credit_spending_minor"] == 30000
+    assert rows["Groceries"]["credit_overspent_minor"] == 0
     assert account_balance(client, owner_token, budget["id"], checking["id"]) == 100000
     assert account_balance(client, owner_token, budget["id"], card["id"]) == -30000
 
@@ -105,6 +152,8 @@ def test_partially_funded_purchase_increases_debt_without_inventing_reserve(
     _, rows = category_rows(client, owner_token, budget["id"])
     assert rows["Groceries"]["available_minor"] == -30000
     assert rows["Visa Payment"]["available_minor"] == 20000
+    assert rows["Groceries"]["credit_overspent_minor"] == 30000
+    assert rows["Groceries"]["cash_overspent_minor"] == 0
 
     unfunded_payment = client.post(
         f"/api/v1/budgets/{budget['id']}/transfers",
@@ -149,6 +198,8 @@ def test_card_refund_releases_payment_reserve_and_restores_category(
     _, rows = category_rows(client, owner_token, budget["id"])
     assert rows["Groceries"]["available_minor"] == 30000
     assert rows["Visa Payment"]["available_minor"] == 20000
+    assert rows["Groceries"]["funded_credit_spending_minor"] == 20000
+    assert rows["Groceries"]["credit_overspent_minor"] == 0
     assert account_balance(client, owner_token, budget["id"], card["id"]) == -20000
 
 

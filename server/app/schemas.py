@@ -669,13 +669,14 @@ class CategoryMonthSummary(BaseModel):
     carried_available_minor: int
     available_minor: int
     is_overspent: bool
-    cash_overspent_minor: int = 0
-    credit_overspent_minor: int = 0
     target_type: Optional[str] = None
     target_amount_minor: Optional[int] = None
     target_date: Optional[date] = None
     recommended_contribution_minor: int = 0
     underfunded_minor: int = 0
+    cash_overspent_minor: int = 0
+    credit_overspent_minor: int = 0
+    funded_credit_spending_minor: int = 0
 
 
 class MonthSummaryResponse(BaseModel):
