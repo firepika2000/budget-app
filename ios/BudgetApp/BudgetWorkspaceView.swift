@@ -19,6 +19,7 @@ private struct WorkspaceSnapshot {
     var members: [APIHouseholdMember]; var delegatedBudgets: [APIDelegatedBudget]
     var allocationOperations: [APIAllocationOperation] = []
     var targets: [APICategoryTarget] = []
+    var schedules: [APIScheduledTransaction] = []
 }
 
 private struct WorkspaceReportQuery {
@@ -141,7 +142,12 @@ private final class DemoWorkspaceDataSource: WorkspaceDataSource {
             guard let amount = item.target else { return nil }
             return APICategoryTarget(id: "demo-\(item.id)", categoryID: item.id, targetType: item.targetType, targetAmountMinor: amount, targetDate: item.targetDate, recurrenceMonths: item.targetRecurrenceMonths, minimumContributionMinor: item.targetMinimumContribution, priority: item.targetPriority, isActive: item.targetIsActive)
         }
-        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, requests: requestRows, allowances: [], spending: spending, income: income, delegated: delegated, forecast: nil, members: [], delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows)
+        let scheduleRows: [APIScheduledTransaction] = try decode(demo.schedules.filter { item in
+            item.isActive && visibleAccounts.contains { $0.id == item.accountID }
+                && (item.destinationAccountID == nil || visibleAccounts.contains { $0.id == item.destinationAccountID })
+                && (item.categoryID == nil || categoryIDs.contains(item.categoryID!))
+        }.map { item in ["id": item.id, "budget_id": budget.id, "account_id": item.accountID, "destination_account_id": item.destinationAccountID.map { $0 as Any } ?? NSNull(), "category_id": item.categoryID.map { $0 as Any } ?? NSNull(), "name": item.name, "amount_minor": item.amount, "next_date": item.nextDate, "recurrence_unit": item.recurrenceUnit, "interval_count": item.intervalCount, "memo": item.memo, "is_active": item.isActive, "last_realized_on": item.lastRealizedOn.map { $0 as Any } ?? NSNull()] })
+        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, requests: requestRows, allowances: [], spending: spending, income: income, delegated: delegated, forecast: nil, members: [], delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
     }
 
     private func decode<T: Decodable>(_ value: Any) throws -> T { try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value)) }
@@ -165,6 +171,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var delegatedBudgets: [APIDelegatedBudget] = []
     @Published var allocationOperations: [APIAllocationOperation] = []
     @Published var targets: [String: APICategoryTarget] = [:]
+    @Published var scheduledTransactions: [APIScheduledTransaction] = []
     @Published var forecast: APIForecast?
     @Published var reportPeriod = "30d"
     @Published var customReportStart = Calendar.current.date(byAdding: .day, value: -29, to: Date())!
@@ -202,6 +209,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 incomeReport = value.income; delegatedBudget = value.delegated; forecast = value.forecast
                 householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; allocationOperations = value.allocationOperations; errorMessage = nil
                 targets = Dictionary(uniqueKeysWithValues: value.targets.map { ($0.categoryID, $0) })
+                scheduledTransactions = value.schedules
                 return
             }
             let client = try APIClient(baseURL: serverURL)
@@ -235,6 +243,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome
             )
             if budget.can("view_allocation_history") { allocationOperations = (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] }
+            scheduledTransactions = budget.can("view_transactions") ? (try await client.scheduledTransactions(budgetID: budget.id, token: token)) : []
             targets = Dictionary(uniqueKeysWithValues: await withTaskGroup(of: (String, APICategoryTarget?).self) { group in for category in categories { group.addTask { (category.id, try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: token)) } }; var values: [(String, APICategoryTarget)] = []; for await (id, target) in group { if let target { values.append((id, target)) } }; return values })
             accountBalances = Dictionary(uniqueKeysWithValues: await withTaskGroup(of: (String, APIAccountBalance?).self) { group in
                 for account in accounts { group.addTask { (account.id, try? await client.accountBalance(budgetID: self.budget.id, accountID: account.id, token: token)) } }
@@ -396,6 +405,60 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
 
+    func createSchedule(_ value: APIScheduledTransactionCreate) async throws {
+        if let demoSource = dataSource as? DemoWorkspaceDataSource {
+            demoSource.demo.schedules.append(.init(id: UUID().uuidString, accountID: value.accountID, destinationAccountID: value.destinationAccountID, categoryID: value.categoryID, name: value.name, amount: value.amountMinor, nextDate: value.nextDate, recurrenceUnit: value.recurrenceUnit, intervalCount: value.intervalCount, memo: value.memo, isActive: value.isActive))
+        } else { _ = try await liveClient().createScheduledTransaction(budgetID: budget.id, schedule: value, token: liveToken!) }
+        await refresh()
+    }
+
+    func updateSchedule(id: String, value: APIScheduledTransactionCreate) async throws {
+        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.schedules.firstIndex(where: { $0.id == id }) {
+            demoSource.demo.schedules[index].accountID = value.accountID
+            demoSource.demo.schedules[index].destinationAccountID = value.destinationAccountID
+            demoSource.demo.schedules[index].categoryID = value.categoryID
+            demoSource.demo.schedules[index].name = value.name
+            demoSource.demo.schedules[index].amount = value.amountMinor
+            demoSource.demo.schedules[index].nextDate = value.nextDate
+            demoSource.demo.schedules[index].recurrenceUnit = value.recurrenceUnit
+            demoSource.demo.schedules[index].intervalCount = value.intervalCount
+            demoSource.demo.schedules[index].memo = value.memo
+            demoSource.demo.schedules[index].isActive = value.isActive
+        } else { _ = try await liveClient().updateScheduledTransaction(budgetID: budget.id, scheduleID: id, schedule: value, token: liveToken!) }
+        await refresh()
+    }
+
+    func deleteSchedule(id: String) async throws {
+        if let demoSource = dataSource as? DemoWorkspaceDataSource { demoSource.demo.schedules.removeAll { $0.id == id } }
+        else { try await liveClient().deleteScheduledTransaction(budgetID: budget.id, scheduleID: id, token: liveToken!) }
+        await refresh()
+    }
+
+    @discardableResult func realizeSchedule(id: String) async throws -> APIScheduledRealization {
+        let result: APIScheduledRealization
+        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.schedules.firstIndex(where: { $0.id == id }) {
+            let item = demoSource.demo.schedules[index]
+            guard item.isActive else { throw workspaceError("Scheduled transaction is inactive") }
+            let due = Self.parseDate(item.nextDate)
+            guard Calendar.current.startOfDay(for: due) <= Calendar.current.startOfDay(for: Date()) else { throw workspaceError("This scheduled transaction is not due yet") }
+            let before = Set(demoSource.demo.transactions.map(\.id))
+            if let destination = item.destinationAccountID {
+                guard demoSource.demo.transfer(amount: item.amount, from: item.accountID, to: destination, memo: item.memo, cleared: false, date: due) else { throw workspaceError(demoSource.demo.errorMessage) }
+            } else {
+                demoSource.demo.createTransaction(payee: item.name, signedAmount: item.amount, date: due, accountID: item.accountID, categoryAmounts: item.categoryID.map { [$0: item.amount] } ?? [:], memo: item.memo, cleared: false)
+            }
+            let transactionIDs = demoSource.demo.transactions.map(\.id).filter { !before.contains($0) }
+            let next = Self.nextScheduledDate(from: due, unit: item.recurrenceUnit, interval: item.intervalCount)
+            demoSource.demo.schedules[index].lastRealizedOn = item.nextDate
+            demoSource.demo.schedules[index].isActive = next != nil
+            if let next { demoSource.demo.schedules[index].nextDate = Self.dateString(next) }
+            let body: [String: Any] = ["scheduled_transaction_id": id, "transaction_ids": transactionIDs, "realized_on": item.nextDate, "next_date": next.map(Self.dateString) ?? NSNull(), "is_active": next != nil, "last_realized_on": item.nextDate]
+            result = try JSONDecoder().decode(APIScheduledRealization.self, from: JSONSerialization.data(withJSONObject: body))
+        } else { result = try await liveClient().realizeScheduledTransaction(budgetID: budget.id, scheduleID: id, token: liveToken!) }
+        await refresh()
+        return result
+    }
+
     func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws {
         if let demoSource = dataSource as? DemoWorkspaceDataSource {
             if decision == "approve", let amount { demoSource.demo.approve(id, amount: amount) }
@@ -499,6 +562,17 @@ final class BudgetWorkspaceStore: ObservableObject {
         let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
         return formatter.date(from: value) ?? Date()
+    }
+
+    nonisolated static func nextScheduledDate(from date: Date, unit: String, interval: Int, calendar: Calendar = Calendar(identifier: .gregorian)) -> Date? {
+        switch unit {
+        case "once": return nil
+        case "days": return calendar.date(byAdding: .day, value: interval, to: date)
+        case "weeks": return calendar.date(byAdding: .day, value: interval * 7, to: date)
+        case "months": return calendar.date(byAdding: .month, value: interval, to: date)
+        case "years": return calendar.date(byAdding: .year, value: interval, to: date)
+        default: return nil
+        }
     }
 }
 

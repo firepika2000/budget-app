@@ -109,6 +109,21 @@ struct DemoTransaction: Identifiable, Hashable {
     var transferID: String? = nil
 }
 
+struct DemoSchedule: Identifiable, Hashable {
+    let id: String
+    var accountID: String
+    var destinationAccountID: String? = nil
+    var categoryID: String? = nil
+    var name: String
+    var amount: Int64
+    var nextDate: String
+    var recurrenceUnit: String
+    var intervalCount: Int = 1
+    var memo: String = ""
+    var isActive = true
+    var lastRealizedOn: String? = nil
+}
+
 enum DemoReportPeriod: String, CaseIterable, Identifiable {
     case thirtyDays = "30D"
     case sixtyDays = "60D"

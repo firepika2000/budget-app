@@ -6,6 +6,82 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testScheduledRepositoryCRUDRecurrencesAndFutureIncomeStayNonSpendable() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        XCTAssertEqual(store.scheduledTransactions.count, 4)
+        XCTAssertEqual(Set(store.scheduledTransactions.map(\.recurrenceUnit)), ["weeks", "months"])
+        let account = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
+        let before = (store.summary?.readyToAssignMinor, store.balance(for: account), store.transactions.count)
+        for unit in ["once", "days", "weeks", "months", "years"] {
+            try await store.createSchedule(.init(accountID: account.id, name: "Future \(unit)", amountMinor: 50_000, nextDate: "2026-12-01", recurrenceUnit: unit, intervalCount: unit == "weeks" ? 2 : 1))
+            XCTAssertTrue(store.scheduledTransactions.contains { $0.name == "Future \(unit)" && $0.recurrenceUnit == unit })
+        }
+        XCTAssertEqual(store.summary?.readyToAssignMinor, before.0)
+        XCTAssertEqual(store.balance(for: account), before.1)
+        XCTAssertEqual(store.transactions.count, before.2)
+
+        let edited = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Future months" })
+        try await store.updateSchedule(id: edited.id, value: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3))
+        XCTAssertTrue(store.scheduledTransactions.contains { $0.name == "Edited monthly" && $0.intervalCount == 3 })
+        try await store.updateSchedule(id: edited.id, value: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3, isActive: false))
+        XCTAssertFalse(store.scheduledTransactions.contains { $0.id == edited.id }, "inactive schedules match the live active-only list contract")
+        let deletable = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Future days" })
+        try await store.deleteSchedule(id: deletable.id)
+        XCTAssertFalse(store.scheduledTransactions.contains { $0.id == deletable.id })
+    }
+
+    @MainActor
+    func testScheduledRealizationAdvancesAndOnceDeactivatesWithWorkspaceRefresh() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let due = BudgetWorkspaceStore.dateString(Date())
+        let account = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
+        let category = try XCTUnwrap(store.categories.first { $0.id == "electric" })
+        try await store.createSchedule(.init(accountID: account.id, categoryID: category.id, name: "Due weekly", amountMinor: -2_500, nextDate: due, recurrenceUnit: "weeks"))
+        let recurring = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Due weekly" })
+        let activityBefore = store.summary?.categories.first { $0.categoryID == category.id }?.activityMinor
+        let transactionCount = store.transactions.count
+        let result = try await store.realizeSchedule(id: recurring.id)
+        XCTAssertEqual(result.transactionIDs.count, 1)
+        XCTAssertEqual(store.transactions.count, transactionCount + 1)
+        XCTAssertEqual(store.summary?.categories.first { $0.categoryID == category.id }?.activityMinor, (activityBefore ?? 0) - 2_500)
+        XCTAssertGreaterThan(try XCTUnwrap(store.scheduledTransactions.first { $0.id == recurring.id }?.nextDate), due)
+
+        try await store.createSchedule(.init(accountID: account.id, categoryID: category.id, name: "One time", amountMinor: -500, nextDate: due, recurrenceUnit: "once"))
+        let once = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "One time" })
+        let onceResult = try await store.realizeSchedule(id: once.id)
+        XCTAssertFalse(onceResult.isActive)
+        XCTAssertFalse(store.scheduledTransactions.contains { $0.id == once.id })
+    }
+
+    @MainActor
+    func testScheduledTransferAndCardRealizationUseExistingDemoAccountingPaths() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let due = BudgetWorkspaceStore.dateString(Date())
+        let checking = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
+        let savings = try XCTUnwrap(store.accounts.first { $0.id == "savings" })
+        let checkingBefore = store.balance(for: checking), savingsBefore = store.balance(for: savings)
+        try await store.createSchedule(.init(accountID: checking.id, destinationAccountID: savings.id, name: "Due transfer", amountMinor: 1_000, nextDate: due, recurrenceUnit: "months"))
+        let transfer = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Due transfer" })
+        let transferResult = try await store.realizeSchedule(id: transfer.id)
+        XCTAssertEqual(transferResult.transactionIDs.count, 2)
+        XCTAssertEqual(store.balance(for: checking), checkingBefore - 1_000)
+        XCTAssertEqual(store.balance(for: savings), savingsBefore + 1_000)
+
+        let card = try XCTUnwrap(store.accounts.first { $0.id == "visa" })
+        let groceries = try XCTUnwrap(store.categories.first { $0.id == "groceries" })
+        let cardBefore = store.balance(for: card)
+        let activityBefore = store.summary?.categories.first { $0.categoryID == groceries.id }?.activityMinor ?? 0
+        try await store.createSchedule(.init(accountID: card.id, categoryID: groceries.id, name: "Due card purchase", amountMinor: -1_500, nextDate: due, recurrenceUnit: "months"))
+        let purchase = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Due card purchase" })
+        _ = try await store.realizeSchedule(id: purchase.id)
+        XCTAssertEqual(store.balance(for: card), cardBefore - 1_500)
+        XCTAssertEqual(store.summary?.categories.first { $0.categoryID == groceries.id }?.activityMinor, activityBefore - 1_500)
+    }
+
+    @MainActor
     func testTargetMetadataCreateDisableAndDeleteNeverChangesMoney() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

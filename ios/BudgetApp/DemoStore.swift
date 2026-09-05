@@ -8,6 +8,7 @@ final class DemoStore: ObservableObject {
     @Published var accounts: [DemoAccount]
     @Published var categories: [DemoCategory]
     @Published var transactions: [DemoTransaction]
+    @Published var schedules: [DemoSchedule]
     @Published var requests: [DemoRequest]
     @Published var allowances: [DemoAllowance]
     @Published var groupOrder: [String]
@@ -24,6 +25,7 @@ final class DemoStore: ObservableObject {
         accounts = Self.seedAccounts
         categories = Self.seedCategories
         transactions = Self.seedTransactions
+        schedules = Self.seedSchedules
         requests = Self.seedRequests
         allowances = Self.seedAllowances
         groupOrder = Array(Set(Self.seedCategories.map(\.group))).sorted()
@@ -58,6 +60,7 @@ final class DemoStore: ObservableObject {
         accounts = Self.seedAccounts
         categories = Self.seedCategories
         transactions = Self.seedTransactions
+        schedules = Self.seedSchedules
         requests = Self.seedRequests
         allowances = Self.seedAllowances
         groupOrder = Array(Set(Self.seedCategories.map(\.group))).sorted()
@@ -177,13 +180,13 @@ final class DemoStore: ObservableObject {
     }
 
     @discardableResult
-    func transfer(amount: Int64, from sourceID: String, to destinationID: String, memo: String, cleared: Bool) -> Bool {
+    func transfer(amount: Int64, from sourceID: String, to destinationID: String, memo: String, cleared: Bool, date: Date = .demo(monthsAgo: 0, day: 30)) -> Bool {
         guard amount > 0 else { return fail(.invalidAmount) }
         guard let source = accounts.firstIndex(where: { $0.id == sourceID }), let destination = accounts.firstIndex(where: { $0.id == destinationID }), source != destination else { return fail(.accountNotFound) }
         let transferID = UUID().uuidString
         accounts[source].balance -= amount; accounts[destination].balance += amount
-        transactions.insert(.init(id: "\(transferID)-in", date: .demo(monthsAgo: 0, day: 30), payee: "Transfer", memo: memo, accountID: destinationID, categoryIDs: [], amount: amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
-        transactions.insert(.init(id: "\(transferID)-out", date: .demo(monthsAgo: 0, day: 30), payee: "Transfer", memo: memo, accountID: sourceID, categoryIDs: [], amount: -amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
+        transactions.insert(.init(id: "\(transferID)-in", date: date, payee: "Transfer", memo: memo, accountID: destinationID, categoryIDs: [], amount: amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
+        transactions.insert(.init(id: "\(transferID)-out", date: date, payee: "Transfer", memo: memo, accountID: sourceID, categoryIDs: [], amount: -amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
         errorMessage = nil
         return true
     }
@@ -385,5 +388,13 @@ final class DemoStore: ObservableObject {
     static let seedAllowances: [DemoAllowance] = [
         .init(id:"alex-weekly",member:.alex,amount:2000,frequency:"Every Friday",nextDate:"Friday · Sep 11",source:"General Buffer",splits:[("Alex Allowance",1200),("Alex Savings",500),("Giving",300)],rollover:true),
         .init(id:"mia-weekly",member:.mia,amount:1200,frequency:"Every Friday",nextDate:"Friday · Sep 11",source:"General Buffer",splits:[("Mia Allowance",800),("Mia Bike Goal",400)],rollover:true)
+    ]
+
+    static let seedSchedules: [DemoSchedule] = [
+        .init(id: "schedule-utility", accountID: "checking", categoryID: "electric", name: "Electric utility", amount: -16_500, nextDate: "2026-09-04", recurrenceUnit: "months", memo: "Monthly utility"),
+        .init(id: "schedule-payroll", accountID: "checking", name: "Payroll", amount: 375_000, nextDate: "2026-09-11", recurrenceUnit: "weeks", intervalCount: 2, memo: "Forecast income only"),
+        .init(id: "schedule-transfer", accountID: "checking", destinationAccountID: "savings", name: "Savings transfer", amount: 25_000, nextDate: "2026-09-05", recurrenceUnit: "months"),
+        .init(id: "schedule-card", accountID: "visa", categoryID: "groceries", name: "Grocery delivery", amount: -12_500, nextDate: "2026-09-05", recurrenceUnit: "weeks"),
+        .init(id: "schedule-inactive", accountID: "checking", categoryID: "internet", name: "Old internet plan", amount: -7_900, nextDate: "2026-09-20", recurrenceUnit: "months", isActive: false)
     ]
 }
