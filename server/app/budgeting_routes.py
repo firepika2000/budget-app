@@ -501,7 +501,10 @@ def update_category(
 def delete_category(budget_id: str, category_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     budget = require_budget_capability(db, user, budget_id, "manage_budget_structure")
     category = db.get(Category, category_id)
-    if category is None or category.budget_id != budget_id or category.system_type is not None:
+    if (
+        category is None or category.budget_id != budget_id or category.system_type is not None
+        or not can_access_resource(db, user, budget, "category", category_id)
+    ):
         raise HTTPException(status_code=404, detail="Category not found")
     linked = any((
         db.scalar(select(Transaction.id).where(Transaction.category_id == category_id).limit(1)),
@@ -1017,9 +1020,16 @@ def month_summary(
     if month.day != 1:
         raise HTTPException(status_code=422, detail="Month must be the first day of a month")
     next_month = date(month.year + (month.month == 12), 1 if month.month == 12 else month.month + 1, 1)
+    archived_group_ids = select(CategoryGroup.id).where(
+        CategoryGroup.budget_id == budget_id,
+        CategoryGroup.is_archived.is_(True),
+    )
     categories = list(db.scalars(select(Category).where(
         Category.budget_id == budget_id,
         Category.is_archived.is_(False),
+        # A category whose group is archived is hidden from the plan (its money and history
+        # remain in the ledger), matching category archival and the demo repository.
+        Category.group_id.not_in(archived_group_ids),
     ).order_by(Category.group_id, Category.sort_order, Category.name)))
     visible_categories = visible_resource_ids(db, user, budget, "category")
     if visible_categories is not None:

@@ -39,3 +39,41 @@ def test_category_delete_only_when_history_free_and_restricted_cannot_manage(cli
     refused = client.delete(f"{path}/categories/{category['id']}", headers=auth(owner_token))
     assert refused.status_code == 409
     assert "Archive" in refused.json()["detail"]
+
+
+def test_archived_group_hides_its_categories_from_the_plan_but_preserves_history(client, owner_token, session_factory):
+    from .test_advanced_ledger import record
+    from .test_allocation_ledger import fund
+
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    path = f"/api/v1/budgets/{budget['id']}"
+    fund(client, owner_token, budget["id"], account["id"], amount=100000)
+    assert client.put(f"{path}/categories/{category['id']}/assignment", headers=auth(owner_token),
+                      json={"month": "2026-09-01", "assigned_minor": 40000}).status_code == 200
+
+    def summary():
+        return client.get(f"{path}/months/2026-09-01", headers=auth(owner_token)).json()
+
+    before = summary()
+    assert category["id"] in {r["category_id"] for r in before["categories"]}
+    rta_before = before["ready_to_assign_minor"]
+
+    group = client.get(f"{path}/category-groups", headers=auth(owner_token)).json()[0]
+    body = {"name": group["name"], "sort_order": group["sort_order"], "is_archived": True}
+    assert client.put(f"{path}/category-groups/{group['id']}", headers=auth(owner_token), json=body).status_code == 200
+
+    after = summary()
+    # Hidden from the plan once its group is archived (parity with the deterministic demo).
+    assert category["id"] not in {r["category_id"] for r in after["categories"]}
+    # Money preserved: RTA unchanged because allocations remain in the ledger.
+    assert after["ready_to_assign_minor"] == rta_before
+    # Still present for management, and the group is listed as archived.
+    assert category["id"] in {c["id"] for c in client.get(f"{path}/categories", headers=auth(owner_token)).json()}
+    groups = {g["id"]: g for g in client.get(f"{path}/category-groups", headers=auth(owner_token)).json()}
+    assert groups[group["id"]]["is_archived"] is True
+
+    # Restoring the group brings its categories back to the plan.
+    body["is_archived"] = False
+    assert client.put(f"{path}/category-groups/{group['id']}", headers=auth(owner_token), json=body).status_code == 200
+    assert category["id"] in {r["category_id"] for r in summary()["categories"]}
