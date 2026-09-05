@@ -9,15 +9,30 @@ final class DemoStoreTests: XCTestCase {
     func testTargetMetadataCreateDisableAndDeleteNeverChangesMoney() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
-        let category = try XCTUnwrap(store.categories.first)
+        let category = try XCTUnwrap(store.categories.first { store.targets[$0.id] == nil })
         let before = (store.summary?.readyToAssignMinor, store.accounts.map { store.balance(for: $0) }, store.transactions.count)
+        let initialPlanCost = store.summary?.categories.reduce(Int64(0)) { $0 + ($1.recommendedContributionMinor ?? 0) }
 
         for type in ["monthly_funding", "savings_balance", "target_by_date", "recurring_expense"] {
-            try await store.saveTarget(categoryID: category.id, value: APICategoryTargetUpsert(targetType: type, targetAmountMinor: 12_345, targetDate: type == "target_by_date" || type == "recurring_expense" ? "2027-09-05" : nil, recurrenceMonths: type == "recurring_expense" ? 12 : nil, isActive: type != "savings_balance"))
-            XCTAssertEqual(store.targets[category.id]?.targetAmountMinor, type == "savings_balance" ? nil : 12_345)
+            let active = type != "savings_balance"
+            try await store.saveTarget(categoryID: category.id, value: APICategoryTargetUpsert(targetType: type, targetAmountMinor: 12_345, targetDate: type == "target_by_date" || type == "recurring_expense" ? "2027-09-05" : nil, recurrenceMonths: type == "recurring_expense" ? 12 : nil, minimumContributionMinor: 500, priority: 72, isActive: active))
+            let saved = try XCTUnwrap(store.targets[category.id])
+            XCTAssertEqual(saved.targetAmountMinor, 12_345)
+            XCTAssertEqual(saved.targetType, type)
+            XCTAssertEqual(saved.minimumContributionMinor, 500)
+            XCTAssertEqual(saved.priority, 72)
+            XCTAssertEqual(saved.isActive, active)
+            let row = try XCTUnwrap(store.summary?.categories.first { $0.categoryID == category.id })
+            XCTAssertEqual(row.targetType, type)
+            if active { XCTAssertGreaterThan(row.recommendedContributionMinor ?? 0, 0) }
+            else { XCTAssertEqual(row.recommendedContributionMinor, 0) }
         }
+        let editedPlanCost = store.summary?.categories.reduce(Int64(0)) { $0 + ($1.recommendedContributionMinor ?? 0) }
+        XCTAssertNotEqual(editedPlanCost, initialPlanCost, "Monthly Plan Cost must refresh after target edits")
         try await store.deleteTarget(categoryID: category.id)
         XCTAssertNil(store.targets[category.id])
+        XCTAssertNil(store.summary?.categories.first { $0.categoryID == category.id }?.targetType)
+        XCTAssertEqual(store.summary?.categories.reduce(Int64(0)) { $0 + ($1.recommendedContributionMinor ?? 0) }, initialPlanCost)
         XCTAssertEqual(store.summary?.readyToAssignMinor, before.0)
         XCTAssertEqual(store.accounts.map { store.balance(for: $0) }, before.1)
         XCTAssertEqual(store.transactions.count, before.2)

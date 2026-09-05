@@ -2,6 +2,7 @@
 .build/
 DerivedData/
 *DerivedData/
+.derived-data/
 *.xcuserstate
 .env
 server/backups/

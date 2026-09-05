@@ -18,6 +18,7 @@ private struct WorkspaceSnapshot {
     var delegated: APIDelegatedBudget?; var forecast: APIForecast?
     var members: [APIHouseholdMember]; var delegatedBudgets: [APIDelegatedBudget]
     var allocationOperations: [APIAllocationOperation] = []
+    var targets: [APICategoryTarget] = []
 }
 
 private struct WorkspaceReportQuery {
@@ -80,11 +81,25 @@ private final class DemoWorkspaceDataSource: WorkspaceDataSource {
             for id in ids { creditSpend[id, default: 0] += item.categoryAmounts[id] ?? base }
         }
         let summaryRows: [[String: Any]] = visibleCategories.map { item -> [String: Any] in
-            let recommended = max((item.target ?? 0) - max(item.available - item.assigned, 0), 0)
+            let recommended: Int64
+            if let target = item.target, item.targetIsActive {
+                if item.targetType == "monthly_funding" {
+                    recommended = max(target, item.targetMinimumContribution)
+                } else if item.targetType == "savings_balance" {
+                    recommended = max(target - max(item.available - item.assigned, 0), item.targetMinimumContribution)
+                } else {
+                    let due = item.targetDate.flatMap { dateFormatter.date(from: $0) } ?? planMonth
+                    let current = Calendar.current.dateComponents([.year, .month], from: planMonth)
+                    let targetMonth = Calendar.current.dateComponents([.year, .month], from: due)
+                    let periods = max(1, ((targetMonth.year ?? current.year ?? 0) - (current.year ?? 0)) * 12 + (targetMonth.month ?? current.month ?? 1) - (current.month ?? 1) + 1)
+                    let gap = max(target - max(item.available - item.assigned, 0), 0)
+                    recommended = max((gap + Int64(periods) - 1) / Int64(periods), item.targetMinimumContribution)
+                }
+            } else { recommended = 0 }
             let overspent = max(-item.available, 0)
             let creditSpent = max(-(creditSpend[item.id] ?? 0), 0)
             let creditOverspent = min(overspent, creditSpent)
-            return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": max(item.available - item.assigned - item.activity, 0), "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": max(creditSpent - creditOverspent, 0), "target_type": item.target == nil ? NSNull() : "savings_balance", "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "target_date": item.targetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - item.assigned, 0)]
+            return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": max(item.available - item.assigned - item.activity, 0), "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": max(creditSpent - creditOverspent, 0), "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "target_date": item.targetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
         }
         let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.readyToAssign, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": 1, "categories": summaryRows])
         let start = report.start
@@ -122,7 +137,11 @@ private final class DemoWorkspaceDataSource: WorkspaceDataSource {
             allocationRows.append(["id": "demo-move", "budget_id": budget.id, "occurred_on": dateFormatter.string(from: report.end), "kind": "category_transfer", "actor_user_id": actor, "note": demo.isRestricted ? "Delegated move within your budget" : "Moved money between categories", "source": "manual", "allocation_version": 1, "postings": [["bucket": "category", "category_id": source.id, "amount_minor": -moveAmount], ["bucket": "category", "category_id": destination.id, "amount_minor": moveAmount]]])
         }
         let allocationOperations: [APIAllocationOperation] = try decode(allocationRows)
-        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, requests: requestRows, allowances: [], spending: spending, income: income, delegated: delegated, forecast: nil, members: [], delegatedBudgets: [], allocationOperations: allocationOperations)
+        let targetRows = visibleCategories.compactMap { item -> APICategoryTarget? in
+            guard let amount = item.target else { return nil }
+            return APICategoryTarget(id: "demo-\(item.id)", categoryID: item.id, targetType: item.targetType, targetAmountMinor: amount, targetDate: item.targetDate, recurrenceMonths: item.targetRecurrenceMonths, minimumContributionMinor: item.targetMinimumContribution, priority: item.targetPriority, isActive: item.targetIsActive)
+        }
+        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, requests: requestRows, allowances: [], spending: spending, income: income, delegated: delegated, forecast: nil, members: [], delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows)
     }
 
     private func decode<T: Decodable>(_ value: Any) throws -> T { try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value)) }
@@ -182,7 +201,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 summary = value.summary; requests = value.requests; allowances = value.allowances; spendingReport = value.spending
                 incomeReport = value.income; delegatedBudget = value.delegated; forecast = value.forecast
                 householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; allocationOperations = value.allocationOperations; errorMessage = nil
-                targets = Dictionary(uniqueKeysWithValues: (value.summary?.categories ?? []).compactMap { row in guard let type = row.targetType, let amount = row.targetAmountMinor else { return nil }; return (row.categoryID, APICategoryTarget(id: "demo-\(row.categoryID)", categoryID: row.categoryID, targetType: type, targetAmountMinor: amount, targetDate: row.targetDate)) })
+                targets = Dictionary(uniqueKeysWithValues: value.targets.map { ($0.categoryID, $0) })
                 return
             }
             let client = try APIClient(baseURL: serverURL)
@@ -359,12 +378,20 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.categories.firstIndex(where: { $0.id == categoryID }) { demoSource.demo.categories[index].target = value.isActive ? value.targetAmountMinor : nil; demoSource.demo.categories[index].targetDate = value.targetDate }
+        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.categories.firstIndex(where: { $0.id == categoryID }) {
+            demoSource.demo.categories[index].target = value.targetAmountMinor
+            demoSource.demo.categories[index].targetDate = value.targetDate
+            demoSource.demo.categories[index].targetType = value.targetType
+            demoSource.demo.categories[index].targetRecurrenceMonths = value.recurrenceMonths
+            demoSource.demo.categories[index].targetMinimumContribution = value.minimumContributionMinor
+            demoSource.demo.categories[index].targetPriority = value.priority
+            demoSource.demo.categories[index].targetIsActive = value.isActive
+        }
         else { _ = try await liveClient().upsertCategoryTarget(budgetID: budget.id, categoryID: categoryID, target: value, token: liveToken!) }
         await refresh()
     }
     func deleteTarget(categoryID: String) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.categories.firstIndex(where: { $0.id == categoryID }) { demoSource.demo.categories[index].target = nil; demoSource.demo.categories[index].targetDate = nil }
+        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.categories.firstIndex(where: { $0.id == categoryID }) { demoSource.demo.categories[index].target = nil; demoSource.demo.categories[index].targetDate = nil; demoSource.demo.categories[index].targetType = "savings_balance"; demoSource.demo.categories[index].targetRecurrenceMonths = nil; demoSource.demo.categories[index].targetMinimumContribution = 0; demoSource.demo.categories[index].targetPriority = 50; demoSource.demo.categories[index].targetIsActive = true }
         else { try await liveClient().deleteCategoryTarget(budgetID: budget.id, categoryID: categoryID, token: liveToken!) }
         await refresh()
     }

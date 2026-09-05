@@ -69,6 +69,11 @@ struct DemoCategory: Identifiable, Hashable {
     var available: Int64
     var target: Int64?
     var targetDate: String? = nil
+    var targetType: String = "savings_balance"
+    var targetRecurrenceMonths: Int? = nil
+    var targetMinimumContribution: Int64 = 0
+    var targetPriority: Int = 50
+    var targetIsActive: Bool = true
     var note: String = ""
     var pinned = false
     var delegatedTo: DemoPersona? = nil
