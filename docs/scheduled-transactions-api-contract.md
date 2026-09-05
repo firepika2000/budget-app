@@ -29,7 +29,7 @@ Realized transactions carry `transactions.scheduled_transaction_id` (plain strin
 
 | Method / path | Capability | Notes |
 |---|---|---|
-| `GET /scheduled-transactions` | `view_transactions` | Active only; filtered by account/category visibility |
+| `GET /scheduled-transactions` | `view_transactions` | Active only by default; `include_inactive=true` includes paused schedules. Both modes retain identical account/category visibility filtering. |
 | `POST /scheduled-transactions` | `manage_planning` | Create; scope + shape validated |
 | `PUT /scheduled-transactions/{id}` | `manage_planning` | Full-object edit incl. `is_active`; scope re-checked; **last-writer-wins** (metadata, no version) |
 | `DELETE /scheduled-transactions/{id}` | `manage_planning` | Removes the plan; **realized actuals preserved** (lineage string retained) |

@@ -143,14 +143,14 @@ private final class DemoWorkspaceDataSource: WorkspaceDataSource {
             return APICategoryTarget(id: "demo-\(item.id)", categoryID: item.id, targetType: item.targetType, targetAmountMinor: amount, targetDate: item.targetDate, recurrenceMonths: item.targetRecurrenceMonths, minimumContributionMinor: item.targetMinimumContribution, priority: item.targetPriority, isActive: item.targetIsActive)
         }
         let scheduleRows: [APIScheduledTransaction] = try decode(demo.schedules.filter { item in
-            item.isActive && visibleAccounts.contains { $0.id == item.accountID }
+            visibleAccounts.contains { $0.id == item.accountID }
                 && (item.destinationAccountID == nil || visibleAccounts.contains { $0.id == item.destinationAccountID })
                 && (item.categoryID == nil || categoryIDs.contains(item.categoryID!))
         }.map { item in ["id": item.id, "budget_id": budget.id, "account_id": item.accountID, "destination_account_id": item.destinationAccountID.map { $0 as Any } ?? NSNull(), "category_id": item.categoryID.map { $0 as Any } ?? NSNull(), "name": item.name, "amount_minor": item.amount, "next_date": item.nextDate, "recurrence_unit": item.recurrenceUnit, "interval_count": item.intervalCount, "memo": item.memo, "is_active": item.isActive, "last_realized_on": item.lastRealizedOn.map { $0 as Any } ?? NSNull()] })
         let forecastStart = Date.demo(monthsAgo: 0, day: 5), forecastThrough = Calendar.current.date(byAdding: .day, value: 90, to: forecastStart)!
         var projected = Dictionary(uniqueKeysWithValues: visibleAccounts.map { ($0.id, $0.balance) })
         var occurrenceRows: [[String: Any]] = []
-        for item in scheduleRows {
+        for item in scheduleRows where item.isActive {
             var occurrence = BudgetWorkspaceStore.parseDate(item.nextDate)
             for _ in 0..<400 where occurrence <= forecastThrough {
                 if occurrence >= forecastStart {
@@ -261,7 +261,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome
             )
             if budget.can("view_allocation_history") { allocationOperations = (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] }
-            scheduledTransactions = budget.can("view_transactions") ? (try await client.scheduledTransactions(budgetID: budget.id, token: token)) : []
+            scheduledTransactions = budget.can("view_transactions") ? (try await client.scheduledTransactions(budgetID: budget.id, includeInactive: true, token: token)) : []
             targets = Dictionary(uniqueKeysWithValues: await withTaskGroup(of: (String, APICategoryTarget?).self) { group in for category in categories { group.addTask { (category.id, try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: token)) } }; var values: [(String, APICategoryTarget)] = []; for await (id, target) in group { if let target { values.append((id, target)) } }; return values })
             accountBalances = Dictionary(uniqueKeysWithValues: await withTaskGroup(of: (String, APIAccountBalance?).self) { group in
                 for account in accounts { group.addTask { (account.id, try? await client.accountBalance(budgetID: self.budget.id, accountID: account.id, token: token)) } }
@@ -660,7 +660,7 @@ private struct LiveHomeView: View {
             }
             if !store.scheduledTransactions.isEmpty {
                 Section("Upcoming") {
-                    ForEach(Array(store.scheduledTransactions.sorted { $0.nextDate < $1.nextDate }.prefix(3))) { item in NavigationLink { LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode) } label: { ScheduledTransactionRow(item: item) } }
+                    ForEach(Array(store.scheduledTransactions.filter(\.isActive).sorted { $0.nextDate < $1.nextDate }.prefix(3))) { item in NavigationLink { LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode) } label: { ScheduledTransactionRow(item: item) } }
                     NavigationLink("View all scheduled transactions") { LiveScheduledTransactionsView() }
                 }
             }
@@ -848,7 +848,7 @@ private struct LivePlanCategoryDetailView: View {
     private var model: APICategory? { store.categories.first { $0.id == categoryID } }
     private var transactions: [APITransaction] { store.transactions.filter { $0.categoryID == categoryID || $0.splits.contains(where: { $0.categoryID == categoryID }) } }
     private var operations: [(APIAllocationOperation, APIAllocationPosting)] { store.allocationOperations.flatMap { operation in operation.postings.filter { $0.categoryID == categoryID }.map { (operation, $0) } } }
-    var body: some View { List { if let row { Section("Plan") { LabeledContent("Available", value: store.format(row.availableMinor)); LabeledContent("Assigned this month", value: store.format(row.assignedMinor)); LabeledContent("Activity this month", value: store.format(row.activityMinor)); LabeledContent("Rollover into month", value: store.format(row.carriedAvailableMinor)); if row.targetType != nil { LabeledContent("Target recommendation", value: store.format(row.recommendedContributionMinor ?? 0)); LabeledContent("Still needed", value: store.format(row.underfundedMinor ?? 0)); if let date = row.targetDate { LabeledContent("Due", value: date) } }; if let overspend = store.overspendSummary(row) { VStack(alignment: .leading, spacing: 2) { Label(overspend, systemImage: (row.creditOverspentMinor ?? 0) > 0 && (row.cashOverspentMinor ?? 0) == 0 ? "creditcard.trianglebadge.exclamationmark" : "exclamationmark.triangle.fill").foregroundStyle(Theme.danger); Text((row.creditOverspentMinor ?? 0) > 0 ? "Unfunded card spending adds to card debt; fund the card payment category to cover it." : "Move available money here or reduce spending to cover the shortfall.").font(.caption).foregroundStyle(.secondary) } } }; Section("Actions") { if store.budget.can("assign_money") { Button("Assign money", action: assign) }; if store.budget.can("move_money") { Button("Move money", action: move) }; if store.budget.can("manage_planning") { Button(store.targets[categoryID] == nil ? "Create target" : "Manage target") { showTarget = true } }; if model != nil { Button("Edit category", action: manage) } } }; let schedules = store.scheduledTransactions.filter { $0.categoryID == categoryID }; if !schedules.isEmpty { Section("Upcoming scheduled") { ForEach(schedules) { item in NavigationLink { LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode) } label: { ScheduledTransactionRow(item: item) } } } }; Section("Recent activity") { if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }; ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) } }; Section("Allocation history") { if operations.isEmpty { Text("No allocation movements available").foregroundStyle(.secondary) }; ForEach(Array(operations.enumerated()), id: \.offset) { _, value in VStack(alignment: .leading) { Text(value.0.note.isEmpty ? value.0.kind.replacingOccurrences(of: "_", with: " ").capitalized : value.0.note); HStack { Text(value.0.occurredOn); Spacer(); Text(store.format(value.1.amountMinor)).monospacedDigit() }.font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle(row?.name ?? "Category").sheet(isPresented: $showTarget) { LiveTargetEditor(categoryID: categoryID, categoryName: row?.name ?? "Category", currencyCode: store.budget.currencyCode, existing: store.targets[categoryID]) } }
+    var body: some View { List { if let row { Section("Plan") { LabeledContent("Available", value: store.format(row.availableMinor)); LabeledContent("Assigned this month", value: store.format(row.assignedMinor)); LabeledContent("Activity this month", value: store.format(row.activityMinor)); LabeledContent("Rollover into month", value: store.format(row.carriedAvailableMinor)); if row.targetType != nil { LabeledContent("Target recommendation", value: store.format(row.recommendedContributionMinor ?? 0)); LabeledContent("Still needed", value: store.format(row.underfundedMinor ?? 0)); if let date = row.targetDate { LabeledContent("Due", value: date) } }; if let overspend = store.overspendSummary(row) { VStack(alignment: .leading, spacing: 2) { Label(overspend, systemImage: (row.creditOverspentMinor ?? 0) > 0 && (row.cashOverspentMinor ?? 0) == 0 ? "creditcard.trianglebadge.exclamationmark" : "exclamationmark.triangle.fill").foregroundStyle(Theme.danger); Text((row.creditOverspentMinor ?? 0) > 0 ? "Unfunded card spending adds to card debt; fund the card payment category to cover it." : "Move available money here or reduce spending to cover the shortfall.").font(.caption).foregroundStyle(.secondary) } } }; Section("Actions") { if store.budget.can("assign_money") { Button("Assign money", action: assign) }; if store.budget.can("move_money") { Button("Move money", action: move) }; if store.budget.can("manage_planning") { Button(store.targets[categoryID] == nil ? "Create target" : "Manage target") { showTarget = true } }; if model != nil { Button("Edit category", action: manage) } } }; let schedules = store.scheduledTransactions.filter { $0.isActive && $0.categoryID == categoryID }; if !schedules.isEmpty { Section("Upcoming scheduled") { ForEach(schedules) { item in NavigationLink { LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode) } label: { ScheduledTransactionRow(item: item) } } } }; Section("Recent activity") { if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }; ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) } }; Section("Allocation history") { if operations.isEmpty { Text("No allocation movements available").foregroundStyle(.secondary) }; ForEach(Array(operations.enumerated()), id: \.offset) { _, value in VStack(alignment: .leading) { Text(value.0.note.isEmpty ? value.0.kind.replacingOccurrences(of: "_", with: " ").capitalized : value.0.note); HStack { Text(value.0.occurredOn); Spacer(); Text(store.format(value.1.amountMinor)).monospacedDigit() }.font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle(row?.name ?? "Category").sheet(isPresented: $showTarget) { LiveTargetEditor(categoryID: categoryID, categoryName: row?.name ?? "Category", currencyCode: store.budget.currencyCode, existing: store.targets[categoryID]) } }
 }
 
 private struct LiveTargetEditor: View {
@@ -928,14 +928,16 @@ private enum ScheduledKind: String, CaseIterable, Identifiable {
 private struct LiveScheduledTransactionsView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var showCreate = false
-    private var due: [APIScheduledTransaction] { store.scheduledTransactions.filter { BudgetWorkspaceStore.parseDate($0.nextDate) <= Date() }.sorted { $0.nextDate < $1.nextDate } }
-    private var upcoming: [APIScheduledTransaction] { store.scheduledTransactions.filter { BudgetWorkspaceStore.parseDate($0.nextDate) > Date() }.sorted { $0.nextDate < $1.nextDate } }
+    private var due: [APIScheduledTransaction] { store.scheduledTransactions.filter { $0.isActive && BudgetWorkspaceStore.parseDate($0.nextDate) <= Date() }.sorted { $0.nextDate < $1.nextDate } }
+    private var upcoming: [APIScheduledTransaction] { store.scheduledTransactions.filter { $0.isActive && BudgetWorkspaceStore.parseDate($0.nextDate) > Date() }.sorted { $0.nextDate < $1.nextDate } }
+    private var paused: [APIScheduledTransaction] { store.scheduledTransactions.filter { !$0.isActive }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } }
     var body: some View {
         List {
             Section { Text("Scheduled money is a forecast only. It changes no balance, category, or Available amount until you explicitly enter it.").font(.footnote).foregroundStyle(.secondary) }
             if store.scheduledTransactions.isEmpty && !store.isLoading { ContentUnavailableView("No scheduled transactions", systemImage: "calendar.badge.plus", description: Text("Add recurring bills, income, or transfers without posting them early.")) }
             scheduleSection("Due", values: due)
             scheduleSection("Upcoming", values: upcoming)
+            scheduleSection("Paused", values: paused)
         }
         .navigationTitle("Scheduled")
         .toolbar { if store.budget.can("manage_planning") { Button { showCreate = true } label: { Image(systemName: "plus") }.accessibilityLabel("Add scheduled transaction") } }
@@ -957,14 +959,14 @@ private struct ScheduledTransactionRow: View {
             Image(systemName: kind.symbol).frame(width: 28, height: 28).foregroundStyle(kind == .income ? Theme.healthy : kind == .transfer ? Theme.projected : Theme.attention)
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.name).fontWeight(.medium)
-                Text("\(accountName(item.accountID)) · \(recurrence)").font(.caption).foregroundStyle(.secondary)
+                Text(item.isActive ? "\(accountName(item.accountID)) · \(recurrence)" : "Paused · no forecast or realization").font(.caption).foregroundStyle(item.isActive ? .secondary : Theme.attention)
                 if let category = item.categoryID { Text(store.categories.first(where: { $0.id == category })?.name ?? "Category").font(.caption2).foregroundStyle(.secondary) }
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 3) { Text(store.format(item.amountMinor)).monospacedDigit(); Text(item.nextDate).font(.caption).foregroundStyle(BudgetWorkspaceStore.parseDate(item.nextDate) <= Date() ? Theme.danger : .secondary) }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.name), \(kind.rawValue), \(store.format(item.amountMinor)), \(recurrence), next \(item.nextDate)")
+        .accessibilityLabel("\(item.name), \(item.isActive ? "active" : "paused"), \(kind.rawValue), \(store.format(item.amountMinor)), \(recurrence), next \(item.nextDate)")
     }
     private func accountName(_ id: String) -> String { store.accounts.first(where: { $0.id == id })?.name ?? "Account" }
 }
@@ -996,7 +998,7 @@ private struct LiveScheduledTransactionEditor: View {
         _kind = State(initialValue: inferred); _accountID = State(initialValue: schedule?.accountID ?? ""); _destinationAccountID = State(initialValue: schedule?.destinationAccountID ?? ""); _categoryID = State(initialValue: schedule?.categoryID ?? ""); _name = State(initialValue: schedule?.name ?? ""); _amount = State(initialValue: CurrencyText.editable(abs(schedule?.amountMinor ?? 0), currencyCode: currencyCode)); _nextDate = State(initialValue: schedule.map { BudgetWorkspaceStore.parseDate($0.nextDate) } ?? Date()); _recurrenceUnit = State(initialValue: schedule?.recurrenceUnit ?? "months"); _intervalCount = State(initialValue: schedule?.intervalCount ?? 1); _memo = State(initialValue: schedule?.memo ?? ""); _active = State(initialValue: schedule?.isActive ?? true)
     }
     private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: store.budget.currencyCode), value > 0 else { return nil }; return value }
-    private var due: Bool { schedule != nil && Calendar.current.startOfDay(for: nextDate) <= Calendar.current.startOfDay(for: Date()) }
+    private var due: Bool { schedule?.isActive == true && Calendar.current.startOfDay(for: nextDate) <= Calendar.current.startOfDay(for: Date()) }
     private var valid: Bool { parsed != nil && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !accountID.isEmpty && (kind != .expense || !categoryID.isEmpty) && (kind != .transfer || !destinationAccountID.isEmpty && destinationAccountID != accountID) }
     var body: some View {
         NavigationStack {

@@ -119,14 +119,15 @@ def delete_category_target(
 @router.get("/scheduled-transactions", response_model=list[ScheduledTransactionResponse])
 def list_scheduled_transactions(
     budget_id: str,
+    include_inactive: bool = False,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ScheduledTransaction]:
     budget = require_budget_capability(db, user, budget_id, "view_transactions")
-    schedules = list(db.scalars(select(ScheduledTransaction).where(
-        ScheduledTransaction.budget_id == budget_id,
-        ScheduledTransaction.is_active.is_(True),
-    ).order_by(ScheduledTransaction.next_date, ScheduledTransaction.name)))
+    query = select(ScheduledTransaction).where(ScheduledTransaction.budget_id == budget_id)
+    if not include_inactive:
+        query = query.where(ScheduledTransaction.is_active.is_(True))
+    schedules = list(db.scalars(query.order_by(ScheduledTransaction.next_date, ScheduledTransaction.name)))
     visible_accounts = visible_resource_ids(db, user, budget, "account")
     visible_categories = visible_resource_ids(db, user, budget, "category")
     return [item for item in schedules if (

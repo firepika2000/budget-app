@@ -89,6 +89,23 @@ def test_schedule_crud_round_trip(client, owner_token, session_factory):
                             "amount_minor": -1999, "next_date": future(30), "recurrence_unit": "months", "is_active": False}).status_code == 200
     assert sid not in {s["id"] for s in client.get(sched_url(budget["id"]), headers=auth(owner_token)).json()}  # list filters inactive
 
+    inactive = client.get(f"{sched_url(budget['id'])}?include_inactive=true", headers=auth(owner_token))
+    assert inactive.status_code == 200
+    assert {item["id"]: item["is_active"] for item in inactive.json()}[sid] is False
+
+    # Paused schedules remain editable and can be resumed without duplication.
+    reactivated = client.put(item_url(budget["id"], sid), headers=auth(owner_token),
+                             json={"account_id": account["id"], "category_id": category["id"], "name": "Netflix Premium",
+                                   "amount_minor": -1999, "next_date": future(30), "recurrence_unit": "months", "is_active": True})
+    assert reactivated.status_code == 200
+    assert reactivated.json()["is_active"] is True
+    assert [item["id"] for item in client.get(sched_url(budget["id"]), headers=auth(owner_token)).json()].count(sid) == 1
+
+    # It can be paused again and deleted while paused.
+    assert client.put(item_url(budget["id"], sid), headers=auth(owner_token),
+                      json={"account_id": account["id"], "category_id": category["id"], "name": "Netflix Premium",
+                            "amount_minor": -1999, "next_date": future(30), "recurrence_unit": "months", "is_active": False}).status_code == 200
+
     assert client.delete(item_url(budget["id"], sid), headers=auth(owner_token)).status_code == 204
     assert client.delete(item_url(budget["id"], sid), headers=auth(owner_token)).status_code == 404
 
@@ -153,7 +170,14 @@ def test_disabling_and_deleting_schedule_updates_forecast(client, owner_token, s
     sid = created.json()["id"]
     fc = client.get(f"/api/v1/budgets/{budget['id']}/forecast?through={horizon()}", headers=auth(owner_token)).json()
     assert fc["projected_total_on_budget_minor"] == fc["actual_total_on_budget_minor"] + 500000
-    # Delete removes it from the forecast.
+    paused = {"account_id": account["id"], "name": "Salary", "amount_minor": 500000,
+              "next_date": future(10), "recurrence_unit": "once", "is_active": False}
+    assert client.put(item_url(budget["id"], sid), headers=auth(owner_token), json=paused).status_code == 200
+    fc = client.get(f"/api/v1/budgets/{budget['id']}/forecast?through={horizon()}", headers=auth(owner_token)).json()
+    assert fc["projected_total_on_budget_minor"] == fc["actual_total_on_budget_minor"]
+    assert not any(item["scheduled_transaction_id"] == sid for item in fc["occurrences"])
+    assert sid in {item["id"] for item in client.get(f"{sched_url(budget['id'])}?include_inactive=true", headers=auth(owner_token)).json()}
+    # Delete while paused keeps it out of the forecast.
     assert client.delete(item_url(budget["id"], sid), headers=auth(owner_token)).status_code == 204
     fc = client.get(f"/api/v1/budgets/{budget['id']}/forecast?through={horizon()}", headers=auth(owner_token)).json()
     assert fc["projected_total_on_budget_minor"] == fc["actual_total_on_budget_minor"]
@@ -316,6 +340,31 @@ def test_schedule_management_requires_manage_planning_and_realize_requires_creat
     assert client.delete(item_url(budget["id"], sid), headers=auth(member_token)).status_code == 403
     # But a member WITH create_transaction may realize a due occurrence in their scope.
     assert client.post(realize_url(budget["id"], sid), headers=auth(member_token)).status_code == 200
+
+
+def test_inactive_listing_preserves_authorization_and_resource_scope(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    private_category = add_category(client, owner_token, budget["id"], "Private", "Owner only")
+    member_id, member_token = add_child(session_factory, client)
+    grant_planner(client, owner_token, budget["id"], member_id, account["id"], [category["id"]],
+                  ["view_budget", "view_accounts", "view_categories", "view_transactions", "manage_planning"])
+    visible = create_schedule(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"],
+                              name="Visible paused", amount_minor=-1000, next_date=future(), recurrence_unit="months").json()
+    hidden = create_schedule(client, owner_token, budget["id"], account_id=account["id"], category_id=private_category["id"],
+                             name="Private paused", amount_minor=-2000, next_date=future(), recurrence_unit="months").json()
+    for item in (visible, hidden):
+        body = {"account_id": item["account_id"], "category_id": item["category_id"], "name": item["name"],
+                "amount_minor": item["amount_minor"], "next_date": item["next_date"], "recurrence_unit": item["recurrence_unit"], "is_active": False}
+        assert client.put(item_url(budget["id"], item["id"]), headers=auth(owner_token), json=body).status_code == 200
+
+    listed = client.get(f"{sched_url(budget['id'])}?include_inactive=true", headers=auth(member_token))
+    assert listed.status_code == 200
+    assert {item["id"] for item in listed.json()} == {visible["id"]}
+    assert client.put(item_url(budget["id"], hidden["id"]), headers=auth(member_token), json={
+        "account_id": account["id"], "category_id": private_category["id"], "name": "Nope", "amount_minor": -2000,
+        "next_date": future(), "recurrence_unit": "months", "is_active": True,
+    }).status_code in {404, 422}
 
 
 def test_realization_rechecks_scope_after_permission_revoked(client, owner_token, session_factory):

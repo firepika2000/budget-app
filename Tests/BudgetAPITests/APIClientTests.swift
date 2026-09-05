@@ -349,6 +349,22 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(seen[1].1, "/api/v1/budgets/b1/scheduled-transactions/s1/realize")
         XCTAssertEqual(seen[2].1, "/api/v1/budgets/b1/scheduled-transactions/s1")
     }
+
+    func testScheduledManagementListRequestsInactiveRecords() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
+            XCTAssertEqual(components.path, "/api/v1/budgets/b1/scheduled-transactions")
+            XCTAssertEqual(components.queryItems, [URLQueryItem(name: "include_inactive", value: "true")])
+            let body = Data(#"[{"id":"paused","budget_id":"b1","account_id":"a1","destination_account_id":null,"category_id":"c1","name":"Paused","amount_minor":-1599,"next_date":"2026-10-01","recurrence_unit":"months","interval_count":1,"memo":"","is_active":false,"last_realized_on":null}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let schedules = try await client.scheduledTransactions(budgetID: "b1", includeInactive: true, token: "secret")
+        XCTAssertEqual(schedules.map(\.isActive), [false])
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

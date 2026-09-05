@@ -297,8 +297,8 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/forecast", queryItems: [URLQueryItem(name: "through", value: through)], token: token)
     }
 
-    public func scheduledTransactions(budgetID: String, token: String) async throws -> [APIScheduledTransaction] {
-        try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions", token: token)
+    public func scheduledTransactions(budgetID: String, includeInactive: Bool = false, token: String) async throws -> [APIScheduledTransaction] {
+        try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions", queryItems: includeInactive ? [URLQueryItem(name: "include_inactive", value: "true")] : [], token: token)
     }
     public func createScheduledTransaction(budgetID: String, schedule: APIScheduledTransactionCreate, token: String) async throws -> APIScheduledTransaction {
         try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions", method: "POST", token: token, body: schedule)

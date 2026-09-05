@@ -9,7 +9,9 @@ final class DemoStoreTests: XCTestCase {
     func testScheduledRepositoryCRUDRecurrencesAndFutureIncomeStayNonSpendable() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
-        XCTAssertEqual(store.scheduledTransactions.count, 4)
+        XCTAssertEqual(store.scheduledTransactions.count, 5)
+        XCTAssertEqual(store.scheduledTransactions.filter(\.isActive).count, 4)
+        XCTAssertTrue(store.scheduledTransactions.contains { $0.id == "schedule-inactive" && !$0.isActive })
         XCTAssertEqual(Set(store.scheduledTransactions.map(\.recurrenceUnit)), ["weeks", "months"])
         let account = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
         let before = (store.summary?.readyToAssignMinor, store.balance(for: account), store.transactions.count)
@@ -26,8 +28,11 @@ final class DemoStoreTests: XCTestCase {
         try await store.updateSchedule(id: edited.id, value: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3))
         XCTAssertTrue(store.scheduledTransactions.contains { $0.name == "Edited monthly" && $0.intervalCount == 3 })
         try await store.updateSchedule(id: edited.id, value: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3, isActive: false))
-        XCTAssertFalse(store.scheduledTransactions.contains { $0.id == edited.id }, "inactive schedules match the live active-only list contract")
+        XCTAssertTrue(store.scheduledTransactions.contains { $0.id == edited.id && !$0.isActive }, "paused schedules remain manageable after reload")
+        try await store.updateSchedule(id: edited.id, value: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3, isActive: true))
+        XCTAssertTrue(store.scheduledTransactions.contains { $0.id == edited.id && $0.isActive })
         let deletable = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Future days" })
+        try await store.updateSchedule(id: deletable.id, value: .init(accountID: account.id, name: deletable.name, amountMinor: deletable.amountMinor, nextDate: deletable.nextDate, recurrenceUnit: deletable.recurrenceUnit, intervalCount: deletable.intervalCount, isActive: false))
         try await store.deleteSchedule(id: deletable.id)
         XCTAssertFalse(store.scheduledTransactions.contains { $0.id == deletable.id })
     }
@@ -41,6 +46,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(forecast.occurrences.contains { $0.destinationAccountID != nil })
         XCTAssertTrue(forecast.occurrences.contains { $0.amountMinor > 0 })
         XCTAssertTrue(forecast.occurrences.contains { $0.accountID == "visa" })
+        XCTAssertFalse(forecast.occurrences.contains { $0.scheduledTransactionID == "schedule-inactive" })
 
         let testFile = URL(fileURLWithPath: #filePath)
         let source = testFile.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
@@ -48,6 +54,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("LiveScheduledTransactionsView"))
         XCTAssertTrue(contents.contains("Upcoming scheduled"))
         XCTAssertTrue(contents.contains("View all scheduled transactions"))
+        XCTAssertTrue(contents.contains("Paused · no forecast or realization"))
         XCTAssertTrue(contents.contains("Projected values include schedules but are not spendable"))
     }
 
@@ -72,7 +79,7 @@ final class DemoStoreTests: XCTestCase {
         let once = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "One time" })
         let onceResult = try await store.realizeSchedule(id: once.id)
         XCTAssertFalse(onceResult.isActive)
-        XCTAssertFalse(store.scheduledTransactions.contains { $0.id == once.id })
+        XCTAssertEqual(store.scheduledTransactions.first { $0.id == once.id }?.isActive, false)
     }
 
     @MainActor
