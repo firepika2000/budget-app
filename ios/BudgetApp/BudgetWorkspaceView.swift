@@ -113,6 +113,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var delegatedBudget: APIDelegatedBudget?
     @Published var householdMembers: [APIHouseholdMember] = []
     @Published var delegatedBudgets: [APIDelegatedBudget] = []
+    @Published var allocationOperations: [APIAllocationOperation] = []
     @Published var forecast: APIForecast?
     @Published var reportPeriod = "30d"
     @Published var customReportStart = Calendar.current.date(byAdding: .day, value: -29, to: Date())!
@@ -181,6 +182,7 @@ final class BudgetWorkspaceStore: ObservableObject {
             (accounts, transactions, categories, groups, summary, spendingReport, incomeReport) = try await (
                 loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome
             )
+            if budget.can("view_allocation_history") { allocationOperations = (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] }
             accountBalances = Dictionary(uniqueKeysWithValues: await withTaskGroup(of: (String, APIAccountBalance?).self) { group in
                 for account in accounts { group.addTask { (account.id, try? await client.accountBalance(budgetID: self.budget.id, accountID: account.id, token: token)) } }
                 var values: [(String, APIAccountBalance)] = []; for await (id, balance) in group { if let balance { values.append((id, balance)) } }; return values
@@ -538,6 +540,8 @@ private struct LivePlanView: View {
     @State private var showSmartFunding = false
     @State private var showRequest = false
     @State private var managing: APICategory?
+    @State private var focus = PlanFocus.all
+    private var rows: [APICategoryMonth] { (store.summary?.categories ?? []).filter { row in switch focus { case .all: true; case .underfunded: (row.underfundedMinor ?? 0) > 0; case .overspent: row.isOverspent; case .funded: (row.underfundedMinor ?? 0) == 0 && !row.isOverspent; case .available: row.availableMinor > 0 } } }
     var body: some View {
         List {
             if let delegated = store.delegatedBudget {
@@ -550,16 +554,16 @@ private struct LivePlanView: View {
             } else if let summary = store.summary {
                 Section("Available to assign") { Text(store.format(summary.readyToAssignMinor)).font(.largeTitle.bold()).monospacedDigit() }
             }
+            if let summary = store.summary {
+                Section("Month summary") { LabeledContent("Assigned", value: store.format(summary.totalAssignedMinor)); LabeledContent("Overspent", value: store.format(summary.totalOverspentMinor)); LabeledContent("Monthly plan cost", value: store.format(summary.categories.reduce(Int64(0)) { $0 + ($1.recommendedContributionMinor ?? 0) })) }
+            }
             Section("Plan") {
-                HStack { Button { changeMonth(-1) } label: { Image(systemName: "chevron.left") }; Spacer(); Text(store.planMonth.formatted(.dateTime.month(.wide).year())).font(.headline); Spacer(); Button { changeMonth(1) } label: { Image(systemName: "chevron.right") } }
-                ForEach(store.summary?.categories ?? []) { category in
-                    Button { if store.delegatedBudget == nil && store.budget.can("assign_money") { editing = category } } label: {
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack { Text(category.name); Spacer(); Text(store.format(category.availableMinor)).fontWeight(.semibold) }
-                            HStack { Text("Assigned \(store.format(category.assignedMinor))"); Spacer(); Text("Activity \(store.format(category.activityMinor))") }.font(.caption).foregroundStyle(.secondary)
-                        }.foregroundStyle(.primary)
-                    }.contextMenu { if let model = store.categories.first(where: { $0.id == category.categoryID }), canManage(model) { Button("Manage Category", systemImage: "pencil") { managing = model } } }
-                }
+                HStack { Button { changeMonth(-1) } label: { Image(systemName: "chevron.left") }; Spacer(); Button("Today") { store.planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year,.month], from: Date()))!; Task { await reload() } }; Text(store.planMonth.formatted(.dateTime.month(.wide).year())).font(.headline); Spacer(); Button { changeMonth(1) } label: { Image(systemName: "chevron.right") } }
+                Picker("Focus", selection: $focus) { ForEach(PlanFocus.allCases) { Text($0.rawValue).tag($0) } }
+            }
+            ForEach(store.groups.sorted { $0.sortOrder < $1.sortOrder }) { group in
+                let groupRows = rows.filter { row in store.categories.first(where: { $0.id == row.categoryID })?.groupID == group.id }
+                if !groupRows.isEmpty { Section(group.name) { ForEach(groupRows) { category in NavigationLink { LivePlanCategoryDetailView(categoryID: category.categoryID, assign: { editing = category }, move: { showMove = true }, manage: { managing = store.categories.first(where: { $0.id == category.categoryID }) }) } label: { PlanCategoryRow(category: category) }.contextMenu { if let model = store.categories.first(where: { $0.id == category.categoryID }), canManage(model) { Button("Manage Category", systemImage: "pencil") { managing = model } } } } } }
             }
         }.navigationTitle("Plan").toolbar {
             Menu {
@@ -602,6 +606,29 @@ private struct LivePlanView: View {
     private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
     private func canManage(_ category: APICategory) -> Bool { store.budget.can("manage_budget_structure") || (store.budget.can("manage_own_categories") && category.delegatedUserID == session.profile?.id) }
     private func changeMonth(_ value: Int) { if let next = Calendar.current.date(byAdding: .month, value: value, to: store.planMonth) { store.planMonth = next; Task { await reload() } } }
+}
+
+private enum PlanFocus: String, CaseIterable, Identifiable { case all = "All", underfunded = "Underfunded", overspent = "Overspent", funded = "Funded", available = "Available"; var id: Self { self } }
+
+private struct PlanCategoryRow: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let category: APICategoryMonth
+    var body: some View { VStack(alignment: .leading, spacing: 5) { HStack { Text(category.name); Spacer(); Text(store.format(category.availableMinor)).fontWeight(.semibold).foregroundStyle(category.isOverspent ? Theme.danger : .primary) }; HStack { Text("Assigned \(store.format(category.assignedMinor))"); Spacer(); Text("Activity \(store.format(category.activityMinor))") }.font(.caption).foregroundStyle(.secondary); if category.targetType != nil { ProgressView(value: targetProgress); HStack { Label(status, systemImage: (category.underfundedMinor ?? 0) > 0 ? "target" : "checkmark.circle.fill"); Spacer(); if let needed = category.underfundedMinor, needed > 0 { Text("\(store.format(needed)) needed") } }.font(.caption).foregroundStyle((category.underfundedMinor ?? 0) > 0 ? Theme.attention : Theme.healthy) } } }
+    private var targetProgress: Double { let recommendation = category.recommendedContributionMinor ?? 0; guard recommendation > 0 else { return 1 }; return min(Double(max(recommendation - (category.underfundedMinor ?? 0), 0)) / Double(recommendation), 1) }
+    private var status: String { category.isOverspent ? "Overspent" : (category.underfundedMinor ?? 0) > 0 ? "Underfunded" : category.targetType == nil ? "Available" : "Funded" }
+}
+
+private struct LivePlanCategoryDetailView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let categoryID: String
+    let assign: () -> Void
+    let move: () -> Void
+    let manage: () -> Void
+    private var row: APICategoryMonth? { store.summary?.categories.first { $0.categoryID == categoryID } }
+    private var model: APICategory? { store.categories.first { $0.id == categoryID } }
+    private var transactions: [APITransaction] { store.transactions.filter { $0.categoryID == categoryID || $0.splits.contains(where: { $0.categoryID == categoryID }) } }
+    private var operations: [(APIAllocationOperation, APIAllocationPosting)] { store.allocationOperations.flatMap { operation in operation.postings.filter { $0.categoryID == categoryID }.map { (operation, $0) } } }
+    var body: some View { List { if let row { Section("Plan") { LabeledContent("Available", value: store.format(row.availableMinor)); LabeledContent("Assigned this month", value: store.format(row.assignedMinor)); LabeledContent("Activity this month", value: store.format(row.activityMinor)); LabeledContent("Rollover into month", value: store.format(row.carriedAvailableMinor)); if row.targetType != nil { LabeledContent("Target recommendation", value: store.format(row.recommendedContributionMinor ?? 0)); LabeledContent("Still needed", value: store.format(row.underfundedMinor ?? 0)) }; if row.isOverspent { Label("Overspent — move available money here or reduce spending", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.danger) } }; Section("Actions") { if store.budget.can("assign_money") { Button("Assign money", action: assign) }; if store.budget.can("move_money") { Button("Move money", action: move) }; if model != nil { Button("Edit category", action: manage) } } }; Section("Recent activity") { if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }; ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) } }; Section("Allocation history") { if operations.isEmpty { Text("No allocation movements available").foregroundStyle(.secondary) }; ForEach(Array(operations.enumerated()), id: \.offset) { _, value in VStack(alignment: .leading) { Text(value.0.note.isEmpty ? value.0.kind.replacingOccurrences(of: "_", with: " ").capitalized : value.0.note); HStack { Text(value.0.occurredOn); Spacer(); Text(store.format(value.1.amountMinor)).monospacedDigit() }.font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle(row?.name ?? "Category") }
 }
 
 private struct LiveSmartFundingView: View {

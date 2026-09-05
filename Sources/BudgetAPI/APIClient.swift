@@ -121,6 +121,10 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/category-groups", token: token)
     }
 
+    public func allocationOperations(budgetID: String, token: String) async throws -> [APIAllocationOperation] {
+        try await send(path: "api/v1/budgets/\(budgetID)/allocations", token: token)
+    }
+
     public func createCategoryGroup(
         budgetID: String,
         group: APICategoryGroupCreate,
