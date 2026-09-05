@@ -46,6 +46,26 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDemoAllocationHistoryMatchesLiveContractShape() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        // The same production category-detail view reads store.allocationOperations for demo and live.
+        XCTAssertFalse(store.allocationOperations.isEmpty, "demo must emit allocation history like live")
+        // Every operation balances to zero, exactly like the server allocation ledger.
+        for operation in store.allocationOperations {
+            XCTAssertEqual(operation.postings.reduce(Int64(0)) { $0 + $1.amountMinor }, 0)
+        }
+        // History includes an assignment and a category-to-category move (money in / money out).
+        XCTAssertTrue(store.allocationOperations.contains { $0.kind == "assignment" })
+        XCTAssertTrue(store.allocationOperations.contains { $0.kind == "category_transfer" })
+        // At least one posting attributes to a real demo category, so category detail can filter it.
+        let categoryIDs = Set(store.categories.map(\.id))
+        XCTAssertTrue(store.allocationOperations.contains { operation in
+            operation.postings.contains { $0.categoryID.map(categoryIDs.contains) == true }
+        })
+    }
+
+    @MainActor
     func testAccountRegisterScopesOrdersAndDescribesProductionTransactions() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

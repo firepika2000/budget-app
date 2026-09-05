@@ -17,6 +17,7 @@ private struct WorkspaceSnapshot {
     var spending: APISpendingReport?; var income: APIIncomeSpendingReport?
     var delegated: APIDelegatedBudget?; var forecast: APIForecast?
     var members: [APIHouseholdMember]; var delegatedBudgets: [APIDelegatedBudget]
+    var allocationOperations: [APIAllocationOperation] = []
 }
 
 private struct WorkspaceReportQuery {
@@ -108,7 +109,20 @@ private final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let income: APIIncomeSpendingReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "income_minor": incomeValue, "spending_minor": spendingValue, "difference_minor": incomeValue - spendingValue, "savings_rate": incomeValue > 0 ? Double(incomeValue - spendingValue) / Double(incomeValue) : NSNull(), "income_transaction_ids": included.filter { $0.amount > 0 && $0.categoryIDs.isEmpty }.map(\.id), "spending_transaction_ids": included.filter { $0.amount < 0 && !$0.categoryIDs.isEmpty }.map(\.id)])
         let delegated: APIDelegatedBudget? = demo.isRestricted ? try decode(["id": "demo-delegated", "budget_id": budget.id, "user_id": demo.persona.rawValue.lowercased(), "pool_category_id": visibleCategories.first?.id ?? "", "authority_minor": demo.delegatedAuthority, "assigned_minor": demo.delegatedAssigned, "available_to_assign_minor": demo.delegatedReadyToAssign, "allow_category_creation": true, "allow_reallocation": true, "rules": []]) : nil
         let requestRows: [APIFinancialRequest] = try decode(demo.requests.filter { !demo.isRestricted || $0.member == demo.persona }.map { item -> [String: Any] in ["id": item.id, "requester_user_id": item.member.rawValue.lowercased(), "request_type": "additional_allocation", "destination_category_id": item.categoryID, "requested_amount_minor": item.amount, "reason": item.reason, "status": item.status.lowercased().replacingOccurrences(of: " ", with: "_"), "version": item.status == "Pending" ? 0 : 1, "approved_amount_minor": item.approvedAmount.map { $0 as Any } ?? NSNull(), "source_category_id": NSNull(), "allocation_operation_id": NSNull(), "actions": []] })
-        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, requests: requestRows, allowances: [], spending: spending, income: income, delegated: delegated, forecast: nil, members: [], delegatedBudgets: [])
+        // Deterministic allocation history so the same production category-detail view shows
+        // realistic movements (assignment, move in, move out) in demo mode. Same DTO shape as live.
+        let actor = demo.persona.rawValue.lowercased()
+        var allocationRows: [[String: Any]] = []
+        for item in visibleCategories where item.assigned != 0 {
+            allocationRows.append(["id": "demo-alloc-\(item.id)", "budget_id": budget.id, "occurred_on": month, "kind": "assignment", "actor_user_id": actor, "note": "Assigned \(item.name)", "source": "manual", "allocation_version": 1, "postings": [["bucket": "ready_to_assign", "category_id": NSNull(), "amount_minor": -item.assigned], ["bucket": "category", "category_id": item.id, "amount_minor": item.assigned]]])
+        }
+        if visibleCategories.count >= 2 {
+            let source = visibleCategories[0], destination = visibleCategories[1]
+            let moveAmount: Int64 = 5000
+            allocationRows.append(["id": "demo-move", "budget_id": budget.id, "occurred_on": dateFormatter.string(from: report.end), "kind": "category_transfer", "actor_user_id": actor, "note": demo.isRestricted ? "Delegated move within your budget" : "Moved money between categories", "source": "manual", "allocation_version": 1, "postings": [["bucket": "category", "category_id": source.id, "amount_minor": -moveAmount], ["bucket": "category", "category_id": destination.id, "amount_minor": moveAmount]]])
+        }
+        let allocationOperations: [APIAllocationOperation] = try decode(allocationRows)
+        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, requests: requestRows, allowances: [], spending: spending, income: income, delegated: delegated, forecast: nil, members: [], delegatedBudgets: [], allocationOperations: allocationOperations)
     }
 
     private func decode<T: Decodable>(_ value: Any) throws -> T { try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value)) }
@@ -167,7 +181,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 accounts = value.accounts; accountBalances = value.accountBalances; categories = value.categories; groups = value.groups; transactions = value.transactions
                 summary = value.summary; requests = value.requests; allowances = value.allowances; spendingReport = value.spending
                 incomeReport = value.income; delegatedBudget = value.delegated; forecast = value.forecast
-                householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; errorMessage = nil
+                householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; allocationOperations = value.allocationOperations; errorMessage = nil
                 targets = Dictionary(uniqueKeysWithValues: (value.summary?.categories ?? []).compactMap { row in guard let type = row.targetType, let amount = row.targetAmountMinor else { return nil }; return (row.categoryID, APICategoryTarget(id: "demo-\(row.categoryID)", categoryID: row.categoryID, targetType: type, targetAmountMinor: amount, targetDate: row.targetDate)) })
                 return
             }
