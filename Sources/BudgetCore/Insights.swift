@@ -199,20 +199,29 @@ public struct InsightsCalculator: Sendable {
         }
     }
 
+    /// Spending grouped by category, matching the canonical server definition.
+    ///
+    /// Transfers are ignored. Negative categorized portions are spending; positive categorized
+    /// portions are refunds/reversals that reduce spending (a refund never becomes income).
+    /// Categories whose net spending is not positive are omitted from the ranking. Callers should
+    /// pass already-expanded split portions (one `ReportTransaction` per category contribution).
     public func spendingByCategory(
         transactions: [ReportTransaction]
     ) -> [SpendingCategoryInsight] {
-        let spending = transactions.filter {
-            !$0.isTransfer && $0.amountMinor < 0 && $0.categoryID != nil
+        let categorized = transactions.filter {
+            !$0.isTransfer && $0.categoryID != nil && $0.amountMinor != 0
         }
-        let groups = Dictionary(grouping: spending) { $0.categoryID! }
+        let groups = Dictionary(grouping: categorized) { $0.categoryID! }
         return groups.compactMap { categoryID, items in
             guard let first = items.first else { return nil }
+            // Negative amounts add to spending; positive (refund) amounts subtract from it.
+            let net = items.reduce(Int64(0)) { $0 - $1.amountMinor }
+            guard net > 0 else { return nil }
             return SpendingCategoryInsight(
                 id: categoryID,
                 name: first.categoryName ?? "Uncategorized",
                 group: first.categoryGroup ?? "Uncategorized",
-                spendingMinor: items.reduce(0) { $0 + abs($1.amountMinor) },
+                spendingMinor: net,
                 transactionIDs: items.sorted { $0.occurredOn > $1.occurredOn }.map(\.id)
             )
         }.sorted { lhs, rhs in
@@ -220,15 +229,20 @@ public struct InsightsCalculator: Sendable {
         }
     }
 
+    /// Income versus spending, matching the canonical server definition.
+    ///
+    /// Transfers are excluded. Income is uncategorized on-budget inflow only. Categorized/split
+    /// portions participate in spending: negatives increase spending and positive refunds reduce it,
+    /// so a categorized positive amount never inflates income.
     public func incomeVersusSpending(
         transactions: [ReportTransaction]
     ) -> IncomeSpendingInsight {
         let included = transactions.filter { !$0.isTransfer }
-        let income = included.filter { $0.amountMinor > 0 }
-        let spending = included.filter { $0.amountMinor < 0 }
+        let income = included.filter { $0.amountMinor > 0 && $0.categoryID == nil }
+        let spending = included.filter { $0.categoryID != nil && $0.amountMinor != 0 }
         return IncomeSpendingInsight(
             incomeMinor: income.reduce(0) { $0 + $1.amountMinor },
-            spendingMinor: spending.reduce(0) { $0 + abs($1.amountMinor) },
+            spendingMinor: spending.reduce(Int64(0)) { $0 - $1.amountMinor },
             incomeTransactionIDs: income.map(\.id),
             spendingTransactionIDs: spending.map(\.id)
         )

@@ -112,19 +112,24 @@ def spending_report(
     totals: dict[str, int] = defaultdict(int)
     transaction_ids: dict[str, list[str]] = defaultdict(list)
     for transaction in transactions:
-        if transaction.transfer_id is not None or transaction.amount_minor >= 0:
+        if transaction.transfer_id is not None or transaction.amount_minor == 0:
             continue
         portions = (
             [(transaction.category_id, transaction.amount_minor)] if transaction.category_id is not None
             else [(split.category_id, split.amount_minor) for split in transaction.splits]
         )
         for category, amount in portions:
-            if category is None or amount >= 0 or (category_id and category not in category_id):
+            if category is None or amount == 0 or (category_id and category not in category_id):
                 continue
-            totals[category] += -amount
+            # Negative categorized amounts are spending; positive categorized amounts are
+            # refunds/reversals that reduce spending. A positive amount must never become income.
+            totals[category] -= amount
             transaction_ids[category].append(transaction.id)
     rows = []
     for category, amount in totals.items():
+        if amount <= 0:
+            # Net non-spending (fully refunded or net-inflow) categories are omitted from the ranking.
+            continue
         model = categories[category]
         rows.append({
             "category_id": category,
@@ -136,7 +141,7 @@ def spending_report(
     rows.sort(key=lambda item: (-item["spending_minor"], item["category_name"]))
     return {
         "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,
-        "total_spending_minor": sum(totals.values()), "categories": rows,
+        "total_spending_minor": sum(item["spending_minor"] for item in rows), "categories": rows,
     }
 
 
@@ -157,9 +162,17 @@ def income_spending_report(
     on_budget_accounts = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id, Account.is_on_budget.is_(True))))
     included = [item for item in transactions if item.transfer_id is None and item.account_id in on_budget_accounts]
     income = [item for item in included if item.amount_minor > 0 and item.category_id is None and not item.splits]
-    spending = [item for item in included if item.amount_minor < 0 and (item.category_id is not None or item.splits)]
+    # Categorized/split transactions participate in spending; positive categorized amounts are
+    # refunds that reduce spending rather than income. Uncategorized inflow alone is income.
+    spending = [item for item in included if item.category_id is not None or item.splits]
     income_minor = sum(item.amount_minor for item in income)
-    spending_minor = sum(-item.amount_minor for item in spending)
+    spending_minor = 0
+    for item in spending:
+        portions = (
+            [item.amount_minor] if item.category_id is not None
+            else [split.amount_minor for split in item.splits]
+        )
+        spending_minor += sum(-amount for amount in portions)
     difference = income_minor - spending_minor
     return {
         "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,

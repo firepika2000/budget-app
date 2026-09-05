@@ -1143,6 +1143,15 @@ def commit_smart_funding(
     db: Session = Depends(get_db),
 ) -> dict:
     require_budget_capability(db, user, budget_id, "assign_money")
+    delegated_policy = db.scalar(select(DelegatedBudgetPolicy.id).where(
+        DelegatedBudgetPolicy.budget_id == budget_id,
+        DelegatedBudgetPolicy.user_id == user.id,
+    ))
+    if delegated_policy is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Delegated members allocate only from their delegated pool",
+        )
     summary = month_summary(budget_id, body.month, user, db)
     preview = build_smart_funding_preview(summary)
     if not preview["proposals"]:
