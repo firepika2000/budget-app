@@ -5,6 +5,24 @@ import BudgetAPI
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testTargetMetadataCreateDisableAndDeleteNeverChangesMoney() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let category = try XCTUnwrap(store.categories.first)
+        let before = (store.summary?.readyToAssignMinor, store.accounts.map { store.balance(for: $0) }, store.transactions.count)
+
+        for type in ["monthly_funding", "savings_balance", "target_by_date", "recurring_expense"] {
+            try await store.saveTarget(categoryID: category.id, value: APICategoryTargetUpsert(targetType: type, targetAmountMinor: 12_345, targetDate: type == "target_by_date" || type == "recurring_expense" ? "2027-09-05" : nil, recurrenceMonths: type == "recurring_expense" ? 12 : nil, isActive: type != "savings_balance"))
+            XCTAssertEqual(store.targets[category.id]?.targetAmountMinor, type == "savings_balance" ? nil : 12_345)
+        }
+        try await store.deleteTarget(categoryID: category.id)
+        XCTAssertNil(store.targets[category.id])
+        XCTAssertEqual(store.summary?.readyToAssignMinor, before.0)
+        XCTAssertEqual(store.accounts.map { store.balance(for: $0) }, before.1)
+        XCTAssertEqual(store.transactions.count, before.2)
+    }
+
     func testSpendingBreakdownBuildsRankedCategoryAndGroupSlicesFromReportContract() throws {
         let report = try JSONDecoder().decode(APISpendingReport.self, from: Data(#"{"start_date":"2026-08-01","end_date":"2026-08-31","currency_code":"USD","total_spending_minor":10000,"categories":[{"category_id":"food","category_name":"Food","category_group":"Everyday","spending_minor":7001,"transaction_ids":["purchase","refund","split"]},{"category_id":"fuel","category_name":"Fuel","category_group":"Everyday","spending_minor":2999,"transaction_ids":["split"]}]}"#.utf8))
 

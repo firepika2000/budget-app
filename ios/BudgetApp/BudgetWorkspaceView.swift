@@ -68,7 +68,8 @@ private final class DemoWorkspaceDataSource: WorkspaceDataSource {
             return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "is_cleared": item.cleared, "is_reconciled": item.reconciled, "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "splits": splits]
         })
         let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"
-        let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.readyToAssign, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": 1, "categories": visibleCategories.map { ["category_id": $0.id, "name": $0.name, "assigned_minor": $0.assigned, "activity_minor": $0.activity, "carried_available_minor": 0, "available_minor": $0.available, "is_overspent": $0.available < 0] }])
+        let summaryRows: [[String: Any]] = visibleCategories.map { item in let recommended = max((item.target ?? 0) - max(item.available - item.assigned, 0), 0); return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": max(item.available - item.assigned - item.activity, 0), "available_minor": item.available, "is_overspent": item.available < 0, "target_type": item.target == nil ? NSNull() : "savings_balance", "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "target_date": item.targetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - item.assigned, 0)] }
+        let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.readyToAssign, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": 1, "categories": summaryRows])
         let start = report.start
         let included = demo.visibleTransactions.filter { item in
             item.date >= start && item.date <= report.end
@@ -114,6 +115,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var householdMembers: [APIHouseholdMember] = []
     @Published var delegatedBudgets: [APIDelegatedBudget] = []
     @Published var allocationOperations: [APIAllocationOperation] = []
+    @Published var targets: [String: APICategoryTarget] = [:]
     @Published var forecast: APIForecast?
     @Published var reportPeriod = "30d"
     @Published var customReportStart = Calendar.current.date(byAdding: .day, value: -29, to: Date())!
@@ -150,6 +152,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 summary = value.summary; requests = value.requests; allowances = value.allowances; spendingReport = value.spending
                 incomeReport = value.income; delegatedBudget = value.delegated; forecast = value.forecast
                 householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; errorMessage = nil
+                targets = Dictionary(uniqueKeysWithValues: (value.summary?.categories ?? []).compactMap { row in guard let type = row.targetType, let amount = row.targetAmountMinor else { return nil }; return (row.categoryID, APICategoryTarget(id: "demo-\(row.categoryID)", categoryID: row.categoryID, targetType: type, targetAmountMinor: amount, targetDate: row.targetDate)) })
                 return
             }
             let client = try APIClient(baseURL: serverURL)
@@ -183,6 +186,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome
             )
             if budget.can("view_allocation_history") { allocationOperations = (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] }
+            targets = Dictionary(uniqueKeysWithValues: await withTaskGroup(of: (String, APICategoryTarget?).self) { group in for category in categories { group.addTask { (category.id, try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: token)) } }; var values: [(String, APICategoryTarget)] = []; for await (id, target) in group { if let target { values.append((id, target)) } }; return values })
             accountBalances = Dictionary(uniqueKeysWithValues: await withTaskGroup(of: (String, APIAccountBalance?).self) { group in
                 for account in accounts { group.addTask { (account.id, try? await client.accountBalance(budgetID: self.budget.id, accountID: account.id, token: token)) } }
                 var values: [(String, APIAccountBalance)] = []; for await (id, balance) in group { if let balance { values.append((id, balance)) } }; return values
@@ -303,6 +307,17 @@ final class BudgetWorkspaceStore: ObservableObject {
             _ = try await client.updateCategory(budgetID: budget.id, categoryID: id, category: value, token: liveToken!)
             if existing?.delegatedUserID != delegatedUserID { _ = try await client.updateCategoryDelegation(budgetID: budget.id, categoryID: id, delegatedUserID: delegatedUserID, token: liveToken!) }
         }
+        await refresh()
+    }
+
+    func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws {
+        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.categories.firstIndex(where: { $0.id == categoryID }) { demoSource.demo.categories[index].target = value.isActive ? value.targetAmountMinor : nil; demoSource.demo.categories[index].targetDate = value.targetDate }
+        else { _ = try await liveClient().upsertCategoryTarget(budgetID: budget.id, categoryID: categoryID, target: value, token: liveToken!) }
+        await refresh()
+    }
+    func deleteTarget(categoryID: String) async throws {
+        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.categories.firstIndex(where: { $0.id == categoryID }) { demoSource.demo.categories[index].target = nil; demoSource.demo.categories[index].targetDate = nil }
+        else { try await liveClient().deleteCategoryTarget(budgetID: budget.id, categoryID: categoryID, token: liveToken!) }
         await refresh()
     }
 
@@ -624,11 +639,26 @@ private struct LivePlanCategoryDetailView: View {
     let assign: () -> Void
     let move: () -> Void
     let manage: () -> Void
+    @State private var showTarget = false
     private var row: APICategoryMonth? { store.summary?.categories.first { $0.categoryID == categoryID } }
     private var model: APICategory? { store.categories.first { $0.id == categoryID } }
     private var transactions: [APITransaction] { store.transactions.filter { $0.categoryID == categoryID || $0.splits.contains(where: { $0.categoryID == categoryID }) } }
     private var operations: [(APIAllocationOperation, APIAllocationPosting)] { store.allocationOperations.flatMap { operation in operation.postings.filter { $0.categoryID == categoryID }.map { (operation, $0) } } }
-    var body: some View { List { if let row { Section("Plan") { LabeledContent("Available", value: store.format(row.availableMinor)); LabeledContent("Assigned this month", value: store.format(row.assignedMinor)); LabeledContent("Activity this month", value: store.format(row.activityMinor)); LabeledContent("Rollover into month", value: store.format(row.carriedAvailableMinor)); if row.targetType != nil { LabeledContent("Target recommendation", value: store.format(row.recommendedContributionMinor ?? 0)); LabeledContent("Still needed", value: store.format(row.underfundedMinor ?? 0)) }; if row.isOverspent { Label("Overspent — move available money here or reduce spending", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.danger) } }; Section("Actions") { if store.budget.can("assign_money") { Button("Assign money", action: assign) }; if store.budget.can("move_money") { Button("Move money", action: move) }; if model != nil { Button("Edit category", action: manage) } } }; Section("Recent activity") { if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }; ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) } }; Section("Allocation history") { if operations.isEmpty { Text("No allocation movements available").foregroundStyle(.secondary) }; ForEach(Array(operations.enumerated()), id: \.offset) { _, value in VStack(alignment: .leading) { Text(value.0.note.isEmpty ? value.0.kind.replacingOccurrences(of: "_", with: " ").capitalized : value.0.note); HStack { Text(value.0.occurredOn); Spacer(); Text(store.format(value.1.amountMinor)).monospacedDigit() }.font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle(row?.name ?? "Category") }
+    var body: some View { List { if let row { Section("Plan") { LabeledContent("Available", value: store.format(row.availableMinor)); LabeledContent("Assigned this month", value: store.format(row.assignedMinor)); LabeledContent("Activity this month", value: store.format(row.activityMinor)); LabeledContent("Rollover into month", value: store.format(row.carriedAvailableMinor)); if row.targetType != nil { LabeledContent("Target recommendation", value: store.format(row.recommendedContributionMinor ?? 0)); LabeledContent("Still needed", value: store.format(row.underfundedMinor ?? 0)); if let date = row.targetDate { LabeledContent("Due", value: date) } }; if row.isOverspent { Label("Overspent — move available money here or reduce spending", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.danger) } }; Section("Actions") { if store.budget.can("assign_money") { Button("Assign money", action: assign) }; if store.budget.can("move_money") { Button("Move money", action: move) }; if store.budget.can("manage_planning") { Button(store.targets[categoryID] == nil ? "Create target" : "Manage target") { showTarget = true } }; if model != nil { Button("Edit category", action: manage) } } }; Section("Recent activity") { if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }; ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) } }; Section("Allocation history") { if operations.isEmpty { Text("No allocation movements available").foregroundStyle(.secondary) }; ForEach(Array(operations.enumerated()), id: \.offset) { _, value in VStack(alignment: .leading) { Text(value.0.note.isEmpty ? value.0.kind.replacingOccurrences(of: "_", with: " ").capitalized : value.0.note); HStack { Text(value.0.occurredOn); Spacer(); Text(store.format(value.1.amountMinor)).monospacedDigit() }.font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle(row?.name ?? "Category").sheet(isPresented: $showTarget) { LiveTargetEditor(categoryID: categoryID, categoryName: row?.name ?? "Category", existing: store.targets[categoryID]) } }
+}
+
+private struct LiveTargetEditor: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let categoryID: String; let categoryName: String; let existing: APICategoryTarget?
+    @State private var type: String; @State private var amount: String; @State private var dueDate: Date; @State private var recurrence: Int; @State private var minimum: String; @State private var priority: Int; @State private var active: Bool; @State private var saving = false; @State private var error: String?; @State private var confirmDelete = false
+    init(categoryID: String, categoryName: String, existing: APICategoryTarget?) { self.categoryID=categoryID;self.categoryName=categoryName;self.existing=existing;_type=State(initialValue:existing?.targetType ?? "monthly_funding");_amount=State(initialValue:CurrencyText.editable(existing?.targetAmountMinor ?? 0,currencyCode:"USD"));_dueDate=State(initialValue:existing?.targetDate.flatMap(BudgetWorkspaceStore.parseDate) ?? Date());_recurrence=State(initialValue:existing?.recurrenceMonths ?? 1);_minimum=State(initialValue:CurrencyText.editable(existing?.minimumContributionMinor ?? 0,currencyCode:"USD"));_priority=State(initialValue:existing?.priority ?? 50);_active=State(initialValue:existing?.isActive ?? true) }
+    private var dated: Bool { type == "target_by_date" || type == "recurring_expense" }
+    private var parsed: Int64? { guard let value=CurrencyText.parseMinorUnits(amount,currencyCode:store.budget.currencyCode),value>0 else{return nil};return value }
+    private var parsedMinimum: Int64? { guard let value=CurrencyText.parseMinorUnits(minimum,currencyCode:store.budget.currencyCode),value>=0 else{return nil};return value }
+    var body: some View { NavigationStack { Form { Section(categoryName) { Picker("Target type",selection:$type){Text("Monthly funding").tag("monthly_funding");Text("Savings balance").tag("savings_balance");Text("By date").tag("target_by_date");Text("Recurring expense").tag("recurring_expense")};CurrencyAmountField("Target amount",text:$amount,currencyCode:store.budget.currencyCode);CurrencyAmountField("Minimum contribution",text:$minimum,currencyCode:store.budget.currencyCode,allowsZero:true);if dated{DatePicker("Due date",selection:$dueDate,displayedComponents:.date)};if type=="recurring_expense"{Stepper("Every \(recurrence) month\(recurrence == 1 ? "" : "s")",value:$recurrence,in:1...1200);Button("Set annual cadence"){recurrence=12}};Stepper("Priority \(priority)",value:$priority,in:0...100);Toggle("Target active",isOn:$active)};Section{Text("Targets guide planning only. Saving this target does not move money, change account balances, or increase Ready to Assign.").font(.footnote).foregroundStyle(.secondary)};if existing != nil{Section{Button("Delete Target",role:.destructive){confirmDelete=true}}} }.navigationTitle(existing == nil ? "New Target" : "Edit Target").navigationBarTitleDisplayMode(.inline).toolbar{ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(parsed==nil || parsedMinimum==nil || saving)}}.confirmationDialog("Delete this target?",isPresented:$confirmDelete){Button("Delete Target",role:.destructive){Task{await remove()}}}.alert("Unable to save target",isPresented:Binding(get:{error != nil},set:{if !$0{error=nil}})){Button("OK",role:.cancel){}}message:{Text(error ?? "Unknown error")} } }
+    private func save() async { guard let parsed,let parsedMinimum else{return};saving=true;defer{saving=false};do{try await store.saveTarget(categoryID:categoryID,value:APICategoryTargetUpsert(targetType:type,targetAmountMinor:parsed,targetDate:dated ? BudgetWorkspaceStore.dateString(dueDate):nil,recurrenceMonths:type == "recurring_expense" ? recurrence:nil,minimumContributionMinor:parsedMinimum,priority:priority,isActive:active));dismiss()}catch{self.error=error.localizedDescription} }
+    private func remove() async { saving=true;defer{saving=false};do{try await store.deleteTarget(categoryID:categoryID);dismiss()}catch{self.error=error.localizedDescription} }
 }
 
 private struct LiveSmartFundingView: View {
