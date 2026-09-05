@@ -68,7 +68,23 @@ private final class DemoWorkspaceDataSource: WorkspaceDataSource {
             return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "is_cleared": item.cleared, "is_reconciled": item.reconciled, "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "splits": splits]
         })
         let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"
-        let summaryRows: [[String: Any]] = visibleCategories.map { item in let recommended = max((item.target ?? 0) - max(item.available - item.assigned, 0), 0); return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": max(item.available - item.assigned - item.activity, 0), "available_minor": item.available, "is_overspent": item.available < 0, "target_type": item.target == nil ? NSNull() : "savings_balance", "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "target_date": item.targetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - item.assigned, 0)] }
+        // Best-effort credit spend per category from demo transactions on credit-kind accounts,
+        // so the demo classifies overspending as cash vs credit like the live server does.
+        let creditAccountIDs = Set(demo.accounts.filter { $0.kind == .credit }.map(\.id))
+        var creditSpend: [String: Int64] = [:]
+        for item in demo.visibleTransactions where creditAccountIDs.contains(item.accountID) {
+            let ids = item.categoryIDs
+            guard !ids.isEmpty else { continue }
+            let base = item.amount / Int64(ids.count)
+            for id in ids { creditSpend[id, default: 0] += item.categoryAmounts[id] ?? base }
+        }
+        let summaryRows: [[String: Any]] = visibleCategories.map { item -> [String: Any] in
+            let recommended = max((item.target ?? 0) - max(item.available - item.assigned, 0), 0)
+            let overspent = max(-item.available, 0)
+            let creditSpent = max(-(creditSpend[item.id] ?? 0), 0)
+            let creditOverspent = min(overspent, creditSpent)
+            return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": max(item.available - item.assigned - item.activity, 0), "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "target_type": item.target == nil ? NSNull() : "savings_balance", "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "target_date": item.targetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - item.assigned, 0)]
+        }
         let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.readyToAssign, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": 1, "categories": summaryRows])
         let start = report.start
         let included = demo.visibleTransactions.filter { item in
@@ -387,6 +403,17 @@ final class BudgetWorkspaceStore: ObservableObject {
         return formatter.string(from: NSNumber(value: Double(minor) / divisor)) ?? "\(minor)"
     }
 
+    // Plain-language, server-authoritative overspend explanation: cash overspending "needs
+    // coverage" from other money; unfunded card spending "became card debt".
+    func overspendSummary(_ row: APICategoryMonth) -> String? {
+        guard row.isOverspent else { return nil }
+        let cash = row.cashOverspentMinor ?? 0
+        let credit = row.creditOverspentMinor ?? 0
+        if credit > 0 && cash > 0 { return "\(format(cash)) needs coverage · \(format(credit)) became card debt" }
+        if credit > 0 { return "\(format(credit)) became card debt" }
+        return "\(format(cash > 0 ? cash : -row.availableMinor)) needs coverage"
+    }
+
     func categoryName(_ transaction: APITransaction) -> String {
         let ids = transaction.categoryID.map { [$0] } ?? transaction.splits.map(\.categoryID)
         return ids.compactMap { id in categories.first(where: { $0.id == id })?.name }.joined(separator: ", ")
@@ -494,7 +521,7 @@ private struct LiveHomeView: View {
             }
             if let summary = store.summary {
                 Section("Needs attention") {
-                    ForEach(summary.categories.filter(\.isOverspent)) { row in Label("\(row.name) is overspent by \(store.format(abs(row.availableMinor)))", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.danger) }
+                    ForEach(summary.categories.filter(\.isOverspent)) { row in Label("\(row.name): \(store.overspendSummary(row) ?? "")", systemImage: (row.creditOverspentMinor ?? 0) > 0 && (row.cashOverspentMinor ?? 0) == 0 ? "creditcard.trianglebadge.exclamationmark" : "exclamationmark.triangle.fill").foregroundStyle(Theme.danger) }
                     ForEach(store.requests.filter { $0.status == "pending" }) { request in NavigationLink { LiveRequestDetailView(requestID: request.id) } label: { Label("Request pending · \(store.format(request.requestedAmountMinor))", systemImage: "hand.raised.fill") } }
                 }
             }
@@ -666,7 +693,7 @@ private enum PlanFocus: String, CaseIterable, Identifiable { case all = "All", u
 private struct PlanCategoryRow: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let category: APICategoryMonth
-    var body: some View { VStack(alignment: .leading, spacing: 5) { HStack { Text(category.name); Spacer(); Text(store.format(category.availableMinor)).fontWeight(.semibold).foregroundStyle(category.isOverspent ? Theme.danger : .primary) }; HStack { Text("Assigned \(store.format(category.assignedMinor))"); Spacer(); Text("Activity \(store.format(category.activityMinor))") }.font(.caption).foregroundStyle(.secondary); if category.targetType != nil { ProgressView(value: targetProgress); HStack { Label(status, systemImage: (category.underfundedMinor ?? 0) > 0 ? "target" : "checkmark.circle.fill"); Spacer(); if let needed = category.underfundedMinor, needed > 0 { Text("\(store.format(needed)) needed") } }.font(.caption).foregroundStyle((category.underfundedMinor ?? 0) > 0 ? Theme.attention : Theme.healthy) } } }
+    var body: some View { VStack(alignment: .leading, spacing: 5) { HStack { Text(category.name); Spacer(); Text(store.format(category.availableMinor)).fontWeight(.semibold).foregroundStyle(category.isOverspent ? Theme.danger : .primary) }; HStack { Text("Assigned \(store.format(category.assignedMinor))"); Spacer(); Text("Activity \(store.format(category.activityMinor))") }.font(.caption).foregroundStyle(.secondary); if let overspend = store.overspendSummary(category) { Text(overspend).font(.caption).foregroundStyle(Theme.danger) }; if category.targetType != nil { ProgressView(value: targetProgress); HStack { Label(status, systemImage: (category.underfundedMinor ?? 0) > 0 ? "target" : "checkmark.circle.fill"); Spacer(); if let needed = category.underfundedMinor, needed > 0 { Text("\(store.format(needed)) needed") } }.font(.caption).foregroundStyle((category.underfundedMinor ?? 0) > 0 ? Theme.attention : Theme.healthy) } } }
     private var targetProgress: Double { let recommendation = category.recommendedContributionMinor ?? 0; guard recommendation > 0 else { return 1 }; return min(Double(max(recommendation - (category.underfundedMinor ?? 0), 0)) / Double(recommendation), 1) }
     private var status: String { category.isOverspent ? "Overspent" : (category.underfundedMinor ?? 0) > 0 ? "Underfunded" : category.targetType == nil ? "Available" : "Funded" }
 }
@@ -682,7 +709,7 @@ private struct LivePlanCategoryDetailView: View {
     private var model: APICategory? { store.categories.first { $0.id == categoryID } }
     private var transactions: [APITransaction] { store.transactions.filter { $0.categoryID == categoryID || $0.splits.contains(where: { $0.categoryID == categoryID }) } }
     private var operations: [(APIAllocationOperation, APIAllocationPosting)] { store.allocationOperations.flatMap { operation in operation.postings.filter { $0.categoryID == categoryID }.map { (operation, $0) } } }
-    var body: some View { List { if let row { Section("Plan") { LabeledContent("Available", value: store.format(row.availableMinor)); LabeledContent("Assigned this month", value: store.format(row.assignedMinor)); LabeledContent("Activity this month", value: store.format(row.activityMinor)); LabeledContent("Rollover into month", value: store.format(row.carriedAvailableMinor)); if row.targetType != nil { LabeledContent("Target recommendation", value: store.format(row.recommendedContributionMinor ?? 0)); LabeledContent("Still needed", value: store.format(row.underfundedMinor ?? 0)); if let date = row.targetDate { LabeledContent("Due", value: date) } }; if row.isOverspent { Label("Overspent — move available money here or reduce spending", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.danger) } }; Section("Actions") { if store.budget.can("assign_money") { Button("Assign money", action: assign) }; if store.budget.can("move_money") { Button("Move money", action: move) }; if store.budget.can("manage_planning") { Button(store.targets[categoryID] == nil ? "Create target" : "Manage target") { showTarget = true } }; if model != nil { Button("Edit category", action: manage) } } }; Section("Recent activity") { if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }; ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) } }; Section("Allocation history") { if operations.isEmpty { Text("No allocation movements available").foregroundStyle(.secondary) }; ForEach(Array(operations.enumerated()), id: \.offset) { _, value in VStack(alignment: .leading) { Text(value.0.note.isEmpty ? value.0.kind.replacingOccurrences(of: "_", with: " ").capitalized : value.0.note); HStack { Text(value.0.occurredOn); Spacer(); Text(store.format(value.1.amountMinor)).monospacedDigit() }.font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle(row?.name ?? "Category").sheet(isPresented: $showTarget) { LiveTargetEditor(categoryID: categoryID, categoryName: row?.name ?? "Category", currencyCode: store.budget.currencyCode, existing: store.targets[categoryID]) } }
+    var body: some View { List { if let row { Section("Plan") { LabeledContent("Available", value: store.format(row.availableMinor)); LabeledContent("Assigned this month", value: store.format(row.assignedMinor)); LabeledContent("Activity this month", value: store.format(row.activityMinor)); LabeledContent("Rollover into month", value: store.format(row.carriedAvailableMinor)); if row.targetType != nil { LabeledContent("Target recommendation", value: store.format(row.recommendedContributionMinor ?? 0)); LabeledContent("Still needed", value: store.format(row.underfundedMinor ?? 0)); if let date = row.targetDate { LabeledContent("Due", value: date) } }; if let overspend = store.overspendSummary(row) { VStack(alignment: .leading, spacing: 2) { Label(overspend, systemImage: (row.creditOverspentMinor ?? 0) > 0 && (row.cashOverspentMinor ?? 0) == 0 ? "creditcard.trianglebadge.exclamationmark" : "exclamationmark.triangle.fill").foregroundStyle(Theme.danger); Text((row.creditOverspentMinor ?? 0) > 0 ? "Unfunded card spending adds to card debt; fund the card payment category to cover it." : "Move available money here or reduce spending to cover the shortfall.").font(.caption).foregroundStyle(.secondary) } } }; Section("Actions") { if store.budget.can("assign_money") { Button("Assign money", action: assign) }; if store.budget.can("move_money") { Button("Move money", action: move) }; if store.budget.can("manage_planning") { Button(store.targets[categoryID] == nil ? "Create target" : "Manage target") { showTarget = true } }; if model != nil { Button("Edit category", action: manage) } } }; Section("Recent activity") { if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }; ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) } }; Section("Allocation history") { if operations.isEmpty { Text("No allocation movements available").foregroundStyle(.secondary) }; ForEach(Array(operations.enumerated()), id: \.offset) { _, value in VStack(alignment: .leading) { Text(value.0.note.isEmpty ? value.0.kind.replacingOccurrences(of: "_", with: " ").capitalized : value.0.note); HStack { Text(value.0.occurredOn); Spacer(); Text(store.format(value.1.amountMinor)).monospacedDigit() }.font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle(row?.name ?? "Category").sheet(isPresented: $showTarget) { LiveTargetEditor(categoryID: categoryID, categoryName: row?.name ?? "Category", currencyCode: store.budget.currencyCode, existing: store.targets[categoryID]) } }
 }
 
 private struct LiveTargetEditor: View {

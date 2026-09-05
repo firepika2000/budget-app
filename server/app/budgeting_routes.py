@@ -1064,6 +1064,11 @@ def month_summary(
         Account.is_on_budget.is_(True),
         Account.account_type.in_(("checking", "savings", "cash")),
     )))
+    credit_account_ids = set(db.scalars(select(Account.id).where(
+        Account.budget_id == budget_id,
+        Account.is_on_budget.is_(True),
+        Account.account_type == "credit",
+    )))
 
     assigned_before: dict[str, int] = {}
     assigned_current: dict[str, int] = {}
@@ -1077,6 +1082,9 @@ def month_summary(
 
     activity_before: dict[str, int] = {}
     activity_current: dict[str, int] = {}
+    # Current-month category activity that landed on credit accounts, tracked separately so the
+    # summary can classify overspending as "became card debt" (credit) vs "needs coverage" (cash).
+    credit_activity_current: dict[str, int] = {}
     unassigned_cash_to_date = 0
     for transaction in transactions:
         if (
@@ -1089,10 +1097,15 @@ def month_summary(
         if transaction.account_id not in on_budget_account_ids:
             continue
         target = activity_current if transaction.occurred_on >= month else activity_before
+        on_credit = transaction.account_id in credit_account_ids
         if transaction.category_id is not None:
             target[transaction.category_id] = target.get(transaction.category_id, 0) + transaction.amount_minor
+            if on_credit and transaction.occurred_on >= month:
+                credit_activity_current[transaction.category_id] = credit_activity_current.get(transaction.category_id, 0) + transaction.amount_minor
         for split in transaction.splits:
             target[split.category_id] = target.get(split.category_id, 0) + split.amount_minor
+            if on_credit and transaction.occurred_on >= month:
+                credit_activity_current[split.category_id] = credit_activity_current.get(split.category_id, 0) + split.amount_minor
 
     reserve_events = list(db.scalars(select(CreditCardReserveEvent).where(
         CreditCardReserveEvent.budget_id == budget_id,
@@ -1109,8 +1122,16 @@ def month_summary(
         assigned = assigned_current.get(category.id, 0)
         activity = activity_current.get(category.id, 0)
         available = carried + assigned + activity
+        overspent = -available if available < 0 else 0
         if available < 0:
             total_overspent += -available
+        # Attribute overspending: unfunded credit-card spending "became card debt" (credit),
+        # the remainder "needs coverage" from other real money (cash). Credit spending this
+        # month absorbs the overspend first, up to the amount actually spent on credit.
+        credit_spending = -credit_activity_current.get(category.id, 0)
+        credit_spending = credit_spending if credit_spending > 0 else 0
+        credit_overspent = min(overspent, credit_spending)
+        cash_overspent = overspent - credit_overspent
         category_target = targets.get(category.id)
         funding = target_funding(
             category_target,
@@ -1126,6 +1147,8 @@ def month_summary(
             carried_available_minor=carried,
             available_minor=available,
             is_overspent=available < 0,
+            cash_overspent_minor=cash_overspent,
+            credit_overspent_minor=credit_overspent,
             target_type=category_target.target_type if category_target else None,
             target_amount_minor=category_target.target_amount_minor if category_target else None,
             target_date=category_target.target_date if category_target else None,
