@@ -80,6 +80,35 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(result.savingsRate, 0.4)
     }
 
+    func testRefundReducesSpendingAndIsNotCountedAsIncome() {
+        let values = [
+            transaction("purchase", -10_000, "food", "Food"),
+            transaction("refund", 2_500, "food", "Food"),
+            transaction("income", 20_000, nil, nil)
+        ]
+        let spending = InsightsCalculator().spendingByCategory(transactions: values)
+        XCTAssertEqual(spending.count, 1)
+        XCTAssertEqual(spending[0].id, "food")
+        XCTAssertEqual(spending[0].spendingMinor, 7_500)
+        XCTAssertEqual(Set(spending[0].transactionIDs), ["purchase", "refund"])
+
+        let result = InsightsCalculator().incomeVersusSpending(transactions: values)
+        XCTAssertEqual(result.incomeMinor, 20_000)
+        XCTAssertEqual(result.spendingMinor, 7_500)
+        XCTAssertEqual(result.differenceMinor, 12_500)
+    }
+
+    func testExpandedSplitPortionsAreAttributedExactly() {
+        let values = [
+            transaction("food-portion", -7_001, "food", "Food"),
+            transaction("fuel-portion", -2_999, "fuel", "Fuel")
+        ]
+        let report = InsightsCalculator().spendingByCategory(transactions: values)
+        let byID = Dictionary(uniqueKeysWithValues: report.map { ($0.id, $0.spendingMinor) })
+        XCTAssertEqual(byID["food"], 7_001)
+        XCTAssertEqual(byID["fuel"], 2_999)
+    }
+
     private func transaction(
         _ id: String,
         _ amount: Int64,

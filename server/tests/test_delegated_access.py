@@ -483,3 +483,124 @@ def test_delegated_member_can_rename_move_and_archive_only_own_category(
         json={"group_id": savings_group["id"], "name": "Private Parent", "is_archived": True},
     )
     assert forbidden.status_code == 403
+
+
+def _delegate_with_pool(client, owner_token, session_factory, capabilities):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, _ = create_budget_structure(client, owner_token, budget["id"])
+    pool = add_category(client, owner_token, budget["id"], "Delegated", "Alex To Assign")
+    games = add_category(client, owner_token, budget["id"], "Delegated", "Games")
+    child_id, child_token = add_child(session_factory, client)
+    for category in (pool, games):
+        assert client.put(
+            f"/api/v1/budgets/{budget['id']}/categories/{category['id']}/delegation",
+            headers=auth(owner_token), json={"delegated_user_id": child_id},
+        ).status_code == 200
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/grants", headers=auth(owner_token),
+        json={"user_id": child_id, "permission": "contribute"},
+    ).status_code == 200
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token),
+        json={
+            "capabilities": capabilities,
+            "restrict_accounts": True, "account_ids": [checking["id"]],
+            "restrict_categories": True, "category_ids": [pool["id"], games["id"]],
+        },
+    ).status_code == 200
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=20000, is_cleared=True)
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{pool['id']}/assignment",
+        headers=auth(owner_token), json={"month": "2026-09-01", "assigned_minor": 20000},
+    ).status_code == 200
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/delegated-budgets/{child_id}", headers=auth(owner_token),
+        json={"user_id": child_id, "pool_category_id": pool["id"], "authority_minor": 20000, "rules": []},
+    ).status_code == 200
+    return budget, checking, pool, games, child_id, child_token
+
+
+def test_delegated_member_cannot_commit_smart_funding_against_household_rta(
+    client, owner_token, session_factory
+):
+    # Grant the delegate every capability that could otherwise permit assignment/funding.
+    budget, checking, pool, games, child_id, child_token = _delegate_with_pool(
+        client, owner_token, session_factory,
+        capabilities=[
+            "view_budget", "view_accounts", "view_categories", "view_transactions",
+            "view_reports", "assign_money", "move_money", "manage_own_categories",
+        ],
+    )
+    # Give the household real Ready-to-Assign that the delegate must NOT be able to touch.
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=500000, is_cleared=True)
+
+    preview = client.get(
+        f"/api/v1/budgets/{budget['id']}/smart-funding/2026-09-01", headers=auth(child_token)
+    )
+    # Whether preview is visible or not, committing must be an explicit hard boundary.
+    commit = client.post(
+        f"/api/v1/budgets/{budget['id']}/smart-funding", headers=auth(child_token),
+        json={"month": "2026-09-01", "expected_allocation_version": 1},
+    )
+    assert commit.status_code == 403, commit.text
+    assert "delegated pool" in commit.text.lower()
+
+    # The owner's Ready-to-Assign is unchanged by the attempt.
+    owner_summary = client.get(
+        f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)
+    ).json()
+    assert owner_summary["ready_to_assign_minor"] == 500000
+
+
+def test_double_approval_with_same_initial_version_has_exactly_one_winner(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, _ = create_budget_structure(client, owner_token, budget["id"])
+    source = add_category(client, owner_token, budget["id"], "Family", "Allowance Pool")
+    destination = add_category(client, owner_token, budget["id"], "Delegated", "Child Entertainment")
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=20000, is_cleared=True)
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{source['id']}/assignment",
+        headers=auth(owner_token), json={"month": "2026-09-01", "assigned_minor": 20000},
+    ).status_code == 200
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, checking["id"], destination["id"])
+    request = client.post(
+        f"/api/v1/budgets/{budget['id']}/requests", headers=auth(child_token),
+        json={"destination_category_id": destination["id"], "requested_amount_minor": 5000, "reason": "New game"},
+    ).json()
+
+    decision_body = {
+        "decision": "approve", "expected_request_version": 0,
+        "approved_amount_minor": 5000, "source_category_id": source["id"],
+    }
+    first = client.post(
+        f"/api/v1/budgets/{budget['id']}/requests/{request['id']}/decision",
+        headers=auth(owner_token), json=decision_body,
+    )
+    second = client.post(
+        f"/api/v1/budgets/{budget['id']}/requests/{request['id']}/decision",
+        headers=auth(owner_token), json=decision_body,
+    )
+    assert first.status_code == 200, first.text
+    assert second.status_code == 409, second.text
+    assert first.json()["status"] == "approved"
+
+    # Money moved exactly once: source debited 5000, destination funded 5000.
+    summary = client.get(
+        f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)
+    ).json()
+    by_id = {item["category_id"]: item for item in summary["categories"]}
+    assert by_id[source["id"]]["available_minor"] == 15000
+    assert by_id[destination["id"]]["available_minor"] == 5000
+
+    with session_factory() as db:
+        stored = db.get(FinancialRequest, request["id"])
+        assert stored.status == "approved"
+        # Exactly one approval allocation operation, exactly two request actions (submit + approve).
+        approvals = db.query(AllocationOperation).filter_by(
+            budget_id=budget["id"], kind="request_approval"
+        ).count()
+        assert approvals == 1
+        assert db.query(RequestAction).filter_by(request_id=request["id"]).count() == 2

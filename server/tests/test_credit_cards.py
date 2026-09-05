@@ -1,5 +1,7 @@
+from app.models import CreditCardReserveEvent, TransactionChange
+
 from .conftest import auth
-from .test_advanced_ledger import record
+from .test_advanced_ledger import add_category, record
 from .test_allocation_ledger import fund
 from .test_budgeting_api import create_budget, create_budget_structure
 
@@ -210,3 +212,69 @@ def test_refund_cannot_release_manual_old_debt_funding_or_another_category_reser
     _, rows = category_rows(client, owner_token, budget["id"])
     assert rows["Visa Payment"]["available_minor"] == 40000
     assert rows["Groceries"]["available_minor"] == -5000
+
+
+def test_editing_funded_card_purchase_rebuilds_activity_and_payment_reserve(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    dining = add_category(client, owner_token, budget["id"], "Food", "Dining")
+    card = create_credit_card(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], checking["id"], amount=100000)
+    for category_id in (groceries["id"], dining["id"]):
+        assert client.put(
+            f"/api/v1/budgets/{budget['id']}/categories/{category_id}/assignment",
+            headers=auth(owner_token),
+            json={"month": "2026-09-01", "assigned_minor": 20000},
+        ).status_code == 200
+
+    purchase = record(
+        client, owner_token, budget["id"], account_id=card["id"],
+        category_id=dining["id"], amount_minor=-10000, payee_name="Bistro",
+    )
+    _, rows = category_rows(client, owner_token, budget["id"])
+    assert rows["Dining"]["activity_minor"] == -10000
+    assert rows["Dining"]["available_minor"] == 10000
+    assert rows["Visa Payment"]["available_minor"] == 10000
+    assert account_balance(client, owner_token, budget["id"], card["id"]) == -10000
+
+    edited = client.put(
+        f"/api/v1/budgets/{budget['id']}/transactions/{purchase['id']}",
+        headers=auth(owner_token),
+        json={
+            "account_id": card["id"],
+            "category_id": groceries["id"],
+            "amount_minor": -12000,
+            "occurred_on": "2026-09-04",
+            "payee_name": "Bistro",
+        },
+    )
+    assert edited.status_code == 200, edited.text
+
+    _, rows = category_rows(client, owner_token, budget["id"])
+    # Original Dining effect fully reversed.
+    assert rows["Dining"]["activity_minor"] == 0
+    assert rows["Dining"]["available_minor"] == 20000
+    # New Groceries effect applied exactly once.
+    assert rows["Groceries"]["activity_minor"] == -12000
+    assert rows["Groceries"]["available_minor"] == 8000
+    # Payment reserve reflects only the edited funded purchase (no duplicate).
+    assert rows["Visa Payment"]["available_minor"] == 12000
+    assert account_balance(client, owner_token, budget["id"], card["id"]) == -12000
+
+    with session_factory() as db:
+        reserves = db.query(CreditCardReserveEvent).filter_by(
+            source_transaction_id=purchase["id"]
+        ).all()
+        assert len(reserves) == 1
+        assert reserves[0].spending_category_id == groceries["id"]
+        assert reserves[0].amount_minor == 12000
+        changes = db.query(TransactionChange).filter_by(
+            transaction_id=purchase["id"], action="updated"
+        ).all()
+        assert len(changes) == 1
+        assert changes[0].before_json is not None
+        assert changes[0].after_json is not None
+        assert '"category_id":"' + dining["id"] + '"' in changes[0].before_json
+        assert '"category_id":"' + groceries["id"] + '"' in changes[0].after_json
