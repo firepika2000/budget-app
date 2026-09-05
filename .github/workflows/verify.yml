@@ -35,6 +35,11 @@ jobs:
         working-directory: server
       - run: pytest
         working-directory: server
+      - name: PostgreSQL concurrency tests
+        run: pytest tests/test_pg_concurrency.py -v
+        working-directory: server
+        env:
+          BUDGET_APP_TEST_PG_URL: postgresql+psycopg://budget:test-database-password@127.0.0.1:5432/budget_test
       - run: python -m compileall -q app tests migrations
         working-directory: server
       - run: alembic upgrade head
