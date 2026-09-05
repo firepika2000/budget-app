@@ -1,7 +1,32 @@
 import XCTest
+import SwiftUI
+import UIKit
+import BudgetAPI
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testHouseholdProfileHierarchyResolvesSharedDependenciesWhenRendered() throws {
+        let session = AppSession()
+        let store = BudgetWorkspaceStore.demo()
+        let member = try JSONDecoder().decode(
+            APIHouseholdMember.self,
+            from: Data(#"{"user_id":"member-1","email":"member@example.com","display_name":"Member","role":"member","is_active":true}"#.utf8)
+        )
+
+        let household = LiveHouseholdView(session: session, store: store)
+        let delegated = LiveDelegatedPolicyView(session: session, store: store, member: member)
+        XCTAssertTrue(household.session === session)
+        XCTAssertTrue(household.store === store)
+        XCTAssertTrue(delegated.session === session)
+        XCTAssertTrue(delegated.store === store)
+
+        // Rendering both roots forces SwiftUI to resolve every dynamic property.
+        // A missing EnvironmentObject traps here instead of escaping to manual QA.
+        render(household.environmentObject(session).environmentObject(store))
+        render(delegated.environmentObject(session).environmentObject(store))
+    }
+
     func testCurrencyTextAcceptsNaturalDecimalZeroAndSignedInput() {
         XCTAssertEqual(CurrencyText.parseMinorUnits("12.34", currencyCode: "USD"), 1_234)
         XCTAssertEqual(CurrencyText.parseMinorUnits("0", currencyCode: "USD"), 0)
@@ -140,5 +165,18 @@ final class DemoStoreTests: XCTestCase {
         store.persona = .alex
         XCTAssertFalse(store.move(amount: 100, from: "alexallow", to: "groceries"))
         XCTAssertEqual(store.errorMessage, DemoMutationError.restrictedCategory.localizedDescription)
+    }
+
+    @MainActor
+    private func render<Content: View>(_ view: Content) {
+        let controller = UIHostingController(rootView: view)
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.loadViewIfNeeded()
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        window.isHidden = true
     }
 }

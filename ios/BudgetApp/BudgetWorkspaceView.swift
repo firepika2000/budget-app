@@ -410,7 +410,6 @@ struct BudgetWorkspaceView: View {
             NavigationStack { LiveAccountsView() }.tabItem { Label("Accounts", systemImage: "creditcard.fill") }.tag(3)
             NavigationStack { LiveInsightsView() }.tabItem { Label("Insights", systemImage: "chart.xyaxis.line") }.tag(4)
         }
-        .environmentObject(store)
         .tint(Theme.accent)
         .overlay { if store.isLoading { ProgressView().padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
         .task { await reload() }
@@ -419,7 +418,13 @@ struct BudgetWorkspaceView: View {
         } message: { Text(store.errorMessage ?? "Unknown error") }
         .sheet(isPresented: $showingSettings) {
             LiveHouseholdView(session: session, store: store)
+                .environmentObject(session)
+                .environmentObject(store)
         }
+        // Keep workspace dependencies outside every presentation modifier so
+        // sheets and their navigation destinations inherit the same instances.
+        .environmentObject(store)
+        .environmentObject(session)
     }
 
     private func reload() async {
@@ -453,7 +458,7 @@ private struct LiveHomeView: View {
             }
             Section("Recent activity") { ForEach(store.transactions.prefix(5)) { LiveTransactionLink(transaction: $0) } }
             if let forecast = store.forecast { Section("90-day forecast") { LabeledContent("Projected total", value: store.format(forecast.projectedTotalOnBudgetMinor)); LabeledContent("Lowest projected", value: store.format(forecast.lowestProjectedTotalMinor)); NavigationLink("View forecast") { LiveForecastView() } } }
-        }.navigationTitle(store.budget.name).toolbar { ToolbarItem(placement: .topBarLeading) { Button(action: showSettings) { Image(systemName: "person.crop.circle") } } }
+        }.navigationTitle(store.budget.name).toolbar { ToolbarItem(placement: .topBarLeading) { Button(action: showSettings) { Image(systemName: "person.crop.circle") }.accessibilityIdentifier("household-profile-button") } }
     }
 }
 
@@ -798,7 +803,7 @@ private struct LiveReportCategoryView: View {
     }
 }
 
-private struct LiveHouseholdView: View {
+struct LiveHouseholdView: View {
     @ObservedObject var session: AppSession
     @ObservedObject var store: BudgetWorkspaceStore
     @Environment(\.dismiss) private var dismiss
@@ -812,7 +817,7 @@ private struct LiveHouseholdView: View {
                 if store.budget.can("manage_allowances") {
                     Section("Delegated budgets") {
                         ForEach(store.householdMembers.filter { $0.role != "owner" && $0.isActive }) { member in
-                            NavigationLink { LiveDelegatedPolicyView(member: member) } label: {
+                            NavigationLink { LiveDelegatedPolicyView(session: session, store: store, member: member) } label: {
                                 VStack(alignment: .leading) {
                                     Text(member.displayName)
                                     if let policy = store.delegatedBudgets.first(where: { $0.userID == member.userID }) {
@@ -836,11 +841,13 @@ private struct LiveHouseholdView: View {
         }
         .environmentObject(session)
         .environmentObject(store)
+        .accessibilityIdentifier("household-profile-screen")
     }
 }
 
-private struct LiveDelegatedPolicyView: View {
-    @EnvironmentObject private var session: AppSession; @EnvironmentObject private var store: BudgetWorkspaceStore
+struct LiveDelegatedPolicyView: View {
+    @ObservedObject var session: AppSession
+    @ObservedObject var store: BudgetWorkspaceStore
     let member: APIHouseholdMember
     @State private var poolCategoryID = ""; @State private var authority = ""; @State private var allowCreation = true; @State private var allowReallocation = true; @State private var isSaving = false; @State private var errorMessage: String?
     private var categories: [APICategory] { store.categories.filter { $0.delegatedUserID == member.userID && !$0.isArchived } }
