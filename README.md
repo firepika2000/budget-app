@@ -41,6 +41,7 @@ swift test
 ## Read next
 
 - [Product brief](docs/product-brief.md)
+- [Development roadmap](docs/ROADMAP.md)
 - [Architecture direction](docs/architecture.md)
 - [Architecture review and financial-engine evolution](docs/architecture-review.md)
 - [Self-hosting guide](docs/deployment.md)
