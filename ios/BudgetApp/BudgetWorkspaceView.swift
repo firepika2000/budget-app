@@ -361,6 +361,13 @@ final class BudgetWorkspaceStore: ObservableObject {
         accountBalances[account.id]?.workingBalanceMinor ?? transactions.filter { $0.accountID == account.id }.reduce(0) { $0 + $1.amountMinor }
     }
     func clearedBalance(for account: APIAccount) -> Int64 { accountBalances[account.id]?.clearedBalanceMinor ?? transactions.filter { $0.accountID == account.id && $0.isCleared }.reduce(0) { $0 + $1.amountMinor } }
+    func unclearedBalance(for account: APIAccount) -> Int64 { accountBalances[account.id]?.unclearedBalanceMinor ?? transactions.filter { $0.accountID == account.id && !$0.isCleared }.reduce(0) { $0 + $1.amountMinor } }
+    func transactions(for account: APIAccount) -> [APITransaction] {
+        transactions.filter { $0.accountID == account.id }.sorted {
+            if $0.occurredOn == $1.occurredOn { return $0.id > $1.id }
+            return $0.occurredOn > $1.occurredOn
+        }
+    }
 
     func reportRange(calendar: Calendar = .current, now: Date = Date()) -> (Date, Date) {
         let effectiveNow = dataSource == nil ? now : Date.demo(monthsAgo: 0, day: 30)
@@ -695,10 +702,79 @@ private struct LiveTransactionDetailView: View {
 private struct LiveAccountsView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    @State private var reconciling: APIAccount?
     @State private var showAdd = false
-    var body: some View { List(store.accounts) { account in Button { if store.budget.can("reconcile_account") { reconciling = account } } label: { HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: account.accountType == "credit" ? "creditcard.fill" : "building.columns.fill") }; Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } }.foregroundStyle(.primary) } }.navigationTitle("Accounts").toolbar { if store.budget.can("manage_budget_structure") { Button { showAdd = true } label: { Image(systemName:"plus") } } }.sheet(item: $reconciling) { account in LiveReconcileView(budget: store.budget, account: account, currentBalance: store.clearedBalance(for: account), serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload) }.sheet(isPresented:$showAdd){AccountCreationView(budget:store.budget,serverURL:session.serverURL ?? URL(string:"http://localhost")!,token:session.token ?? "demo",onSaved:reload)} }
+    var body: some View { List(store.accounts) { account in NavigationLink { LiveAccountRegisterView(account: account) } label: { HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: account.accountType == "credit" ? "creditcard.fill" : "building.columns.fill") }; Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle("Accounts").toolbar { if store.budget.can("manage_budget_structure") { Button { showAdd = true } label: { Image(systemName:"plus") } } }.sheet(isPresented:$showAdd){AccountCreationView(budget:store.budget,serverURL:session.serverURL ?? URL(string:"http://localhost")!,token:session.token ?? "demo",onSaved:reload)} }
     private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
+}
+
+struct LiveAccountRegisterView: View {
+    @EnvironmentObject private var session: AppSession
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let account: APIAccount
+    @State private var showAdd = false
+    @State private var showReconcile = false
+
+    private var transactions: [APITransaction] { store.transactions(for: account) }
+    private var paymentReserve: Int64? {
+        guard let id = account.paymentCategoryID else { return nil }
+        return store.summary?.categories.first(where: { $0.categoryID == id })?.availableMinor
+    }
+
+    var body: some View {
+        List {
+            Section {
+                LabeledContent("Working", value: store.format(store.balance(for: account)))
+                LabeledContent("Cleared", value: store.format(store.clearedBalance(for: account)))
+                LabeledContent("Uncleared", value: store.format(store.unclearedBalance(for: account)))
+                if let reconciled = account.reconciledBalanceMinor {
+                    LabeledContent("Last reconciled balance", value: store.format(reconciled))
+                } else {
+                    LabeledContent("Reconciliation", value: "Not reconciled")
+                }
+                if let paymentReserve { LabeledContent("Reserved for payment", value: store.format(paymentReserve)) }
+            } header: {
+                Text(account.name)
+            }
+
+            Section("Register") {
+                if transactions.isEmpty {
+                    ContentUnavailableView("No transactions", systemImage: "list.bullet.rectangle", description: Text("Transactions recorded in this account will appear here."))
+                } else {
+                    ForEach(transactions) { transaction in
+                        LiveTransactionLink(transaction: transaction)
+                            .badge(registerBadge(transaction))
+                    }
+                }
+            }
+        }
+        .navigationTitle(account.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if store.budget.can("create_transaction") { Button("Add Transaction", systemImage: "plus") { showAdd = true } }
+                if store.budget.can("reconcile_account") { Button("Reconcile", systemImage: "checkmark.seal") { showReconcile = true } }
+            }
+        }
+        .sheet(isPresented: $showAdd) { entry }
+        .sheet(isPresented: $showReconcile) { reconcile }
+        .refreshable { await store.refresh() }
+    }
+
+    private func registerBadge(_ transaction: APITransaction) -> String {
+        var values: [String] = []
+        if transaction.isReconciled { values.append("R") } else if transaction.isCleared { values.append("C") }
+        if !transaction.splits.isEmpty { values.append("Split") }
+        if transaction.transferID != nil { values.append("Transfer") }
+        if transaction.memo.isEmpty == false || transaction.attachmentMetadata?.isEmpty == false { values.append("Details") }
+        return values.joined(separator: " · ")
+    }
+
+    @ViewBuilder private var entry: some View {
+        TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", initialAccountID: account.id, onSaved: store.refresh)
+    }
+    @ViewBuilder private var reconcile: some View {
+        LiveReconcileView(budget: store.budget, account: account, currentBalance: store.clearedBalance(for: account), serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: store.refresh)
+    }
 }
 
 private struct LiveTransferView: View {

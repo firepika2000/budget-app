@@ -6,6 +6,47 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testAccountRegisterScopesOrdersAndDescribesProductionTransactions() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let account = try XCTUnwrap(store.accounts.first(where: { $0.id == "checking" }))
+        let destination = try XCTUnwrap(store.accounts.first(where: { $0.id == "savings" }))
+        try await store.createTransfer(APITransferCreate(sourceAccountID: account.id, destinationAccountID: destination.id, amountMinor: 500, occurredOn: "2026-09-05", memo: "Register transfer", isCleared: true))
+        let rows = store.transactions(for: account)
+
+        XCTAssertFalse(rows.isEmpty)
+        XCTAssertTrue(rows.allSatisfy { $0.accountID == account.id })
+        XCTAssertEqual(rows.map(\.occurredOn), rows.map(\.occurredOn).sorted(by: >))
+        XCTAssertTrue(rows.contains { $0.transferID != nil })
+        XCTAssertTrue(store.transactions(for: destination).contains { $0.transferID != nil })
+        XCTAssertTrue(rows.contains { !$0.splits.isEmpty })
+        XCTAssertEqual(store.balance(for: account), store.clearedBalance(for: account) + store.unclearedBalance(for: account))
+    }
+
+    @MainActor
+    func testAccountRegisterReflectsCreateEditAndDeleteRefreshes() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let checking = try XCTUnwrap(store.accounts.first(where: { $0.id == "checking" }))
+        let savings = try XCTUnwrap(store.accounts.first(where: { $0.id == "savings" }))
+        let category = try XCTUnwrap(store.categories.first(where: { !$0.isArchived }))
+        let originalCount = store.transactions(for: checking).count
+        let value = APITransactionCreate(accountID: checking.id, categoryID: category.id, amountMinor: -1_234, occurredOn: "2026-09-05", payeeName: "Register regression", memo: "", isCleared: false)
+
+        try await store.createTransaction(value)
+        let created = try XCTUnwrap(store.transactions.first(where: { $0.payeeName == "Register regression" }))
+        XCTAssertEqual(store.transactions(for: checking).count, originalCount + 1)
+
+        let moved = APITransactionCreate(accountID: savings.id, categoryID: category.id, amountMinor: -1_234, occurredOn: "2026-09-05", payeeName: "Register regression", memo: "moved", isCleared: true)
+        try await store.updateTransaction(id: created.id, value: moved)
+        XCTAssertFalse(store.transactions(for: checking).contains { $0.id == created.id })
+        XCTAssertTrue(store.transactions(for: savings).contains { $0.id == created.id && $0.isCleared })
+
+        try await store.deleteTransaction(id: created.id)
+        XCTAssertFalse(store.transactions.contains { $0.id == created.id })
+    }
+
+    @MainActor
     func testHouseholdProfileHierarchyResolvesSharedDependenciesWhenRendered() throws {
         let session = AppSession()
         let store = BudgetWorkspaceStore.demo()

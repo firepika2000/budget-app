@@ -27,6 +27,16 @@ struct TransactionEntryView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
+    init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], serverURL: URL, token: String, initialAccountID: String? = nil, onSaved: @escaping () async -> Void) {
+        self.budget = budget
+        self.accounts = accounts
+        self.categories = categories
+        self.serverURL = serverURL
+        self.token = token
+        self.onSaved = onSaved
+        _accountID = State(initialValue: initialAccountID ?? "")
+    }
+
     var body: some View {
         NavigationStack {
             Form {
