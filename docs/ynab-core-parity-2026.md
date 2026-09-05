@@ -93,8 +93,8 @@ YNAB behavior summaries are grounded in current first-party documentation (see r
 | Capability | YNAB behavior | Ref | Backend | Prod UI | Demo/Live | Tests | Status | Sev | Required work | Acceptance |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Account types (checking/savings/cash) | On-budget cash accounts | features | account types | create account | Both | yes | IMPLEMENTED | — | — | Create typed account |
-| **Account register / account-scoped history** | Tap account → its transaction register | features | data available (`transactions` filterable) | **tapping account opens Reconcile only; no register** | — | — | **REGRESSED/MISSING** | **P1** | Add `AccountDetailView` register (that account's transactions, running/cleared/uncleared balances, entry) | Open account → see its transactions, balances, add/edit within it |
-| Account balances (cleared/uncleared/working) | Show three balances | features | `GET /accounts/{id}/balance` | Accounts list shows "Current" only | live | `test_advanced_ledger` | PARTIAL | P2 | Show cleared/uncleared/working in register header | Three balances visible per account |
+| **Account register / account-scoped history** | Tap account → its transaction register | features | data available (`transactions` filterable) | `LiveAccountRegisterView` (register, balances header, scoped add/edit, reconcile) — **added `f93dce2`** | live | `DemoStoreTests` register | **IMPLEMENTED** *(was REGRESSED at 43a5212; resolved by Codex `f93dce2` during this review)* | — | Mac runtime confirm | Open account → see its transactions, balances, add/edit within it |
+| Account balances (cleared/uncleared/working) | Show three balances | features | `GET /accounts/{id}/balance` | Register header shows Working/Cleared/Uncleared (`f93dce2`) | live | `test_advanced_ledger` | IMPLEMENTED | — | — | Three balances visible per account |
 | Reconciliation | Match to statement; adjustment | features | `POST /accounts/{id}/reconcile` (expected-cleared, authority-gated adjustment) | Accounts → tap → Reconcile | live | `test_advanced_ledger` reconcile suite | IMPLEMENTED · **BETTER** (stale-balance + adjustment authority) | — | — | Reconcile matches; adjustment needs `manage_budget_structure` |
 | Closed accounts | Close/reopen | features | `is_closed` | shown "Closed"; no toggle UI | live | yes | PARTIAL | P3 | Close/reopen action | Closed account hidden from entry |
 
@@ -160,13 +160,13 @@ Counting the ~55 in-scope capability rows above (deferred bank-sync excluded fro
 - **BETTER-than-baseline:** ~10 distinct capabilities (delegation, approvals, scoped permissions, auditability, forecasting, drill-through recalc, credit attribution, reconciliation authority, smart-funding preview, extra report ranges)
 
 ## Top P1 gaps (viability-blocking)
-1. **Account register / account-scoped transaction history** — REGRESSED/MISSING (accounts open to reconcile only).
+1. ~~Account register / account-scoped transaction history~~ — **RESOLVED by Codex `f93dce2`** (`LiveAccountRegisterView`); pending Mac runtime confirmation.
 2. **Targets: create/edit in-app** — MISSING client (server-ready).
 3. **Scheduled/recurring transactions: create/list in-app** — MISSING client (server-ready).
 4. **Target progress surfaced with an editable target** — PARTIAL.
 
 ## Confirmed regressions (with source evidence)
-- **Account register:** `LiveAccountsView` (`BudgetWorkspaceView.swift:695`) taps open `LiveReconcileView`; no `AccountDetailView`. Register never existed in the unified live product.
+- **Account register:** was REGRESSED at `43a5212` (`LiveAccountsView` taps opened `LiveReconcileView` only). **Resolved `f93dce2`** — accounts now navigate to `LiveAccountRegisterView`. Verify at runtime on Mac.
 - **Spending donut → bar:** current Insights uses `BarMark` (`BudgetWorkspaceView.swift:759`). The prior donut existed as `SectorMark` in `git show 87517c1:ios/BudgetApp/DemoInsightsViews.swift` (`SpendingInsightView`), deleted during the v0.4 unification.
 - **Hide Amounts:** `DemoStore.hideAmounts` / `DemoStore.money()` exist but the unified workspace renders via `BudgetWorkspaceStore.format` (no mask). The global privacy toggle from v0.3 is absent from the shipping app.
 
