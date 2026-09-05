@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+
+set -u
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+SERVER_DIR="$SCRIPT_DIR/server"
+VENV_DIR="$SERVER_DIR/.venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
+VENV_ALEMBIC="$VENV_DIR/bin/alembic"
+VENV_UVICORN="$VENV_DIR/bin/uvicorn"
+DEPENDENCY_FILE="$SERVER_DIR/pyproject.toml"
+DEPENDENCY_STAMP="$VENV_DIR/.budget-dependencies.sha256"
+DEV_ENV_FILE="$SERVER_DIR/.env.development"
+HOST="${BUDGET_HOST:-127.0.0.1}"
+PORT="${BUDGET_PORT:-8000}"
+
+heading() {
+    printf '\nBudget App Development Server\n'
+    printf '%s\n' '-----------------------------'
+}
+
+ok() { printf '✓ %s\n' "$1"; }
+fail() { printf '✗ %s\n' "$1" >&2; }
+
+usage() {
+    cat <<'EOF'
+Usage: ./budget [command]
+
+Commands:
+  server   Bootstrap, migrate, and run the development server (default)
+  doctor   Diagnose the local development environment without changing it
+  migrate  Bootstrap dependencies and upgrade the database to Alembic head
+  test     Bootstrap dependencies and run the backend test suite
+  help     Show this help
+
+Optional overrides:
+  BUDGET_HOST=0.0.0.0 BUDGET_PORT=8080 ./budget server
+
+Development configuration belongs in server/.env.development.
+Copy server/.env.development.example to get started.
+EOF
+}
+
+require_python() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        fail "Python 3 is not installed."
+        printf '\nInstall Python 3.9 or newer and run ./budget again.\n' >&2
+        return 10
+    fi
+    if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+        fail "Python 3.9 or newer is required."
+        printf '\nInstalled version: %s\n' "$(python3 --version 2>&1)" >&2
+        return 11
+    fi
+}
+
+dependency_checksum() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$DEPENDENCY_FILE" | awk '{print $1}'
+    else
+        "$VENV_PYTHON" -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$DEPENDENCY_FILE"
+    fi
+}
+
+dependencies_ready() {
+    [ -x "$VENV_PYTHON" ] &&
+        [ -f "$DEPENDENCY_STAMP" ] &&
+        [ "$(cat "$DEPENDENCY_STAMP")" = "$(dependency_checksum)" ] &&
+        "$VENV_PYTHON" -c 'import alembic, fastapi, psycopg, pytest, uvicorn' >/dev/null 2>&1
+}
+
+bootstrap_dependencies() {
+    local created_venv=0
+    require_python || return $?
+    if [ ! -d "$SERVER_DIR" ] || [ ! -f "$DEPENDENCY_FILE" ]; then
+        fail "The server directory could not be found at $SERVER_DIR."
+        return 12
+    fi
+    ok "Python ($(python3 --version 2>&1))"
+
+    if [ ! -x "$VENV_PYTHON" ]; then
+        printf 'Creating the backend virtual environment...\n'
+        if ! python3 -m venv "$VENV_DIR"; then
+            fail "Could not create $VENV_DIR."
+            return 13
+        fi
+        created_venv=1
+    fi
+    ok "Virtual environment"
+
+    if [ "$created_venv" -eq 1 ]; then
+        printf 'Updating the virtual environment installer...\n'
+        if ! "$VENV_PYTHON" -m pip install --upgrade pip; then
+            fail "Could not update pip inside the new virtual environment."
+            return 14
+        fi
+    fi
+
+    if dependencies_ready; then
+        ok "Dependencies (unchanged)"
+        return 0
+    fi
+
+    printf 'Installing backend dependencies (first launch or dependency change)...\n'
+    if ! "$VENV_PYTHON" -m pip install -e "$SERVER_DIR[dev]"; then
+        fail "Backend dependency installation failed."
+        printf '\nCheck your internet connection and Python installation, then run ./budget again.\n' >&2
+        return 14
+    fi
+    dependency_checksum > "$DEPENDENCY_STAMP"
+    ok "Dependencies"
+}
+
+load_development_environment() {
+    if [ -f "$DEV_ENV_FILE" ]; then
+        set -a
+        # This file is local, ignored by Git, and follows normal shell KEY=value syntax.
+        # shellcheck disable=SC1090
+        . "$DEV_ENV_FILE"
+        set +a
+    fi
+}
+
+validate_configuration() {
+    load_development_environment
+    if [ -z "${BUDGET_APP_DATABASE_URL:-}" ]; then
+        fail "Database configuration is missing."
+        printf '\nCopy the development template and enter your PostgreSQL connection:\n' >&2
+        printf '  cp server/.env.development.example server/.env.development\n' >&2
+        return 20
+    fi
+    if [ -z "${BUDGET_APP_JWT_SECRET:-}" ] || [ "${#BUDGET_APP_JWT_SECRET}" -lt 32 ] || [[ "$BUDGET_APP_JWT_SECRET" == replace-with-* ]]; then
+        fail "BUDGET_APP_JWT_SECRET must be a non-placeholder value of at least 32 characters."
+        printf '\nUpdate server/.env.development and run ./budget again.\n' >&2
+        return 21
+    fi
+    export BUDGET_APP_ALLOWED_HOSTS="${BUDGET_APP_ALLOWED_HOSTS:-localhost,127.0.0.1}"
+    ok "Database configuration"
+}
+
+port_in_use() {
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1
+        return $?
+    fi
+    local probe="${VENV_PYTHON:-python3}"
+    [ -x "$probe" ] || probe="python3"
+    "$probe" - "$HOST" "$PORT" <<'PY' >/dev/null 2>&1
+import socket, sys
+s = socket.socket()
+try:
+    s.bind((sys.argv[1], int(sys.argv[2])))
+except OSError:
+    raise SystemExit(0)
+finally:
+    s.close()
+raise SystemExit(1)
+PY
+}
+
+run_migrations() {
+    if ! (cd "$SERVER_DIR" && "$VENV_ALEMBIC" upgrade head); then
+        fail "Database migration failed."
+        printf '\nConfirm PostgreSQL is running and the database URL in server/.env.development is correct.\n' >&2
+        return 30
+    fi
+    ok "Migrations current"
+}
+
+run_server() {
+    heading
+    bootstrap_dependencies || return $?
+    validate_configuration || return $?
+    run_migrations || return $?
+
+    if port_in_use; then
+        fail "Port $PORT is already in use."
+        printf '\nAnother Budget server may already be running:\n  http://%s:%s\n\nTry:\n  lsof -i :%s\n' "$HOST" "$PORT" "$PORT" >&2
+        return 40
+    fi
+
+    printf '\nServer:   http://%s:%s\n' "$HOST" "$PORT"
+    printf 'API Docs: http://%s:%s/api/docs\n\n' "$HOST" "$PORT"
+    printf 'Budget server is running.\nPress Ctrl+C to stop.\n\n'
+
+    cd "$SERVER_DIR" || return 12
+    "$VENV_UVICORN" --factory app.main:create_app --reload --host "$HOST" --port "$PORT" &
+    local server_pid=$!
+    trap 'kill -INT "$server_pid" 2>/dev/null || true' INT TERM
+    wait "$server_pid"
+    local status=$?
+    trap - INT TERM
+    return "$status"
+}
+
+run_doctor() {
+    heading
+    local ready=0
+    printf 'Repository: %s\n' "$SCRIPT_DIR"
+    printf 'Platform:   %s\n' "$(uname -srm)"
+    printf 'Server URL: http://%s:%s\n\n' "$HOST" "$PORT"
+
+    if require_python; then ok "Python: $(command -v python3) ($(python3 --version 2>&1))"; else ready=1; fi
+    if [ -x "$VENV_PYTHON" ]; then ok "Virtual environment: present"; else fail "Virtual environment: missing (./budget server will create it)"; ready=1; fi
+    if dependencies_ready; then ok "Dependencies: ready"; else fail "Dependencies: not ready (./budget server will install them)"; ready=1; fi
+
+    load_development_environment
+    if [ -n "${BUDGET_APP_DATABASE_URL:-}" ]; then
+        case "$BUDGET_APP_DATABASE_URL" in
+            postgresql*) ok "Database configuration: PostgreSQL URL set" ;;
+            sqlite*) ok "Database configuration: SQLite URL set" ;;
+            *) ok "Database configuration: URL set" ;;
+        esac
+    else
+        fail "Database configuration: missing server/.env.development or BUDGET_APP_DATABASE_URL"
+        ready=1
+    fi
+    if [ -n "${BUDGET_APP_JWT_SECRET:-}" ] && [ "${#BUDGET_APP_JWT_SECRET}" -ge 32 ] && [[ "$BUDGET_APP_JWT_SECRET" != replace-with-* ]]; then
+        ok "JWT secret: configured (value hidden)"
+    else
+        fail "JWT secret: missing, too short, or still a placeholder"
+        ready=1
+    fi
+
+    if [ -n "${BUDGET_APP_DATABASE_URL:-}" ] && [ -x "$VENV_ALEMBIC" ]; then
+        local migration_state
+        migration_state="$(cd "$SERVER_DIR" && "$VENV_ALEMBIC" current 2>/dev/null)"
+        if [[ "$migration_state" == *"(head)"* ]]; then
+            ok "Alembic: migrations current"
+        elif [ -n "$migration_state" ]; then
+            fail "Alembic: database reachable, but migrations are not current"
+            ready=1
+        else
+            fail "Alembic: database not reachable or migration state unavailable"
+            ready=1
+        fi
+    else
+        fail "Alembic: not queryable until dependencies and database configuration are ready"
+        ready=1
+    fi
+
+    if port_in_use; then fail "Port $PORT: in use"; ready=1; else ok "Port $PORT: free"; fi
+    printf '\n'
+    if [ "$ready" -eq 0 ]; then printf 'READY TO RUN\n'; else printf 'NOT READY — resolve the items marked ✗, then run ./budget doctor again.\n'; fi
+    return "$ready"
+}
+
+run_migrate_command() {
+    heading
+    bootstrap_dependencies || return $?
+    validate_configuration || return $?
+    run_migrations
+}
+
+run_tests() {
+    heading
+    bootstrap_dependencies || return $?
+    printf '\nRunning backend tests...\n'
+    cd "$SERVER_DIR" || return 12
+    "$VENV_PYTHON" -m pytest
+}
+
+command_name="${1:-server}"
+case "$command_name" in
+    server) run_server ;;
+    doctor) run_doctor ;;
+    migrate) run_migrate_command ;;
+    test) run_tests ;;
+    help|--help|-h) usage ;;
+    *) fail "Unknown command: $command_name"; printf '\n' >&2; usage >&2; exit 2 ;;
+esac

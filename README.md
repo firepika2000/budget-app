@@ -22,6 +22,16 @@ The repository contains the household-ready financial foundation and native v0.4
 
 Product and architecture decisions are recorded in `docs/`.
 
+## Run locally
+
+```sh
+./budget
+```
+
+The launcher prepares the Python environment, applies safe forward migrations, and starts the development server. API documentation is at `http://127.0.0.1:8000/api/docs`; use `http://127.0.0.1:8000` as the iOS Simulator server URL. Press Ctrl+C to stop the server. On first use, copy `server/.env.development.example` to `server/.env.development` and enter the existing PostgreSQL development connection and a private JWT secret.
+
+On macOS, you can instead double-click `Start Budget Server.command` in Finder. Run `./budget doctor` for non-destructive setup diagnostics or `./budget help` for all commands.
+
 ## Run the tests
 
 ```sh

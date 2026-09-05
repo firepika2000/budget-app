@@ -5,6 +5,7 @@ DerivedData/
 .derived-data/
 *.xcuserstate
 .env
+server/.env.development
 server/backups/
 data/
 .venv/

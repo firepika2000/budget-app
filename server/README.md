@@ -10,6 +10,18 @@ The API is a FastAPI service backed by PostgreSQL in production. Authentication 
 
 ## Development
 
+From the repository root, the supported macOS development workflow is:
+
+```sh
+cp server/.env.development.example server/.env.development
+# Edit the copied file with the existing PostgreSQL connection and a private JWT secret.
+./budget
+```
+
+The launcher creates `.venv`, installs dependencies only when `pyproject.toml` changes, applies `alembic upgrade head`, and starts Uvicorn with reload enabled. `./budget doctor`, `./budget migrate`, and `./budget test` provide the corresponding diagnostic, migration-only, and test workflows. It never creates or resets a PostgreSQL database.
+
+The equivalent manual setup remains:
+
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
