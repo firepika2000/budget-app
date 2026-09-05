@@ -51,7 +51,7 @@ class BudgetCreate(BaseModel):
 
 CapabilityName = Literal[
     "view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports", "view_allocation_history",
-    "create_transaction", "request_money", "assign_money", "move_money", "reconcile_account",
+    "create_transaction", "edit_transaction", "delete_transaction", "request_money", "assign_money", "move_money", "manage_own_categories", "reconcile_account",
     "manage_budget_structure", "manage_planning", "manage_allowances", "approve_request", "export_data",
 ]
 
@@ -173,6 +173,53 @@ class CategoryResponse(BaseModel):
 
 class CategoryDelegationUpdate(BaseModel):
     delegated_user_id: Optional[str] = None
+
+
+class CategoryUpdate(BaseModel):
+    group_id: str
+    name: str = Field(min_length=1, max_length=100)
+    sort_order: int = 0
+    is_archived: bool = False
+
+
+class DelegatedCategoryRuleUpsert(BaseModel):
+    category_id: str
+    rule_kind: Literal["hard_limit", "soft_target", "approval_gated"]
+    minimum_minor: Optional[int] = Field(default=None, ge=0, le=MAX_INT64)
+    maximum_minor: Optional[int] = Field(default=None, ge=0, le=MAX_INT64)
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "DelegatedCategoryRuleUpsert":
+        if self.minimum_minor is not None and self.maximum_minor is not None and self.minimum_minor > self.maximum_minor:
+            raise ValueError("minimum cannot exceed maximum")
+        return self
+
+
+class DelegatedBudgetPolicyUpsert(BaseModel):
+    user_id: str
+    pool_category_id: str
+    authority_minor: int = Field(ge=0, le=MAX_INT64)
+    allow_category_creation: bool = True
+    allow_reallocation: bool = True
+    expected_allocation_version: Optional[int] = Field(default=None, ge=0)
+    rules: list[DelegatedCategoryRuleUpsert] = Field(default_factory=list, max_length=100)
+
+
+class DelegatedCategoryRuleResponse(DelegatedCategoryRuleUpsert):
+    id: str
+
+
+class DelegatedBudgetPolicyResponse(BaseModel):
+    id: str
+    budget_id: str
+    user_id: str
+    pool_category_id: str
+    authority_minor: int
+    assigned_minor: int
+    available_to_assign_minor: int
+    allow_category_creation: bool
+    allow_reallocation: bool
+    rules: list[DelegatedCategoryRuleResponse]
 
 
 class CategoryTargetUpsert(BaseModel):
@@ -359,6 +406,9 @@ class TransactionCreate(BaseModel):
     payee_name: str = Field(default="", max_length=150)
     memo: str = Field(default="", max_length=500)
     is_cleared: bool = False
+    flag: Optional[str] = Field(default=None, max_length=30)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    attachment_metadata: list[dict[str, str]] = Field(default_factory=list, max_length=20)
     splits: list[TransactionSplitCreate] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")
@@ -368,6 +418,10 @@ class TransactionCreate(BaseModel):
         if self.splits and sum(split.amount_minor for split in self.splits) != self.amount_minor:
             raise ValueError("split amounts must equal transaction amount")
         return self
+
+
+class TransactionUpdate(TransactionCreate):
+    pass
 
 
 class TransactionResponse(BaseModel):
@@ -383,9 +437,40 @@ class TransactionResponse(BaseModel):
     memo: str
     is_cleared: bool
     is_reconciled: bool
+    flag: Optional[str]
+    tags: list[str] = Field(default_factory=list)
+    attachment_metadata: list[dict[str, str]] = Field(default_factory=list)
     created_by_user_id: str
     transfer_id: Optional[str]
     splits: list[TransactionSplitResponse] = Field(default_factory=list)
+
+
+class SpendingCategoryReport(BaseModel):
+    category_id: str
+    category_name: str
+    category_group: str
+    spending_minor: int
+    transaction_ids: list[str]
+
+
+class SpendingReportResponse(BaseModel):
+    start_date: date
+    end_date: date
+    currency_code: str
+    total_spending_minor: int
+    categories: list[SpendingCategoryReport]
+
+
+class IncomeSpendingReportResponse(BaseModel):
+    start_date: date
+    end_date: date
+    currency_code: str
+    income_minor: int
+    spending_minor: int
+    difference_minor: int
+    savings_rate: Optional[float]
+    income_transaction_ids: list[str]
+    spending_transaction_ids: list[str]
 
 
 class TransferCreate(BaseModel):
@@ -414,6 +499,7 @@ class ReconcileRequest(BaseModel):
     through_date: date
     create_adjustment: bool = False
     adjustment_reason: str = Field(default="", max_length=500)
+    expected_cleared_balance_minor: Optional[int] = Field(default=None, ge=MIN_INT64, le=MAX_INT64)
 
 
 class ReconcileResponse(BaseModel):
@@ -577,6 +663,29 @@ class MonthSummaryResponse(BaseModel):
     total_overspent_minor: int
     allocation_version: int
     categories: list[CategoryMonthSummary]
+
+
+class SmartFundingProposal(BaseModel):
+    category_id: str
+    category_name: str
+    amount_minor: int
+    before_available_minor: int
+    after_available_minor: int
+
+
+class SmartFundingPreviewResponse(BaseModel):
+    month: date
+    currency_code: str
+    before_ready_to_assign_minor: int
+    proposed_minor: int
+    after_ready_to_assign_minor: int
+    allocation_version: int
+    proposals: list[SmartFundingProposal]
+
+
+class SmartFundingCommit(BaseModel):
+    month: date
+    expected_allocation_version: int = Field(ge=0)
 
 
 class HouseholdSummary(BaseModel):

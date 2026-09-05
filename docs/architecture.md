@@ -2,7 +2,7 @@
 
 ## Components
 
-- **iPhone app:** SwiftUI, local read cache, Keychain-held session material, and an HTTPS JSON API.
+- **iPhone app:** one shared SwiftUI product and application store, Keychain-held session material, and interchangeable authenticated API/deterministic demo data sources.
 - **BudgetCore:** dependency-free Swift domain types and client-side policy helpers. Server authorization remains mandatory.
 - **Application server:** versioned REST API, authentication, authorization, budgeting rules, imports/exports, and audit logging.
 - **Database:** PostgreSQL for supported deployments. SQLite may be considered later for single-user local mode only if identical behavior can be maintained.
@@ -19,7 +19,8 @@ Household
     ├── Account → Credit Payment Category → ReserveEvent
     ├── CategoryGroup → Category → Target
     ├── AllocationOperation → balanced AllocationPostings
-    ├── Transaction → Split
+    ├── DelegatedBudgetPolicy → Pool Category → Category Rules
+    ├── Transaction → Split + immutable TransactionChange history
     ├── ScheduledTransaction (planning only)
     ├── FinancialRequest → RequestActions → AllocationOperation
     └── AllowancePlan → Splits → Issuance → AllocationOperation
@@ -28,6 +29,17 @@ Household
 All child records carry or can be joined unambiguously to `budget_id`. API handlers resolve active membership, budget visibility, effective capabilities, and account/category scopes before returning or mutating protected data. Existing View/Contribute/Manage grants remain compatibility bundles; an explicit access profile replaces the bundle with named capabilities and deny-by-default resource allowlists.
 
 Actual transactions and immutable allocation postings are separate authoritative ledgers. Scheduled transactions and forecasts never enter actual balances or Ready to Assign. Delegated categories, requests, approvals, and allowances move existing allocation inside the same budget rather than creating cash or duplicate books. Credit liabilities, physical cash, and payment-category reserves remain distinct quantities.
+
+## Native composition boundary
+
+```text
+BudgetWorkspaceView (shared SwiftUI)
+    → BudgetWorkspaceStore (shared loading, mutation, invalidation)
+        → authenticated API data source → self-hosted server → database
+        → deterministic demo data source → in-memory fixture
+```
+
+Views never choose demo arithmetic or call the network. They submit application operations and render API-shaped snapshots. The runtime data source is selected at the composition root. Every successful mutation invalidates and reloads the complete workspace, including Insights.
 
 ## Security invariants
 

@@ -128,6 +128,19 @@ public struct APIHousehold: Identifiable, Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIHouseholdMember: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { userID }
+    public let userID: String
+    public let email: String
+    public let displayName: String
+    public let role: String
+    public let isActive: Bool
+    enum CodingKeys: String, CodingKey {
+        case email, role
+        case userID = "user_id", displayName = "display_name", isActive = "is_active"
+    }
+}
+
 public struct APIProfile: Decodable, Equatable, Sendable {
     public let id: String
     public let email: String
@@ -181,6 +194,11 @@ public struct APIAccount: Identifiable, Decodable, Equatable, Sendable {
         case reconciledBalanceMinor = "reconciled_balance_minor"
         case paymentCategoryID = "payment_category_id"
     }
+}
+
+public struct APIAccountBalance: Decodable, Equatable, Sendable {
+    public let accountID: String; public let currencyCode: String; public let clearedBalanceMinor: Int64; public let unclearedBalanceMinor: Int64; public let workingBalanceMinor: Int64; public let reconciledBalanceMinor: Int64?
+    enum CodingKeys: String, CodingKey { case accountID = "account_id", currencyCode = "currency_code", clearedBalanceMinor = "cleared_balance_minor", unclearedBalanceMinor = "uncleared_balance_minor", workingBalanceMinor = "working_balance_minor", reconciledBalanceMinor = "reconciled_balance_minor" }
 }
 
 public struct APIAccountCreate: Encodable, Sendable {
@@ -250,6 +268,19 @@ public struct APICategoryCreate: Encodable, Sendable {
     }
 }
 
+public struct APICategoryUpdate: Encodable, Sendable {
+    public let groupID: String
+    public let name: String
+    public let sortOrder: Int
+    public let isArchived: Bool
+    public init(groupID: String, name: String, sortOrder: Int = 0, isArchived: Bool = false) {
+        self.groupID = groupID; self.name = name; self.sortOrder = sortOrder; self.isArchived = isArchived
+    }
+    enum CodingKeys: String, CodingKey {
+        case groupID = "group_id", name, sortOrder = "sort_order", isArchived = "is_archived"
+    }
+}
+
 public struct APITransactionSplit: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let categoryID: String
@@ -274,10 +305,13 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
     public let isCleared: Bool
     public let isReconciled: Bool
     public let transferID: String?
+    public let flag: String?
+    public let tags: [String]?
+    public let attachmentMetadata: [[String: String]]?
     public let splits: [APITransactionSplit]
 
     enum CodingKeys: String, CodingKey {
-        case id, memo, splits
+        case id, memo, splits, flag, tags
         case accountID = "account_id"
         case categoryID = "category_id"
         case amountMinor = "amount_minor"
@@ -286,7 +320,203 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
         case isCleared = "is_cleared"
         case isReconciled = "is_reconciled"
         case transferID = "transfer_id"
+        case attachmentMetadata = "attachment_metadata"
     }
+}
+
+public struct APITransferCreate: Encodable, Sendable {
+    public let sourceAccountID: String
+    public let destinationAccountID: String
+    public let amountMinor: Int64
+    public let occurredOn: String
+    public let memo: String
+    public let isCleared: Bool
+
+    public init(sourceAccountID: String, destinationAccountID: String, amountMinor: Int64, occurredOn: String, memo: String = "", isCleared: Bool = false) {
+        self.sourceAccountID = sourceAccountID; self.destinationAccountID = destinationAccountID
+        self.amountMinor = amountMinor; self.occurredOn = occurredOn; self.memo = memo; self.isCleared = isCleared
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case sourceAccountID = "source_account_id", destinationAccountID = "destination_account_id"
+        case amountMinor = "amount_minor", occurredOn = "occurred_on", memo, isCleared = "is_cleared"
+    }
+}
+
+public struct APITransferResponse: Decodable, Equatable, Sendable {
+    public let transferID: String
+    public let source: APITransaction
+    public let destination: APITransaction
+    enum CodingKeys: String, CodingKey { case transferID = "transfer_id", source, destination }
+}
+
+public struct APIReconcileRequest: Encodable, Sendable {
+    public let statementBalanceMinor: Int64
+    public let throughDate: String
+    public let createAdjustment: Bool
+    public let adjustmentReason: String
+    public let expectedClearedBalanceMinor: Int64?
+    public init(statementBalanceMinor: Int64, throughDate: String, createAdjustment: Bool = false, adjustmentReason: String = "", expectedClearedBalanceMinor: Int64? = nil) {
+        self.statementBalanceMinor = statementBalanceMinor; self.throughDate = throughDate
+        self.createAdjustment = createAdjustment; self.adjustmentReason = adjustmentReason
+        self.expectedClearedBalanceMinor = expectedClearedBalanceMinor
+    }
+    enum CodingKeys: String, CodingKey {
+        case statementBalanceMinor = "statement_balance_minor", throughDate = "through_date"
+        case createAdjustment = "create_adjustment", adjustmentReason = "adjustment_reason"
+        case expectedClearedBalanceMinor = "expected_cleared_balance_minor"
+    }
+}
+
+public struct APIReconcileResponse: Decodable, Equatable, Sendable {
+    public let accountID: String
+    public let reconciledBalanceMinor: Int64
+    public let reconciledTransactionCount: Int
+    public let adjustmentTransactionID: String?
+    public let adjustmentAmountMinor: Int64
+    enum CodingKeys: String, CodingKey {
+        case accountID = "account_id", reconciledBalanceMinor = "reconciled_balance_minor"
+        case reconciledTransactionCount = "reconciled_transaction_count"
+        case adjustmentTransactionID = "adjustment_transaction_id", adjustmentAmountMinor = "adjustment_amount_minor"
+    }
+}
+
+public struct APISpendingCategoryReport: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { categoryID }
+    public let categoryID: String
+    public let categoryName: String
+    public let categoryGroup: String
+    public let spendingMinor: Int64
+    public let transactionIDs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case categoryID = "category_id", categoryName = "category_name", categoryGroup = "category_group"
+        case spendingMinor = "spending_minor", transactionIDs = "transaction_ids"
+    }
+}
+
+public struct APISpendingReport: Decodable, Equatable, Sendable {
+    public let startDate: String
+    public let endDate: String
+    public let currencyCode: String
+    public let totalSpendingMinor: Int64
+    public let categories: [APISpendingCategoryReport]
+
+    enum CodingKeys: String, CodingKey {
+        case categories
+        case startDate = "start_date", endDate = "end_date", currencyCode = "currency_code"
+        case totalSpendingMinor = "total_spending_minor"
+    }
+}
+
+public struct APIIncomeSpendingReport: Decodable, Equatable, Sendable {
+    public let startDate: String
+    public let endDate: String
+    public let currencyCode: String
+    public let incomeMinor: Int64
+    public let spendingMinor: Int64
+    public let differenceMinor: Int64
+    public let savingsRate: Double?
+    public let incomeTransactionIDs: [String]
+    public let spendingTransactionIDs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case startDate = "start_date", endDate = "end_date", currencyCode = "currency_code"
+        case incomeMinor = "income_minor", spendingMinor = "spending_minor", differenceMinor = "difference_minor"
+        case savingsRate = "savings_rate", incomeTransactionIDs = "income_transaction_ids", spendingTransactionIDs = "spending_transaction_ids"
+    }
+}
+
+public struct APIForecastOccurrence: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { "\(scheduledTransactionID)-\(occurredOn)" }
+    public let scheduledTransactionID: String; public let name: String; public let occurredOn: String; public let accountID: String; public let destinationAccountID: String?; public let categoryID: String?; public let amountMinor: Int64
+    enum CodingKeys: String, CodingKey { case name; case scheduledTransactionID = "scheduled_transaction_id", occurredOn = "occurred_on", accountID = "account_id", destinationAccountID = "destination_account_id", categoryID = "category_id", amountMinor = "amount_minor" }
+}
+
+public struct APIForecastAccount: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { accountID }; public let accountID: String; public let name: String; public let actualBalanceMinor: Int64; public let projectedBalanceMinor: Int64
+    enum CodingKeys: String, CodingKey { case name; case accountID = "account_id", actualBalanceMinor = "actual_balance_minor", projectedBalanceMinor = "projected_balance_minor" }
+}
+
+public struct APIForecast: Decodable, Equatable, Sendable {
+    public let asOf: String; public let through: String; public let currencyCode: String; public let actualTotalOnBudgetMinor: Int64; public let projectedTotalOnBudgetMinor: Int64; public let lowestProjectedTotalMinor: Int64; public let accounts: [APIForecastAccount]; public let occurrences: [APIForecastOccurrence]
+    enum CodingKeys: String, CodingKey { case accounts, occurrences; case asOf = "as_of", through, currencyCode = "currency_code", actualTotalOnBudgetMinor = "actual_total_on_budget_minor", projectedTotalOnBudgetMinor = "projected_total_on_budget_minor", lowestProjectedTotalMinor = "lowest_projected_total_minor" }
+}
+
+public struct APIDelegatedCategoryRule: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let categoryID: String
+    public let ruleKind: String
+    public let minimumMinor: Int64?
+    public let maximumMinor: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case categoryID = "category_id", ruleKind = "rule_kind", minimumMinor = "minimum_minor", maximumMinor = "maximum_minor"
+    }
+}
+
+public struct APIDelegatedBudget: Decodable, Equatable, Sendable {
+    public let id: String
+    public let budgetID: String
+    public let userID: String
+    public let poolCategoryID: String
+    public let authorityMinor: Int64
+    public let assignedMinor: Int64
+    public let availableToAssignMinor: Int64
+    public let allowCategoryCreation: Bool
+    public let allowReallocation: Bool
+    public let rules: [APIDelegatedCategoryRule]
+
+    enum CodingKeys: String, CodingKey {
+        case id, rules
+        case budgetID = "budget_id", userID = "user_id", poolCategoryID = "pool_category_id"
+        case authorityMinor = "authority_minor", assignedMinor = "assigned_minor", availableToAssignMinor = "available_to_assign_minor"
+        case allowCategoryCreation = "allow_category_creation", allowReallocation = "allow_reallocation"
+    }
+}
+
+public struct APIDelegatedRuleUpsert: Encodable, Sendable {
+    public let categoryID: String; public let ruleKind: String; public let minimumMinor: Int64?; public let maximumMinor: Int64?
+    public init(categoryID: String, ruleKind: String, minimumMinor: Int64? = nil, maximumMinor: Int64? = nil) { self.categoryID = categoryID; self.ruleKind = ruleKind; self.minimumMinor = minimumMinor; self.maximumMinor = maximumMinor }
+    enum CodingKeys: String, CodingKey { case categoryID = "category_id", ruleKind = "rule_kind", minimumMinor = "minimum_minor", maximumMinor = "maximum_minor" }
+}
+
+public struct APIDelegatedBudgetUpsert: Encodable, Sendable {
+    public let userID: String; public let poolCategoryID: String; public let authorityMinor: Int64; public let allowCategoryCreation: Bool; public let allowReallocation: Bool; public let expectedAllocationVersion: Int?; public let rules: [APIDelegatedRuleUpsert]
+    public init(userID: String, poolCategoryID: String, authorityMinor: Int64, allowCategoryCreation: Bool, allowReallocation: Bool, expectedAllocationVersion: Int? = nil, rules: [APIDelegatedRuleUpsert] = []) { self.userID = userID; self.poolCategoryID = poolCategoryID; self.authorityMinor = authorityMinor; self.allowCategoryCreation = allowCategoryCreation; self.allowReallocation = allowReallocation; self.expectedAllocationVersion = expectedAllocationVersion; self.rules = rules }
+    enum CodingKeys: String, CodingKey { case userID = "user_id", poolCategoryID = "pool_category_id", authorityMinor = "authority_minor", allowCategoryCreation = "allow_category_creation", allowReallocation = "allow_reallocation", expectedAllocationVersion = "expected_allocation_version", rules }
+}
+
+struct APICategoryDelegationUpdate: Encodable { let delegatedUserID: String?; enum CodingKeys: String, CodingKey { case delegatedUserID = "delegated_user_id" } }
+
+public struct APISmartFundingProposal: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { categoryID }
+    public let categoryID: String
+    public let categoryName: String
+    public let amountMinor: Int64
+    public let beforeAvailableMinor: Int64
+    public let afterAvailableMinor: Int64
+    enum CodingKeys: String, CodingKey {
+        case categoryID = "category_id", categoryName = "category_name", amountMinor = "amount_minor"
+        case beforeAvailableMinor = "before_available_minor", afterAvailableMinor = "after_available_minor"
+    }
+}
+
+public struct APISmartFundingPreview: Decodable, Equatable, Sendable {
+    public let month: String; public let currencyCode: String
+    public let beforeReadyToAssignMinor: Int64; public let proposedMinor: Int64; public let afterReadyToAssignMinor: Int64
+    public let allocationVersion: Int; public let proposals: [APISmartFundingProposal]
+    enum CodingKeys: String, CodingKey {
+        case month, proposals
+        case currencyCode = "currency_code", beforeReadyToAssignMinor = "before_ready_to_assign_minor"
+        case proposedMinor = "proposed_minor", afterReadyToAssignMinor = "after_ready_to_assign_minor", allocationVersion = "allocation_version"
+    }
+}
+
+struct APISmartFundingCommit: Encodable {
+    let month: String; let expectedAllocationVersion: Int
+    enum CodingKeys: String, CodingKey { case month; case expectedAllocationVersion = "expected_allocation_version" }
 }
 
 public struct APICategoryMonth: Identifiable, Decodable, Equatable, Sendable {
@@ -378,6 +608,14 @@ public struct APIFinancialRequestCreate: Encodable, Sendable {
     }
 }
 
+public struct APIFinancialRequestDecision: Encodable, Sendable {
+    public let decision: String; public let expectedRequestVersion: Int; public let approvedAmountMinor: Int64?; public let sourceCategoryID: String?; public let note: String
+    public init(decision: String, expectedRequestVersion: Int, approvedAmountMinor: Int64? = nil, sourceCategoryID: String? = nil, note: String = "") { self.decision = decision; self.expectedRequestVersion = expectedRequestVersion; self.approvedAmountMinor = approvedAmountMinor; self.sourceCategoryID = sourceCategoryID; self.note = note }
+    enum CodingKeys: String, CodingKey { case decision, note; case expectedRequestVersion = "expected_request_version", approvedAmountMinor = "approved_amount_minor", sourceCategoryID = "source_category_id" }
+}
+
+struct APIFinancialRequestCancel: Encodable { let expectedRequestVersion: Int; let note: String; enum CodingKeys: String, CodingKey { case expectedRequestVersion = "expected_request_version", note } }
+
 public struct APIRequestAction: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let actorUserID: String
@@ -465,6 +703,9 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
     public let memo: String
     public let isCleared: Bool
     public let splits: [APITransactionSplitCreate]
+    public let flag: String?
+    public let tags: [String]
+    public let attachmentMetadata: [[String: String]]
 
     public init(
         accountID: String,
@@ -474,7 +715,10 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         payeeName: String,
         memo: String = "",
         isCleared: Bool = false,
-        splits: [APITransactionSplitCreate] = []
+        splits: [APITransactionSplitCreate] = [],
+        flag: String? = nil,
+        tags: [String] = [],
+        attachmentMetadata: [[String: String]] = []
     ) {
         self.accountID = accountID
         self.categoryID = categoryID
@@ -484,16 +728,20 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         self.memo = memo
         self.isCleared = isCleared
         self.splits = splits
+        self.flag = flag
+        self.tags = tags
+        self.attachmentMetadata = attachmentMetadata
     }
 
     enum CodingKeys: String, CodingKey {
-        case memo, splits
+        case memo, splits, flag, tags
         case accountID = "account_id"
         case categoryID = "category_id"
         case amountMinor = "amount_minor"
         case occurredOn = "occurred_on"
         case payeeName = "payee_name"
         case isCleared = "is_cleared"
+        case attachmentMetadata = "attachment_metadata"
     }
 }
 

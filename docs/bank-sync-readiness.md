@@ -2,7 +2,7 @@
 
 Status: **BLOCKED UNTIL EXPLICIT FUTURE APPROVAL.**
 
-Budget App v0.3.0 contains no Plaid, MX, Finicity, Akoya, Teller, Apple Card, institution OAuth, scraping, credential storage, or live institution code. Manual entry and deterministic demo data remain authoritative.
+Budget App v0.4.0 contains no Plaid, MX, Finicity, Akoya, Teller, Apple Card, institution OAuth, scraping, credential storage, or live institution code. Manual entry and the self-hosted server remain authoritative; deterministic demo data is only a review fixture.
 
 ## Threat model
 
@@ -51,4 +51,3 @@ Bank synchronization may begin only after explicit approval of:
 6. retention/deletion/backup policy;
 7. incident, outage, rollback, and provider-removal runbooks;
 8. automated security and accounting-invariant tests.
-

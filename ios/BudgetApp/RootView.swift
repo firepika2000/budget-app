@@ -9,7 +9,7 @@ struct RootView: View {
         Group {
             #if DEBUG
             if !ProcessInfo.processInfo.arguments.contains("--live") {
-                DemoRootView()
+                BudgetWorkspaceView.demo()
             } else if session.serverURL == nil {
                 ServerSetupView()
             } else if session.token == nil {
@@ -157,7 +157,7 @@ private struct BudgetListView: View {
         NavigationStack {
             List(session.budgets) { budget in
                 NavigationLink {
-                    BudgetDetailView(budget: budget)
+                    BudgetWorkspaceView(budget: budget)
                 } label: {
                     VStack(alignment: .leading) {
                         Text(budget.name).font(.headline)

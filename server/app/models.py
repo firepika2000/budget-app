@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -194,6 +194,42 @@ class Category(Base):
     )
 
 
+class DelegatedBudgetPolicy(Base):
+    __tablename__ = "delegated_budget_policies"
+    __table_args__ = (
+        UniqueConstraint("budget_id", "user_id"),
+        UniqueConstraint("pool_category_id"),
+        CheckConstraint("authority_minor >= 0", name="ck_delegated_authority_nonnegative"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    pool_category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"))
+    authority_minor: Mapped[int] = mapped_column(BigInteger)
+    allow_category_creation: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_reallocation: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class DelegatedCategoryRule(Base):
+    __tablename__ = "delegated_category_rules"
+    __table_args__ = (
+        UniqueConstraint("policy_id", "category_id"),
+        CheckConstraint("minimum_minor IS NULL OR minimum_minor >= 0", name="ck_delegated_rule_minimum"),
+        CheckConstraint("maximum_minor IS NULL OR maximum_minor >= 0", name="ck_delegated_rule_maximum"),
+        CheckConstraint("rule_kind IN ('hard_limit', 'soft_target', 'approval_gated')", name="ck_delegated_rule_kind"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    policy_id: Mapped[str] = mapped_column(ForeignKey("delegated_budget_policies.id", ondelete="CASCADE"), index=True)
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="CASCADE"), index=True)
+    rule_kind: Mapped[str] = mapped_column(String(30))
+    minimum_minor: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    maximum_minor: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+
+
 class CategoryTarget(Base):
     __tablename__ = "category_targets"
     __table_args__ = (
@@ -321,6 +357,9 @@ class Transaction(Base):
     memo: Mapped[str] = mapped_column(String(500), default="")
     is_cleared: Mapped[bool] = mapped_column(Boolean, default=False)
     is_reconciled: Mapped[bool] = mapped_column(Boolean, default=False)
+    flag: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    attachment_metadata: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
     created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     splits: Mapped[list["TransactionSplit"]] = relationship(
@@ -339,6 +378,19 @@ class TransactionSplit(Base):
     amount_minor: Mapped[int] = mapped_column(BigInteger)
     memo: Mapped[str] = mapped_column(String(500), default="")
     transaction: Mapped[Transaction] = relationship(back_populates="splits")
+
+
+class TransactionChange(Base):
+    __tablename__ = "transaction_changes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    transaction_id: Mapped[str] = mapped_column(String(36), index=True)
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    action: Mapped[str] = mapped_column(String(20), index=True)
+    before_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    after_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
 class CreditCardReserveEvent(Base):

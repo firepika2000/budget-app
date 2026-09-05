@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import csv
+import json
 from datetime import date, datetime, timezone
 from io import StringIO
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from .access import (
@@ -35,13 +36,18 @@ from .models import (
     AllocationOperation,
     AllocationPosting,
     Budget,
+    BudgetAccessProfile,
     BudgetPermission,
     Category,
     CategoryGroup,
     CategoryTarget,
     CreditCardReserveEvent,
+    DelegatedBudgetPolicy,
+    DelegatedCategoryRule,
     Membership,
+    ResourceGrant,
     Transaction,
+    TransactionChange,
     TransactionSplit,
     User,
 )
@@ -55,6 +61,7 @@ from .schemas import (
     AssignmentUpsert,
     CategoryCreate,
     CategoryDelegationUpdate,
+    CategoryUpdate,
     CategoryGroupCreate,
     CategoryGroupResponse,
     CategoryMonthSummary,
@@ -62,8 +69,11 @@ from .schemas import (
     MonthSummaryResponse,
     ReconcileRequest,
     ReconcileResponse,
+    SmartFundingCommit,
+    SmartFundingPreviewResponse,
     TransactionCreate,
     TransactionResponse,
+    TransactionUpdate,
     TransferCreate,
     TransferResponse,
 )
@@ -71,6 +81,35 @@ from .planning import target_funding
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
+
+
+def transaction_snapshot(transaction: Transaction) -> str:
+    return json.dumps({
+        "account_id": transaction.account_id,
+        "category_id": transaction.category_id,
+        "amount_minor": transaction.amount_minor,
+        "occurred_on": transaction.occurred_on.isoformat(),
+        "payee_name": transaction.payee_name,
+        "memo": transaction.memo,
+        "is_cleared": transaction.is_cleared,
+        "is_reconciled": transaction.is_reconciled,
+        "flag": transaction.flag,
+        "tags": transaction.tags,
+        "attachment_metadata": transaction.attachment_metadata,
+        "transfer_id": transaction.transfer_id,
+        "splits": [{"category_id": item.category_id, "amount_minor": item.amount_minor, "memo": item.memo} for item in transaction.splits],
+    }, sort_keys=True, separators=(",", ":"))
+
+
+def record_transaction_change(db: Session, transaction: Transaction, actor: User, action: str, *, before: str | None = None, after: str | None = None) -> None:
+    db.add(TransactionChange(
+        budget_id=transaction.budget_id,
+        transaction_id=transaction.id,
+        actor_user_id=actor.id,
+        action=action,
+        before_json=before,
+        after_json=after,
+    ))
 
 
 def require_budget(
@@ -317,10 +356,27 @@ def create_category(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Category:
-    budget = require_budget_capability(db, user, budget_id, "manage_budget_structure")
+    try:
+        budget = require_budget_capability(db, user, budget_id, "manage_budget_structure")
+        is_own_delegated_creation = False
+    except HTTPException:
+        budget = require_budget_capability(db, user, budget_id, "manage_own_categories")
+        is_own_delegated_creation = True
     group = db.get(CategoryGroup, body.group_id)
     if group is None or group.budget_id != budget_id:
         raise HTTPException(status_code=422, detail="Invalid category group")
+    if is_own_delegated_creation and body.delegated_user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Delegated members may only create categories in their own budget",
+        )
+    if is_own_delegated_creation:
+        policy = db.scalar(select(DelegatedBudgetPolicy).where(
+            DelegatedBudgetPolicy.budget_id == budget_id,
+            DelegatedBudgetPolicy.user_id == user.id,
+        ))
+        if policy is None or not policy.allow_category_creation:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Category creation is disabled for this delegated budget")
     if body.delegated_user_id is not None:
         member = db.scalar(select(Membership).where(
             Membership.household_id == budget.household_id,
@@ -331,6 +387,19 @@ def create_category(
             raise HTTPException(status_code=422, detail="Delegated user must be an active household member")
     category = Category(budget_id=budget_id, **body.model_dump())
     db.add(category)
+    db.flush()
+    if is_own_delegated_creation:
+        profile = db.scalar(select(BudgetAccessProfile).where(
+            BudgetAccessProfile.budget_id == budget_id,
+            BudgetAccessProfile.user_id == user.id,
+        ))
+        if profile is not None and profile.restrict_categories:
+            db.add(ResourceGrant(
+                budget_id=budget_id,
+                user_id=user.id,
+                resource_type="category",
+                resource_id=category.id,
+            ))
     db.commit()
     db.refresh(category)
     return category
@@ -370,6 +439,42 @@ def update_category_delegation(
     return category
 
 
+@router.put("/categories/{category_id}", response_model=CategoryResponse)
+def update_category(
+    budget_id: str,
+    category_id: str,
+    body: CategoryUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Category:
+    budget = require_budget_capability(db, user, budget_id, "view_categories")
+    category = db.get(Category, category_id)
+    if category is None or category.budget_id != budget_id or category.system_type is not None or not can_access_resource(db, user, budget, "category", category_id):
+        raise HTTPException(status_code=404, detail="Category not found")
+    may_manage_all = has_capability(db, user, budget, "manage_budget_structure")
+    may_manage_own = has_capability(db, user, budget, "manage_own_categories") and category.delegated_user_id == user.id
+    if not may_manage_all and not may_manage_own:
+        raise HTTPException(status_code=403, detail="You may only manage categories in your delegated budget")
+    group = db.get(CategoryGroup, body.group_id)
+    if group is None or group.budget_id != budget_id:
+        raise HTTPException(status_code=422, detail="Invalid category group")
+    duplicate = db.scalar(select(Category.id).where(
+        Category.budget_id == budget_id,
+        Category.group_id == body.group_id,
+        Category.name == body.name.strip(),
+        Category.id != category_id,
+    ))
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail="A category with this name already exists in the group")
+    category.group_id = body.group_id
+    category.name = body.name.strip()
+    category.sort_order = body.sort_order
+    category.is_archived = body.is_archived
+    db.commit()
+    db.refresh(category)
+    return category
+
+
 @router.put("/categories/{category_id}/assignment", response_model=AssignmentResponse)
 def upsert_assignment(
     budget_id: str,
@@ -379,6 +484,15 @@ def upsert_assignment(
     db: Session = Depends(get_db),
 ) -> dict:
     access_budget = require_budget_capability(db, user, budget_id, "assign_money")
+    delegated_policy = db.scalar(select(DelegatedBudgetPolicy.id).where(
+        DelegatedBudgetPolicy.budget_id == budget_id,
+        DelegatedBudgetPolicy.user_id == user.id,
+    ))
+    if delegated_policy is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Delegated members must allocate from their scoped pool using money moves",
+        )
     category = db.get(Category, category_id)
     if (
         category is None
@@ -486,6 +600,31 @@ def transfer_allocation(
         raise HTTPException(status_code=422, detail="Invalid allocation category")
     if any(not can_access_resource(db, user, access_budget, "category", category.id) for category in transfer_categories):
         raise HTTPException(status_code=404, detail="Allocation category not found")
+    delegated_policy = db.scalar(select(DelegatedBudgetPolicy).where(
+        DelegatedBudgetPolicy.budget_id == budget_id,
+        DelegatedBudgetPolicy.user_id == user.id,
+    ))
+    if delegated_policy is not None:
+        if not delegated_policy.allow_reallocation:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Reallocation is disabled for this delegated budget")
+        if any(category.delegated_user_id != user.id for category in transfer_categories):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Delegated money may only move within your budget")
+        rules = {
+            rule.category_id: rule for rule in db.scalars(select(DelegatedCategoryRule).where(
+                DelegatedCategoryRule.policy_id == delegated_policy.id,
+                DelegatedCategoryRule.category_id.in_([category.id for category in transfer_categories]),
+            ))
+        }
+        source_rule = rules.get(body.source_category_id)
+        destination_rule = rules.get(body.destination_category_id)
+        source_after = category_available_balance(db, budget_id, body.source_category_id, through=body.occurred_on) - body.amount_minor
+        destination_after = category_available_balance(db, budget_id, body.destination_category_id, through=body.occurred_on) + body.amount_minor
+        if source_rule is not None and source_rule.rule_kind == "approval_gated":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Withdrawing from this category requires approval")
+        if source_rule is not None and source_rule.rule_kind == "hard_limit" and source_rule.minimum_minor is not None and source_after < source_rule.minimum_minor:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Category must retain at least {source_rule.minimum_minor} minor units")
+        if destination_rule is not None and destination_rule.rule_kind == "hard_limit" and destination_rule.maximum_minor is not None and destination_after > destination_rule.maximum_minor:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Category cannot exceed {destination_rule.maximum_minor} minor units")
     if category_available_balance(
         db, budget_id, body.source_category_id, through=body.occurred_on
     ) < body.amount_minor:
@@ -605,6 +744,82 @@ def create_transaction(
     return transaction
 
 
+@router.put("/transactions/{transaction_id}", response_model=TransactionResponse)
+def update_transaction(
+    budget_id: str,
+    transaction_id: str,
+    body: TransactionUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Transaction:
+    budget = require_budget_capability(db, user, budget_id, "edit_transaction")
+    transaction = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.id == transaction_id,
+        Transaction.budget_id == budget_id,
+    ).with_for_update())
+    if transaction is None or transaction.transfer_id is not None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if transaction.is_reconciled:
+        raise HTTPException(status_code=409, detail="Reconciled transactions cannot be edited")
+    if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
+        raise HTTPException(status_code=403, detail="You may only edit your own transactions")
+    before_snapshot = transaction_snapshot(transaction)
+    if body.occurred_on > date.today():
+        raise HTTPException(status_code=422, detail="Future transactions belong in the planning layer")
+    account = db.scalar(select(Account).where(Account.id == body.account_id).with_for_update())
+    if account is None or account.budget_id != budget_id or account.is_closed or not can_access_resource(db, user, budget, "account", account.id):
+        raise HTTPException(status_code=422, detail="Invalid account")
+    category_ids = ([body.category_id] if body.category_id is not None else []) + [split.category_id for split in body.splits]
+    if category_ids and not account.is_on_budget:
+        raise HTTPException(status_code=422, detail="Tracking accounts cannot affect budget categories")
+    if len(category_ids) != len(set(category_ids)):
+        raise HTTPException(status_code=422, detail="Duplicate split category")
+    categories_by_id: dict[str, Category] = {}
+    for category_id in category_ids:
+        category = db.get(Category, category_id)
+        if category is None or category.budget_id != budget_id or category.is_archived or not can_access_resource(db, user, budget, "category", category.id):
+            raise HTTPException(status_code=422, detail="Invalid category")
+        categories_by_id[category_id] = category
+    db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.source_transaction_id == transaction.id))
+    values = body.model_dump(exclude={"splits"})
+    for key, value in values.items():
+        setattr(transaction, key, value)
+    transaction.splits = [TransactionSplit(**split.model_dump()) for split in body.splits]
+    db.flush()
+    category_amounts = (
+        [(categories_by_id[body.category_id], body.amount_minor)]
+        if body.category_id is not None else [(categories_by_id[split.category_id], split.amount_minor) for split in body.splits]
+    )
+    add_purchase_reserve_events(db, account=account, transaction=transaction, category_amounts=category_amounts, actor=user)
+    record_transaction_change(db, transaction, user, "updated", before=before_snapshot, after=transaction_snapshot(transaction))
+    db.commit()
+    db.refresh(transaction)
+    return transaction
+
+
+@router.delete("/transactions/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_transaction(
+    budget_id: str,
+    transaction_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    budget = require_budget_capability(db, user, budget_id, "delete_transaction")
+    transaction = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(Transaction.id == transaction_id))
+    if transaction is None or transaction.budget_id != budget_id or transaction.transfer_id is not None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if transaction.is_reconciled:
+        raise HTTPException(status_code=409, detail="Reconciled transactions cannot be deleted")
+    if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
+        raise HTTPException(status_code=403, detail="You may only delete your own transactions")
+    if not can_access_resource(db, user, budget, "account", transaction.account_id):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    record_transaction_change(db, transaction, user, "deleted", before=transaction_snapshot(transaction))
+    db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.source_transaction_id == transaction.id))
+    db.delete(transaction)
+    db.commit()
+
+
 @router.post("/transfers", response_model=TransferResponse, status_code=status.HTTP_201_CREATED)
 def create_transfer(
     budget_id: str,
@@ -690,7 +905,7 @@ def reconcile_account(
     db: Session = Depends(get_db),
 ) -> ReconcileResponse:
     budget = require_budget_capability(db, user, budget_id, "reconcile_account")
-    account = db.get(Account, account_id)
+    account = db.scalar(select(Account).where(Account.id == account_id).with_for_update())
     if account is None or account.budget_id != budget_id or not can_access_resource(
         db, user, budget, "account", account_id
     ):
@@ -701,6 +916,11 @@ def reconcile_account(
         Transaction.is_cleared.is_(True),
     )))
     cleared_balance = sum(transaction.amount_minor for transaction in transactions)
+    if body.expected_cleared_balance_minor is not None and body.expected_cleared_balance_minor != cleared_balance:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "Account changed since reconciliation started", "cleared_balance_minor": cleared_balance},
+        )
     adjustment_transaction = None
     adjustment_amount = body.statement_balance_minor - cleared_balance
     if adjustment_amount != 0 and not body.create_adjustment:
@@ -712,6 +932,11 @@ def reconcile_account(
             },
         )
     if adjustment_amount != 0:
+        if not has_capability(db, user, budget, "manage_budget_structure"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Creating a reconciliation adjustment requires household financial authority",
+            )
         adjustment_transaction = Transaction(
             budget_id=budget_id,
             account_id=account_id,
@@ -869,6 +1094,78 @@ def month_summary(
         allocation_version=budget.allocation_version,
         categories=rows,
     )
+
+
+def build_smart_funding_preview(summary: MonthSummaryResponse) -> dict:
+    remaining = max(summary.ready_to_assign_minor, 0)
+    proposals = []
+    for category in sorted(summary.categories, key=lambda item: (-item.recommended_contribution_minor, item.name)):
+        requested = min(max(category.underfunded_minor, category.recommended_contribution_minor), remaining)
+        if requested <= 0:
+            continue
+        proposals.append({
+            "category_id": category.category_id,
+            "category_name": category.name,
+            "amount_minor": requested,
+            "before_available_minor": category.available_minor,
+            "after_available_minor": category.available_minor + requested,
+        })
+        remaining -= requested
+        if remaining == 0:
+            break
+    proposed = summary.ready_to_assign_minor - remaining
+    return {
+        "month": summary.month,
+        "currency_code": summary.currency_code,
+        "before_ready_to_assign_minor": summary.ready_to_assign_minor,
+        "proposed_minor": proposed,
+        "after_ready_to_assign_minor": remaining,
+        "allocation_version": summary.allocation_version,
+        "proposals": proposals,
+    }
+
+
+@router.get("/smart-funding/{month}", response_model=SmartFundingPreviewResponse)
+def smart_funding_preview(
+    budget_id: str,
+    month: date,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return build_smart_funding_preview(month_summary(budget_id, month, user, db))
+
+
+@router.post("/smart-funding", response_model=AllocationOperationResponse, status_code=status.HTTP_201_CREATED)
+def commit_smart_funding(
+    budget_id: str,
+    body: SmartFundingCommit,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_budget_capability(db, user, budget_id, "assign_money")
+    summary = month_summary(budget_id, body.month, user, db)
+    preview = build_smart_funding_preview(summary)
+    if not preview["proposals"]:
+        raise HTTPException(status_code=409, detail="No funded recommendations are currently available")
+    budget = lock_budget(db, budget_id)
+    require_version(budget, body.expected_allocation_version)
+    total = preview["proposed_minor"]
+    operation = append_operation(
+        db, budget=budget, actor=user, occurred_on=body.month, kind="smart_funding",
+        note=f"Funded {len(preview['proposals'])} target recommendations",
+        source="smart_funding",
+        postings=[PostingInput(bucket="ready_to_assign", amount_minor=-total)] + [
+            PostingInput(bucket="category", category_id=item["category_id"], amount_minor=item["amount_minor"])
+            for item in preview["proposals"]
+        ],
+    )
+    db.commit()
+    db.refresh(operation)
+    return {
+        "id": operation.id, "budget_id": operation.budget_id, "occurred_on": operation.occurred_on,
+        "kind": operation.kind, "actor_user_id": operation.actor_user_id, "note": operation.note,
+        "source": operation.source, "allocation_version": budget.allocation_version, "postings": operation.postings,
+    }
     MonthSummaryResponse,
     ReconcileRequest,
     ReconcileResponse,

@@ -2,6 +2,7 @@ import BudgetAPI
 import SwiftUI
 
 struct TransactionEntryView: View {
+    @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget
     let accounts: [APIAccount]
     let categories: [APICategory]
@@ -19,6 +20,9 @@ struct TransactionEntryView: View {
     @State private var isInflow = false
     @State private var isCleared = false
     @State private var isSplit = false
+    @State private var flag = ""
+    @State private var tags = ""
+    @State private var attachments = ""
     @State private var splitRows = [SplitDraft(), SplitDraft()]
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -67,6 +71,9 @@ struct TransactionEntryView: View {
                 }
                 DatePicker("Date", selection: $date, displayedComponents: .date)
                 TextField("Memo", text: $memo)
+                Picker("Flag", selection: $flag) { Text("None").tag(""); Text("Red").tag("red"); Text("Orange").tag("orange"); Text("Yellow").tag("yellow"); Text("Green").tag("green"); Text("Blue").tag("blue"); Text("Purple").tag("purple") }
+                TextField("Tags (comma separated)", text: $tags)
+                TextField("Attachment names (metadata only)", text: $attachments)
                 Toggle("Cleared", isOn: $isCleared)
             }
             .navigationTitle("New Transaction")
@@ -139,10 +146,8 @@ struct TransactionEntryView: View {
             formatter.calendar = Calendar(identifier: .gregorian)
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.dateFormat = "yyyy-MM-dd"
-            let client = try APIClient(baseURL: serverURL)
-            _ = try await client.createTransaction(
-                budgetID: budget.id,
-                transaction: APITransactionCreate(
+            try await workspace.createTransaction(
+                APITransactionCreate(
                     accountID: accountID,
                     categoryID: isSplit ? nil : categoryID,
                     amountMinor: parsedAmount,
@@ -150,15 +155,21 @@ struct TransactionEntryView: View {
                     payeeName: payee,
                     memo: memo,
                     isCleared: isCleared,
-                    splits: parsedSplits
-                ),
-                token: token
+                    splits: parsedSplits,
+                    flag: flag.isEmpty ? nil : flag,
+                    tags: commaValues(tags),
+                    attachmentMetadata: commaValues(attachments).map { ["name": $0] }
+                )
             )
             await onSaved()
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func commaValues(_ value: String) -> [String] {
+        value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 }
 
@@ -170,6 +181,7 @@ private struct SplitDraft: Identifiable {
 }
 
 struct AllocationTransferView: View {
+    @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget
     let categories: [APICategoryMonth]
     let expectedAllocationVersion: Int
@@ -257,17 +269,15 @@ struct AllocationTransferView: View {
             formatter.calendar = Calendar(identifier: .gregorian)
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.dateFormat = "yyyy-MM-dd"
-            _ = try await APIClient(baseURL: serverURL).transferAllocation(
-                budgetID: budget.id,
-                transfer: APIAllocationTransferCreate(
+            try await workspace.moveAllocation(
+                APIAllocationTransferCreate(
                     sourceCategoryID: sourceCategoryID,
                     destinationCategoryID: destinationCategoryID,
                     amountMinor: parsedAmount,
                     occurredOn: formatter.string(from: Date()),
                     note: note,
                     expectedAllocationVersion: expectedAllocationVersion
-                ),
-                token: token
+                )
             )
             await onSaved()
             dismiss()
@@ -276,6 +286,7 @@ struct AllocationTransferView: View {
 }
 
 struct AssignmentEditView: View {
+    @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget
     let category: APICategoryMonth
     let month: String
@@ -351,13 +362,11 @@ struct AssignmentEditView: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            _ = try await APIClient(baseURL: serverURL).updateAssignment(
-                budgetID: budget.id,
+            try await workspace.updateAssignment(
                 categoryID: category.categoryID,
                 month: month,
                 assignedMinor: parsedAmount,
-                expectedAllocationVersion: expectedAllocationVersion,
-                token: token
+                expectedVersion: expectedAllocationVersion
             )
             await onSaved()
             dismiss()
@@ -368,6 +377,7 @@ struct AssignmentEditView: View {
 }
 
 struct FundingRequestView: View {
+    @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget
     let categories: [APICategory]
     let serverURL: URL
@@ -427,14 +437,12 @@ struct FundingRequestView: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            _ = try await APIClient(baseURL: serverURL).createFinancialRequest(
-                budgetID: budget.id,
-                request: APIFinancialRequestCreate(
+            try await workspace.createRequest(
+                APIFinancialRequestCreate(
                     destinationCategoryID: categoryID,
                     requestedAmountMinor: parsedAmount,
                     reason: reason
-                ),
-                token: token
+                )
             )
             await onSaved()
             dismiss()
@@ -489,6 +497,7 @@ enum CurrencyText {
 }
 
 struct AccountCreationView: View {
+    @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget
     let serverURL: URL
     let token: String
@@ -534,11 +543,7 @@ struct AccountCreationView: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            _ = try await APIClient(baseURL: serverURL).createAccount(
-                budgetID: budget.id,
-                account: APIAccountCreate(name: name, accountType: accountType, isOnBudget: isOnBudget),
-                token: token
-            )
+            try await workspace.createAccount(APIAccountCreate(name: name, accountType: accountType, isOnBudget: isOnBudget))
             await onSaved()
             dismiss()
         } catch { errorMessage = error.localizedDescription }
@@ -546,11 +551,13 @@ struct AccountCreationView: View {
 }
 
 struct CategoryCreationView: View {
+    @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget
     let groups: [APICategoryGroup]
     let serverURL: URL
     let token: String
     let onSaved: () async -> Void
+    var delegatedUserID: String? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var groupID = ""
@@ -567,7 +574,11 @@ struct CategoryCreationView: View {
                         ForEach(groups) { Text($0.name).tag($0.id) }
                     }
                 }
-                TextField(groups.isEmpty ? "First group name" : "Or create a new group", text: $newGroupName)
+                if delegatedUserID == nil {
+                    TextField(groups.isEmpty ? "First group name" : "Or create a new group", text: $newGroupName)
+                } else {
+                    Text("This category will be scoped to your delegated budget and cannot increase your total authority.").font(.footnote).foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("New Category")
             .navigationBarTitleDisplayMode(.inline)
@@ -594,20 +605,7 @@ struct CategoryCreationView: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            let client = try APIClient(baseURL: serverURL)
-            var targetGroupID = groupID
-            if !newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                targetGroupID = try await client.createCategoryGroup(
-                    budgetID: budget.id,
-                    group: APICategoryGroupCreate(name: newGroupName),
-                    token: token
-                ).id
-            }
-            _ = try await client.createCategory(
-                budgetID: budget.id,
-                category: APICategoryCreate(groupID: targetGroupID, name: name),
-                token: token
-            )
+            try await workspace.createCategory(groupID: groupID, newGroupName: newGroupName, name: name, delegatedUserID: delegatedUserID)
             await onSaved()
             dismiss()
         } catch { errorMessage = error.localizedDescription }

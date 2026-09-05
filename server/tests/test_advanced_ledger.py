@@ -1,3 +1,6 @@
+from app.models import Household, Membership, TransactionChange, User
+from app.security import create_access_token, hash_password
+
 from .conftest import auth
 from .test_budgeting_api import create_budget, create_budget_structure
 
@@ -30,6 +33,14 @@ def record(client, token, budget_id, **values):
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def add_restricted_member(session_factory, client):
+    with session_factory() as db:
+        household = db.query(Household).one()
+        member = User(email="reconciler@example.com", display_name="Reconciler", password_hash=hash_password("restricted password long enough"))
+        db.add(member); db.flush(); db.add(Membership(household_id=household.id, user_id=member.id, role="child")); db.commit()
+        return member.id, create_access_token(member.id, client.app.state.settings)
 
 
 def test_split_activity_and_income_feed_month_summary(
@@ -243,6 +254,77 @@ def test_reconciliation_adjustment_is_an_explicit_auditable_transaction(
     assert balance["reconciled_balance_minor"] == 48750
 
 
+def test_positive_cash_reconciliation_becomes_explicit_real_money_then_allocates(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=50000, is_cleared=True)
+    result = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/reconcile",
+        headers=auth(owner_token),
+        json={"statement_balance_minor": 55000, "through_date": "2026-09-30", "create_adjustment": True, "adjustment_reason": "Cash found", "expected_cleared_balance_minor": 50000},
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["adjustment_amount_minor"] == 5000
+    summary = client.get(f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)).json()
+    assert summary["ready_to_assign_minor"] == 55000
+    assigned = client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{category['id']}/assignment",
+        headers=auth(owner_token), json={"month": "2026-09-01", "assigned_minor": 55000, "expected_allocation_version": summary["allocation_version"]},
+    )
+    assert assigned.status_code == 200, assigned.text
+    assert client.get(f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)).json()["ready_to_assign_minor"] == 0
+
+
+def test_credit_reconciliation_changes_debt_without_creating_ready_to_assign(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    create_budget_structure(client, owner_token, budget["id"])
+    credit = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Card", "account_type": "credit", "is_on_budget": True},
+    ).json()
+    record(client, owner_token, budget["id"], account_id=credit["id"], amount_minor=-10000, is_cleared=True)
+    before = client.get(f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)).json()["ready_to_assign_minor"]
+    result = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{credit['id']}/reconcile", headers=auth(owner_token),
+        json={"statement_balance_minor": -12000, "through_date": "2026-09-30", "create_adjustment": True, "expected_cleared_balance_minor": -10000},
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["adjustment_amount_minor"] == -2000
+    after = client.get(f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)).json()["ready_to_assign_minor"]
+    assert after == before
+
+
+def test_reconciliation_rejects_stale_balance_and_restricted_adjustment(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=50000, is_cleared=True)
+    child_id, child_token = add_restricted_member(session_factory, client)
+    grant = client.put(f"/api/v1/budgets/{budget['id']}/grants", headers=auth(owner_token), json={"user_id": child_id, "permission": "contribute"})
+    assert grant.status_code == 200, grant.text
+    profile = client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token),
+        json={"capabilities": ["view_budget", "view_accounts", "view_categories", "reconcile_account"], "restrict_accounts": True, "account_ids": [account["id"]], "restrict_categories": True, "category_ids": [category["id"]]},
+    )
+    assert profile.status_code == 200, profile.text
+    forbidden = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/reconcile", headers=auth(child_token),
+        json={"statement_balance_minor": 51000, "through_date": "2026-09-30", "create_adjustment": True, "expected_cleared_balance_minor": 50000},
+    )
+    assert forbidden.status_code == 403
+    record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-1000, is_cleared=True)
+    stale = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/reconcile", headers=auth(owner_token),
+        json={"statement_balance_minor": 49000, "through_date": "2026-09-30", "expected_cleared_balance_minor": 50000},
+    )
+    assert stale.status_code == 409
+
+
 def test_split_total_must_equal_transaction_total(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])
@@ -295,3 +377,72 @@ def test_ready_to_assign_excludes_tracking_cash_and_includes_uncategorized_outfl
         headers=auth(owner_token),
     ).json()
     assert summary["ready_to_assign_minor"] == 9750
+
+
+def test_transaction_edit_recalculates_category_reports_and_account(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, groceries = create_budget_structure(client, owner_token, budget["id"])
+    dining = add_category(client, owner_token, budget["id"], "Wants", "Dining")
+    transaction = record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=dining["id"], amount_minor=-12000, payee_name="Incorrect Dining",
+    )
+    changed = client.put(
+        f"/api/v1/budgets/{budget['id']}/transactions/{transaction['id']}",
+        headers=auth(owner_token),
+        json={
+            "account_id": account["id"], "category_id": groceries["id"],
+            "amount_minor": -12000, "occurred_on": "2026-09-04",
+            "payee_name": "Grocery Store", "memo": "Corrected", "is_cleared": True,
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["category_id"] == groceries["id"]
+    summary = client.get(
+        f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)
+    ).json()
+    by_id = {item["category_id"]: item for item in summary["categories"]}
+    assert by_id[groceries["id"]]["activity_minor"] == -12000
+    assert by_id[dining["id"]]["activity_minor"] == 0
+    balance = client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/balance", headers=auth(owner_token)
+    ).json()
+    assert balance["working_balance_minor"] == -12000
+    with session_factory() as db:
+        change = db.query(TransactionChange).filter_by(transaction_id=transaction["id"], action="updated").one()
+        assert '"category_id":"' + dining["id"] + '"' in change.before_json
+        assert '"category_id":"' + groceries["id"] + '"' in change.after_json
+
+    deleted = client.delete(
+        f"/api/v1/budgets/{budget['id']}/transactions/{transaction['id']}", headers=auth(owner_token)
+    )
+    assert deleted.status_code == 204
+    with session_factory() as db:
+        history = db.query(TransactionChange).filter_by(transaction_id=transaction["id"]).all()
+        assert [item.action for item in history] == ["updated", "deleted"]
+        assert history[-1].before_json is not None
+
+
+def test_reconciled_transaction_cannot_be_edited_or_deleted(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    transaction = record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=category["id"], amount_minor=-1000, is_cleared=True,
+    )
+    reconciled = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/reconcile",
+        headers=auth(owner_token),
+        json={"statement_balance_minor": -1000, "through_date": "2026-09-04"},
+    )
+    assert reconciled.status_code == 200, reconciled.text
+    body = {
+        "account_id": account["id"], "category_id": category["id"],
+        "amount_minor": -900, "occurred_on": "2026-09-04", "payee_name": "Changed",
+    }
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/transactions/{transaction['id']}", headers=auth(owner_token), json=body
+    ).status_code == 409
+    assert client.delete(
+        f"/api/v1/budgets/{budget['id']}/transactions/{transaction['id']}", headers=auth(owner_token)
+    ).status_code == 409

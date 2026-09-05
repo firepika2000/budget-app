@@ -18,8 +18,8 @@ from .models import (
 
 ALL_CAPABILITIES = {
     "view_budget", "view_accounts", "view_account_balances", "view_categories",
-    "view_transactions", "view_reports", "view_allocation_history", "create_transaction",
-    "request_money", "assign_money", "move_money", "reconcile_account",
+    "view_transactions", "view_reports", "view_allocation_history", "create_transaction", "edit_transaction", "delete_transaction",
+    "request_money", "assign_money", "move_money", "manage_own_categories", "reconcile_account",
     "manage_budget_structure", "manage_planning", "manage_allowances", "approve_request", "export_data",
 }
 
@@ -33,11 +33,11 @@ LEGACY_CAPABILITIES = {
     "view": {"view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports", "view_allocation_history"},
     "contribute": {
         "view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports", "view_allocation_history",
-        "create_transaction", "request_money",
+        "create_transaction", "edit_transaction", "delete_transaction", "request_money",
     },
     "manage": {
         "view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports", "view_allocation_history",
-        "create_transaction", "request_money", "assign_money", "move_money", "reconcile_account",
+        "create_transaction", "edit_transaction", "delete_transaction", "request_money", "assign_money", "move_money", "reconcile_account",
         "manage_budget_structure", "manage_planning", "manage_allowances", "approve_request", "export_data",
     },
 }

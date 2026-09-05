@@ -92,12 +92,77 @@ struct DemoTransaction: Identifiable, Hashable {
     var memo: String
     var accountID: String
     var categoryIDs: [String]
+    var categoryAmounts: [String: Int64] = [:]
     var amount: Int64
     var member: DemoPersona
     var cleared: Bool
     var flag: String? = nil
     var attachmentName: String? = nil
+    var tags: [String] = []
     var scheduled = false
+    var reconciled = false
+    var transferID: String? = nil
+}
+
+enum DemoReportPeriod: String, CaseIterable, Identifiable {
+    case thirtyDays = "30D"
+    case sixtyDays = "60D"
+    case ninetyDays = "90D"
+    case threeMonths = "3M"
+    case sixMonths = "6M"
+    case yearToDate = "YTD"
+    case oneYear = "1Y"
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .thirtyDays: "30 Days"
+        case .sixtyDays: "60 Days"
+        case .ninetyDays: "90 Days"
+        case .threeMonths: "3 Months"
+        case .sixMonths: "6 Months"
+        case .yearToDate: "Year to Date"
+        case .oneYear: "1 Year"
+        }
+    }
+
+    func contains(_ date: Date, asOf: Date = .demo(monthsAgo: 0, day: 30), calendar: Calendar = .current) -> Bool {
+        let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: asOf))!
+        let start: Date
+        switch self {
+        case .thirtyDays, .sixtyDays, .ninetyDays:
+            let days = self == .thirtyDays ? 30 : self == .sixtyDays ? 60 : 90
+            start = calendar.date(byAdding: .day, value: -(days - 1), to: calendar.startOfDay(for: asOf))!
+        case .threeMonths, .sixMonths, .oneYear:
+            let months = self == .threeMonths ? 3 : self == .sixMonths ? 6 : 12
+            start = calendar.date(byAdding: .month, value: -months, to: end)!
+        case .yearToDate:
+            start = calendar.dateInterval(of: .year, for: asOf)!.start
+        }
+        return date >= start && date < end
+    }
+}
+
+enum DemoMutationError: LocalizedError, Equatable {
+    case invalidAmount
+    case categoryNotFound
+    case transactionNotFound
+    case accountNotFound
+    case insufficientFunds(available: Int64)
+    case exceedsDelegatedAuthority(available: Int64)
+    case restrictedCategory
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidAmount: "Enter an amount greater than zero."
+        case .categoryNotFound: "That category is no longer available."
+        case .transactionNotFound: "That transaction is no longer available."
+        case .accountNotFound: "That account is no longer available."
+        case let .insufficientFunds(available): "Only \(available.demoCurrency) is available to move."
+        case let .exceedsDelegatedAuthority(available): "This exceeds your delegated budget. You have \(available.demoCurrency) left to assign."
+        case .restrictedCategory: "You can only change categories inside your delegated budget."
+        }
+    }
 }
 
 struct DemoRequest: Identifiable, Hashable {

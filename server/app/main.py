@@ -11,6 +11,8 @@ from .planning_routes import router as planning_router
 from .request_routes import router as request_router
 from .allowance_routes import router as allowance_router
 from .export_routes import router as export_router
+from .delegated_routes import router as delegated_router
+from .analytics_routes import router as analytics_router
 from .web_routes import ASSET_ROOT, router as web_router
 from .database import build_session_factory
 from .routes import router
@@ -21,7 +23,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or Settings.from_environment()
     app = FastAPI(
         title="Budget App API",
-        version="0.3.0",
+        version="0.4.0",
         docs_url="/api/docs",
         redoc_url=None,
     )
@@ -36,6 +38,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(request_router)
     app.include_router(allowance_router)
     app.include_router(export_router)
+    app.include_router(delegated_router)
+    app.include_router(analytics_router)
     app.include_router(web_router)
     app.mount("/admin-assets", StaticFiles(directory=ASSET_ROOT), name="admin-assets")
     return app

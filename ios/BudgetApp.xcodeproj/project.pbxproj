@@ -16,11 +16,8 @@
 		F7F6130787A7D2A0DAF13030 /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10F6752E4E2DAAB5F30C155 /* AppSession.swift */; };
 		AA0000010000000000000001 /* DemoModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000010000000000000001 /* DemoModels.swift */; };
 		AA0000020000000000000002 /* DemoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000020000000000000002 /* DemoStore.swift */; };
-		AA0000030000000000000003 /* DemoRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000030000000000000003 /* DemoRootView.swift */; };
-		AA0000040000000000000004 /* DemoActivityViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000040000000000000004 /* DemoActivityViews.swift */; };
-		AA0000050000000000000005 /* DemoInsightsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000050000000000000005 /* DemoInsightsViews.swift */; };
-		AA0000060000000000000006 /* DemoHouseholdViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000060000000000000006 /* DemoHouseholdViews.swift */; };
 		AA0000070000000000000007 /* DemoStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000070000000000000007 /* DemoStoreTests.swift */; };
+		AA0000080000000000000008 /* BudgetWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000080000000000000008 /* BudgetWorkspaceView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -45,11 +42,8 @@
 		DEFFDD801DC18A01D2C2C6FF /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		BB0000010000000000000001 /* DemoModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoModels.swift; sourceTree = "<group>"; };
 		BB0000020000000000000002 /* DemoStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoStore.swift; sourceTree = "<group>"; };
-		BB0000030000000000000003 /* DemoRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoRootView.swift; sourceTree = "<group>"; };
-		BB0000040000000000000004 /* DemoActivityViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoActivityViews.swift; sourceTree = "<group>"; };
-		BB0000050000000000000005 /* DemoInsightsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoInsightsViews.swift; sourceTree = "<group>"; };
-		BB0000060000000000000006 /* DemoHouseholdViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoHouseholdViews.swift; sourceTree = "<group>"; };
 		BB0000070000000000000007 /* DemoStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoStoreTests.swift; sourceTree = "<group>"; };
+		BB0000080000000000000008 /* BudgetWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetWorkspaceView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -110,10 +104,7 @@
 				601308601949744C902D3365 /* RootView.swift */,
 				BB0000010000000000000001 /* DemoModels.swift */,
 				BB0000020000000000000002 /* DemoStore.swift */,
-				BB0000030000000000000003 /* DemoRootView.swift */,
-				BB0000040000000000000004 /* DemoActivityViews.swift */,
-				BB0000050000000000000005 /* DemoInsightsViews.swift */,
-				BB0000060000000000000006 /* DemoHouseholdViews.swift */,
+				BB0000080000000000000008 /* BudgetWorkspaceView.swift */,
 			);
 			path = BudgetApp;
 			sourceTree = "<group>";
@@ -216,10 +207,7 @@
 				924CF4BFFBE2D5F48825FA53 /* RootView.swift in Sources */,
 				AA0000010000000000000001 /* DemoModels.swift in Sources */,
 				AA0000020000000000000002 /* DemoStore.swift in Sources */,
-				AA0000030000000000000003 /* DemoRootView.swift in Sources */,
-				AA0000040000000000000004 /* DemoActivityViews.swift in Sources */,
-				AA0000050000000000000005 /* DemoInsightsViews.swift in Sources */,
-				AA0000060000000000000006 /* DemoHouseholdViews.swift in Sources */,
+				AA0000080000000000000008 /* BudgetWorkspaceView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -238,6 +226,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -255,6 +244,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -284,7 +274,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.3.0;
+				MARKETING_VERSION = 0.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp;
 				PRODUCT_NAME = "Budget App";
 				SDKROOT = iphoneos;
@@ -372,7 +362,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.3.0;
+				MARKETING_VERSION = 0.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp;
 				PRODUCT_NAME = "Budget App";
 				SDKROOT = iphoneos;

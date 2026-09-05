@@ -84,6 +84,10 @@ public struct APIClient {
         try await send(path: "api/v1/me", token: token)
     }
 
+    public func householdMembers(householdID: String, token: String) async throws -> [APIHouseholdMember] {
+        try await send(path: "api/v1/households/\(householdID)/members", token: token)
+    }
+
     public func budgets(token: String) async throws -> [APIBudget] {
         try await send(path: "api/v1/budgets", token: token)
     }
@@ -94,6 +98,10 @@ public struct APIClient {
 
     public func accounts(budgetID: String, token: String) async throws -> [APIAccount] {
         try await send(path: "api/v1/budgets/\(budgetID)/accounts", token: token)
+    }
+
+    public func accountBalance(budgetID: String, accountID: String, token: String) async throws -> APIAccountBalance {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/balance", token: token)
     }
 
     public func createAccount(
@@ -147,6 +155,14 @@ public struct APIClient {
         )
     }
 
+    public func updateCategory(budgetID: String, categoryID: String, category: APICategoryUpdate, token: String) async throws -> APICategory {
+        try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)", method: "PUT", token: token, body: category)
+    }
+
+    public func updateCategoryDelegation(budgetID: String, categoryID: String, delegatedUserID: String?, token: String) async throws -> APICategory {
+        try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/delegation", method: "PUT", token: token, body: APICategoryDelegationUpdate(delegatedUserID: delegatedUserID))
+    }
+
     public func createTransaction(
         budgetID: String,
         transaction: APITransactionCreate,
@@ -158,6 +174,36 @@ public struct APIClient {
             token: token,
             body: transaction
         )
+    }
+
+    public func updateTransaction(
+        budgetID: String,
+        transactionID: String,
+        transaction: APITransactionCreate,
+        token: String
+    ) async throws -> APITransaction {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)",
+            method: "PUT",
+            token: token,
+            body: transaction
+        )
+    }
+
+    public func deleteTransaction(budgetID: String, transactionID: String, token: String) async throws {
+        let _: EmptyResponse = try await send(
+            path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
+    public func createTransfer(budgetID: String, transfer: APITransferCreate, token: String) async throws -> APITransferResponse {
+        try await send(path: "api/v1/budgets/\(budgetID)/transfers", method: "POST", token: token, body: transfer)
+    }
+
+    public func reconcileAccount(budgetID: String, accountID: String, request: APIReconcileRequest, token: String) async throws -> APIReconcileResponse {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/reconcile", method: "POST", token: token, body: request)
     }
 
     public func updateAssignment(
@@ -221,11 +267,111 @@ public struct APIClient {
         )
     }
 
+    public func decideFinancialRequest(budgetID: String, requestID: String, decision: APIFinancialRequestDecision, token: String) async throws -> APIFinancialRequest {
+        try await send(path: "api/v1/budgets/\(budgetID)/requests/\(requestID)/decision", method: "POST", token: token, body: decision)
+    }
+
+    public func cancelFinancialRequest(budgetID: String, requestID: String, expectedVersion: Int, note: String = "", token: String) async throws -> APIFinancialRequest {
+        try await send(path: "api/v1/budgets/\(budgetID)/requests/\(requestID)/cancel", method: "POST", token: token, body: APIFinancialRequestCancel(expectedRequestVersion: expectedVersion, note: note))
+    }
+
     public func allowancePlans(
         budgetID: String,
         token: String
     ) async throws -> [APIAllowancePlan] {
         try await send(path: "api/v1/budgets/\(budgetID)/allowances", token: token)
+    }
+
+    public func forecast(budgetID: String, through: String, token: String) async throws -> APIForecast {
+        try await send(path: "api/v1/budgets/\(budgetID)/forecast", queryItems: [URLQueryItem(name: "through", value: through)], token: token)
+    }
+
+    public func spendingReport(
+        budgetID: String,
+        startDate: String,
+        endDate: String,
+        accountIDs: [String] = [],
+        categoryIDs: [String] = [],
+        categoryGroups: [String] = [],
+        memberIDs: [String] = [],
+        payees: [String] = [],
+        transactionType: String? = nil,
+        cleared: Bool? = nil,
+        includeTracking: Bool = false,
+        token: String
+    ) async throws -> APISpendingReport {
+        var query = [URLQueryItem(name: "start_date", value: startDate), URLQueryItem(name: "end_date", value: endDate)]
+        query += accountIDs.map { URLQueryItem(name: "account_id", value: $0) }
+        query += categoryIDs.map { URLQueryItem(name: "category_id", value: $0) }
+        query += categoryGroups.map { URLQueryItem(name: "category_group", value: $0) }
+        query += memberIDs.map { URLQueryItem(name: "member_id", value: $0) }
+        query += payees.map { URLQueryItem(name: "payee", value: $0) }
+        if let transactionType { query.append(URLQueryItem(name: "transaction_type", value: transactionType)) }
+        if let cleared { query.append(URLQueryItem(name: "cleared", value: String(cleared))) }
+        if includeTracking { query.append(URLQueryItem(name: "include_tracking", value: "true")) }
+        return try await send(
+            path: "api/v1/budgets/\(budgetID)/reports/spending",
+            queryItems: query,
+            token: token
+        )
+    }
+
+    public func incomeSpendingReport(
+        budgetID: String,
+        startDate: String,
+        endDate: String,
+        accountIDs: [String] = [],
+        memberIDs: [String] = [],
+        payees: [String] = [],
+        cleared: Bool? = nil,
+        includeTracking: Bool = false,
+        token: String
+    ) async throws -> APIIncomeSpendingReport {
+        var query = [URLQueryItem(name: "start_date", value: startDate), URLQueryItem(name: "end_date", value: endDate)]
+        query += accountIDs.map { URLQueryItem(name: "account_id", value: $0) }
+        query += memberIDs.map { URLQueryItem(name: "member_id", value: $0) }
+        query += payees.map { URLQueryItem(name: "payee", value: $0) }
+        if let cleared { query.append(URLQueryItem(name: "cleared", value: String(cleared))) }
+        if includeTracking { query.append(URLQueryItem(name: "include_tracking", value: "true")) }
+        return try await send(
+            path: "api/v1/budgets/\(budgetID)/reports/income-spending",
+            queryItems: query,
+            token: token
+        )
+    }
+
+    public func delegatedBudget(budgetID: String, token: String) async throws -> APIDelegatedBudget {
+        try await send(path: "api/v1/budgets/\(budgetID)/delegated-budgets/me", token: token)
+    }
+
+    public func delegatedBudgets(budgetID: String, token: String) async throws -> [APIDelegatedBudget] {
+        try await send(path: "api/v1/budgets/\(budgetID)/delegated-budgets", token: token)
+    }
+
+    public func updateDelegatedBudget(budgetID: String, userID: String, policy: APIDelegatedBudgetUpsert, token: String) async throws -> APIDelegatedBudget {
+        try await send(path: "api/v1/budgets/\(budgetID)/delegated-budgets/\(userID)", method: "PUT", token: token, body: policy)
+    }
+
+    public func smartFundingPreview(budgetID: String, month: String, token: String) async throws -> APISmartFundingPreview {
+        try await send(path: "api/v1/budgets/\(budgetID)/smart-funding/\(month)", token: token)
+    }
+
+    public func commitSmartFunding(budgetID: String, month: String, expectedAllocationVersion: Int, token: String) async throws -> APIAllocationOperation {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/smart-funding", method: "POST", token: token,
+            body: APISmartFundingCommit(month: month, expectedAllocationVersion: expectedAllocationVersion)
+        )
+    }
+
+    private func send<Response: Decodable>(
+        path: String,
+        queryItems: [URLQueryItem],
+        token: String? = nil
+    ) async throws -> Response {
+        var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)
+        components?.queryItems = queryItems
+        guard let url = components?.url else { throw APIClientError.invalidServerURL }
+        return try await send(url: url, method: "GET", token: token, bodyData: nil)
     }
 
     private func send<Response: Decodable>(
@@ -253,6 +399,15 @@ public struct APIClient {
         bodyData: Data?
     ) async throws -> Response {
         let url = baseURL.appending(path: path)
+        return try await send(url: url, method: method, token: token, bodyData: bodyData)
+    }
+
+    private func send<Response: Decodable>(
+        url: URL,
+        method: String,
+        token: String?,
+        bodyData: Data?
+    ) async throws -> Response {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = bodyData

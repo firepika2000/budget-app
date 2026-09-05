@@ -218,6 +218,48 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(request.requestedAmountMinor, 3500)
         XCTAssertEqual(request.actions.map(\.action), ["submitted"])
     }
+
+    func testSpendingReportUsesExplicitInclusiveDateRangeAndKeepsDrillDownIDs() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/reports/spending")
+            let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+            XCTAssertEqual(Set(components?.queryItems ?? []), Set([
+                URLQueryItem(name: "start_date", value: "2026-08-06"),
+                URLQueryItem(name: "end_date", value: "2026-09-04")
+            ]))
+            let response = Data(#"{"start_date":"2026-08-06","end_date":"2026-09-04","currency_code":"USD","total_spending_minor":3182,"categories":[{"category_id":"dining","category_name":"Dining Out","category_group":"Food","spending_minor":3182,"transaction_ids":["t1"]}]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let report = try await client.spendingReport(budgetID: "b1", startDate: "2026-08-06", endDate: "2026-09-04", token: "secret")
+        XCTAssertEqual(report.totalSpendingMinor, 3182)
+        XCTAssertEqual(report.categories.first?.transactionIDs, ["t1"])
+    }
+
+    func testUpdateAndDeleteTransactionUseResourcePath() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var methods: [String] = []
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/t1")
+            methods.append(request.httpMethod ?? "")
+            if request.httpMethod == "DELETE" {
+                return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data())
+            }
+            let response = Data(#"{"id":"t1","budget_id":"b1","account_id":"a1","category_id":"groceries","amount_minor":-12000,"occurred_on":"2026-09-04","payee_name":"Market","memo":"Corrected","is_cleared":true,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":null,"splits":[]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let body = APITransactionCreate(accountID: "a1", categoryID: "groceries", amountMinor: -12000, occurredOn: "2026-09-04", payeeName: "Market", memo: "Corrected", isCleared: true)
+        let updated = try await client.updateTransaction(budgetID: "b1", transactionID: "t1", transaction: body, token: "secret")
+        XCTAssertEqual(updated.categoryID, "groceries")
+        try await client.deleteTransaction(budgetID: "b1", transactionID: "t1", token: "secret")
+        XCTAssertEqual(methods, ["PUT", "DELETE"])
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

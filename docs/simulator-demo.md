@@ -1,50 +1,30 @@
-# v0.3.0 Simulator demo
+# v0.4.0 Simulator and live review
 
-The Debug build is self-contained and opens a deterministic fictional household immediately. No backend, network, credentials, or bank connection is required for the product-experience review.
+The Debug build opens a deterministic fictional household through the same `BudgetWorkspaceView` and `BudgetWorkspaceStore` used by authenticated operation. Demo data is ephemeral and is a repository fixture, not a security boundary or substitute for a live test.
 
-## Quick start in Xcode
+## Deterministic mode
 
-1. Open `ios/BudgetApp.xcodeproj`.
-2. Select the shared **BudgetApp** scheme.
-3. Choose any installed iPhone running iOS 17 or later; a Pro-size device is recommended.
-4. Press Run.
-5. The app opens on Home as Rey in **The Soto Household**.
+1. Open `ios/BudgetApp.xcodeproj`, select **BudgetApp**, and choose an iPhone on iOS 17 or later.
+2. Run without arguments to open the shared five-tab product with the owner fixture.
+3. Use `--demo-persona=alex` or `--demo-persona=mia` to launch a restricted member fixture.
+4. Optionally add `--demo-screen=home|plan|activity|transaction|accounts|credit|insights` for a repeatable starting tab.
 
-To exercise the real self-hosted client instead, edit the scheme’s Run arguments and add `--live`. Then start the backend from `server/` with `docker compose up --build`, connect to the displayed local URL, and authenticate normally.
+Walk through Home, Plan, Activity, Accounts, Insights, and Household. Create and edit an exact split; change its date/category and confirm Insights refreshes; move allocations; preview/commit Smart Funding; reconcile an account; approve a request partially; request changes; reject a request; and verify the child fixture cannot discover owner or sibling resources.
 
-## Demo personas
+## Authenticated self-hosted mode
 
-- **Rey** — owner/admin; full financial and household visibility.
-- **Jordan** — full-access partner.
-- **Alex** — delegated teenager; only Alex Allowance, Alex Savings, own activity, requests, and allowance.
-- **Mia** — delegated child; only Mia Allowance, Mia Bike Goal, own activity, requests, and allowance.
+1. Start the backend and an empty disposable database using `server/README.md` or `server/compose.yaml`; apply `alembic upgrade head`.
+2. Add `--live` to the Run arguments, bootstrap/login, create a household budget, and seed only test data.
+3. Repeat every deterministic workflow. Confirm mutations survive relaunch and a second authenticated session sees the same state.
+4. Exercise stale reconciliation and allocation/request versions from two clients; the second write must receive a conflict and reload.
+5. Authenticate as each restricted household member and attempt direct resource identifiers belonging to the owner and a sibling. The server must deny them even if the UI route is constructed manually.
 
-Tap the initial avatar at the upper left to switch persona. Use **Reset Demo Household** in Household to restore the deterministic fixture after trying transactions, approvals, moves, or allowances.
+## Review checklist
 
-## Representative workflows
+- Check light and dark appearance, Dynamic Type, VoiceOver labels/order, reduced motion, empty states, loading, server errors, and offline/retry behavior.
+- Confirm cash reconciliation adjustments change Ready to Assign, credit adjustments do not, and exact reconciliation creates no adjustment.
+- Confirm transaction flags, tags, attachment metadata, splits, payee, memo, account, category, cleared state, and date persist after edit.
+- Confirm every Insights number drills into contributing transactions and changes immediately after an edit.
+- Confirm owner, spouse, teen, and child disclosure choices match the intended privacy policy.
 
-- Home → **Make a plan**, or Plan → **Smart Fund**, to inspect a non-mutating Before/Proposed/After preview.
-- Plan → **Move** to preview $50 from Dining Out to Fuel.
-- Home → Alex’s request to approve $20 of $35 with source/destination preview.
-- Avatar → Recurring Allowances → Issue Due Allowance.
-- Plan → CNC Machine to inspect the $2,000 goal.
-- Insights → Debt Progress and adjust extra payment to $100.
-- Insights → Spending or Income vs. Spending for six-month history.
-- Avatar → Alex to verify restricted information disappears.
-- Avatar → Hide Amounts to mask sensitive values across the app.
-- Activity → + for manual or split transaction and receipt/photo/file selection.
-- Accounts → Reconcile for a non-mutating comparison.
-- Insights → Cash Outlook and choose 30/60/90 days, 6 months, or 1 year.
-
-## Deterministic screenshot routes
-
-Debug-only launch arguments support repeatable review automation:
-
-`--demo-screen=home|plan|activity|accounts|insights|category|transaction|credit|goal|household|child|approval|forecast`
-
-These routes are not compiled into Release behavior because the demo selection is gated by `#if DEBUG` in `RootView`.
-
-## Screenshots
-
-Full-screen captures from an installed iPhone 15 Pro Max (iOS 17.5) are in `docs/screenshots/v0.3.0/`. They include Home, Plan, Category Detail, Transaction Entry, Accounts, Credit Card, Insights, Goal Detail, Household, Child Persona, Request Approval, Forecast, and Dark Mode Home.
-
+The automated v0.4 verification device is iPhone 15 Pro Max, iOS 17.5. Do not tag the release until this human walkthrough is signed off. Bank synchronization and external financial-provider connections are not part of either mode.
