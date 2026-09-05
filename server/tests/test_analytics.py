@@ -123,3 +123,35 @@ def test_restricted_reports_cannot_leak_hidden_accounts_categories_or_members(
         f"{url}&category_id={groceries['id']}", headers=auth(child_token)
     )
     assert forbidden.status_code == 404
+
+
+def test_report_filters_and_inclusive_custom_range(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    dining = add_category(client, owner_token, budget["id"], "Fun", "Dining")
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100000, is_cleared=True, occurred_on="2026-09-01", payee_name="Payroll")
+    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=groceries["id"], amount_minor=-5000, is_cleared=True, occurred_on="2026-09-03", payee_name="Costco")
+    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=dining["id"], amount_minor=-3000, is_cleared=False, occurred_on="2026-09-05", payee_name="cafe")
+
+    base = f"/api/v1/budgets/{budget['id']}/reports/spending"
+
+    def ids(url):
+        response = client.get(url, headers=auth(owner_token))
+        assert response.status_code == 200, response.text
+        return {row["category_id"] for row in response.json()["categories"]}, response.json()["total_spending_minor"]
+
+    # Inclusive single-day custom range.
+    single, total = ids(f"{base}?start_date=2026-09-03&end_date=2026-09-03")
+    assert single == {groceries["id"]} and total == 5000
+    # End date is inclusive: 09-04 excludes the 09-05 dining, 09-05 includes it.
+    assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-04")[0] == {groceries["id"]}
+    assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-05")[0] == {groceries["id"], dining["id"]}
+    # Payee filter is case-insensitive exact match.
+    assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&payee=COSTCO")[0] == {groceries["id"]}
+    # Cleared-state filter.
+    assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&cleared=false")[0] == {dining["id"]}
+    assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&cleared=true")[0] == {groceries["id"]}
+    # Category-group filter.
+    assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&category_group=Fun")[0] == {dining["id"]}
+    # Combined filters intersect (Fun group + cleared true has no rows).
+    assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&category_group=Fun&cleared=true")[0] == set()
