@@ -828,15 +828,22 @@ private struct LiveInsightsView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var showFilters = false
+    @State private var breakdownMode = SpendingBreakdownMode.category
+    @State private var selectedAngle: Int64?
+    @State private var selectedSlice: SpendingBreakdownSlice?
     var body: some View {
         List {
             Section { Picker("Period", selection: $store.reportPeriod) { Text("30 Days").tag("30d"); Text("60 Days").tag("60d"); Text("90 Days").tag("90d"); Text("3 Months").tag("3m"); Text("6 Months").tag("6m"); Text("Year to Date").tag("ytd"); Text("1 Year").tag("1y"); Text("Custom").tag("custom") }.onChange(of: store.reportPeriod) { _, _ in Task { await reload() } }; if store.reportPeriod == "custom" { DatePicker("From", selection: $store.customReportStart, displayedComponents: .date); DatePicker("Through", selection: $store.customReportEnd, displayedComponents: .date); Button("Apply custom range") { Task { await reload() } } } }
             if let report = store.spendingReport {
-                Section { LabeledContent("Total spending", value: store.format(report.totalSpendingMinor)); Chart(report.categories) { BarMark(x: .value("Spending", $0.spendingMinor), y: .value("Category", $0.categoryName)).foregroundStyle(Theme.accent) }.frame(minHeight: 180) }
-                Section("Spending by category") { ForEach(report.categories) { category in NavigationLink { LiveReportCategoryView(category: category) } label: { LabeledContent(category.categoryName, value: store.format(category.spendingMinor)) } } }
+                SpendingBreakdownView(report: report, mode: $breakdownMode, selectedAngle: $selectedAngle, selectedSlice: $selectedSlice)
+                Section("Ranked breakdown") { ForEach(SpendingBreakdownSlice.make(from: report, mode: breakdownMode)) { slice in Button { selectedSlice = slice } label: { HStack { Image(systemName: "circle.fill").foregroundStyle(Theme.accent); VStack(alignment: .leading) { Text(slice.name); Text(slice.percentage(of: report.totalSpendingMinor).formatted(.percent.precision(.fractionLength(1)))).font(.caption).foregroundStyle(.secondary) }; Spacer(); Text(store.format(slice.spendingMinor)).monospacedDigit() }.foregroundStyle(.primary) } } }
+            } else if let message = store.errorMessage {
+                Section { ContentUnavailableView("Unable to load spending", systemImage: "exclamationmark.triangle", description: Text(message)); Button("Retry") { Task { await reload() } } }
+            } else {
+                Section { ContentUnavailableView("No spending in this range", systemImage: "chart.pie", description: Text("Try a wider date range or different filters.")) }
             }
             if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportTransactionType.isEmpty, let report = store.incomeReport { Section("Income vs. spending") { LabeledContent("Income", value: store.format(report.incomeMinor)); LabeledContent("Spending", value: store.format(report.spendingMinor)); LabeledContent("Difference", value: store.format(report.differenceMinor)); if let rate = report.savingsRate { LabeledContent("Savings rate", value: rate.formatted(.percent.precision(.fractionLength(0)))) } } }
-        }.navigationTitle("Insights").toolbar { Button { showFilters = true } label: { Image(systemName: hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") } }.sheet(isPresented: $showFilters) { filters }
+        }.navigationTitle("Insights").toolbar { Button { showFilters = true } label: { Image(systemName: hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") } }.sheet(isPresented: $showFilters) { filters }.navigationDestination(item: $selectedSlice) { slice in if slice.mode == .group { LiveReportGroupView(group: slice.name) } else if let category = store.spendingReport?.categories.first(where: { $0.categoryID == slice.id }) { LiveReportCategoryView(category: category) } }
     }
     private var hasFilters: Bool { !store.reportAccountID.isEmpty || !store.reportCategoryID.isEmpty || !store.reportCategoryGroup.isEmpty || !store.reportPayee.isEmpty || !store.reportMemberID.isEmpty || !store.reportTransactionType.isEmpty || store.reportCleared != "all" || store.includeTrackingAccounts }
     private var filters: some View { NavigationStack { Form {
@@ -850,6 +857,72 @@ private struct LiveInsightsView: View {
         Toggle("Include tracking accounts", isOn: $store.includeTrackingAccounts)
     }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false; Task { await reload() } } } } } }
     private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
+}
+
+enum SpendingBreakdownMode: String, CaseIterable, Identifiable { case group = "Groups", category = "Categories"; var id: Self { self } }
+
+struct SpendingBreakdownSlice: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let spendingMinor: Int64
+    let transactionIDs: [String]
+    let mode: SpendingBreakdownMode
+
+    static func make(from report: APISpendingReport, mode: SpendingBreakdownMode) -> [Self] {
+        if mode == .category {
+            return report.categories.filter { $0.spendingMinor > 0 }.map { Self(id: $0.categoryID, name: $0.categoryName, spendingMinor: $0.spendingMinor, transactionIDs: $0.transactionIDs, mode: mode) }.sorted { $0.spendingMinor > $1.spendingMinor }
+        }
+        let groups = Dictionary(grouping: report.categories.filter { $0.spendingMinor > 0 }, by: \.categoryGroup)
+        return groups.map { name, rows in Self(id: "group:\(name)", name: name, spendingMinor: rows.reduce(Int64(0)) { $0 + $1.spendingMinor }, transactionIDs: Array(Set(rows.flatMap(\.transactionIDs))).sorted(), mode: mode) }.sorted { $0.spendingMinor > $1.spendingMinor }
+    }
+
+    func percentage(of total: Int64) -> Double { total > 0 ? Double(spendingMinor) / Double(total) : 0 }
+}
+
+private struct SpendingBreakdownView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let report: APISpendingReport
+    @Binding var mode: SpendingBreakdownMode
+    @Binding var selectedAngle: Int64?
+    @Binding var selectedSlice: SpendingBreakdownSlice?
+    private var slices: [SpendingBreakdownSlice] { SpendingBreakdownSlice.make(from: report, mode: mode) }
+
+    var body: some View {
+        Section("Spending Breakdown") {
+            Picker("Break down by", selection: $mode) { ForEach(SpendingBreakdownMode.allCases) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented)
+            if slices.isEmpty || report.totalSpendingMinor <= 0 {
+                ContentUnavailableView("No spending in this range", systemImage: "chart.pie", description: Text("Try a wider date range or different filters."))
+            } else {
+                ZStack {
+                    Chart(slices) { slice in
+                        SectorMark(angle: .value("Spending", slice.spendingMinor), innerRadius: .ratio(0.62), angularInset: 1.5)
+                            .foregroundStyle(by: .value(mode.rawValue, slice.name))
+                            .accessibilityLabel(slice.name)
+                            .accessibilityValue("\(store.format(slice.spendingMinor)), \(slice.percentage(of: report.totalSpendingMinor).formatted(.percent.precision(.fractionLength(1))))")
+                    }
+                    .chartAngleSelection(value: $selectedAngle)
+                    .chartLegend(.hidden)
+                    VStack { Text("Total").font(.caption).foregroundStyle(.secondary); Text(store.format(report.totalSpendingMinor)).font(.headline).minimumScaleFactor(0.7) }
+                }
+                .frame(minHeight: 260)
+                .accessibilityIdentifier("spending-breakdown-sector-chart")
+                .onChange(of: selectedAngle) { _, value in if let value { selectedSlice = slice(at: value) } }
+            }
+        }
+    }
+
+    private func slice(at angle: Int64) -> SpendingBreakdownSlice? {
+        var upper: Int64 = 0
+        for slice in slices { upper += slice.spendingMinor; if angle <= upper { return slice } }
+        return nil
+    }
+}
+
+private struct LiveReportGroupView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let group: String
+    private var categories: [APISpendingCategoryReport] { store.spendingReport?.categories.filter { $0.categoryGroup == group && $0.spendingMinor > 0 }.sorted { $0.spendingMinor > $1.spendingMinor } ?? [] }
+    var body: some View { List { Section { LabeledContent("Total", value: store.format(categories.reduce(Int64(0)) { $0 + $1.spendingMinor })) }; Section("Categories") { ForEach(categories) { category in NavigationLink { LiveReportCategoryView(category: category) } label: { LabeledContent(category.categoryName, value: store.format(category.spendingMinor)) } } } }.navigationTitle(group) }
 }
 
 private struct LiveReportCategoryView: View {

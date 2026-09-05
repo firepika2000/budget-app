@@ -5,6 +5,28 @@ import BudgetAPI
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testSpendingBreakdownBuildsRankedCategoryAndGroupSlicesFromReportContract() throws {
+        let report = try JSONDecoder().decode(APISpendingReport.self, from: Data(#"{"start_date":"2026-08-01","end_date":"2026-08-31","currency_code":"USD","total_spending_minor":10000,"categories":[{"category_id":"food","category_name":"Food","category_group":"Everyday","spending_minor":7001,"transaction_ids":["purchase","refund","split"]},{"category_id":"fuel","category_name":"Fuel","category_group":"Everyday","spending_minor":2999,"transaction_ids":["split"]}]}"#.utf8))
+
+        let categories = SpendingBreakdownSlice.make(from: report, mode: .category)
+        XCTAssertEqual(categories.map(\.id), ["food", "fuel"])
+        XCTAssertEqual(categories.map(\.spendingMinor), [7_001, 2_999])
+        XCTAssertEqual(categories[0].percentage(of: report.totalSpendingMinor), 0.7001, accuracy: 0.000_001)
+
+        let groups = SpendingBreakdownSlice.make(from: report, mode: .group)
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups[0].spendingMinor, report.totalSpendingMinor)
+        XCTAssertEqual(Set(groups[0].transactionIDs), ["purchase", "refund", "split"])
+    }
+
+    func testProductionSpendingBreakdownRetainsSectorMarkPath() throws {
+        let testFile = URL(fileURLWithPath: #filePath)
+        let source = testFile.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let contents = try String(contentsOf: source)
+        XCTAssertTrue(contents.contains("SectorMark(angle:"))
+        XCTAssertTrue(contents.contains("spending-breakdown-sector-chart"))
+    }
+
     @MainActor
     func testAccountRegisterScopesOrdersAndDescribesProductionTransactions() async throws {
         let store = BudgetWorkspaceStore.demo()
