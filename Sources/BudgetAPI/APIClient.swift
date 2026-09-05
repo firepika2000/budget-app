@@ -297,6 +297,22 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/forecast", queryItems: [URLQueryItem(name: "through", value: through)], token: token)
     }
 
+    public func scheduledTransactions(budgetID: String, token: String) async throws -> [APIScheduledTransaction] {
+        try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions", token: token)
+    }
+    public func createScheduledTransaction(budgetID: String, schedule: APIScheduledTransactionCreate, token: String) async throws -> APIScheduledTransaction {
+        try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions", method: "POST", token: token, body: schedule)
+    }
+    public func updateScheduledTransaction(budgetID: String, scheduleID: String, schedule: APIScheduledTransactionCreate, token: String) async throws -> APIScheduledTransaction {
+        try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions/\(scheduleID)", method: "PUT", token: token, body: schedule)
+    }
+    public func deleteScheduledTransaction(budgetID: String, scheduleID: String, token: String) async throws {
+        let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions/\(scheduleID)", method: "DELETE", token: token)
+    }
+    public func realizeScheduledTransaction(budgetID: String, scheduleID: String, token: String) async throws -> APIScheduledRealization {
+        try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions/\(scheduleID)/realize", method: "POST", token: token)
+    }
+
     public func spendingReport(
         budgetID: String,
         startDate: String,

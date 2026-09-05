@@ -171,6 +171,85 @@ public struct APIBudgetCreate: Encodable, Sendable {
     }
 }
 
+public struct APIScheduledTransaction: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let budgetID: String
+    public let accountID: String
+    public let destinationAccountID: String?
+    public let categoryID: String?
+    public let name: String
+    public let amountMinor: Int64
+    public let nextDate: String
+    public let recurrenceUnit: String
+    public let intervalCount: Int
+    public let memo: String
+    public let isActive: Bool
+    public let lastRealizedOn: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, memo
+        case budgetID = "budget_id"
+        case accountID = "account_id"
+        case destinationAccountID = "destination_account_id"
+        case categoryID = "category_id"
+        case amountMinor = "amount_minor"
+        case nextDate = "next_date"
+        case recurrenceUnit = "recurrence_unit"
+        case intervalCount = "interval_count"
+        case isActive = "is_active"
+        case lastRealizedOn = "last_realized_on"
+    }
+}
+
+public struct APIScheduledTransactionCreate: Encodable, Sendable {
+    public let accountID: String
+    public let destinationAccountID: String?
+    public let categoryID: String?
+    public let name: String
+    public let amountMinor: Int64
+    public let nextDate: String
+    public let recurrenceUnit: String
+    public let intervalCount: Int
+    public let memo: String
+    public let isActive: Bool
+
+    public init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, name: String, amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1, memo: String = "", isActive: Bool = true) {
+        self.accountID = accountID; self.destinationAccountID = destinationAccountID; self.categoryID = categoryID
+        self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate
+        self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.memo = memo; self.isActive = isActive
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, memo
+        case accountID = "account_id"
+        case destinationAccountID = "destination_account_id"
+        case categoryID = "category_id"
+        case amountMinor = "amount_minor"
+        case nextDate = "next_date"
+        case recurrenceUnit = "recurrence_unit"
+        case intervalCount = "interval_count"
+        case isActive = "is_active"
+    }
+}
+
+public struct APIScheduledRealization: Decodable, Equatable, Sendable {
+    public let scheduledTransactionID: String
+    public let transactionIDs: [String]
+    public let realizedOn: String
+    public let nextDate: String?
+    public let isActive: Bool
+    public let lastRealizedOn: String
+
+    enum CodingKeys: String, CodingKey {
+        case scheduledTransactionID = "scheduled_transaction_id"
+        case transactionIDs = "transaction_ids"
+        case realizedOn = "realized_on"
+        case nextDate = "next_date"
+        case isActive = "is_active"
+        case lastRealizedOn = "last_realized_on"
+    }
+}
+
 struct APIErrorBody: Decodable {
     let detail: String?
 
