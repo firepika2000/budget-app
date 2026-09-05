@@ -54,11 +54,12 @@ YNAB behavior summaries are grounded in current first-party documentation (see r
 
 | Capability | YNAB behavior | Ref | Backend | Prod UI | Demo/Live | Tests | Status | Sev | Required work | Acceptance |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Create/edit target | Set monthly/needed-by/refill targets per category | targets | `PUT/GET /categories/{id}/target` (type, amount, minimum, priority, date, recurrence) | **no client method, no UI** | — | server-side only | **MISSING** | **P1** | Add `APIClient.upsertTarget` + Plan target editor | User creates/edits a target; it persists and drives recommended/underfunded |
+| Create/edit target | Set monthly/needed-by/refill targets per category | targets | `PUT/GET /categories/{id}/target` — **contract locked & fully tested** (`test_targets_contract`, see `docs/targets-api-contract.md`) | **no client method, no UI** | — | server-side (10 contract tests) | **MISSING (client)** — backend READY | **P1** | Add `APIClient.upsertTarget` + Plan target editor | User creates/edits a target; it persists and drives recommended/underfunded |
 | Target progress | Show progress toward target | targets | `recommended_contribution`, `underfunded` in summary | values shown, no editing | live | `test_planning` | PARTIAL | P1 | Surface progress bar tied to editable target | Progress reflects assigned vs target |
 | Target recurrence (weekly/monthly/yearly/custom) | Repeating cadence | targets | `recurrence_months` (monthly/simple) | none | — | partial | PARTIAL | P2 | Weekly/custom cadence + editor | Recurrence persists and recomputes each period |
 | Snooze/skip target | Temporarily pause a target | targets *(unverified detail)* | none | none | — | — | MISSING | P3 | Add snooze state | Snoozed target excluded from underfunded that month |
-| Delete target | Remove a target | targets | upsert can clear? verify | none | — | — | PARTIAL | P2 | Explicit delete path + UI | Deleting a target removes recommendations |
+| Delete target | Remove a target | targets | `DELETE /categories/{id}/target` — **added + tested** (removes no money/allocations) | none | — | `test_targets_contract` | IMPLEMENTED (backend); client UI pending | P2 | Add delete affordance in target editor | Deleting a target removes recommendations, not allocations |
+| Enable/disable (snooze) target | Pause a target | targets | `is_active` via upsert (tested) | none | — | `test_targets_contract` | PARTIAL (backend ready) | P3 | Toggle in editor; per-month snooze deferred | Disabled target produces no recommendation |
 
 ## 5. Auto-Assign / recommendations / underfunded
 
