@@ -417,7 +417,9 @@ struct BudgetWorkspaceView: View {
         .alert("Unable to complete request", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("Retry") { Task { await reload() } }; Button("Cancel", role: .cancel) {}
         } message: { Text(store.errorMessage ?? "Unknown error") }
-        .sheet(isPresented: $showingSettings) { LiveHouseholdView() }
+        .sheet(isPresented: $showingSettings) {
+            LiveHouseholdView(session: session, store: store)
+        }
     }
 
     private func reload() async {
@@ -754,10 +756,44 @@ private struct LiveReportCategoryView: View {
 }
 
 private struct LiveHouseholdView: View {
-    @EnvironmentObject private var session: AppSession
-    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @ObservedObject var session: AppSession
+    @ObservedObject var store: BudgetWorkspaceStore
     @Environment(\.dismiss) private var dismiss
-    var body: some View { NavigationStack { List { Section("Signed in") { LabeledContent("Member", value: session.profile?.displayName ?? ""); LabeledContent("Role", value: store.budget.effectivePermission.rawValue.capitalized) }; if store.budget.can("manage_allowances") { Section("Delegated budgets") { ForEach(store.householdMembers.filter { $0.role != "owner" && $0.isActive }) { member in NavigationLink { LiveDelegatedPolicyView(member: member) } label: { VStack(alignment: .leading) { Text(member.displayName); if let policy = store.delegatedBudgets.first(where: { $0.userID == member.userID }) { Text("Authority \(store.format(policy.authorityMinor)) · \(policy.allowReallocation ? "can reallocate" : "locked")").font(.caption).foregroundStyle(.secondary) } else { Text("Not configured").font(.caption).foregroundStyle(.secondary) } } } } } }; Section("Self-hosting") { LabeledContent("Server", value: session.serverURL?.host ?? ""); Label("Manual entry only — no bank connections", systemImage: "building.columns") } }.navigationTitle("Household").toolbar { Button("Done") { dismiss() } } } }
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Signed in") {
+                    LabeledContent("Member", value: session.profile?.displayName ?? "Demo household")
+                    LabeledContent("Role", value: store.budget.effectivePermission.rawValue.capitalized)
+                }
+                if store.budget.can("manage_allowances") {
+                    Section("Delegated budgets") {
+                        ForEach(store.householdMembers.filter { $0.role != "owner" && $0.isActive }) { member in
+                            NavigationLink { LiveDelegatedPolicyView(member: member) } label: {
+                                VStack(alignment: .leading) {
+                                    Text(member.displayName)
+                                    if let policy = store.delegatedBudgets.first(where: { $0.userID == member.userID }) {
+                                        Text("Authority \(store.format(policy.authorityMinor)) · \(policy.allowReallocation ? "can reallocate" : "locked")")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    } else {
+                                        Text("Not configured").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Section("Self-hosting") {
+                    LabeledContent("Server", value: session.serverURL?.host ?? "Deterministic demo")
+                    Label("Manual entry only — no bank connections", systemImage: "building.columns")
+                }
+            }
+            .navigationTitle("Household")
+            .toolbar { Button("Done") { dismiss() } }
+        }
+        .environmentObject(session)
+        .environmentObject(store)
+    }
 }
 
 private struct LiveDelegatedPolicyView: View {
