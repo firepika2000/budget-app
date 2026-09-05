@@ -141,6 +141,12 @@ class CategoryGroupCreate(BaseModel):
     sort_order: int = 0
 
 
+class CategoryGroupUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    sort_order: int = 0
+    is_archived: bool = False
+
+
 class CategoryGroupResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -148,6 +154,7 @@ class CategoryGroupResponse(BaseModel):
     budget_id: str
     name: str
     sort_order: int
+    is_archived: bool
 
 
 class CategoryCreate(BaseModel):

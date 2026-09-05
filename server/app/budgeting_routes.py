@@ -63,6 +63,7 @@ from .schemas import (
     CategoryDelegationUpdate,
     CategoryUpdate,
     CategoryGroupCreate,
+    CategoryGroupUpdate,
     CategoryGroupResponse,
     CategoryMonthSummary,
     CategoryResponse,
@@ -318,6 +319,27 @@ def create_category_group(
     return group
 
 
+@router.put("/category-groups/{group_id}", response_model=CategoryGroupResponse)
+def update_category_group(budget_id: str, group_id: str, body: CategoryGroupUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> CategoryGroup:
+    require_budget_capability(db, user, budget_id, "manage_budget_structure")
+    group = db.get(CategoryGroup, group_id)
+    if group is None or group.budget_id != budget_id:
+        raise HTTPException(status_code=404, detail="Category group not found")
+    group.name = body.name.strip(); group.sort_order = body.sort_order; group.is_archived = body.is_archived
+    db.commit(); db.refresh(group); return group
+
+
+@router.delete("/category-groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_category_group(budget_id: str, group_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    require_budget_capability(db, user, budget_id, "manage_budget_structure")
+    group = db.get(CategoryGroup, group_id)
+    if group is None or group.budget_id != budget_id:
+        raise HTTPException(status_code=404, detail="Category group not found")
+    if db.scalar(select(Category.id).where(Category.group_id == group_id).limit(1)) is not None:
+        raise HTTPException(status_code=409, detail="Move or archive every category before deleting this group")
+    db.delete(group); db.commit()
+
+
 @router.get("/categories", response_model=list[CategoryResponse])
 def list_categories(
     budget_id: str,
@@ -473,6 +495,23 @@ def update_category(
     db.commit()
     db.refresh(category)
     return category
+
+
+@router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_category(budget_id: str, category_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    budget = require_budget_capability(db, user, budget_id, "manage_budget_structure")
+    category = db.get(Category, category_id)
+    if category is None or category.budget_id != budget_id or category.system_type is not None:
+        raise HTTPException(status_code=404, detail="Category not found")
+    linked = any((
+        db.scalar(select(Transaction.id).where(Transaction.category_id == category_id).limit(1)),
+        db.scalar(select(TransactionSplit.id).where(TransactionSplit.category_id == category_id).limit(1)),
+        db.scalar(select(AllocationPosting.id).where(AllocationPosting.category_id == category_id).limit(1)),
+        db.scalar(select(CategoryTarget.id).where(CategoryTarget.category_id == category_id).limit(1)),
+    ))
+    if linked:
+        raise HTTPException(status_code=409, detail="This category has financial history. Archive it to preserve the audit trail")
+    db.delete(category); db.commit()
 
 
 @router.put("/categories/{category_id}/assignment", response_model=AssignmentResponse)

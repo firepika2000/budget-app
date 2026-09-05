@@ -242,12 +242,20 @@ public struct APICategoryGroup: Identifiable, Decodable, Equatable, Sendable {
     public let budgetID: String
     public let name: String
     public let sortOrder: Int
+    public let isArchived: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, name
         case budgetID = "budget_id"
         case sortOrder = "sort_order"
+        case isArchived = "is_archived"
     }
+}
+
+public struct APICategoryGroupUpdate: Encodable, Sendable {
+    public let name: String; public let sortOrder: Int; public let isArchived: Bool
+    public init(name: String, sortOrder: Int, isArchived: Bool) { self.name=name;self.sortOrder=sortOrder;self.isArchived=isArchived }
+    enum CodingKeys: String, CodingKey { case name; case sortOrder="sort_order", isArchived="is_archived" }
 }
 
 public struct APICategoryGroupCreate: Encodable, Sendable {

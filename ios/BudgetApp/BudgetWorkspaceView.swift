@@ -55,9 +55,9 @@ private final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let categoryIDs = Set(visibleCategories.map(\.id))
         let accountRows: [APIAccount] = try decode(visibleAccounts.map { ["id": $0.id, "budget_id": budget.id, "name": $0.name, "account_type": $0.kind.rawValue, "is_on_budget": $0.kind != .asset, "is_closed": false, "reconciled_balance_minor": $0.cleared, "payment_category_id": NSNull()] })
         let accountBalanceRows: [APIAccountBalance] = try decode(visibleAccounts.map { ["account_id": $0.id, "currency_code": "USD", "cleared_balance_minor": $0.cleared, "uncleared_balance_minor": $0.balance - $0.cleared, "working_balance_minor": $0.balance, "reconciled_balance_minor": $0.cleared] })
-        let groupNames = Array(Set(visibleCategories.map(\.group))).sorted()
+        let groupNames = demo.isRestricted ? demo.groupOrder.filter { name in visibleCategories.contains { $0.group == name } } : demo.groupOrder
         let groupIDs = Dictionary(uniqueKeysWithValues: groupNames.map { ($0, "demo-group-\($0.lowercased().replacingOccurrences(of: " ", with: "-"))") })
-        let groupRows: [APICategoryGroup] = try decode(groupNames.enumerated().map { ["id": groupIDs[$0.element]!, "budget_id": budget.id, "name": $0.element, "sort_order": $0.offset] })
+        let groupRows: [APICategoryGroup] = try decode(groupNames.enumerated().map { ["id": groupIDs[$0.element]!, "budget_id": budget.id, "name": $0.element, "sort_order": $0.offset, "is_archived": demo.archivedGroups.contains($0.element)] })
         let categoryRows: [APICategory] = try decode(visibleCategories.enumerated().map { index, item in ["id": item.id, "budget_id": budget.id, "group_id": groupIDs[item.group]!, "name": item.name, "sort_order": index, "is_archived": item.isHidden, "system_type": NSNull(), "linked_account_id": NSNull(), "delegated_user_id": item.delegatedTo?.rawValue.lowercased() ?? NSNull()] })
         let dateFormatter = DateFormatter(); dateFormatter.locale = Locale(identifier: "en_US_POSIX"); dateFormatter.dateFormat = "yyyy-MM-dd"
         let transactionRows: [APITransaction] = try decode(demo.visibleTransactions.map { item in
@@ -309,6 +309,24 @@ final class BudgetWorkspaceStore: ObservableObject {
         }
         await refresh()
     }
+    func updateGroup(id: String, value: APICategoryGroupUpdate) async throws {
+        if let demoSource = dataSource as? DemoWorkspaceDataSource, let current = groups.first(where: { $0.id == id }) {
+            for index in demoSource.demo.categories.indices where demoSource.demo.categories[index].group == current.name { demoSource.demo.categories[index].group = value.name }
+            if let index = demoSource.demo.groupOrder.firstIndex(of: current.name) { demoSource.demo.groupOrder[index] = value.name; demoSource.demo.groupOrder.remove(at: index); demoSource.demo.groupOrder.insert(value.name, at: min(max(value.sortOrder, 0), demoSource.demo.groupOrder.count)) }
+            demoSource.demo.archivedGroups.remove(current.name); if value.isArchived { demoSource.demo.archivedGroups.insert(value.name) }
+        } else { _ = try await liveClient().updateCategoryGroup(budgetID: budget.id, groupID: id, group: value, token: liveToken!) }
+        await refresh()
+    }
+    func deleteGroup(id: String) async throws {
+        if let demoSource = dataSource as? DemoWorkspaceDataSource, let current = groups.first(where: { $0.id == id }) { guard !demoSource.demo.categories.contains(where: { $0.group == current.name }) else { throw workspaceError("Move or archive every category before deleting this group") }; demoSource.demo.groupOrder.removeAll { $0 == current.name } }
+        else { try await liveClient().deleteCategoryGroup(budgetID: budget.id, groupID: id, token: liveToken!) }
+        await refresh()
+    }
+    func deleteCategory(id: String) async throws {
+        if let demoSource = dataSource as? DemoWorkspaceDataSource { guard !demoSource.demo.transactions.contains(where: { $0.categoryIDs.contains(id) }) else { throw workspaceError("This category has financial history. Archive it to preserve the audit trail") }; demoSource.demo.categories.removeAll { $0.id == id } }
+        else { try await liveClient().deleteCategory(budgetID: budget.id, categoryID: id, token: liveToken!) }
+        await refresh()
+    }
 
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws {
         if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.categories.firstIndex(where: { $0.id == categoryID }) { demoSource.demo.categories[index].target = value.isActive ? value.targetAmountMinor : nil; demoSource.demo.categories[index].targetDate = value.targetDate }
@@ -555,6 +573,7 @@ private struct LivePlanView: View {
     @State private var showSmartFunding = false
     @State private var showRequest = false
     @State private var managing: APICategory?
+    @State private var showGroups = false
     @State private var focus = PlanFocus.all
     private var rows: [APICategoryMonth] { (store.summary?.categories ?? []).filter { row in switch focus { case .all: true; case .underfunded: (row.underfundedMinor ?? 0) > 0; case .overspent: row.isOverspent; case .funded: (row.underfundedMinor ?? 0) == 0 && !row.isOverspent; case .available: row.availableMinor > 0 } } }
     var body: some View {
@@ -584,6 +603,7 @@ private struct LivePlanView: View {
             Menu {
                 if store.delegatedBudget == nil && store.budget.can("assign_money") { Button("Smart Funding", systemImage: "sparkles") { showSmartFunding = true } }
                 if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") { Button("Add category", systemImage: "folder.badge.plus") { showCategory = true } }
+                if store.budget.can("manage_budget_structure") { Button("Manage groups", systemImage: "folder") { showGroups = true } }
                 if store.budget.can("move_money") { Button("Move money", systemImage: "arrow.left.arrow.right") { showMove = true } }
                 if store.budget.can("request_money") { Button("Request money", systemImage: "hand.raised") { showRequest = true } }
             } label: { Image(systemName: "plus") }
@@ -594,6 +614,7 @@ private struct LivePlanView: View {
         .sheet(isPresented: $showSmartFunding) { smartFunding }
         .sheet(isPresented: $showRequest) { FundingRequestView(budget: store.budget, categories: store.categories, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload) }
         .sheet(item: $managing) { category in LiveCategoryEditView(budget: store.budget, category: category, groups: store.groups, members: store.householdMembers, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload) }
+        .sheet(isPresented: $showGroups) { LiveGroupManagementView() }
     }
     @ViewBuilder private func editAssignment(_ category: APICategoryMonth) -> some View {
         if let summary = store.summary {
@@ -621,6 +642,23 @@ private struct LivePlanView: View {
     private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
     private func canManage(_ category: APICategory) -> Bool { store.budget.can("manage_budget_structure") || (store.budget.can("manage_own_categories") && category.delegatedUserID == session.profile?.id) }
     private func changeMonth(_ value: Int) { if let next = Calendar.current.date(byAdding: .month, value: value, to: store.planMonth) { store.planMonth = next; Task { await reload() } } }
+}
+
+private struct LiveGroupManagementView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var editing: APICategoryGroup?
+    var body: some View { NavigationStack { List { ForEach(store.groups.sorted { $0.sortOrder < $1.sortOrder }) { group in Button { editing=group } label: { HStack { VStack(alignment:.leading){Text(group.name);Text(group.isArchived ? "Hidden" : "Visible").font(.caption).foregroundStyle(.secondary)};Spacer();Text("Order \(group.sortOrder)").foregroundStyle(.secondary) } } } }.navigationTitle("Category Groups").toolbar { ToolbarItem(placement:.confirmationAction){Button("Done"){dismiss()}} }.sheet(item:$editing){LiveGroupEditor(group:$0)} } }
+}
+
+private struct LiveGroupEditor: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore; @Environment(\.dismiss) private var dismiss
+    let group: APICategoryGroup
+    @State private var name: String; @State private var order: Int; @State private var archived: Bool; @State private var saving=false; @State private var error:String?; @State private var confirmDelete=false
+    init(group: APICategoryGroup){self.group=group;_name=State(initialValue:group.name);_order=State(initialValue:group.sortOrder);_archived=State(initialValue:group.isArchived)}
+    var body: some View { NavigationStack { Form { TextField("Name",text:$name);Stepper("Order \(order)",value:$order,in:0...10_000);Toggle("Hidden",isOn:$archived);Section{Text("Hiding a group preserves every category and its financial history.").font(.footnote).foregroundStyle(.secondary)};Section{Button("Delete Empty Group",role:.destructive){confirmDelete=true}} }.navigationTitle("Manage Group").toolbar{ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || saving)}}.confirmationDialog("Delete this group?",isPresented:$confirmDelete){Button("Delete Empty Group",role:.destructive){Task{await remove()}}} .alert("Unable to update group",isPresented:Binding(get:{error != nil},set:{if !$0{error=nil}})){Button("OK",role:.cancel){}}message:{Text(error ?? "Unknown error")} } }
+    private func save()async{saving=true;defer{saving=false};do{try await store.updateGroup(id:group.id,value:APICategoryGroupUpdate(name:name,sortOrder:order,isArchived:archived));dismiss()}catch{self.error=error.localizedDescription}}
+    private func remove()async{saving=true;defer{saving=false};do{try await store.deleteGroup(id:group.id);dismiss()}catch{self.error=error.localizedDescription}}
 }
 
 private enum PlanFocus: String, CaseIterable, Identifiable { case all = "All", underfunded = "Underfunded", overspent = "Overspent", funded = "Funded", available = "Available"; var id: Self { self } }
@@ -856,13 +894,14 @@ private struct LiveCategoryEditView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget; let category: APICategory; let groups: [APICategoryGroup]; let members: [APIHouseholdMember]; let serverURL: URL; let token: String; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var name: String; @State private var groupID: String; @State private var archived: Bool; @State private var delegatedUserID: String; @State private var isSaving = false; @State private var errorMessage: String?
+    @State private var name: String; @State private var groupID: String; @State private var sortOrder: Int; @State private var archived: Bool; @State private var delegatedUserID: String; @State private var isSaving = false; @State private var errorMessage: String?; @State private var confirmDelete = false
     init(budget: APIBudget, category: APICategory, groups: [APICategoryGroup], members: [APIHouseholdMember], serverURL: URL, token: String, onSaved: @escaping () async -> Void) {
         self.budget = budget; self.category = category; self.groups = groups; self.members = members; self.serverURL = serverURL; self.token = token; self.onSaved = onSaved
-        _name = State(initialValue: category.name); _groupID = State(initialValue: category.groupID); _archived = State(initialValue: category.isArchived); _delegatedUserID = State(initialValue: category.delegatedUserID ?? "")
+        _name = State(initialValue: category.name); _groupID = State(initialValue: category.groupID); _sortOrder = State(initialValue: category.sortOrder); _archived = State(initialValue: category.isArchived); _delegatedUserID = State(initialValue: category.delegatedUserID ?? "")
     }
-    var body: some View { NavigationStack { Form { TextField("Name", text: $name); Picker("Group", selection: $groupID) { ForEach(groups) { Text($0.name).tag($0.id) } }; if budget.can("manage_allowances") { Picker("Delegated budget", selection: $delegatedUserID) { Text("Household / private").tag(""); ForEach(members.filter { $0.role != "owner" && $0.isActive }) { Text($0.displayName).tag($0.userID) } } }; Toggle("Archived", isOn: $archived); if archived { Text("Archived categories remain in historical reports but are hidden from new spending and assignments.").font(.footnote).foregroundStyle(.secondary) } }.navigationTitle("Manage Category").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || groupID.isEmpty || isSaving) } }.alert("Unable to update category", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } } }
-    private func save() async { isSaving = true; defer { isSaving = false }; do { try await workspace.updateCategory(id: category.id, value: APICategoryUpdate(groupID: groupID, name: name, sortOrder: category.sortOrder, isArchived: archived), delegatedUserID: delegatedUserID.isEmpty ? nil : delegatedUserID); dismiss() } catch { errorMessage = error.localizedDescription } }
+    var body: some View { NavigationStack { Form { TextField("Name", text: $name); Picker("Group", selection: $groupID) { ForEach(groups.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } };Stepper("Order \(sortOrder)",value:$sortOrder,in:0...10_000); if budget.can("manage_allowances") { Picker("Delegated budget", selection: $delegatedUserID) { Text("Household / private").tag(""); ForEach(members.filter { $0.role != "owner" && $0.isActive }) { Text($0.displayName).tag($0.userID) } } }; Toggle("Archived", isOn: $archived); if archived { Text("Archived categories remain in historical reports but are hidden from new spending and assignments.").font(.footnote).foregroundStyle(.secondary) };Section{Button("Delete Unused Category",role:.destructive){confirmDelete=true};Text("Categories with transactions, allocations, targets, or other financial history cannot be deleted. Archive them instead.").font(.footnote).foregroundStyle(.secondary)} }.navigationTitle("Manage Category").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || groupID.isEmpty || isSaving) } }.confirmationDialog("Delete this category?",isPresented:$confirmDelete){Button("Delete Unused Category",role:.destructive){Task{await remove()}}}.alert("Unable to update category", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } } }
+    private func save() async { isSaving = true; defer { isSaving = false }; do { try await workspace.updateCategory(id: category.id, value: APICategoryUpdate(groupID: groupID, name: name, sortOrder: sortOrder, isArchived: archived), delegatedUserID: delegatedUserID.isEmpty ? nil : delegatedUserID); dismiss() } catch { errorMessage = error.localizedDescription } }
+    private func remove()async{isSaving=true;defer{isSaving=false};do{try await workspace.deleteCategory(id:category.id);dismiss()}catch{errorMessage=error.localizedDescription}}
 }
 
 private struct LiveReconcileView: View {

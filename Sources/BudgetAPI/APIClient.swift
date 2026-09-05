@@ -137,6 +137,8 @@ public struct APIClient {
             body: group
         )
     }
+    public func updateCategoryGroup(budgetID: String, groupID: String, group: APICategoryGroupUpdate, token: String) async throws -> APICategoryGroup { try await send(path: "api/v1/budgets/\(budgetID)/category-groups/\(groupID)", method: "PUT", token: token, body: group) }
+    public func deleteCategoryGroup(budgetID: String, groupID: String, token: String) async throws { let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/category-groups/\(groupID)", method: "DELETE", token: token) }
 
     public func transactions(budgetID: String, token: String) async throws -> [APITransaction] {
         try await send(path: "api/v1/budgets/\(budgetID)/transactions", token: token)
@@ -162,6 +164,7 @@ public struct APIClient {
     public func updateCategory(budgetID: String, categoryID: String, category: APICategoryUpdate, token: String) async throws -> APICategory {
         try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)", method: "PUT", token: token, body: category)
     }
+    public func deleteCategory(budgetID: String, categoryID: String, token: String) async throws { let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)", method: "DELETE", token: token) }
 
     public func updateCategoryDelegation(budgetID: String, categoryID: String, delegatedUserID: String?, token: String) async throws -> APICategory {
         try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/delegation", method: "PUT", token: token, body: APICategoryDelegationUpdate(delegatedUserID: delegatedUserID))

@@ -176,6 +176,7 @@ class CategoryGroup(Base):
     budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(100))
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Category(Base):

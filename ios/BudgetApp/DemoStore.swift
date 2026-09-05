@@ -10,6 +10,8 @@ final class DemoStore: ObservableObject {
     @Published var transactions: [DemoTransaction]
     @Published var requests: [DemoRequest]
     @Published var allowances: [DemoAllowance]
+    @Published var groupOrder: [String]
+    @Published var archivedGroups = Set<String>()
     @Published var selectedMonth = "September 2026"
     @Published private(set) var unassignedMinor: Int64 = 320000
     @Published var errorMessage: String?
@@ -24,13 +26,14 @@ final class DemoStore: ObservableObject {
         transactions = Self.seedTransactions
         requests = Self.seedRequests
         allowances = Self.seedAllowances
+        groupOrder = Array(Set(Self.seedCategories.map(\.group))).sorted()
     }
 
     var isRestricted: Bool { persona.isChild }
     var visibleAccounts: [DemoAccount] { isRestricted ? accounts.filter { !$0.restrictedFromChildren } : accounts }
     var visibleCategories: [DemoCategory] {
-        guard isRestricted else { return categories.filter { !$0.isHidden } }
-        return categories.filter { $0.delegatedTo == persona && !$0.isHidden }
+        guard isRestricted else { return categories.filter { !$0.isHidden && !archivedGroups.contains($0.group) } }
+        return categories.filter { $0.delegatedTo == persona && !$0.isHidden && !archivedGroups.contains($0.group) }
     }
     var visibleTransactions: [DemoTransaction] {
         guard isRestricted else { return transactions }
@@ -57,6 +60,8 @@ final class DemoStore: ObservableObject {
         transactions = Self.seedTransactions
         requests = Self.seedRequests
         allowances = Self.seedAllowances
+        groupOrder = Array(Set(Self.seedCategories.map(\.group))).sorted()
+        archivedGroups = []
         unassignedMinor = 320000
     }
 
