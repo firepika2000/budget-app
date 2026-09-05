@@ -81,8 +81,14 @@ The RTA identities are **non-vacuous**: the server's Ready-to-Assign (from the `
 | Permission revoked before realization blocks it | `test_scheduled_transactions_contract::test_realization_rechecks_scope_after_permission_revoked` |
 | Deleted / deactivated / cross-budget denied | `test_scheduled_transactions_contract` auth tests |
 
+## Concurrency (true PostgreSQL parallelism)
+`server/tests/test_pg_concurrency.py` closes the earlier SQLite caveat by running **genuinely overlapping transactions** (separate sessions + `threading.Barrier`) against a real PostgreSQL server, contending on the same `SELECT … FOR UPDATE` / optimistic-version mechanisms used in production. See [postgres-concurrency-testing.md](postgres-concurrency-testing.md). Proven under contention: schedule realization double-post (expense / transfer / credit), full & partial request approval, delegated-authority boundary, allocation optimistic-version race, reconciliation adjustment, and that locking never lets an unauthorized actor through. Final state is verified from stored rows, exact minor units.
+
+These tests **skip** when `BUDGET_APP_TEST_PG_URL` is unset (never a silent SQLite fallback) and run in CI against the `postgres:17-alpine` service.
+
 ## Known limitations
-- **Concurrency is not proven under true parallelism.** The suite runs on SQLite single-threaded, so `SELECT … FOR UPDATE` row-lock behavior (realization, approval, delegated authority) is verified **deterministically** (advance-then-reject, stale-version 409) rather than with concurrent workers. The row locks provide the guarantee on PostgreSQL; a real concurrency harness would need a Postgres test fixture. This is a documented gap, not a proven guarantee.
+- The concurrency tests contend on **row locks + optimistic versions** (the production mechanisms), not on `SERIALIZABLE` isolation. They assume a non-parallel pytest run against one database.
+- Author's note: the PostgreSQL concurrency suite was authored, wired into CI, and verified to **collect and skip cleanly** on the Windows dev host (no local Postgres/Docker); its passing execution is exercised by CI's Postgres service, not observed on that host.
 - The property harness is owner-driven; delegated conservation is covered by dedicated deterministic tests rather than inside the random loop.
 - Interest/fee entries are modeled as ordinary categorized/uncategorized transactions (no dedicated type), so they are covered by the generic income/expense invariants.
 
