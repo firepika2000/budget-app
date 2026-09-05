@@ -2,6 +2,21 @@ import XCTest
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testCurrencyTextAcceptsNaturalDecimalZeroAndSignedInput() {
+        XCTAssertEqual(CurrencyText.parseMinorUnits("12.34", currencyCode: "USD"), 1_234)
+        XCTAssertEqual(CurrencyText.parseMinorUnits("0", currencyCode: "USD"), 0)
+        XCTAssertEqual(CurrencyText.parseMinorUnits("-12.34", currencyCode: "USD"), -1_234)
+        XCTAssertNil(CurrencyText.parseMinorUnits("12.345", currencyCode: "USD"))
+        XCTAssertNil(CurrencyText.parseMinorUnits("not money", currencyCode: "USD"))
+    }
+
+    func testCurrencyTextEditableRoundTripsWithoutDoublePrecision() {
+        for value: Int64 in [0, 1, -1, 12_345, -98_765, 9_007_199_254_740_991] {
+            let text = CurrencyText.editable(value, currencyCode: "USD")
+            XCTAssertEqual(CurrencyText.parseMinorUnits(text, currencyCode: "USD"), value)
+        }
+    }
+
     @MainActor
     func testSeedIsDeterministicAndHasTwelveMonthsOfActivity() {
         let first = DemoStore()

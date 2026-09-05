@@ -36,8 +36,7 @@ struct TransactionEntryView: View {
                     }
                 }
                 TextField("Payee", text: $payee)
-                TextField("Amount", text: $amount)
-                    .keyboardType(.decimalPad)
+                CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode)
                 Toggle("Income / inflow", isOn: $isInflow)
                 Toggle("Split across categories", isOn: $isSplit)
                     .disabled(isInflow)
@@ -50,8 +49,7 @@ struct TransactionEntryView: View {
                                     Text(category.name).tag(category.id)
                                 }
                             }
-                            TextField("Split amount", text: $row.amount)
-                                .keyboardType(.decimalPad)
+                            CurrencyAmountField("Split amount", text: $row.amount, currencyCode: budget.currencyCode, allowsZero: true)
                             TextField("Split memo", text: $row.memo)
                         }
                         Button("Add another split", systemImage: "plus") { splitRows.append(SplitDraft()) }
@@ -210,7 +208,7 @@ struct AllocationTransferView: View {
                         Text(category.name).tag(category.categoryID)
                     }
                 }
-                TextField("Amount", text: $amount).keyboardType(.decimalPad)
+                CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode)
                 TextField("Reason (optional)", text: $note)
             }
             .navigationTitle("Move Money")
@@ -323,8 +321,7 @@ struct AssignmentEditView: View {
         NavigationStack {
             Form {
                 Section(category.name) {
-                    TextField("Assigned amount", text: $amount)
-                        .keyboardType(.numbersAndPunctuation)
+                    CurrencyAmountField("Assigned amount", text: $amount, currencyCode: budget.currencyCode, allowsNegative: true, allowsZero: true)
                     Text("Enter a negative amount to move money back to Ready to Assign.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -399,7 +396,7 @@ struct FundingRequestView: View {
                         Text(category.name).tag(category.id)
                     }
                 }
-                TextField("Amount", text: $amount).keyboardType(.decimalPad)
+                CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode)
                 TextField("What is this for?", text: $reason, axis: .vertical)
             }
             .navigationTitle("Request Money")
@@ -487,12 +484,75 @@ enum CurrencyText {
         currencyFormatter.numberStyle = .currency
         currencyFormatter.currencyCode = currencyCode
         let digits = currencyFormatter.maximumFractionDigits
-        let divisor = pow(10.0, Double(digits))
+        let divisor = NSDecimalNumber(mantissa: 1, exponent: Int16(digits), isNegative: false)
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = digits
         formatter.maximumFractionDigits = digits
-        return formatter.string(from: NSNumber(value: Double(minorUnits) / divisor)) ?? ""
+        return formatter.string(from: NSDecimalNumber(value: minorUnits).dividing(by: divisor)) ?? ""
+    }
+}
+
+struct CurrencyAmountField: View {
+    private let title: String
+    @Binding private var text: String
+    private let currencyCode: String
+    private let allowsNegative: Bool
+    private let allowsZero: Bool
+    @FocusState private var isFocused: Bool
+
+    init(_ title: String, text: Binding<String>, currencyCode: String, allowsNegative: Bool = false, allowsZero: Bool = false) {
+        self.title = title
+        _text = text
+        self.currencyCode = currencyCode
+        self.allowsNegative = allowsNegative
+        self.allowsZero = allowsZero
+    }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer(minLength: 12)
+                TextField("0.00", text: $text)
+                    .focused($isFocused)
+                    .keyboardType(allowsNegative ? .numbersAndPunctuation : .decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(minWidth: 120)
+                    .accessibilityLabel(title)
+                if !text.isEmpty {
+                    Button {
+                        text = ""
+                        isFocused = true
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear \(title)")
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { isFocused = true }
+            if !text.isEmpty && !isValid {
+                Text(validationMessage).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { isFocused = false }
+            }
+        }
+    }
+
+    private var isValid: Bool {
+        guard let parsed = CurrencyText.parseMinorUnits(text, currencyCode: currencyCode) else { return false }
+        if !allowsNegative && parsed < 0 { return false }
+        return allowsZero || parsed != 0
+    }
+
+    private var validationMessage: String {
+        allowsNegative ? "Enter a valid currency amount." : "Enter a valid non-negative currency amount."
     }
 }
 
