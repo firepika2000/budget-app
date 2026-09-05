@@ -20,6 +20,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(store.summary?.readyToAssignMinor, before.0)
         XCTAssertEqual(store.balance(for: account), before.1)
         XCTAssertEqual(store.transactions.count, before.2)
+        XCTAssertTrue(store.forecast?.occurrences.contains { $0.name == "Future years" && $0.amountMinor == 50_000 } == true)
 
         let edited = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Future months" })
         try await store.updateSchedule(id: edited.id, value: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3))
@@ -29,6 +30,25 @@ final class DemoStoreTests: XCTestCase {
         let deletable = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Future days" })
         try await store.deleteSchedule(id: deletable.id)
         XCTAssertFalse(store.scheduledTransactions.contains { $0.id == deletable.id })
+    }
+
+    @MainActor
+    func testScheduledProductionSurfacesShareWorkspaceStateAndForecastContract() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let forecast = try XCTUnwrap(store.forecast)
+        XCTAssertFalse(forecast.occurrences.isEmpty)
+        XCTAssertTrue(forecast.occurrences.contains { $0.destinationAccountID != nil })
+        XCTAssertTrue(forecast.occurrences.contains { $0.amountMinor > 0 })
+        XCTAssertTrue(forecast.occurrences.contains { $0.accountID == "visa" })
+
+        let testFile = URL(fileURLWithPath: #filePath)
+        let source = testFile.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let contents = try String(contentsOf: source)
+        XCTAssertTrue(contents.contains("LiveScheduledTransactionsView"))
+        XCTAssertTrue(contents.contains("Upcoming scheduled"))
+        XCTAssertTrue(contents.contains("View all scheduled transactions"))
+        XCTAssertTrue(contents.contains("Projected values include schedules but are not spendable"))
     }
 
     @MainActor
