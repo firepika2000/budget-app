@@ -876,7 +876,10 @@ private struct LiveActivityView: View {
     @State private var showTransfer = false
     var filtered: [APITransaction] { store.transactions.filter { search.isEmpty || $0.payeeName.localizedCaseInsensitiveContains(search) || $0.memo.localizedCaseInsensitiveContains(search) || store.categoryName($0).localizedCaseInsensitiveContains(search) } }
     var body: some View {
-        List { ForEach(filtered) { LiveTransactionLink(transaction: $0) } }
+        List {
+            Section("Planning") { NavigationLink { LiveScheduledTransactionsView() } label: { Label("Scheduled transactions", systemImage: "calendar.badge.clock") } }
+            Section("Posted activity") { ForEach(filtered) { LiveTransactionLink(transaction: $0) } }
+        }
             .searchable(text: $search, prompt: "Payee, memo, or category")
             .navigationTitle("Activity")
             .toolbar { if store.budget.can("create_transaction") { Menu { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { showTransfer = true } } label: { Image(systemName: "plus") } } }
@@ -890,6 +893,124 @@ private struct LiveActivityView: View {
         TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload)
     }
     private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
+}
+
+private enum ScheduledKind: String, CaseIterable, Identifiable {
+    case expense = "Expense", income = "Income", transfer = "Transfer"
+    var id: Self { self }
+    var symbol: String { switch self { case .expense: "arrow.up.right"; case .income: "arrow.down.left"; case .transfer: "arrow.left.arrow.right" } }
+}
+
+private struct LiveScheduledTransactionsView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @State private var showCreate = false
+    private var due: [APIScheduledTransaction] { store.scheduledTransactions.filter { BudgetWorkspaceStore.parseDate($0.nextDate) <= Date() }.sorted { $0.nextDate < $1.nextDate } }
+    private var upcoming: [APIScheduledTransaction] { store.scheduledTransactions.filter { BudgetWorkspaceStore.parseDate($0.nextDate) > Date() }.sorted { $0.nextDate < $1.nextDate } }
+    var body: some View {
+        List {
+            Section { Text("Scheduled money is a forecast only. It changes no balance, category, or Available amount until you explicitly enter it.").font(.footnote).foregroundStyle(.secondary) }
+            if store.scheduledTransactions.isEmpty && !store.isLoading { ContentUnavailableView("No scheduled transactions", systemImage: "calendar.badge.plus", description: Text("Add recurring bills, income, or transfers without posting them early.")) }
+            scheduleSection("Due", values: due)
+            scheduleSection("Upcoming", values: upcoming)
+        }
+        .navigationTitle("Scheduled")
+        .toolbar { if store.budget.can("manage_planning") { Button { showCreate = true } label: { Image(systemName: "plus") }.accessibilityLabel("Add scheduled transaction") } }
+        .sheet(isPresented: $showCreate) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode) }
+        .refreshable { await store.refresh() }
+    }
+    @ViewBuilder private func scheduleSection(_ title: String, values: [APIScheduledTransaction]) -> some View {
+        if !values.isEmpty { Section(title) { ForEach(values) { item in NavigationLink { LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode) } label: { ScheduledTransactionRow(item: item) } } } }
+    }
+}
+
+private struct ScheduledTransactionRow: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let item: APIScheduledTransaction
+    private var kind: ScheduledKind { item.destinationAccountID != nil ? .transfer : item.amountMinor > 0 ? .income : .expense }
+    private var recurrence: String { item.recurrenceUnit == "once" ? "Once" : "Every \(item.intervalCount == 1 ? "" : "\(item.intervalCount) ")\(item.recurrenceUnit.dropLast(item.intervalCount == 1 ? 1 : 0))" }
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: kind.symbol).frame(width: 28, height: 28).foregroundStyle(kind == .income ? Theme.healthy : kind == .transfer ? Theme.projected : Theme.attention)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.name).fontWeight(.medium)
+                Text("\(accountName(item.accountID)) · \(recurrence)").font(.caption).foregroundStyle(.secondary)
+                if let category = item.categoryID { Text(store.categories.first(where: { $0.id == category })?.name ?? "Category").font(.caption2).foregroundStyle(.secondary) }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 3) { Text(store.format(item.amountMinor)).monospacedDigit(); Text(item.nextDate).font(.caption).foregroundStyle(BudgetWorkspaceStore.parseDate(item.nextDate) <= Date() ? Theme.danger : .secondary) }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(item.name), \(kind.rawValue), \(store.format(item.amountMinor)), \(recurrence), next \(item.nextDate)")
+    }
+    private func accountName(_ id: String) -> String { store.accounts.first(where: { $0.id == id })?.name ?? "Account" }
+}
+
+private struct LiveScheduledTransactionEditor: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let schedule: APIScheduledTransaction?
+    let currencyCode: String
+    @State private var kind: ScheduledKind
+    @State private var accountID: String
+    @State private var destinationAccountID: String
+    @State private var categoryID: String
+    @State private var name: String
+    @State private var amount: String
+    @State private var nextDate: Date
+    @State private var recurrenceUnit: String
+    @State private var intervalCount: Int
+    @State private var memo: String
+    @State private var active: Bool
+    @State private var saving = false
+    @State private var error: String?
+    @State private var confirmDelete = false
+    @State private var confirmRealize = false
+
+    init(schedule: APIScheduledTransaction?, currencyCode: String) {
+        self.schedule = schedule; self.currencyCode = currencyCode
+        let inferred: ScheduledKind = schedule?.destinationAccountID != nil ? .transfer : (schedule?.amountMinor ?? -1) > 0 ? .income : .expense
+        _kind = State(initialValue: inferred); _accountID = State(initialValue: schedule?.accountID ?? ""); _destinationAccountID = State(initialValue: schedule?.destinationAccountID ?? ""); _categoryID = State(initialValue: schedule?.categoryID ?? ""); _name = State(initialValue: schedule?.name ?? ""); _amount = State(initialValue: CurrencyText.editable(abs(schedule?.amountMinor ?? 0), currencyCode: currencyCode)); _nextDate = State(initialValue: schedule.map { BudgetWorkspaceStore.parseDate($0.nextDate) } ?? Date()); _recurrenceUnit = State(initialValue: schedule?.recurrenceUnit ?? "months"); _intervalCount = State(initialValue: schedule?.intervalCount ?? 1); _memo = State(initialValue: schedule?.memo ?? ""); _active = State(initialValue: schedule?.isActive ?? true)
+    }
+    private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: store.budget.currencyCode), value > 0 else { return nil }; return value }
+    private var due: Bool { schedule != nil && Calendar.current.startOfDay(for: nextDate) <= Calendar.current.startOfDay(for: Date()) }
+    private var valid: Bool { parsed != nil && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !accountID.isEmpty && (kind != .expense || !categoryID.isEmpty) && (kind != .transfer || !destinationAccountID.isEmpty && destinationAccountID != accountID) }
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Transaction") {
+                    Picker("Type", selection: $kind) { ForEach(ScheduledKind.allCases) { Label($0.rawValue, systemImage: $0.symbol).tag($0) } }.onChange(of: kind) { _, value in if value == .transfer { categoryID = "" } else { destinationAccountID = "" } }
+                    TextField("Payee or description", text: $name)
+                    Picker("Account", selection: $accountID) { Text("Select account").tag(""); ForEach(store.accounts.filter { !$0.isClosed }) { Text($0.name).tag($0.id) } }
+                    if kind == .transfer { Picker("Destination", selection: $destinationAccountID) { Text("Select account").tag(""); ForEach(store.accounts.filter { !$0.isClosed && $0.id != accountID }) { Text($0.name).tag($0.id) } } }
+                    else if kind == .expense { Picker("Category", selection: $categoryID) { Text("Select category").tag(""); ForEach(store.categories.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } } }
+                    CurrencyAmountField("Amount", text: $amount, currencyCode: store.budget.currencyCode)
+                    TextField("Memo", text: $memo, axis: .vertical)
+                }
+                Section("Schedule") {
+                    DatePicker("Next occurrence", selection: $nextDate, displayedComponents: .date)
+                    Picker("Repeats", selection: $recurrenceUnit) { Text("Once").tag("once"); Text("Days").tag("days"); Text("Weeks").tag("weeks"); Text("Months").tag("months"); Text("Years").tag("years") }
+                    if recurrenceUnit != "once" { Stepper("Every \(intervalCount) \(recurrenceUnit)", value: $intervalCount, in: 1...365) }
+                    Toggle("Active", isOn: $active)
+                    if kind == .income { Label("Future income remains forecast-only and is not available to spend until entered.", systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary) }
+                }
+                if let schedule {
+                    if due && store.budget.can("create_transaction") { Section { Button("Enter Now", systemImage: "checkmark.circle") { confirmRealize = true }.disabled(saving); Text("This posts the due occurrence through the normal transaction engine and then advances the schedule.").font(.footnote).foregroundStyle(.secondary) } }
+                    if store.budget.can("manage_planning") { Section { Button("Delete Schedule", role: .destructive) { confirmDelete = true }; Text("Deleting the schedule keeps any transactions already entered from it.").font(.footnote).foregroundStyle(.secondary) } }
+                    if schedule.lastRealizedOn != nil { Section("History") { LabeledContent("Last entered", value: schedule.lastRealizedOn ?? "") } }
+                }
+            }
+            .navigationTitle(schedule == nil ? "New Schedule" : "Edit Schedule")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; if store.budget.can("manage_planning") { ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(!valid || saving) } } }
+            .confirmationDialog("Enter this occurrence now?", isPresented: $confirmRealize) { Button("Enter Now") { Task { await realize() } } } message: { Text("This creates an actual transaction. It is no longer forecast-only.") }
+            .confirmationDialog("Delete this schedule?", isPresented: $confirmDelete) { Button("Delete Schedule", role: .destructive) { Task { await remove() } } }
+            .alert("Unable to update schedule", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
+        }
+    }
+    private func payload(isActive: Bool? = nil) -> APIScheduledTransactionCreate { .init(accountID: accountID, destinationAccountID: kind == .transfer ? destinationAccountID : nil, categoryID: kind == .expense ? categoryID : nil, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: kind == .expense ? -(parsed ?? 0) : parsed ?? 0, nextDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrenceUnit, intervalCount: recurrenceUnit == "once" ? 1 : intervalCount, memo: memo, isActive: isActive ?? active) }
+    private func save() async { saving = true; defer { saving = false }; do { if let schedule { try await store.updateSchedule(id: schedule.id, value: payload()) } else { try await store.createSchedule(payload()) }; dismiss() } catch { self.error = error.localizedDescription } }
+    private func remove() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { try await store.deleteSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
+    private func realize() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { _ = try await store.realizeSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
 }
 
 private struct LiveTransactionLink: View {
