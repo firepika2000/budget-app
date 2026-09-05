@@ -86,6 +86,32 @@ def get_category_target(
     return target
 
 
+@router.delete("/categories/{category_id}/target", status_code=status.HTTP_204_NO_CONTENT)
+def delete_category_target(
+    budget_id: str,
+    category_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    budget = require_budget_capability(db, user, budget_id, "manage_planning")
+    category = db.get(Category, category_id)
+    if (
+        category is None or category.budget_id != budget_id
+        or not can_access_resource(db, user, budget, "category", category_id)
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target not found")
+    target = db.scalar(select(CategoryTarget).where(
+        CategoryTarget.budget_id == budget_id,
+        CategoryTarget.category_id == category_id,
+    ))
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target not found")
+    # Targets are planning metadata only. Removing one deletes no allocations or transactions
+    # and moves no money; recommendations simply stop being produced for the category.
+    db.delete(target)
+    db.commit()
+
+
 @router.get("/scheduled-transactions", response_model=list[ScheduledTransactionResponse])
 def list_scheduled_transactions(
     budget_id: str,
