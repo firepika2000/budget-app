@@ -446,3 +446,82 @@ def test_reconciled_transaction_cannot_be_edited_or_deleted(client, owner_token,
     assert client.delete(
         f"/api/v1/budgets/{budget['id']}/transactions/{transaction['id']}", headers=auth(owner_token)
     ).status_code == 409
+
+
+def test_transaction_edit_preserves_resent_metadata_and_split_transitions(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    dining = add_category(client, owner_token, budget["id"], "Food", "Dining")
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100000, is_cleared=True)
+
+    original = record(
+        client, owner_token, budget["id"], account_id=checking["id"],
+        category_id=groceries["id"], amount_minor=-5000, is_cleared=True,
+        payee_name="Market", memo="weekly", flag="red",
+        tags=["work", "reimburse"], attachment_metadata=[{"name": "receipt.jpg"}],
+    )
+    assert original["flag"] == "red"
+    assert original["tags"] == ["work", "reimburse"]
+
+    # Client re-sends the full object changing only the amount; metadata must survive.
+    edited = client.put(
+        f"/api/v1/budgets/{budget['id']}/transactions/{original['id']}", headers=auth(owner_token),
+        json={
+            "account_id": checking["id"], "category_id": groceries["id"], "amount_minor": -6500,
+            "occurred_on": "2026-09-04", "payee_name": "Market", "memo": "weekly",
+            "is_cleared": True, "flag": "red", "tags": ["work", "reimburse"],
+            "attachment_metadata": [{"name": "receipt.jpg"}],
+        },
+    )
+    assert edited.status_code == 200, edited.text
+    body = edited.json()
+    assert body["amount_minor"] == -6500
+    assert body["flag"] == "red"
+    assert body["tags"] == ["work", "reimburse"]
+    assert body["attachment_metadata"] == [{"name": "receipt.jpg"}]
+    assert body["is_cleared"] is True
+    assert body["memo"] == "weekly"
+
+    # Single -> split.
+    to_split = client.put(
+        f"/api/v1/budgets/{budget['id']}/transactions/{original['id']}", headers=auth(owner_token),
+        json={
+            "account_id": checking["id"], "category_id": None, "amount_minor": -12000,
+            "occurred_on": "2026-09-04", "payee_name": "Market",
+            "splits": [
+                {"category_id": groceries["id"], "amount_minor": -8000},
+                {"category_id": dining["id"], "amount_minor": -4000},
+            ],
+        },
+    )
+    assert to_split.status_code == 200, to_split.text
+    assert to_split.json()["category_id"] is None
+    assert len(to_split.json()["splits"]) == 2
+
+    # Split -> single.
+    to_single = client.put(
+        f"/api/v1/budgets/{budget['id']}/transactions/{original['id']}", headers=auth(owner_token),
+        json={
+            "account_id": checking["id"], "category_id": dining["id"], "amount_minor": -3000,
+            "occurred_on": "2026-09-04", "payee_name": "Market",
+        },
+    )
+    assert to_single.status_code == 200, to_single.text
+    assert to_single.json()["category_id"] == dining["id"]
+    assert to_single.json()["splits"] == []
+
+    # A split whose parts do not equal the total is rejected (invariant preserved on edit).
+    bad = client.put(
+        f"/api/v1/budgets/{budget['id']}/transactions/{original['id']}", headers=auth(owner_token),
+        json={
+            "account_id": checking["id"], "category_id": None, "amount_minor": -10000,
+            "occurred_on": "2026-09-04", "payee_name": "Market",
+            "splits": [
+                {"category_id": groceries["id"], "amount_minor": -4000},
+                {"category_id": dining["id"], "amount_minor": -4000},
+            ],
+        },
+    )
+    assert bad.status_code == 422

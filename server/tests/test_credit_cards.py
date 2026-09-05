@@ -278,3 +278,48 @@ def test_editing_funded_card_purchase_rebuilds_activity_and_payment_reserve(
         assert changes[0].after_json is not None
         assert '"category_id":"' + dining["id"] + '"' in changes[0].before_json
         assert '"category_id":"' + groceries["id"] + '"' in changes[0].after_json
+
+
+def test_deleting_funded_card_purchase_releases_reserve_and_records_history(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    card = create_credit_card(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], checking["id"], amount=100000)
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{groceries['id']}/assignment",
+        headers=auth(owner_token), json={"month": "2026-09-01", "assigned_minor": 50000},
+    ).status_code == 200
+
+    purchase = record(
+        client, owner_token, budget["id"], account_id=card["id"],
+        category_id=groceries["id"], amount_minor=-30000, payee_name="Market",
+    )
+    _, rows = category_rows(client, owner_token, budget["id"])
+    assert rows["Groceries"]["available_minor"] == 20000
+    assert rows["Visa Payment"]["available_minor"] == 30000
+    assert account_balance(client, owner_token, budget["id"], card["id"]) == -30000
+
+    deleted = client.delete(
+        f"/api/v1/budgets/{budget['id']}/transactions/{purchase['id']}", headers=auth(owner_token)
+    )
+    assert deleted.status_code == 204, deleted.text
+
+    _, rows = category_rows(client, owner_token, budget["id"])
+    # Category spending fully reversed and the payment reserve released.
+    assert rows["Groceries"]["available_minor"] == 50000
+    assert rows["Groceries"]["activity_minor"] == 0
+    assert rows["Visa Payment"]["available_minor"] == 0
+    assert account_balance(client, owner_token, budget["id"], card["id"]) == 0
+
+    with session_factory() as db:
+        assert db.query(CreditCardReserveEvent).filter_by(
+            source_transaction_id=purchase["id"]
+        ).count() == 0
+        history = db.query(TransactionChange).filter_by(
+            transaction_id=purchase["id"], action="deleted"
+        ).all()
+        assert len(history) == 1
+        assert history[0].before_json is not None
+        assert history[0].after_json is None

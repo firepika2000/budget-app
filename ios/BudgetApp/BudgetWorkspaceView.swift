@@ -496,7 +496,7 @@ private struct LivePlanView: View {
             Section("Plan") {
                 HStack { Button { changeMonth(-1) } label: { Image(systemName: "chevron.left") }; Spacer(); Text(store.planMonth.formatted(.dateTime.month(.wide).year())).font(.headline); Spacer(); Button { changeMonth(1) } label: { Image(systemName: "chevron.right") } }
                 ForEach(store.summary?.categories ?? []) { category in
-                    Button { if store.budget.can("assign_money") { editing = category } } label: {
+                    Button { if store.delegatedBudget == nil && store.budget.can("assign_money") { editing = category } } label: {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack { Text(category.name); Spacer(); Text(store.format(category.availableMinor)).fontWeight(.semibold) }
                             HStack { Text("Assigned \(store.format(category.assignedMinor))"); Spacer(); Text("Activity \(store.format(category.activityMinor))") }.font(.caption).foregroundStyle(.secondary)
@@ -506,7 +506,7 @@ private struct LivePlanView: View {
             }
         }.navigationTitle("Plan").toolbar {
             Menu {
-                if store.budget.can("assign_money") { Button("Smart Funding", systemImage: "sparkles") { showSmartFunding = true } }
+                if store.delegatedBudget == nil && store.budget.can("assign_money") { Button("Smart Funding", systemImage: "sparkles") { showSmartFunding = true } }
                 if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") { Button("Add category", systemImage: "folder.badge.plus") { showCategory = true } }
                 if store.budget.can("move_money") { Button("Move money", systemImage: "arrow.left.arrow.right") { showMove = true } }
                 if store.budget.can("request_money") { Button("Request money", systemImage: "hand.raised") { showRequest = true } }
@@ -729,8 +729,28 @@ private struct LiveInsightsView: View {
 private struct LiveReportCategoryView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let category: APISpendingCategoryReport
-    var transactions: [APITransaction] { store.transactions.filter { category.transactionIDs.contains($0.id) } }
-    var body: some View { List { Section { LabeledContent("Total", value: store.format(category.spendingMinor)); LabeledContent("Transactions", value: "\(transactions.count)"); LabeledContent("Average", value: store.format(transactions.isEmpty ? 0 : category.spendingMinor / Int64(transactions.count))) }; Section("Transactions") { ForEach(transactions) { LiveTransactionLink(transaction: $0) } } }.navigationTitle(category.categoryName) }
+    // Re-derive from the live report so that editing a transaction out of this category
+    // recalculates the total/contributing rows on return instead of showing a stale snapshot.
+    private var liveRow: APISpendingCategoryReport? { store.spendingReport?.categories.first { $0.categoryID == category.categoryID } }
+    private var reportLoaded: Bool { store.spendingReport != nil }
+    private var displayName: String { liveRow?.categoryName ?? category.categoryName }
+    private var spendingMinor: Int64 { reportLoaded ? (liveRow?.spendingMinor ?? 0) : category.spendingMinor }
+    private var contributingIDs: [String] { reportLoaded ? (liveRow?.transactionIDs ?? []) : category.transactionIDs }
+    var transactions: [APITransaction] { store.transactions.filter { contributingIDs.contains($0.id) } }
+    var body: some View {
+        List {
+            Section {
+                LabeledContent("Total", value: store.format(spendingMinor))
+                LabeledContent("Transactions", value: "\(transactions.count)")
+                LabeledContent("Average", value: store.format(transactions.isEmpty ? 0 : spendingMinor / Int64(transactions.count)))
+            }
+            if transactions.isEmpty {
+                Section { ContentUnavailableView("No spending in this range", systemImage: "tray") }
+            } else {
+                Section("Transactions") { ForEach(transactions) { LiveTransactionLink(transaction: $0) } }
+            }
+        }.navigationTitle(displayName)
+    }
 }
 
 private struct LiveHouseholdView: View {
