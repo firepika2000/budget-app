@@ -604,3 +604,73 @@ def test_double_approval_with_same_initial_version_has_exactly_one_winner(
         ).count()
         assert approvals == 1
         assert db.query(RequestAction).filter_by(request_id=request["id"]).count() == 2
+
+
+def test_transaction_edit_and_delete_enforce_scope_and_ownership(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    child_category = add_category(client, owner_token, budget["id"], "Delegated", "Child Fun")
+    child_id, child_token = add_child(session_factory, client)
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/grants", headers=auth(owner_token),
+        json={"user_id": child_id, "permission": "contribute"},
+    ).status_code == 200
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token),
+        json={
+            "capabilities": [
+                "view_budget", "view_accounts", "view_categories", "view_transactions",
+                "create_transaction", "edit_transaction", "delete_transaction",
+            ],
+            "restrict_accounts": True, "account_ids": [checking["id"]],
+            "restrict_categories": True, "category_ids": [child_category["id"]],
+        },
+    ).status_code == 200
+
+    owner_txn = record(
+        client, owner_token, budget["id"], account_id=checking["id"],
+        category_id=groceries["id"], amount_minor=-5000, payee_name="Owner private",
+    )
+    own = record(
+        client, child_token, budget["id"], account_id=checking["id"],
+        category_id=child_category["id"], amount_minor=-1000, payee_name="Snack",
+    )
+
+    valid_child_body = {
+        "account_id": checking["id"], "category_id": child_category["id"],
+        "amount_minor": -1200, "occurred_on": "2026-09-04", "payee_name": "Snack",
+    }
+
+    # Cannot edit a transaction the member did not create (even on an accessible account).
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/transactions/{owner_txn['id']}",
+        headers=auth(child_token), json=valid_child_body,
+    ).status_code == 403
+    # Cannot move own transaction into a category outside scope.
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/transactions/{own['id']}",
+        headers=auth(child_token),
+        json={**valid_child_body, "category_id": groceries["id"]},
+    ).status_code == 422
+    # Cannot delete another member's transaction.
+    assert client.delete(
+        f"/api/v1/budgets/{budget['id']}/transactions/{owner_txn['id']}",
+        headers=auth(child_token),
+    ).status_code == 403
+    # Owner's transaction is untouched by the failed attempts.
+    remaining = client.get(
+        f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)
+    ).json()
+    assert owner_txn["id"] in {item["id"] for item in remaining}
+
+    # In-scope edit and delete of own transaction succeed.
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/transactions/{own['id']}",
+        headers=auth(child_token), json=valid_child_body,
+    ).status_code == 200
+    assert client.delete(
+        f"/api/v1/budgets/{budget['id']}/transactions/{own['id']}",
+        headers=auth(child_token),
+    ).status_code == 204
