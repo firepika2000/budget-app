@@ -5,6 +5,11 @@ import BudgetAPI
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    override func tearDown() {
+        ConnectionURLProtocol.handler = nil
+        super.tearDown()
+    }
+
     @MainActor
     func testScheduledRepositoryCRUDRecurrencesAndFutureIncomeStayNonSpendable() async throws {
         let store = BudgetWorkspaceStore.demo()
@@ -246,12 +251,94 @@ final class DemoStoreTests: XCTestCase {
         render(delegated.environmentObject(session).environmentObject(store))
     }
 
+    @MainActor
+    func testDataSourceModeAndServerURLPersistAcrossSessionRelaunch() async throws {
+        let (defaults, domain) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let service = "BudgetAppTests.\(UUID().uuidString)"
+        let factory = connectionClientFactory { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/health")
+            return Self.response(request, body: #"{"status":"ok"}"#)
+        }
+        let first = AppSession(defaults: defaults, keychain: KeychainStore(service: service), clientFactory: factory, initialMode: .deterministic)
+        await first.configureServer("http://127.0.0.1:8000")
+        XCTAssertEqual(first.composition, .liveServer)
+        XCTAssertEqual(first.connectionStatus, .authenticationRequired)
+
+        let relaunched = AppSession(defaults: defaults, keychain: KeychainStore(service: service), clientFactory: factory)
+        XCTAssertEqual(relaunched.sourceMode, .liveServer)
+        XCTAssertEqual(relaunched.serverURL?.absoluteString, "http://127.0.0.1:8000")
+        XCTAssertEqual(relaunched.composition, .liveServer)
+        relaunched.selectDeterministic()
+        let demoRelaunch = AppSession(defaults: defaults, keychain: KeychainStore(service: service), clientFactory: factory)
+        XCTAssertEqual(demoRelaunch.composition, .deterministic)
+    }
+
+    @MainActor
+    func testUnreachableAndInvalidLiveServerNeverFallBackToDemo() async {
+        let (defaults, domain) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let unreachable = AppSession(
+            defaults: defaults,
+            keychain: KeychainStore(service: "BudgetAppTests.\(UUID().uuidString)"),
+            clientFactory: connectionClientFactory { _ in throw URLError(.cannotConnectToHost) },
+            initialMode: .deterministic
+        )
+        await unreachable.configureServer("http://127.0.0.1:65530")
+        XCTAssertEqual(unreachable.composition, .liveServer)
+        guard case .unreachable = unreachable.connectionStatus else { return XCTFail("Expected unreachable live state") }
+
+        let invalid = AppSession(defaults: defaults, keychain: KeychainStore(service: "BudgetAppTests.\(UUID().uuidString)"), initialMode: .deterministic)
+        await invalid.configureServer("not a server URL")
+        XCTAssertEqual(invalid.composition, .liveServer)
+        guard case .invalidConfiguration = invalid.connectionStatus else { return XCTFail("Expected invalid live configuration") }
+    }
+
+    @MainActor
+    func testChangingCompositionDoesNotMutateDeterministicFinancialState() async {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let before = (store.transactions.count, store.summary?.readyToAssignMinor, store.categories.map(\.availableMinor))
+        let (defaults, domain) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let session = AppSession(
+            defaults: defaults,
+            keychain: KeychainStore(service: "BudgetAppTests.\(UUID().uuidString)"),
+            clientFactory: connectionClientFactory { request in Self.response(request, body: #"{"status":"ok"}"#) },
+            initialMode: .deterministic
+        )
+        await session.configureServer("http://127.0.0.1:8000")
+        XCTAssertEqual(session.composition, .liveServer)
+        XCTAssertEqual(store.transactions.count, before.0)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, before.1)
+        XCTAssertEqual(store.categories.map(\.availableMinor), before.2)
+    }
+
     func testCurrencyTextAcceptsNaturalDecimalZeroAndSignedInput() {
         XCTAssertEqual(CurrencyText.parseMinorUnits("12.34", currencyCode: "USD"), 1_234)
         XCTAssertEqual(CurrencyText.parseMinorUnits("0", currencyCode: "USD"), 0)
         XCTAssertEqual(CurrencyText.parseMinorUnits("-12.34", currencyCode: "USD"), -1_234)
         XCTAssertNil(CurrencyText.parseMinorUnits("12.345", currencyCode: "USD"))
         XCTAssertNil(CurrencyText.parseMinorUnits("not money", currencyCode: "USD"))
+    }
+
+    private func isolatedDefaults() -> (UserDefaults, String) {
+        let domain = "BudgetAppTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: domain)!
+        defaults.removePersistentDomain(forName: domain)
+        return (defaults, domain)
+    }
+
+    private func connectionClientFactory(_ handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) -> (URL) throws -> APIClient {
+        ConnectionURLProtocol.handler = handler
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ConnectionURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        return { try APIClient(baseURL: $0, session: session) }
+    }
+
+    private static func response(_ request: URLRequest, body: String) -> (HTTPURLResponse, Data) {
+        (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(body.utf8))
     }
 
     func testCurrencyTextEditableRoundTripsWithoutDoublePrecision() {
@@ -398,4 +485,20 @@ final class DemoStoreTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         window.isHidden = true
     }
+}
+
+private final class ConnectionURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        do {
+            guard let handler = Self.handler else { throw URLError(.badServerResponse) }
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+    override func stopLoading() {}
 }

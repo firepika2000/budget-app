@@ -7,25 +7,20 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            #if DEBUG
-            if !ProcessInfo.processInfo.arguments.contains("--live") {
+            if session.composition == .deterministic {
                 BudgetWorkspaceView.demo()
-            } else if session.serverURL == nil {
+            } else if session.serverURL == nil || needsServerConfiguration {
                 ServerSetupView()
+            } else if session.connectionStatus == .connecting {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Connecting to Budget Server…").foregroundStyle(.secondary)
+                }
             } else if session.token == nil {
                 AuthenticationView()
             } else {
                 BudgetListView()
             }
-            #else
-            if session.serverURL == nil {
-                ServerSetupView()
-            } else if session.token == nil {
-                AuthenticationView()
-            } else {
-                BudgetListView()
-            }
-            #endif
         }
         .alert("Something went wrong", isPresented: Binding(
             get: { session.errorMessage != nil },
@@ -36,9 +31,17 @@ struct RootView: View {
             Text(session.errorMessage ?? "Unknown error")
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active, session.token != nil {
-                Task { await session.loadBudgets() }
+            if phase == .active, session.sourceMode == .liveServer {
+                Task { await session.validateSelectedSource() }
             }
+        }
+        .task { await session.validateSelectedSource() }
+    }
+
+    private var needsServerConfiguration: Bool {
+        switch session.connectionStatus {
+        case .unreachable, .invalidConfiguration: true
+        default: false
         }
     }
 }
@@ -50,6 +53,12 @@ private struct ServerSetupView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Data Source") {
+                    LabeledContent("Mode", value: "Live Budget Server")
+                    Button("Use Deterministic Demo") { session.selectDeterministic() }
+                    Text("Demo data is temporary and is not your authoritative household database.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("Your server") {
                     TextField("https://budget.example.com", text: $address)
                         .textInputAutocapitalization(.never)
@@ -59,6 +68,10 @@ private struct ServerSetupView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                Section("Connection Status") {
+                    Label(session.connectionStatus.title, systemImage: connectionSymbol)
+                    if let detail = session.connectionStatus.detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
+                }
                 Button("Connect") {
                     Task { await session.configureServer(address) }
                 }
@@ -66,6 +79,65 @@ private struct ServerSetupView: View {
             }
             .navigationTitle("Connect Budget App")
             .overlay { if session.isWorking { ProgressView() } }
+            .onAppear { if let url = session.serverURL { address = url.absoluteString } }
+        }
+    }
+
+    private var connectionSymbol: String {
+        switch session.connectionStatus {
+        case .connected: "checkmark.circle.fill"
+        case .connecting: "arrow.triangle.2.circlepath"
+        case .authenticationRequired: "person.badge.key"
+        case .deterministic: "shippingbox"
+        case .unreachable, .invalidConfiguration: "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+struct ServerConnectionSettingsView: View {
+    @EnvironmentObject private var session: AppSession
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedMode: AppDataSourceMode = .deterministic
+    @State private var address = "http://127.0.0.1:8000"
+
+    var body: some View {
+        Form {
+            Section("Data Source") {
+                Picker("Mode", selection: $selectedMode) {
+                    ForEach(AppDataSourceMode.allCases) { Text($0.title).tag($0) }
+                }
+                Text(selectedMode == .deterministic
+                     ? "Uses temporary acceptance fixtures. Changes do not belong to your live household and reset on relaunch."
+                     : "Uses the authoritative Budget Server. Changes are sent to that server and persist there.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if selectedMode == .liveServer {
+                Section("Server Address") {
+                    TextField("http://127.0.0.1:8000", text: $address)
+                        .textInputAutocapitalization(.never).keyboardType(.URL).autocorrectionDisabled()
+                    Text("Raw addresses are available for development acceptance. Discovery and secure pairing remain future work.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            Section("Connection Status") {
+                LabeledContent("Status", value: session.connectionStatus.title)
+                if let detail = session.connectionStatus.detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
+                if let url = session.serverURL { LabeledContent("Server", value: url.absoluteString) }
+            }
+            Section {
+                Button(selectedMode == .deterministic ? "Use Deterministic Demo" : "Test and Connect") {
+                    if selectedMode == .deterministic { session.selectDeterministic(); dismiss() }
+                    else { Task { await session.configureServer(address) } }
+                }
+                .disabled(session.isWorking || (selectedMode == .liveServer && address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+            }
+        }
+        .navigationTitle("Server Connection")
+        .navigationBarTitleDisplayMode(.inline)
+        .overlay { if session.isWorking { ProgressView() } }
+        .onAppear {
+            selectedMode = session.sourceMode
+            if let url = session.serverURL { address = url.absoluteString }
         }
     }
 }
@@ -82,6 +154,10 @@ private struct AuthenticationView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Server Connection") {
+                    LabeledContent("Status", value: session.connectionStatus.title)
+                    LabeledContent("Server", value: session.serverURL?.absoluteString ?? "Not configured")
+                }
                 Picker("Mode", selection: $mode) {
                     Text("Sign in").tag(0)
                     Text("First-time setup").tag(1)

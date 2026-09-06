@@ -630,12 +630,15 @@ struct BudgetWorkspaceView: View {
     }
 
     private func reload() async {
-        if ProcessInfo.processInfo.arguments.contains("--demo") || session.serverURL == nil && session.token == nil {
+        if session.sourceMode == .deterministic {
             await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
             return
         }
         do { try await session.refreshIfNeeded() } catch { store.errorMessage = error.localizedDescription; return }
-        guard let url = session.serverURL, let token = session.token else { return }
+        guard let url = session.serverURL, let token = session.token else {
+            store.errorMessage = "Live Budget Server authentication is required."
+            return
+        }
         await store.load(serverURL: url, token: token)
     }
 }
@@ -1366,7 +1369,10 @@ struct LiveHouseholdView: View {
                     }
                 }
                 Section("Self-hosting") {
-                    LabeledContent("Server", value: session.serverURL?.host ?? "Deterministic demo")
+                    LabeledContent("Data Source", value: session.sourceMode.title)
+                    LabeledContent("Status", value: session.connectionStatus.title)
+                    LabeledContent("Server", value: session.serverURL?.absoluteString ?? "No live server configured")
+                    NavigationLink("Server Connection") { ServerConnectionSettingsView() }
                     Label("Manual entry only — no bank connections", systemImage: "building.columns")
                 }
             }

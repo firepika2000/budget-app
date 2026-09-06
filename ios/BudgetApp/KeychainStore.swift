@@ -2,7 +2,11 @@ import Foundation
 import Security
 
 struct KeychainStore {
-    private let service = "com.firepika.BudgetApp"
+    private let service: String
+
+    init(service: String = "com.firepika.BudgetApp") {
+        self.service = service
+    }
 
     func save(_ value: String, account: String) throws {
         let encoded = Data(value.utf8)
@@ -46,4 +50,3 @@ struct KeychainStore {
 enum KeychainError: Error {
     case unhandled(OSStatus)
 }
-

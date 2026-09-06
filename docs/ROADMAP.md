@@ -74,6 +74,8 @@ The `codex/v0.4.0-stabilization` branch currently includes:
 
 The v0.4 release is not yet accepted merely because these implementation checkpoints exist. Human Xcode Simulator and authenticated live acceptance remain ongoing. Point-in-time reviews may list gaps that later branch commits resolved; use their acceptance criteria to retest the newer implementation.
 
+Completing v0.4 live acceptance also requires an explicit, persisted development data-source selection that connects the production UI to the configured authoritative server without silently falling back to deterministic fixtures. Raw server-address entry is acceptable for this development gate only; consumer discovery and secure pairing remain v0.9 work.
+
 ## Release sequence
 
 ### v0.4 — Core Budgeting Stabilization
