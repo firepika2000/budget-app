@@ -2,16 +2,45 @@ from .conftest import auth
 from app.models import RefreshSession
 
 
+BOOTSTRAP_BODY = {
+    "email": "owner@example.com",
+    "password": "correct horse battery staple",
+    "display_name": "Owner",
+    "household_name": "Home",
+}
+
+
 def test_bootstrap_is_single_use(client):
-    body = {
-        "email": "owner@example.com",
-        "password": "correct horse battery staple",
-        "display_name": "Owner",
-        "household_name": "Home",
-    }
-    assert client.post("/api/v1/auth/bootstrap", json=body).status_code == 201
-    second = client.post("/api/v1/auth/bootstrap", json={**body, "email": "other@example.com"})
+    assert client.post("/api/v1/auth/bootstrap", json=BOOTSTRAP_BODY).status_code == 201
+    second = client.post("/api/v1/auth/bootstrap", json={**BOOTSTRAP_BODY, "email": "other@example.com"})
     assert second.status_code == 409
+
+
+def test_bootstrap_status_is_uninitialized_on_a_fresh_server(client):
+    response = client.get("/api/v1/bootstrap/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["initialized"] is False
+    assert body["authentication_required"] is True
+    assert isinstance(body["api_version"], str) and body["api_version"]
+    # Discovery must never require auth and must not leak household/user detail.
+    assert set(body.keys()) == {"initialized", "authentication_required", "api_version"}
+
+
+def test_bootstrap_status_becomes_initialized_after_first_owner_and_stays_claimed(client):
+    assert client.post("/api/v1/auth/bootstrap", json=BOOTSTRAP_BODY).status_code == 201
+    body = client.get("/api/v1/bootstrap/status").json()
+    assert body["initialized"] is True
+    # A second device cannot re-run first-owner bootstrap once initialized.
+    assert client.post("/api/v1/auth/bootstrap", json={**BOOTSTRAP_BODY, "email": "second@example.com"}).status_code == 409
+    # And the status response still leaks nothing about the owner/household.
+    text = client.get("/api/v1/bootstrap/status").text
+    assert "owner@example.com" not in text and "Home" not in text and "Owner" not in text
+
+
+def test_bootstrap_status_does_not_require_authentication(client):
+    # No Authorization header at all.
+    assert client.get("/api/v1/bootstrap/status").status_code == 200
 
 
 def test_login_returns_working_bearer_token(client, owner_token):

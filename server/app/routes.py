@@ -31,6 +31,7 @@ from .schemas import (
     AccessProfileResponse,
     AccessProfileUpsert,
     BootstrapRequest,
+    BootstrapStatusResponse,
     BudgetCreate,
     BudgetResponse,
     GrantResponse,
@@ -45,10 +46,28 @@ from .sessions import issue_session, revoke_session, rotate_session
 
 router = APIRouter(prefix="/api/v1")
 
+# Single source for the client compatibility check; keep in step with the FastAPI app version.
+API_VERSION = "0.4.0"
+
 
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/bootstrap/status", response_model=BootstrapStatusResponse)
+def bootstrap_status(db: Session = Depends(get_db)) -> BootstrapStatusResponse:
+    """Let the client discover whether first-run setup or sign-in is required, without
+    inferring it from authentication failures and without leaking any household data."""
+    initialized = (
+        db.scalar(select(SetupState.id).limit(1)) is not None
+        or db.scalar(select(User.id).limit(1)) is not None
+    )
+    return BootstrapStatusResponse(
+        initialized=initialized,
+        authentication_required=True,
+        api_version=API_VERSION,
+    )
 
 
 @router.post("/auth/bootstrap", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)

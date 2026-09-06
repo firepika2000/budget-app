@@ -40,6 +40,10 @@ public struct APIClient {
         let _: [String: String] = try await send(path: "api/v1/health")
     }
 
+    public func bootstrapStatus() async throws -> APIBootstrapStatus {
+        try await send(path: "api/v1/bootstrap/status")
+    }
+
     public func login(email: String, password: String) async throws -> APIAuthTokens {
         try await send(
             path: "api/v1/auth/login",

@@ -16,8 +16,10 @@ struct RootView: View {
                     ProgressView()
                     Text("Connecting to Budget Server…").foregroundStyle(.secondary)
                 }
+            } else if session.connectionStatus == .setupRequired {
+                AuthenticationView(firstRun: true)
             } else if session.token == nil {
-                AuthenticationView()
+                AuthenticationView(firstRun: false)
             } else {
                 BudgetListView()
             }
@@ -88,6 +90,7 @@ private struct ServerSetupView: View {
         case .connected: "checkmark.circle.fill"
         case .connecting: "arrow.triangle.2.circlepath"
         case .authenticationRequired: "person.badge.key"
+        case .setupRequired: "sparkles"
         case .deterministic: "shippingbox"
         case .unreachable, .invalidConfiguration: "exclamationmark.triangle.fill"
         }
@@ -144,12 +147,18 @@ struct ServerConnectionSettingsView: View {
 
 private struct AuthenticationView: View {
     @EnvironmentObject private var session: AppSession
-    @State private var mode = 0
+    let firstRun: Bool
+    @State private var mode: Int
     @State private var email = ""
     @State private var password = ""
     @State private var displayName = ""
     @State private var householdName = ""
     @State private var invitationToken = ""
+
+    init(firstRun: Bool = false) {
+        self.firstRun = firstRun
+        _mode = State(initialValue: firstRun ? 1 : 0)
+    }
 
     var body: some View {
         NavigationStack {
@@ -158,12 +167,19 @@ private struct AuthenticationView: View {
                     LabeledContent("Status", value: session.connectionStatus.title)
                     LabeledContent("Server", value: session.serverURL?.absoluteString ?? "Not configured")
                 }
-                Picker("Mode", selection: $mode) {
-                    Text("Sign in").tag(0)
-                    Text("First-time setup").tag(1)
-                    Text("Join family").tag(2)
+                if firstRun {
+                    Section {
+                        Text("This Budget Server has not been set up yet. Create the first household and its owner account to begin.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Picker("Mode", selection: $mode) {
+                        Text("Sign in").tag(0)
+                        Text("First-time setup").tag(1)
+                        Text("Join family").tag(2)
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
                 if mode != 0 {
                     TextField("Your name", text: $displayName)
                 }
@@ -204,7 +220,7 @@ private struct AuthenticationView: View {
                 .disabled(session.isWorking || !formIsValid)
                 Button("Use a different server", role: .cancel) { session.changeServer() }
             }
-            .navigationTitle("Budget App")
+            .navigationTitle(firstRun ? "First-Time Setup" : "Budget App")
             .overlay { if session.isWorking { ProgressView() } }
         }
     }

@@ -11,7 +11,7 @@ enum AppDataSourceMode: String, CaseIterable, Identifiable {
 enum AppComposition: Equatable { case deterministic, liveServer }
 
 enum ServerConnectionStatus: Equatable {
-    case deterministic, connecting, connected, authenticationRequired
+    case deterministic, connecting, connected, authenticationRequired, setupRequired
     case unreachable(String), invalidConfiguration(String)
 
     var title: String {
@@ -20,6 +20,7 @@ enum ServerConnectionStatus: Equatable {
         case .connecting: "Connecting"
         case .connected: "Connected"
         case .authenticationRequired: "Authentication required"
+        case .setupRequired: "First-time setup required"
         case .unreachable: "Unreachable"
         case .invalidConfiguration: "Invalid configuration"
         }
@@ -99,9 +100,18 @@ final class AppSession: ObservableObject {
         debugLog("initializing live repository for: \(url.absoluteString)")
         do {
             try await client.health()
-            connectionStatus = token == nil ? .authenticationRequired : .connected
             debugLog("live server health check succeeded")
-            if token != nil { await loadBudgets() }
+            // Discover whether the server still needs first-run setup, so a fresh install shows
+            // First-Time Setup instead of a Sign In prompt the tester can't satisfy. A server that
+            // predates this endpoint fails the call and falls back to the existing behavior.
+            let status = try? await client.bootstrapStatus()
+            if let status, !status.initialized {
+                connectionStatus = .setupRequired
+                debugLog("live server reports uninitialized: first-run setup required")
+            } else {
+                connectionStatus = token == nil ? .authenticationRequired : .connected
+                if token != nil { await loadBudgets() }
+            }
         } catch {
             let message = connectionMessage(error)
             connectionStatus = isConfigurationError(error) ? .invalidConfiguration(message) : .unreachable(message)

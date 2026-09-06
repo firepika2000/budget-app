@@ -34,6 +34,14 @@ class TokenResponse(BaseModel):
     token_type: Literal["bearer"] = "bearer"
 
 
+class BootstrapStatusResponse(BaseModel):
+    """Safe, unauthenticated server-state discovery. Exposes no users, households, or secrets."""
+
+    initialized: bool
+    authentication_required: bool
+    api_version: str
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=40, max_length=200)
 

@@ -21,6 +21,25 @@ final class APIClientTests: XCTestCase {
         XCTAssertNoThrow(try APIClient(baseURL: URL(string: "http://localhost:8080")!))
     }
 
+    func testBootstrapStatusDiscoversUninitializedServerWithoutAuthentication() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/api/v1/bootstrap/status")
+            // Discovery must not send credentials — it precedes sign in.
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            let body = Data(#"{"initialized":false,"authentication_required":true,"api_version":"0.4.0"}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+
+        let status = try await client.bootstrapStatus()
+
+        XCTAssertEqual(status, APIBootstrapStatus(initialized: false, authenticationRequired: true, apiVersion: "0.4.0"))
+    }
+
     func testBudgetRequestSendsBearerTokenAndDecodesPrivacyFilteredList() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

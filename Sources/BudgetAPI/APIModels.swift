@@ -250,6 +250,22 @@ public struct APIScheduledRealization: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIBootstrapStatus: Decodable, Equatable, Sendable {
+    public let initialized: Bool
+    public let authenticationRequired: Bool
+    public let apiVersion: String
+
+    public init(initialized: Bool, authenticationRequired: Bool, apiVersion: String) {
+        self.initialized = initialized; self.authenticationRequired = authenticationRequired; self.apiVersion = apiVersion
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case initialized
+        case authenticationRequired = "authentication_required"
+        case apiVersion = "api_version"
+    }
+}
+
 struct APIErrorBody: Decodable {
     let detail: String?
 
