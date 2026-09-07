@@ -384,6 +384,65 @@ final class APIClientTests: XCTestCase {
         let schedules = try await client.scheduledTransactions(budgetID: "b1", includeInactive: true, token: "secret")
         XCTAssertEqual(schedules.map(\.isActive), [false])
     }
+
+    func testBootstrapRequestEncodesExactBackendFieldNames() throws {
+        // The backend BootstrapRequest requires snake_case display_name / household_name. Lock the
+        // wire encoding so a fresh iOS first-time setup cannot silently drift from the contract.
+        let data = try JSONEncoder().encode(BootstrapRequest(
+            email: "owner@example.com",
+            password: "correct horse battery staple",
+            displayName: "Owner",
+            householdName: "Home"
+        ))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(Set(json.keys), ["email", "password", "display_name", "household_name"])
+        XCTAssertEqual(json["display_name"] as? String, "Owner")
+        XCTAssertEqual(json["household_name"] as? String, "Home")
+        XCTAssertEqual(json["email"] as? String, "owner@example.com")
+    }
+
+    func testValidationErrorArraySurfacesReadableFieldMessage() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/auth/bootstrap")
+            // FastAPI 422: `detail` is an array of {loc, msg, type}, not a string or {message}.
+            let body = Data(#"{"detail":[{"type":"string_too_short","loc":["body","password"],"msg":"String should have at least 12 characters","input":"short"}]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 422, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        do {
+            _ = try await client.bootstrap(BootstrapRequest(email: "owner@example.com", password: "short", displayName: "Owner", householdName: "Home"))
+            XCTFail("Expected a validation error")
+        } catch let APIClientError.server(status, message) {
+            XCTAssertEqual(status, 422)
+            // Humanized field label + FastAPI message, without raw type/loc internals.
+            XCTAssertEqual(message, "Password: String should have at least 12 characters")
+        }
+    }
+
+    func testDelegatedBudgetNotFoundSurfacesAsServer404() async throws {
+        // The owner has no delegated budget, so /delegated-budgets/me returns 404 by design. The
+        // workspace loads it with `try?`, so the contract is: a 404 throws server(404) (→ nil),
+        // never a decode crash or a swallowed success.
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/delegated-budgets/me")
+            let body = Data(#"{"detail":"Delegated budget not found"}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        do {
+            _ = try await client.delegatedBudget(budgetID: "b1", token: "secret")
+            XCTFail("Expected a 404")
+        } catch let APIClientError.server(status, message) {
+            XCTAssertEqual(status, 404)
+            XCTAssertEqual(message, "Delegated budget not found")
+        }
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

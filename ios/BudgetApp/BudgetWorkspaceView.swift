@@ -745,6 +745,14 @@ private struct LivePlanView: View {
     @State private var showGroups = false
     @State private var focus = PlanFocus.all
     private var rows: [APICategoryMonth] { (store.summary?.categories ?? []).filter { row in switch focus { case .all: true; case .underfunded: (row.underfundedMinor ?? 0) > 0; case .overspent: row.isOverspent; case .funded: (row.underfundedMinor ?? 0) == 0 && !row.isOverspent; case .available: row.availableMinor > 0 } } }
+    // A brand-new Budget has no groups/categories. Surface a discoverable primary action to create
+    // the first group/category through the same production workflow used later, so the owner is not
+    // left at a dead end. Gated on structural authority (an owner always has it); delegated members
+    // manage only their own scoped categories and do not define the household's first plan skeleton.
+    private var showFirstPlanEmptyState: Bool {
+        store.summary != nil && store.groups.isEmpty && store.categories.isEmpty && !store.isLoading
+            && store.delegatedBudget == nil && store.budget.can("manage_budget_structure")
+    }
     var body: some View {
         List {
             if let delegated = store.delegatedBudget {
@@ -759,6 +767,21 @@ private struct LivePlanView: View {
             }
             if let summary = store.summary {
                 Section("Month summary") { LabeledContent("Assigned", value: store.format(summary.totalAssignedMinor)); LabeledContent("Overspent", value: store.format(summary.totalOverspentMinor)); LabeledContent("Monthly plan cost", value: store.format(summary.categories.reduce(Int64(0)) { $0 + ($1.recommendedContributionMinor ?? 0) })) }
+            }
+            if showFirstPlanEmptyState {
+                Section {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Build your first plan").font(.headline)
+                        Text("Categories give your money a purpose. Start by creating a category group, then add categories for the things you spend and save for.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                        Button { showCategory = true } label: {
+                            Label("Create Category Group", systemImage: "folder.badge.plus").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityHint("Opens the form to create your first category group and category.")
+                    }
+                    .padding(.vertical, 6)
+                }
             }
             Section("Plan") {
                 HStack { Button { changeMonth(-1) } label: { Image(systemName: "chevron.left") }; Spacer(); Button("Today") { store.planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year,.month], from: Date()))!; Task { await reload() } }; Text(store.planMonth.formatted(.dateTime.month(.wide).year())).font(.headline); Spacer(); Button { changeMonth(1) } label: { Image(systemName: "chevron.right") } }

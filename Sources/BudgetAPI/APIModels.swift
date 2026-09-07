@@ -272,14 +272,46 @@ struct APIErrorBody: Decodable {
     private enum CodingKeys: String, CodingKey { case detail }
     private struct DetailObject: Decodable { let message: String? }
 
+    // One entry of a FastAPI 422 validation-error array: {"loc": ["body","password"], "msg": ...}.
+    // We surface `msg` prefixed with a humanized field label and deliberately ignore `type`/`input`
+    // so raw Pydantic internals never reach the user.
+    private struct ValidationItem: Decodable {
+        let msg: String?
+        let field: String?
+        private enum CodingKeys: String, CodingKey { case msg, loc }
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            msg = try? container.decode(String.self, forKey: .msg)
+            var label: String?
+            if var loc = try? container.nestedUnkeyedContainer(forKey: .loc) {
+                var parts: [String] = []
+                while !loc.isAtEnd {
+                    if let text = try? loc.decode(String.self) { parts.append(text) }
+                    else if let index = try? loc.decode(Int.self) { parts.append(String(index)) }
+                    else { break }
+                }
+                label = parts.last(where: { $0 != "body" && $0 != "query" && $0 != "path" })
+            }
+            field = label
+        }
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // FastAPI `detail` is usually a string, but several financial-conflict responses
         // (reconciliation mismatch, allocation/request version conflict, stale balance) return
-        // an object like {"message": ..., "cleared_balance_minor": ...}. Surface either form so
-        // the actionable message reaches the user instead of a generic status string.
+        // an object like {"message": ..., "cleared_balance_minor": ...}, and request-validation
+        // (422) responses return an array of {loc, msg} items. Surface each form so the actionable
+        // message reaches the user instead of a generic status string.
         if let text = try? container.decode(String.self, forKey: .detail) {
             detail = text
+        } else if let items = try? container.decode([ValidationItem].self, forKey: .detail), !items.isEmpty {
+            let messages = items.compactMap { item -> String? in
+                guard let msg = item.msg else { return nil }
+                guard let field = item.field else { return msg }
+                return "\(field.replacingOccurrences(of: "_", with: " ").capitalized): \(msg)"
+            }
+            detail = messages.isEmpty ? nil : messages.joined(separator: "\n")
         } else if let object = try? container.decode(DetailObject.self, forKey: .detail) {
             detail = object.message
         } else {

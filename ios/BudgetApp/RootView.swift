@@ -197,6 +197,13 @@ private struct AuthenticationView: View {
                         .autocorrectionDisabled()
                 }
                 SecureField("Password", text: $password)
+                if mode != 0 {
+                    // New credentials must satisfy the server's 12-character minimum. Validate before
+                    // submission so a short password never returns an opaque server-side 422.
+                    Text(!password.isEmpty && password.count < 12 ? "Password must be at least 12 characters." : "Use at least 12 characters.")
+                        .font(.caption)
+                        .foregroundStyle(!password.isEmpty && password.count < 12 ? Color.red : Color.secondary)
+                }
                 Button(actionTitle) {
                     Task {
                         if mode == 0 {
@@ -233,11 +240,17 @@ private struct AuthenticationView: View {
         }
     }
 
+    // Mirror the backend contract (bootstrap/accept-invitation: password >= 12, email >= 3,
+    // display/household names non-blank) so the primary action stays disabled until a request would
+    // pass validation, rather than surfacing a server-side 422 as the user's first feedback.
     private var formIsValid: Bool {
-        guard !password.isEmpty else { return false }
-        if mode == 2 { return !displayName.isEmpty && !invitationToken.isEmpty }
-        if mode == 1 { return !email.isEmpty && !displayName.isEmpty && !householdName.isEmpty }
-        return !email.isEmpty
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasName = !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        switch mode {
+        case 1: return password.count >= 12 && trimmedEmail.count >= 3 && hasName && !householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case 2: return password.count >= 12 && hasName && !invitationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        default: return !password.isEmpty && !trimmedEmail.isEmpty
+        }
     }
 }
 
@@ -259,11 +272,24 @@ private struct BudgetListView: View {
             }
             .overlay {
                 if session.budgets.isEmpty && !session.isWorking {
-                    ContentUnavailableView(
-                        "No shared budgets",
-                        systemImage: "tray",
-                        description: Text("Ask the household owner to share a budget with this account.")
-                    )
+                    if canCreateBudget {
+                        // The signed-in user owns an active household, so the zero-Budget state is an
+                        // invitation to create the first one — not a request to wait for a share.
+                        ContentUnavailableView {
+                            Label("No budgets yet", systemImage: "tray")
+                        } description: {
+                            Text("Create your first budget to start organizing your household's money.")
+                        } actions: {
+                            Button("Create Budget") { showingBudgetCreation = true }
+                                .buttonStyle(.borderedProminent)
+                        }
+                    } else {
+                        ContentUnavailableView(
+                            "No shared budgets",
+                            systemImage: "tray",
+                            description: Text("Ask the household owner to share a budget with this account.")
+                        )
+                    }
                 }
             }
             .navigationTitle("Budgets")
@@ -273,7 +299,7 @@ private struct BudgetListView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack {
-                        if !ownerHouseholds.isEmpty {
+                        if canCreateBudget {
                             Button { showingBudgetCreation = true } label: {
                                 Image(systemName: "plus")
                             }
@@ -295,6 +321,10 @@ private struct BudgetListView: View {
     private var ownerHouseholds: [APIHousehold] {
         session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? []
     }
+
+    // The same signal that gates the "+" toolbar action: whether the user owns an active household
+    // and may therefore create a Budget. Drives capability-appropriate empty-state copy.
+    private var canCreateBudget: Bool { !ownerHouseholds.isEmpty }
 }
 
 private struct BudgetCreationView: View {
