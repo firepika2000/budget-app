@@ -8,6 +8,7 @@ This document distinguishes the implemented baseline from future milestone scope
 
 - [Core behavioral parity review](ynab-core-parity-2026.md)
 - [v0.4 core-completeness acceptance](v0.4-core-completeness-acceptance.md)
+- [v0.4 live acceptance (current findings)](v0.4.0-live-acceptance.md)
 - [Financial invariants and enforcing tests](financial-invariants.md)
 - [Architecture direction](architecture.md)
 - [v0.4 Mac acceptance](v0.4.0-mac-acceptance.md)
@@ -33,6 +34,8 @@ These constraints apply to every milestone:
 - **Recommendations do not mutate truth.** Smart Funding, targets, forecasts, scenarios, and later intelligence explain or propose changes; only an explicit valid financial operation changes authoritative state.
 - **Self-hosting and ownership are durable requirements.** Core use cannot require a vendor SaaS account, ongoing subscription, or vendor-operated cloud service. Data must remain exportable, recoverable, and under the household's control.
 - **Bank connectivity stays deferred.** The manual financial system must become mature, trustworthy, and releasable before imported financial data is introduced.
+- **Empty states are part of the product, not edge cases.** A fresh household must always have an obvious next action. A new installation, a new Budget, and an empty Plan must each present a discoverable path forward and must never dead-end into a state the user cannot leave without an API or developer workaround.
+- **Teach the financial model, not just the interface.** Onboarding and education explain both how to operate Budget App and why the allocation model works the way it does — money location versus purpose, and that future income helps you plan but is not spendable until it is actually received. Education never bypasses an invariant and never quietly mutates authoritative household data.
 
 ## Definition of complete
 
@@ -53,6 +56,8 @@ The capability is understandable and usable in the actual application without re
 ### 4. Distribution reality
 
 The capability works in an installation and operating environment appropriate to its intended user. A workflow that depends on undocumented shell commands, manually managed infrastructure, or developer intervention is not complete for normal households.
+
+**Functional onboarding directly affects gates 2–4.** If a real user cannot discover how to progress from a fresh state into using a capability — for example, a new Budget with no discoverable way to create the first category — then production completeness, human acceptance, and distribution reality are not met, regardless of how correct the underlying accounting is.
 
 ## Current baseline
 
@@ -76,6 +81,16 @@ The v0.4 release is not yet accepted merely because these implementation checkpo
 
 Completing v0.4 live acceptance also requires an explicit, persisted development data-source selection that connects the production UI to the configured authoritative server without silently falling back to deterministic fixtures. Raw server-address entry is acceptable for this development gate only; consumer discovery and secure pairing remain v0.9 work.
 
+**Live acceptance is now running against authoritative PostgreSQL state.** Hands-on testing has connected the iOS Simulator to a fresh PostgreSQL-backed Budget Server and demonstrated the live path through health/status discovery, first-owner initialization, Sign In, authenticated application entry, first Budget creation, and initial production data hydration. Detailed evidence and findings are tracked in [v0.4.0 live acceptance](v0.4.0-live-acceptance.md). **v0.4 is not complete.** Current blockers and open findings include:
+
+- **Fresh Plan / category onboarding dead end (blocker).** A newly created live Budget has no category groups/categories and the Plan UI exposes no discoverable path to create the first one, so a new household cannot progress into normal budgeting without an API/manual workaround. See the v0.4 milestone requirement and the First-Budget Experience below.
+- **iOS first-time bootstrap submission returned `422` and requires diagnosis.** The setup form (which does include a Household Name field) failed where a direct request on the documented contract succeeded; the client-side root cause is not yet known.
+- **Owner Budgets empty-state wording is contextually wrong** — an authenticated owner was shown "ask the owner to share a budget" copy.
+- **`GET /delegated-budgets/me` returned `404` for the owner** — semantic review pending (legitimate "no delegated budget" versus an empty-state/integration issue).
+- **Remaining live persistence and financial-workflow acceptance is pending.** In particular, the intended live financial-persistence check (`$720 → $860`) has **not** been completed — it is currently blocked by the Plan onboarding dead end, since the fresh Budget has no categories to assign against.
+
+Because CI minutes are temporarily exhausted, local verification is serving as the active gate while that capacity is unavailable; this is an engineering constraint, not a change to any acceptance gate.
+
 ## Release sequence
 
 ### v0.4 — Core Budgeting Stabilization
@@ -96,6 +111,24 @@ The release must demonstrate that:
 - serious crashes and previously discovered profile/money-entry regressions stay closed.
 
 Accounting errors, persistence failures, serious crashes, incorrect authorization, privacy leaks, future-income leakage, and money-conservation failures block release. Cosmetic issues may be deferred unless they prevent normal use or comprehension. The detailed release gate is maintained in [v0.4 core-completeness acceptance](v0.4-core-completeness-acceptance.md) and the hands-on scripts linked above.
+
+#### Functional first-run onboarding (required for v0.4)
+
+v0.4 must include enough functional onboarding and empty-state behavior that a brand-new live household can create and use its first Budget **without any API or manual intervention**. The path `new installation → household → owner → budget → accounts → categories → usable Plan` must not dead-end at any step.
+
+Specifically for v0.4: **the Plan empty state must provide a discoverable path to create the first category group and category.** This is the functional onboarding requirement, not the polished guided tour — the complete interactive walkthrough (see [Onboarding and Product Education](#onboarding-and-product-education)) is **not** required for v0.4 and is scheduled at v0.7.
+
+#### First-Budget Experience
+
+A fresh Budget must offer a deliberate first-run experience with clear, discoverable actions, at minimum:
+
+- Add your first account;
+- Create your first category group;
+- Add categories;
+- Understand Available to Assign;
+- Begin assigning real money.
+
+For v0.4, **manual creation with excellent empty-state guidance is sufficient** — starter category templates, household-type templates, and guided setup recommendations are future possibilities and are **not** mandatory for this milestone. Any template or sample content, if later added, must respect the "empty states are part of the product" and "recommendations do not mutate truth" principles: it may propose structure but must not silently create authoritative money.
 
 ### v0.5 — Transaction System + Payees
 
@@ -142,7 +175,18 @@ Scope includes:
 - clearer member, role, capability, account, and category-scope management;
 - delegated budgets, allowances, and transparent funding rules;
 - complete Requests lifecycle, including cancellation, expiration, decision history, and recovery;
-- household controls expressed in human terms while retaining deny-by-default server enforcement.
+- household controls expressed in human terms while retaining deny-by-default server enforcement;
+- the primary **Guided Onboarding & Product Education** workstream (below).
+
+#### Guided Onboarding & Product Education (primary workstream)
+
+v0.7 hosts the polished guided experience that teaches new users both **how** to operate Budget App and **why** the allocation model works the way it does. It is optional education layered on top of the functional first-run onboarding delivered at v0.4 — not a replacement for it. Full product direction, teaching goals, and the guided-tour requirements are in [Onboarding and Product Education](#onboarding-and-product-education); this milestone delivers:
+
+- the polished interactive walkthrough that prefers real interaction over passive slides;
+- the educational progression through the core concepts (accounts as location, Plan as purpose, future income not yet spendable) and, progressively, first account, real starting balances, category groups/categories, assigning available money, moving money between purposes, recording a transaction, watching category balances respond, targets, scheduled transactions, credit-card reserve behavior, reconciliation, forecast versus actual/current money, and Insights;
+- skip, resume-where-practical, and restart-from-Profile/Help/Settings behavior;
+- contextual education surfaced in-place, accessible and Dynamic Type / VoiceOver compatible;
+- explicit signalling of whether an action affects real financial data, with any demonstration state confined to an identified demonstration/sandbox context or gated behind explicit user consent.
 
 ### v0.8 — Debt, Loans & Advanced Forecasting
 
@@ -163,6 +207,12 @@ Forecast and scenario state must never mutate or inflate current spendable reali
 Expected normal-user flow:
 
 `Download → Install → Open → Create Household → Done`
+
+v0.9 also extends onboarding into the complete normal-user self-hosted experience — the **server and device onboarding** concern (distinct from functional first-run onboarding and from guided product education; see [Onboarding and Product Education](#onboarding-and-product-education)):
+
+`Download → Install → Open Budget Server → Create/Connect Household → Pair Device → Create/Select Budget → Begin guided onboarding`
+
+No Terminal or development infrastructure may be exposed to normal users at any step of this flow. It covers Budget Server installation, local discovery, secure device pairing/enrollment, remote/local connectivity, and backup/recovery setup, and it hands off cleanly into the in-app guided onboarding scheduled at v0.7.
 
 The normal user must not need to understand Homebrew, Python, pip, virtual environments, PostgreSQL administration, Alembic, Uvicorn, JWT secrets, `.env` files, shell commands, or raw database URLs. The future graphical Budget Server application manages internally:
 
@@ -208,6 +258,8 @@ Recovery must prioritize preservation of authoritative data. A failed update can
 
 Ordinary v1.0 use must not require Terminal. The four completion gates apply to the product as a whole, including installation and recovery—not only to budgeting screens.
 
+A nontechnical new user must be able to go from a fresh installation to a usable household Budget and understand the core allocation model (money location versus purpose; future income is not yet spendable) **without developer intervention**. Completing the optional guided tour is not required, but the product must provide sufficient discoverable guidance — functional onboarding that never dead-ends, clear empty states, and available product education — for that user to succeed on their own.
+
 ### v1.x — Import & Bank Connectivity Ecosystem
 
 Bank connectivity remains intentionally deferred until after v1.0 readiness unless this roadmap and the [bank-connectivity readiness gate](bank-sync-readiness.md) are explicitly amended and approved.
@@ -223,6 +275,18 @@ Potential work includes unusual-spending and duplicate detection, recurring-bill
 **AI advises. The deterministic financial engine decides.** No AI or language model may invent money, silently post transactions, override permissions, or directly redefine financial truth.
 
 ## Cross-cutting product direction
+
+### Onboarding and Product Education
+
+Budget App treats onboarding as three related but distinct product concerns. They must not be conflated: shipping one does not satisfy another.
+
+1. **Functional first-run onboarding** — what a user needs to get from `new installation → household → owner → budget → accounts → categories → usable Plan`. This is not optional and must never dead-end; every empty state on that path presents an obvious next action. Its first acceptance gate lands at v0.4 (the Plan empty state must offer a discoverable path to create the first category group/category; see the v0.4 milestone and First-Budget Experience).
+2. **Guided product education** — an optional walkthrough that teaches how and why to use Budget App effectively. This is the v0.7 workstream. It is layered on top of functional onboarding and is never a prerequisite for basic use.
+3. **Server and device onboarding** — the later consumer self-hosted experience: Budget Server installation, local discovery, secure device pairing/enrollment, remote/local connectivity, and backup/recovery setup, with no Terminal or development infrastructure exposed. This is v0.9 (see Distribution, Installation & Server Manager).
+
+**Teach the financial model, not just the interface.** The guided experience is not merely a sequence of tooltip bubbles; it teaches both how to operate the application and the reasoning behind the allocation model. At minimum it makes clear that *accounts tell you where your money is, your Plan tells you what that money is for,* and that *future income can help you plan ahead but is not available to spend until it is actually received.* It then progressively teaches creating the first account, entering real starting balances, category groups/categories, assigning available money, moving money between purposes, recording a transaction, seeing category balances respond, targets, scheduled transactions, credit-card reserve behavior where applicable, reconciliation, forecast versus actual/current money, and Insights. The walkthrough prefers real interaction with the application over passive slides.
+
+The eventual guided tour must be: optional; skippable; resumable where practical; restartable from Profile / Help / Settings; accessible, including Dynamic Type and VoiceOver; and explicit about whether any action affects real financial data. It must be safe around authoritative household data: it must **never** silently create fake authoritative transactions, balances, income, accounts, or allocations. If a demonstration requires sample financial state, it must use an explicitly identified demonstration/sandbox context or obtain explicit user consent before modifying authoritative data. The deterministic/demo environment may be a useful basis for a safe interactive tutorial.
 
 ### Financial Health
 
