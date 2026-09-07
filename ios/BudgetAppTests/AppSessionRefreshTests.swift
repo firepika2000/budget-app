@@ -1,0 +1,215 @@
+import XCTest
+import BudgetAPI
+@testable import Budget_App
+
+/// Regression coverage for authentication-refresh single-flight and session recovery.
+///
+/// The live human-acceptance bug: on relaunch, several independent session-initialization paths
+/// each read the same stored refresh token and issued their own `POST /auth/refresh`. With rotation,
+/// the first rotated R1→R2 (200) and the losers submitted the now-stale R1 (401), surfacing a
+/// user-visible "Invalid or expired refresh token" alert even though the winning refresh had already
+/// recovered the session. These tests lock in the single-flight fix and the clean sign-in transition.
+final class AppSessionRefreshTests: XCTestCase {
+    override func tearDown() {
+        RefreshMockURLProtocol.handler = nil
+        super.tearDown()
+    }
+
+    // AppSession's private Keychain accounts; kept in sync intentionally so we can seed a session.
+    private static let accessAccount = "access-token"
+    private static let refreshAccount = "refresh-token"
+
+    @MainActor
+    private func makeSession(
+        access: String,
+        refresh: String,
+        handler: @escaping (URLRequest) -> (Int, Data)
+    ) -> AppSession {
+        RefreshMockURLProtocol.handler = handler
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let urlSession = URLSession(configuration: configuration)
+
+        let suite = "AppSessionRefreshTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set("https://budget.example.com", forKey: "budget.serverURL")
+        defaults.set("liveServer", forKey: "budget.dataSourceMode")
+
+        let store = InMemoryTokenStore([
+            Self.accessAccount: access,   // non-JWT string → treated as already expired (needs refresh)
+            Self.refreshAccount: refresh,
+        ])
+        return AppSession(
+            defaults: defaults,
+            keychain: store,
+            clientFactory: { try APIClient(baseURL: $0, session: urlSession) },
+            initialMode: .liveServer
+        )
+    }
+
+    private static func json(_ status: Int, _ body: String) -> (Int, Data) { (status, Data(body.utf8)) }
+    private static let rotated = #"{"access_token":"A2","refresh_token":"R2","token_type":"bearer"}"#
+
+    // Concurrent refresh demand must collapse to exactly one network refresh, and the rotated
+    // credentials (A2/R2) must be what remains — no losing caller re-submits the old token or clears
+    // the newer credentials, and no user-facing error is produced.
+    @MainActor
+    func testConcurrentRefreshIsSingleFlightAndKeepsRotatedCredentials() async throws {
+        let gate = Gate()
+        let counter = Counter()
+        let session = makeSession(access: "expired-access", refresh: "R1") { request in
+            guard request.url?.path == "/api/v1/auth/refresh" else { return Self.json(404, "{}") }
+            let n = counter.increment()
+            if n == 1 {
+                gate.signalArrived()
+                gate.waitForRelease()
+                return Self.json(200, Self.rotated)
+            }
+            // A duplicate request would carry the now-rotated-away R1 → 401 (the original bug).
+            return Self.json(401, #"{"detail":"Invalid or expired refresh token"}"#)
+        }
+
+        let callers = (0..<8).map { _ in Task { try? await session.refreshIfNeeded(force: true) } }
+        await gate.awaitArrival()   // the single request is in flight; every other caller has joined it
+        gate.releaseNow()
+        for caller in callers { _ = await caller.value }
+
+        XCTAssertEqual(counter.value, 1, "concurrent refresh demand must issue exactly one /auth/refresh")
+        XCTAssertEqual(session.token, "A2")
+        XCTAssertEqual(session.refreshToken, "R2")
+        XCTAssertNil(session.errorMessage, "a recovered refresh must not surface a user-facing error")
+    }
+
+    // Concurrent loadBudgets() at startup (the real call graph) must also trigger only one refresh,
+    // then hydrate /me and /budgets and land Connected.
+    @MainActor
+    func testConcurrentLoadBudgetsAtStartupIssuesOneRefresh() async throws {
+        let gate = Gate()
+        let counter = Counter()
+        let session = makeSession(access: "expired-access", refresh: "R1") { request in
+            switch request.url?.path {
+            case "/api/v1/auth/refresh":
+                let n = counter.increment()
+                if n == 1 { gate.signalArrived(); gate.waitForRelease(); return Self.json(200, Self.rotated) }
+                return Self.json(401, #"{"detail":"Invalid or expired refresh token"}"#)
+            case "/api/v1/me":
+                return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
+            case "/api/v1/budgets":
+                return Self.json(200, "[]")
+            default:
+                return Self.json(404, "{}")
+            }
+        }
+
+        let loaders = (0..<5).map { _ in Task { await session.loadBudgets() } }
+        await gate.awaitArrival()
+        gate.releaseNow()
+        for loader in loaders { _ = await loader.value }
+
+        XCTAssertEqual(counter.value, 1)
+        XCTAssertEqual(session.token, "A2")
+        XCTAssertEqual(session.connectionStatus, .connected)
+        XCTAssertNil(session.errorMessage)
+    }
+
+    // A genuinely invalid/expired refresh token (no competing success) must clear credentials and
+    // transition cleanly to Sign In, while preserving the Live Budget Server selection and never
+    // falling back to the deterministic demo — and without a generic error alert.
+    @MainActor
+    func testGenuineInvalidRefreshTransitionsToSignInAndPreservesLiveServer() async throws {
+        let session = makeSession(access: "expired-access", refresh: "R1") { request in
+            guard request.url?.path == "/api/v1/auth/refresh" else { return Self.json(404, "{}") }
+            return Self.json(401, #"{"detail":"Invalid or expired refresh token"}"#)
+        }
+
+        try await session.refreshIfNeeded(force: true)
+
+        XCTAssertNil(session.token)
+        XCTAssertNil(session.refreshToken)
+        XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+        XCTAssertEqual(session.serverURL?.absoluteString, "https://budget.example.com")
+        XCTAssertEqual(session.sourceMode, .liveServer, "must not downgrade to deterministic demo")
+        XCTAssertNil(session.errorMessage, "clean sign-in transition, not a generic error alert")
+    }
+
+    // Generation safety: if the user signs out while a refresh is in flight, the later-arriving
+    // success must NOT re-authenticate the session (a stale completion cannot install credentials
+    // over a newer sign-out).
+    @MainActor
+    func testStaleRefreshSuccessAfterSignOutDoesNotReauthenticate() async throws {
+        let gate = Gate()
+        let session = makeSession(access: "expired-access", refresh: "R1") { request in
+            switch request.url?.path {
+            case "/api/v1/auth/refresh":
+                gate.signalArrived(); gate.waitForRelease(); return Self.json(200, Self.rotated)
+            case "/api/v1/auth/logout":
+                return Self.json(204, "")
+            default:
+                return Self.json(404, "{}")
+            }
+        }
+
+        let refresh = Task { try? await session.refreshIfNeeded(force: true) }
+        await gate.awaitArrival()   // refresh is in flight (blocked in transport)
+        session.signOut()           // newer credential change: clears session, advances generation
+        gate.releaseNow()           // the in-flight refresh now completes with 200 A2/R2 (stale)
+        _ = await refresh.value
+
+        XCTAssertNil(session.token, "a stale refresh success must not re-install credentials")
+        XCTAssertNil(session.refreshToken)
+        XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+    }
+}
+
+// MARK: - Test doubles
+
+private final class InMemoryTokenStore: TokenStoring {
+    private let lock = NSLock()
+    private var storage: [String: String]
+    init(_ initial: [String: String]) { storage = initial }
+    func save(_ value: String, account: String) throws { lock.lock(); storage[account] = value; lock.unlock() }
+    func read(account: String) -> String? { lock.lock(); defer { lock.unlock() }; return storage[account] }
+    func delete(account: String) { lock.lock(); storage[account] = nil; lock.unlock() }
+}
+
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() -> Int { lock.lock(); defer { lock.unlock() }; count += 1; return count }
+    var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+}
+
+/// Deterministic barrier: lets a test hold the single in-flight refresh open until every concurrent
+/// caller has converged on it, then release it — no sleeps, no timing assumptions. `waitForRelease`
+/// blocks only the URLSession transport thread; `awaitArrival` suspends the test without blocking the
+/// main actor, so the refresh can actually reach the transport.
+private final class Gate: @unchecked Sendable {
+    private let arrived = DispatchSemaphore(value: 0)
+    private let released = DispatchSemaphore(value: 0)
+    func signalArrived() { arrived.signal() }
+    func waitForRelease() { released.wait() }
+    func releaseNow() { released.signal() }
+    func awaitArrival() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async { self.arrived.wait(); continuation.resume() }
+        }
+    }
+}
+
+private final class RefreshMockURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) -> (Int, Data))?
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return
+        }
+        let (status, data) = handler(request)
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}

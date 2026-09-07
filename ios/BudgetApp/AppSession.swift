@@ -47,15 +47,22 @@ final class AppSession: ObservableObject {
 
     var composition: AppComposition { sourceMode == .deterministic ? .deterministic : .liveServer }
     private let defaults: UserDefaults
-    private let keychain: KeychainStore
+    private let keychain: TokenStoring
     private let clientFactory: (URL) throws -> APIClient
     private let serverKey = "budget.serverURL"
     private let sourceModeKey = "budget.dataSourceMode"
     private let tokenAccount = "access-token"
     private let refreshTokenAccount = "refresh-token"
+    // Single-flight refresh: at most one `/auth/refresh` request is in flight per session; concurrent
+    // callers await this shared task rather than each submitting the (now-rotated) refresh token.
+    private var refreshTask: Task<APIAuthTokens, Error>?
+    // Monotonic credential generation. A refresh result — success or failure — may only be applied
+    // while the generation it started under is still current, so a stale attempt can never overwrite
+    // or clear credentials installed by a newer refresh, sign-in, or sign-out.
+    private var credentialGeneration = 0
 
     init(defaults: UserDefaults = .standard,
-         keychain: KeychainStore = KeychainStore(),
+         keychain: TokenStoring = KeychainStore(),
          clientFactory: @escaping (URL) throws -> APIClient = { try APIClient(baseURL: $0) },
          initialMode: AppDataSourceMode? = nil) {
         self.defaults = defaults; self.keychain = keychain; self.clientFactory = clientFactory
@@ -163,6 +170,7 @@ final class AppSession: ObservableObject {
         guard sourceMode == .liveServer, let serverURL else { return }
         await perform {
             let tokens = try await operation(self.clientFactory(serverURL)); try self.save(tokens)
+            self.refreshTask = nil  // a brand-new session must not join a prior session's refresh task
             let client = try self.clientFactory(serverURL)
             async let profile = client.profile(token: tokens.accessToken); async let budgets = client.budgets(token: tokens.accessToken)
             (self.profile, self.budgets) = try await (profile, budgets); self.connectionStatus = .connected
@@ -170,22 +178,82 @@ final class AppSession: ObservableObject {
     }
 
     func refreshIfNeeded(force: Bool = false) async throws {
-        guard sourceMode == .liveServer, let serverURL, let refreshToken else { return }
+        guard sourceMode == .liveServer, let serverURL, refreshToken != nil else { return }
         if !force, let token, Self.secondsUntilExpiration(token) > 90 { return }
-        try save(try await clientFactory(serverURL).refresh(refreshToken))
+        do {
+            _ = try await sharedRefresh(serverURL: serverURL)
+        } catch where Self.isUnauthorized(error) {
+            // A genuine invalid/expired refresh token already cleared the session to Sign In inside
+            // sharedRefresh (generation-guarded). Swallow the error here so callers do not also raise
+            // a redundant "something went wrong" alert over the now-unauthenticated state.
+        }
     }
 
+    // Concurrent callers converge on one network refresh. The first caller installs the shared task;
+    // everyone arriving while it is in flight awaits the same task and receives the same rotated
+    // tokens — no second caller ever submits the old refresh token. Because the check-and-set runs
+    // synchronously on the main actor (no `await` between them), the single-flight guarantee holds.
+    @discardableResult
+    private func sharedRefresh(serverURL: URL) async throws -> APIAuthTokens {
+        if let refreshTask { return try await refreshTask.value }
+        guard let currentRefresh = refreshToken else {
+            throw APIClientError.server(status: 401, message: "No refresh token available")
+        }
+        let generation = credentialGeneration
+        let makeClient = clientFactory
+        let task = Task<APIAuthTokens, Error> {
+            try await makeClient(serverURL).refresh(currentRefresh)
+        }
+        refreshTask = task
+        defer { refreshTask = nil }
+        do {
+            let rotated = try await task.value
+            // Only apply if no newer credential change (sign-in, sign-out, or a later refresh) landed
+            // while this request was in flight — a stale success must not clobber newer tokens.
+            if generation == credentialGeneration { try save(rotated) }
+            return rotated
+        } catch where Self.isUnauthorized(error) {
+            // The refresh token was genuinely rejected. Clear to Sign In only if this is still the
+            // current generation; a stale failure must never invalidate credentials a newer refresh
+            // already installed.
+            if generation == credentialGeneration { invalidateSessionToSignIn() }
+            throw error
+        }
+    }
+
+    private static func isUnauthorized(_ error: Error) -> Bool {
+        if case APIClientError.server(401, _) = error { return true }
+        return false
+    }
+
+    // Atomic logical replacement of the access + refresh token pair, advancing the credential
+    // generation so any in-flight or stale refresh cannot apply over it.
     private func save(_ tokens: APIAuthTokens) throws {
         try keychain.save(tokens.accessToken, account: tokenAccount)
         do { try keychain.save(tokens.refreshToken, account: refreshTokenAccount) }
         catch { keychain.delete(account: tokenAccount); throw error }
         token = tokens.accessToken; refreshToken = tokens.refreshToken
+        credentialGeneration += 1
+    }
+
+    // Clean transition to Sign In when the refresh token is genuinely invalid. Preserves the Live
+    // Budget Server selection and configuration; never falls back to the deterministic demo. No
+    // network logout is attempted because the token is already rejected.
+    private func invalidateSessionToSignIn() {
+        keychain.delete(account: tokenAccount); keychain.delete(account: refreshTokenAccount)
+        token = nil; refreshToken = nil; budgets = []; profile = nil
+        credentialGeneration += 1
+        refreshTask = nil
+        if sourceMode == .liveServer { connectionStatus = .authenticationRequired }
+        debugLog("refresh token rejected; session cleared to sign in")
     }
 
     private func clearCredentials(logoutFrom url: URL?) {
         if let url, let refreshToken { Task { try? await clientFactory(url).logout(refreshToken) } }
         keychain.delete(account: tokenAccount); keychain.delete(account: refreshTokenAccount)
         token = nil; refreshToken = nil; budgets = []; profile = nil
+        credentialGeneration += 1
+        refreshTask = nil
         if sourceMode == .liveServer { connectionStatus = .authenticationRequired }
     }
 

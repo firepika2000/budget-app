@@ -1,7 +1,15 @@
 import Foundation
 import Security
 
-struct KeychainStore {
+/// Minimal token persistence surface used by `AppSession`. Abstracted so credential storage can be
+/// faked deterministically in tests without touching the real Keychain.
+protocol TokenStoring {
+    func save(_ value: String, account: String) throws
+    func read(account: String) -> String?
+    func delete(account: String)
+}
+
+struct KeychainStore: TokenStoring {
     private let service: String
 
     init(service: String = "com.firepika.BudgetApp") {
