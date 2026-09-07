@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -47,4 +49,31 @@ def owner_token(client):
 
 def auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def freeze_today(monkeypatch, when: date, *modules) -> None:
+    """Pin ``date.today()`` to ``when`` inside the given app modules.
+
+    Forecast and planning-horizon logic anchor "now" with ``date.today()``. A
+    test that asserts against fixed calendar dates must control that anchor,
+    otherwise it silently starts passing or failing as the real wall clock
+    advances past the fixture dates. This replaces only ``date.today``; genuine
+    ``date(...)`` construction, comparison, and arithmetic keep working because
+    the stand-in is a real ``date`` subclass. ``timedelta`` and other symbols are
+    untouched.
+
+    Pass the app modules whose module-global ``date`` should be frozen (each must
+    use ``from datetime import date``)::
+
+        from app import planning_routes
+        freeze_today(monkeypatch, date(2026, 9, 1), planning_routes)
+    """
+
+    class _FrozenDate(date):
+        @classmethod
+        def today(cls) -> date:
+            return when
+
+    for module in modules:
+        monkeypatch.setattr(module, "date", _FrozenDate)
 

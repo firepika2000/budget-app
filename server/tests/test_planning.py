@@ -1,7 +1,16 @@
-from .conftest import auth
+from datetime import date
+
+from app import planning_routes
+
+from .conftest import auth, freeze_today
 from .test_advanced_ledger import add_category, record
 from .test_allocation_ledger import fund
 from .test_budgeting_api import create_budget, create_budget_structure
+
+# Forecasts anchor "now" on the server's date.today(). These tests assert against
+# fixed occurrence dates, so they pin the anchor to a stable reference (the start
+# of the budget month under test) instead of the real wall clock.
+FORECAST_AS_OF = date(2026, 9, 1)
 
 
 def test_target_recommendation_uses_rollover_without_mutating_allocation(
@@ -40,8 +49,9 @@ def test_target_recommendation_uses_rollover_without_mutating_allocation(
 
 
 def test_scheduled_transactions_affect_forecast_but_never_actual_budget(
-    client, owner_token, session_factory
+    client, owner_token, session_factory, monkeypatch
 ):
+    freeze_today(monkeypatch, FORECAST_AS_OF, planning_routes)
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])
     fund(client, owner_token, budget["id"], account["id"], amount=100000)
@@ -86,8 +96,9 @@ def test_scheduled_transactions_affect_forecast_but_never_actual_budget(
 
 
 def test_scheduled_account_transfer_changes_location_not_total(
-    client, owner_token, session_factory
+    client, owner_token, session_factory, monkeypatch
 ):
+    freeze_today(monkeypatch, FORECAST_AS_OF, planning_routes)
     budget = create_budget(client, owner_token, session_factory)
     checking, _ = create_budget_structure(client, owner_token, budget["id"])
     savings = client.post(
