@@ -160,6 +160,127 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertNil(session.refreshToken)
         XCTAssertEqual(session.connectionStatus, .authenticationRequired)
     }
+
+    // Terminal invalidation: after a genuine 401, independent production-style callers arriving LATER
+    // (after the failed refresh Task has completed and cleared) must not start a new refresh. This is
+    // the case the earlier single-flight test did not cover — it only collapsed simultaneous callers.
+    @MainActor
+    func testSequentialCallersAfterInvalidRefreshDoNotRetry() async throws {
+        let refresh = Counter()
+        let session = makeSession(access: "expired-access", refresh: "R1") { request in
+            switch request.url?.path {
+            case "/api/v1/auth/refresh":
+                _ = refresh.increment()
+                return Self.json(401, #"{"detail":"Invalid or expired refresh token"}"#)
+            case "/api/v1/me":
+                return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
+            case "/api/v1/budgets":
+                return Self.json(200, "[]")
+            default:
+                return Self.json(404, "{}")
+            }
+        }
+
+        // First production-style load refreshes → 401 → session invalidated.
+        await session.loadBudgets()
+        XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+        XCTAssertNil(session.token)
+
+        // Two more independent loaders arrive after the failed refresh completed.
+        await session.loadBudgets()
+        await session.loadBudgets()
+
+        XCTAssertEqual(refresh.value, 1, "an invalidated session must not start another refresh cycle")
+        XCTAssertNil(session.token)
+        XCTAssertNil(session.refreshToken)
+        XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+        XCTAssertTrue(session.budgets.isEmpty, "stale authenticated content must be cleared")
+        XCTAssertNil(session.errorMessage, "a handled refresh 401 must not surface a generic error alert")
+        XCTAssertEqual(session.serverURL?.absoluteString, "https://budget.example.com")
+    }
+
+    // Reproduces the real startup composition: two concurrent entry points (RootView.task +
+    // scenePhase .active) both call validateSelectedSource, which runs discovery then the
+    // authenticated load. Discovery and refresh must each happen once. This would fail on the prior
+    // build, where validateSelectedSource was not coalesced (duplicate /health + /bootstrap/status).
+    @MainActor
+    func testConcurrentStartupValidationRunsDiscoveryAndRefreshOnce() async throws {
+        let gate = Gate()
+        let health = Counter(); let bootstrap = Counter(); let refresh = Counter()
+        let session = makeSession(access: "expired-access", refresh: "R1") { request in
+            switch request.url?.path {
+            case "/api/v1/health":
+                let n = health.increment()
+                if n == 1 { gate.signalArrived(); gate.waitForRelease() }
+                return Self.json(200, "{}")
+            case "/api/v1/bootstrap/status":
+                _ = bootstrap.increment()
+                return Self.json(200, #"{"initialized":true,"authentication_required":true,"api_version":"0.4.0"}"#)
+            case "/api/v1/auth/refresh":
+                _ = refresh.increment()
+                return Self.json(401, #"{"detail":"Invalid or expired refresh token"}"#)
+            default:
+                return Self.json(404, "{}")
+            }
+        }
+
+        let first = Task { await session.validateSelectedSource() }
+        let second = Task { await session.validateSelectedSource() }
+        await gate.awaitArrival()   // the single coalesced discovery is in flight; the other entry joined
+        gate.releaseNow()
+        _ = await first.value; _ = await second.value
+
+        XCTAssertEqual(health.value, 1, "startup discovery must run once, not once per entry point")
+        XCTAssertEqual(bootstrap.value, 1)
+        XCTAssertEqual(refresh.value, 1, "an invalid session must issue exactly one refresh at startup")
+        XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+        XCTAssertNil(session.token)
+        XCTAssertTrue(session.budgets.isEmpty)
+        XCTAssertNil(session.errorMessage)
+    }
+
+    // The terminal latch must not be permanent: a successful login re-establishes a refreshable
+    // session, and a later legitimate refresh proceeds.
+    @MainActor
+    func testSuccessfulLoginAfterInvalidationRestoresRefreshableSession() async throws {
+        let refresh = Counter()
+        let session = makeSession(access: "expired-access", refresh: "R1") { request in
+            switch request.url?.path {
+            case "/api/v1/auth/refresh":
+                let n = refresh.increment()
+                // First refresh (the invalid stored token) fails; a later refresh (post-login) rotates.
+                return n == 1
+                    ? Self.json(401, #"{"detail":"Invalid or expired refresh token"}"#)
+                    : Self.json(200, #"{"access_token":"A10","refresh_token":"R10","token_type":"bearer"}"#)
+            case "/api/v1/auth/login":
+                return Self.json(200, #"{"access_token":"A9","refresh_token":"R9","token_type":"bearer"}"#)
+            case "/api/v1/me":
+                return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
+            case "/api/v1/budgets":
+                return Self.json(200, "[]")
+            default:
+                return Self.json(404, "{}")
+            }
+        }
+
+        // Genuine 401 invalidates the session.
+        try await session.refreshIfNeeded(force: true)
+        XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+        XCTAssertNil(session.token)
+
+        // Re-authenticate — this must reset the invalidation latch.
+        await session.login(email: "owner@example.com", password: "correct horse battery staple")
+        XCTAssertEqual(session.token, "A9")
+        XCTAssertEqual(session.refreshToken, "R9")
+        XCTAssertEqual(session.connectionStatus, .connected)
+
+        // A later legitimate refresh is eligible again and rotates successfully.
+        try await session.refreshIfNeeded(force: true)
+        XCTAssertEqual(refresh.value, 2, "the login path must reset the terminal latch so refresh works again")
+        XCTAssertEqual(session.token, "A10")
+        XCTAssertEqual(session.refreshToken, "R10")
+        XCTAssertNil(session.errorMessage)
+    }
 }
 
 // MARK: - Test doubles

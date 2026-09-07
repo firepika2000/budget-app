@@ -60,6 +60,15 @@ final class AppSession: ObservableObject {
     // while the generation it started under is still current, so a stale attempt can never overwrite
     // or clear credentials installed by a newer refresh, sign-in, or sign-out.
     private var credentialGeneration = 0
+    // Authoritative terminal latch. Once a current-generation refresh is rejected (401) — or the
+    // session is otherwise torn down — the session is invalidated and NO further refresh may begin
+    // until a successful login/bootstrap/invitation establishes a new refreshable generation. This
+    // gates refresh eligibility so a caller arriving after the failed refresh (even one that already
+    // passed earlier guards) cannot start a fresh refresh for an already-invalidated session.
+    private var authInvalidated = false
+    // Coalesces concurrent startup validations (RootView's `.task` and its `scenePhase == .active`
+    // handler) so discovery and the authenticated load run once per activation, not once per entry.
+    private var validateTask: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard,
          keychain: TokenStoring = KeychainStore(),
@@ -115,9 +124,15 @@ final class AppSession: ObservableObject {
             if let status, !status.initialized {
                 connectionStatus = .setupRequired
                 debugLog("live server reports uninitialized: first-run setup required")
+            } else if token == nil {
+                connectionStatus = .authenticationRequired
             } else {
-                connectionStatus = token == nil ? .authenticationRequired : .connected
-                if token != nil { await loadBudgets() }
+                // Stay `.connecting` until loadBudgets resolves. Publishing `.connected` here — before
+                // the authenticated load has succeeded — renders the Budgets UI (and spawns its own
+                // loader) during the not-yet-loaded window, which both showed stale content and let an
+                // invalid session issue extra refreshes. loadBudgets sets `.connected` on success or
+                // `.authenticationRequired` if the refresh token is invalid.
+                await loadBudgets()
             }
         } catch {
             let message = connectionMessage(error)
@@ -127,6 +142,16 @@ final class AppSession: ObservableObject {
     }
 
     func validateSelectedSource() async {
+        // Single-flight: the `.task` modifier and the `scenePhase == .active` handler both call this at
+        // launch. Coalescing them avoids duplicate discovery and duplicate authenticated loads.
+        if let validateTask { await validateTask.value; return }
+        let task = Task { await self.performValidateSelectedSource() }
+        validateTask = task
+        defer { validateTask = nil }
+        await task.value
+    }
+
+    private func performValidateSelectedSource() async {
         guard sourceMode == .liveServer else { connectionStatus = .deterministic; return }
         guard let serverURL else { connectionStatus = .invalidConfiguration("Enter the address of your Budget Server."); return }
         await configureServer(serverURL.absoluteString)
@@ -178,14 +203,22 @@ final class AppSession: ObservableObject {
     }
 
     func refreshIfNeeded(force: Bool = false) async throws {
-        guard sourceMode == .liveServer, let serverURL, refreshToken != nil else { return }
+        // Eligibility is authoritative: a Live session with credentials that has NOT been invalidated.
+        // `authInvalidated` makes a post-401 session terminal, so a caller arriving after the failed
+        // refresh cannot start a new refresh cycle for the dead credential generation.
+        guard sourceMode == .liveServer, !authInvalidated, token != nil, refreshToken != nil, let serverURL else { return }
         if !force, let token, Self.secondsUntilExpiration(token) > 90 { return }
         do {
             _ = try await sharedRefresh(serverURL: serverURL)
-        } catch where Self.isUnauthorized(error) {
-            // A genuine invalid/expired refresh token already cleared the session to Sign In inside
-            // sharedRefresh (generation-guarded). Swallow the error here so callers do not also raise
-            // a redundant "something went wrong" alert over the now-unauthenticated state.
+        } catch {
+            if Self.isUnauthorized(error) {
+                // A genuine invalid/expired refresh token already cleared the session to Sign In inside
+                // sharedRefresh (generation-guarded). A refresh 401 is an authentication-state
+                // transition, not an ordinary error: consume it here so no generic alert is shown over
+                // the now-unauthenticated state. Other (network/server) errors still propagate.
+                return
+            }
+            throw error
         }
     }
 
@@ -234,15 +267,19 @@ final class AppSession: ObservableObject {
         catch { keychain.delete(account: tokenAccount); throw error }
         token = tokens.accessToken; refreshToken = tokens.refreshToken
         credentialGeneration += 1
+        authInvalidated = false  // a successful sign-in/refresh re-establishes a refreshable session
     }
 
     // Clean transition to Sign In when the refresh token is genuinely invalid. Preserves the Live
     // Budget Server selection and configuration; never falls back to the deterministic demo. No
-    // network logout is attempted because the token is already rejected.
+    // network logout is attempted because the token is already rejected. Clears the stale
+    // authenticated content so RootView routes to Sign In rather than presenting old Budgets, and
+    // latches the session invalid so no further refresh may begin until re-authentication.
     private func invalidateSessionToSignIn() {
         keychain.delete(account: tokenAccount); keychain.delete(account: refreshTokenAccount)
         token = nil; refreshToken = nil; budgets = []; profile = nil
         credentialGeneration += 1
+        authInvalidated = true
         refreshTask = nil
         if sourceMode == .liveServer { connectionStatus = .authenticationRequired }
         debugLog("refresh token rejected; session cleared to sign in")
@@ -253,6 +290,7 @@ final class AppSession: ObservableObject {
         keychain.delete(account: tokenAccount); keychain.delete(account: refreshTokenAccount)
         token = nil; refreshToken = nil; budgets = []; profile = nil
         credentialGeneration += 1
+        authInvalidated = true
         refreshTask = nil
         if sourceMode == .liveServer { connectionStatus = .authenticationRequired }
     }
