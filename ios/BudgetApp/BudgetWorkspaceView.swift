@@ -54,8 +54,15 @@ private final class DemoWorkspaceDataSource: WorkspaceDataSource {
     let demo: DemoStore
     let budget: APIBudget
 
-    init() {
+    init(fresh: Bool = false) {
         let store = DemoStore()
+        if fresh || ProcessInfo.processInfo.arguments.contains("--demo-fresh-budget") {
+            store.accounts = []
+            store.categories = []
+            store.transactions = []
+            store.groupOrder = []
+            store.setUnassigned(0)
+        }
         if let value = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--demo-persona=") })?.split(separator: "=").last,
            let persona = DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == value.lowercased() }) { store.persona = persona }
         demo = store
@@ -226,7 +233,7 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     init(budget: APIBudget) { self.budget = budget; dataSource = nil }
     private init(dataSource: WorkspaceDataSource) { self.budget = dataSource.budget; self.dataSource = dataSource }
-    static func demo() -> BudgetWorkspaceStore { BudgetWorkspaceStore(dataSource: DemoWorkspaceDataSource()) }
+    static func demo(fresh: Bool = false) -> BudgetWorkspaceStore { BudgetWorkspaceStore(dataSource: DemoWorkspaceDataSource(fresh: fresh)) }
 
     func load(serverURL: URL, token: String) async {
         liveServerURL = serverURL; liveToken = token
@@ -630,19 +637,27 @@ struct BudgetWorkspaceView: View {
     @State private var showingSettings = false
     @State private var selectedTab: Int
     private let canDismiss: Bool
+    private let selectionOverride: Binding<Int>?
 
-    init(budget: APIBudget, canDismiss: Bool = false) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _selectedTab = State(initialValue: 0); self.canDismiss = canDismiss }
-    private init(demo: Bool) { _store = StateObject(wrappedValue: .demo()); let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--demo-screen=") }?.split(separator: "=").last.map(String.init) ?? "home"; _selectedTab = State(initialValue: ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4][screen] ?? 0); canDismiss = false }
+    init(budget: APIBudget, canDismiss: Bool = false) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _selectedTab = State(initialValue: 0); self.canDismiss = canDismiss; selectionOverride = nil }
+    private init(demo: Bool) { _store = StateObject(wrappedValue: .demo()); let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--demo-screen=") }?.split(separator: "=").last.map(String.init) ?? "home"; _selectedTab = State(initialValue: ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4][screen] ?? 0); canDismiss = ProcessInfo.processInfo.arguments.contains("--workspace-dismiss"); selectionOverride = nil }
+    init(testStore: BudgetWorkspaceStore, selection: Binding<Int>, canDismiss: Bool = true) { _store = StateObject(wrappedValue: testStore); _selectedTab = State(initialValue: 0); self.canDismiss = canDismiss; selectionOverride = selection }
     static func demo() -> BudgetWorkspaceView { BudgetWorkspaceView(demo: true) }
+    private var tabSelection: Binding<Int> { selectionOverride ?? $selectedTab }
+    private var activeTab: Int { selectionOverride?.wrappedValue ?? selectedTab }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
+        TabView(selection: tabSelection) {
             NavigationStack { LiveHomeView(showSettings: { showingSettings = true }).workspaceDismissToolbar(canDismiss) }.tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
             NavigationStack { LivePlanView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Plan", systemImage: "square.grid.2x2.fill") }.tag(1)
             NavigationStack { LiveActivityView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag(2)
             NavigationStack { LiveAccountsView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Accounts", systemImage: "creditcard.fill") }.tag(3)
             NavigationStack { LiveInsightsView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Insights", systemImage: "chart.xyaxis.line") }.tag(4)
         }
+        // iOS 27 can update the selected tab while leaving a previously lazy per-tab NavigationStack
+        // unmaterialized. Re-keying only the TabView at selection time forces the selected production
+        // navigation root to resolve while preserving every tab's title, toolbar, and navigation path.
+        .id(activeTab)
         .tint(Theme.accent)
         .overlay { if store.isLoading { ProgressView().padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
         .task { await reload() }
@@ -837,6 +852,7 @@ private struct LivePlanView: View {
                                 Label(store.groups.isEmpty ? "Create Category Group" : "Add Category", systemImage: "folder.badge.plus").frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier(activation.needsGroup ? "create-category-group-cta" : "add-category-cta")
                         } else {
                             Text("A household owner can add the plan structure. Your authorized budget areas will appear here when they are shared with you.")
                                 .font(.footnote).foregroundStyle(.secondary)
@@ -855,7 +871,7 @@ private struct LivePlanView: View {
                 let groupRows = rows.filter { row in store.categories.first(where: { $0.id == row.categoryID })?.groupID == group.id }
                 if !groupRows.isEmpty { Section(group.name) { ForEach(groupRows) { category in NavigationLink { LivePlanCategoryDetailView(categoryID: category.categoryID, assign: { editing = category }, move: { showMove = true }, manage: { managing = store.categories.first(where: { $0.id == category.categoryID }) }) } label: { PlanCategoryRow(category: category) }.contextMenu { if let model = store.categories.first(where: { $0.id == category.categoryID }), canManage(model) { Button("Manage Category", systemImage: "pencil") { managing = model } } } } } }
             }
-        }.navigationTitle("Plan").toolbar {
+        }.accessibilityIdentifier("plan-screen").navigationTitle("Plan").toolbar {
             Menu {
                 if store.delegatedBudget == nil && store.budget.can("assign_money") { Button("Smart Funding", systemImage: "sparkles") { showSmartFunding = true } }
                 if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") { Button("Add category", systemImage: "folder.badge.plus") { showCategory = true } }
@@ -1235,6 +1251,7 @@ private struct LiveAccountsView: View {
                         Text("Start with where your money lives today. Add checking, savings, cash, or a credit card and enter its real current balance.").font(.subheadline).foregroundStyle(.secondary)
                         if activation.showsAddAccount {
                             Button { showAdd = true } label: { Label("Add Account", systemImage: "plus.circle.fill").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent)
+                                .accessibilityIdentifier("add-account-cta")
                         } else {
                             Text("A household owner can add accounts. Only accounts shared with you will appear here.").font(.footnote).foregroundStyle(.secondary)
                         }
@@ -1242,6 +1259,7 @@ private struct LiveAccountsView: View {
                 }
             }
         }
+        .accessibilityIdentifier("accounts-screen")
         .navigationTitle("Accounts")
         .toolbar { if store.budget.can("manage_budget_structure") { Button { showAdd = true } label: { Image(systemName:"plus") } } }
         .sheet(isPresented:$showAdd){AccountCreationView(budget:store.budget,serverURL:session.serverURL ?? URL(string:"http://localhost")!,token:session.token ?? "demo",onSaved:reload)}

@@ -64,6 +64,24 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testProductionWorkspaceRendersFreshAccountsAndPlanTabsWithLivePresentationChrome() async {
+        let (defaults, domain) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let session = AppSession(
+            defaults: defaults,
+            keychain: KeychainStore(service: "BudgetAppTests.\(UUID().uuidString)"),
+            initialMode: .deterministic
+        )
+        let store = BudgetWorkspaceStore.demo(fresh: true)
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+
+        let accounts = WorkspaceSelectionHarness(store: store, session: session, destination: 3)
+        XCTAssertGreaterThan(renderedContentSignal(accounts), 1_000, "switching Home → Accounts rendered blank")
+        let plan = WorkspaceSelectionHarness(store: store, session: session, destination: 1)
+        XCTAssertGreaterThan(renderedContentSignal(plan), 1_000, "switching Home → Plan rendered blank")
+    }
+
+    @MainActor
     func testScheduledRepositoryCRUDRecurrencesAndFutureIncomeStayNonSpendable() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
@@ -544,6 +562,55 @@ final class DemoStoreTests: XCTestCase {
         controller.view.layoutIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         window.isHidden = true
+        window.rootViewController = nil
+    }
+
+    @MainActor
+    private func renderedContentSignal<Content: View>(_ view: Content) -> Int {
+        let controller = UIHostingController(rootView: view)
+        let frame = CGRect(x: 0, y: 0, width: 430, height: 932)
+        let window = UIWindow(frame: frame)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.loadViewIfNeeded()
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        func contentSignal() -> Int {
+          let image = UIGraphicsImageRenderer(size: frame.size).image { _ in
+              controller.view.drawHierarchy(in: frame, afterScreenUpdates: true)
+          }
+          guard let cgImage = image.cgImage,
+              let data = cgImage.dataProvider?.data,
+              let bytes = CFDataGetBytePtr(data) else { return 0 }
+          let width = cgImage.width, height = cgImage.height, bytesPerRow = cgImage.bytesPerRow
+          var signal = 0
+          // Exclude tab/navigation chrome: those controls must not make a blank tab pass.
+          for y in stride(from: height / 5, to: height * 3 / 4, by: 3) {
+            for x in stride(from: width / 12, to: width * 11 / 12, by: 3) {
+              let offset = y * bytesPerRow + x * 4
+              let b = Int(bytes[offset]), g = Int(bytes[offset + 1]), r = Int(bytes[offset + 2])
+              if max(r, g, b) - min(r, g, b) > 28 || max(r, g, b) < 175 { signal += 1 }
+            }
+          }
+          return signal
+        }
+        let signal = contentSignal()
+        window.isHidden = true
+        window.rootViewController = nil
+        return signal
+    }
+}
+
+private struct WorkspaceSelectionHarness: View {
+    let store: BudgetWorkspaceStore
+    let session: AppSession
+    let destination: Int
+    @State private var selection = 0
+    var body: some View {
+        BudgetWorkspaceView(testStore: store, selection: $selection, canDismiss: true)
+            .environmentObject(session)
+            .onAppear { DispatchQueue.main.async { selection = destination } }
     }
 }
 
