@@ -21,4 +21,24 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(email.exists, "typing must not replace the production authentication route")
         XCTAssertFalse(app.buttons["Budgets"].exists, "authentication must not restore a Budgets parent shell")
     }
+
+    func testFreshProductionWorkspaceTabsAndGlobalProfileRemainReachable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-fresh-budget"]
+        app.launch()
+
+        app.tabBars.buttons["Accounts"].tap()
+        XCTAssertTrue(app.navigationBars["Accounts"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Add Account"].exists)
+        XCTAssertTrue(app.buttons["profile-settings-button"].exists)
+
+        app.tabBars.buttons["Plan"].tap()
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Create Category Group"].exists)
+        XCTAssertTrue(app.buttons["profile-settings-button"].exists)
+
+        app.buttons["profile-settings-button"].tap()
+        XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Budgets"].exists)
+    }
 }
