@@ -35,6 +35,8 @@ enum ServerConnectionStatus: Equatable {
 
 @MainActor
 final class AppSession: ObservableObject {
+    static let production = AppSession()
+
     @Published private(set) var sourceMode: AppDataSourceMode
     @Published private(set) var connectionStatus: ServerConnectionStatus
     @Published private(set) var serverURL: URL?
@@ -56,6 +58,7 @@ final class AppSession: ObservableObject {
     // Single-flight refresh: at most one `/auth/refresh` request is in flight per session; concurrent
     // callers await this shared task rather than each submitting the (now-rotated) refresh token.
     private var refreshTask: Task<APIAuthTokens, Error>?
+    private var refreshOperationID: UUID?
     // Monotonic credential generation. A refresh result — success or failure — may only be applied
     // while the generation it started under is still current, so a stale attempt can never overwrite
     // or clear credentials installed by a newer refresh, sign-in, or sign-out.
@@ -69,6 +72,7 @@ final class AppSession: ObservableObject {
     // Coalesces concurrent startup validations (RootView's `.task` and its `scenePhase == .active`
     // handler) so discovery and the authenticated load run once per activation, not once per entry.
     private var validateTask: Task<Void, Never>?
+    private let instanceID = String(UUID().uuidString.prefix(8))
 
     init(defaults: UserDefaults = .standard,
          keychain: TokenStoring = KeychainStore(),
@@ -88,6 +92,8 @@ final class AppSession: ObservableObject {
         let resolvedMode = initialMode ?? argumentMode ?? stored ?? fallback
         sourceMode = resolvedMode
         connectionStatus = resolvedMode == .deterministic ? .deterministic : .connecting
+        debugLog("AUTH_DIAGNOSTICS build=\(Self.buildMarker) session=\(instanceID)")
+        authLog("init", caller: "AppSession.init")
         debugLog("selected data source: \(resolvedMode.rawValue)")
         if let serverURL { debugLog("configured server: \(serverURL.absoluteString)") }
     }
@@ -132,7 +138,7 @@ final class AppSession: ObservableObject {
                 // loader) during the not-yet-loaded window, which both showed stale content and let an
                 // invalid session issue extra refreshes. loadBudgets sets `.connected` on success or
                 // `.authenticationRequired` if the refresh token is invalid.
-                await loadBudgets()
+                await loadBudgets(caller: "configureServer")
             }
         } catch {
             let message = connectionMessage(error)
@@ -141,17 +147,23 @@ final class AppSession: ObservableObject {
         }
     }
 
-    func validateSelectedSource() async {
+    func validateSelectedSource(caller: String = "unspecified") async {
+        authLog("validate requested", caller: caller)
         // Single-flight: the `.task` modifier and the `scenePhase == .active` handler both call this at
         // launch. Coalescing them avoids duplicate discovery and duplicate authenticated loads.
-        if let validateTask { await validateTask.value; return }
-        let task = Task { await self.performValidateSelectedSource() }
+        if let validateTask {
+            authLog("validate joined", caller: caller)
+            await validateTask.value
+            return
+        }
+        let task = Task { await self.performValidateSelectedSource(caller: caller) }
         validateTask = task
         defer { validateTask = nil }
         await task.value
     }
 
-    private func performValidateSelectedSource() async {
+    private func performValidateSelectedSource(caller: String) async {
+        authLog("validate started", caller: caller)
         guard sourceMode == .liveServer else { connectionStatus = .deterministic; return }
         guard let serverURL else { connectionStatus = .invalidConfiguration("Enter the address of your Budget Server."); return }
         await configureServer(serverURL.absoluteString)
@@ -165,14 +177,35 @@ final class AppSession: ObservableObject {
         await authenticate { try await $0.acceptInvitation(APIInvitationAccept(invitationToken: invitationToken, password: password, displayName: displayName)) }
     }
 
-    func loadBudgets() async {
+    func loadBudgets(caller: String = "unspecified") async {
         guard sourceMode == .liveServer else { return }
-        await perform {
-            try await self.refreshIfNeeded()
-            guard let serverURL = self.serverURL, let token = self.token else { self.connectionStatus = .authenticationRequired; return }
-            let client = try self.clientFactory(serverURL)
-            async let profile = client.profile(token: token); async let budgets = client.budgets(token: token)
-            (self.profile, self.budgets) = try await (profile, budgets); self.connectionStatus = .connected
+        authLog("loadBudgets started", caller: caller)
+        let startingGeneration = credentialGeneration
+        isWorking = true
+        errorMessage = nil
+        defer { isWorking = false }
+        do {
+            try await refreshIfNeeded(caller: "loadBudgets:\(caller)")
+            guard let serverURL, let token else { connectionStatus = .authenticationRequired; return }
+            let generation = credentialGeneration
+            let client = try clientFactory(serverURL)
+            async let loadedProfile = client.profile(token: token)
+            async let loadedBudgets = client.budgets(token: token)
+            let loaded = try await (loadedProfile, loadedBudgets)
+            guard generation == credentialGeneration, !authInvalidated, self.token != nil else {
+                authLog("discarded stale loadBudgets completion", caller: caller)
+                return
+            }
+            (profile, budgets) = loaded; connectionStatus = .connected
+        } catch {
+            // A request started by an older authenticated generation is obsolete. In particular it
+            // must not put an alert over Sign In after a different caller invalidated the session.
+            guard startingGeneration == credentialGeneration, !authInvalidated else {
+                authLog("discarded stale loadBudgets error", caller: caller)
+                return
+            }
+            errorMessage = error.localizedDescription
+            debugLog("API request failed: \(failureCategory(error))")
         }
     }
 
@@ -196,13 +229,15 @@ final class AppSession: ObservableObject {
         await perform {
             let tokens = try await operation(self.clientFactory(serverURL)); try self.save(tokens)
             self.refreshTask = nil  // a brand-new session must not join a prior session's refresh task
+            self.refreshOperationID = nil
             let client = try self.clientFactory(serverURL)
             async let profile = client.profile(token: tokens.accessToken); async let budgets = client.budgets(token: tokens.accessToken)
             (self.profile, self.budgets) = try await (profile, budgets); self.connectionStatus = .connected
         }
     }
 
-    func refreshIfNeeded(force: Bool = false) async throws {
+    func refreshIfNeeded(force: Bool = false, caller: String = "unspecified") async throws {
+        authLog("refresh requested", caller: caller)
         // Eligibility is authoritative: a Live session with credentials that has NOT been invalidated.
         // `authInvalidated` makes a post-401 session terminal, so a caller arriving after the failed
         // refresh cannot start a new refresh cycle for the dead credential generation.
@@ -228,30 +263,41 @@ final class AppSession: ObservableObject {
     // synchronously on the main actor (no `await` between them), the single-flight guarantee holds.
     @discardableResult
     private func sharedRefresh(serverURL: URL) async throws -> APIAuthTokens {
-        if let refreshTask { return try await refreshTask.value }
+        if let refreshTask {
+            authLog("refresh joined", caller: "sharedRefresh")
+            return try await refreshTask.value
+        }
         guard let currentRefresh = refreshToken else {
             throw APIClientError.server(status: 401, message: "No refresh token available")
         }
         let generation = credentialGeneration
         let makeClient = clientFactory
-        let task = Task<APIAuthTokens, Error> {
-            try await makeClient(serverURL).refresh(currentRefresh)
+        let operationID = UUID()
+        let task = Task<APIAuthTokens, Error> { @MainActor in
+            do {
+                let rotated = try await makeClient(serverURL).refresh(currentRefresh)
+                // The shared operation includes the state transition. Joiners cannot resume with
+                // the old access token after the server has already rotated the refresh token.
+                if generation == self.credentialGeneration { try self.save(rotated) }
+                self.authLog("refresh completed", caller: "sharedRefresh")
+                return rotated
+            } catch where Self.isUnauthorized(error) {
+                if generation == self.credentialGeneration { self.invalidateSessionToSignIn() }
+                self.authLog("refresh failed unauthorized", caller: "sharedRefresh")
+                throw error
+            }
         }
         refreshTask = task
-        defer { refreshTask = nil }
-        do {
-            let rotated = try await task.value
-            // Only apply if no newer credential change (sign-in, sign-out, or a later refresh) landed
-            // while this request was in flight — a stale success must not clobber newer tokens.
-            if generation == credentialGeneration { try save(rotated) }
-            return rotated
-        } catch where Self.isUnauthorized(error) {
-            // The refresh token was genuinely rejected. Clear to Sign In only if this is still the
-            // current generation; a stale failure must never invalidate credentials a newer refresh
-            // already installed.
-            if generation == credentialGeneration { invalidateSessionToSignIn() }
-            throw error
+        refreshOperationID = operationID
+        authLog("refresh created", caller: "sharedRefresh")
+        defer {
+            // A stale operation must not clear a newer refresh installed after re-authentication.
+            if refreshOperationID == operationID {
+                refreshTask = nil
+                refreshOperationID = nil
+            }
         }
+        return try await task.value
     }
 
     private static func isUnauthorized(_ error: Error) -> Bool {
@@ -281,8 +327,10 @@ final class AppSession: ObservableObject {
         credentialGeneration += 1
         authInvalidated = true
         refreshTask = nil
+        refreshOperationID = nil
         if sourceMode == .liveServer { connectionStatus = .authenticationRequired }
         debugLog("refresh token rejected; session cleared to sign in")
+        authLog("session invalidated", caller: "invalidateSessionToSignIn")
     }
 
     private func clearCredentials(logoutFrom url: URL?) {
@@ -292,6 +340,7 @@ final class AppSession: ObservableObject {
         credentialGeneration += 1
         authInvalidated = true
         refreshTask = nil
+        refreshOperationID = nil
         if sourceMode == .liveServer { connectionStatus = .authenticationRequired }
     }
 
@@ -335,6 +384,16 @@ final class AppSession: ObservableObject {
         }
         if let error = error as? URLError { return "network-\(error.code.rawValue)" }
         return String(describing: type(of: error))
+    }
+
+    private static var buildMarker: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "local"
+        return "\(version)(\(build))"
+    }
+
+    private func authLog(_ event: String, caller: String) {
+        debugLog("AUTH session=\(instanceID) caller=\(caller) event=\(event) status=\(connectionStatus.title) auth=\(token == nil ? "none" : "present") invalidated=\(authInvalidated) generation=\(credentialGeneration)")
     }
 }
 

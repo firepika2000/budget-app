@@ -26,10 +26,6 @@ final class AppSessionRefreshTests: XCTestCase {
         handler: @escaping (URLRequest) -> (Int, Data)
     ) -> AppSession {
         RefreshMockURLProtocol.handler = handler
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [RefreshMockURLProtocol.self]
-        let urlSession = URLSession(configuration: configuration)
-
         let suite = "AppSessionRefreshTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
@@ -43,7 +39,11 @@ final class AppSessionRefreshTests: XCTestCase {
         return AppSession(
             defaults: defaults,
             keychain: store,
-            clientFactory: { try APIClient(baseURL: $0, session: urlSession) },
+            clientFactory: {
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.protocolClasses = [RefreshMockURLProtocol.self]
+                return try APIClient(baseURL: $0, session: URLSession(configuration: configuration))
+            },
             initialMode: .liveServer
         )
     }
@@ -281,6 +281,45 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertEqual(session.refreshToken, "R10")
         XCTAssertNil(session.errorMessage)
     }
+
+    // A loader can already be suspended in authenticated endpoint calls when another caller learns
+    // that the current refresh generation is invalid. Its later success is obsolete and must not
+    // restore Connected or authenticated presentation state.
+    @MainActor
+    func testSuspendedAuthenticatedLoadCannotReviveInvalidatedSession() async throws {
+        let endpoints = Gate()
+        let session = makeSession(
+            access: "eyJhbGciOiJub25lIn0.eyJleHAiOjQxMDI0NDQ4MDB9.x",
+            refresh: "R1"
+        ) { request in
+            switch request.url?.path {
+            case "/api/v1/auth/refresh":
+                return Self.json(401, #"{"detail":"Invalid or expired refresh token"}"#)
+            case "/api/v1/me":
+                endpoints.signalArrived(); endpoints.waitForRelease()
+                return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
+            case "/api/v1/budgets":
+                endpoints.signalArrived(); endpoints.waitForRelease()
+                return Self.json(200, "[]")
+            default:
+                return Self.json(404, "{}")
+            }
+        }
+
+        let staleLoad = Task { await session.loadBudgets(caller: "test.staleLoad") }
+        await endpoints.awaitArrival()
+
+        try await session.refreshIfNeeded(force: true, caller: "test.invalidate")
+        XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+        endpoints.releaseNow(); endpoints.releaseNow()
+        _ = await staleLoad.value
+
+        XCTAssertNil(session.token)
+        XCTAssertNil(session.profile)
+        XCTAssertTrue(session.budgets.isEmpty)
+        XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+        XCTAssertNil(session.errorMessage)
+    }
 }
 
 // MARK: - Test doubles
@@ -323,14 +362,18 @@ private final class RefreshMockURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        guard let handler = Self.handler else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return
+        // Run the deterministic handler away from URLSession's protocol scheduling queue. Some tests
+        // intentionally suspend one response while a second session performs invalidation.
+        DispatchQueue.global().async { [self] in
+            guard let handler = Self.handler else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return
+            }
+            let (status, data) = handler(request)
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
         }
-        let (status, data) = handler(request)
-        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
-        client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
 }

@@ -32,12 +32,12 @@ struct RootView: View {
         } message: {
             Text(session.errorMessage ?? "Unknown error")
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active, session.sourceMode == .liveServer {
-                Task { await session.validateSelectedSource() }
-            }
+        // One lifecycle owner. This runs once for the initial active scene and once for each genuine
+        // background -> active transition; separate `.task` + `scenePhase` callbacks raced at launch.
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            await session.validateSelectedSource(caller: "RootView.sceneTask")
         }
-        .task { await session.validateSelectedSource() }
     }
 
     private var needsServerConfiguration: Bool {
@@ -304,14 +304,14 @@ private struct BudgetListView: View {
                                 Image(systemName: "plus")
                             }
                         }
-                        Button { Task { await session.loadBudgets() } } label: {
+                        Button { Task { await session.loadBudgets(caller: "BudgetListView.toolbar") } } label: {
                             Image(systemName: "arrow.clockwise")
                         }
                     }
                 }
             }
-            .task { await session.loadBudgets() }
-            .refreshable { await session.loadBudgets() }
+            .task { await session.loadBudgets(caller: "BudgetListView.task") }
+            .refreshable { await session.loadBudgets(caller: "BudgetListView.refreshable") }
             .sheet(isPresented: $showingBudgetCreation) {
                 BudgetCreationView(households: ownerHouseholds)
             }

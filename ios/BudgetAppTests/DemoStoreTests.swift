@@ -257,8 +257,15 @@ final class DemoStoreTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: domain) }
         let service = "BudgetAppTests.\(UUID().uuidString)"
         let factory = connectionClientFactory { request in
-            XCTAssertEqual(request.url?.path, "/api/v1/health")
-            return Self.response(request, body: #"{"status":"ok"}"#)
+            switch request.url?.path {
+            case "/api/v1/health":
+                return Self.response(request, body: #"{"status":"ok"}"#)
+            case "/api/v1/bootstrap/status":
+                return Self.response(request, body: #"{"initialized":true,"authentication_required":true,"api_version":"0.4.0"}"#)
+            default:
+                XCTFail("Unexpected connection request: \(request.url?.path ?? "nil")")
+                return Self.response(request, body: "{}")
+            }
         }
         let first = AppSession(defaults: defaults, keychain: KeychainStore(service: service), clientFactory: factory, initialMode: .deterministic)
         await first.configureServer("http://127.0.0.1:8000")
@@ -298,7 +305,7 @@ final class DemoStoreTests: XCTestCase {
     func testChangingCompositionDoesNotMutateDeterministicFinancialState() async {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
-        let before = (store.transactions.count, store.summary?.readyToAssignMinor, store.categories.map(\.availableMinor))
+        let before = (store.transactions.count, store.summary?.readyToAssignMinor, store.summary?.categories.map(\.availableMinor))
         let (defaults, domain) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: domain) }
         let session = AppSession(
@@ -311,7 +318,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(session.composition, .liveServer)
         XCTAssertEqual(store.transactions.count, before.0)
         XCTAssertEqual(store.summary?.readyToAssignMinor, before.1)
-        XCTAssertEqual(store.categories.map(\.availableMinor), before.2)
+        XCTAssertEqual(store.summary?.categories.map(\.availableMinor), before.2)
     }
 
     func testCurrencyTextAcceptsNaturalDecimalZeroAndSignedInput() {
