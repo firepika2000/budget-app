@@ -307,6 +307,59 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertEqual(relaunched.activeBudget?.id, "b2")
     }
 
+    @MainActor
+    func testProductionDemoToLiveAuthenticationFormRetainsContinuousInputAndFocus() async throws {
+        let health = Counter()
+        RefreshMockURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/api/v1/health": _ = health.increment(); return Self.json(200, "{}")
+            case "/api/v1/bootstrap/status": return Self.json(200, #"{"initialized":true,"authentication_required":true,"api_version":"0.4.0"}"#)
+            default: return Self.json(404, "{}")
+            }
+        }
+        let suite = "AuthFormProductionComposition.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let session = AppSession(
+            defaults: defaults,
+            keychain: InMemoryTokenStore([:]),
+            clientFactory: {
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.protocolClasses = [RefreshMockURLProtocol.self]
+                return try APIClient(baseURL: $0, session: URLSession(configuration: configuration))
+            },
+            initialMode: .deterministic
+        )
+        let form = AuthenticationFormState()
+        let controller = UIHostingController(rootView: RootView(authenticationForm: form).environmentObject(session))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        controller.loadViewIfNeeded(); controller.view.layoutIfNeeded()
+
+        await session.configureServer("https://budget.example.com")
+        try? await Task.sleep(for: .milliseconds(100))
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+
+        let formIdentity = ObjectIdentifier(form)
+        for character in "owner@example.com" {
+            form.email.append(character)
+            controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
+            await Task.yield()
+        }
+        XCTAssertEqual(form.email, "owner@example.com")
+        for character in "correct horse battery staple" {
+            form.password.append(character)
+            controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
+            await Task.yield()
+        }
+        XCTAssertEqual(form.password, "correct horse battery staple")
+        XCTAssertEqual(ObjectIdentifier(form), formIdentity, "field edits must retain the root-owned form identity")
+        XCTAssertEqual(session.connectionStatus, .authenticationRequired, "field edits must not replace the auth presentation")
+        XCTAssertEqual(health.value, 1, "editing must not restart root source validation")
+        window.isHidden = true; window.rootViewController = nil
+    }
+
     // The terminal latch must not be permanent: a successful login re-establishes a refreshable
     // session, and a later legitimate refresh proceeds.
     @MainActor

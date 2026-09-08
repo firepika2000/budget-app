@@ -4,6 +4,12 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var session: AppSession
     @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var authenticationForm: AuthenticationFormState
+    @State private var validatedCurrentActivation = false
+
+    init(authenticationForm: AuthenticationFormState = AuthenticationFormState()) {
+        _authenticationForm = StateObject(wrappedValue: authenticationForm)
+    }
 
     var body: some View {
         Group {
@@ -17,9 +23,9 @@ struct RootView: View {
                     Text("Connecting to Budget Server…").foregroundStyle(.secondary)
                 }
             } else if session.connectionStatus == .setupRequired {
-                AuthenticationView(firstRun: true)
+                AuthenticationView(firstRun: true, form: authenticationForm)
             } else if session.token == nil {
-                AuthenticationView(firstRun: false)
+                AuthenticationView(firstRun: false, form: authenticationForm)
             } else {
                 ActiveBudgetShell()
             }
@@ -32,11 +38,14 @@ struct RootView: View {
         } message: {
             Text(session.errorMessage ?? "Unknown error")
         }
-        // One lifecycle owner. This runs once for the initial active scene and once for each genuine
-        // background -> active transition; separate `.task` + `scenePhase` callbacks raced at launch.
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
-            await session.validateSelectedSource(caller: "RootView.sceneTask")
+        // This modifier can be restarted when the conditional presentation changes (for example,
+        // Demo -> Connecting -> Sign In) even though the scene stayed active. The state gate makes
+        // validation exactly once per genuine activation so a restarted task cannot tear down a
+        // focused authentication form.
+        .task { await validateActivationIfNeeded() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await validateActivationIfNeeded() } }
+            else { validatedCurrentActivation = false }
         }
     }
 
@@ -45,6 +54,12 @@ struct RootView: View {
         case .unreachable, .invalidConfiguration: true
         default: false
         }
+    }
+
+    private func validateActivationIfNeeded() async {
+        guard scenePhase == .active, !validatedCurrentActivation else { return }
+        validatedCurrentActivation = true
+        await session.validateSelectedSource(caller: "RootView.sceneActivation")
     }
 }
 
@@ -161,20 +176,19 @@ struct ServerConnectionSettingsView: View {
     }
 }
 
-private struct AuthenticationView: View {
+final class AuthenticationFormState: ObservableObject {
+    @Published var mode = 0
+    @Published var email = ""
+    @Published var password = ""
+    @Published var displayName = ""
+    @Published var householdName = ""
+    @Published var invitationToken = ""
+}
+
+struct AuthenticationView: View {
     @EnvironmentObject private var session: AppSession
     let firstRun: Bool
-    @State private var mode: Int
-    @State private var email = ""
-    @State private var password = ""
-    @State private var displayName = ""
-    @State private var householdName = ""
-    @State private var invitationToken = ""
-
-    init(firstRun: Bool = false) {
-        self.firstRun = firstRun
-        _mode = State(initialValue: firstRun ? 1 : 0)
-    }
+    @ObservedObject var form: AuthenticationFormState
 
     var body: some View {
         NavigationStack {
@@ -189,53 +203,55 @@ private struct AuthenticationView: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 } else {
-                    Picker("Mode", selection: $mode) {
+                    Picker("Mode", selection: $form.mode) {
                         Text("Sign in").tag(0)
                         Text("First-time setup").tag(1)
                         Text("Join family").tag(2)
                     }
                     .pickerStyle(.segmented)
                 }
-                if mode != 0 {
-                    TextField("Your name", text: $displayName)
+                if form.mode != 0 {
+                    TextField("Your name", text: $form.displayName)
                 }
-                if mode == 1 {
-                    TextField("Household name", text: $householdName)
+                if form.mode == 1 {
+                    TextField("Household name", text: $form.householdName)
                 }
-                if mode == 2 {
-                    TextField("Invitation code", text: $invitationToken, axis: .vertical)
+                if form.mode == 2 {
+                    TextField("Invitation code", text: $form.invitationToken, axis: .vertical)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 } else {
-                    TextField("Email", text: $email)
+                    TextField("Email", text: $form.email)
+                        .accessibilityIdentifier("auth-email-field")
                         .textInputAutocapitalization(.never)
                         .keyboardType(.emailAddress)
                         .autocorrectionDisabled()
                 }
-                SecureField("Password", text: $password)
-                if mode != 0 {
+                SecureField("Password", text: $form.password)
+                    .accessibilityIdentifier("auth-password-field")
+                if form.mode != 0 {
                     // New credentials must satisfy the server's 12-character minimum. Validate before
                     // submission so a short password never returns an opaque server-side 422.
-                    Text(!password.isEmpty && password.count < 12 ? "Password must be at least 12 characters." : "Use at least 12 characters.")
+                    Text(!form.password.isEmpty && form.password.count < 12 ? "Password must be at least 12 characters." : "Use at least 12 characters.")
                         .font(.caption)
-                        .foregroundStyle(!password.isEmpty && password.count < 12 ? Color.red : Color.secondary)
+                        .foregroundStyle(!form.password.isEmpty && form.password.count < 12 ? Color.red : Color.secondary)
                 }
                 Button(actionTitle) {
                     Task {
-                        if mode == 0 {
-                            await session.login(email: email, password: password)
-                        } else if mode == 1 {
+                        if form.mode == 0 {
+                            await session.login(email: form.email, password: form.password)
+                        } else if form.mode == 1 {
                             await session.bootstrap(
-                                email: email,
-                                password: password,
-                                displayName: displayName,
-                                householdName: householdName
+                                email: form.email,
+                                password: form.password,
+                                displayName: form.displayName,
+                                householdName: form.householdName
                             )
                         } else {
                             await session.acceptInvitation(
-                                token: invitationToken,
-                                password: password,
-                                displayName: displayName
+                                token: form.invitationToken,
+                                password: form.password,
+                                displayName: form.displayName
                             )
                         }
                     }
@@ -245,11 +261,12 @@ private struct AuthenticationView: View {
             }
             .navigationTitle(firstRun ? "First-Time Setup" : "Budget App")
             .overlay { if session.isWorking { ProgressView() } }
+            .onAppear { if firstRun && form.mode == 0 { form.mode = 1 } }
         }
     }
 
     private var actionTitle: String {
-        switch mode {
+        switch form.mode {
         case 1: "Create owner account"
         case 2: "Join household"
         default: "Sign in"
@@ -260,12 +277,12 @@ private struct AuthenticationView: View {
     // display/household names non-blank) so the primary action stays disabled until a request would
     // pass validation, rather than surfacing a server-side 422 as the user's first feedback.
     private var formIsValid: Bool {
-        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hasName = !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        switch mode {
-        case 1: return password.count >= 12 && trimmedEmail.count >= 3 && hasName && !householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case 2: return password.count >= 12 && hasName && !invitationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        default: return !password.isEmpty && !trimmedEmail.isEmpty
+        let trimmedEmail = form.email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasName = !form.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        switch form.mode {
+        case 1: return form.password.count >= 12 && trimmedEmail.count >= 3 && hasName && !form.householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case 2: return form.password.count >= 12 && hasName && !form.invitationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        default: return !form.password.isEmpty && !trimmedEmail.isEmpty
         }
     }
 }
