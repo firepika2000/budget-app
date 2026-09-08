@@ -251,11 +251,24 @@ def create_account(
     db: Session = Depends(get_db),
 ) -> Account:
     require_budget_capability(db, user, budget_id, "manage_budget_structure")
-    account = Account(budget_id=budget_id, **body.model_dump())
+    account_values = body.model_dump(exclude={"starting_balance_minor"})
+    account = Account(budget_id=budget_id, **account_values)
     db.add(account)
     db.flush()
     if account.account_type == "credit":
         ensure_credit_payment_category(db, account)
+    if body.starting_balance_minor:
+        db.add(Transaction(
+            budget_id=budget_id,
+            account_id=account.id,
+            category_id=None,
+            amount_minor=body.starting_balance_minor,
+            occurred_on=date.today(),
+            payee_name="Starting Balance",
+            memo="Balance when account was added",
+            is_cleared=True,
+            created_by_user_id=user.id,
+        ))
     db.commit()
     db.refresh(account)
     return account

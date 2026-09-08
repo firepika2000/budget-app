@@ -105,6 +105,80 @@ def test_owner_can_build_budget_and_record_exact_transaction(
     assert [item["payee_name"] for item in listed.json()] == ["Grocery Store", "Opening funds"]
 
 
+def test_first_account_records_exact_starting_balance_and_makes_cash_available(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    created = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts",
+        headers=auth(owner_token),
+        json={
+            "name": "Everyday Checking",
+            "account_type": "checking",
+            "is_on_budget": True,
+            "starting_balance_minor": 123456,
+        },
+    )
+    assert created.status_code == 201
+
+    balance = client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{created.json()['id']}/balance",
+        headers=auth(owner_token),
+    )
+    assert balance.status_code == 200
+    assert balance.json()["working_balance_minor"] == 123456
+    assert balance.json()["cleared_balance_minor"] == 123456
+
+    month = date.today().replace(day=1).isoformat()
+    summary = client.get(
+        f"/api/v1/budgets/{budget['id']}/months/{month}",
+        headers=auth(owner_token),
+    )
+    assert summary.status_code == 200
+    assert summary.json()["ready_to_assign_minor"] == 123456
+
+    transactions = client.get(
+        f"/api/v1/budgets/{budget['id']}/transactions",
+        headers=auth(owner_token),
+    ).json()
+    assert len(transactions) == 1
+    assert transactions[0]["amount_minor"] == 123456
+    assert transactions[0]["payee_name"] == "Starting Balance"
+    assert transactions[0]["category_id"] is None
+    assert transactions[0]["is_cleared"] is True
+
+
+def test_starting_balance_is_capability_gated_and_tracking_money_stays_out_of_rta(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    contributor_token = add_member(session_factory, client, "contribute", budget["id"])
+    denied = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts",
+        headers=auth(contributor_token),
+        json={"name": "Hidden", "account_type": "checking", "starting_balance_minor": 99999},
+    )
+    assert denied.status_code == 403
+
+    tracking = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts",
+        headers=auth(owner_token),
+        json={
+            "name": "Retirement",
+            "account_type": "tracking",
+            "is_on_budget": False,
+            "starting_balance_minor": 9876543,
+        },
+    )
+    assert tracking.status_code == 201
+    month = date.today().replace(day=1).isoformat()
+    summary = client.get(
+        f"/api/v1/budgets/{budget['id']}/months/{month}", headers=auth(owner_token)
+    )
+    assert summary.status_code == 200
+    assert summary.json()["ready_to_assign_minor"] == 0
+
+
 def test_contributor_can_transact_but_cannot_change_plan(
     client, owner_token, session_factory
 ):

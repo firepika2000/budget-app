@@ -10,6 +10,21 @@ enum Theme {
     static let projected = Color.indigo
 }
 
+struct FreshBudgetActivationState: Equatable {
+    let accountCount: Int
+    let groupCount: Int
+    let categoryCount: Int
+    let canManageStructure: Bool
+
+    var needsAccount: Bool { accountCount == 0 }
+    var needsGroup: Bool { groupCount == 0 }
+    var needsCategory: Bool { categoryCount == 0 }
+    var showsAddAccount: Bool { canManageStructure }
+    var showsCreateGroup: Bool { needsGroup && canManageStructure }
+    var showsAddCategory: Bool { !needsGroup && needsCategory && canManageStructure }
+    var showsNormalPlan: Bool { !needsGroup && !needsCategory }
+}
+
 private struct WorkspaceSnapshot {
     var accounts: [APIAccount]; var accountBalances: [String: APIAccountBalance]; var categories: [APICategory]; var groups: [APICategoryGroup]
     var transactions: [APITransaction]; var summary: APIMonthSummary?
@@ -359,8 +374,23 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
 
+    func createGroup(name: String) async throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw workspaceError("Enter a category group name.") }
+        if let demoSource = dataSource as? DemoWorkspaceDataSource {
+            if !demoSource.demo.groupOrder.contains(trimmed) { demoSource.demo.groupOrder.append(trimmed) }
+        } else {
+            _ = try await liveClient().createCategoryGroup(
+                budgetID: budget.id,
+                group: APICategoryGroupCreate(name: trimmed),
+                token: liveToken!
+            )
+        }
+        await refresh()
+    }
+
     func createAccount(_ value: APIAccountCreate) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource { demoSource.demo.createAccount(name: value.name, type: value.accountType, isOnBudget: value.isOnBudget) }
+        if let demoSource = dataSource as? DemoWorkspaceDataSource { demoSource.demo.createAccount(name: value.name, type: value.accountType, isOnBudget: value.isOnBudget, startingBalance: value.startingBalanceMinor) }
         else { _ = try await liveClient().createAccount(budgetID: budget.id, account: value, token: liveToken!) }
         await refresh()
     }
@@ -599,18 +629,19 @@ struct BudgetWorkspaceView: View {
     @StateObject private var store: BudgetWorkspaceStore
     @State private var showingSettings = false
     @State private var selectedTab: Int
+    private let canDismiss: Bool
 
-    init(budget: APIBudget) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _selectedTab = State(initialValue: 0) }
-    private init(demo: Bool) { _store = StateObject(wrappedValue: .demo()); let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--demo-screen=") }?.split(separator: "=").last.map(String.init) ?? "home"; _selectedTab = State(initialValue: ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4][screen] ?? 0) }
+    init(budget: APIBudget, canDismiss: Bool = false) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _selectedTab = State(initialValue: 0); self.canDismiss = canDismiss }
+    private init(demo: Bool) { _store = StateObject(wrappedValue: .demo()); let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--demo-screen=") }?.split(separator: "=").last.map(String.init) ?? "home"; _selectedTab = State(initialValue: ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4][screen] ?? 0); canDismiss = false }
     static func demo() -> BudgetWorkspaceView { BudgetWorkspaceView(demo: true) }
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            NavigationStack { LiveHomeView(showSettings: { showingSettings = true }) }.tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
-            NavigationStack { LivePlanView() }.tabItem { Label("Plan", systemImage: "square.grid.2x2.fill") }.tag(1)
-            NavigationStack { LiveActivityView() }.tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag(2)
-            NavigationStack { LiveAccountsView() }.tabItem { Label("Accounts", systemImage: "creditcard.fill") }.tag(3)
-            NavigationStack { LiveInsightsView() }.tabItem { Label("Insights", systemImage: "chart.xyaxis.line") }.tag(4)
+            NavigationStack { LiveHomeView(showSettings: { showingSettings = true }).workspaceDismissToolbar(canDismiss) }.tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
+            NavigationStack { LivePlanView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Plan", systemImage: "square.grid.2x2.fill") }.tag(1)
+            NavigationStack { LiveActivityView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag(2)
+            NavigationStack { LiveAccountsView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Accounts", systemImage: "creditcard.fill") }.tag(3)
+            NavigationStack { LiveInsightsView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Insights", systemImage: "chart.xyaxis.line") }.tag(4)
         }
         .tint(Theme.accent)
         .overlay { if store.isLoading { ProgressView().padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
@@ -640,6 +671,26 @@ struct BudgetWorkspaceView: View {
             return
         }
         await store.load(serverURL: url, token: token)
+    }
+}
+
+private struct WorkspaceDismissToolbar: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+    let enabled: Bool
+    func body(content: Content) -> some View {
+        content.toolbar {
+            if enabled {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Budgets", systemImage: "chevron.backward") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private extension View {
+    func workspaceDismissToolbar(_ enabled: Bool) -> some View {
+        modifier(WorkspaceDismissToolbar(enabled: enabled))
     }
 }
 
@@ -743,15 +794,16 @@ private struct LivePlanView: View {
     @State private var showRequest = false
     @State private var managing: APICategory?
     @State private var showGroups = false
+    @State private var showGroupCreation = false
     @State private var focus = PlanFocus.all
     private var rows: [APICategoryMonth] { (store.summary?.categories ?? []).filter { row in switch focus { case .all: true; case .underfunded: (row.underfundedMinor ?? 0) > 0; case .overspent: row.isOverspent; case .funded: (row.underfundedMinor ?? 0) == 0 && !row.isOverspent; case .available: row.availableMinor > 0 } } }
     // A brand-new Budget has no groups/categories. Surface a discoverable primary action to create
     // the first group/category through the same production workflow used later, so the owner is not
     // left at a dead end. Gated on structural authority (an owner always has it); delegated members
     // manage only their own scoped categories and do not define the household's first plan skeleton.
-    private var showFirstPlanEmptyState: Bool {
-        store.summary != nil && store.groups.isEmpty && store.categories.isEmpty && !store.isLoading
-            && store.delegatedBudget == nil && store.budget.can("manage_budget_structure")
+    private var activation: FreshBudgetActivationState {
+        .init(accountCount: store.accounts.count, groupCount: store.groups.count, categoryCount: store.categories.count,
+              canManageStructure: store.delegatedBudget == nil && store.budget.can("manage_budget_structure"))
     }
     var body: some View {
         List {
@@ -763,29 +815,41 @@ private struct LivePlanView: View {
                     Text("Reallocations conserve your household allocation and follow the limits selected by the owner.").font(.footnote).foregroundStyle(.secondary)
                 }
             } else if let summary = store.summary {
-                Section("Available to assign") { Text(store.format(summary.readyToAssignMinor)).font(.largeTitle.bold()).monospacedDigit() }
+                Section("Available to assign") {
+                    Text(store.format(summary.readyToAssignMinor)).font(.largeTitle.bold()).monospacedDigit()
+                    Text("Money you currently have that has not been given a purpose yet.").font(.footnote).foregroundStyle(.secondary)
+                }
             }
-            if let summary = store.summary {
+            if let summary = store.summary, activation.showsNormalPlan {
                 Section("Month summary") { LabeledContent("Assigned", value: store.format(summary.totalAssignedMinor)); LabeledContent("Overspent", value: store.format(summary.totalOverspentMinor)); LabeledContent("Monthly plan cost", value: store.format(summary.categories.reduce(Int64(0)) { $0 + ($1.recommendedContributionMinor ?? 0) })) }
             }
-            if showFirstPlanEmptyState {
+            if !activation.showsNormalPlan && !store.isLoading {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Build your first plan").font(.headline)
-                        Text("Categories give your money a purpose. Start by creating a category group, then add categories for the things you spend and save for.")
+                        Text(store.groups.isEmpty ? "Build your first plan" : "Add your first category").font(.headline)
+                        Text(activationExplanation)
                             .font(.subheadline).foregroundStyle(.secondary)
-                        Button { showCategory = true } label: {
-                            Label("Create Category Group", systemImage: "folder.badge.plus").frame(maxWidth: .infinity)
+                        if activation.canManageStructure {
+                            Button {
+                                if activation.needsGroup { showGroupCreation = true }
+                                else { showCategory = true }
+                            } label: {
+                                Label(store.groups.isEmpty ? "Create Category Group" : "Add Category", systemImage: "folder.badge.plus").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                        } else {
+                            Text("A household owner can add the plan structure. Your authorized budget areas will appear here when they are shared with you.")
+                                .font(.footnote).foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityHint("Opens the form to create your first category group and category.")
                     }
                     .padding(.vertical, 6)
                 }
             }
-            Section("Plan") {
+            if activation.showsNormalPlan {
+                Section("Plan") {
                 HStack { Button { changeMonth(-1) } label: { Image(systemName: "chevron.left") }; Spacer(); Button("Today") { store.planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year,.month], from: Date()))!; Task { await reload() } }; Text(store.planMonth.formatted(.dateTime.month(.wide).year())).font(.headline); Spacer(); Button { changeMonth(1) } label: { Image(systemName: "chevron.right") } }
                 Picker("Focus", selection: $focus) { ForEach(PlanFocus.allCases) { Text($0.rawValue).tag($0) } }
+                }
             }
             ForEach(store.groups.sorted { $0.sortOrder < $1.sortOrder }) { group in
                 let groupRows = rows.filter { row in store.categories.first(where: { $0.id == row.categoryID })?.groupID == group.id }
@@ -807,6 +871,11 @@ private struct LivePlanView: View {
         .sheet(isPresented: $showRequest) { FundingRequestView(budget: store.budget, categories: store.categories, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload) }
         .sheet(item: $managing) { category in LiveCategoryEditView(budget: store.budget, category: category, groups: store.groups, members: store.householdMembers, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload) }
         .sheet(isPresented: $showGroups) { LiveGroupManagementView() }
+        .sheet(isPresented: $showGroupCreation) { GroupCreationView() }
+    }
+    private var activationExplanation: String {
+        if store.groups.isEmpty { return "Category groups organize the purposes in your plan. Create one first, then add a category for something you spend or save for." }
+        return "Categories give money a specific purpose. After you add one, open it and choose Assign money to move Available to Assign into that category."
     }
     @ViewBuilder private func editAssignment(_ category: APICategoryMonth) -> some View {
         if let summary = store.summary {
@@ -834,6 +903,41 @@ private struct LivePlanView: View {
     private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
     private func canManage(_ category: APICategory) -> Bool { store.budget.can("manage_budget_structure") || (store.budget.can("manage_own_categories") && category.delegatedUserID == session.profile?.id) }
     private func changeMonth(_ value: Int) { if let next = Calendar.current.date(byAdding: .month, value: value, to: store.planMonth) { store.planMonth = next; Task { await reload() } } }
+}
+
+private struct GroupCreationView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var saving = false
+    @State private var error: String?
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Group name", text: $name)
+                Text("Groups keep related categories together, such as Monthly Bills or Savings Goals.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            .navigationTitle("New Category Group")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") { Task { await save() } }
+                        .disabled(saving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .overlay { if saving { ProgressView() } }
+            .alert("Unable to create group", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(error ?? "Unknown error") }
+        }
+    }
+    private func save() async {
+        saving = true; defer { saving = false }
+        do { try await store.createGroup(name: name); dismiss() }
+        catch { self.error = error.localizedDescription }
+    }
 }
 
 private struct LiveGroupManagementView: View {
@@ -1113,7 +1217,35 @@ private struct LiveAccountsView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var showAdd = false
-    var body: some View { List(store.accounts) { account in NavigationLink { LiveAccountRegisterView(account: account) } label: { HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: account.accountType == "credit" ? "creditcard.fill" : "building.columns.fill") }; Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle("Accounts").toolbar { if store.budget.can("manage_budget_structure") { Button { showAdd = true } label: { Image(systemName:"plus") } } }.sheet(isPresented:$showAdd){AccountCreationView(budget:store.budget,serverURL:session.serverURL ?? URL(string:"http://localhost")!,token:session.token ?? "demo",onSaved:reload)} }
+    private var activation: FreshBudgetActivationState {
+        .init(accountCount: store.accounts.count, groupCount: store.groups.count, categoryCount: store.categories.count,
+              canManageStructure: store.budget.can("manage_budget_structure"))
+    }
+    var body: some View {
+        List {
+            ForEach(store.accounts) { account in
+                NavigationLink { LiveAccountRegisterView(account: account) } label: {
+                    HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: account.accountType == "credit" ? "creditcard.fill" : "building.columns.fill") }; Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } }
+                }
+            }
+            if activation.needsAccount && !store.isLoading {
+                Section {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Add your first account").font(.headline)
+                        Text("Start with where your money lives today. Add checking, savings, cash, or a credit card and enter its real current balance.").font(.subheadline).foregroundStyle(.secondary)
+                        if activation.showsAddAccount {
+                            Button { showAdd = true } label: { Label("Add Account", systemImage: "plus.circle.fill").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent)
+                        } else {
+                            Text("A household owner can add accounts. Only accounts shared with you will appear here.").font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }.padding(.vertical, 6)
+                }
+            }
+        }
+        .navigationTitle("Accounts")
+        .toolbar { if store.budget.can("manage_budget_structure") { Button { showAdd = true } label: { Image(systemName:"plus") } } }
+        .sheet(isPresented:$showAdd){AccountCreationView(budget:store.budget,serverURL:session.serverURL ?? URL(string:"http://localhost")!,token:session.token ?? "demo",onSaved:reload)}
+    }
     private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
 }
 

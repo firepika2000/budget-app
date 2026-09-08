@@ -576,6 +576,7 @@ struct AccountCreationView: View {
     @State private var name = ""
     @State private var accountType = "checking"
     @State private var isOnBudget = true
+    @State private var startingBalance = ""
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -589,13 +590,27 @@ struct AccountCreationView: View {
                     }
                 }
                 Toggle("Include in budget", isOn: $isOnBudget)
+                Section("Current balance") {
+                    CurrencyAmountField(
+                        "Balance",
+                        text: $startingBalance,
+                        currencyCode: budget.currencyCode,
+                        allowsNegative: true,
+                        allowsZero: true
+                    )
+                    Text(accountType == "credit"
+                         ? "Enter existing credit card debt as a negative amount. This records the real balance without treating borrowed money as income."
+                         : "Enter the balance as it is today. On-budget cash becomes available to assign after the account is created.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("New Account")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") { Task { await save() } }.disabled(isSaving || name.isEmpty)
+                    Button("Create") { Task { await save() } }.disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || parsedStartingBalance == nil)
                 }
             }
             .overlay { if isSaving { ProgressView() } }
@@ -609,11 +624,18 @@ struct AccountCreationView: View {
         Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
     }
 
+    private var parsedStartingBalance: Int64? {
+        startingBalance.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? 0
+            : CurrencyText.parseMinorUnits(startingBalance, currencyCode: budget.currencyCode)
+    }
+
     private func save() async {
         isSaving = true
         defer { isSaving = false }
         do {
-            try await workspace.createAccount(APIAccountCreate(name: name, accountType: accountType, isOnBudget: isOnBudget))
+            guard let balance = parsedStartingBalance else { return }
+            try await workspace.createAccount(APIAccountCreate(name: name, accountType: accountType, isOnBudget: isOnBudget, startingBalanceMinor: balance))
             await onSaved()
             dismiss()
         } catch { errorMessage = error.localizedDescription }

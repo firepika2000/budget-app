@@ -21,6 +21,20 @@ final class APIClientTests: XCTestCase {
         XCTAssertNoThrow(try APIClient(baseURL: URL(string: "http://localhost:8080")!))
     }
 
+    func testAccountCreateEncodesExactStartingBalanceMinorUnits() throws {
+        let data = try JSONEncoder().encode(
+            APIAccountCreate(
+                name: "Everyday Checking",
+                accountType: "checking",
+                isOnBudget: true,
+                startingBalanceMinor: 123456
+            )
+        )
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["starting_balance_minor"] as? Int, 123456)
+        XCTAssertEqual(json["is_on_budget"] as? Bool, true)
+    }
+
     func testBootstrapStatusDiscoversUninitializedServerWithoutAuthentication() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

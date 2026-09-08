@@ -257,18 +257,18 @@ private struct AuthenticationView: View {
 private struct BudgetListView: View {
     @EnvironmentObject private var session: AppSession
     @State private var showingBudgetCreation = false
+    @State private var selectedBudget: APIBudget?
 
     var body: some View {
         NavigationStack {
             List(session.budgets) { budget in
-                NavigationLink {
-                    BudgetWorkspaceView(budget: budget)
-                } label: {
+                Button { selectedBudget = budget } label: {
                     VStack(alignment: .leading) {
                         Text(budget.name).font(.headline)
                         Text(budget.currencyCode).font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                .buttonStyle(.plain)
             }
             .overlay {
                 if session.budgets.isEmpty && !session.isWorking {
@@ -314,6 +314,12 @@ private struct BudgetListView: View {
             .refreshable { await session.loadBudgets(caller: "BudgetListView.refreshable") }
             .sheet(isPresented: $showingBudgetCreation) {
                 BudgetCreationView(households: ownerHouseholds)
+            }
+            // A workspace owns the navigation stack for each tab. Present it as a root instead of
+            // nesting those stacks inside this list's stack, which otherwise hides tab titles and
+            // toolbar actions on current SwiftUI releases.
+            .fullScreenCover(item: $selectedBudget) { budget in
+                BudgetWorkspaceView(budget: budget, canDismiss: true)
             }
         }
     }

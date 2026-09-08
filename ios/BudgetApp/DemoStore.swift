@@ -70,8 +70,13 @@ final class DemoStore: ObservableObject {
 
     func setUnassigned(_ value: Int64) { unassignedMinor = value }
 
-    func createAccount(name: String, type: String, isOnBudget: Bool) {
-        accounts.append(.init(id: UUID().uuidString, name: name, kind: DemoAccountKind(rawValue: type) ?? (isOnBudget ? .checking : .asset), balance: 0, cleared: 0))
+    func createAccount(name: String, type: String, isOnBudget: Bool, startingBalance: Int64 = 0) {
+        let id = UUID().uuidString
+        accounts.append(.init(id: id, name: name, kind: DemoAccountKind(rawValue: type) ?? (isOnBudget ? .checking : .asset), balance: startingBalance, cleared: startingBalance))
+        if startingBalance != 0 {
+            transactions.insert(.init(id: UUID().uuidString, date: Date(), payee: "Starting Balance", memo: "Balance when account was added", accountID: id, categoryIDs: [], amount: startingBalance, member: persona, cleared: true), at: 0)
+            if isOnBudget && ["checking", "savings", "cash"].contains(type) { unassignedMinor += startingBalance }
+        }
     }
 
     @discardableResult

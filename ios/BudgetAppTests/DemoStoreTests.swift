@@ -11,6 +11,59 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testFreshBudgetStartingBalanceAndActivationSurfacesUseProductionPaths() throws {
+        let demo = DemoStore()
+        demo.accounts = []
+        demo.transactions = []
+        demo.categories = []
+        demo.groupOrder = []
+        demo.setUnassigned(0)
+
+        demo.createAccount(name: "Everyday Checking", type: "checking", isOnBudget: true, startingBalance: 72_000)
+        XCTAssertEqual(demo.accounts.first?.balance, 72_000)
+        XCTAssertEqual(demo.readyToAssign, 72_000)
+        XCTAssertEqual(demo.transactions.first?.payee, "Starting Balance")
+        XCTAssertTrue(demo.transactions.first?.cleared == true)
+        XCTAssertEqual(demo.transactions.first?.categoryIDs, [])
+
+        let testFile = URL(fileURLWithPath: #filePath)
+        let appDirectory = testFile.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp")
+        let workspace = try String(contentsOf: appDirectory.appendingPathComponent("BudgetWorkspaceView.swift"))
+        let root = try String(contentsOf: appDirectory.appendingPathComponent("RootView.swift"))
+        let editor = try String(contentsOf: appDirectory.appendingPathComponent("EditingViews.swift"))
+        XCTAssertTrue(root.contains(".fullScreenCover(item: $selectedBudget)"), "workspace must not be nested inside the Budgets navigation stack")
+        XCTAssertTrue(workspace.contains("Add your first account"))
+        XCTAssertTrue(workspace.contains("Create Category Group"))
+        XCTAssertTrue(workspace.contains("Add your first category"))
+        XCTAssertTrue(workspace.contains("Money you currently have that has not been given a purpose yet."))
+        XCTAssertTrue(editor.contains("startingBalanceMinor: balance"))
+    }
+
+    func testFreshBudgetActivationIsAuthoritativeCapabilityDrivenAndHasNoLatch() {
+        let freshOwner = FreshBudgetActivationState(accountCount: 0, groupCount: 0, categoryCount: 0, canManageStructure: true)
+        XCTAssertTrue(freshOwner.needsAccount)
+        XCTAssertTrue(freshOwner.showsAddAccount)
+        XCTAssertTrue(freshOwner.showsCreateGroup)
+        XCTAssertFalse(freshOwner.showsAddCategory)
+        XCTAssertFalse(freshOwner.showsNormalPlan)
+
+        let afterGroup = FreshBudgetActivationState(accountCount: 1, groupCount: 1, categoryCount: 0, canManageStructure: true)
+        XCTAssertFalse(afterGroup.needsAccount)
+        XCTAssertTrue(afterGroup.showsAddAccount, "adding another account remains discoverable")
+        XCTAssertFalse(afterGroup.showsCreateGroup)
+        XCTAssertTrue(afterGroup.showsAddCategory)
+
+        let populated = FreshBudgetActivationState(accountCount: 1, groupCount: 1, categoryCount: 1, canManageStructure: true)
+        XCTAssertTrue(populated.showsNormalPlan)
+        XCTAssertTrue(populated.showsAddAccount)
+
+        let restricted = FreshBudgetActivationState(accountCount: 0, groupCount: 0, categoryCount: 0, canManageStructure: false)
+        XCTAssertFalse(restricted.showsAddAccount)
+        XCTAssertFalse(restricted.showsCreateGroup)
+        XCTAssertFalse(restricted.showsAddCategory)
+    }
+
+    @MainActor
     func testScheduledRepositoryCRUDRecurrencesAndFutureIncomeStayNonSpendable() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

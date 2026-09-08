@@ -350,17 +350,20 @@ public struct APIAccountCreate: Encodable, Sendable {
     public let name: String
     public let accountType: String
     public let isOnBudget: Bool
+    public let startingBalanceMinor: Int64
 
-    public init(name: String, accountType: String, isOnBudget: Bool = true) {
+    public init(name: String, accountType: String, isOnBudget: Bool = true, startingBalanceMinor: Int64 = 0) {
         self.name = name
         self.accountType = accountType
         self.isOnBudget = isOnBudget
+        self.startingBalanceMinor = startingBalanceMinor
     }
 
     enum CodingKeys: String, CodingKey {
         case name
         case accountType = "account_type"
         case isOnBudget = "is_on_budget"
+        case startingBalanceMinor = "starting_balance_minor"
     }
 }
 
