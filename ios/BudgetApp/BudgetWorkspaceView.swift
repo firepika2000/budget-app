@@ -636,23 +636,22 @@ struct BudgetWorkspaceView: View {
     @StateObject private var store: BudgetWorkspaceStore
     @State private var showingSettings = false
     @State private var selectedTab: Int
-    private let canDismiss: Bool
     private let selectionOverride: Binding<Int>?
 
-    init(budget: APIBudget, canDismiss: Bool = false) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _selectedTab = State(initialValue: 0); self.canDismiss = canDismiss; selectionOverride = nil }
-    private init(demo: Bool) { _store = StateObject(wrappedValue: .demo()); let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--demo-screen=") }?.split(separator: "=").last.map(String.init) ?? "home"; _selectedTab = State(initialValue: ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4][screen] ?? 0); canDismiss = ProcessInfo.processInfo.arguments.contains("--workspace-dismiss"); selectionOverride = nil }
-    init(testStore: BudgetWorkspaceStore, selection: Binding<Int>, canDismiss: Bool = true) { _store = StateObject(wrappedValue: testStore); _selectedTab = State(initialValue: 0); self.canDismiss = canDismiss; selectionOverride = selection }
+    init(budget: APIBudget) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _selectedTab = State(initialValue: 0); selectionOverride = nil }
+    private init(demo: Bool) { _store = StateObject(wrappedValue: .demo()); let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--demo-screen=") }?.split(separator: "=").last.map(String.init) ?? "home"; _selectedTab = State(initialValue: ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4][screen] ?? 0); selectionOverride = nil }
+    init(testStore: BudgetWorkspaceStore, selection: Binding<Int>) { _store = StateObject(wrappedValue: testStore); _selectedTab = State(initialValue: 0); selectionOverride = selection }
     static func demo() -> BudgetWorkspaceView { BudgetWorkspaceView(demo: true) }
     private var tabSelection: Binding<Int> { selectionOverride ?? $selectedTab }
     private var activeTab: Int { selectionOverride?.wrappedValue ?? selectedTab }
 
     var body: some View {
         TabView(selection: tabSelection) {
-            NavigationStack { LiveHomeView(showSettings: { showingSettings = true }).workspaceDismissToolbar(canDismiss) }.tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
-            NavigationStack { LivePlanView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Plan", systemImage: "square.grid.2x2.fill") }.tag(1)
-            NavigationStack { LiveActivityView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag(2)
-            NavigationStack { LiveAccountsView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Accounts", systemImage: "creditcard.fill") }.tag(3)
-            NavigationStack { LiveInsightsView().workspaceDismissToolbar(canDismiss) }.tabItem { Label("Insights", systemImage: "chart.xyaxis.line") }.tag(4)
+            NavigationStack { LiveHomeView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
+            NavigationStack { LivePlanView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Plan", systemImage: "square.grid.2x2.fill") }.tag(1)
+            NavigationStack { LiveActivityView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag(2)
+            NavigationStack { LiveAccountsView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Accounts", systemImage: "creditcard.fill") }.tag(3)
+            NavigationStack { LiveInsightsView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Insights", systemImage: "chart.xyaxis.line") }.tag(4)
         }
         // iOS 27 can update the selected tab while leaving a previously lazy per-tab NavigationStack
         // unmaterialized. Re-keying only the TabView at selection time forces the selected production
@@ -737,29 +736,26 @@ private struct WorkspaceProfileView: View {
     }
 }
 
-private struct WorkspaceDismissToolbar: ViewModifier {
-    @Environment(\.dismiss) private var dismiss
-    let enabled: Bool
+private struct WorkspaceProfileToolbar: ViewModifier {
+    let action: () -> Void
     func body(content: Content) -> some View {
         content.toolbar {
-            if enabled {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Budgets", systemImage: "chevron.backward") { dismiss() }
-                }
+            ToolbarItem(placement: .topBarLeading) {
+                Button(action: action) { Image(systemName: "person.crop.circle") }
+                    .accessibilityIdentifier("profile-settings-button")
             }
         }
     }
 }
 
 private extension View {
-    func workspaceDismissToolbar(_ enabled: Bool) -> some View {
-        modifier(WorkspaceDismissToolbar(enabled: enabled))
+    func workspaceProfileToolbar(action: @escaping () -> Void) -> some View {
+        modifier(WorkspaceProfileToolbar(action: action))
     }
 }
 
 private struct LiveHomeView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    let showSettings: () -> Void
     var body: some View {
         List {
             Section {
@@ -783,7 +779,7 @@ private struct LiveHomeView: View {
             }
             Section("Recent activity") { ForEach(store.transactions.prefix(5)) { LiveTransactionLink(transaction: $0) } }
             if let forecast = store.forecast { Section("90-day forecast") { LabeledContent("Projected total", value: store.format(forecast.projectedTotalOnBudgetMinor)); LabeledContent("Lowest projected", value: store.format(forecast.lowestProjectedTotalMinor)); NavigationLink("View forecast") { LiveForecastView() } } }
-        }.navigationTitle(store.budget.name).toolbar { ToolbarItem(placement: .topBarLeading) { Button(action: showSettings) { Image(systemName: "person.crop.circle") }.accessibilityIdentifier("household-profile-button") } }
+        }.navigationTitle(store.budget.name)
     }
 }
 

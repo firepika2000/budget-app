@@ -35,6 +35,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertFalse(root.contains(".fullScreenCover(item: $selectedBudget)"), "the active workspace must not be a temporary child of a Budgets browser")
         XCTAssertEqual(root.components(separatedBy: "ActiveBudgetShell()").count - 1, 2, "deterministic and live routes must enter the same product shell")
         XCTAssertTrue(workspace.contains("Add your first account"))
+        XCTAssertEqual(workspace.components(separatedBy: ".workspaceProfileToolbar").count - 1, 5, "Profile & Settings must be global workspace chrome on every tab")
+        XCTAssertFalse(workspace.contains("workspaceDismissToolbar"), "the active budget must not navigate back to a Budgets parent")
         XCTAssertTrue(workspace.contains("Create Category Group"))
         XCTAssertTrue(workspace.contains("Add your first category"))
         XCTAssertTrue(workspace.contains("Money you currently have that has not been given a purpose yet."))
@@ -610,7 +612,7 @@ private struct WorkspaceSelectionHarness: View {
     let destination: Int
     @State private var selection = 0
     var body: some View {
-        BudgetWorkspaceView(testStore: store, selection: $selection, canDismiss: true)
+        BudgetWorkspaceView(testStore: store, selection: $selection)
             .environmentObject(session)
             .onAppear { DispatchQueue.main.async { selection = destination } }
     }
