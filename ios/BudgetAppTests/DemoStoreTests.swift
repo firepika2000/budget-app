@@ -41,6 +41,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(workspace.contains("Add your first category"))
         XCTAssertTrue(workspace.contains("Money you currently have that has not been given a purpose yet."))
         XCTAssertTrue(editor.contains("startingBalanceMinor: balance"))
+        XCTAssertFalse(editor.contains("let serverURL"), "editors must submit through the shared workspace store, not own transport configuration")
+        XCTAssertFalse(editor.contains("let token"), "credentials must not leak into local editing state")
     }
 
     func testFreshBudgetActivationIsAuthoritativeCapabilityDrivenAndHasNoLatch() {

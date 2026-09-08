@@ -928,8 +928,8 @@ private struct LivePlanView: View {
         .sheet(isPresented: $showMove) { moveMoney }
         .sheet(isPresented: $showCategory) { createCategory }
         .sheet(isPresented: $showSmartFunding) { smartFunding }
-        .sheet(isPresented: $showRequest) { FundingRequestView(budget: store.budget, categories: store.categories, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload) }
-        .sheet(item: $managing) { category in LiveCategoryEditView(budget: store.budget, category: category, groups: store.groups, members: store.householdMembers, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload) }
+        .sheet(isPresented: $showRequest) { FundingRequestView(budget: store.budget, categories: store.categories, onSaved: reload) }
+        .sheet(item: $managing) { category in LiveCategoryEditView(budget: store.budget, category: category, groups: store.groups, members: store.householdMembers, onSaved: reload) }
         .sheet(isPresented: $showGroups) { LiveGroupManagementView() }
         .sheet(isPresented: $showGroupCreation) { GroupCreationView() }
     }
@@ -939,28 +939,26 @@ private struct LivePlanView: View {
     }
     @ViewBuilder private func editAssignment(_ category: APICategoryMonth) -> some View {
         if let summary = store.summary {
-            AssignmentEditView(budget: store.budget, category: category, month: String(BudgetWorkspaceStore.dateString(store.planMonth).prefix(7)) + "-01", expectedAllocationVersion: summary.allocationVersion, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload)
+            AssignmentEditView(budget: store.budget, category: category, month: String(BudgetWorkspaceStore.dateString(store.planMonth).prefix(7)) + "-01", expectedAllocationVersion: summary.allocationVersion, onSaved: reload)
         }
     }
     @ViewBuilder private var moveMoney: some View {
         if let summary = store.summary {
-            AllocationTransferView(budget: store.budget, categories: summary.categories, expectedAllocationVersion: summary.allocationVersion, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload)
+            AllocationTransferView(budget: store.budget, categories: summary.categories, expectedAllocationVersion: summary.allocationVersion, onSaved: reload)
         }
     }
     @ViewBuilder private var createCategory: some View {
         CategoryCreationView(
                 budget: store.budget,
                 groups: store.groups,
-                serverURL: session.serverURL ?? URL(string: "http://localhost")!,
-                token: session.token ?? "demo",
                 onSaved: reload,
                 delegatedUserID: store.budget.can("manage_own_categories") && !store.budget.can("manage_budget_structure") ? session.profile?.id : nil
             )
     }
     @ViewBuilder private var smartFunding: some View {
-        LiveSmartFundingView(budget: store.budget, month: String(BudgetWorkspaceStore.dateString(store.planMonth).prefix(7)) + "-01", serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload)
+        LiveSmartFundingView(budget: store.budget, month: String(BudgetWorkspaceStore.dateString(store.planMonth).prefix(7)) + "-01", onSaved: reload)
     }
-    private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
+    private func reload() async { await store.refresh() }
     private func canManage(_ category: APICategory) -> Bool { store.budget.can("manage_budget_structure") || (store.budget.can("manage_own_categories") && category.delegatedUserID == session.profile?.id) }
     private func changeMonth(_ value: Int) { if let next = Calendar.current.date(byAdding: .month, value: value, to: store.planMonth) { store.planMonth = next; Task { await reload() } } }
 }
@@ -1057,7 +1055,7 @@ private struct LiveTargetEditor: View {
 
 private struct LiveSmartFundingView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
-    let budget: APIBudget; let month: String; let serverURL: URL; let token: String; let onSaved: () async -> Void
+    let budget: APIBudget; let month: String; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var preview: APISmartFundingPreview?; @State private var isLoading = false; @State private var errorMessage: String?
     var body: some View {
@@ -1083,7 +1081,6 @@ private struct LiveSmartFundingView: View {
 }
 
 private struct LiveActivityView: View {
-    @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var search = ""
     @State private var showAdd = false
@@ -1101,12 +1098,12 @@ private struct LiveActivityView: View {
             .sheet(isPresented: $showTransfer) { transfer }
     }
     @ViewBuilder private var transfer: some View {
-        LiveTransferView(budget: store.budget, accounts: store.accounts, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload)
+        LiveTransferView(budget: store.budget, accounts: store.accounts, onSaved: reload)
     }
     @ViewBuilder private var entry: some View {
-        TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload)
+        TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, onSaved: reload)
     }
-    private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
+    private func reload() async { await store.refresh() }
 }
 
 private enum ScheduledKind: String, CaseIterable, Identifiable {
@@ -1240,7 +1237,6 @@ private struct LiveTransactionLink: View {
 }
 
 private struct LiveTransactionDetailView: View {
-    @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let transactionID: String
     @State private var showEdit = false
@@ -1261,10 +1257,10 @@ private struct LiveTransactionDetailView: View {
                 } label: { Image(systemName: "ellipsis.circle") }
             }
         }
-            .sheet(isPresented: $showEdit) { if let transaction { LiveTransactionEditView(budget: store.budget, transaction: transaction, accounts: store.accounts, categories: store.categories, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: reload) } }
+            .sheet(isPresented: $showEdit) { if let transaction { LiveTransactionEditView(budget: store.budget, transaction: transaction, accounts: store.accounts, categories: store.categories, onSaved: reload) } }
             .confirmationDialog("Delete this transaction?", isPresented: $confirmDelete, titleVisibility: .visible) { Button("Delete Transaction", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text("This cannot be undone and will immediately update the plan and reports.") }
     }
-    private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
+    private func reload() async { await store.refresh() }
     private func deleteTransaction() async {
         guard let transaction else { return }
         isDeleting = true; defer { isDeleting = false }
@@ -1274,7 +1270,6 @@ private struct LiveTransactionDetailView: View {
 }
 
 private struct LiveAccountsView: View {
-    @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var showAdd = false
     private var activation: FreshBudgetActivationState {
@@ -1306,13 +1301,12 @@ private struct LiveAccountsView: View {
         .accessibilityIdentifier("accounts-screen")
         .navigationTitle("Accounts")
         .toolbar { if store.budget.can("manage_budget_structure") { Button { showAdd = true } label: { Image(systemName:"plus") } } }
-        .sheet(isPresented:$showAdd){AccountCreationView(budget:store.budget,serverURL:session.serverURL ?? URL(string:"http://localhost")!,token:session.token ?? "demo",onSaved:reload)}
+        .sheet(isPresented:$showAdd){AccountCreationView(budget:store.budget,onSaved:reload)}
     }
-    private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
+    private func reload() async { await store.refresh() }
 }
 
 struct LiveAccountRegisterView: View {
-    @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let account: APIAccount
     @State private var showAdd = false
@@ -1374,16 +1368,16 @@ struct LiveAccountRegisterView: View {
     }
 
     @ViewBuilder private var entry: some View {
-        TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", initialAccountID: account.id, onSaved: store.refresh)
+        TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, initialAccountID: account.id, onSaved: store.refresh)
     }
     @ViewBuilder private var reconcile: some View {
-        LiveReconcileView(budget: store.budget, account: account, currentBalance: store.clearedBalance(for: account), serverURL: session.serverURL ?? URL(string: "http://localhost")!, token: session.token ?? "demo", onSaved: store.refresh)
+        LiveReconcileView(budget: store.budget, account: account, currentBalance: store.clearedBalance(for: account), onSaved: store.refresh)
     }
 }
 
 private struct LiveTransferView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
-    let budget: APIBudget; let accounts: [APIAccount]; let serverURL: URL; let token: String; let onSaved: () async -> Void
+    let budget: APIBudget; let accounts: [APIAccount]; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var sourceID = ""; @State private var destinationID = ""; @State private var amount = ""; @State private var memo = ""; @State private var date = Date(); @State private var cleared = false; @State private var isSaving = false; @State private var errorMessage: String?
     private var openAccounts: [APIAccount] { accounts.filter { !$0.isClosed } }
@@ -1401,11 +1395,11 @@ private struct LiveTransferView: View {
 
 private struct LiveCategoryEditView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
-    let budget: APIBudget; let category: APICategory; let groups: [APICategoryGroup]; let members: [APIHouseholdMember]; let serverURL: URL; let token: String; let onSaved: () async -> Void
+    let budget: APIBudget; let category: APICategory; let groups: [APICategoryGroup]; let members: [APIHouseholdMember]; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name: String; @State private var groupID: String; @State private var sortOrder: Int; @State private var archived: Bool; @State private var delegatedUserID: String; @State private var isSaving = false; @State private var errorMessage: String?; @State private var confirmDelete = false
-    init(budget: APIBudget, category: APICategory, groups: [APICategoryGroup], members: [APIHouseholdMember], serverURL: URL, token: String, onSaved: @escaping () async -> Void) {
-        self.budget = budget; self.category = category; self.groups = groups; self.members = members; self.serverURL = serverURL; self.token = token; self.onSaved = onSaved
+    init(budget: APIBudget, category: APICategory, groups: [APICategoryGroup], members: [APIHouseholdMember], onSaved: @escaping () async -> Void) {
+        self.budget = budget; self.category = category; self.groups = groups; self.members = members; self.onSaved = onSaved
         _name = State(initialValue: category.name); _groupID = State(initialValue: category.groupID); _sortOrder = State(initialValue: category.sortOrder); _archived = State(initialValue: category.isArchived); _delegatedUserID = State(initialValue: category.delegatedUserID ?? "")
     }
     var body: some View { NavigationStack { Form { TextField("Name", text: $name); Picker("Group", selection: $groupID) { ForEach(groups.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } };Stepper("Order \(sortOrder)",value:$sortOrder,in:0...10_000); if budget.can("manage_allowances") { Picker("Delegated budget", selection: $delegatedUserID) { Text("Household / private").tag(""); ForEach(members.filter { $0.role != "owner" && $0.isActive }) { Text($0.displayName).tag($0.userID) } } }; Toggle("Archived", isOn: $archived); if archived { Text("Archived categories remain in historical reports but are hidden from new spending and assignments.").font(.footnote).foregroundStyle(.secondary) };Section{Button("Delete Unused Category",role:.destructive){confirmDelete=true};Text("Categories with transactions, allocations, targets, or other financial history cannot be deleted. Archive them instead.").font(.footnote).foregroundStyle(.secondary)} }.navigationTitle("Manage Category").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || groupID.isEmpty || isSaving) } }.confirmationDialog("Delete this category?",isPresented:$confirmDelete){Button("Delete Unused Category",role:.destructive){Task{await remove()}}}.alert("Unable to update category", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } } }
@@ -1415,7 +1409,7 @@ private struct LiveCategoryEditView: View {
 
 private struct LiveReconcileView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
-    let budget: APIBudget; let account: APIAccount; let currentBalance: Int64; let serverURL: URL; let token: String; let onSaved: () async -> Void
+    let budget: APIBudget; let account: APIAccount; let currentBalance: Int64; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var statementBalance = ""; @State private var throughDate = Date(); @State private var createAdjustment = false; @State private var reason = ""; @State private var isSaving = false; @State private var errorMessage: String?
     private var parsed: Int64? { CurrencyText.parseMinorUnits(statementBalance, currencyCode: budget.currencyCode) }
@@ -1430,7 +1424,6 @@ private struct LiveReconcileView: View {
 }
 
 private struct LiveInsightsView: View {
-    @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var showFilters = false
     @State private var breakdownMode = SpendingBreakdownMode.category
@@ -1461,7 +1454,7 @@ private struct LiveInsightsView: View {
         Picker("Status", selection: $store.reportCleared) { Text("All statuses").tag("all"); Text("Cleared").tag("cleared"); Text("Uncleared").tag("uncleared") }
         Toggle("Include tracking accounts", isOn: $store.includeTrackingAccounts)
     }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false; Task { await reload() } } } } } }
-    private func reload() async { guard let url = session.serverURL, let token = session.token else { return }; await store.load(serverURL: url, token: token) }
+    private func reload() async { await store.refresh() }
 }
 
 enum SpendingBreakdownMode: String, CaseIterable, Identifiable { case group = "Groups", category = "Categories"; var id: Self { self } }
@@ -1615,12 +1608,12 @@ struct LiveDelegatedPolicyView: View {
 
 private struct LiveTransactionEditView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
-    let budget: APIBudget; let transaction: APITransaction; let accounts: [APIAccount]; let categories: [APICategory]; let serverURL: URL; let token: String; let onSaved: () async -> Void
+    let budget: APIBudget; let transaction: APITransaction; let accounts: [APIAccount]; let categories: [APICategory]; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var payee: String; @State private var amount: String; @State private var accountID: String; @State private var categoryID: String; @State private var memo: String; @State private var cleared: Bool; @State private var date: Date; @State private var isInflow: Bool; @State private var isSplit: Bool; @State private var splitRows: [WorkspaceSplitDraft]; @State private var flag: String; @State private var tags: String; @State private var attachments: String
     @State private var isSaving = false; @State private var errorMessage: String?
-    init(budget: APIBudget, transaction: APITransaction, accounts: [APIAccount], categories: [APICategory], serverURL: URL, token: String, onSaved: @escaping () async -> Void) {
-        self.budget=budget; self.transaction=transaction; self.accounts=accounts; self.categories=categories; self.serverURL=serverURL; self.token=token; self.onSaved=onSaved
+    init(budget: APIBudget, transaction: APITransaction, accounts: [APIAccount], categories: [APICategory], onSaved: @escaping () async -> Void) {
+        self.budget=budget; self.transaction=transaction; self.accounts=accounts; self.categories=categories; self.onSaved=onSaved
         _payee=State(initialValue:transaction.payeeName); _amount=State(initialValue:CurrencyText.editable(abs(transaction.amountMinor),currencyCode:budget.currencyCode)); _accountID=State(initialValue:transaction.accountID); _categoryID=State(initialValue:transaction.categoryID ?? ""); _memo=State(initialValue:transaction.memo); _cleared=State(initialValue:transaction.isCleared); _date=State(initialValue:Self.parseDate(transaction.occurredOn)); _isInflow=State(initialValue:transaction.amountMinor > 0); _isSplit=State(initialValue:!transaction.splits.isEmpty); _splitRows=State(initialValue:transaction.splits.map { WorkspaceSplitDraft(categoryID:$0.categoryID,amount:CurrencyText.editable(abs($0.amountMinor),currencyCode:budget.currencyCode),memo:$0.memo) }); _flag=State(initialValue:transaction.flag ?? ""); _tags=State(initialValue:(transaction.tags ?? []).joined(separator:", ")); _attachments=State(initialValue:(transaction.attachmentMetadata ?? []).compactMap{$0["name"]}.joined(separator:", "))
     }
     var body: some View { NavigationStack { Form {

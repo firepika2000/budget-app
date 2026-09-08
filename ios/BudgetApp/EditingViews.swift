@@ -6,8 +6,6 @@ struct TransactionEntryView: View {
     let budget: APIBudget
     let accounts: [APIAccount]
     let categories: [APICategory]
-    let serverURL: URL
-    let token: String
     let onSaved: () async -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -27,12 +25,10 @@ struct TransactionEntryView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], serverURL: URL, token: String, initialAccountID: String? = nil, onSaved: @escaping () async -> Void) {
+    init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], initialAccountID: String? = nil, onSaved: @escaping () async -> Void) {
         self.budget = budget
         self.accounts = accounts
         self.categories = categories
-        self.serverURL = serverURL
-        self.token = token
         self.onSaved = onSaved
         _accountID = State(initialValue: initialAccountID ?? "")
     }
@@ -193,8 +189,6 @@ struct AllocationTransferView: View {
     let budget: APIBudget
     let categories: [APICategoryMonth]
     let expectedAllocationVersion: Int
-    let serverURL: URL
-    let token: String
     let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var sourceCategoryID = ""
@@ -299,8 +293,6 @@ struct AssignmentEditView: View {
     let category: APICategoryMonth
     let month: String
     let expectedAllocationVersion: Int
-    let serverURL: URL
-    let token: String
     let onSaved: () async -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -313,16 +305,12 @@ struct AssignmentEditView: View {
         category: APICategoryMonth,
         month: String,
         expectedAllocationVersion: Int,
-        serverURL: URL,
-        token: String,
         onSaved: @escaping () async -> Void
     ) {
         self.budget = budget
         self.category = category
         self.month = month
         self.expectedAllocationVersion = expectedAllocationVersion
-        self.serverURL = serverURL
-        self.token = token
         self.onSaved = onSaved
         _amount = State(initialValue: CurrencyText.editable(category.assignedMinor, currencyCode: budget.currencyCode))
     }
@@ -387,8 +375,6 @@ struct FundingRequestView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget
     let categories: [APICategory]
-    let serverURL: URL
-    let token: String
     let onSaved: () async -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -569,8 +555,6 @@ struct CurrencyAmountField: View {
 struct AccountCreationView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget
-    let serverURL: URL
-    let token: String
     let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -646,8 +630,6 @@ struct CategoryCreationView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget
     let groups: [APICategoryGroup]
-    let serverURL: URL
-    let token: String
     let onSaved: () async -> Void
     var delegatedUserID: String? = nil
     @Environment(\.dismiss) private var dismiss
