@@ -10,6 +10,16 @@ enum AppDataSourceMode: String, CaseIterable, Identifiable {
 
 enum AppComposition: Equatable { case deterministic, liveServer }
 
+enum ApplicationRoute: Equatable {
+    case deterministicWorkspace
+    case serverSetup
+    case connecting
+    case serverBootstrap
+    case authentication
+    case budgetSelection
+    case workspace(APIBudget)
+}
+
 enum ServerConnectionStatus: Equatable {
     case deterministic, connecting, connected, authenticationRequired, setupRequired
     case unreachable(String), invalidConfiguration(String)
@@ -74,6 +84,7 @@ final class AppSession: ObservableObject {
     // Coalesces concurrent startup validations (RootView's `.task` and its `scenePhase == .active`
     // handler) so discovery and the authenticated load run once per activation, not once per entry.
     private var validateTask: Task<Void, Never>?
+    private var activationValidated = false
     private let instanceID = String(UUID().uuidString.prefix(8))
 
     init(defaults: UserDefaults = .standard,
@@ -225,6 +236,28 @@ final class AppSession: ObservableObject {
     }
 
     var activeBudget: APIBudget? { budgets.first { $0.id == activeBudgetID } }
+
+    var route: ApplicationRoute {
+        if composition == .deterministic { return .deterministicWorkspace }
+        guard serverURL != nil else { return .serverSetup }
+        switch connectionStatus {
+        case .unreachable, .invalidConfiguration: return .serverSetup
+        case .connecting: return .connecting
+        case .setupRequired: return .serverBootstrap
+        default: break
+        }
+        guard token != nil else { return .authentication }
+        if let activeBudget { return .workspace(activeBudget) }
+        return .budgetSelection
+    }
+
+    func activate(caller: String = "unspecified") async {
+        guard !activationValidated else { authLog("activation ignored", caller: caller); return }
+        activationValidated = true
+        await validateSelectedSource(caller: caller)
+    }
+
+    func deactivate() { activationValidated = false }
 
     func selectBudget(_ id: String) {
         guard budgets.contains(where: { $0.id == id }) else { return }

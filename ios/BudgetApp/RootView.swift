@@ -4,29 +4,31 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var session: AppSession
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var authenticationForm: AuthenticationFormState
-    @State private var validatedCurrentActivation = false
+    private let authenticationFormOverride: AuthenticationFormState?
 
-    init(authenticationForm: AuthenticationFormState = AuthenticationFormState()) {
-        _authenticationForm = StateObject(wrappedValue: authenticationForm)
+    init(authenticationForm: AuthenticationFormState? = nil) {
+        authenticationFormOverride = authenticationForm
     }
 
     var body: some View {
         Group {
-            if session.composition == .deterministic {
+            switch session.route {
+            case .deterministicWorkspace:
                 ActiveBudgetShell()
-            } else if session.serverURL == nil || needsServerConfiguration {
+            case .serverSetup:
                 ServerSetupView()
-            } else if session.connectionStatus == .connecting {
+            case .connecting:
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("Connecting to Budget Server…").foregroundStyle(.secondary)
                 }
-            } else if session.connectionStatus == .setupRequired {
-                AuthenticationView(firstRun: true, form: authenticationForm)
-            } else if session.token == nil {
-                AuthenticationView(firstRun: false, form: authenticationForm)
-            } else {
+            case .serverBootstrap:
+                AuthenticationFlowView(firstRun: true, form: authenticationFormOverride)
+            case .authentication:
+                AuthenticationFlowView(firstRun: false, form: authenticationFormOverride)
+            case .budgetSelection:
+                BudgetSelectionView()
+            case .workspace:
                 ActiveBudgetShell()
             }
         }
@@ -38,28 +40,11 @@ struct RootView: View {
         } message: {
             Text(session.errorMessage ?? "Unknown error")
         }
-        // This modifier can be restarted when the conditional presentation changes (for example,
-        // Demo -> Connecting -> Sign In) even though the scene stayed active. The state gate makes
-        // validation exactly once per genuine activation so a restarted task cannot tear down a
-        // focused authentication form.
-        .task { await validateActivationIfNeeded() }
+        .task { guard scenePhase == .active else { return }; await session.activate(caller: "RootView.task") }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await validateActivationIfNeeded() } }
-            else { validatedCurrentActivation = false }
+            if phase == .active { Task { await session.activate(caller: "RootView.sceneActive") } }
+            else { session.deactivate() }
         }
-    }
-
-    private var needsServerConfiguration: Bool {
-        switch session.connectionStatus {
-        case .unreachable, .invalidConfiguration: true
-        default: false
-        }
-    }
-
-    private func validateActivationIfNeeded() async {
-        guard scenePhase == .active, !validatedCurrentActivation else { return }
-        validatedCurrentActivation = true
-        await session.validateSelectedSource(caller: "RootView.sceneActivation")
     }
 }
 
@@ -183,6 +168,16 @@ final class AuthenticationFormState: ObservableObject {
     @Published var displayName = ""
     @Published var householdName = ""
     @Published var invitationToken = ""
+}
+
+private struct AuthenticationFlowView: View {
+    let firstRun: Bool
+    @StateObject private var form: AuthenticationFormState
+    init(firstRun: Bool, form: AuthenticationFormState? = nil) {
+        self.firstRun = firstRun
+        _form = StateObject(wrappedValue: form ?? AuthenticationFormState())
+    }
+    var body: some View { AuthenticationView(firstRun: firstRun, form: form) }
 }
 
 struct AuthenticationView: View {

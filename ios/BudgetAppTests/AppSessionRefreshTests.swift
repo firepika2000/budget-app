@@ -130,6 +130,7 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertNil(session.token)
         XCTAssertNil(session.refreshToken)
         XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+        XCTAssertEqual(session.route, .authentication)
         XCTAssertEqual(session.serverURL?.absoluteString, "https://budget.example.com")
         XCTAssertEqual(session.sourceMode, .liveServer, "must not downgrade to deterministic demo")
         XCTAssertNil(session.errorMessage, "clean sign-in transition, not a generic error alert")
@@ -285,6 +286,7 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertNil(session.activeBudget, "multiple budgets require an explicit first selection")
         session.selectBudget("b2")
         XCTAssertEqual(session.activeBudget?.name, "Travel")
+        XCTAssertEqual(session.route, .workspace(session.activeBudget!))
         session.selectBudget("not-authorized")
         XCTAssertEqual(session.activeBudget?.id, "b2", "an unavailable budget cannot replace the active context")
     }
