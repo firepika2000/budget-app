@@ -18,10 +18,18 @@
 		AA0000070000000000000007 /* DemoStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000070000000000000007 /* DemoStoreTests.swift */; };
 		AA0000080000000000000008 /* BudgetWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000080000000000000008 /* BudgetWorkspaceView.swift */; };
 		AA0000090000000000000009 /* AppSessionRefreshTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000090000000000000009 /* AppSessionRefreshTests.swift */; };
+		CC0000010000000000000001 /* AuthenticationJourneyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD0000010000000000000001 /* AuthenticationJourneyTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		A3CD3E08C7B85D0DE2E3A332 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AD37C1DD4FBCA4DC6B085CD1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DE51103439BB9A5389F0B595;
+			remoteInfo = BudgetApp;
+		};
+		CC0000020000000000000002 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = AD37C1DD4FBCA4DC6B085CD1 /* Project object */;
 			proxyType = 1;
@@ -44,9 +52,17 @@
 		BB0000070000000000000007 /* DemoStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoStoreTests.swift; sourceTree = "<group>"; };
 		BB0000080000000000000008 /* BudgetWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetWorkspaceView.swift; sourceTree = "<group>"; };
 		BB0000090000000000000009 /* AppSessionRefreshTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSessionRefreshTests.swift; sourceTree = "<group>"; };
+		DD0000010000000000000001 /* AuthenticationJourneyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticationJourneyTests.swift; sourceTree = "<group>"; };
+		DD0000020000000000000002 /* BudgetAppUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = BudgetAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		CC0000030000000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		32B48C46C55E631622718C8B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -67,11 +83,20 @@
 			path = BudgetAppTests;
 			sourceTree = "<group>";
 		};
+		CC0000040000000000000004 /* BudgetAppUITests */ = {
+			isa = PBXGroup;
+			children = (
+				DD0000010000000000000001 /* AuthenticationJourneyTests.swift */,
+			);
+			path = BudgetAppUITests;
+			sourceTree = "<group>";
+		};
 		57F785105A3E16BE29FE4152 = {
 			isa = PBXGroup;
 			children = (
 				E7B3E1F17E00FB7963AA3BF8 /* BudgetApp */,
 				4FD519930AF57FD856DB07D3 /* BudgetAppTests */,
+				CC0000040000000000000004 /* BudgetAppUITests */,
 				A9D39F70725EDBD6AC98239E /* Packages */,
 				D022D078AB2D1CC929A0E9B5 /* Products */,
 			);
@@ -90,6 +115,7 @@
 			children = (
 				5D4070DC93D13B19958B946B /* BudgetApp.app */,
 				1B486F81EC877C3437C19C5C /* BudgetAppTests.xctest */,
+				DD0000020000000000000002 /* BudgetAppUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -112,6 +138,22 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		CC0000050000000000000005 /* BudgetAppUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CC00000B000000000000000B /* Build configuration list for PBXNativeTarget "BudgetAppUITests" */;
+			buildPhases = (
+				CC0000030000000000000003 /* Frameworks */,
+				CC0000060000000000000006 /* Sources */,
+			);
+			buildRules = ();
+			dependencies = (
+				CC0000070000000000000007 /* PBXTargetDependency */,
+			);
+			name = BudgetAppUITests;
+			productName = BudgetAppUITests;
+			productReference = DD0000020000000000000002 /* BudgetAppUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		4852D5FBC10BDDC4D7231FCE /* BudgetAppTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A60C1A4E5DAB7DF9E7A5748E /* Build configuration list for PBXNativeTarget "BudgetAppTests" */;
@@ -158,6 +200,7 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1540;
 				TargetAttributes = {
+					CC0000050000000000000005 = { ProvisioningStyle = Automatic; TestTargetID = DE51103439BB9A5389F0B595; };
 					DE51103439BB9A5389F0B595 = {
 						ProvisioningStyle = Automatic;
 					};
@@ -182,11 +225,20 @@
 			targets = (
 				DE51103439BB9A5389F0B595 /* BudgetApp */,
 				4852D5FBC10BDDC4D7231FCE /* BudgetAppTests */,
+				CC0000050000000000000005 /* BudgetAppUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
+		CC0000060000000000000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CC0000010000000000000001 /* AuthenticationJourneyTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		4BD683A8D415D1003CD8EC49 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -214,6 +266,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		CC0000070000000000000007 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DE51103439BB9A5389F0B595 /* BudgetApp */;
+			targetProxy = CC0000020000000000000002 /* PBXContainerItemProxy */;
+		};
 		58BD6BA5896DA4CCF88F1A2F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = DE51103439BB9A5389F0B595 /* BudgetApp */;
@@ -222,6 +279,30 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		CC0000080000000000000008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetAppUITests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = BudgetApp;
+			};
+			name = Debug;
+		};
+		CC0000090000000000000009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetAppUITests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = BudgetApp;
+			};
+			name = Release;
+		};
 		16D099F03B584F1B882FCFE8 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -430,6 +511,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		CC00000B000000000000000B /* Build configuration list for PBXNativeTarget "BudgetAppUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CC0000080000000000000008 /* Debug */,
+				CC0000090000000000000009 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		3AEA90FA53A09785181AAB36 /* Build configuration list for PBXNativeTarget "BudgetApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

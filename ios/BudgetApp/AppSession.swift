@@ -86,12 +86,18 @@ final class AppSession: ObservableObject {
     private var validateTask: Task<Void, Never>?
     private var activationValidated = false
     private let instanceID = String(UUID().uuidString.prefix(8))
+    private let suppressLifecycleValidationForUITest: Bool
 
     init(defaults: UserDefaults = .standard,
          keychain: TokenStoring = KeychainStore(),
          clientFactory: @escaping (URL) throws -> APIClient = { try APIClient(baseURL: $0) },
          initialMode: AppDataSourceMode? = nil) {
         self.defaults = defaults; self.keychain = keychain; self.clientFactory = clientFactory
+        #if DEBUG
+        suppressLifecycleValidationForUITest = ProcessInfo.processInfo.arguments.contains("--ui-test-authentication")
+        #else
+        suppressLifecycleValidationForUITest = false
+        #endif
         serverURL = defaults.string(forKey: serverKey).flatMap(URL.init(string:))
         token = keychain.read(account: tokenAccount); refreshToken = keychain.read(account: refreshTokenAccount)
         activeBudgetID = defaults.string(forKey: activeBudgetKey)
@@ -106,6 +112,14 @@ final class AppSession: ObservableObject {
         let resolvedMode = initialMode ?? argumentMode ?? stored ?? fallback
         sourceMode = resolvedMode
         connectionStatus = resolvedMode == .deterministic ? .deterministic : .connecting
+        #if DEBUG
+        if suppressLifecycleValidationForUITest {
+            sourceMode = .liveServer
+            serverURL = URL(string: "http://127.0.0.1:8000")
+            token = nil; refreshToken = nil
+            connectionStatus = .authenticationRequired
+        }
+        #endif
         debugLog("AUTH_DIAGNOSTICS build=\(Self.buildMarker) session=\(instanceID)")
         authLog("init", caller: "AppSession.init")
         debugLog("selected data source: \(resolvedMode.rawValue)")
@@ -252,6 +266,7 @@ final class AppSession: ObservableObject {
     }
 
     func activate(caller: String = "unspecified") async {
+        guard !suppressLifecycleValidationForUITest else { return }
         guard !activationValidated else { authLog("activation ignored", caller: caller); return }
         activationValidated = true
         await validateSelectedSource(caller: caller)
