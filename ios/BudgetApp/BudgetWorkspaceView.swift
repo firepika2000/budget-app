@@ -665,7 +665,7 @@ struct BudgetWorkspaceView: View {
             Button("Retry") { Task { await reload() } }; Button("Cancel", role: .cancel) {}
         } message: { Text(store.errorMessage ?? "Unknown error") }
         .sheet(isPresented: $showingSettings) {
-            LiveHouseholdView(session: session, store: store)
+            WorkspaceProfileView(store: store)
                 .environmentObject(session)
                 .environmentObject(store)
         }
@@ -680,12 +680,60 @@ struct BudgetWorkspaceView: View {
             await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
             return
         }
-        do { try await session.refreshIfNeeded() } catch { store.errorMessage = error.localizedDescription; return }
+        // AppSession/RootView exclusively owns authentication. A reconstructed tab or workspace
+        // must never start another refresh cycle after the session generation was invalidated.
         guard let url = session.serverURL, let token = session.token else {
-            store.errorMessage = "Live Budget Server authentication is required."
             return
         }
         await store.load(serverURL: url, token: token)
+    }
+}
+
+private struct WorkspaceProfileView: View {
+    @EnvironmentObject private var session: AppSession
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var store: BudgetWorkspaceStore
+    @State private var showHousehold = false
+    @State private var showConnection = false
+    @State private var showCreate = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Profile") {
+                    LabeledContent("User", value: session.profile?.displayName ?? "Demo household owner")
+                    LabeledContent("Active budget", value: store.budget.name)
+                }
+                if session.sourceMode == .liveServer {
+                    Section("Budgets") {
+                        ForEach(session.budgets) { budget in
+                            Button { session.selectBudget(budget.id); dismiss() } label: {
+                                HStack { Text(budget.name); Spacer(); if budget.id == store.budget.id { Image(systemName: "checkmark") } }
+                            }
+                        }
+                        if session.profile?.households.contains(where: { $0.role == "owner" && $0.isActive }) == true {
+                            Button("Create another budget", systemImage: "plus") { showCreate = true }
+                        }
+                    }
+                }
+                Section("Household") { Button("Household and access", systemImage: "person.3") { showHousehold = true } }
+                Section("Connection") {
+                    LabeledContent("Source", value: session.sourceMode.title)
+                    LabeledContent("Status", value: session.connectionStatus.title)
+                    Button("Server and data source", systemImage: "server.rack") { showConnection = true }
+                }
+                if session.sourceMode == .liveServer {
+                    Section { Button("Sign Out", role: .destructive) { session.signOut(); dismiss() } }
+                }
+            }
+            .navigationTitle("Profile & Settings")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .navigationDestination(isPresented: $showHousehold) { LiveHouseholdView(session: session, store: store) }
+            .navigationDestination(isPresented: $showConnection) { ServerConnectionSettingsView() }
+            .sheet(isPresented: $showCreate) {
+                BudgetCreationView(households: session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? [])
+            }
+        }
     }
 }
 

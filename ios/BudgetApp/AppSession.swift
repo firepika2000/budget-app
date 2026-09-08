@@ -46,6 +46,7 @@ final class AppSession: ObservableObject {
     @Published var budgets: [APIBudget] = []
     @Published var isWorking = false
     @Published var errorMessage: String?
+    @Published private(set) var activeBudgetID: String?
 
     var composition: AppComposition { sourceMode == .deterministic ? .deterministic : .liveServer }
     private let defaults: UserDefaults
@@ -55,6 +56,7 @@ final class AppSession: ObservableObject {
     private let sourceModeKey = "budget.dataSourceMode"
     private let tokenAccount = "access-token"
     private let refreshTokenAccount = "refresh-token"
+    private let activeBudgetKey = "budget.activeBudgetID"
     // Single-flight refresh: at most one `/auth/refresh` request is in flight per session; concurrent
     // callers await this shared task rather than each submitting the (now-rotated) refresh token.
     private var refreshTask: Task<APIAuthTokens, Error>?
@@ -81,6 +83,7 @@ final class AppSession: ObservableObject {
         self.defaults = defaults; self.keychain = keychain; self.clientFactory = clientFactory
         serverURL = defaults.string(forKey: serverKey).flatMap(URL.init(string:))
         token = keychain.read(account: tokenAccount); refreshToken = keychain.read(account: refreshTokenAccount)
+        activeBudgetID = defaults.string(forKey: activeBudgetKey)
         let stored = defaults.string(forKey: sourceModeKey).flatMap(AppDataSourceMode.init(rawValue:))
         #if DEBUG
         let argumentMode: AppDataSourceMode? = ProcessInfo.processInfo.arguments.contains("--live") ? .liveServer : (ProcessInfo.processInfo.arguments.contains("--demo") ? .deterministic : nil)
@@ -196,7 +199,9 @@ final class AppSession: ObservableObject {
                 authLog("discarded stale loadBudgets completion", caller: caller)
                 return
             }
-            (profile, budgets) = loaded; connectionStatus = .connected
+            (profile, budgets) = loaded
+            reconcileActiveBudget()
+            connectionStatus = .connected
         } catch {
             // A request started by an older authenticated generation is obsolete. In particular it
             // must not put an alert over Sign In after a different caller invalidated the session.
@@ -213,9 +218,24 @@ final class AppSession: ObservableObject {
         guard sourceMode == .liveServer, let serverURL, let token else { return }
         await perform {
             let client = try self.clientFactory(serverURL)
-            _ = try await client.createBudget(APIBudgetCreate(householdID: householdID, name: name, currencyCode: currencyCode), token: token)
+            let created = try await client.createBudget(APIBudgetCreate(householdID: householdID, name: name, currencyCode: currencyCode), token: token)
             self.budgets = try await client.budgets(token: token)
+            self.selectBudget(created.id)
         }
+    }
+
+    var activeBudget: APIBudget? { budgets.first { $0.id == activeBudgetID } }
+
+    func selectBudget(_ id: String) {
+        guard budgets.contains(where: { $0.id == id }) else { return }
+        activeBudgetID = id
+        defaults.set(id, forKey: activeBudgetKey)
+    }
+
+    private func reconcileActiveBudget() {
+        if let activeBudgetID, budgets.contains(where: { $0.id == activeBudgetID }) { return }
+        if budgets.count == 1 { selectBudget(budgets[0].id) }
+        else { activeBudgetID = nil; defaults.removeObject(forKey: activeBudgetKey) }
     }
 
     func signOut() { clearCredentials(logoutFrom: serverURL) }
@@ -232,7 +252,9 @@ final class AppSession: ObservableObject {
             self.refreshOperationID = nil
             let client = try self.clientFactory(serverURL)
             async let profile = client.profile(token: tokens.accessToken); async let budgets = client.budgets(token: tokens.accessToken)
-            (self.profile, self.budgets) = try await (profile, budgets); self.connectionStatus = .connected
+            (self.profile, self.budgets) = try await (profile, budgets)
+            self.reconcileActiveBudget()
+            self.connectionStatus = .connected
         }
     }
 

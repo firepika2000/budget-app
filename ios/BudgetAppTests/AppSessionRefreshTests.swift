@@ -1,5 +1,7 @@
 import XCTest
 import BudgetAPI
+import SwiftUI
+import UIKit
 @testable import Budget_App
 
 /// Regression coverage for authentication-refresh single-flight and session recovery.
@@ -237,6 +239,72 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertNil(session.token)
         XCTAssertTrue(session.budgets.isEmpty)
         XCTAssertNil(session.errorMessage)
+    }
+
+    // Hosts the actual RootView while startup discovery rejects the stored refresh token. This
+    // catches presentation-owned loaders: the rendered production hierarchy must not issue another
+    // refresh after AppSession transitions authoritatively to Sign In.
+    @MainActor
+    func testProductionRootInvalidRefreshClearsAuthenticatedShellWithOneRequest() async throws {
+        let refresh = Counter()
+        let session = makeSession(access: "expired-access", refresh: "R1") { request in
+            switch request.url?.path {
+            case "/api/v1/health": return Self.json(200, "{}")
+            case "/api/v1/bootstrap/status": return Self.json(200, #"{"initialized":true,"authentication_required":true,"api_version":"0.4.0"}"#)
+            case "/api/v1/auth/refresh": _ = refresh.increment(); return Self.json(401, #"{"detail":"Invalid or expired refresh token"}"#)
+            default: return Self.json(404, "{}")
+            }
+        }
+        let controller = UIHostingController(rootView: RootView().environmentObject(session))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        controller.loadViewIfNeeded(); controller.view.layoutIfNeeded()
+
+        await session.validateSelectedSource(caller: "test.productionRoot")
+        try? await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertEqual(refresh.value, 1)
+        XCTAssertNil(session.token)
+        XCTAssertTrue(session.budgets.isEmpty)
+        XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+        XCTAssertNil(session.errorMessage)
+        window.isHidden = true; window.rootViewController = nil
+    }
+
+    @MainActor
+    func testAuthenticatedLoadResolvesAndSwitchesPersistentActiveBudget() async throws {
+        let session = makeSession(access: "expired-access", refresh: "R1") { request in
+            switch request.url?.path {
+            case "/api/v1/auth/refresh": return Self.json(200, Self.rotated)
+            case "/api/v1/me": return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
+            case "/api/v1/budgets": return Self.json(200, #"[{"id":"b1","household_id":"h1","name":"Home","currency_code":"USD","effective_permission":"owner","allocation_version":0},{"id":"b2","household_id":"h1","name":"Travel","currency_code":"USD","effective_permission":"owner","allocation_version":0}]"#)
+            default: return Self.json(404, "{}")
+            }
+        }
+        await session.loadBudgets(caller: "test.activeBudget")
+        XCTAssertNil(session.activeBudget, "multiple budgets require an explicit first selection")
+        session.selectBudget("b2")
+        XCTAssertEqual(session.activeBudget?.name, "Travel")
+        session.selectBudget("not-authorized")
+        XCTAssertEqual(session.activeBudget?.id, "b2", "an unavailable budget cannot replace the active context")
+    }
+
+    @MainActor
+    func testActiveBudgetSelectionSurvivesSessionReconstruction() {
+        let suite = "AppSessionActiveBudgetTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let budgets = [
+            APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD"),
+            APIBudget(id: "b2", householdID: "h1", name: "Travel", currencyCode: "USD")
+        ]
+        let first = AppSession(defaults: defaults, keychain: InMemoryTokenStore([:]), initialMode: .liveServer)
+        first.budgets = budgets
+        first.selectBudget("b2")
+
+        let relaunched = AppSession(defaults: defaults, keychain: InMemoryTokenStore([:]), initialMode: .liveServer)
+        relaunched.budgets = budgets
+        XCTAssertEqual(relaunched.activeBudget?.id, "b2")
     }
 
     // The terminal latch must not be permanent: a successful login re-establishes a refreshable

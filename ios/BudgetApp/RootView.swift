@@ -8,7 +8,7 @@ struct RootView: View {
     var body: some View {
         Group {
             if session.composition == .deterministic {
-                BudgetWorkspaceView.demo()
+                ActiveBudgetShell()
             } else if session.serverURL == nil || needsServerConfiguration {
                 ServerSetupView()
             } else if session.connectionStatus == .connecting {
@@ -21,7 +21,7 @@ struct RootView: View {
             } else if session.token == nil {
                 AuthenticationView(firstRun: false)
             } else {
-                BudgetListView()
+                ActiveBudgetShell()
             }
         }
         .alert("Something went wrong", isPresented: Binding(
@@ -45,6 +45,22 @@ struct RootView: View {
         case .unreachable, .invalidConfiguration: true
         default: false
         }
+    }
+}
+
+struct ActiveBudgetShell: View {
+    @EnvironmentObject private var session: AppSession
+    var body: some View {
+        Group {
+            if session.composition == .deterministic {
+                BudgetWorkspaceView.demo()
+            } else if let budget = session.activeBudget {
+                BudgetWorkspaceView(budget: budget).id(budget.id)
+            } else {
+                BudgetSelectionView()
+            }
+        }
+        .accessibilityIdentifier("active-budget-shell")
     }
 }
 
@@ -254,15 +270,14 @@ private struct AuthenticationView: View {
     }
 }
 
-private struct BudgetListView: View {
+struct BudgetSelectionView: View {
     @EnvironmentObject private var session: AppSession
     @State private var showingBudgetCreation = false
-    @State private var selectedBudget: APIBudget?
 
     var body: some View {
         NavigationStack {
             List(session.budgets) { budget in
-                Button { selectedBudget = budget } label: {
+                Button { session.selectBudget(budget.id) } label: {
                     VStack(alignment: .leading) {
                         Text(budget.name).font(.headline)
                         Text(budget.currencyCode).font(.caption).foregroundStyle(.secondary)
@@ -304,22 +319,15 @@ private struct BudgetListView: View {
                                 Image(systemName: "plus")
                             }
                         }
-                        Button { Task { await session.loadBudgets(caller: "BudgetListView.toolbar") } } label: {
+                        Button { Task { await session.loadBudgets(caller: "BudgetSelectionView.toolbar") } } label: {
                             Image(systemName: "arrow.clockwise")
                         }
                     }
                 }
             }
-            .task { await session.loadBudgets(caller: "BudgetListView.task") }
-            .refreshable { await session.loadBudgets(caller: "BudgetListView.refreshable") }
+            .refreshable { await session.loadBudgets(caller: "BudgetSelectionView.refreshable") }
             .sheet(isPresented: $showingBudgetCreation) {
                 BudgetCreationView(households: ownerHouseholds)
-            }
-            // A workspace owns the navigation stack for each tab. Present it as a root instead of
-            // nesting those stacks inside this list's stack, which otherwise hides tab titles and
-            // toolbar actions on current SwiftUI releases.
-            .fullScreenCover(item: $selectedBudget) { budget in
-                BudgetWorkspaceView(budget: budget, canDismiss: true)
             }
         }
     }
@@ -333,7 +341,7 @@ private struct BudgetListView: View {
     private var canCreateBudget: Bool { !ownerHouseholds.isEmpty }
 }
 
-private struct BudgetCreationView: View {
+struct BudgetCreationView: View {
     @EnvironmentObject private var session: AppSession
     @Environment(\.dismiss) private var dismiss
     let households: [APIHousehold]

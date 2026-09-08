@@ -266,7 +266,6 @@ struct BudgetDetailView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            try await session.refreshIfNeeded()
             guard let serverURL = session.serverURL, let token = session.token else { return }
             let client = try APIClient(baseURL: serverURL)
             async let loadedAccounts = client.accounts(budgetID: budget.id, token: token)
