@@ -81,9 +81,11 @@ final class AuthenticationJourneyTests: XCTestCase {
 
     func testAccountRegisterExposesCanonicalTransferWithCurrentAccountSelected() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "--demo-screen=accounts"]
+        app.launchArguments = ["--demo"]
         app.launch()
 
+        XCTAssertTrue(app.tabBars.buttons["Accounts"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Accounts"].tap()
         XCTAssertTrue(app.navigationBars["Accounts"].waitForExistence(timeout: 5))
         app.buttons["account-row-checking"].tap()
         XCTAssertTrue(app.navigationBars["Household Checking"].waitForExistence(timeout: 5))
@@ -94,12 +96,20 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(app.buttons["transfer-destination-account"].value as? String, "High-Yield Savings")
         let amount = app.textFields["Amount"]
         amount.tap()
-        amount.typeText("200.00")
-        XCTAssertEqual(amount.value as? String, "200.00")
+        var expectedAmount = ""
+        for character in "200.00" {
+            amount.typeText(String(character))
+            expectedAmount.append(character)
+            XCTAssertEqual(amount.value as? String, expectedAmount)
+        }
         let memo = app.textFields["Memo"]
         memo.tap()
-        memo.typeText("Stage 2 transfer test")
-        XCTAssertEqual(memo.value as? String, "Stage 2 transfer test")
+        var expectedMemo = ""
+        for character in "Stage 2 transfer test" {
+            memo.typeText(String(character))
+            expectedMemo.append(character)
+            XCTAssertEqual(memo.value as? String, expectedMemo)
+        }
         app.buttons["Save"].tap()
 
         XCTAssertTrue(app.navigationBars["Transfer"].waitForNonExistence(timeout: 5))

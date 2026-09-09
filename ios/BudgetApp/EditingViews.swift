@@ -505,14 +505,16 @@ struct CurrencyAmountField: View {
     private let currencyCode: String
     private let allowsNegative: Bool
     private let allowsZero: Bool
+    private let onFocusChange: ((Bool) -> Void)?
     @FocusState private var isFocused: Bool
 
-    init(_ title: String, text: Binding<String>, currencyCode: String, allowsNegative: Bool = false, allowsZero: Bool = false) {
+    init(_ title: String, text: Binding<String>, currencyCode: String, allowsNegative: Bool = false, allowsZero: Bool = false, onFocusChange: ((Bool) -> Void)? = nil) {
         self.title = title
         _text = text
         self.currencyCode = currencyCode
         self.allowsNegative = allowsNegative
         self.allowsZero = allowsZero
+        self.onFocusChange = onFocusChange
     }
 
     var body: some View {
@@ -553,6 +555,7 @@ struct CurrencyAmountField: View {
                 Button("Done") { isFocused = false }
             }
         }
+        .onChange(of: isFocused) { _, focused in onFocusChange?(focused) }
     }
 
     private var isValid: Bool {
