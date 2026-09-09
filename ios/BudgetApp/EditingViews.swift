@@ -516,16 +516,20 @@ struct CurrencyAmountField: View {
                     .multilineTextAlignment(.trailing)
                     .frame(minWidth: 120)
                     .accessibilityLabel(title)
-                if !text.isEmpty {
-                    Button {
-                        text = ""
-                        isFocused = true
-                    } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear \(title)")
+                // Keep this control in the hierarchy while the buffer is empty. Removing it when
+                // the last character is deleted causes current SwiftUI Form rows to rebuild the
+                // adjacent TextField and lose its active input target.
+                Button {
+                    text = ""
+                    isFocused = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
+                .opacity(text.isEmpty ? 0 : 1)
+                .allowsHitTesting(!text.isEmpty)
+                .accessibilityHidden(text.isEmpty)
+                .accessibilityLabel("Clear \(title)")
             }
             .contentShape(Rectangle())
             .onTapGesture { isFocused = true }

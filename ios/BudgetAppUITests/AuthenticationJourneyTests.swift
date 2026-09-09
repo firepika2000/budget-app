@@ -36,7 +36,12 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["Add Account"].exists)
         XCTAssertTrue(app.buttons["profile-settings-button"].exists)
 
-        app.tabBars.buttons["Plan"].tap()
+        let planTab = app.tabBars.buttons["Plan"]
+        XCTAssertTrue(planTab.waitForExistence(timeout: 5))
+        planTab.tap()
+        if !app.navigationBars["Plan"].waitForExistence(timeout: 3) {
+            planTab.tap()
+        }
         XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Create Category Group"].exists)
         XCTAssertTrue(app.buttons["profile-settings-button"].exists)
@@ -44,5 +49,33 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["profile-settings-button"].tap()
         XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Budgets"].exists)
+    }
+
+    func testProductionPlanAssignmentFieldCanClearReplaceAndSave() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=plan"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["runtime-build-identity"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        let groceries = app.buttons["plan-category-groceries"]
+        XCTAssertTrue(groceries.waitForExistence(timeout: 5))
+        groceries.tap()
+        app.buttons["Assign money"].tap()
+
+        let field = app.textFields["Assigned amount"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "720.00")
+        app.buttons["Clear Assigned amount"].tap()
+        XCTAssertEqual(field.value as? String, "0.00", "the empty editing buffer must remain active rather than restoring the model value")
+        field.typeText("820.00")
+        XCTAssertEqual(field.value as? String, "820.00")
+        app.buttons["Save"].tap()
+
+        XCTAssertTrue(app.navigationBars["Edit Assignment"].waitForNonExistence(timeout: 5))
+        app.buttons["Assign money"].tap()
+        let persistedField = app.textFields["Assigned amount"]
+        XCTAssertTrue(persistedField.waitForExistence(timeout: 5))
+        XCTAssertEqual(persistedField.value as? String, "820.00")
     }
 }

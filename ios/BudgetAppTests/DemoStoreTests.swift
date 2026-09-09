@@ -414,6 +414,28 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(CurrencyText.parseMinorUnits("-12.34", currencyCode: "USD"), -1_234)
         XCTAssertNil(CurrencyText.parseMinorUnits("12.345", currencyCode: "USD"))
         XCTAssertNil(CurrencyText.parseMinorUnits("not money", currencyCode: "USD"))
+        XCTAssertNil(CurrencyText.parseMinorUnits("", currencyCode: "USD"))
+        XCTAssertNil(CurrencyText.parseMinorUnits(".", currencyCode: "USD"))
+        XCTAssertNil(CurrencyText.parseMinorUnits("-", currencyCode: "USD"))
+        XCTAssertEqual(CurrencyText.parseMinorUnits("820.00", currencyCode: "USD"), 82_000)
+    }
+
+    @MainActor
+    func testEditingAssignmentTotalPreservesActivityAndAppliesOnlyExactDelta() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let groceries = try XCTUnwrap(store.summary?.categories.first(where: { $0.name == "Groceries" }))
+        XCTAssertEqual(groceries.assignedMinor, 72_000)
+        XCTAssertEqual(groceries.activityMinor, -48_264)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, 320_000)
+
+        try await store.updateAssignment(categoryID: groceries.categoryID, month: "2026-09-01", assignedMinor: 82_000, expectedVersion: store.summary!.allocationVersion)
+
+        let updated = try XCTUnwrap(store.summary?.categories.first(where: { $0.categoryID == groceries.categoryID }))
+        XCTAssertEqual(updated.assignedMinor, 82_000)
+        XCTAssertEqual(updated.activityMinor, -48_264)
+        XCTAssertEqual(updated.availableMinor, 33_736)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, 310_000)
     }
 
     private func isolatedDefaults() -> (UserDefaults, String) {

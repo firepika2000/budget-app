@@ -668,12 +668,16 @@ struct BudgetWorkspaceView: View {
     private let selectionOverride: Binding<Int>?
 
     init(budget: APIBudget) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _selectedTab = State(initialValue: 0); selectionOverride = nil }
-    init(store: BudgetWorkspaceStore) { _store = StateObject(wrappedValue: store); _selectedTab = State(initialValue: 0); selectionOverride = nil }
-    private init(demo: Bool) { _store = StateObject(wrappedValue: .demo()); let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--demo-screen=") }?.split(separator: "=").last.map(String.init) ?? "home"; _selectedTab = State(initialValue: ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4][screen] ?? 0); selectionOverride = nil }
+    init(store: BudgetWorkspaceStore) { _store = StateObject(wrappedValue: store); _selectedTab = State(initialValue: Self.launchTab); selectionOverride = nil }
+    private init(demo: Bool) { _store = StateObject(wrappedValue: .demo()); _selectedTab = State(initialValue: Self.launchTab); selectionOverride = nil }
     init(testStore: BudgetWorkspaceStore, selection: Binding<Int>) { _store = StateObject(wrappedValue: testStore); _selectedTab = State(initialValue: 0); selectionOverride = selection }
     static func demo() -> BudgetWorkspaceView { BudgetWorkspaceView(demo: true) }
     private var tabSelection: Binding<Int> { selectionOverride ?? $selectedTab }
     private var activeTab: Int { selectionOverride?.wrappedValue ?? selectedTab }
+    private static var launchTab: Int {
+        let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--demo-screen=") }?.split(separator: "=").last.map(String.init) ?? "home"
+        return ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4][screen] ?? 0
+    }
 
     var body: some View {
         TabView(selection: tabSelection) {
@@ -936,7 +940,7 @@ private struct LivePlanView: View {
             }
             ForEach(store.groups.sorted { $0.sortOrder < $1.sortOrder }) { group in
                 let groupRows = rows.filter { row in store.categories.first(where: { $0.id == row.categoryID })?.groupID == group.id }
-                if !groupRows.isEmpty { Section(group.name) { ForEach(groupRows) { category in NavigationLink { LivePlanCategoryDetailView(categoryID: category.categoryID, assign: { editing = category }, move: { showMove = true }, manage: { managing = store.categories.first(where: { $0.id == category.categoryID }) }) } label: { PlanCategoryRow(category: category) }.contextMenu { if let model = store.categories.first(where: { $0.id == category.categoryID }), canManage(model) { Button("Manage Category", systemImage: "pencil") { managing = model } } } } } }
+                if !groupRows.isEmpty { Section(group.name) { ForEach(groupRows) { category in NavigationLink { LivePlanCategoryDetailView(categoryID: category.categoryID, assign: { editing = category }, move: { showMove = true }, manage: { managing = store.categories.first(where: { $0.id == category.categoryID }) }) } label: { PlanCategoryRow(category: category) }.accessibilityIdentifier("plan-category-\(category.categoryID)").contextMenu { if let model = store.categories.first(where: { $0.id == category.categoryID }), canManage(model) { Button("Manage Category", systemImage: "pencil") { managing = model } } } } } }
             }
         }.accessibilityIdentifier("plan-screen").navigationTitle("Plan").toolbar {
             Menu {
