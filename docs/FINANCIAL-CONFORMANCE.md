@@ -1,6 +1,6 @@
 # Financial Conformance
 
-Status: Stage 1 executable baseline. The product authority is
+Status: Stage 2 dual-provider executable baseline. The product authority is
 [`PRODUCT-SPECIFICATION.md`](PRODUCT-SPECIFICATION.md); this document does not replace it.
 
 ## Purpose and authority
@@ -63,8 +63,9 @@ terminal states, and month rollover neutrality.
 | `server/app/planning_routes.py` and `server/app/planning.py` | **AUTHORITATIVE for implemented planning behavior** | Targets/recommendations, schedule persistence, forecast, and realization through normal transaction/transfer accounting. Forecast state is non-posting. |
 | `server/app/analytics_routes.py` | **AUTHORITATIVE reporting projection** | Permission-filtered spending and income/spending semantics derived from authoritative transactions. It is not an allocation engine. |
 | `server/app/models.py` | **AUTHORITATIVE persistence model** | Monetary columns use integer minor units (`BigInteger`); allocation and split constraints preserve exactness. |
-| `ios/BudgetApp/BudgetWorkspaceView.swift` live data source/store | **ADAPTER / presentation state** | Loads server observations and submits commands. Display/chart derivations are not authoritative money mutations. |
-| `ios/BudgetApp/DemoStore.swift` through `DemoWorkspaceDataSource` | **TEST FIXTURE with competing accounting behavior** | Deterministic sample data and direct Swift mutations currently implement their own account/category/reserve/reconciliation rules. Must be moved behind shared Stage 2 services rather than treated as authority. |
+| `ios/BudgetApp/ApplicationServices.swift` | **CANONICAL APPLICATION BOUNDARY** | Provider-neutral operations, observations, capability repositories, focused services, validation, and application errors. It does not implement the server ledger. |
+| `ios/BudgetApp/BudgetWorkspaceView.swift` live data source/store | **LIVE ADAPTER / presentation state** | Translates canonical commands to server DTOs, loads server observations, and refreshes shared UI state. Display/chart derivations are not authoritative mutations. |
+| `ios/BudgetApp/DemoStore.swift` through `DemoWorkspaceDataSource` | **DETERMINISTIC ADAPTER / FIXTURE PERSISTENCE** | Migrated mutations enter through shared services and its exact state transitions pass the same golden vectors. It remains non-authoritative in-memory persistence/projection code. |
 | `Sources/BudgetCore/MonthlyBudget.swift` | **LEGACY / QUARANTINE CANDIDATE** | Pure monthly calculator duplicates Assigned/Activity/Available/Unassigned formulas. No production target imports it; only `BudgetCoreTests` exercise it. Preserve until Stage 2 proves replacement coverage. |
 | `Sources/BudgetCore/Insights.swift` | **LEGACY SUPPORT / QUARANTINE CANDIDATE** | Pure reporting/date calculations, aligned with server refund/transfer semantics and tested, but not imported by the production iOS target. It is not financial mutation authority. |
 | `Sources/BudgetCore/DelegatedBudget.swift` | **LEGACY / QUARANTINE CANDIDATE** | In-memory delegated allocation engine used by package tests, while production authority lives in server allocation/delegated routes. Do not delete until shared-service migration resolves ownership. |
@@ -80,15 +81,15 @@ These are findings, not newly canonicalized behavior:
 
 | Behavior | Server | Deterministic/Demo | Status |
 |---|---|---|---|
-| Categorized positive transaction | Restores category Activity/Available and does not increase Unassigned. | `createTransaction` increases the account but does not apply positive category Activity; the value reaches neither category Available nor Unassigned. | **DIVERGENT — Stage 2** |
-| Positive transaction deletion/edit | Server rebuilds transaction and card reserve attribution; ordinary positive transactions affect their destination once. | `deleteTransaction` calls an expense-only reversal and therefore does not reverse a positive account/category/Unassigned mutation. Signed edit handles only uncategorized positive reversal. | **DIVERGENT — Stage 2** |
-| Credit purchase reserve | Server derives funded reserve from category availability and records reserve events; refunds release attribution. | Older `addTransaction` mutates reserve counters, while the newer shared-editor `createTransaction` path does not. Edit/delete paths do not consistently rebuild reserve counters. | **DIVERGENT — Stage 2** |
-| Credit-card payment | Server treats payment as a transfer and consumes payment reserve, rejecting a payment not fully funded by reserve. | Generic Demo transfer changes account balances but does not consume/rebuild card reserve. | **DIVERGENT — Stage 2** |
-| Reconciliation adjustment | Server records an explicit categorized-null transaction; on-budget cash changes Unassigned and tracking remains isolated. | Demo records an explicit transaction and account change but does not update Unassigned; it also lacks a provider-neutral on-budget/tracking consequence rule. | **DIVERGENT — Stage 2** |
-| Tracking transaction/category boundary | Server rejects category effects from tracking accounts and excludes tracking from Unassigned. | Demo mutation functions do not consistently enforce the tracking/category boundary. | **DIVERGENT — Stage 2** |
-| Future actual transaction | Server rejects it and directs callers to planning. | Demo transaction creation accepts arbitrary dates. | **DIVERGENT — Stage 2** |
-| Assignment deficit | Server rejects increasing assignments beyond current Unassigned; negative Unassigned can still arise from real adjustments. | Demo `assign` also requires positive available Unassigned, while `createCategory` clamps the deduction and cannot expose a deficit. | **PARTIAL / DIVERGENT EDGE — Stage 2** |
-| Spending reports | Server nets categorized refunds and split portions and excludes transfers after authorization filtering. | `DemoStore.spendingByCategory` filters to negative parent transactions and therefore omits positive refunds; legacy `InsightsCalculator` is aligned but production Demo does not use it. | **DIVERGENT — Stage 2** |
+| Categorized positive transaction | Restores category Activity/Available and does not increase Unassigned. | Same canonical transaction path restores the category once. | **CONFORMANT — shared vector** |
+| Positive transaction deletion/edit | Rebuilds transaction and card attribution; ordinary positive transactions affect their destination once. | Exact reversal followed by canonical reapplication. | **CONFORMANT — native regression coverage** |
+| Credit purchase reserve | Derives funded reserve from category availability and records attribution; refunds release attribution. | Canonical deterministic path derives and reverses per-transaction reserve attribution. | **CONFORMANT — shared vectors for funded/unfunded purchase and payment** |
+| Credit-card payment | Transfer consumes payment reserve and rejects an unfunded payment. | Transfer consumes reserve and rejects an unfunded payment. | **CONFORMANT — shared vector** |
+| Reconciliation adjustment | Explicit categorized-null transaction; on-budget cash changes Unassigned and tracking remains isolated. | Same observable consequences with explicit transaction. | **CONFORMANT — shared vectors** |
+| Tracking transaction/category boundary | Rejects category effects from tracking accounts and excludes tracking from Unassigned. | Same boundary and opening-balance isolation. | **CONFORMANT — shared vector** |
+| Future actual transaction | Rejects it and directs callers to planning. | Canonical deterministic transaction path rejects it. | **CONFORMANT for migrated entry path** |
+| Assignment deficit | Rejects increasing assignments/category initialization beyond current Unassigned; real adjustments may make Unassigned negative. | Same rule; category creation no longer clamps the deduction. | **CONFORMANT** |
+| Spending reports | Nets categorized refunds/splits and excludes transfers after visibility filtering. | Deterministic production projection now uses exact split attribution and nets refunds. | **CONFORMANT for current report contract** |
 
 Static Demo seed totals are presentation fixtures and are not proof that the seed can be reproduced
 from its transactions. Stage 2 should make seeded state enter through the same operations/services
