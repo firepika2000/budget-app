@@ -1,78 +1,63 @@
-# Architecture direction
+# Application architecture
 
-## Components
+This document describes the enforced v0.4 runtime architecture. Financial invariants and server-side authorization remain authoritative; see `financial-invariants.md` and the architecture audit for the point-in-time debt inventory.
 
-- **iPhone app:** one shared SwiftUI product and application store, Keychain-held session material, and interchangeable authenticated API/deterministic demo data sources.
-- **BudgetCore:** dependency-free Swift domain types and client-side policy helpers. Server authorization remains mandatory.
-- **Application server:** versioned REST API, authentication, authorization, budgeting rules, imports/exports, and audit logging.
-- **Database:** PostgreSQL for supported deployments. SQLite may be considered later for single-user local mode only if identical behavior can be maintained.
-- **Desktop administration:** responsive web UI served by the application server, avoiding a separately installed desktop binary in the first release.
-- **Deployment:** an OCI container plus a compose file for the application and PostgreSQL. TLS terminates at a documented reverse proxy or trusted private network.
-
-## Core data boundaries
+## Application state machine
 
 ```text
-Household
-├── Membership (user + household role)
-└── Budget
-    ├── BudgetGrant → AccessProfile → Capability/ResourceGrant
-    ├── Account → Credit Payment Category → ReserveEvent
-    ├── CategoryGroup → Category → Target
-    ├── AllocationOperation → balanced AllocationPostings
-    ├── DelegatedBudgetPolicy → Pool Category → Category Rules
-    ├── Transaction → Split + immutable TransactionChange history
-    ├── ScheduledTransaction (planning only)
-    ├── FinancialRequest → RequestActions → AllocationOperation
-    └── AllowancePlan → Splits → Issuance → AllocationOperation
+BudgetApp
+  -> process-stable AppSession
+  -> selected source (deterministic or configured live server)
+  -> connection/authentication state
+  -> household and visible budgets
+  -> persisted active budget selection
+  -> ActiveBudgetShell
+  -> BudgetWorkspaceView
+       Home | Plan | Activity | Accounts | Insights
+       Profile & Settings (available from every tab)
 ```
 
-All child records carry or can be joined unambiguously to `budget_id`. API handlers resolve active membership, budget visibility, effective capabilities, and account/category scopes before returning or mutating protected data. Existing View/Contribute/Manage grants remain compatibility bundles; an explicit access profile replaces the bundle with named capabilities and deny-by-default resource allowlists.
+`BudgetApp` constructs one `AppSession` with `@StateObject`. `AppSession.route` is the only root routing decision. It owns source selection, credential validation, authentication state, the budget collection, active-budget selection, and a once-per-active-scene activation latch. Child views consume state and send intents; they do not independently refresh credentials.
 
-Actual transactions and immutable allocation postings are separate authoritative ledgers. Scheduled transactions and forecasts never enter actual balances or Ready to Assign. Delegated categories, requests, approvals, and allowances move existing allocation inside the same budget rather than creating cash or duplicate books. Credit liabilities, physical cash, and payment-category reserves remain distinct quantities.
+Authentication fields are owned by `AuthenticationFlowView`, below the route boundary. Keystrokes can therefore update form state without invalidating the root state machine. Secrets and refresh material remain in Keychain-backed session storage, not view state.
 
-## Native composition boundary
+## Active-budget product shell
+
+A valid persisted budget selection enters `ActiveBudgetShell` directly. The Budgets list is a chooser and creation surface, not a permanent navigation parent. Profile & Settings provides budget switching, budget creation, household access, source/server context, and sign out. All five tabs use production views in deterministic and live modes.
+
+Each tab owns a `NavigationStack`. On iOS 27 the selected tab can change before a lazily created stack is materialized, leaving the content region blank. `BudgetWorkspaceView` intentionally keys the `TabView` by the selected tab to guarantee materialization. This is a narrowly documented identity boundary; editor drafts remain modal and locally owned. Removing it requires a successful production-composition regression on the affected OS, not a source-only cleanup.
+
+## Data and repository boundary
 
 ```text
-BudgetWorkspaceView (shared SwiftUI)
-    → BudgetWorkspaceStore (shared loading, mutation, invalidation)
-        → authenticated API data source → self-hosted server → database
-        → deterministic demo data source → in-memory fixture
+production SwiftUI views
+  -> BudgetWorkspaceStore (snapshot, refresh, mutation coordination)
+       -> authenticated API source -> self-hosted server -> PostgreSQL
+       -> deterministic source -> API-shaped in-memory fixture
 ```
 
-Views never choose demo arithmetic or call the network. They submit application operations and render API-shaped snapshots. The runtime data source is selected at the composition root. Every successful mutation invalidates and reloads the complete workspace, including Insights.
+Both sources feed the same workspace, features, editors, and API-shaped models. Editors do not own a server URL or bearer token; they submit operations through the shared workspace store and reload the authoritative snapshot after successful mutation. Exact monetary source-of-truth values are signed `Int64` minor units. Floating point is limited to derived presentation geometry such as chart angles.
 
-## Security invariants
+The remaining v0.4 boundary debt is that `BudgetWorkspaceStore` still dispatches some mutations to its concrete live or deterministic source internally. That compatibility seam is centralized and does not create separate view hierarchies, but a later repository-protocol expansion should make every command polymorphic without changing accounting semantics. It is not permission to duplicate financial logic in Swift.
 
-- New members receive no budget grants automatically.
-- Only the household owner can grant/revoke or scope budget access.
-- Revocation invalidates active sessions or advances a membership authorization version immediately.
-- Unauthorized and nonexistent budget resources are indistinguishable to non-owners.
-- Logs, push notification text, analytics, and crash reports do not contain hidden budget names or transaction details.
-- Passwords use a memory-hard password hash; sessions are short-lived with rotating refresh tokens.
-- Internet exposure requires TLS, rate limiting, secure headers, and documented update/backup procedures.
-- Authorization is tested at API integration level even when equivalent client-side rules exist.
+## Form ownership
 
-## Financial invariants
+Transient editor input is owned by the stable editor/sheet root, normally as local `@State` or a dedicated `@StateObject`. Opening an editor initializes a draft; typing changes only that draft; Cancel discards it; Save validates and converts currency text to exact minor units before submitting one operation. Refreshes occur after successful persistence, not on each keystroke. Derived bindings must have real setters and no editor may bind to a disposable navigation parent.
 
-- Money uses signed 64-bit minor units; floating point is never authoritative.
-- Every allocation operation has nonzero postings whose signed sum is zero.
-- Account transfers create paired opposite transactions and do not create income or expense.
-- Future schedules and forecasts cannot mutate actual balances or allocations.
-- Funded credit purchases reserve only available category money; payments are transfers, not new expenses.
-- Refunds release only the remaining reserve attributed to their spending category.
-- Approval and allowance issuance lock their source state, use optimistic versions, and link to one auditable allocation operation.
-- Household totals remain unchanged by category transfers, delegation, request approvals, and allowance issuance.
+## Security and accounting boundaries
 
-## Implemented delivery slices
+- The server enforces household membership, capabilities, resource scopes, and deny-by-default privacy.
+- Client capability checks improve discovery but never authorize a request.
+- Transfers change account location without creating income, spending, or category activity.
+- Schedules and forecasts remain money-neutral until server realization creates an actual transaction.
+- Allocation postings balance exactly; future income is not Ready to Assign.
+- Credit-card liability, category availability, and payment reserve use the existing server engine.
+- Demo behavior may mimic the contract for deterministic product testing but is not an authority for live accounting definitions.
 
-1. Domain model and authorization contract.
-2. Server skeleton, PostgreSQL schema, owner authentication, and API integration tests.
-3. iPhone sign-in/server setup plus budget list.
-4. Categories, assignments, and zero-based month calculation.
-5. Transactions, splits, and reconciliation.
-6. Invitations and the family permissions UI.
-7. Containerized deployment, backup/restore, and security hardening.
-8. Append-only allocation ledger, transfers, rollover, and targets.
-9. Scheduled planning forecasts and funded credit-card accounting.
-10. Capability scopes, delegated categories, requests, and approvals.
-11. Recurring allowance plans and structured audit export.
+## Verification layers
+
+1. Swift package and backend tests prove domain, contract, authorization, migration, concurrency, and financial invariants.
+2. Native XCTest hosts application and workspace composition to prove routing, ownership, and feature integration.
+3. XCUITest launches the built product and exercises actual navigation, focus, keyboard entry, and fresh-budget first-use surfaces. This layer is mandatory for regressions whose failure depends on UIKit/SwiftUI presentation behavior.
+
+Automation is necessary but does not mark v0.4 accepted. A human must still complete the documented iOS 27 Simulator and authenticated live-server journeys before release, merge, or tag.
