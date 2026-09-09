@@ -191,12 +191,20 @@ struct AllocationTransferView: View {
     let expectedAllocationVersion: Int
     let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var sourceCategoryID = ""
+    @State private var sourceCategoryID: String
     @State private var destinationCategoryID = ""
     @State private var amount = ""
     @State private var note = ""
     @State private var isSaving = false
     @State private var errorMessage: String?
+
+    init(budget: APIBudget, categories: [APICategoryMonth], expectedAllocationVersion: Int, initialSourceCategoryID: String? = nil, onSaved: @escaping () async -> Void) {
+        self.budget = budget
+        self.categories = categories
+        self.expectedAllocationVersion = expectedAllocationVersion
+        self.onSaved = onSaved
+        _sourceCategoryID = State(initialValue: initialSourceCategoryID ?? "")
+    }
 
     var body: some View {
         NavigationStack {
@@ -207,6 +215,8 @@ struct AllocationTransferView: View {
                             .tag(category.categoryID)
                     }
                 }
+                .accessibilityIdentifier("move-source-category")
+                .accessibilityValue(categories.first(where: { $0.categoryID == sourceCategoryID })?.name ?? "Select category")
                 Picker("To", selection: $destinationCategoryID) {
                     ForEach(categories.filter { $0.categoryID != sourceCategoryID }) { category in
                         Text(category.name).tag(category.categoryID)
@@ -320,7 +330,7 @@ struct AssignmentEditView: View {
             Form {
                 Section(category.name) {
                     CurrencyAmountField("Assigned amount", text: $amount, currencyCode: budget.currencyCode, allowsNegative: true, allowsZero: true)
-                    Text("Enter a negative amount to move money back to Ready to Assign.")
+                    Text("Enter a negative amount to move money back to Unassigned.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

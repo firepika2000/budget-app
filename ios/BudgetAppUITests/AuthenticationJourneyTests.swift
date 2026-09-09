@@ -78,4 +78,60 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(persistedField.waitForExistence(timeout: 5))
         XCTAssertEqual(persistedField.value as? String, "820.00")
     }
+
+    func testAccountRegisterExposesCanonicalTransferWithCurrentAccountSelected() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=accounts"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Accounts"].waitForExistence(timeout: 5))
+        app.buttons["account-row-checking"].tap()
+        XCTAssertTrue(app.navigationBars["Household Checking"].waitForExistence(timeout: 5))
+        app.buttons["Transfer"].tap()
+
+        XCTAssertTrue(app.navigationBars["Transfer"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["transfer-source-account"].value as? String, "Household Checking")
+        XCTAssertEqual(app.buttons["transfer-destination-account"].value as? String, "High-Yield Savings")
+        let amount = app.textFields["Amount"]
+        amount.tap()
+        amount.typeText("200.00")
+        app.buttons["Save"].tap()
+
+        XCTAssertTrue(app.navigationBars["Transfer"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Transfer"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["To High-Yield Savings"].exists)
+    }
+
+    func testMoveMoneyFromCategoryPreservesSourceContextAndUsesUnassignedTerm() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=plan"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        app.buttons["plan-category-groceries"].tap()
+        app.buttons["Move money"].tap()
+
+        XCTAssertTrue(app.navigationBars["Move Money"].waitForExistence(timeout: 5))
+        XCTAssertTrue((app.buttons["move-source-category"].value as? String)?.hasPrefix("Groceries") == true)
+        app.buttons["Cancel"].tap()
+        app.buttons["Assign money"].tap()
+        XCTAssertTrue(app.staticTexts["Enter a negative amount to move money back to Unassigned."].waitForExistence(timeout: 5))
+    }
+
+    func testDeletingTransactionReturnsToOriginatingRegister() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=accounts"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Accounts"].waitForExistence(timeout: 5))
+        app.buttons["account-row-checking"].tap()
+        app.buttons["transaction-row-t2"].tap()
+        XCTAssertTrue(app.navigationBars["Transaction"].waitForExistence(timeout: 5))
+        app.buttons["More"].tap()
+        app.buttons["Delete"].tap()
+        app.buttons["Delete Transaction"].tap()
+
+        XCTAssertTrue(app.navigationBars["Household Checking"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["transaction-row-t2"].exists)
+    }
 }

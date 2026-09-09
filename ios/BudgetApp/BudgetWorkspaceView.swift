@@ -870,11 +870,16 @@ private struct LiveRequestDetailView: View {
     private func decide(_ decision: String) async { guard let request else { return }; isSaving = true; defer { isSaving = false }; do { try await store.decideRequest(id: request.id, decision: decision, version: request.version, amount: decision == "approve" ? parsed : nil, sourceCategoryID: decision == "approve" ? sourceCategoryID : nil, note: note) } catch { errorMessage = error.localizedDescription } }
 }
 
+private struct MoveMoneyPresentation: Identifiable {
+    let id = UUID()
+    let sourceCategoryID: String?
+}
+
 private struct LivePlanView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var editing: APICategoryMonth?
-    @State private var showMove = false
+    @State private var movePresentation: MoveMoneyPresentation?
     @State private var showCategory = false
     @State private var showSmartFunding = false
     @State private var showRequest = false
@@ -940,19 +945,19 @@ private struct LivePlanView: View {
             }
             ForEach(store.groups.sorted { $0.sortOrder < $1.sortOrder }) { group in
                 let groupRows = rows.filter { row in store.categories.first(where: { $0.id == row.categoryID })?.groupID == group.id }
-                if !groupRows.isEmpty { Section(group.name) { ForEach(groupRows) { category in NavigationLink { LivePlanCategoryDetailView(categoryID: category.categoryID, assign: { editing = category }, move: { showMove = true }, manage: { managing = store.categories.first(where: { $0.id == category.categoryID }) }) } label: { PlanCategoryRow(category: category) }.accessibilityIdentifier("plan-category-\(category.categoryID)").contextMenu { if let model = store.categories.first(where: { $0.id == category.categoryID }), canManage(model) { Button("Manage Category", systemImage: "pencil") { managing = model } } } } } }
+                if !groupRows.isEmpty { Section(group.name) { ForEach(groupRows) { category in NavigationLink { LivePlanCategoryDetailView(categoryID: category.categoryID, assign: { editing = category }, move: { movePresentation = .init(sourceCategoryID: category.categoryID) }, manage: { managing = store.categories.first(where: { $0.id == category.categoryID }) }) } label: { PlanCategoryRow(category: category) }.accessibilityIdentifier("plan-category-\(category.categoryID)").contextMenu { if let model = store.categories.first(where: { $0.id == category.categoryID }), canManage(model) { Button("Manage Category", systemImage: "pencil") { managing = model } } } } } }
             }
         }.accessibilityIdentifier("plan-screen").navigationTitle("Plan").toolbar {
             Menu {
                 if store.delegatedBudget == nil && store.budget.can("assign_money") { Button("Smart Funding", systemImage: "sparkles") { showSmartFunding = true } }
                 if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") { Button("Add category", systemImage: "folder.badge.plus") { showCategory = true } }
                 if store.budget.can("manage_budget_structure") { Button("Manage groups", systemImage: "folder") { showGroups = true } }
-                if store.budget.can("move_money") { Button("Move money", systemImage: "arrow.left.arrow.right") { showMove = true } }
+                if store.budget.can("move_money") { Button("Move money", systemImage: "arrow.left.arrow.right") { movePresentation = .init(sourceCategoryID: nil) } }
                 if store.budget.can("request_money") { Button("Request money", systemImage: "hand.raised") { showRequest = true } }
             } label: { Image(systemName: "plus") }
         }
         .sheet(item: $editing) { category in editAssignment(category) }
-        .sheet(isPresented: $showMove) { moveMoney }
+        .sheet(item: $movePresentation) { presentation in moveMoney(initialSourceCategoryID: presentation.sourceCategoryID) }
         .sheet(isPresented: $showCategory) { createCategory }
         .sheet(isPresented: $showSmartFunding) { smartFunding }
         .sheet(isPresented: $showRequest) { FundingRequestView(budget: store.budget, categories: store.categories, onSaved: reload) }
@@ -969,9 +974,9 @@ private struct LivePlanView: View {
             AssignmentEditView(budget: store.budget, category: category, month: String(BudgetWorkspaceStore.dateString(store.planMonth).prefix(7)) + "-01", expectedAllocationVersion: summary.allocationVersion, onSaved: reload)
         }
     }
-    @ViewBuilder private var moveMoney: some View {
+    @ViewBuilder private func moveMoney(initialSourceCategoryID: String?) -> some View {
         if let summary = store.summary {
-            AllocationTransferView(budget: store.budget, categories: summary.categories, expectedAllocationVersion: summary.allocationVersion, onSaved: reload)
+            AllocationTransferView(budget: store.budget, categories: summary.categories, expectedAllocationVersion: summary.allocationVersion, initialSourceCategoryID: initialSourceCategoryID, onSaved: reload)
         }
     }
     @ViewBuilder private var createCategory: some View {
@@ -1075,7 +1080,7 @@ private struct LiveTargetEditor: View {
     private var dated: Bool { type == "target_by_date" || type == "recurring_expense" }
     private var parsed: Int64? { guard let value=CurrencyText.parseMinorUnits(amount,currencyCode:store.budget.currencyCode),value>0 else{return nil};return value }
     private var parsedMinimum: Int64? { guard let value=CurrencyText.parseMinorUnits(minimum,currencyCode:store.budget.currencyCode),value>=0 else{return nil};return value }
-    var body: some View { NavigationStack { Form { Section(categoryName) { Picker("Target type",selection:$type){Text("Monthly funding").tag("monthly_funding");Text("Savings balance").tag("savings_balance");Text("By date").tag("target_by_date");Text("Recurring expense").tag("recurring_expense")};CurrencyAmountField("Target amount",text:$amount,currencyCode:store.budget.currencyCode);CurrencyAmountField("Minimum contribution",text:$minimum,currencyCode:store.budget.currencyCode,allowsZero:true);if dated{DatePicker("Due date",selection:$dueDate,displayedComponents:.date)};if type=="recurring_expense"{Stepper("Every \(recurrence) month\(recurrence == 1 ? "" : "s")",value:$recurrence,in:1...1200);Button("Set annual cadence"){recurrence=12}};Stepper("Priority \(priority)",value:$priority,in:0...100);Toggle("Target active",isOn:$active)};Section{Text("Targets guide planning only. Saving this target does not move money, change account balances, or increase Ready to Assign.").font(.footnote).foregroundStyle(.secondary)};if existing != nil{Section{Button("Delete Target",role:.destructive){confirmDelete=true}}} }.navigationTitle(existing == nil ? "New Target" : "Edit Target").navigationBarTitleDisplayMode(.inline).toolbar{ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(parsed==nil || parsedMinimum==nil || saving)}}.confirmationDialog("Delete this target?",isPresented:$confirmDelete){Button("Delete Target",role:.destructive){Task{await remove()}}}.alert("Unable to save target",isPresented:Binding(get:{error != nil},set:{if !$0{error=nil}})){Button("OK",role:.cancel){}}message:{Text(error ?? "Unknown error")} } }
+    var body: some View { NavigationStack { Form { Section(categoryName) { Picker("Target type",selection:$type){Text("Monthly funding").tag("monthly_funding");Text("Savings balance").tag("savings_balance");Text("By date").tag("target_by_date");Text("Recurring expense").tag("recurring_expense")};CurrencyAmountField("Target amount",text:$amount,currencyCode:store.budget.currencyCode);CurrencyAmountField("Minimum contribution",text:$minimum,currencyCode:store.budget.currencyCode,allowsZero:true);if dated{DatePicker("Due date",selection:$dueDate,displayedComponents:.date)};if type=="recurring_expense"{Stepper("Every \(recurrence) month\(recurrence == 1 ? "" : "s")",value:$recurrence,in:1...1200);Button("Set annual cadence"){recurrence=12}};Stepper("Priority \(priority)",value:$priority,in:0...100);Toggle("Target active",isOn:$active)};Section{Text("Targets guide planning only. Saving this target does not move money, change account balances, or increase Unassigned.").font(.footnote).foregroundStyle(.secondary)};if existing != nil{Section{Button("Delete Target",role:.destructive){confirmDelete=true}}} }.navigationTitle(existing == nil ? "New Target" : "Edit Target").navigationBarTitleDisplayMode(.inline).toolbar{ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(parsed==nil || parsedMinimum==nil || saving)}}.confirmationDialog("Delete this target?",isPresented:$confirmDelete){Button("Delete Target",role:.destructive){Task{await remove()}}}.alert("Unable to save target",isPresented:Binding(get:{error != nil},set:{if !$0{error=nil}})){Button("OK",role:.cancel){}}message:{Text(error ?? "Unknown error")} } }
     private func save() async { guard let parsed,let parsedMinimum else{return};saving=true;defer{saving=false};do{try await store.saveTarget(categoryID:categoryID,value:APICategoryTargetUpsert(targetType:type,targetAmountMinor:parsed,targetDate:dated ? BudgetWorkspaceStore.dateString(dueDate):nil,recurrenceMonths:type == "recurring_expense" ? recurrence:nil,minimumContributionMinor:parsedMinimum,priority:priority,isActive:active));dismiss()}catch{self.error=error.localizedDescription} }
     private func remove() async { saving=true;defer{saving=false};do{try await store.deleteTarget(categoryID:categoryID);dismiss()}catch{self.error=error.localizedDescription} }
 }
@@ -1258,13 +1263,24 @@ private struct LiveTransactionLink: View {
     let transaction: APITransaction
     var body: some View {
         NavigationLink { LiveTransactionDetailView(transactionID: transaction.id) } label: {
-            HStack { VStack(alignment: .leading) { Text(transaction.payeeName.isEmpty ? "No payee" : transaction.payeeName); Text(store.categoryName(transaction).isEmpty ? transaction.occurredOn : store.categoryName(transaction)).font(.caption).foregroundStyle(.secondary) }; Spacer(); Text(store.format(transaction.amountMinor)).monospacedDigit() }
+            HStack { VStack(alignment: .leading) { Text(transaction.payeeName.isEmpty ? "No payee" : transaction.payeeName); Text(secondaryText).font(.caption).foregroundStyle(.secondary) }; Spacer(); Text(store.format(transaction.amountMinor)).monospacedDigit() }
         }
+        .accessibilityIdentifier("transaction-row-\(transaction.id)")
+    }
+    private var secondaryText: String {
+        if let transferID = transaction.transferID,
+           let counterpart = store.transactions.first(where: { $0.transferID == transferID && $0.id != transaction.id }),
+           let account = store.accounts.first(where: { $0.id == counterpart.accountID }) {
+            return "\(transaction.amountMinor < 0 ? "To" : "From") \(account.name)"
+        }
+        let category = store.categoryName(transaction)
+        return category.isEmpty ? transaction.occurredOn : category
     }
 }
 
 private struct LiveTransactionDetailView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
     let transactionID: String
     @State private var showEdit = false
     @State private var confirmDelete = false
@@ -1274,10 +1290,10 @@ private struct LiveTransactionDetailView: View {
         List {
             if let transaction {
                 Section { Text(store.format(transaction.amountMinor)).font(.largeTitle.bold()).frame(maxWidth: .infinity).padding() }
-                Section("Details") { LabeledContent("Payee", value: transaction.payeeName); LabeledContent("Category", value: store.categoryName(transaction)); LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Status", value: transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared"); LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo) }
+                Section("Details") { LabeledContent("Payee", value: transaction.payeeName); if let linked = linkedAccountName(for: transaction) { LabeledContent("Linked account", value: linked) } else { LabeledContent("Category", value: store.categoryName(transaction)) }; LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Status", value: transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared"); LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo) }
             }
         }.navigationTitle("Transaction").toolbar {
-            if let transaction, !transaction.isReconciled {
+            if let transaction, !transaction.isReconciled && transaction.transferID == nil {
                 Menu {
                     if store.budget.can("edit_transaction") { Button("Edit", systemImage: "pencil") { showEdit = true } }
                     if store.budget.can("delete_transaction") { Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true } }
@@ -1288,10 +1304,15 @@ private struct LiveTransactionDetailView: View {
             .confirmationDialog("Delete this transaction?", isPresented: $confirmDelete, titleVisibility: .visible) { Button("Delete Transaction", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text("This cannot be undone and will immediately update the plan and reports.") }
     }
     private func reload() async { await store.refresh() }
+    private func linkedAccountName(for transaction: APITransaction) -> String? {
+        guard let transferID = transaction.transferID,
+              let counterpart = store.transactions.first(where: { $0.transferID == transferID && $0.id != transaction.id }) else { return nil }
+        return store.accounts.first(where: { $0.id == counterpart.accountID })?.name
+    }
     private func deleteTransaction() async {
         guard let transaction else { return }
         isDeleting = true; defer { isDeleting = false }
-        do { try await store.deleteTransaction(id: transaction.id) }
+        do { try await store.deleteTransaction(id: transaction.id); dismiss() }
         catch { store.errorMessage = error.localizedDescription }
     }
 }
@@ -1309,6 +1330,7 @@ private struct LiveAccountsView: View {
                 NavigationLink { LiveAccountRegisterView(account: account) } label: {
                     HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: account.accountType == "credit" ? "creditcard.fill" : "building.columns.fill") }; Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } }
                 }
+                .accessibilityIdentifier("account-row-\(account.id)")
             }
             if activation.needsAccount && !store.isLoading {
                 Section {
@@ -1337,6 +1359,7 @@ struct LiveAccountRegisterView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let account: APIAccount
     @State private var showAdd = false
+    @State private var showTransfer = false
     @State private var showReconcile = false
 
     private var transactions: [APITransaction] { store.transactions(for: account) }
@@ -1377,10 +1400,12 @@ struct LiveAccountRegisterView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if store.budget.can("create_transaction") { Button("Add Transaction", systemImage: "plus") { showAdd = true } }
+                if store.budget.can("create_transaction") { Button("Transfer", systemImage: "arrow.left.arrow.right") { showTransfer = true } }
                 if store.budget.can("reconcile_account") { Button("Reconcile", systemImage: "checkmark.seal") { showReconcile = true } }
             }
         }
         .sheet(isPresented: $showAdd) { entry }
+        .sheet(isPresented: $showTransfer) { transfer }
         .sheet(isPresented: $showReconcile) { reconcile }
         .refreshable { await store.refresh() }
     }
@@ -1397,6 +1422,9 @@ struct LiveAccountRegisterView: View {
     @ViewBuilder private var entry: some View {
         TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, initialAccountID: account.id, onSaved: store.refresh)
     }
+    @ViewBuilder private var transfer: some View {
+        LiveTransferView(budget: store.budget, accounts: store.accounts, initialSourceAccountID: account.id, onSaved: store.refresh)
+    }
     @ViewBuilder private var reconcile: some View {
         LiveReconcileView(budget: store.budget, account: account, currentBalance: store.clearedBalance(for: account), onSaved: store.refresh)
     }
@@ -1406,17 +1434,22 @@ private struct LiveTransferView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget; let accounts: [APIAccount]; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var sourceID = ""; @State private var destinationID = ""; @State private var amount = ""; @State private var memo = ""; @State private var date = Date(); @State private var cleared = false; @State private var isSaving = false; @State private var errorMessage: String?
+    @State private var sourceID: String; @State private var destinationID = ""; @State private var amount = ""; @State private var memo = ""; @State private var date = Date(); @State private var cleared = false; @State private var isSaving = false; @State private var errorMessage: String?
+    init(budget: APIBudget, accounts: [APIAccount], initialSourceAccountID: String? = nil, onSaved: @escaping () async -> Void) {
+        self.budget = budget; self.accounts = accounts; self.onSaved = onSaved
+        _sourceID = State(initialValue: initialSourceAccountID ?? "")
+    }
     private var openAccounts: [APIAccount] { accounts.filter { !$0.isClosed } }
     private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: budget.currencyCode), value > 0 else { return nil }; return value }
     var body: some View {
         NavigationStack { Form {
-            Picker("From", selection: $sourceID) { ForEach(openAccounts) { Text($0.name).tag($0.id) } }
-            Picker("To", selection: $destinationID) { ForEach(openAccounts.filter { $0.id != sourceID }) { Text($0.name).tag($0.id) } }
+            Picker("From", selection: $sourceID) { Text("Select account").tag(""); ForEach(openAccounts) { Text($0.name).tag($0.id) } }.accessibilityIdentifier("transfer-source-account").accessibilityValue(accountName(sourceID))
+            Picker("To", selection: $destinationID) { Text("Select account").tag(""); ForEach(openAccounts.filter { $0.id != sourceID }) { Text($0.name).tag($0.id) } }.accessibilityIdentifier("transfer-destination-account").accessibilityValue(accountName(destinationID))
             CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode); DatePicker("Date", selection: $date, displayedComponents: .date); TextField("Memo", text: $memo); Toggle("Cleared", isOn: $cleared)
-        }.navigationTitle("Transfer").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(parsed == nil || sourceID.isEmpty || destinationID.isEmpty || sourceID == destinationID || isSaving) } }.onAppear { sourceID = openAccounts.first?.id ?? ""; selectDestination() }.onChange(of: sourceID) { _, _ in selectDestination() }.alert("Unable to transfer", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
+        }.navigationTitle("Transfer").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(parsed == nil || sourceID.isEmpty || destinationID.isEmpty || sourceID == destinationID || isSaving) } }.onAppear { if sourceID.isEmpty { sourceID = openAccounts.first?.id ?? "" }; selectDestination() }.onChange(of: sourceID) { _, _ in selectDestination() }.alert("Unable to transfer", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
     }
     private func selectDestination() { if destinationID == sourceID || !openAccounts.contains(where: { $0.id == destinationID }) { destinationID = openAccounts.first(where: { $0.id != sourceID })?.id ?? "" } }
+    private func accountName(_ id: String) -> String { openAccounts.first(where: { $0.id == id })?.name ?? "Select account" }
     private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await workspace.createTransfer(TransferMoneyOperation(sourceAccountID: sourceID, destinationAccountID: destinationID, amountMinor: parsed, occurredOn: BudgetWorkspaceStore.dateString(date), memo: memo, isCleared: cleared)); dismiss() } catch { errorMessage = error.localizedDescription } }
 }
 

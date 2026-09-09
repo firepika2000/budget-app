@@ -294,6 +294,34 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testCanonicalAccountTransferConservesPlanAndCreatesLinkedRegisterLegs() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let checking = try XCTUnwrap(store.accounts.first(where: { $0.id == "checking" }))
+        let savings = try XCTUnwrap(store.accounts.first(where: { $0.id == "savings" }))
+        let checkingBefore = store.balance(for: checking)
+        let savingsBefore = store.balance(for: savings)
+        let unassignedBefore = store.summary?.readyToAssignMinor
+        let assignedBefore = store.summary?.totalAssignedMinor
+        let categoriesBefore = store.summary?.categories
+
+        try await store.createTransfer(.init(sourceAccountID: checking.id, destinationAccountID: savings.id, amountMinor: 20_000, occurredOn: "2026-09-09", memo: "Acceptance transfer", isCleared: true))
+
+        XCTAssertEqual(store.balance(for: checking), checkingBefore - 20_000)
+        XCTAssertEqual(store.balance(for: savings), savingsBefore + 20_000)
+        XCTAssertEqual(store.balance(for: checking) + store.balance(for: savings), checkingBefore + savingsBefore)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, unassignedBefore)
+        XCTAssertEqual(store.summary?.totalAssignedMinor, assignedBefore)
+        XCTAssertEqual(store.summary?.categories, categoriesBefore)
+        let sourceLeg = try XCTUnwrap(store.transactions(for: checking).first(where: { $0.memo == "Acceptance transfer" }))
+        let destinationLeg = try XCTUnwrap(store.transactions(for: savings).first(where: { $0.memo == "Acceptance transfer" }))
+        XCTAssertEqual(sourceLeg.amountMinor, -20_000)
+        XCTAssertEqual(destinationLeg.amountMinor, 20_000)
+        XCTAssertNotNil(sourceLeg.transferID)
+        XCTAssertEqual(sourceLeg.transferID, destinationLeg.transferID)
+    }
+
+    @MainActor
     func testAccountRegisterReflectsCreateEditAndDeleteRefreshes() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

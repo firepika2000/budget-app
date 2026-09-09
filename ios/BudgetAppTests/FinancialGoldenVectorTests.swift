@@ -74,6 +74,26 @@ final class FinancialGoldenVectorTests: XCTestCase {
         }
         XCTAssertTrue(source.demo.accounts.isEmpty)
         XCTAssertTrue(source.demo.transactions.isEmpty)
+
+        try await services.accounts.create(.init(name: "Source", kind: "checking", isOnBudget: true, openingBalanceMinor: 1_000))
+        try await services.accounts.create(.init(name: "Destination", kind: "savings", isOnBudget: true, openingBalanceMinor: 0))
+        let sourceID = try XCTUnwrap(source.demo.accounts.first(where: { $0.name == "Source" })?.id)
+        let destinationID = try XCTUnwrap(source.demo.accounts.first(where: { $0.name == "Destination" })?.id)
+        let transactionCountBeforeInvalidTransfers = source.demo.transactions.count
+        for invalid in [
+            TransferMoneyOperation(sourceAccountID: sourceID, destinationAccountID: destinationID, amountMinor: 0, occurredOn: "2026-09-09", memo: "", isCleared: false),
+            TransferMoneyOperation(sourceAccountID: sourceID, destinationAccountID: sourceID, amountMinor: 100, occurredOn: "2026-09-09", memo: "", isCleared: false)
+        ] {
+            do {
+                try await services.transactions.transfer(invalid)
+                XCTFail("invalid transfer unexpectedly reached the adapter")
+            } catch let error as BudgetApplicationError {
+                guard case .invalidOperation = error else { return XCTFail("wrong error: \(error)") }
+            }
+        }
+        XCTAssertEqual(source.demo.transactions.count, transactionCountBeforeInvalidTransfers)
+        XCTAssertEqual(source.demo.accounts.first(where: { $0.id == sourceID })?.balance, 1_000)
+        XCTAssertEqual(source.demo.accounts.first(where: { $0.id == destinationID })?.balance, 0)
     }
 
     @MainActor
