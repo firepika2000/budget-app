@@ -19,6 +19,8 @@ targets:
         product: BudgetAPI
     postBuildScripts:
       - name: Inject Runtime Identity
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/BudgetAppRuntimeIdentity.txt
         script: |
           REPOSITORY_ROOT="${SRCROOT}/.."
           RUNTIME_IDENTITY_PATH="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/BudgetAppRuntimeIdentity.txt"
