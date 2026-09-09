@@ -49,7 +49,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(workspace.contains("Create Category Group"))
         XCTAssertTrue(workspace.contains("Add your first category"))
         XCTAssertTrue(workspace.contains("Money you currently have that has not been given a purpose yet."))
-        XCTAssertTrue(editor.contains("startingBalanceMinor: balance"))
+        XCTAssertTrue(editor.contains("openingBalanceMinor: balance"))
+        XCTAssertFalse(editor.contains("APITransactionCreate("), "production editors must emit canonical application operations")
         XCTAssertFalse(editor.contains("let serverURL"), "editors must submit through the shared workspace store, not own transport configuration")
         XCTAssertFalse(editor.contains("let token"), "credentials must not leak into local editing state")
     }
@@ -116,14 +117,14 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(store.forecast?.occurrences.contains { $0.name == "Future years" && $0.amountMinor == 50_000 } == true)
 
         let edited = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Future months" })
-        try await store.updateSchedule(id: edited.id, value: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3))
+        try await store.updateSchedule(id: edited.id, operation: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3))
         XCTAssertTrue(store.scheduledTransactions.contains { $0.name == "Edited monthly" && $0.intervalCount == 3 })
-        try await store.updateSchedule(id: edited.id, value: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3, isActive: false))
+        try await store.updateSchedule(id: edited.id, operation: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3, isActive: false))
         XCTAssertTrue(store.scheduledTransactions.contains { $0.id == edited.id && !$0.isActive }, "paused schedules remain manageable after reload")
-        try await store.updateSchedule(id: edited.id, value: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3, isActive: true))
+        try await store.updateSchedule(id: edited.id, operation: .init(accountID: account.id, name: "Edited monthly", amountMinor: -1_234, nextDate: "2026-12-02", recurrenceUnit: "months", intervalCount: 3, isActive: true))
         XCTAssertTrue(store.scheduledTransactions.contains { $0.id == edited.id && $0.isActive })
         let deletable = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Future days" })
-        try await store.updateSchedule(id: deletable.id, value: .init(accountID: account.id, name: deletable.name, amountMinor: deletable.amountMinor, nextDate: deletable.nextDate, recurrenceUnit: deletable.recurrenceUnit, intervalCount: deletable.intervalCount, isActive: false))
+        try await store.updateSchedule(id: deletable.id, operation: .init(accountID: account.id, name: deletable.name, amountMinor: deletable.amountMinor, nextDate: deletable.nextDate, recurrenceUnit: deletable.recurrenceUnit, intervalCount: deletable.intervalCount, isActive: false))
         try await store.deleteSchedule(id: deletable.id)
         XCTAssertFalse(store.scheduledTransactions.contains { $0.id == deletable.id })
     }
@@ -280,7 +281,7 @@ final class DemoStoreTests: XCTestCase {
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
         let account = try XCTUnwrap(store.accounts.first(where: { $0.id == "checking" }))
         let destination = try XCTUnwrap(store.accounts.first(where: { $0.id == "savings" }))
-        try await store.createTransfer(APITransferCreate(sourceAccountID: account.id, destinationAccountID: destination.id, amountMinor: 500, occurredOn: "2026-09-05", memo: "Register transfer", isCleared: true))
+        try await store.createTransfer(TransferMoneyOperation(sourceAccountID: account.id, destinationAccountID: destination.id, amountMinor: 500, occurredOn: "2026-09-05", memo: "Register transfer", isCleared: true))
         let rows = store.transactions(for: account)
 
         XCTAssertFalse(rows.isEmpty)
@@ -300,14 +301,14 @@ final class DemoStoreTests: XCTestCase {
         let savings = try XCTUnwrap(store.accounts.first(where: { $0.id == "savings" }))
         let category = try XCTUnwrap(store.categories.first(where: { !$0.isArchived }))
         let originalCount = store.transactions(for: checking).count
-        let value = APITransactionCreate(accountID: checking.id, categoryID: category.id, amountMinor: -1_234, occurredOn: "2026-09-05", payeeName: "Register regression", memo: "", isCleared: false)
+        let value = RecordTransactionOperation(accountID: checking.id, categoryID: category.id, amountMinor: -1_234, occurredOn: "2026-09-05", payeeName: "Register regression", memo: "", isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: [])
 
         try await store.createTransaction(value)
         let created = try XCTUnwrap(store.transactions.first(where: { $0.payeeName == "Register regression" }))
         XCTAssertEqual(store.transactions(for: checking).count, originalCount + 1)
 
-        let moved = APITransactionCreate(accountID: savings.id, categoryID: category.id, amountMinor: -1_234, occurredOn: "2026-09-05", payeeName: "Register regression", memo: "moved", isCleared: true)
-        try await store.updateTransaction(id: created.id, value: moved)
+        let moved = RecordTransactionOperation(accountID: savings.id, categoryID: category.id, amountMinor: -1_234, occurredOn: "2026-09-05", payeeName: "Register regression", memo: "moved", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])
+        try await store.updateTransaction(id: created.id, operation: moved)
         XCTAssertFalse(store.transactions(for: checking).contains { $0.id == created.id })
         XCTAssertTrue(store.transactions(for: savings).contains { $0.id == created.id && $0.isCleared })
 

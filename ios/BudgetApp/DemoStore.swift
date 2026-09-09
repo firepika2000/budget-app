@@ -16,6 +16,7 @@ final class DemoStore: ObservableObject {
     @Published var selectedMonth = "September 2026"
     @Published private(set) var unassignedMinor: Int64 = 320000
     @Published var errorMessage: String?
+    private var reserveAttribution: [String: [String: Int64]] = [:]
 
     let incomeHistory: [Int64] = [725000, 738000, 725000, 760000, 742000, 750000]
     let spendingHistory: [Int64] = [594000, 621000, 609000, 642000, 598000, 634000]
@@ -52,6 +53,29 @@ final class DemoStore: ObservableObject {
     var overspent: [DemoCategory] { visibleCategories.filter { $0.available < 0 } }
     var underfunded: [DemoCategory] { visibleCategories.filter { $0.target != nil && $0.available >= 0 && $0.progress < 1 } }
 
+    func financialObservation(accountReferences: [String: String], categoryReferences: [String: String]) -> FinancialObservation {
+        let accountValues = accountReferences.compactMapValues { id in
+            accounts.first(where: { $0.id == id }).map { AccountBalanceObservation(balanceMinor: $0.balance) }
+        }
+        let categoryValues = categoryReferences.compactMapValues { id in
+            categories.first(where: { $0.id == id }).map {
+                CategoryBalanceObservation(assignedMinor: $0.assigned, activityMinor: $0.activity, availableMinor: $0.available)
+            }
+        }
+        let cards = accountReferences.compactMapValues { id -> CreditCardObservation? in
+            guard let account = accounts.first(where: { $0.id == id }), account.kind == .credit else { return nil }
+            let liability = max(-account.balance, 0)
+            return CreditCardObservation(liabilityMinor: liability, reservedMinor: account.paymentReserved,
+                                         unfundedDebtMinor: max(liability - account.paymentReserved, 0))
+        }
+        let budgetCash = accounts.filter { $0.isOnBudget && [.checking, .savings, .cash].contains($0.kind) }.reduce(Int64(0)) { $0 + $1.balance }
+        let allocationDifference = unassignedMinor + categories.reduce(Int64(0)) { $0 + $1.assigned } - budgetCash
+        return FinancialObservation(accounts: accountValues, categories: categoryValues, cards: cards,
+                                    unassignedMinor: unassignedMinor, totalBudgetCashMinor: budgetCash,
+                                    netWorthMinor: netWorth, transactionCount: transactions.count,
+                                    allocationPostingsSumMinor: allocationDifference)
+    }
+
     func money(_ amount: Int64) -> String { hideAmounts ? "••••" : amount.demoCurrency }
 
     func reset() {
@@ -66,13 +90,14 @@ final class DemoStore: ObservableObject {
         groupOrder = Array(Set(Self.seedCategories.map(\.group))).sorted()
         archivedGroups = []
         unassignedMinor = 320000
+        reserveAttribution = [:]
     }
 
     func setUnassigned(_ value: Int64) { unassignedMinor = value }
 
     func createAccount(name: String, type: String, isOnBudget: Bool, startingBalance: Int64 = 0) {
         let id = UUID().uuidString
-        accounts.append(.init(id: id, name: name, kind: DemoAccountKind(rawValue: type) ?? (isOnBudget ? .checking : .asset), balance: startingBalance, cleared: startingBalance))
+        accounts.append(.init(id: id, name: name, kind: DemoAccountKind(rawValue: type) ?? (isOnBudget ? .checking : .asset), balance: startingBalance, cleared: startingBalance, isOnBudget: isOnBudget))
         if startingBalance != 0 {
             transactions.insert(.init(id: UUID().uuidString, date: Date(), payee: "Starting Balance", memo: "Balance when account was added", accountID: id, categoryIDs: [], amount: startingBalance, member: persona, cleared: true), at: 0)
             if isOnBudget && ["checking", "savings", "cash"].contains(type) { unassignedMinor += startingBalance }
@@ -111,29 +136,15 @@ final class DemoStore: ObservableObject {
     }
 
     func addTransaction(payee: String, amount: Int64, accountID: String, categoryIDs: [String], memo: String, attachment: Bool) {
-        let transaction = DemoTransaction(id: UUID().uuidString, date: Date(), payee: payee, memo: memo, accountID: accountID, categoryIDs: categoryIDs, amount: -abs(amount), member: persona, cleared: false, flag: "New", attachmentName: attachment ? "receipt.jpg" : nil)
-        transactions.insert(transaction, at: 0)
-        if let account = accounts.firstIndex(where: { $0.id == accountID }) { accounts[account].balance -= abs(amount) }
-        for (id, splitAmount) in splitAmounts(total: abs(amount), categoryIDs: categoryIDs) where categories.contains(where: { $0.id == id }) {
-            let index = categories.firstIndex(where: { $0.id == id })!
-            categories[index].activity -= splitAmount
-            categories[index].available -= splitAmount
-        }
-        if let account = accounts.firstIndex(where: { $0.id == accountID }), accounts[account].kind == .credit {
-            let funded = min(abs(amount), categoryIDs.compactMap { id in categories.first(where: { $0.id == id })?.available }.reduce(0, +) + abs(amount))
-            accounts[account].paymentReserved += funded
-            accounts[account].fundedSpending += funded
-            accounts[account].unfundedSpending += abs(amount) - funded
-        }
+        let signed = -abs(amount)
+        let amounts = Dictionary(uniqueKeysWithValues: splitAmounts(total: abs(amount), categoryIDs: categoryIDs).map { ($0.key, -$0.value) })
+        _ = recordCanonicalTransaction(.init(accountID: accountID, categoryID: categoryIDs.count == 1 ? categoryIDs[0] : nil, amountMinor: signed, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: payee, memo: memo, isCleared: false, splits: categoryIDs.count > 1 ? amounts.map { .init(categoryID: $0.key, amountMinor: $0.value, memo: "") } : [], flag: "New", tags: [], attachmentMetadata: attachment ? [["name": "receipt.jpg"]] : []))
     }
 
     func createTransaction(payee: String, signedAmount: Int64, date: Date = .demo(monthsAgo: 0, day: 30), accountID: String, categoryAmounts: [String: Int64], memo: String, cleared: Bool, flag: String? = nil, tags: [String] = [], attachmentName: String? = nil) {
-        let categoryIDs = Array(categoryAmounts.keys).sorted()
-        let transaction = DemoTransaction(id: UUID().uuidString, date: date, payee: payee, memo: memo, accountID: accountID, categoryIDs: categoryIDs, categoryAmounts: categoryAmounts, amount: signedAmount, member: persona, cleared: cleared, flag: flag, attachmentName: attachmentName, tags: tags)
-        transactions.insert(transaction, at: 0)
-        if signedAmount < 0 { applyExpense(transaction, direction: 1) }
-        else if let account = accounts.firstIndex(where: { $0.id == accountID }) { accounts[account].balance += signedAmount; if cleared { accounts[account].cleared += signedAmount } }
-        if categoryIDs.isEmpty && !isRestricted { unassignedMinor += signedAmount }
+        let categoryID = categoryAmounts.count == 1 ? categoryAmounts.keys.first : nil
+        let splits = categoryAmounts.count > 1 ? categoryAmounts.map { TransactionSplitOperation(categoryID: $0.key, amountMinor: $0.value, memo: "") } : []
+        _ = recordCanonicalTransaction(.init(accountID: accountID, categoryID: categoryID, amountMinor: signedAmount, occurredOn: BudgetWorkspaceStore.dateString(date), payeeName: payee, memo: memo, isCleared: cleared, splits: splits, flag: flag, tags: tags, attachmentMetadata: attachmentName.map { [["name": $0]] } ?? []))
     }
 
     func updateTransaction(
@@ -147,30 +158,21 @@ final class DemoStore: ObservableObject {
         flag: String?
     ) -> Bool {
         guard amount > 0 else { return fail(.invalidAmount) }
-        guard let index = transactions.firstIndex(where: { $0.id == id }) else { return fail(.transactionNotFound) }
         guard accounts.contains(where: { $0.id == accountID }) else { return fail(.accountNotFound) }
-        let old = transactions[index]
-        applyExpense(old, direction: -1)
-        transactions[index].payee = payee
-        transactions[index].amount = -abs(amount)
-        transactions[index].accountID = accountID
-        transactions[index].categoryIDs = categoryIDs
-        transactions[index].memo = memo
-        transactions[index].cleared = cleared
-        transactions[index].flag = flag
-        applyExpense(transactions[index], direction: 1)
-        errorMessage = nil
-        return true
+        let values = splitAmounts(total: amount, categoryIDs: categoryIDs)
+        return updateCanonicalTransaction(id: id, operation: .init(
+            accountID: accountID, categoryID: categoryIDs.count == 1 ? categoryIDs[0] : nil,
+            amountMinor: -amount, occurredOn: transactions.first(where: { $0.id == id }).map { BudgetWorkspaceStore.dateString($0.date) } ?? BudgetWorkspaceStore.dateString(Date()),
+            payeeName: payee, memo: memo, isCleared: cleared,
+            splits: categoryIDs.count > 1 ? values.map { .init(categoryID: $0.key, amountMinor: -$0.value, memo: "") } : [],
+            flag: flag, tags: [], attachmentMetadata: []
+        ))
     }
 
     func updateTransactionSigned(id: String, payee: String, signedAmount: Int64, date: Date, accountID: String, categoryAmounts: [String: Int64], memo: String, cleared: Bool, flag: String?, tags: [String], attachmentName: String?) -> Bool {
-        guard signedAmount != 0, let index = transactions.firstIndex(where: { $0.id == id }), accounts.contains(where: { $0.id == accountID }) else { return fail(.invalidAmount) }
-        let categoryIDs = Array(categoryAmounts.keys).sorted()
-        let old = transactions[index]
-        if old.amount < 0 { applyExpense(old, direction: -1) } else { if let account = accounts.firstIndex(where: { $0.id == old.accountID }) { accounts[account].balance -= old.amount }; if old.categoryIDs.isEmpty && !isRestricted { unassignedMinor -= old.amount } }
-        transactions[index].payee = payee; transactions[index].amount = signedAmount; transactions[index].date = date; transactions[index].accountID = accountID; transactions[index].categoryIDs = categoryIDs; transactions[index].categoryAmounts = categoryAmounts; transactions[index].memo = memo; transactions[index].cleared = cleared; transactions[index].flag = flag; transactions[index].tags = tags; transactions[index].attachmentName = attachmentName
-        if signedAmount < 0 { applyExpense(transactions[index], direction: 1) } else { if let account = accounts.firstIndex(where: { $0.id == accountID }) { accounts[account].balance += signedAmount }; if categoryIDs.isEmpty && !isRestricted { unassignedMinor += signedAmount } }
-        errorMessage = nil; return true
+        let categoryID = categoryAmounts.count == 1 ? categoryAmounts.keys.first : nil
+        let splits = categoryAmounts.count > 1 ? categoryAmounts.map { TransactionSplitOperation(categoryID: $0.key, amountMinor: $0.value, memo: "") } : []
+        return updateCanonicalTransaction(id: id, operation: .init(accountID: accountID, categoryID: categoryID, amountMinor: signedAmount, occurredOn: BudgetWorkspaceStore.dateString(date), payeeName: payee, memo: memo, isCleared: cleared, splits: splits, flag: flag, tags: tags, attachmentMetadata: attachmentName.map { [["name": $0]] } ?? []))
     }
 
     @discardableResult
@@ -178,7 +180,7 @@ final class DemoStore: ObservableObject {
         guard let index = transactions.firstIndex(where: { $0.id == id }) else { return fail(.transactionNotFound) }
         let transaction = transactions[index]
         guard !transaction.reconciled else { return fail(.invalidAmount) }
-        applyExpense(transaction, direction: -1)
+        reverseCanonicalTransaction(transaction)
         transactions.remove(at: index)
         errorMessage = nil
         return true
@@ -188,8 +190,14 @@ final class DemoStore: ObservableObject {
     func transfer(amount: Int64, from sourceID: String, to destinationID: String, memo: String, cleared: Bool, date: Date = .demo(monthsAgo: 0, day: 30)) -> Bool {
         guard amount > 0 else { return fail(.invalidAmount) }
         guard let source = accounts.firstIndex(where: { $0.id == sourceID }), let destination = accounts.firstIndex(where: { $0.id == destinationID }), source != destination else { return fail(.accountNotFound) }
+        if accounts[destination].kind == .credit && accounts[destination].paymentReserved < amount {
+            return fail(.insufficientFunds(available: accounts[destination].paymentReserved))
+        }
         let transferID = UUID().uuidString
         accounts[source].balance -= amount; accounts[destination].balance += amount
+        if cleared { accounts[source].cleared -= amount; accounts[destination].cleared += amount }
+        if accounts[destination].kind == .credit { accounts[destination].paymentReserved -= amount }
+        if accounts[source].kind == .credit { accounts[source].paymentReserved += amount }
         transactions.insert(.init(id: "\(transferID)-in", date: date, payee: "Transfer", memo: memo, accountID: destinationID, categoryIDs: [], amount: amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
         transactions.insert(.init(id: "\(transferID)-out", date: date, payee: "Transfer", memo: memo, accountID: sourceID, categoryIDs: [], amount: -amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
         errorMessage = nil
@@ -201,20 +209,8 @@ final class DemoStore: ObservableObject {
         guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return fail(.accountNotFound) }
         let difference = statementBalance - accounts[index].cleared
         if difference != 0 {
-            transactions.insert(.init(
-                id: UUID().uuidString,
-                date: .demo(monthsAgo: 0, day: 30),
-                payee: "Reconciliation adjustment",
-                memo: "Confirmed statement balance",
-                accountID: accountID,
-                categoryIDs: [],
-                amount: difference,
-                member: persona,
-                cleared: true,
-                flag: "Reconciled",
-                reconciled: true
-            ), at: 0)
-            accounts[index].balance += difference
+            guard recordCanonicalTransaction(.init(accountID: accountID, categoryID: nil, amountMinor: difference, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Reconciliation adjustment", memo: "Confirmed statement balance", isCleared: true, splits: [], flag: "Reconciled", tags: [], attachmentMetadata: [])) else { return false }
+            transactions[0].reconciled = true
         }
         accounts[index].cleared = statementBalance
         for transactionIndex in transactions.indices where transactions[transactionIndex].accountID == accountID && transactions[transactionIndex].cleared {
@@ -230,6 +226,9 @@ final class DemoStore: ObservableObject {
         if isRestricted && initialAssignment > delegatedReadyToAssign {
             return fail(.exceedsDelegatedAuthority(available: delegatedReadyToAssign))
         }
+        if !isRestricted && initialAssignment > unassignedMinor {
+            return fail(.insufficientFunds(available: unassignedMinor))
+        }
         categories.append(.init(
             id: UUID().uuidString,
             group: isRestricted ? "My Budget" : group,
@@ -241,7 +240,7 @@ final class DemoStore: ObservableObject {
             target: nil,
             delegatedTo: isRestricted ? persona : nil
         ))
-        if !isRestricted { unassignedMinor -= min(initialAssignment, unassignedMinor) }
+        if !isRestricted { unassignedMinor -= initialAssignment }
         errorMessage = nil
         return true
     }
@@ -280,26 +279,120 @@ final class DemoStore: ObservableObject {
 
     func spendingByCategory(in period: DemoReportPeriod) -> [(DemoCategory, Int64, [DemoTransaction])] {
         visibleCategories.compactMap { category in
-            let contributing = transactions(in: period, categoryID: category.id).filter { $0.amount < 0 }
+            let contributing = transactions(in: period, categoryID: category.id).filter { $0.transferID == nil && $0.amount != 0 }
             let total = contributing.reduce(Int64(0)) { partial, transaction in
-                partial + (splitAmounts(for: transaction)[category.id] ?? 0)
+                partial - (canonicalCategoryAmounts(for: transaction)[category.id] ?? 0)
             }
-            return total == 0 ? nil : (category, total, contributing)
+            return total <= 0 ? nil : (category, total, contributing)
         }.sorted { $0.1 > $1.1 }
     }
 
-    private func applyExpense(_ transaction: DemoTransaction, direction: Int64) {
-        guard transaction.amount < 0 else { return }
-        let amount = abs(transaction.amount)
-        if let account = accounts.firstIndex(where: { $0.id == transaction.accountID }) {
-            accounts[account].balance -= direction * amount
+    @discardableResult
+    func recordCanonicalTransaction(_ operation: RecordTransactionOperation, id: String = UUID().uuidString) -> Bool {
+        guard operation.amountMinor != 0,
+              let account = accounts.first(where: { $0.id == operation.accountID }) else { return fail(.invalidAmount) }
+        let occurredOn = BudgetWorkspaceStore.parseDate(operation.occurredOn)
+        guard Calendar.current.startOfDay(for: occurredOn) <= Calendar.current.startOfDay(for: Date()) else { return fail(.invalidAmount) }
+        let amounts = operation.categoryID.map { [$0: operation.amountMinor] }
+            ?? Dictionary(uniqueKeysWithValues: operation.splits.map { ($0.categoryID, $0.amountMinor) })
+        guard amounts.values.reduce(0, +) == (amounts.isEmpty ? 0 : operation.amountMinor),
+              amounts.keys.allSatisfy({ id in categories.contains { $0.id == id } }),
+              account.isOnBudget || amounts.isEmpty else { return fail(.invalidAmount) }
+        let transaction = DemoTransaction(
+            id: id, date: occurredOn, payee: operation.payeeName, memo: operation.memo,
+            accountID: operation.accountID, categoryIDs: Array(amounts.keys).sorted(), categoryAmounts: amounts,
+            amount: operation.amountMinor, member: persona, cleared: operation.isCleared, flag: operation.flag,
+            attachmentName: operation.attachmentMetadata.first?["name"], tags: operation.tags
+        )
+        applyCanonicalTransaction(transaction)
+        transactions.insert(transaction, at: 0)
+        errorMessage = nil
+        return true
+    }
+
+    @discardableResult
+    func updateCanonicalTransaction(id: String, operation: RecordTransactionOperation) -> Bool {
+        guard let index = transactions.firstIndex(where: { $0.id == id }), !transactions[index].reconciled else { return fail(.transactionNotFound) }
+        let old = transactions[index]
+        reverseCanonicalTransaction(old)
+        transactions.remove(at: index)
+        guard recordCanonicalTransaction(operation, id: id) else {
+            applyCanonicalTransaction(old)
+            transactions.insert(old, at: index)
+            return false
         }
-        for (id, splitAmount) in splitAmounts(for: transaction) {
-            if let category = categories.firstIndex(where: { $0.id == id }) {
-                categories[category].activity -= direction * splitAmount
-                categories[category].available -= direction * splitAmount
+        return true
+    }
+
+    private func applyCanonicalTransaction(_ transaction: DemoTransaction) {
+        guard let accountIndex = accounts.firstIndex(where: { $0.id == transaction.accountID }) else { return }
+        let amounts = canonicalCategoryAmounts(for: transaction)
+        var reserve: [String: Int64] = [:]
+        if accounts[accountIndex].kind == .credit {
+            for (categoryID, amount) in amounts {
+                guard let categoryIndex = categories.firstIndex(where: { $0.id == categoryID }) else { continue }
+                if amount < 0 {
+                    let availableBefore = categories[categoryIndex].available
+                    reserve[categoryID] = min(-amount, max(availableBefore, 0))
+                } else if amount > 0 {
+                    let attributed = reserveAttribution.values.reduce(Int64(0)) { $0 + max($1[categoryID] ?? 0, 0) }
+                    reserve[categoryID] = -min(amount, attributed, max(accounts[accountIndex].paymentReserved, 0))
+                }
             }
         }
+        accounts[accountIndex].balance += transaction.amount
+        if transaction.cleared { accounts[accountIndex].cleared += transaction.amount }
+        if amounts.isEmpty {
+            if accounts[accountIndex].isOnBudget && [.checking, .savings, .cash].contains(accounts[accountIndex].kind) && !isRestricted {
+                unassignedMinor += transaction.amount
+            }
+        } else {
+            for (categoryID, amount) in amounts where categories.contains(where: { $0.id == categoryID }) {
+                let categoryIndex = categories.firstIndex(where: { $0.id == categoryID })!
+                categories[categoryIndex].activity += amount
+                categories[categoryIndex].available += amount
+            }
+        }
+        if !reserve.isEmpty {
+            let reserved = reserve.values.reduce(0, +)
+            accounts[accountIndex].paymentReserved += reserved
+            if transaction.amount < 0 {
+                accounts[accountIndex].fundedSpending += reserved
+                accounts[accountIndex].unfundedSpending += -transaction.amount - reserved
+            }
+            reserveAttribution[transaction.id] = reserve
+        }
+    }
+
+    private func reverseCanonicalTransaction(_ transaction: DemoTransaction) {
+        guard let accountIndex = accounts.firstIndex(where: { $0.id == transaction.accountID }) else { return }
+        accounts[accountIndex].balance -= transaction.amount
+        if transaction.cleared { accounts[accountIndex].cleared -= transaction.amount }
+        let amounts = canonicalCategoryAmounts(for: transaction)
+        if amounts.isEmpty {
+            if accounts[accountIndex].isOnBudget && [.checking, .savings, .cash].contains(accounts[accountIndex].kind) && !isRestricted {
+                unassignedMinor -= transaction.amount
+            }
+        } else {
+            for (categoryID, amount) in amounts where categories.contains(where: { $0.id == categoryID }) {
+                let categoryIndex = categories.firstIndex(where: { $0.id == categoryID })!
+                categories[categoryIndex].activity -= amount
+                categories[categoryIndex].available -= amount
+            }
+        }
+        let reserve = reserveAttribution.removeValue(forKey: transaction.id)?.values.reduce(0, +) ?? 0
+        accounts[accountIndex].paymentReserved -= reserve
+        if transaction.amount < 0 {
+            accounts[accountIndex].fundedSpending -= reserve
+            accounts[accountIndex].unfundedSpending -= -transaction.amount - reserve
+        }
+    }
+
+    func canonicalCategoryAmounts(for transaction: DemoTransaction) -> [String: Int64] {
+        if !transaction.categoryAmounts.isEmpty { return transaction.categoryAmounts }
+        guard !transaction.categoryIDs.isEmpty else { return [:] }
+        let magnitude = splitAmounts(total: abs(transaction.amount), categoryIDs: transaction.categoryIDs)
+        return magnitude.mapValues { transaction.amount < 0 ? -$0 : $0 }
     }
 
     private func splitAmounts(total: Int64, categoryIDs: [String]) -> [String: Int64] {
@@ -315,12 +408,6 @@ final class DemoStore: ObservableObject {
         return result
     }
 
-    private func splitAmounts(for transaction: DemoTransaction) -> [String: Int64] {
-        transaction.categoryAmounts.isEmpty
-            ? splitAmounts(total: abs(transaction.amount), categoryIDs: transaction.categoryIDs)
-            : transaction.categoryAmounts.mapValues(abs)
-    }
-
     private func fail(_ error: DemoMutationError) -> Bool {
         errorMessage = error.localizedDescription
         return false
@@ -332,9 +419,9 @@ final class DemoStore: ObservableObject {
         .init(id: "cash", name: "Wallet Cash", kind: .cash, balance: 18000, cleared: 18000),
         .init(id: "visa", name: "Everyday Visa", kind: .credit, balance: -142864, cleared: -130364, paymentReserved: 121250, fundedSpending: 48264, unfundedSpending: 21614, apr: 20.49, minimumPayment: 4500, dueText: "Due Sep 18"),
         .init(id: "mastercard", name: "Travel Mastercard", kind: .credit, balance: -36421, cleared: -36421, paymentReserved: 36421, fundedSpending: 18210, dueText: "Due Sep 24"),
-        .init(id: "auto", name: "Auto Loan", kind: .loan, balance: -1875000, cleared: -1875000, apr: 6.25, minimumPayment: 41200, dueText: "Due Oct 1"),
-        .init(id: "mortgage", name: "Home Mortgage", kind: .mortgage, balance: -23840000, cleared: -23840000, apr: 3.75, minimumPayment: 184500, dueText: "Due Oct 1"),
-        .init(id: "home", name: "Home Value", kind: .asset, balance: 39200000, cleared: 39200000)
+        .init(id: "auto", name: "Auto Loan", kind: .loan, balance: -1875000, cleared: -1875000, isOnBudget: false, apr: 6.25, minimumPayment: 41200, dueText: "Due Oct 1"),
+        .init(id: "mortgage", name: "Home Mortgage", kind: .mortgage, balance: -23840000, cleared: -23840000, isOnBudget: false, apr: 3.75, minimumPayment: 184500, dueText: "Due Oct 1"),
+        .init(id: "home", name: "Home Value", kind: .asset, balance: 39200000, cleared: 39200000, isOnBudget: false)
     ]
 
     static let seedCategories: [DemoCategory] = [

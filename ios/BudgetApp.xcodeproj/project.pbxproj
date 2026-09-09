@@ -18,6 +18,8 @@
 		AA0000070000000000000007 /* DemoStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000070000000000000007 /* DemoStoreTests.swift */; };
 		AA0000080000000000000008 /* BudgetWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000080000000000000008 /* BudgetWorkspaceView.swift */; };
 		AA0000090000000000000009 /* AppSessionRefreshTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000090000000000000009 /* AppSessionRefreshTests.swift */; };
+		AA0000110000000000000011 /* ApplicationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000110000000000000011 /* ApplicationServices.swift */; };
+		AA0000120000000000000012 /* FinancialGoldenVectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000120000000000000012 /* FinancialGoldenVectorTests.swift */; };
 		CC0000010000000000000001 /* AuthenticationJourneyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD0000010000000000000001 /* AuthenticationJourneyTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -52,6 +54,8 @@
 		BB0000070000000000000007 /* DemoStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoStoreTests.swift; sourceTree = "<group>"; };
 		BB0000080000000000000008 /* BudgetWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetWorkspaceView.swift; sourceTree = "<group>"; };
 		BB0000090000000000000009 /* AppSessionRefreshTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSessionRefreshTests.swift; sourceTree = "<group>"; };
+		BB0000110000000000000011 /* ApplicationServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationServices.swift; sourceTree = "<group>"; };
+		BB0000120000000000000012 /* FinancialGoldenVectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinancialGoldenVectorTests.swift; sourceTree = "<group>"; };
 		DD0000010000000000000001 /* AuthenticationJourneyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticationJourneyTests.swift; sourceTree = "<group>"; };
 		DD0000020000000000000002 /* BudgetAppUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = BudgetAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -79,6 +83,7 @@
 			children = (
 				BB0000070000000000000007 /* DemoStoreTests.swift */,
 				BB0000090000000000000009 /* AppSessionRefreshTests.swift */,
+				BB0000120000000000000012 /* FinancialGoldenVectorTests.swift */,
 			);
 			path = BudgetAppTests;
 			sourceTree = "<group>";
@@ -124,6 +129,7 @@
 			isa = PBXGroup;
 			children = (
 				B10F6752E4E2DAAB5F30C155 /* AppSession.swift */,
+				BB0000110000000000000011 /* ApplicationServices.swift */,
 				345B8B1D2F7640B5BD488CC5 /* BudgetApp.swift */,
 				B0E14E75380CB2C219F61828 /* EditingViews.swift */,
 				DEFFDD801DC18A01D2C2C6FF /* KeychainStore.swift */,
@@ -269,6 +275,7 @@
 			files = (
 				AA0000070000000000000007 /* DemoStoreTests.swift in Sources */,
 				AA0000090000000000000009 /* AppSessionRefreshTests.swift in Sources */,
+				AA0000120000000000000012 /* FinancialGoldenVectorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -284,6 +291,7 @@
 				AA0000010000000000000001 /* DemoModels.swift in Sources */,
 				AA0000020000000000000002 /* DemoStore.swift in Sources */,
 				AA0000080000000000000008 /* BudgetWorkspaceView.swift in Sources */,
+				AA0000110000000000000011 /* ApplicationServices.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

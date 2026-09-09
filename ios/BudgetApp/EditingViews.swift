@@ -118,14 +118,14 @@ struct TransactionEntryView: View {
         return isInflow ? magnitude : -magnitude
     }
 
-    private var parsedSplits: [APITransactionSplitCreate]? {
+    private var parsedSplits: [TransactionSplitOperation]? {
         guard isSplit else { return [] }
-        var result: [APITransactionSplitCreate] = []
+        var result: [TransactionSplitOperation] = []
         for row in splitRows {
             guard !row.categoryID.isEmpty,
                   let amount = CurrencyText.parseMinorUnits(row.amount, currencyCode: budget.currencyCode),
                   amount >= 0 else { return nil }
-            result.append(APITransactionSplitCreate(categoryID: row.categoryID, amountMinor: -amount, memo: row.memo))
+            result.append(TransactionSplitOperation(categoryID: row.categoryID, amountMinor: -amount, memo: row.memo))
         }
         return result
     }
@@ -151,7 +151,7 @@ struct TransactionEntryView: View {
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.dateFormat = "yyyy-MM-dd"
             try await workspace.createTransaction(
-                APITransactionCreate(
+                RecordTransactionOperation(
                     accountID: accountID,
                     categoryID: isSplit ? nil : categoryID,
                     amountMinor: parsedAmount,
@@ -272,13 +272,13 @@ struct AllocationTransferView: View {
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.dateFormat = "yyyy-MM-dd"
             try await workspace.moveAllocation(
-                APIAllocationTransferCreate(
+                MoveMoneyOperation(
                     sourceCategoryID: sourceCategoryID,
                     destinationCategoryID: destinationCategoryID,
                     amountMinor: parsedAmount,
                     occurredOn: formatter.string(from: Date()),
                     note: note,
-                    expectedAllocationVersion: expectedAllocationVersion
+                    expectedVersion: expectedAllocationVersion
                 )
             )
             await onSaved()
@@ -619,7 +619,7 @@ struct AccountCreationView: View {
         defer { isSaving = false }
         do {
             guard let balance = parsedStartingBalance else { return }
-            try await workspace.createAccount(APIAccountCreate(name: name, accountType: accountType, isOnBudget: isOnBudget, startingBalanceMinor: balance))
+            try await workspace.createAccount(CreateAccountOperation(name: name, kind: accountType, isOnBudget: isOnBudget, openingBalanceMinor: balance))
             await onSaved()
             dismiss()
         } catch { errorMessage = error.localizedDescription }

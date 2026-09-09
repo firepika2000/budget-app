@@ -21,13 +21,13 @@ enum DemoPersona: String, CaseIterable, Identifiable {
 }
 
 enum DemoAccountKind: String, Codable {
-    case checking, savings, cash, credit, loan, asset, mortgage
+    case checking, savings, cash, credit, loan, tracking, asset, mortgage
 
     var title: String {
         switch self {
         case .credit: "Credit Cards"
         case .loan, .mortgage: "Loans & Debt"
-        case .asset: "Tracking Assets"
+        case .asset, .tracking: "Tracking Assets"
         default: "Cash Accounts"
         }
     }
@@ -39,7 +39,7 @@ enum DemoAccountKind: String, Codable {
         case .credit: "creditcard.fill"
         case .loan: "car.fill"
         case .mortgage: "house.fill"
-        case .asset: "chart.line.uptrend.xyaxis"
+        case .asset, .tracking: "chart.line.uptrend.xyaxis"
         }
     }
 }
@@ -50,6 +50,7 @@ struct DemoAccount: Identifiable, Hashable {
     var kind: DemoAccountKind
     var balance: Int64
     var cleared: Int64
+    var isOnBudget: Bool = true
     var paymentReserved: Int64 = 0
     var fundedSpending: Int64 = 0
     var unfundedSpending: Int64 = 0
