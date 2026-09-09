@@ -317,6 +317,28 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testNewlyCreatedFirstBudgetImmediatelyBecomesWorkspaceContext() async {
+        let created = Counter()
+        let session = makeSession(access: "expired-access", refresh: "R1") { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("POST", "/api/v1/auth/refresh"): return Self.json(200, Self.rotated)
+            case ("GET", "/api/v1/me"): return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[{"id":"h1","name":"Home","role":"owner","is_active":true}]}"#)
+            case ("POST", "/api/v1/budgets"):
+                _ = created.increment()
+                return Self.json(201, #"{"id":"b1","household_id":"h1","name":"First budget","currency_code":"USD","effective_permission":"owner","allocation_version":0}"#)
+            case ("GET", "/api/v1/budgets"):
+                return created.value == 0 ? Self.json(200, "[]") : Self.json(200, #"[{"id":"b1","household_id":"h1","name":"First budget","currency_code":"USD","effective_permission":"owner","allocation_version":0}]"#)
+            default: return Self.json(404, "{}")
+            }
+        }
+        await session.loadBudgets(caller: "test.firstBudget")
+        XCTAssertEqual(session.route, .budgetSelection)
+        await session.createBudget(name: "First budget", currencyCode: "USD", householdID: "h1")
+        XCTAssertEqual(session.activeBudgetID, "b1")
+        guard case .workspace = session.route else { return XCTFail("newly created first budget must immediately enter the shared shell") }
+    }
+
+    @MainActor
     func testActiveBudgetSelectionSurvivesSessionReconstruction() {
         let suite = "AppSessionActiveBudgetTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

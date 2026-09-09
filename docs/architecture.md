@@ -36,9 +36,18 @@ production SwiftUI views
        -> deterministic source -> API-shaped in-memory fixture
 ```
 
-Both sources feed the same workspace, features, editors, and API-shaped models. Editors do not own a server URL or bearer token; they submit operations through the shared workspace store and reload the authoritative snapshot after successful mutation. Exact monetary source-of-truth values are signed `Int64` minor units. Floating point is limited to derived presentation geometry such as chart angles.
+Both sources feed the same workspace, features, editors, and API-shaped models. Reads conform to the
+shared workspace snapshot contract. Every mutation conforms to `WorkspaceCommandRepository`, whose
+semantic operations cover transactions, transfers, reconciliation, assignments, categories, accounts,
+targets, schedules, requests, Smart Funding, and delegated policy. `BudgetWorkspaceStore` never
+downcasts a concrete repository and feature UI never selects a source. The composition root is the sole
+place that chooses the deterministic or Live implementation.
 
-The remaining v0.4 boundary debt is that `BudgetWorkspaceStore` still dispatches some mutations to its concrete live or deterministic source internally. That compatibility seam is centralized and does not create separate view hierarchies, but a later repository-protocol expansion should make every command polymorphic without changing accounting semantics. It is not permission to duplicate financial logic in Swift.
+Editors do not own a server URL or bearer token; they submit operations through the shared workspace
+store and reload the authoritative snapshot after successful mutation. Exact monetary source-of-truth
+values are signed `Int64` minor units. Floating point is limited to derived presentation geometry such
+as chart angles. Repository abstraction is not permission to duplicate or reinterpret server financial
+semantics in Swift.
 
 ## Form ownership
 
