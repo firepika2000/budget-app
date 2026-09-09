@@ -79,6 +79,38 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(persistedField.value as? String, "820.00")
     }
 
+    func testDeterministicMutationResetsAfterProcessRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=plan"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        app.buttons["plan-category-groceries"].tap()
+        app.buttons["Assign money"].tap()
+
+        let field = app.textFields["Assigned amount"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "720.00")
+        app.buttons["Clear Assigned amount"].tap()
+        field.typeText("820.00")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit Assignment"].waitForNonExistence(timeout: 5))
+
+        app.terminate()
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        app.buttons["plan-category-groceries"].tap()
+        app.buttons["Assign money"].tap()
+        let relaunchedField = app.textFields["Assigned amount"]
+        XCTAssertTrue(relaunchedField.waitForExistence(timeout: 5))
+        XCTAssertEqual(
+            relaunchedField.value as? String,
+            "720.00",
+            "the deterministic repository is an intentionally ephemeral fixture and must rebuild its seed after process relaunch"
+        )
+    }
+
     func testAccountRegisterExposesCanonicalTransferWithCurrentAccountSelected() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo"]
