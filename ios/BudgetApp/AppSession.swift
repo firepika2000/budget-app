@@ -134,6 +134,7 @@ final class AppSession: ObservableObject {
     }
 
     func selectDeterministic() {
+        clearActiveBudget()
         defaults.set(AppDataSourceMode.deterministic.rawValue, forKey: sourceModeKey)
         sourceMode = .deterministic; connectionStatus = .deterministic; errorMessage = nil
         debugLog("selected data source: deterministic")
@@ -431,12 +432,55 @@ final class AppSession: ObservableObject {
         if let url, let refreshToken { Task { try? await clientFactory(url).logout(refreshToken) } }
         keychain.delete(account: tokenAccount); keychain.delete(account: refreshTokenAccount)
         token = nil; refreshToken = nil; budgets = []; profile = nil
+        clearActiveBudget()
         credentialGeneration += 1
         authInvalidated = true
         refreshTask = nil
         refreshOperationID = nil
         if sourceMode == .liveServer { connectionStatus = .authenticationRequired }
     }
+
+    private func clearActiveBudget() {
+        activeBudgetID = nil
+        defaults.removeObject(forKey: activeBudgetKey)
+    }
+
+    #if DEBUG
+    func logRouteTransition(from previous: ApplicationRoute?, to next: ApplicationRoute) {
+        let resolution: String
+        switch next {
+        case .budgetSelection where budgets.isEmpty:
+            resolution = "zero_budget_onboarding"
+        case .budgetSelection where budgets.count > 1:
+            resolution = "unresolved_multiple_budget_chooser"
+        case .budgetSelection:
+            resolution = "unresolved_budget_chooser"
+        case .workspace(.deterministic):
+            resolution = "deterministic_workspace"
+        case .workspace(.live) where budgets.count == 1:
+            resolution = "automatically_resolved_one_budget_workspace"
+        case .workspace(.live):
+            resolution = "resolved_live_workspace"
+        default:
+            resolution = "not_applicable"
+        }
+        let activeBudget = activeBudgetID ?? "none"
+        print("BUDGETAPP_ROUTE previous=\(routeName(previous)) next=\(routeName(next)) resolution=\(resolution) activeBudget=\(activeBudget) accessibleBudgetCount=\(budgets.count)")
+    }
+
+    private func routeName(_ route: ApplicationRoute?) -> String {
+        guard let route else { return "none" }
+        switch route {
+        case .serverSetup: return "serverSetup"
+        case .connecting: return "connecting"
+        case .serverBootstrap: return "serverBootstrap"
+        case .authentication: return "authentication"
+        case .budgetSelection: return "budgetSelection"
+        case .workspace(.deterministic): return "workspace.deterministic"
+        case .workspace(.live): return "workspace.live"
+        }
+    }
+    #endif
 
     private func selectLiveWithInvalidConfiguration(_ message: String) {
         clearCredentials(logoutFrom: serverURL)

@@ -357,6 +357,37 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testSignOutClearsPersistedActiveBudgetContext() {
+        let session = makeSession(access: "A1", refresh: "R1") { request in
+            request.url?.path == "/api/v1/auth/logout" ? Self.json(204, "") : Self.json(404, "{}")
+        }
+        session.budgets = [APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD")]
+        session.selectBudget("b1")
+
+        session.signOut()
+
+        XCTAssertNil(session.activeBudgetID)
+        XCTAssertNil(session.activeBudget)
+        XCTAssertEqual(session.route, .authentication)
+    }
+
+    @MainActor
+    func testRepositoryChangeInvalidatesPriorActiveBudgetContext() {
+        let session = makeSession(access: "A1", refresh: "R1") { request in
+            request.url?.path == "/api/v1/auth/logout" ? Self.json(204, "") : Self.json(404, "{}")
+        }
+        session.budgets = [APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD")]
+        session.selectBudget("b1")
+
+        session.changeServer()
+
+        XCTAssertNil(session.activeBudgetID)
+        XCTAssertNil(session.activeBudget)
+        XCTAssertNil(session.serverURL)
+        XCTAssertEqual(session.route, .serverSetup)
+    }
+
+    @MainActor
     func testProductionDemoToLiveAuthenticationFormRetainsContinuousInputAndFocus() async throws {
         let health = Counter()
         RefreshMockURLProtocol.handler = { request in

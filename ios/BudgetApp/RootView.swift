@@ -30,6 +30,24 @@ struct RootView: View {
                 ActiveBudgetShell(context: context)
             }
         }
+        #if DEBUG
+        .overlay(alignment: .bottomLeading) {
+            Text(RuntimeBuildIdentity.visibleText)
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .padding(5)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 6))
+                .padding(.leading, 4)
+                .padding(.bottom, 2)
+                .accessibilityLabel("Debug runtime identity \(RuntimeBuildIdentity.visibleText)")
+                .accessibilityIdentifier("runtime-build-identity")
+                .allowsHitTesting(false)
+        }
+        .onAppear { session.logRouteTransition(from: nil, to: session.route) }
+        .onChange(of: session.route) { oldRoute, newRoute in
+            session.logRouteTransition(from: oldRoute, to: newRoute)
+        }
+        #endif
         .alert("Something went wrong", isPresented: Binding(
             get: { session.errorMessage != nil },
             set: { if !$0 { session.errorMessage = nil } }

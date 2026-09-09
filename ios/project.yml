@@ -17,6 +17,15 @@ targets:
     dependencies:
       - package: BudgetCore
         product: BudgetAPI
+    postBuildScripts:
+      - name: Inject Runtime Identity
+        script: |
+          REPOSITORY_ROOT="${SRCROOT}/.."
+          RUNTIME_IDENTITY_PATH="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/BudgetAppRuntimeIdentity.txt"
+          COMMIT_SHA="$(git -C "${REPOSITORY_ROOT}" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)"
+          mkdir -p "$(dirname "${RUNTIME_IDENTITY_PATH}")"
+          printf 'commit=%s\nconfiguration=%s\n' "${COMMIT_SHA}" "${CONFIGURATION}" > "${RUNTIME_IDENTITY_PATH}"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.firepika.BudgetApp

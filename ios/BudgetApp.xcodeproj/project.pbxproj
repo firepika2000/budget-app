@@ -178,6 +178,7 @@
 			buildPhases = (
 				99EB62D84F2C312B4DC5C0BC /* Sources */,
 				32B48C46C55E631622718C8B /* Frameworks */,
+				AA0000100000000000000010 /* Inject Runtime Identity */,
 			);
 			buildRules = (
 			);
@@ -229,6 +230,28 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		AA0000100000000000000010 /* Inject Runtime Identity */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Inject Runtime Identity";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "REPOSITORY_ROOT=\"${SRCROOT}/..\"\nRUNTIME_IDENTITY_PATH=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/BudgetAppRuntimeIdentity.txt\"\nCOMMIT_SHA=\"$(git -C \"${REPOSITORY_ROOT}\" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)\"\nmkdir -p \"$(dirname \"${RUNTIME_IDENTITY_PATH}\")\"\nprintf 'commit=%s\\nconfiguration=%s\\n' \"${COMMIT_SHA}\" \"${CONFIGURATION}\" > \"${RUNTIME_IDENTITY_PATH}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		CC0000060000000000000006 /* Sources */ = {

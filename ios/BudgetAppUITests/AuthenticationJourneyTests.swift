@@ -6,6 +6,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.launchArguments = ["--ui-test-authentication"]
         app.launch()
 
+        XCTAssertTrue(app.staticTexts["runtime-build-identity"].waitForExistence(timeout: 5))
+
         let email = app.textFields["auth-email-field"]
         XCTAssertTrue(email.waitForExistence(timeout: 5))
         email.tap()
@@ -26,6 +28,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-fresh-budget"]
         app.launch()
+
+        XCTAssertTrue(app.staticTexts["runtime-build-identity"].waitForExistence(timeout: 5))
 
         app.tabBars.buttons["Accounts"].tap()
         XCTAssertTrue(app.navigationBars["Accounts"].waitForExistence(timeout: 5))
