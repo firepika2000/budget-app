@@ -123,6 +123,46 @@ def test_transfer_is_balanced_and_does_not_create_income(
     assert summary["ready_to_assign_minor"] == 0
 
 
+def test_linked_transfer_update_and_delete_are_atomic_and_preserve_identity(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    savings = client.post(f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token), json={"name": "Savings", "account_type": "savings"}).json()
+    other = client.post(f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token), json={"name": "Other", "account_type": "savings"}).json()
+    created = client.post(f"/api/v1/budgets/{budget['id']}/transfers", headers=auth(owner_token), json={"source_account_id": checking["id"], "destination_account_id": savings["id"], "amount_minor": 20000, "occurred_on": "2026-09-04", "memo": "original", "is_cleared": True}).json()
+    transfer_id = created["transfer_id"]
+    original_ids = {created["source"]["id"], created["destination"]["id"]}
+
+    updated_response = client.put(f"/api/v1/budgets/{budget['id']}/transfers/{transfer_id}", headers=auth(owner_token), json={"source_account_id": checking["id"], "destination_account_id": other["id"], "amount_minor": 2000, "occurred_on": "2026-09-05", "memo": "corrected", "is_cleared": False})
+    assert updated_response.status_code == 200, updated_response.text
+    updated = updated_response.json()
+    assert updated["transfer_id"] == transfer_id
+    assert {updated["source"]["id"], updated["destination"]["id"]} == original_ids
+    assert updated["source"]["amount_minor"] == -2000
+    assert updated["destination"]["amount_minor"] == 2000
+    assert updated["destination"]["account_id"] == other["id"]
+    assert updated["source"]["memo"] == updated["destination"]["memo"] == "corrected"
+    summary = client.get(f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)).json()
+    assert summary["ready_to_assign_minor"] == 0
+    assert next(row for row in summary["categories"] if row["category_id"] == category["id"])["activity_minor"] == 0
+
+    assert client.delete(f"/api/v1/budgets/{budget['id']}/transactions/{updated['source']['id']}", headers=auth(owner_token)).status_code == 404
+    deleted = client.delete(f"/api/v1/budgets/{budget['id']}/transfers/{transfer_id}", headers=auth(owner_token))
+    assert deleted.status_code == 204
+    rows = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()
+    assert not any(row["transfer_id"] == transfer_id for row in rows)
+
+
+def test_reconciled_transfer_cannot_be_updated_or_deleted(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, _ = create_budget_structure(client, owner_token, budget["id"])
+    savings = client.post(f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token), json={"name": "Savings", "account_type": "savings"}).json()
+    created = client.post(f"/api/v1/budgets/{budget['id']}/transfers", headers=auth(owner_token), json={"source_account_id": checking["id"], "destination_account_id": savings["id"], "amount_minor": 2000, "occurred_on": "2026-09-04", "is_cleared": True}).json()
+    client.post(f"/api/v1/budgets/{budget['id']}/accounts/{checking['id']}/reconcile", headers=auth(owner_token), json={"statement_balance_minor": -2000, "through_date": "2026-09-30"})
+    payload = {"source_account_id": checking["id"], "destination_account_id": savings["id"], "amount_minor": 1000, "occurred_on": "2026-09-04"}
+    assert client.put(f"/api/v1/budgets/{budget['id']}/transfers/{created['transfer_id']}", headers=auth(owner_token), json=payload).status_code == 409
+    assert client.delete(f"/api/v1/budgets/{budget['id']}/transfers/{created['transfer_id']}", headers=auth(owner_token)).status_code == 409
+
+
 def test_reconciliation_requires_exact_cleared_balance(
     client, owner_token, session_factory
 ):

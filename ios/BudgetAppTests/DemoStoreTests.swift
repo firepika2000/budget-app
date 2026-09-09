@@ -322,6 +322,33 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testCanonicalTransferEditAndDeletePreserveLinkageAndPlan() async throws {
+        let store = BudgetWorkspaceStore.demo(); await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let checking = try XCTUnwrap(store.accounts.first(where: { $0.id == "checking" }))
+        let savings = try XCTUnwrap(store.accounts.first(where: { $0.id == "savings" }))
+        try await store.createAccount(.init(name: "Transfer destination", kind: "savings", isOnBudget: true, openingBalanceMinor: 0))
+        let destination = try XCTUnwrap(store.accounts.first(where: { $0.name == "Transfer destination" }))
+        let checkingBefore = store.balance(for: checking), savingsBefore = store.balance(for: savings)
+        let planBefore = store.summary
+        try await store.createTransfer(.init(sourceAccountID: checking.id, destinationAccountID: savings.id, amountMinor: 20_000, occurredOn: "2026-09-09", memo: "original", isCleared: true))
+        let transferID = try XCTUnwrap(store.transactions.first(where: { $0.memo == "original" })?.transferID)
+        let legIDs = Set(store.transactions.filter { $0.transferID == transferID }.map(\.id))
+        try await store.updateTransfer(id: transferID, operation: .init(sourceAccountID: checking.id, destinationAccountID: destination.id, amountMinor: 2_000, occurredOn: "2026-09-08", memo: "corrected", isCleared: false))
+        let updated = store.transactions.filter { $0.transferID == transferID }
+        XCTAssertEqual(updated.count, 2); XCTAssertEqual(Set(updated.map(\.id)), legIDs)
+        XCTAssertEqual(Set(updated.map(\.amountMinor)), [-2_000, 2_000]); XCTAssertTrue(updated.allSatisfy { $0.memo == "corrected" && !$0.isCleared })
+        XCTAssertEqual(updated.first(where: { $0.amountMinor > 0 })?.accountID, destination.id)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, planBefore?.readyToAssignMinor)
+        XCTAssertEqual(store.summary?.totalAssignedMinor, planBefore?.totalAssignedMinor)
+        XCTAssertEqual(store.summary?.categories, planBefore?.categories)
+        try await store.deleteTransfer(id: transferID)
+        XCTAssertFalse(store.transactions.contains { $0.transferID == transferID })
+        XCTAssertEqual(store.balance(for: checking), checkingBefore); XCTAssertEqual(store.balance(for: savings), savingsBefore)
+        XCTAssertEqual(store.balance(for: destination), 0)
+        XCTAssertEqual(store.summary?.categories, planBefore?.categories)
+    }
+
+    @MainActor
     func testAccountRegisterReflectsCreateEditAndDeleteRefreshes() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

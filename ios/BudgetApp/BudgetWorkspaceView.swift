@@ -227,6 +227,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     func deleteTransaction(id: String) async throws { guard demo.deleteTransaction(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func transferMoney(_ operation: TransferMoneyOperation) async throws { guard demo.transfer(amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { guard demo.updateTransfer(id: id, amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func deleteTransfer(id: String) async throws { guard demo.deleteTransfer(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { guard demo.reconcile(accountID: operation.accountID, statementBalance: operation.statementBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func assignMoney(_ operation: AssignMoneyOperation) async throws {
         guard !demo.isRestricted, let index = demo.categories.firstIndex(where: { $0.id == operation.categoryID }) else { throw workspaceRepositoryError("Delegated members allocate from their own pool by moving money.") }
@@ -309,6 +311,8 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: operation.apiValue, token: token) }
     func deleteTransaction(id: String) async throws { try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
     func transferMoney(_ operation: TransferMoneyOperation) async throws { _ = try await client.createTransfer(budgetID: budget.id, transfer: operation.apiValue, token: token) }
+    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: operation.apiValue, token: token) }
+    func deleteTransfer(id: String) async throws { try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID, request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason, expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor), token: token) }
     func assignMoney(_ operation: AssignMoneyOperation) async throws { _ = try await client.updateAssignment(budgetID: budget.id, categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor, expectedAllocationVersion: operation.expectedVersion, token: token) }
     func moveMoney(_ operation: MoveMoneyOperation) async throws { _ = try await client.transferAllocation(budgetID: budget.id, transfer: APIAllocationTransferCreate(sourceCategoryID: operation.sourceCategoryID, destinationCategoryID: operation.destinationCategoryID, amountMinor: operation.amountMinor, occurredOn: operation.occurredOn, note: operation.note, expectedAllocationVersion: operation.expectedVersion), token: token) }
@@ -467,6 +471,16 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func createTransfer(_ operation: TransferMoneyOperation) async throws {
         try await services().transactions.transfer(operation)
+        await refresh()
+    }
+
+    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws {
+        try await services().transactions.updateTransfer(id: id, operation: operation)
+        await refresh()
+    }
+
+    func deleteTransfer(id: String) async throws {
+        try await services().transactions.deleteTransfer(id: id)
         await refresh()
     }
 
@@ -1283,6 +1297,7 @@ private struct LiveTransactionDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let transactionID: String
     @State private var showEdit = false
+    @State private var editTransfer: TransferPresentation?
     @State private var confirmDelete = false
     @State private var isDeleting = false
     var transaction: APITransaction? { store.transactions.first(where: { $0.id == transactionID }) }
@@ -1291,17 +1306,26 @@ private struct LiveTransactionDetailView: View {
             if let transaction {
                 Section { Text(store.format(transaction.amountMinor)).font(.largeTitle.bold()).frame(maxWidth: .infinity).padding() }
                 Section("Details") { LabeledContent("Payee", value: transaction.payeeName); if let linked = linkedAccountName(for: transaction) { LabeledContent("Linked account", value: linked) } else { LabeledContent("Category", value: store.categoryName(transaction)) }; LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Status", value: transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared"); LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo) }
+                if transaction.transferID != nil && transaction.isReconciled { Section { Label("This transfer includes reconciled history and cannot be edited or deleted.", systemImage: "lock.fill").font(.footnote).foregroundStyle(.secondary) } }
             }
-        }.navigationTitle("Transaction").toolbar {
-            if let transaction, !transaction.isReconciled && transaction.transferID == nil {
-                Menu {
-                    if store.budget.can("edit_transaction") { Button("Edit", systemImage: "pencil") { showEdit = true } }
-                    if store.budget.can("delete_transaction") { Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true } }
-                } label: { Image(systemName: "ellipsis.circle") }
+        }.navigationTitle(transaction?.transferID == nil ? "Transaction" : "Transfer Detail").toolbar {
+            if let transaction, !transaction.isReconciled {
+                if let transfer = transferPresentation(for: transaction) {
+                    Menu {
+                        if store.budget.can("edit_transaction") { Button("Edit Transfer", systemImage: "pencil") { editTransfer = transfer }.accessibilityIdentifier("edit-transfer-action") }
+                        if store.budget.can("delete_transaction") { Button("Delete Transfer", systemImage: "trash", role: .destructive) { confirmDelete = true }.accessibilityIdentifier("delete-transfer-action") }
+                    } label: { Image(systemName: "ellipsis.circle") }
+                } else if transaction.transferID == nil {
+                    Menu {
+                        if store.budget.can("edit_transaction") { Button("Edit", systemImage: "pencil") { showEdit = true } }
+                        if store.budget.can("delete_transaction") { Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true } }
+                    } label: { Image(systemName: "ellipsis.circle") }
+                }
             }
         }
             .sheet(isPresented: $showEdit) { if let transaction { LiveTransactionEditView(budget: store.budget, transaction: transaction, accounts: store.accounts, categories: store.categories, onSaved: reload) } }
-            .confirmationDialog("Delete this transaction?", isPresented: $confirmDelete, titleVisibility: .visible) { Button("Delete Transaction", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text("This cannot be undone and will immediately update the plan and reports.") }
+            .sheet(item: $editTransfer) { LiveTransferView(presentation: $0, budget: store.budget, accounts: store.accounts, onSaved: reload) }
+            .confirmationDialog(transaction?.transferID == nil ? "Delete this transaction?" : "Delete this transfer?", isPresented: $confirmDelete, titleVisibility: .visible) { Button(transaction?.transferID == nil ? "Delete Transaction" : "Delete Transfer", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text(transaction?.transferID == nil ? "This cannot be undone and will immediately update the plan and reports." : "Both linked account entries will be removed atomically. Your plan and categories will not change.") }
     }
     private func reload() async { await store.refresh() }
     private func linkedAccountName(for transaction: APITransaction) -> String? {
@@ -1309,10 +1333,18 @@ private struct LiveTransactionDetailView: View {
               let counterpart = store.transactions.first(where: { $0.transferID == transferID && $0.id != transaction.id }) else { return nil }
         return store.accounts.first(where: { $0.id == counterpart.accountID })?.name
     }
+    private func transferPresentation(for transaction: APITransaction) -> TransferPresentation? {
+        guard let transferID = transaction.transferID,
+              let counterpart = store.transactions.first(where: { $0.transferID == transferID && $0.id != transaction.id }) else { return nil }
+        let source = transaction.amountMinor < 0 ? transaction : counterpart
+        let destination = transaction.amountMinor > 0 ? transaction : counterpart
+        guard source.amountMinor < 0, destination.amountMinor > 0 else { return nil }
+        return TransferPresentation(transferID: transferID, sourceID: source.accountID, destinationID: destination.accountID, amount: CurrencyText.editable(-source.amountMinor, currencyCode: store.budget.currencyCode), memo: source.memo, date: BudgetWorkspaceStore.parseDate(source.occurredOn), cleared: source.isCleared && destination.isCleared)
+    }
     private func deleteTransaction() async {
         guard let transaction else { return }
         isDeleting = true; defer { isDeleting = false }
-        do { try await store.deleteTransaction(id: transaction.id); dismiss() }
+        do { if let transferID = transaction.transferID { try await store.deleteTransfer(id: transferID) } else { try await store.deleteTransaction(id: transaction.id) }; dismiss() }
         catch { store.errorMessage = error.localizedDescription }
     }
 }
@@ -1432,9 +1464,17 @@ struct LiveAccountRegisterView: View {
 
 private struct TransferPresentation: Identifiable {
     let id = UUID()
+    let transferID: String?
     let sourceID: String
+    let destinationID: String
+    let amount: String
+    let memo: String
+    let date: Date
+    let cleared: Bool
 
-    init(sourceID: String = "") { self.sourceID = sourceID }
+    init(transferID: String? = nil, sourceID: String = "", destinationID: String = "", amount: String = "", memo: String = "", date: Date = Date(), cleared: Bool = false) {
+        self.transferID = transferID; self.sourceID = sourceID; self.destinationID = destinationID; self.amount = amount; self.memo = memo; self.date = date; self.cleared = cleared
+    }
 }
 
 #if DEBUG
@@ -1466,6 +1506,7 @@ private struct LiveTransferView: View {
     init(presentation: TransferPresentation, budget: APIBudget, accounts: [APIAccount], onSaved: @escaping () async -> Void) {
         self.presentation = presentation; self.budget = budget; self.accounts = accounts; self.onSaved = onSaved
         _sourceID = State(initialValue: presentation.sourceID)
+        _destinationID = State(initialValue: presentation.destinationID); _amount = State(initialValue: presentation.amount); _memo = State(initialValue: presentation.memo); _date = State(initialValue: presentation.date); _cleared = State(initialValue: presentation.cleared)
 #if DEBUG
         _lifetime = StateObject(wrappedValue: TransferEditorLifetime(id: presentation.id))
         print("TRANSFER_VIEW_INIT id=\(presentation.id) source=\(presentation.sourceID)")
@@ -1484,7 +1525,7 @@ private struct LiveTransferView: View {
             DatePicker("Date", selection: $date, displayedComponents: .date)
             TextField("Memo", text: $memo).focused($memoFocused)
             Toggle("Cleared", isOn: $cleared)
-        }.navigationTitle("Transfer").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(parsed == nil || sourceID.isEmpty || destinationID.isEmpty || sourceID == destinationID || isSaving) } }.onAppear {
+        }.navigationTitle(presentation.transferID == nil ? "Transfer" : "Edit Transfer").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(parsed == nil || sourceID.isEmpty || destinationID.isEmpty || sourceID == destinationID || isSaving) } }.onAppear {
 #if DEBUG
             lifetime.log("APPEAR sheet=\(presentation.id) accounts=\(accounts.count)")
 #endif
@@ -1525,7 +1566,7 @@ private struct LiveTransferView: View {
 #endif
     }
     private func accountName(_ id: String) -> String { openAccounts.first(where: { $0.id == id })?.name ?? "Select account" }
-    private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await workspace.createTransfer(TransferMoneyOperation(sourceAccountID: sourceID, destinationAccountID: destinationID, amountMinor: parsed, occurredOn: BudgetWorkspaceStore.dateString(date), memo: memo, isCleared: cleared)); dismiss() } catch { errorMessage = error.localizedDescription } }
+    private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { let operation = TransferMoneyOperation(sourceAccountID: sourceID, destinationAccountID: destinationID, amountMinor: parsed, occurredOn: BudgetWorkspaceStore.dateString(date), memo: memo, isCleared: cleared); if let transferID = presentation.transferID { try await workspace.updateTransfer(id: transferID, operation: operation) } else { try await workspace.createTransfer(operation) }; dismiss() } catch { errorMessage = error.localizedDescription } }
 }
 
 private struct LiveCategoryEditView: View {

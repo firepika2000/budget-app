@@ -171,6 +171,8 @@ protocol TransactionCommandRepository: AnyObject {
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws
     func deleteTransaction(id: String) async throws
     func transferMoney(_ operation: TransferMoneyOperation) async throws
+    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws
+    func deleteTransfer(id: String) async throws
 }
 
 @MainActor
@@ -246,11 +248,26 @@ struct TransactionService {
     }
 
     func transfer(_ operation: TransferMoneyOperation) async throws {
+        try validateTransfer(operation)
+        do { try await repository.transferMoney(operation) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws {
+        try validateTransfer(operation)
+        do { try await repository.updateTransfer(id: id, operation: operation) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func deleteTransfer(id: String) async throws {
+        do { try await repository.deleteTransfer(id: id) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    private func validateTransfer(_ operation: TransferMoneyOperation) throws {
         guard operation.amountMinor > 0, operation.sourceAccountID != operation.destinationAccountID else {
             throw BudgetApplicationError.invalidOperation("Choose two accounts and enter an amount greater than zero.")
         }
-        do { try await repository.transferMoney(operation) }
-        catch { throw BudgetApplicationError.map(error) }
     }
 
     private func validate(_ operation: RecordTransactionOperation) throws {

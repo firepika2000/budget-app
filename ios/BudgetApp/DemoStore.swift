@@ -205,6 +205,50 @@ final class DemoStore: ObservableObject {
     }
 
     @discardableResult
+    func updateTransfer(id transferID: String, amount: Int64, from sourceID: String, to destinationID: String, memo: String, cleared: Bool, date: Date) -> Bool {
+        guard amount > 0,
+              let oldSourceLeg = transactions.first(where: { $0.transferID == transferID && $0.amount < 0 }),
+              let oldDestinationLeg = transactions.first(where: { $0.transferID == transferID && $0.amount > 0 }),
+              !oldSourceLeg.reconciled, !oldDestinationLeg.reconciled,
+              let oldSource = accounts.firstIndex(where: { $0.id == oldSourceLeg.accountID }),
+              let oldDestination = accounts.firstIndex(where: { $0.id == oldDestinationLeg.accountID }),
+              let source = accounts.firstIndex(where: { $0.id == sourceID }),
+              let destination = accounts.firstIndex(where: { $0.id == destinationID }), source != destination else { return fail(.invalidAmount) }
+        let oldAmount = -oldSourceLeg.amount
+        var updatedAccounts = accounts
+        updatedAccounts[oldSource].balance += oldAmount; updatedAccounts[oldDestination].balance -= oldAmount
+        if oldSourceLeg.cleared { updatedAccounts[oldSource].cleared += oldAmount; updatedAccounts[oldDestination].cleared -= oldAmount }
+        if updatedAccounts[oldDestination].kind == .credit { updatedAccounts[oldDestination].paymentReserved += oldAmount }
+        if updatedAccounts[oldSource].kind == .credit { updatedAccounts[oldSource].paymentReserved -= oldAmount }
+        if updatedAccounts[destination].kind == .credit && updatedAccounts[destination].paymentReserved < amount { return fail(.insufficientFunds(available: updatedAccounts[destination].paymentReserved)) }
+        updatedAccounts[source].balance -= amount; updatedAccounts[destination].balance += amount
+        if cleared { updatedAccounts[source].cleared -= amount; updatedAccounts[destination].cleared += amount }
+        if updatedAccounts[destination].kind == .credit { updatedAccounts[destination].paymentReserved -= amount }
+        if updatedAccounts[source].kind == .credit { updatedAccounts[source].paymentReserved += amount }
+        accounts = updatedAccounts
+        guard let sourceLegIndex = transactions.firstIndex(where: { $0.id == oldSourceLeg.id }), let destinationLegIndex = transactions.firstIndex(where: { $0.id == oldDestinationLeg.id }) else { return fail(.transactionNotFound) }
+        transactions[sourceLegIndex].accountID = sourceID; transactions[sourceLegIndex].amount = -amount; transactions[sourceLegIndex].memo = memo; transactions[sourceLegIndex].cleared = cleared; transactions[sourceLegIndex].date = date
+        transactions[destinationLegIndex].accountID = destinationID; transactions[destinationLegIndex].amount = amount; transactions[destinationLegIndex].memo = memo; transactions[destinationLegIndex].cleared = cleared; transactions[destinationLegIndex].date = date
+        errorMessage = nil; return true
+    }
+
+    @discardableResult
+    func deleteTransfer(id transferID: String) -> Bool {
+        guard let sourceLeg = transactions.first(where: { $0.transferID == transferID && $0.amount < 0 }),
+              let destinationLeg = transactions.first(where: { $0.transferID == transferID && $0.amount > 0 }),
+              !sourceLeg.reconciled, !destinationLeg.reconciled,
+              let source = accounts.firstIndex(where: { $0.id == sourceLeg.accountID }),
+              let destination = accounts.firstIndex(where: { $0.id == destinationLeg.accountID }) else { return fail(.transactionNotFound) }
+        let amount = -sourceLeg.amount
+        accounts[source].balance += amount; accounts[destination].balance -= amount
+        if sourceLeg.cleared { accounts[source].cleared += amount; accounts[destination].cleared -= amount }
+        if accounts[destination].kind == .credit { accounts[destination].paymentReserved += amount }
+        if accounts[source].kind == .credit { accounts[source].paymentReserved -= amount }
+        transactions.removeAll { $0.transferID == transferID }
+        errorMessage = nil; return true
+    }
+
+    @discardableResult
     func reconcile(accountID: String, statementBalance: Int64) -> Bool {
         guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return fail(.accountNotFound) }
         let difference = statementBalance - accounts[index].cleared

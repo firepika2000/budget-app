@@ -345,6 +345,23 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(methods, ["PUT", "DELETE"])
     }
 
+    func testUpdateAndDeleteTransferUseLogicalTransferPath() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration); var methods: [String] = []
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transfers/xfer1"); methods.append(request.httpMethod ?? "")
+            if request.httpMethod == "DELETE" { return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data()) }
+            let response = Data(#"{"transfer_id":"xfer1","source":{"id":"out","budget_id":"b1","account_id":"a1","category_id":null,"amount_minor":-2000,"occurred_on":"2026-09-04","payee_name":"Transfer","memo":"fixed","is_cleared":false,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":"xfer1","splits":[]},"destination":{"id":"in","budget_id":"b1","account_id":"a2","category_id":null,"amount_minor":2000,"occurred_on":"2026-09-04","payee_name":"Transfer","memo":"fixed","is_cleared":false,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":"xfer1","splits":[]}}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let body = APITransferCreate(sourceAccountID: "a1", destinationAccountID: "a2", amountMinor: 2_000, occurredOn: "2026-09-04", memo: "fixed")
+        let updated = try await client.updateTransfer(budgetID: "b1", transferID: "xfer1", transfer: body, token: "secret")
+        XCTAssertEqual(updated.transferID, "xfer1")
+        try await client.deleteTransfer(budgetID: "b1", transferID: "xfer1", token: "secret")
+        XCTAssertEqual(methods, ["PUT", "DELETE"])
+    }
+
     func testScheduledTransactionCreateListAndRealizeUseContractPaths() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

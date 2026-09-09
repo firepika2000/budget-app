@@ -951,6 +951,88 @@ def create_transfer(
     )
 
 
+def _locked_transfer_legs(db: Session, budget_id: str, transfer_id: str) -> list[Transaction]:
+    legs = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.budget_id == budget_id,
+        Transaction.transfer_id == transfer_id,
+    ).order_by(Transaction.id).with_for_update()))
+    if len(legs) != 2 or sum(leg.amount_minor for leg in legs) != 0:
+        raise HTTPException(status_code=404, detail="Transfer not found")
+    return legs
+
+
+def _authorize_transfer_legs(db: Session, user: User, budget: Budget, legs: list[Transaction], action: str) -> None:
+    if any(not can_access_resource(db, user, budget, "account", leg.account_id) for leg in legs):
+        raise HTTPException(status_code=404, detail="Transfer not found")
+    if any(leg.created_by_user_id != user.id for leg in legs) and not has_capability(db, user, budget, "manage_budget_structure"):
+        raise HTTPException(status_code=403, detail=f"You may only {action} your own transfers")
+    if any(leg.is_reconciled for leg in legs):
+        consequence = "modified" if action == "edit" else "deleted"
+        raise HTTPException(status_code=409, detail=f"Reconciled transfers cannot be {consequence}")
+
+
+@router.put("/transfers/{transfer_id}", response_model=TransferResponse)
+def update_transfer(
+    budget_id: str,
+    transfer_id: str,
+    body: TransferCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TransferResponse:
+    budget = require_budget_capability(db, user, budget_id, "edit_transaction")
+    if body.occurred_on > date.today():
+        raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
+    legs = _locked_transfer_legs(db, budget_id, transfer_id)
+    _authorize_transfer_legs(db, user, budget, legs, "edit")
+    accounts = list(db.scalars(select(Account).where(Account.id.in_([
+        body.source_account_id, body.destination_account_id
+    ])).order_by(Account.id).with_for_update()))
+    by_id = {account.id: account for account in accounts}
+    source, destination = by_id.get(body.source_account_id), by_id.get(body.destination_account_id)
+    if any(account is None or account.budget_id != budget_id or account.is_closed for account in (source, destination)):
+        raise HTTPException(status_code=422, detail="Invalid transfer account")
+    if any(not can_access_resource(db, user, budget, "account", account.id) for account in (source, destination)):
+        raise HTTPException(status_code=422, detail="Invalid transfer account")
+    if source.account_type == "credit" and destination.account_type == "credit":
+        raise HTTPException(status_code=422, detail="Credit-to-credit transfers are not supported")
+
+    source_leg = next(leg for leg in legs if leg.amount_minor < 0)
+    destination_leg = next(leg for leg in legs if leg.amount_minor > 0)
+    before = {leg.id: transaction_snapshot(leg) for leg in legs}
+    common = {"occurred_on": body.occurred_on, "memo": body.memo, "is_cleared": body.is_cleared}
+    for key, value in common.items():
+        setattr(source_leg, key, value); setattr(destination_leg, key, value)
+    source_leg.account_id = body.source_account_id; source_leg.amount_minor = -body.amount_minor
+    destination_leg.account_id = body.destination_account_id; destination_leg.amount_minor = body.amount_minor
+    db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.transfer_id == transfer_id))
+    if destination.account_type == "credit":
+        add_payment_reserve_event(db, credit_account=destination, transfer_id=transfer_id, occurred_on=body.occurred_on, amount_minor=-body.amount_minor, actor=user, kind="payment")
+    elif source.account_type == "credit":
+        add_payment_reserve_event(db, credit_account=source, transfer_id=transfer_id, occurred_on=body.occurred_on, amount_minor=body.amount_minor, actor=user, kind="payment_reversal")
+    for leg in legs:
+        record_transaction_change(db, leg, user, "updated", before=before[leg.id], after=transaction_snapshot(leg))
+    db.commit(); db.refresh(source_leg); db.refresh(destination_leg)
+    return TransferResponse(transfer_id=transfer_id, source=TransactionResponse.model_validate(source_leg), destination=TransactionResponse.model_validate(destination_leg))
+
+
+@router.delete("/transfers/{transfer_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_transfer(
+    budget_id: str,
+    transfer_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    budget = require_budget_capability(db, user, budget_id, "delete_transaction")
+    legs = _locked_transfer_legs(db, budget_id, transfer_id)
+    _authorize_transfer_legs(db, user, budget, legs, "delete")
+    for leg in legs:
+        record_transaction_change(db, leg, user, "deleted", before=transaction_snapshot(leg))
+    db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.transfer_id == transfer_id))
+    for leg in legs:
+        db.delete(leg)
+    db.commit()
+
+
 @router.post("/accounts/{account_id}/reconcile", response_model=ReconcileResponse)
 def reconcile_account(
     budget_id: str,

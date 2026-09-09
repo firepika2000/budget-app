@@ -129,6 +129,28 @@ def test_funded_card_purchase_reserves_cash_and_payment_is_not_a_second_expense(
     assert account_balance(client, owner_token, budget["id"], card["id"]) == 0
 
 
+def test_card_payment_transfer_edit_and_delete_recompute_reserve_atomically(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    card = create_credit_card(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], checking["id"], amount=100000)
+    client.put(f"/api/v1/budgets/{budget['id']}/categories/{groceries['id']}/assignment", headers=auth(owner_token), json={"month": "2026-09-01", "assigned_minor": 50000})
+    record(client, owner_token, budget["id"], account_id=card["id"], category_id=groceries["id"], amount_minor=-30000, payee_name="Market")
+    payment = client.post(f"/api/v1/budgets/{budget['id']}/transfers", headers=auth(owner_token), json={"source_account_id": checking["id"], "destination_account_id": card["id"], "amount_minor": 30000, "occurred_on": "2026-09-04"}).json()
+    transfer_id = payment["transfer_id"]
+    edited = client.put(f"/api/v1/budgets/{budget['id']}/transfers/{transfer_id}", headers=auth(owner_token), json={"source_account_id": checking["id"], "destination_account_id": card["id"], "amount_minor": 20000, "occurred_on": "2026-09-05", "memo": "partial"})
+    assert edited.status_code == 200, edited.text
+    _, rows = category_rows(client, owner_token, budget["id"])
+    assert rows["Visa Payment"]["available_minor"] == 10000
+    assert account_balance(client, owner_token, budget["id"], checking["id"]) == 80000
+    assert account_balance(client, owner_token, budget["id"], card["id"]) == -10000
+    assert client.delete(f"/api/v1/budgets/{budget['id']}/transfers/{transfer_id}", headers=auth(owner_token)).status_code == 204
+    _, rows = category_rows(client, owner_token, budget["id"])
+    assert rows["Visa Payment"]["available_minor"] == 30000
+    assert account_balance(client, owner_token, budget["id"], checking["id"]) == 100000
+    assert account_balance(client, owner_token, budget["id"], card["id"]) == -30000
+
+
 def test_partially_funded_purchase_increases_debt_without_inventing_reserve(
     client, owner_token, session_factory
 ):

@@ -115,6 +115,19 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Transfer"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Transfer"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["To High-Yield Savings"].exists)
+
+        let transferRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'transaction-row-'")).matching(NSPredicate(format: "label CONTAINS 'Transfer'")).firstMatch
+        XCTAssertTrue(transferRow.waitForExistence(timeout: 5)); transferRow.tap()
+        XCTAssertTrue(app.navigationBars["Transfer Detail"].waitForExistence(timeout: 5))
+        app.buttons["More"].tap(); app.buttons["edit-transfer-action"].tap()
+        XCTAssertTrue(app.navigationBars["Edit Transfer"].waitForExistence(timeout: 5))
+        app.buttons["Clear Amount"].tap(); app.textFields["Amount"].tap(); app.textFields["Amount"].typeText("20.00")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit Transfer"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["-$20.00"].waitForExistence(timeout: 5))
+        app.buttons["More"].tap(); app.buttons["delete-transfer-action"].tap(); app.buttons["Delete Transfer"].tap()
+        XCTAssertTrue(app.navigationBars["Transfer Detail"].waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["To High-Yield Savings"].exists)
     }
 
     func testMoveMoneyFromCategoryPreservesSourceContextAndUsesUnassignedTerm() {
