@@ -10,7 +10,8 @@ This document distinguishes the implemented baseline from future milestone scope
 - [v0.4 core-completeness acceptance](v0.4-core-completeness-acceptance.md)
 - [v0.4 live acceptance (current findings)](v0.4.0-live-acceptance.md)
 - [Financial invariants and enforcing tests](financial-invariants.md)
-- [Architecture direction](architecture.md)
+- [Enforced application architecture](ARCHITECTURE.md)
+- [v0.4 architecture audit](ARCHITECTURE-AUDIT-v0.4.md)
 - [v0.4 Mac acceptance](v0.4.0-mac-acceptance.md)
 - [Bank-connectivity readiness gate](bank-sync-readiness.md)
 

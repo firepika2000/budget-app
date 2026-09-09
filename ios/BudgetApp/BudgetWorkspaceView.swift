@@ -653,9 +653,9 @@ struct BudgetWorkspaceView: View {
             NavigationStack { LiveAccountsView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Accounts", systemImage: "creditcard.fill") }.tag(3)
             NavigationStack { LiveInsightsView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Insights", systemImage: "chart.xyaxis.line") }.tag(4)
         }
-        // iOS 27 can update the selected tab while leaving a previously lazy per-tab NavigationStack
-        // unmaterialized. Re-keying only the TabView at selection time forces the selected production
-        // navigation root to resolve while preserving every tab's title, toolbar, and navigation path.
+        // iOS 27 can change selection without materializing a previously lazy NavigationStack.
+        // This is intentional identity replacement at the shell boundary; active editor drafts are
+        // modal and remain locally owned, while the selected production tab is guaranteed to render.
         .id(activeTab)
         .tint(Theme.accent)
         .overlay { if store.isLoading { ProgressView().padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
