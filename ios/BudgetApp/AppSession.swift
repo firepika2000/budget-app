@@ -258,6 +258,7 @@ final class AppSession: ObservableObject {
         case .unreachable, .invalidConfiguration: return .serverSetup
         case .connecting: return .connecting
         case .setupRequired: return .serverBootstrap
+        case .authenticationRequired: return .authentication
         default: break
         }
         guard token != nil else { return .authentication }
@@ -294,7 +295,16 @@ final class AppSession: ObservableObject {
 
     private func authenticate(_ operation: (APIClient) async throws -> APIAuthTokens) async {
         guard sourceMode == .liveServer, let serverURL else { return }
-        await perform {
+        let failureRoute = connectionStatus
+        isWorking = true
+        errorMessage = nil
+        // Authentication is not complete when tokens arrive. Keep the application in a non-
+        // authenticated route until the authoritative profile and budget collection have loaded and
+        // the active-budget resolver has run. Publishing a token while still
+        // `.authenticationRequired` used to expose BudgetSelectionView with an empty budget array.
+        connectionStatus = .connecting
+        defer { isWorking = false }
+        do {
             let tokens = try await operation(self.clientFactory(serverURL)); try self.save(tokens)
             self.refreshTask = nil  // a brand-new session must not join a prior session's refresh task
             self.refreshOperationID = nil
@@ -303,6 +313,13 @@ final class AppSession: ObservableObject {
             (self.profile, self.budgets) = try await (profile, budgets)
             self.reconcileActiveBudget()
             self.connectionStatus = .connected
+        } catch {
+            // A failed post-token hydration must not expose a partially authenticated shell. Keep the
+            // saved credentials for a retry, but return to the authentication/setup presentation and
+            // surface the actual error.
+            connectionStatus = failureRoute
+            errorMessage = error.localizedDescription
+            debugLog("API request failed: \(failureCategory(error))")
         }
     }
 

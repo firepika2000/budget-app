@@ -405,6 +405,46 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertNil(session.errorMessage)
     }
 
+    @MainActor
+    func testProductionPostAuthenticationHydratesOneBudgetBeforeEnteringWorkspace() async throws {
+        let budgetsGate = Gate()
+        let session = makeSession(access: "expired-access", refresh: "R1") { request in
+            switch request.url?.path {
+            case "/api/v1/auth/login":
+                return Self.json(200, #"{"access_token":"A9","refresh_token":"R9","token_type":"bearer"}"#)
+            case "/api/v1/me":
+                return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
+            case "/api/v1/budgets":
+                budgetsGate.signalArrived()
+                budgetsGate.waitForRelease()
+                return Self.json(200, #"[{"id":"b1","household_id":"h1","name":"Test budget","currency_code":"USD","effective_permission":"owner","allocation_version":0}]"#)
+            default:
+                return Self.json(404, "{}")
+            }
+        }
+
+        // Match the real production composition, not an isolated budget picker.
+        let controller = UIHostingController(rootView: RootView().environmentObject(session))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.loadViewIfNeeded()
+
+        let login = Task { await session.login(email: "owner@example.com", password: "correct horse battery staple") }
+        await budgetsGate.awaitArrival()
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(session.route, .connecting, "tokens must not expose the Budgets browser before authoritative hydration")
+
+        budgetsGate.releaseNow()
+        await login.value
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(session.activeBudget?.id, "b1")
+        XCTAssertEqual(session.route, .workspace(session.activeBudget!))
+        XCTAssertEqual(session.activeBudgetID, "b1", "the sole authoritative budget must become persisted application context")
+        window.isHidden = true
+        window.rootViewController = nil
+    }
+
     // A loader can already be suspended in authenticated endpoint calls when another caller learns
     // that the current refresh generation is invalid. Its later success is obsolete and must not
     // restore Connected or authenticated presentation state.
