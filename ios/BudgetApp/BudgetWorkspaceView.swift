@@ -49,6 +49,37 @@ private protocol WorkspaceDataSource: AnyObject {
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot
 }
 
+/// Semantic command boundary shared by deterministic and Live workspaces. UI/store code submits the
+/// same exact-money operations; only the repository implementation decides how they are persisted.
+@MainActor
+private protocol WorkspaceCommandRepository: AnyObject {
+    func createTransaction(_ value: APITransactionCreate) async throws
+    func updateTransaction(id: String, value: APITransactionCreate) async throws
+    func deleteTransaction(id: String) async throws
+    func createTransfer(_ value: APITransferCreate) async throws
+    func reconcile(accountID: String, statementBalance: Int64, throughDate: String, createAdjustment: Bool, reason: String, expectedClearedBalance: Int64) async throws
+    func updateAssignment(categoryID: String, month: String, assignedMinor: Int64, expectedVersion: Int) async throws
+    func moveAllocation(_ value: APIAllocationTransferCreate) async throws
+    func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws
+    func createGroup(name: String) async throws
+    func createAccount(_ value: APIAccountCreate) async throws
+    func createRequest(_ value: APIFinancialRequestCreate) async throws
+    func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws
+    func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws
+    func deleteGroup(id: String, currentName: String?) async throws
+    func deleteCategory(id: String) async throws
+    func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws
+    func deleteTarget(categoryID: String) async throws
+    func createSchedule(_ value: APIScheduledTransactionCreate) async throws
+    func updateSchedule(id: String, value: APIScheduledTransactionCreate) async throws
+    func deleteSchedule(id: String) async throws
+    func realizeSchedule(id: String) async throws -> APIScheduledRealization
+    func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws
+    func smartFundingPreview(month: String) async throws -> APISmartFundingPreview
+    func commitSmartFunding(_ preview: APISmartFundingPreview) async throws
+    func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws
+}
+
 @MainActor
 private final class DemoWorkspaceDataSource: WorkspaceDataSource {
     let demo: DemoStore
@@ -193,6 +224,157 @@ private final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private func decode<T: Decodable>(_ value: Any) throws -> T { try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value)) }
 }
 
+extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
+    func createTransaction(_ value: APITransactionCreate) async throws {
+        let amounts = value.categoryID.map { [$0: value.amountMinor] } ?? Dictionary(uniqueKeysWithValues: value.splits.map { ($0.categoryID, $0.amountMinor) })
+        demo.createTransaction(payee: value.payeeName, signedAmount: value.amountMinor, date: BudgetWorkspaceStore.parseDate(value.occurredOn), accountID: value.accountID, categoryAmounts: amounts, memo: value.memo, cleared: value.isCleared, flag: value.flag, tags: value.tags, attachmentName: value.attachmentMetadata.first?["name"])
+    }
+    func updateTransaction(id: String, value: APITransactionCreate) async throws {
+        let amounts = value.categoryID.map { [$0: value.amountMinor] } ?? Dictionary(uniqueKeysWithValues: value.splits.map { ($0.categoryID, $0.amountMinor) })
+        guard demo.updateTransactionSigned(id: id, payee: value.payeeName, signedAmount: value.amountMinor, date: BudgetWorkspaceStore.parseDate(value.occurredOn), accountID: value.accountID, categoryAmounts: amounts, memo: value.memo, cleared: value.isCleared, flag: value.flag, tags: value.tags, attachmentName: value.attachmentMetadata.first?["name"]) else { throw workspaceRepositoryError(demo.errorMessage) }
+    }
+    func deleteTransaction(id: String) async throws { guard demo.deleteTransaction(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func createTransfer(_ value: APITransferCreate) async throws { guard demo.transfer(amount: value.amountMinor, from: value.sourceAccountID, to: value.destinationAccountID, memo: value.memo, cleared: value.isCleared) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func reconcile(accountID: String, statementBalance: Int64, throughDate: String, createAdjustment: Bool, reason: String, expectedClearedBalance: Int64) async throws { guard demo.reconcile(accountID: accountID, statementBalance: statementBalance) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func updateAssignment(categoryID: String, month: String, assignedMinor: Int64, expectedVersion: Int) async throws {
+        guard !demo.isRestricted, let index = demo.categories.firstIndex(where: { $0.id == categoryID }) else { throw workspaceRepositoryError("Delegated members allocate from their own pool by moving money.") }
+        let delta = assignedMinor - demo.categories[index].assigned
+        guard delta <= demo.readyToAssign else { throw workspaceRepositoryError("Not enough real money to assign.") }
+        demo.categories[index].assigned += delta; demo.categories[index].available += delta; demo.setUnassigned(demo.readyToAssign - delta)
+    }
+    func moveAllocation(_ value: APIAllocationTransferCreate) async throws { guard demo.move(amount: value.amountMinor, from: value.sourceCategoryID, to: value.destinationCategoryID) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { guard demo.createCategory(name: name, group: groupName.isEmpty ? newGroupName : groupName) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func createGroup(name: String) async throws { if !demo.groupOrder.contains(name) { demo.groupOrder.append(name) } }
+    func createAccount(_ value: APIAccountCreate) async throws { demo.createAccount(name: value.name, type: value.accountType, isOnBudget: value.isOnBudget, startingBalance: value.startingBalanceMinor) }
+    func createRequest(_ value: APIFinancialRequestCreate) async throws { demo.requests.insert(.init(id: UUID().uuidString, member: demo.persona, amount: value.requestedAmountMinor, categoryID: value.destinationCategoryID, reason: value.reason, status: "Pending", date: .demo(monthsAgo: 0, day: 30)), at: 0) }
+    func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws {
+        guard let index = demo.categories.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Category not found.") }
+        demo.categories[index].name = value.name; demo.categories[index].group = groupName ?? demo.categories[index].group; demo.categories[index].isHidden = value.isArchived
+    }
+    func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws {
+        guard let currentName else { throw workspaceRepositoryError("Category group not found.") }
+        for index in demo.categories.indices where demo.categories[index].group == currentName { demo.categories[index].group = value.name }
+        if let index = demo.groupOrder.firstIndex(of: currentName) { demo.groupOrder[index] = value.name; demo.groupOrder.remove(at: index); demo.groupOrder.insert(value.name, at: min(max(value.sortOrder, 0), demo.groupOrder.count)) }
+        demo.archivedGroups.remove(currentName); if value.isArchived { demo.archivedGroups.insert(value.name) }
+    }
+    func deleteGroup(id: String, currentName: String?) async throws {
+        guard let currentName else { throw workspaceRepositoryError("Category group not found.") }
+        guard !demo.categories.contains(where: { $0.group == currentName }) else { throw workspaceRepositoryError("Move or archive every category before deleting this group") }
+        demo.groupOrder.removeAll { $0 == currentName }
+    }
+    func deleteCategory(id: String) async throws { guard !demo.transactions.contains(where: { $0.categoryIDs.contains(id) }) else { throw workspaceRepositoryError("This category has financial history. Archive it to preserve the audit trail") }; demo.categories.removeAll { $0.id == id } }
+    func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws {
+        guard let index = demo.categories.firstIndex(where: { $0.id == categoryID }) else { throw workspaceRepositoryError("Category not found.") }
+        demo.categories[index].target = value.targetAmountMinor; demo.categories[index].targetDate = value.targetDate; demo.categories[index].targetType = value.targetType; demo.categories[index].targetRecurrenceMonths = value.recurrenceMonths; demo.categories[index].targetMinimumContribution = value.minimumContributionMinor; demo.categories[index].targetPriority = value.priority; demo.categories[index].targetIsActive = value.isActive
+    }
+    func deleteTarget(categoryID: String) async throws {
+        guard let index = demo.categories.firstIndex(where: { $0.id == categoryID }) else { throw workspaceRepositoryError("Category not found.") }
+        demo.categories[index].target = nil; demo.categories[index].targetDate = nil; demo.categories[index].targetType = "savings_balance"; demo.categories[index].targetRecurrenceMonths = nil; demo.categories[index].targetMinimumContribution = 0; demo.categories[index].targetPriority = 50; demo.categories[index].targetIsActive = true
+    }
+    func createSchedule(_ value: APIScheduledTransactionCreate) async throws { demo.schedules.append(.init(id: UUID().uuidString, accountID: value.accountID, destinationAccountID: value.destinationAccountID, categoryID: value.categoryID, name: value.name, amount: value.amountMinor, nextDate: value.nextDate, recurrenceUnit: value.recurrenceUnit, intervalCount: value.intervalCount, memo: value.memo, isActive: value.isActive)) }
+    func updateSchedule(id: String, value: APIScheduledTransactionCreate) async throws {
+        guard let index = demo.schedules.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Schedule not found.") }
+        demo.schedules[index].accountID = value.accountID; demo.schedules[index].destinationAccountID = value.destinationAccountID; demo.schedules[index].categoryID = value.categoryID; demo.schedules[index].name = value.name; demo.schedules[index].amount = value.amountMinor; demo.schedules[index].nextDate = value.nextDate; demo.schedules[index].recurrenceUnit = value.recurrenceUnit; demo.schedules[index].intervalCount = value.intervalCount; demo.schedules[index].memo = value.memo; demo.schedules[index].isActive = value.isActive
+    }
+    func deleteSchedule(id: String) async throws { demo.schedules.removeAll { $0.id == id } }
+    func realizeSchedule(id: String) async throws -> APIScheduledRealization {
+        guard let index = demo.schedules.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Schedule not found.") }
+        let item = demo.schedules[index]; guard item.isActive else { throw workspaceRepositoryError("Scheduled transaction is inactive") }
+        let due = BudgetWorkspaceStore.parseDate(item.nextDate); guard Calendar.current.startOfDay(for: due) <= Calendar.current.startOfDay(for: Date()) else { throw workspaceRepositoryError("This scheduled transaction is not due yet") }
+        let before = Set(demo.transactions.map(\.id))
+        if let destination = item.destinationAccountID { guard demo.transfer(amount: item.amount, from: item.accountID, to: destination, memo: item.memo, cleared: false, date: due) else { throw workspaceRepositoryError(demo.errorMessage) } }
+        else { demo.createTransaction(payee: item.name, signedAmount: item.amount, date: due, accountID: item.accountID, categoryAmounts: item.categoryID.map { [$0: item.amount] } ?? [:], memo: item.memo, cleared: false) }
+        let transactionIDs = demo.transactions.map(\.id).filter { !before.contains($0) }
+        let next = BudgetWorkspaceStore.nextScheduledDate(from: due, unit: item.recurrenceUnit, interval: item.intervalCount)
+        demo.schedules[index].lastRealizedOn = item.nextDate; demo.schedules[index].isActive = next != nil; if let next { demo.schedules[index].nextDate = BudgetWorkspaceStore.dateString(next) }
+        let body: [String: Any] = ["scheduled_transaction_id": id, "transaction_ids": transactionIDs, "realized_on": item.nextDate, "next_date": next.map(BudgetWorkspaceStore.dateString) ?? NSNull(), "is_active": next != nil, "last_realized_on": item.nextDate]
+        return try JSONDecoder().decode(APIScheduledRealization.self, from: JSONSerialization.data(withJSONObject: body))
+    }
+    func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws { if decision == "approve", let amount { demo.approve(id, amount: amount) } else if let index = demo.requests.firstIndex(where: { $0.id == id }) { demo.requests[index].status = decision == "reject" ? "Rejected" : "Changes requested" } }
+    func smartFundingPreview(month: String) async throws -> APISmartFundingPreview {
+        var remaining = max(demo.readyToAssign, 0); var rows: [[String: Any]] = []
+        for category in demo.visibleCategories where remaining > 0 { let needed = max((category.target ?? 0) - category.available, 0); let amount = min(needed, remaining); if amount > 0 { rows.append(["category_id": category.id, "category_name": category.name, "amount_minor": amount, "before_available_minor": category.available, "after_available_minor": category.available + amount]); remaining -= amount } }
+        let proposed = max(demo.readyToAssign, 0) - remaining
+        return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": demo.readyToAssign, "proposed_minor": proposed, "after_ready_to_assign_minor": demo.readyToAssign - proposed, "allocation_version": 1, "proposals": rows]))
+    }
+    func commitSmartFunding(_ preview: APISmartFundingPreview) async throws { for proposal in preview.proposals { demo.assign(amount: proposal.amountMinor, to: proposal.categoryID) } }
+    func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { throw workspaceRepositoryError("Owner policy editing is demonstrated in live mode; use a delegated demo persona to verify the member experience.") }
+}
+
+private func workspaceRepositoryError(_ message: String?) -> NSError { NSError(domain: "BudgetWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: message ?? "Unable to complete the change."]) }
+
+@MainActor
+private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
+    let budget: APIBudget
+    let serverURL: URL
+    let token: String
+    private var client: APIClient { get throws { try APIClient(baseURL: serverURL) } }
+    init(budget: APIBudget, serverURL: URL, token: String) { self.budget = budget; self.serverURL = serverURL; self.token = token }
+
+    func createTransaction(_ value: APITransactionCreate) async throws { _ = try await client.createTransaction(budgetID: budget.id, transaction: value, token: token) }
+    func updateTransaction(id: String, value: APITransactionCreate) async throws { _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: value, token: token) }
+    func deleteTransaction(id: String) async throws { try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
+    func createTransfer(_ value: APITransferCreate) async throws { _ = try await client.createTransfer(budgetID: budget.id, transfer: value, token: token) }
+    func reconcile(accountID: String, statementBalance: Int64, throughDate: String, createAdjustment: Bool, reason: String, expectedClearedBalance: Int64) async throws { _ = try await client.reconcileAccount(budgetID: budget.id, accountID: accountID, request: APIReconcileRequest(statementBalanceMinor: statementBalance, throughDate: throughDate, createAdjustment: createAdjustment, adjustmentReason: reason, expectedClearedBalanceMinor: expectedClearedBalance), token: token) }
+    func updateAssignment(categoryID: String, month: String, assignedMinor: Int64, expectedVersion: Int) async throws { _ = try await client.updateAssignment(budgetID: budget.id, categoryID: categoryID, month: month, assignedMinor: assignedMinor, expectedAllocationVersion: expectedVersion, token: token) }
+    func moveAllocation(_ value: APIAllocationTransferCreate) async throws { _ = try await client.transferAllocation(budgetID: budget.id, transfer: value, token: token) }
+    func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { var targetGroupID = groupID; if !newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { targetGroupID = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: newGroupName), token: token).id }; _ = try await client.createCategory(budgetID: budget.id, category: APICategoryCreate(groupID: targetGroupID, name: name, delegatedUserID: delegatedUserID), token: token) }
+    func createGroup(name: String) async throws { _ = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: name), token: token) }
+    func createAccount(_ value: APIAccountCreate) async throws { _ = try await client.createAccount(budgetID: budget.id, account: value, token: token) }
+    func createRequest(_ value: APIFinancialRequestCreate) async throws { _ = try await client.createFinancialRequest(budgetID: budget.id, request: value, token: token) }
+    func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws { _ = try await client.updateCategory(budgetID: budget.id, categoryID: id, category: value, token: token); if existingDelegatedUserID != delegatedUserID { _ = try await client.updateCategoryDelegation(budgetID: budget.id, categoryID: id, delegatedUserID: delegatedUserID, token: token) } }
+    func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { _ = try await client.updateCategoryGroup(budgetID: budget.id, groupID: id, group: value, token: token) }
+    func deleteGroup(id: String, currentName: String?) async throws { try await client.deleteCategoryGroup(budgetID: budget.id, groupID: id, token: token) }
+    func deleteCategory(id: String) async throws { try await client.deleteCategory(budgetID: budget.id, categoryID: id, token: token) }
+    func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws { _ = try await client.upsertCategoryTarget(budgetID: budget.id, categoryID: categoryID, target: value, token: token) }
+    func deleteTarget(categoryID: String) async throws { try await client.deleteCategoryTarget(budgetID: budget.id, categoryID: categoryID, token: token) }
+    func createSchedule(_ value: APIScheduledTransactionCreate) async throws { _ = try await client.createScheduledTransaction(budgetID: budget.id, schedule: value, token: token) }
+    func updateSchedule(id: String, value: APIScheduledTransactionCreate) async throws { _ = try await client.updateScheduledTransaction(budgetID: budget.id, scheduleID: id, schedule: value, token: token) }
+    func deleteSchedule(id: String) async throws { try await client.deleteScheduledTransaction(budgetID: budget.id, scheduleID: id, token: token) }
+    func realizeSchedule(id: String) async throws -> APIScheduledRealization { try await client.realizeScheduledTransaction(budgetID: budget.id, scheduleID: id, token: token) }
+    func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws { _ = try await client.decideFinancialRequest(budgetID: budget.id, requestID: id, decision: APIFinancialRequestDecision(decision: decision, expectedRequestVersion: version, approvedAmountMinor: amount, sourceCategoryID: sourceCategoryID, note: note), token: token) }
+    func smartFundingPreview(month: String) async throws -> APISmartFundingPreview { try await client.smartFundingPreview(budgetID: budget.id, month: month, token: token) }
+    func commitSmartFunding(_ preview: APISmartFundingPreview) async throws { _ = try await client.commitSmartFunding(budgetID: budget.id, month: preview.month, expectedAllocationVersion: preview.allocationVersion, token: token) }
+    func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { _ = try await client.updateDelegatedBudget(budgetID: budget.id, userID: userID, policy: value, token: token) }
+}
+
+@MainActor
+private final class LiveWorkspaceDataSource: WorkspaceDataSource {
+    let budget: APIBudget
+    let serverURL: URL
+    let token: String
+    let commands: LiveWorkspaceCommandRepository
+    init(budget: APIBudget, serverURL: URL, token: String) {
+        self.budget = budget; self.serverURL = serverURL; self.token = token
+        commands = LiveWorkspaceCommandRepository(budget: budget, serverURL: serverURL, token: token)
+    }
+
+    func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
+        let client = try APIClient(baseURL: serverURL)
+        let month = BudgetWorkspaceStore.dateString(planMonth).prefix(7) + "-01"
+        let start = BudgetWorkspaceStore.dateString(report.start), end = BudgetWorkspaceStore.dateString(report.end)
+        async let loadedAccounts = client.accounts(budgetID: budget.id, token: token)
+        async let loadedTransactions = client.transactions(budgetID: budget.id, token: token)
+        async let loadedCategories = client.categories(budgetID: budget.id, token: token)
+        async let loadedGroups = client.categoryGroups(budgetID: budget.id, token: token)
+        async let loadedSummary = client.monthSummary(budgetID: budget.id, month: String(month), token: token)
+        async let loadedSpending = client.spendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], categoryIDs: report.categoryID.isEmpty ? [] : [report.categoryID], categoryGroups: report.categoryGroup.isEmpty ? [] : [report.categoryGroup], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], transactionType: report.transactionType.isEmpty ? nil : report.transactionType, cleared: report.cleared == "all" ? nil : report.cleared == "cleared", includeTracking: report.includeTracking, token: token)
+        async let loadedIncome = client.incomeSpendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], cleared: report.cleared == "all" ? nil : report.cleared == "cleared", includeTracking: report.includeTracking, token: token)
+        let (accounts, transactions, categories, groups, summary, spending, income) = try await (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome)
+        let allocationOperations = budget.can("view_allocation_history") ? (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] : []
+        let schedules = budget.can("view_transactions") ? try await client.scheduledTransactions(budgetID: budget.id, includeInactive: true, token: token) : []
+        let targets = await withTaskGroup(of: APICategoryTarget?.self) { group in for category in categories { group.addTask { try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: self.token) } }; var values: [APICategoryTarget] = []; for await target in group { if let target { values.append(target) } }; return values }
+        let balances = await withTaskGroup(of: APIAccountBalance?.self) { group in for account in accounts { group.addTask { try? await client.accountBalance(budgetID: self.budget.id, accountID: account.id, token: self.token) } }; var values: [APIAccountBalance] = []; for await value in group { if let value { values.append(value) } }; return values }
+        let requests = (budget.can("request_money") || budget.can("approve_request")) ? (try? await client.financialRequests(budgetID: budget.id, token: token)) ?? [] : []
+        let allowances = (try? await client.allowancePlans(budgetID: budget.id, token: token)) ?? []
+        let delegated = try? await client.delegatedBudget(budgetID: budget.id, token: token)
+        let forecast: APIForecast? = if budget.can("view_account_balances") { try? await client.forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(Calendar.current.date(byAdding: .day, value: 90, to: Date())!), token: token) } else { nil }
+        let members = budget.can("manage_allowances") ? (try? await client.householdMembers(householdID: budget.householdID, token: token)) ?? [] : []
+        let delegatedBudgets = budget.can("manage_allowances") ? (try? await client.delegatedBudgets(budgetID: budget.id, token: token)) ?? [] : []
+        return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, requests: requests, allowances: allowances, spending: spending, income: income, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, targets: targets, schedules: schedules)
+    }
+}
+
 @MainActor
 final class BudgetWorkspaceStore: ObservableObject {
     let budget: APIBudget
@@ -227,16 +409,29 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date()))!
     @Published var isLoading = false
     @Published var errorMessage: String?
-    private let dataSource: WorkspaceDataSource?
-    private var liveServerURL: URL?
-    private var liveToken: String?
+    private var dataSource: WorkspaceDataSource?
+    private var commandRepository: WorkspaceCommandRepository?
 
-    init(budget: APIBudget) { self.budget = budget; dataSource = nil }
-    private init(dataSource: WorkspaceDataSource) { self.budget = dataSource.budget; self.dataSource = dataSource }
+    init(budget: APIBudget) { self.budget = budget; dataSource = nil; commandRepository = nil }
+    private init(dataSource: DemoWorkspaceDataSource) { self.budget = dataSource.budget; self.dataSource = dataSource; commandRepository = dataSource }
     static func demo(fresh: Bool = false) -> BudgetWorkspaceStore { BudgetWorkspaceStore(dataSource: DemoWorkspaceDataSource(fresh: fresh)) }
+    static func production(context: WorkspaceRouteContext) -> BudgetWorkspaceStore {
+        guard case let .live(budget, serverURL, token) = context else { return .demo() }
+        let source = LiveWorkspaceDataSource(budget: budget, serverURL: serverURL, token: token)
+        let store = BudgetWorkspaceStore(budget: source.budget)
+        store.dataSource = source; store.commandRepository = source.commands
+        return store
+    }
 
     func load(serverURL: URL, token: String) async {
-        liveServerURL = serverURL; liveToken = token
+        if dataSource == nil {
+            let source = LiveWorkspaceDataSource(budget: budget, serverURL: serverURL, token: token)
+            dataSource = source; commandRepository = source.commands
+        }
+        await loadSnapshot()
+    }
+
+    private func loadSnapshot() async {
         isLoading = true
         defer { isLoading = false }
         do {
@@ -252,309 +447,140 @@ final class BudgetWorkspaceStore: ObservableObject {
                 scheduledTransactions = value.schedules
                 return
             }
-            let client = try APIClient(baseURL: serverURL)
-            let month = Self.dateString(planMonth).prefix(7) + "-01"
-            let range = reportRange(); let start = Self.dateString(range.0); let end = Self.dateString(range.1)
-            async let loadedAccounts = client.accounts(budgetID: budget.id, token: token)
-            async let loadedTransactions = client.transactions(budgetID: budget.id, token: token)
-            async let loadedCategories = client.categories(budgetID: budget.id, token: token)
-            async let loadedGroups = client.categoryGroups(budgetID: budget.id, token: token)
-            async let loadedSummary = client.monthSummary(budgetID: budget.id, month: String(month), token: token)
-            async let loadedSpending = client.spendingReport(
-                budgetID: budget.id, startDate: start, endDate: end,
-                accountIDs: reportAccountID.isEmpty ? [] : [reportAccountID],
-                categoryIDs: reportCategoryID.isEmpty ? [] : [reportCategoryID],
-                categoryGroups: reportCategoryGroup.isEmpty ? [] : [reportCategoryGroup],
-                memberIDs: reportMemberID.isEmpty ? [] : [reportMemberID],
-                payees: reportPayee.isEmpty ? [] : [reportPayee],
-                transactionType: reportTransactionType.isEmpty ? nil : reportTransactionType,
-                cleared: reportCleared == "all" ? nil : reportCleared == "cleared",
-                includeTracking: includeTrackingAccounts, token: token
-            )
-            async let loadedIncome = client.incomeSpendingReport(
-                budgetID: budget.id, startDate: start, endDate: end,
-                accountIDs: reportAccountID.isEmpty ? [] : [reportAccountID],
-                memberIDs: reportMemberID.isEmpty ? [] : [reportMemberID],
-                payees: reportPayee.isEmpty ? [] : [reportPayee],
-                cleared: reportCleared == "all" ? nil : reportCleared == "cleared",
-                includeTracking: includeTrackingAccounts, token: token
-            )
-            (accounts, transactions, categories, groups, summary, spendingReport, incomeReport) = try await (
-                loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome
-            )
-            if budget.can("view_allocation_history") { allocationOperations = (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] }
-            scheduledTransactions = budget.can("view_transactions") ? (try await client.scheduledTransactions(budgetID: budget.id, includeInactive: true, token: token)) : []
-            targets = Dictionary(uniqueKeysWithValues: await withTaskGroup(of: (String, APICategoryTarget?).self) { group in for category in categories { group.addTask { (category.id, try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: token)) } }; var values: [(String, APICategoryTarget)] = []; for await (id, target) in group { if let target { values.append((id, target)) } }; return values })
-            accountBalances = Dictionary(uniqueKeysWithValues: await withTaskGroup(of: (String, APIAccountBalance?).self) { group in
-                for account in accounts { group.addTask { (account.id, try? await client.accountBalance(budgetID: self.budget.id, accountID: account.id, token: token)) } }
-                var values: [(String, APIAccountBalance)] = []; for await (id, balance) in group { if let balance { values.append((id, balance)) } }; return values
-            })
-            if budget.can("request_money") || budget.can("approve_request") {
-                requests = (try? await client.financialRequests(budgetID: budget.id, token: token)) ?? []
-            }
-            allowances = (try? await client.allowancePlans(budgetID: budget.id, token: token)) ?? []
-            delegatedBudget = try? await client.delegatedBudget(budgetID: budget.id, token: token)
-            if budget.can("view_account_balances") {
-                let horizon = Calendar.current.date(byAdding: .day, value: 90, to: Date())!
-                forecast = try? await client.forecast(budgetID: budget.id, through: Self.dateString(horizon), token: token)
-            }
-            if budget.can("manage_allowances") {
-                householdMembers = (try? await client.householdMembers(householdID: budget.householdID, token: token)) ?? []
-                delegatedBudgets = (try? await client.delegatedBudgets(budgetID: budget.id, token: token)) ?? []
-            }
-            errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
     }
 
-    func refresh() async {
-        if let liveServerURL, let liveToken { await load(serverURL: liveServerURL, token: liveToken) }
-        else if dataSource != nil { await load(serverURL: URL(string: "http://localhost")!, token: "demo") }
-    }
+    func refresh() async { await loadSnapshot() }
 
     func createTransaction(_ value: APITransactionCreate) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            let amounts = value.categoryID.map { [$0: value.amountMinor] } ?? Dictionary(uniqueKeysWithValues: value.splits.map { ($0.categoryID, $0.amountMinor) })
-            demoSource.demo.createTransaction(payee: value.payeeName, signedAmount: value.amountMinor, date: Self.parseDate(value.occurredOn), accountID: value.accountID, categoryAmounts: amounts, memo: value.memo, cleared: value.isCleared, flag: value.flag, tags: value.tags, attachmentName: value.attachmentMetadata.first?["name"])
-        } else { _ = try await liveClient().createTransaction(budgetID: budget.id, transaction: value, token: liveToken!) }
+        try await commands().createTransaction(value)
         await refresh()
     }
 
     func updateTransaction(id: String, value: APITransactionCreate) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            let amounts = value.categoryID.map { [$0: value.amountMinor] } ?? Dictionary(uniqueKeysWithValues: value.splits.map { ($0.categoryID, $0.amountMinor) })
-            guard demoSource.demo.updateTransactionSigned(id: id, payee: value.payeeName, signedAmount: value.amountMinor, date: Self.parseDate(value.occurredOn), accountID: value.accountID, categoryAmounts: amounts, memo: value.memo, cleared: value.isCleared, flag: value.flag, tags: value.tags, attachmentName: value.attachmentMetadata.first?["name"]) else { throw workspaceError(demoSource.demo.errorMessage) }
-        } else { _ = try await liveClient().updateTransaction(budgetID: budget.id, transactionID: id, transaction: value, token: liveToken!) }
+        try await commands().updateTransaction(id: id, value: value)
         await refresh()
     }
 
     func deleteTransaction(id: String) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            guard demoSource.demo.deleteTransaction(id: id) else { throw workspaceError(demoSource.demo.errorMessage) }
-        } else { try await liveClient().deleteTransaction(budgetID: budget.id, transactionID: id, token: liveToken!) }
+        try await commands().deleteTransaction(id: id)
         await refresh()
     }
 
     func createTransfer(_ value: APITransferCreate) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            guard demoSource.demo.transfer(amount: value.amountMinor, from: value.sourceAccountID, to: value.destinationAccountID, memo: value.memo, cleared: value.isCleared) else { throw workspaceError(demoSource.demo.errorMessage) }
-        } else { _ = try await liveClient().createTransfer(budgetID: budget.id, transfer: value, token: liveToken!) }
+        try await commands().createTransfer(value)
         await refresh()
     }
 
     func reconcile(accountID: String, statementBalance: Int64, throughDate: String, createAdjustment: Bool, reason: String) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            guard demoSource.demo.reconcile(accountID: accountID, statementBalance: statementBalance) else { throw workspaceError(demoSource.demo.errorMessage) }
-        } else {
-            let cleared = transactions.filter { $0.accountID == accountID && $0.isCleared }.reduce(0) { $0 + $1.amountMinor }
-            _ = try await liveClient().reconcileAccount(budgetID: budget.id, accountID: accountID, request: APIReconcileRequest(statementBalanceMinor: statementBalance, throughDate: throughDate, createAdjustment: createAdjustment, adjustmentReason: reason, expectedClearedBalanceMinor: cleared), token: liveToken!)
-        }
+        let cleared = transactions.filter { $0.accountID == accountID && $0.isCleared }.reduce(0) { $0 + $1.amountMinor }
+        try await commands().reconcile(accountID: accountID, statementBalance: statementBalance, throughDate: throughDate, createAdjustment: createAdjustment, reason: reason, expectedClearedBalance: cleared)
         await refresh()
     }
 
     func updateAssignment(categoryID: String, month: String, assignedMinor: Int64, expectedVersion: Int) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            guard !demoSource.demo.isRestricted, let index = demoSource.demo.categories.firstIndex(where: { $0.id == categoryID }) else { throw workspaceError("Delegated members allocate from their own pool by moving money.") }
-            let delta = assignedMinor - demoSource.demo.categories[index].assigned
-            guard delta <= demoSource.demo.readyToAssign else { throw workspaceError("Not enough real money to assign.") }
-            demoSource.demo.categories[index].assigned += delta; demoSource.demo.categories[index].available += delta
-            demoSource.demo.setUnassigned(demoSource.demo.readyToAssign - delta)
-        } else { _ = try await liveClient().updateAssignment(budgetID: budget.id, categoryID: categoryID, month: month, assignedMinor: assignedMinor, expectedAllocationVersion: expectedVersion, token: liveToken!) }
+        try await commands().updateAssignment(categoryID: categoryID, month: month, assignedMinor: assignedMinor, expectedVersion: expectedVersion)
         await refresh()
     }
 
     func moveAllocation(_ value: APIAllocationTransferCreate) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            guard demoSource.demo.move(amount: value.amountMinor, from: value.sourceCategoryID, to: value.destinationCategoryID) else { throw workspaceError(demoSource.demo.errorMessage) }
-        } else { _ = try await liveClient().transferAllocation(budgetID: budget.id, transfer: value, token: liveToken!) }
+        try await commands().moveAllocation(value)
         await refresh()
     }
 
     func createCategory(groupID: String, newGroupName: String, name: String, delegatedUserID: String?) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            let group = groups.first(where: { $0.id == groupID })?.name ?? newGroupName
-            guard demoSource.demo.createCategory(name: name, group: group) else { throw workspaceError(demoSource.demo.errorMessage) }
-        } else {
-            let client = try liveClient(); var targetGroupID = groupID
-            if !newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { targetGroupID = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: newGroupName), token: liveToken!).id }
-            _ = try await client.createCategory(budgetID: budget.id, category: APICategoryCreate(groupID: targetGroupID, name: name, delegatedUserID: delegatedUserID), token: liveToken!)
-        }
+        try await commands().createCategory(groupID: groupID, groupName: groups.first(where: { $0.id == groupID })?.name ?? "", newGroupName: newGroupName, name: name, delegatedUserID: delegatedUserID)
         await refresh()
     }
 
     func createGroup(name: String) async throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw workspaceError("Enter a category group name.") }
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            if !demoSource.demo.groupOrder.contains(trimmed) { demoSource.demo.groupOrder.append(trimmed) }
-        } else {
-            _ = try await liveClient().createCategoryGroup(
-                budgetID: budget.id,
-                group: APICategoryGroupCreate(name: trimmed),
-                token: liveToken!
-            )
-        }
+        guard !trimmed.isEmpty else { throw workspaceRepositoryError("Enter a category group name.") }
+        try await commands().createGroup(name: trimmed)
         await refresh()
     }
 
     func createAccount(_ value: APIAccountCreate) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource { demoSource.demo.createAccount(name: value.name, type: value.accountType, isOnBudget: value.isOnBudget, startingBalance: value.startingBalanceMinor) }
-        else { _ = try await liveClient().createAccount(budgetID: budget.id, account: value, token: liveToken!) }
+        try await commands().createAccount(value)
         await refresh()
     }
 
     func createRequest(_ value: APIFinancialRequestCreate) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            demoSource.demo.requests.insert(.init(id: UUID().uuidString, member: demoSource.demo.persona, amount: value.requestedAmountMinor, categoryID: value.destinationCategoryID, reason: value.reason, status: "Pending", date: .demo(monthsAgo: 0, day: 30)), at: 0)
-        } else { _ = try await liveClient().createFinancialRequest(budgetID: budget.id, request: value, token: liveToken!) }
+        try await commands().createRequest(value)
         await refresh()
     }
 
     func updateCategory(id: String, value: APICategoryUpdate, delegatedUserID: String?) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            guard let index = demoSource.demo.categories.firstIndex(where: { $0.id == id }) else { throw workspaceError("Category not found.") }
-            demoSource.demo.categories[index].name = value.name
-            demoSource.demo.categories[index].group = groups.first(where: { $0.id == value.groupID })?.name ?? demoSource.demo.categories[index].group
-            demoSource.demo.categories[index].isHidden = value.isArchived
-        } else {
-            let client = try liveClient(); let existing = categories.first(where: { $0.id == id })
-            _ = try await client.updateCategory(budgetID: budget.id, categoryID: id, category: value, token: liveToken!)
-            if existing?.delegatedUserID != delegatedUserID { _ = try await client.updateCategoryDelegation(budgetID: budget.id, categoryID: id, delegatedUserID: delegatedUserID, token: liveToken!) }
-        }
+        let existing = categories.first(where: { $0.id == id })
+        try await commands().updateCategory(id: id, value: value, groupName: groups.first(where: { $0.id == value.groupID })?.name, existingDelegatedUserID: existing?.delegatedUserID, delegatedUserID: delegatedUserID)
         await refresh()
     }
     func updateGroup(id: String, value: APICategoryGroupUpdate) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource, let current = groups.first(where: { $0.id == id }) {
-            for index in demoSource.demo.categories.indices where demoSource.demo.categories[index].group == current.name { demoSource.demo.categories[index].group = value.name }
-            if let index = demoSource.demo.groupOrder.firstIndex(of: current.name) { demoSource.demo.groupOrder[index] = value.name; demoSource.demo.groupOrder.remove(at: index); demoSource.demo.groupOrder.insert(value.name, at: min(max(value.sortOrder, 0), demoSource.demo.groupOrder.count)) }
-            demoSource.demo.archivedGroups.remove(current.name); if value.isArchived { demoSource.demo.archivedGroups.insert(value.name) }
-        } else { _ = try await liveClient().updateCategoryGroup(budgetID: budget.id, groupID: id, group: value, token: liveToken!) }
+        try await commands().updateGroup(id: id, currentName: groups.first(where: { $0.id == id })?.name, value: value)
         await refresh()
     }
     func deleteGroup(id: String) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource, let current = groups.first(where: { $0.id == id }) { guard !demoSource.demo.categories.contains(where: { $0.group == current.name }) else { throw workspaceError("Move or archive every category before deleting this group") }; demoSource.demo.groupOrder.removeAll { $0 == current.name } }
-        else { try await liveClient().deleteCategoryGroup(budgetID: budget.id, groupID: id, token: liveToken!) }
+        try await commands().deleteGroup(id: id, currentName: groups.first(where: { $0.id == id })?.name)
         await refresh()
     }
     func deleteCategory(id: String) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource { guard !demoSource.demo.transactions.contains(where: { $0.categoryIDs.contains(id) }) else { throw workspaceError("This category has financial history. Archive it to preserve the audit trail") }; demoSource.demo.categories.removeAll { $0.id == id } }
-        else { try await liveClient().deleteCategory(budgetID: budget.id, categoryID: id, token: liveToken!) }
+        try await commands().deleteCategory(id: id)
         await refresh()
     }
 
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.categories.firstIndex(where: { $0.id == categoryID }) {
-            demoSource.demo.categories[index].target = value.targetAmountMinor
-            demoSource.demo.categories[index].targetDate = value.targetDate
-            demoSource.demo.categories[index].targetType = value.targetType
-            demoSource.demo.categories[index].targetRecurrenceMonths = value.recurrenceMonths
-            demoSource.demo.categories[index].targetMinimumContribution = value.minimumContributionMinor
-            demoSource.demo.categories[index].targetPriority = value.priority
-            demoSource.demo.categories[index].targetIsActive = value.isActive
-        }
-        else { _ = try await liveClient().upsertCategoryTarget(budgetID: budget.id, categoryID: categoryID, target: value, token: liveToken!) }
+        try await commands().saveTarget(categoryID: categoryID, value: value)
         await refresh()
     }
     func deleteTarget(categoryID: String) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.categories.firstIndex(where: { $0.id == categoryID }) { demoSource.demo.categories[index].target = nil; demoSource.demo.categories[index].targetDate = nil; demoSource.demo.categories[index].targetType = "savings_balance"; demoSource.demo.categories[index].targetRecurrenceMonths = nil; demoSource.demo.categories[index].targetMinimumContribution = 0; demoSource.demo.categories[index].targetPriority = 50; demoSource.demo.categories[index].targetIsActive = true }
-        else { try await liveClient().deleteCategoryTarget(budgetID: budget.id, categoryID: categoryID, token: liveToken!) }
+        try await commands().deleteTarget(categoryID: categoryID)
         await refresh()
     }
 
     func createSchedule(_ value: APIScheduledTransactionCreate) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            demoSource.demo.schedules.append(.init(id: UUID().uuidString, accountID: value.accountID, destinationAccountID: value.destinationAccountID, categoryID: value.categoryID, name: value.name, amount: value.amountMinor, nextDate: value.nextDate, recurrenceUnit: value.recurrenceUnit, intervalCount: value.intervalCount, memo: value.memo, isActive: value.isActive))
-        } else { _ = try await liveClient().createScheduledTransaction(budgetID: budget.id, schedule: value, token: liveToken!) }
+        try await commands().createSchedule(value)
         await refresh()
     }
 
     func updateSchedule(id: String, value: APIScheduledTransactionCreate) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.schedules.firstIndex(where: { $0.id == id }) {
-            demoSource.demo.schedules[index].accountID = value.accountID
-            demoSource.demo.schedules[index].destinationAccountID = value.destinationAccountID
-            demoSource.demo.schedules[index].categoryID = value.categoryID
-            demoSource.demo.schedules[index].name = value.name
-            demoSource.demo.schedules[index].amount = value.amountMinor
-            demoSource.demo.schedules[index].nextDate = value.nextDate
-            demoSource.demo.schedules[index].recurrenceUnit = value.recurrenceUnit
-            demoSource.demo.schedules[index].intervalCount = value.intervalCount
-            demoSource.demo.schedules[index].memo = value.memo
-            demoSource.demo.schedules[index].isActive = value.isActive
-        } else { _ = try await liveClient().updateScheduledTransaction(budgetID: budget.id, scheduleID: id, schedule: value, token: liveToken!) }
+        try await commands().updateSchedule(id: id, value: value)
         await refresh()
     }
 
     func deleteSchedule(id: String) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource { demoSource.demo.schedules.removeAll { $0.id == id } }
-        else { try await liveClient().deleteScheduledTransaction(budgetID: budget.id, scheduleID: id, token: liveToken!) }
+        try await commands().deleteSchedule(id: id)
         await refresh()
     }
 
     @discardableResult func realizeSchedule(id: String) async throws -> APIScheduledRealization {
-        let result: APIScheduledRealization
-        if let demoSource = dataSource as? DemoWorkspaceDataSource, let index = demoSource.demo.schedules.firstIndex(where: { $0.id == id }) {
-            let item = demoSource.demo.schedules[index]
-            guard item.isActive else { throw workspaceError("Scheduled transaction is inactive") }
-            let due = Self.parseDate(item.nextDate)
-            guard Calendar.current.startOfDay(for: due) <= Calendar.current.startOfDay(for: Date()) else { throw workspaceError("This scheduled transaction is not due yet") }
-            let before = Set(demoSource.demo.transactions.map(\.id))
-            if let destination = item.destinationAccountID {
-                guard demoSource.demo.transfer(amount: item.amount, from: item.accountID, to: destination, memo: item.memo, cleared: false, date: due) else { throw workspaceError(demoSource.demo.errorMessage) }
-            } else {
-                demoSource.demo.createTransaction(payee: item.name, signedAmount: item.amount, date: due, accountID: item.accountID, categoryAmounts: item.categoryID.map { [$0: item.amount] } ?? [:], memo: item.memo, cleared: false)
-            }
-            let transactionIDs = demoSource.demo.transactions.map(\.id).filter { !before.contains($0) }
-            let next = Self.nextScheduledDate(from: due, unit: item.recurrenceUnit, interval: item.intervalCount)
-            demoSource.demo.schedules[index].lastRealizedOn = item.nextDate
-            demoSource.demo.schedules[index].isActive = next != nil
-            if let next { demoSource.demo.schedules[index].nextDate = Self.dateString(next) }
-            let body: [String: Any] = ["scheduled_transaction_id": id, "transaction_ids": transactionIDs, "realized_on": item.nextDate, "next_date": next.map(Self.dateString) ?? NSNull(), "is_active": next != nil, "last_realized_on": item.nextDate]
-            result = try JSONDecoder().decode(APIScheduledRealization.self, from: JSONSerialization.data(withJSONObject: body))
-        } else { result = try await liveClient().realizeScheduledTransaction(budgetID: budget.id, scheduleID: id, token: liveToken!) }
+        let result = try await commands().realizeSchedule(id: id)
         await refresh()
         return result
     }
 
     func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            if decision == "approve", let amount { demoSource.demo.approve(id, amount: amount) }
-            else if let index = demoSource.demo.requests.firstIndex(where: { $0.id == id }) { demoSource.demo.requests[index].status = decision == "reject" ? "Rejected" : "Changes requested" }
-        } else { _ = try await liveClient().decideFinancialRequest(budgetID: budget.id, requestID: id, decision: APIFinancialRequestDecision(decision: decision, expectedRequestVersion: version, approvedAmountMinor: amount, sourceCategoryID: sourceCategoryID, note: note), token: liveToken!) }
+        try await commands().decideRequest(id: id, decision: decision, version: version, amount: amount, sourceCategoryID: sourceCategoryID, note: note)
         await refresh()
     }
 
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            var remaining = max(demoSource.demo.readyToAssign, 0)
-            var rows: [[String: Any]] = []
-            for category in demoSource.demo.visibleCategories where remaining > 0 {
-                let needed = max((category.target ?? 0) - category.available, 0); let amount = min(needed, remaining)
-                if amount > 0 { rows.append(["category_id": category.id, "category_name": category.name, "amount_minor": amount, "before_available_minor": category.available, "after_available_minor": category.available + amount]); remaining -= amount }
-            }
-            let proposed = max(demoSource.demo.readyToAssign, 0) - remaining
-            let json: [String: Any] = ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": demoSource.demo.readyToAssign, "proposed_minor": proposed, "after_ready_to_assign_minor": demoSource.demo.readyToAssign - proposed, "allocation_version": 1, "proposals": rows]
-            return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: json))
-        }
-        return try await liveClient().smartFundingPreview(budgetID: budget.id, month: month, token: liveToken!)
+        try await commands().smartFundingPreview(month: month)
     }
 
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws {
-        if let demoSource = dataSource as? DemoWorkspaceDataSource {
-            for proposal in preview.proposals { demoSource.demo.assign(amount: proposal.amountMinor, to: proposal.categoryID) }
-        } else { _ = try await liveClient().commitSmartFunding(budgetID: budget.id, month: preview.month, expectedAllocationVersion: preview.allocationVersion, token: liveToken!) }
+        try await commands().commitSmartFunding(preview)
         await refresh()
     }
 
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws {
-        guard dataSource == nil else { throw workspaceError("Owner policy editing is demonstrated in live mode; use a delegated demo persona to verify the member experience.") }
-        _ = try await liveClient().updateDelegatedBudget(budgetID: budget.id, userID: userID, policy: value, token: liveToken!)
+        try await commands().updateDelegatedPolicy(userID: userID, value: value)
         await refresh()
     }
 
-    private func liveClient() throws -> APIClient {
-        guard let liveServerURL, liveToken != nil else { throw workspaceError("Live server session is unavailable.") }
-        return try APIClient(baseURL: liveServerURL)
+    private func commands() throws -> WorkspaceCommandRepository {
+        guard let commandRepository else { throw workspaceRepositoryError("Workspace repository is not configured.") }
+        return commandRepository
     }
-    private func workspaceError(_ message: String?) -> NSError { NSError(domain: "BudgetWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: message ?? "Unable to complete the change."]) }
 
     func format(_ minor: Int64) -> String {
         let formatter = NumberFormatter(); formatter.numberStyle = .currency; formatter.currencyCode = budget.currencyCode
@@ -639,6 +665,7 @@ struct BudgetWorkspaceView: View {
     private let selectionOverride: Binding<Int>?
 
     init(budget: APIBudget) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _selectedTab = State(initialValue: 0); selectionOverride = nil }
+    init(store: BudgetWorkspaceStore) { _store = StateObject(wrappedValue: store); _selectedTab = State(initialValue: 0); selectionOverride = nil }
     private init(demo: Bool) { _store = StateObject(wrappedValue: .demo()); let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--demo-screen=") }?.split(separator: "=").last.map(String.init) ?? "home"; _selectedTab = State(initialValue: ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4][screen] ?? 0); selectionOverride = nil }
     init(testStore: BudgetWorkspaceStore, selection: Binding<Int>) { _store = StateObject(wrappedValue: testStore); _selectedTab = State(initialValue: 0); selectionOverride = selection }
     static func demo() -> BudgetWorkspaceView { BudgetWorkspaceView(demo: true) }
@@ -675,16 +702,9 @@ struct BudgetWorkspaceView: View {
     }
 
     private func reload() async {
-        if session.sourceMode == .deterministic {
-            await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
-            return
-        }
-        // AppSession/RootView exclusively owns authentication. A reconstructed tab or workspace
-        // must never start another refresh cycle after the session generation was invalidated.
-        guard let url = session.serverURL, let token = session.token else {
-            return
-        }
-        await store.load(serverURL: url, token: token)
+        // The composition root has already selected a repository. Feature UI never branches on the
+        // application source and cannot start authentication or credential refresh work.
+        await store.refresh()
     }
 }
 

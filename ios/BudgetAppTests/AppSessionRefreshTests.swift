@@ -25,6 +25,7 @@ final class AppSessionRefreshTests: XCTestCase {
     private func makeSession(
         access: String,
         refresh: String,
+        persistedActiveBudgetID: String? = nil,
         handler: @escaping (URLRequest) -> (Int, Data)
     ) -> AppSession {
         RefreshMockURLProtocol.handler = handler
@@ -33,6 +34,7 @@ final class AppSessionRefreshTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
         defaults.set("https://budget.example.com", forKey: "budget.serverURL")
         defaults.set("liveServer", forKey: "budget.dataSourceMode")
+        if let persistedActiveBudgetID { defaults.set(persistedActiveBudgetID, forKey: "budget.activeBudgetID") }
 
         let store = InMemoryTokenStore([
             Self.accessAccount: access,   // non-JWT string → treated as already expired (needs refresh)
@@ -52,6 +54,13 @@ final class AppSessionRefreshTests: XCTestCase {
 
     private static func json(_ status: Int, _ body: String) -> (Int, Data) { (status, Data(body.utf8)) }
     private static let rotated = #"{"access_token":"A2","refresh_token":"R2","token_type":"bearer"}"#
+
+    @MainActor
+    func testDeterministicSourceUsesSharedWorkspaceRoute() {
+        let session = AppSession(defaults: UserDefaults(suiteName: "DeterministicShell.\(UUID().uuidString)")!, keychain: InMemoryTokenStore([:]), initialMode: .deterministic)
+        guard case let .workspace(context) = session.route else { return XCTFail("deterministic source must resolve the shared workspace route") }
+        XCTAssertEqual(context, .deterministic)
+    }
 
     // Concurrent refresh demand must collapse to exactly one network refresh, and the rotated
     // credentials (A2/R2) must be what remains — no losing caller re-submits the old token or clears
@@ -284,11 +293,27 @@ final class AppSessionRefreshTests: XCTestCase {
         }
         await session.loadBudgets(caller: "test.activeBudget")
         XCTAssertNil(session.activeBudget, "multiple budgets require an explicit first selection")
+        XCTAssertEqual(session.route, .budgetSelection)
         session.selectBudget("b2")
         XCTAssertEqual(session.activeBudget?.name, "Travel")
-        XCTAssertEqual(session.route, .workspace(session.activeBudget!))
+        guard case .workspace = session.route else { return XCTFail("selected budget must enter the shared workspace route") }
         session.selectBudget("not-authorized")
         XCTAssertEqual(session.activeBudget?.id, "b2", "an unavailable budget cannot replace the active context")
+    }
+
+    @MainActor
+    func testInvalidPersistedBudgetIsReplacedBySoleAccessibleBudget() async {
+        let session = makeSession(access: "expired-access", refresh: "R1", persistedActiveBudgetID: "revoked-budget") { request in
+            switch request.url?.path {
+            case "/api/v1/auth/refresh": return Self.json(200, Self.rotated)
+            case "/api/v1/me": return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
+            case "/api/v1/budgets": return Self.json(200, #"[{"id":"b1","household_id":"h1","name":"Test budget","currency_code":"USD","effective_permission":"owner","allocation_version":0}]"#)
+            default: return Self.json(404, "{}")
+            }
+        }
+        await session.loadBudgets(caller: "test.invalidPersistedSelection")
+        XCTAssertEqual(session.activeBudgetID, "b1")
+        guard case .workspace = session.route else { return XCTFail("sole accessible budget must enter the shared workspace route") }
     }
 
     @MainActor
@@ -439,7 +464,7 @@ final class AppSessionRefreshTests: XCTestCase {
         await login.value
         controller.view.layoutIfNeeded()
         XCTAssertEqual(session.activeBudget?.id, "b1")
-        XCTAssertEqual(session.route, .workspace(session.activeBudget!))
+        guard case .workspace = session.route else { return XCTFail("post-authentication hydration must enter the shared workspace route") }
         XCTAssertEqual(session.activeBudgetID, "b1", "the sole authoritative budget must become persisted application context")
         window.isHidden = true
         window.rootViewController = nil

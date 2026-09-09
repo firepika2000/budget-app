@@ -13,8 +13,6 @@ struct RootView: View {
     var body: some View {
         Group {
             switch session.route {
-            case .deterministicWorkspace:
-                ActiveBudgetShell()
             case .serverSetup:
                 ServerSetupView()
             case .connecting:
@@ -28,8 +26,8 @@ struct RootView: View {
                 AuthenticationFlowView(firstRun: false, form: authenticationFormOverride)
             case .budgetSelection:
                 BudgetSelectionView()
-            case .workspace:
-                ActiveBudgetShell()
+            case let .workspace(context):
+                ActiveBudgetShell(context: context)
             }
         }
         .alert("Something went wrong", isPresented: Binding(
@@ -49,19 +47,24 @@ struct RootView: View {
 }
 
 struct ActiveBudgetShell: View {
-    @EnvironmentObject private var session: AppSession
+    let context: WorkspaceRouteContext
     var body: some View {
-        Group {
-            if session.composition == .deterministic {
-                BudgetWorkspaceView.demo()
-            } else if let budget = session.activeBudget {
-                BudgetWorkspaceView(budget: budget).id(budget.id)
-            } else {
-                BudgetSelectionView()
-            }
-        }
+        WorkspaceCompositionRoot(context: context)
+            .id(context.identity)
         .accessibilityIdentifier("active-budget-shell")
     }
+}
+
+/// The only source-selection boundary below the application shell. Both repositories feed the same
+/// BudgetWorkspaceStore and BudgetWorkspaceView; feature views never choose an application mode.
+private struct WorkspaceCompositionRoot: View {
+    @StateObject private var store: BudgetWorkspaceStore
+
+    init(context: WorkspaceRouteContext) {
+        _store = StateObject(wrappedValue: .production(context: context))
+    }
+
+    var body: some View { BudgetWorkspaceView(store: store) }
 }
 
 private struct ServerSetupView: View {

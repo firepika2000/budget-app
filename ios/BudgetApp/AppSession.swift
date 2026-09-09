@@ -10,14 +10,21 @@ enum AppDataSourceMode: String, CaseIterable, Identifiable {
 
 enum AppComposition: Equatable { case deterministic, liveServer }
 
+enum WorkspaceRouteContext: Equatable {
+    case deterministic
+    case live(budget: APIBudget, serverURL: URL, token: String)
+    var identity: String {
+        switch self { case .deterministic: "deterministic-workspace"; case let .live(budget, _, _): budget.id }
+    }
+}
+
 enum ApplicationRoute: Equatable {
-    case deterministicWorkspace
     case serverSetup
     case connecting
     case serverBootstrap
     case authentication
     case budgetSelection
-    case workspace(APIBudget)
+    case workspace(WorkspaceRouteContext)
 }
 
 enum ServerConnectionStatus: Equatable {
@@ -252,7 +259,7 @@ final class AppSession: ObservableObject {
     var activeBudget: APIBudget? { budgets.first { $0.id == activeBudgetID } }
 
     var route: ApplicationRoute {
-        if composition == .deterministic { return .deterministicWorkspace }
+        if composition == .deterministic { return .workspace(.deterministic) }
         guard serverURL != nil else { return .serverSetup }
         switch connectionStatus {
         case .unreachable, .invalidConfiguration: return .serverSetup
@@ -262,7 +269,7 @@ final class AppSession: ObservableObject {
         default: break
         }
         guard token != nil else { return .authentication }
-        if let activeBudget { return .workspace(activeBudget) }
+        if let activeBudget, let serverURL, let token { return .workspace(.live(budget: activeBudget, serverURL: serverURL, token: token)) }
         return .budgetSelection
     }
 
