@@ -1,0 +1,134 @@
+{
+  "format_version": 1,
+  "currency": "USD",
+  "cases": [
+    {
+      "id": "opening_balances",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
+        {"op": "create_account", "ref": "card", "name": "Card", "kind": "credit", "on_budget": true, "opening_minor": -25000},
+        {"op": "create_account", "ref": "asset", "name": "Asset", "kind": "tracking", "on_budget": false, "opening_minor": 500000},
+        {"op": "create_account", "ref": "liability", "name": "Loan", "kind": "loan", "on_budget": false, "opening_minor": -200000},
+        {"op": "observe", "expected": {"accounts": {"cash": 100000, "card": -25000, "asset": 500000, "liability": -200000}, "unassigned_minor": 100000, "total_budget_cash_minor": 100000, "net_worth_minor": 375000, "cards": {"card": {"liability_minor": 25000, "reserved_minor": 0, "unfunded_debt_minor": 25000}}}}
+      ]
+    },
+    {
+      "id": "cash_assignment_and_move",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
+        {"op": "create_category", "ref": "groceries", "group": "Needs", "name": "Groceries"},
+        {"op": "create_category", "ref": "fuel", "group": "Needs", "name": "Fuel"},
+        {"op": "assign", "category": "groceries", "amount_minor": 30000},
+        {"op": "observe", "expected": {"unassigned_minor": 70000, "categories": {"groceries": {"assigned_minor": 30000, "activity_minor": 0, "available_minor": 30000}}}},
+        {"op": "move", "source": "groceries", "destination": "fuel", "amount_minor": 10000},
+        {"op": "observe", "expected": {"accounts": {"cash": 100000}, "unassigned_minor": 70000, "total_budget_cash_minor": 100000, "allocation_postings_sum_minor": 0, "categories": {"groceries": {"available_minor": 20000}, "fuel": {"available_minor": 10000}}}}
+      ]
+    },
+    {
+      "id": "cash_expense",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
+        {"op": "create_category", "ref": "groceries", "group": "Needs", "name": "Groceries"},
+        {"op": "assign", "category": "groceries", "amount_minor": 30000},
+        {"op": "transaction", "account": "cash", "category": "groceries", "amount_minor": -7500, "classification": "spending"},
+        {"op": "observe", "expected": {"accounts": {"cash": 92500}, "unassigned_minor": 70000, "categories": {"groceries": {"assigned_minor": 30000, "activity_minor": -7500, "available_minor": 22500}}}}
+      ]
+    },
+    {
+      "id": "ordinary_inflow",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 0},
+        {"op": "transaction", "account": "cash", "amount_minor": 50000, "classification": "income"},
+        {"op": "observe", "expected": {"accounts": {"cash": 50000}, "unassigned_minor": 50000}}
+      ]
+    },
+    {
+      "id": "split_expense_conservation",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
+        {"op": "create_category", "ref": "groceries", "group": "Needs", "name": "Groceries"},
+        {"op": "create_category", "ref": "fuel", "group": "Needs", "name": "Fuel"},
+        {"op": "assign", "category": "groceries", "amount_minor": 20000},
+        {"op": "assign", "category": "fuel", "amount_minor": 10000},
+        {"op": "transaction", "account": "cash", "amount_minor": -10000, "classification": "spending", "splits": {"groceries": -7001, "fuel": -2999}},
+        {"op": "observe", "expected": {"accounts": {"cash": 90000}, "unassigned_minor": 70000, "categories": {"groceries": {"activity_minor": -7001, "available_minor": 12999}, "fuel": {"activity_minor": -2999, "available_minor": 7001}}}}
+      ]
+    },
+    {
+      "id": "categorized_refund_single_destination",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
+        {"op": "create_category", "ref": "clothing", "group": "Needs", "name": "Clothing"},
+        {"op": "assign", "category": "clothing", "amount_minor": 30000},
+        {"op": "transaction", "account": "cash", "category": "clothing", "amount_minor": -10000, "classification": "spending"},
+        {"op": "transaction", "account": "cash", "category": "clothing", "amount_minor": 4000, "classification": "refund"},
+        {"op": "observe", "expected": {"accounts": {"cash": 94000}, "unassigned_minor": 70000, "categories": {"clothing": {"activity_minor": -6000, "available_minor": 24000}}}}
+      ]
+    },
+    {
+      "id": "on_budget_transfer",
+      "operations": [
+        {"op": "create_account", "ref": "checking", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
+        {"op": "create_account", "ref": "savings", "name": "Savings", "kind": "savings", "on_budget": true, "opening_minor": 0},
+        {"op": "transfer", "source": "checking", "destination": "savings", "amount_minor": 20000},
+        {"op": "observe", "expected": {"accounts": {"checking": 80000, "savings": 20000}, "unassigned_minor": 100000, "total_budget_cash_minor": 100000}}
+      ]
+    },
+    {
+      "id": "funded_credit_purchase_and_payment",
+      "operations": [
+        {"op": "create_account", "ref": "checking", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
+        {"op": "create_account", "ref": "card", "name": "Card", "kind": "credit", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "groceries", "group": "Needs", "name": "Groceries"},
+        {"op": "assign", "category": "groceries", "amount_minor": 30000},
+        {"op": "transaction", "account": "card", "category": "groceries", "amount_minor": -10000, "classification": "spending"},
+        {"op": "observe", "expected": {"unassigned_minor": 70000, "categories": {"groceries": {"available_minor": 20000}}, "cards": {"card": {"liability_minor": 10000, "reserved_minor": 10000, "unfunded_debt_minor": 0}}}},
+        {"op": "transfer", "source": "checking", "destination": "card", "amount_minor": 10000},
+        {"op": "observe", "expected": {"accounts": {"checking": 90000, "card": 0}, "unassigned_minor": 70000, "cards": {"card": {"liability_minor": 0, "reserved_minor": 0, "unfunded_debt_minor": 0}}}}
+      ]
+    },
+    {
+      "id": "unfunded_credit_purchase",
+      "operations": [
+        {"op": "create_account", "ref": "checking", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
+        {"op": "create_account", "ref": "card", "name": "Card", "kind": "credit", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "groceries", "group": "Needs", "name": "Groceries"},
+        {"op": "assign", "category": "groceries", "amount_minor": 3000},
+        {"op": "transaction", "account": "card", "category": "groceries", "amount_minor": -10000, "classification": "spending"},
+        {"op": "observe", "expected": {"unassigned_minor": 97000, "categories": {"groceries": {"activity_minor": -10000, "available_minor": -7000}}, "cards": {"card": {"liability_minor": 10000, "reserved_minor": 3000, "unfunded_debt_minor": 7000}}}}
+      ]
+    },
+    {
+      "id": "explicit_reconciliation_adjustments",
+      "operations": [
+        {"op": "create_account", "ref": "checking", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 10000},
+        {"op": "reconcile", "account": "checking", "statement_minor": 12000, "create_adjustment": true},
+        {"op": "observe", "expected": {"accounts": {"checking": 12000}, "unassigned_minor": 12000, "transaction_count": 2}},
+        {"op": "reconcile", "account": "checking", "statement_minor": 9000, "create_adjustment": true},
+        {"op": "observe", "expected": {"accounts": {"checking": 9000}, "unassigned_minor": 9000, "transaction_count": 3}}
+      ]
+    },
+    {
+      "id": "negative_unassigned_after_adjustment",
+      "operations": [
+        {"op": "create_account", "ref": "checking", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 10000},
+        {"op": "create_category", "ref": "needs", "group": "Needs", "name": "Needs"},
+        {"op": "assign", "category": "needs", "amount_minor": 10000},
+        {"op": "reconcile", "account": "checking", "statement_minor": 5000, "create_adjustment": true},
+        {"op": "observe", "expected": {"accounts": {"checking": 5000}, "unassigned_minor": -5000, "categories": {"needs": {"available_minor": 10000}}}}
+      ]
+    },
+    {
+      "id": "schedule_non_posting_then_realization",
+      "operations": [
+        {"op": "create_account", "ref": "checking", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 10000},
+        {"op": "create_category", "ref": "bills", "group": "Needs", "name": "Bills"},
+        {"op": "assign", "category": "bills", "amount_minor": 5000},
+        {"op": "schedule", "ref": "bill", "account": "checking", "category": "bills", "amount_minor": -2000, "recurrence": "once"},
+        {"op": "observe", "expected": {"accounts": {"checking": 10000}, "unassigned_minor": 5000, "categories": {"bills": {"activity_minor": 0, "available_minor": 5000}}, "transaction_count": 1}},
+        {"op": "realize", "schedule": "bill"},
+        {"op": "observe", "expected": {"accounts": {"checking": 8000}, "unassigned_minor": 5000, "categories": {"bills": {"activity_minor": -2000, "available_minor": 3000}}, "transaction_count": 2}}
+      ]
+    }
+  ]
+}
