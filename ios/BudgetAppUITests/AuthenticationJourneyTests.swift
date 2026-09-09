@@ -95,6 +95,11 @@ final class AuthenticationJourneyTests: XCTestCase {
         let amount = app.textFields["Amount"]
         amount.tap()
         amount.typeText("200.00")
+        XCTAssertEqual(amount.value as? String, "200.00")
+        let memo = app.textFields["Memo"]
+        memo.tap()
+        memo.typeText("Stage 2 transfer test")
+        XCTAssertEqual(memo.value as? String, "Stage 2 transfer test")
         app.buttons["Save"].tap()
 
         XCTAssertTrue(app.navigationBars["Transfer"].waitForNonExistence(timeout: 5))

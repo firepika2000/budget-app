@@ -1116,7 +1116,7 @@ private struct LiveActivityView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var search = ""
     @State private var showAdd = false
-    @State private var showTransfer = false
+    @State private var transferDraft: TransferDraft?
     var filtered: [APITransaction] { store.transactions.filter { search.isEmpty || $0.payeeName.localizedCaseInsensitiveContains(search) || $0.memo.localizedCaseInsensitiveContains(search) || store.categoryName($0).localizedCaseInsensitiveContains(search) } }
     var body: some View {
         List {
@@ -1125,12 +1125,12 @@ private struct LiveActivityView: View {
         }
             .searchable(text: $search, prompt: "Payee, memo, or category")
             .navigationTitle("Activity")
-            .toolbar { if store.budget.can("create_transaction") { Menu { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { showTransfer = true } } label: { Image(systemName: "plus") } } }
+            .toolbar { if store.budget.can("create_transaction") { Menu { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferDraft = TransferDraft() } } label: { Image(systemName: "plus") } } }
             .sheet(isPresented: $showAdd) { entry }
-            .sheet(isPresented: $showTransfer) { transfer }
+            .sheet(item: $transferDraft) { draft in transfer(draft) }
     }
-    @ViewBuilder private var transfer: some View {
-        LiveTransferView(budget: store.budget, accounts: store.accounts, onSaved: reload)
+    @ViewBuilder private func transfer(_ draft: TransferDraft) -> some View {
+        LiveTransferView(draft: draft, budget: store.budget, accounts: store.accounts, onSaved: reload)
     }
     @ViewBuilder private var entry: some View {
         TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, onSaved: reload)
@@ -1359,7 +1359,7 @@ struct LiveAccountRegisterView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let account: APIAccount
     @State private var showAdd = false
-    @State private var showTransfer = false
+    @State private var transferDraft: TransferDraft?
     @State private var showReconcile = false
 
     private var transactions: [APITransaction] { store.transactions(for: account) }
@@ -1400,12 +1400,12 @@ struct LiveAccountRegisterView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if store.budget.can("create_transaction") { Button("Add Transaction", systemImage: "plus") { showAdd = true } }
-                if store.budget.can("create_transaction") { Button("Transfer", systemImage: "arrow.left.arrow.right") { showTransfer = true } }
+                if store.budget.can("create_transaction") { Button("Transfer", systemImage: "arrow.left.arrow.right") { transferDraft = TransferDraft(sourceID: account.id) } }
                 if store.budget.can("reconcile_account") { Button("Reconcile", systemImage: "checkmark.seal") { showReconcile = true } }
             }
         }
         .sheet(isPresented: $showAdd) { entry }
-        .sheet(isPresented: $showTransfer) { transfer }
+        .sheet(item: $transferDraft) { draft in transfer(draft) }
         .sheet(isPresented: $showReconcile) { reconcile }
         .refreshable { await store.refresh() }
     }
@@ -1422,35 +1422,44 @@ struct LiveAccountRegisterView: View {
     @ViewBuilder private var entry: some View {
         TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, initialAccountID: account.id, onSaved: store.refresh)
     }
-    @ViewBuilder private var transfer: some View {
-        LiveTransferView(budget: store.budget, accounts: store.accounts, initialSourceAccountID: account.id, onSaved: store.refresh)
+    @ViewBuilder private func transfer(_ draft: TransferDraft) -> some View {
+        LiveTransferView(draft: draft, budget: store.budget, accounts: store.accounts, onSaved: store.refresh)
     }
     @ViewBuilder private var reconcile: some View {
         LiveReconcileView(budget: store.budget, account: account, currentBalance: store.clearedBalance(for: account), onSaved: store.refresh)
     }
 }
 
+private final class TransferDraft: ObservableObject, Identifiable {
+    let id = UUID()
+    @Published var sourceID: String
+    @Published var destinationID = ""
+    @Published var amount = ""
+    @Published var memo = ""
+    @Published var date = Date()
+    @Published var cleared = false
+
+    init(sourceID: String = "") { self.sourceID = sourceID }
+}
+
 private struct LiveTransferView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
+    @ObservedObject var draft: TransferDraft
     let budget: APIBudget; let accounts: [APIAccount]; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var sourceID: String; @State private var destinationID = ""; @State private var amount = ""; @State private var memo = ""; @State private var date = Date(); @State private var cleared = false; @State private var isSaving = false; @State private var errorMessage: String?
-    init(budget: APIBudget, accounts: [APIAccount], initialSourceAccountID: String? = nil, onSaved: @escaping () async -> Void) {
-        self.budget = budget; self.accounts = accounts; self.onSaved = onSaved
-        _sourceID = State(initialValue: initialSourceAccountID ?? "")
-    }
+    @State private var isSaving = false; @State private var errorMessage: String?
     private var openAccounts: [APIAccount] { accounts.filter { !$0.isClosed } }
-    private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: budget.currencyCode), value > 0 else { return nil }; return value }
+    private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(draft.amount, currencyCode: budget.currencyCode), value > 0 else { return nil }; return value }
     var body: some View {
         NavigationStack { Form {
-            Picker("From", selection: $sourceID) { Text("Select account").tag(""); ForEach(openAccounts) { Text($0.name).tag($0.id) } }.accessibilityIdentifier("transfer-source-account").accessibilityValue(accountName(sourceID))
-            Picker("To", selection: $destinationID) { Text("Select account").tag(""); ForEach(openAccounts.filter { $0.id != sourceID }) { Text($0.name).tag($0.id) } }.accessibilityIdentifier("transfer-destination-account").accessibilityValue(accountName(destinationID))
-            CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode); DatePicker("Date", selection: $date, displayedComponents: .date); TextField("Memo", text: $memo); Toggle("Cleared", isOn: $cleared)
-        }.navigationTitle("Transfer").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(parsed == nil || sourceID.isEmpty || destinationID.isEmpty || sourceID == destinationID || isSaving) } }.onAppear { if sourceID.isEmpty { sourceID = openAccounts.first?.id ?? "" }; selectDestination() }.onChange(of: sourceID) { _, _ in selectDestination() }.alert("Unable to transfer", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
+            Picker("From", selection: $draft.sourceID) { Text("Select account").tag(""); ForEach(openAccounts) { Text($0.name).tag($0.id) } }.accessibilityIdentifier("transfer-source-account").accessibilityValue(accountName(draft.sourceID))
+            Picker("To", selection: $draft.destinationID) { Text("Select account").tag(""); ForEach(openAccounts.filter { $0.id != draft.sourceID }) { Text($0.name).tag($0.id) } }.accessibilityIdentifier("transfer-destination-account").accessibilityValue(accountName(draft.destinationID))
+            CurrencyAmountField("Amount", text: $draft.amount, currencyCode: budget.currencyCode); DatePicker("Date", selection: $draft.date, displayedComponents: .date); TextField("Memo", text: $draft.memo); Toggle("Cleared", isOn: $draft.cleared)
+        }.navigationTitle("Transfer").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(parsed == nil || draft.sourceID.isEmpty || draft.destinationID.isEmpty || draft.sourceID == draft.destinationID || isSaving) } }.onAppear { if draft.sourceID.isEmpty { draft.sourceID = openAccounts.first?.id ?? "" }; selectDestination() }.onChange(of: draft.sourceID) { _, _ in selectDestination() }.alert("Unable to transfer", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
     }
-    private func selectDestination() { if destinationID == sourceID || !openAccounts.contains(where: { $0.id == destinationID }) { destinationID = openAccounts.first(where: { $0.id != sourceID })?.id ?? "" } }
+    private func selectDestination() { if draft.destinationID == draft.sourceID || !openAccounts.contains(where: { $0.id == draft.destinationID }) { draft.destinationID = openAccounts.first(where: { $0.id != draft.sourceID })?.id ?? "" } }
     private func accountName(_ id: String) -> String { openAccounts.first(where: { $0.id == id })?.name ?? "Select account" }
-    private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await workspace.createTransfer(TransferMoneyOperation(sourceAccountID: sourceID, destinationAccountID: destinationID, amountMinor: parsed, occurredOn: BudgetWorkspaceStore.dateString(date), memo: memo, isCleared: cleared)); dismiss() } catch { errorMessage = error.localizedDescription } }
+    private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await workspace.createTransfer(TransferMoneyOperation(sourceAccountID: draft.sourceID, destinationAccountID: draft.destinationID, amountMinor: parsed, occurredOn: BudgetWorkspaceStore.dateString(draft.date), memo: draft.memo, isCleared: draft.cleared)); dismiss() } catch { errorMessage = error.localizedDescription } }
 }
 
 private struct LiveCategoryEditView: View {
