@@ -91,10 +91,16 @@ final class DemoStoreTests: XCTestCase {
         let store = BudgetWorkspaceStore.demo(fresh: true)
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
 
-        let accounts = WorkspaceSelectionHarness(store: store, session: session, destination: 3)
+        let accounts = WorkspaceSelectionHarness(store: store, session: session, start: 0, destination: 3)
         XCTAssertGreaterThan(renderedContentSignal(accounts), 1_000, "switching Home → Accounts rendered blank")
-        let plan = WorkspaceSelectionHarness(store: store, session: session, destination: 1)
-        XCTAssertGreaterThan(renderedContentSignal(plan), 1_000, "switching Home → Plan rendered blank")
+        let plan = WorkspaceSelectionHarness(store: store, session: session, start: 3, destination: 1)
+        XCTAssertGreaterThan(renderedContentSignal(plan), 1_000, "switching Accounts → Plan rendered blank")
+
+        // The live composition creates the same store from an authoritative budget before its first
+        // snapshot arrives. Exercise that zero-content shape as well as the deterministic adapter.
+        let liveShapedStore = BudgetWorkspaceStore(budget: store.budget)
+        let liveShapedPlan = WorkspaceSelectionHarness(store: liveShapedStore, session: session, start: 3, destination: 1)
+        XCTAssertGreaterThan(renderedContentSignal(liveShapedPlan), 1_000, "live-shaped Accounts → Plan rendered blank")
     }
 
     @MainActor
@@ -698,8 +704,18 @@ final class DemoStoreTests: XCTestCase {
 private struct WorkspaceSelectionHarness: View {
     let store: BudgetWorkspaceStore
     let session: AppSession
+    let start: Int
     let destination: Int
-    @State private var selection = 0
+    @State private var selection: Int
+
+    init(store: BudgetWorkspaceStore, session: AppSession, start: Int, destination: Int) {
+        self.store = store
+        self.session = session
+        self.start = start
+        self.destination = destination
+        _selection = State(initialValue: start)
+    }
+
     var body: some View {
         BudgetWorkspaceView(testStore: store, selection: $selection)
             .environmentObject(session)

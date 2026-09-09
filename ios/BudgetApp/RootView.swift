@@ -31,14 +31,14 @@ struct RootView: View {
             }
         }
         #if DEBUG
-        .overlay(alignment: .bottomLeading) {
+        .overlay(alignment: .topLeading) {
             Text(RuntimeBuildIdentity.visibleText)
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .padding(5)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 6))
                 .padding(.leading, 4)
-                .padding(.bottom, 2)
+                .padding(.top, 2)
                 .accessibilityLabel("Debug runtime identity \(RuntimeBuildIdentity.visibleText)")
                 .accessibilityIdentifier("runtime-build-identity")
                 .allowsHitTesting(false)

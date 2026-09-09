@@ -38,10 +38,19 @@ final class AuthenticationJourneyTests: XCTestCase {
 
         let planTab = app.tabBars.buttons["Plan"]
         XCTAssertTrue(planTab.waitForExistence(timeout: 5))
-        planTab.tap()
-        if !app.navigationBars["Plan"].waitForExistence(timeout: 3) {
+        for _ in 0..<3 {
             planTab.tap()
+            XCTAssertTrue(planTab.isSelected, "the production Plan tab must actually accept the tap")
+            XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["Create Category Group"].exists)
+            XCTAssertTrue(app.buttons["profile-settings-button"].exists)
+
+            app.tabBars.buttons["Accounts"].tap()
+            XCTAssertTrue(app.navigationBars["Accounts"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["Add Account"].exists)
         }
+
+        planTab.tap()
         XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Create Category Group"].exists)
         XCTAssertTrue(app.buttons["profile-settings-button"].exists)
