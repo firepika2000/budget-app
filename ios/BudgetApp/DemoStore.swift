@@ -105,6 +105,16 @@ final class DemoStore: ObservableObject {
     }
 
     @discardableResult
+    func updateAccount(id: String, name: String, type: String) -> Bool {
+        guard let index = accounts.firstIndex(where: { $0.id == id }), let kind = DemoAccountKind(rawValue: type) else {
+            return false
+        }
+        accounts[index].name = name
+        accounts[index].kind = kind
+        return true
+    }
+
+    @discardableResult
     func move(amount: Int64, from sourceID: String, to destinationID: String) -> Bool {
         guard amount > 0 else { return fail(.invalidAmount) }
         guard let source = categories.firstIndex(where: { $0.id == sourceID }),

@@ -104,6 +104,48 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testAccountMetadataEditPreservesExactFinancialObservationAndRejectsUnsafeType() async throws {
+        let store = BudgetWorkspaceStore.demo(fresh: true)
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        try await store.createAccount(.init(name: "Everyday", kind: "checking", isOnBudget: true, openingBalanceMinor: 200_000))
+        let account = try XCTUnwrap(store.accounts.first)
+        let balanceBefore = store.accountBalances[account.id]
+        let summaryBefore = store.summary
+        let transactionCountBefore = store.transactions.count
+
+        try await store.updateAccount(.init(accountID: account.id, name: "Emergency Savings", currentKind: "checking", kind: "savings", isOnBudget: true))
+        let updated = try XCTUnwrap(store.accounts.first(where: { $0.id == account.id }))
+        XCTAssertEqual(updated.name, "Emergency Savings")
+        XCTAssertEqual(updated.accountType, "savings")
+        XCTAssertTrue(updated.isOnBudget)
+        XCTAssertEqual(store.accountBalances[account.id], balanceBefore)
+        XCTAssertEqual(store.summary, summaryBefore)
+        XCTAssertEqual(store.transactions.count, transactionCountBefore)
+
+        do {
+            try await store.updateAccount(.init(accountID: account.id, name: "Card", currentKind: "savings", kind: "credit", isOnBudget: true))
+            XCTFail("Expected an unsafe type transition to be rejected")
+        } catch let error as BudgetApplicationError {
+            guard case .invalidOperation = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+    }
+
+    @MainActor
+    func testEmptyGroupPersistsThroughProviderRefreshAndOwnsNewCategory() async throws {
+        let store = BudgetWorkspaceStore.demo(fresh: true)
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        try await store.createGroup(name: "Monthly Expenses")
+        let group = try XCTUnwrap(store.groups.first(where: { $0.name == "Monthly Expenses" }))
+        XCTAssertFalse(store.categories.contains(where: { $0.groupID == group.id }))
+        await store.refresh()
+        XCTAssertTrue(store.groups.contains(where: { $0.id == group.id }))
+
+        try await store.createCategory(groupID: group.id, newGroupName: "", name: "Groceries", delegatedUserID: nil)
+        XCTAssertEqual(store.categories.first(where: { $0.name == "Groceries" })?.groupID, group.id)
+        XCTAssertEqual(store.groups.filter { $0.name == "Monthly Expenses" }.count, 1)
+    }
+
+    @MainActor
     func testScheduledRepositoryCRUDRecurrencesAndFutureIncomeStayNonSpendable() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

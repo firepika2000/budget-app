@@ -10,6 +10,14 @@ struct CreateAccountOperation: Equatable, Sendable {
     let openingBalanceMinor: Int64
 }
 
+struct UpdateAccountMetadataOperation: Equatable, Sendable {
+    let accountID: String
+    let name: String
+    let currentKind: String
+    let kind: String
+    let isOnBudget: Bool
+}
+
 struct AssignMoneyOperation: Equatable, Sendable {
     let categoryID: String
     let month: String
@@ -156,6 +164,7 @@ enum BudgetApplicationError: LocalizedError, Equatable, Sendable {
 @MainActor
 protocol AccountCommandRepository: AnyObject {
     func createAccount(_ operation: CreateAccountOperation) async throws
+    func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws
 }
 
@@ -196,7 +205,29 @@ struct AccountService {
         guard !operation.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw BudgetApplicationError.invalidOperation("Enter an account name.")
         }
+        let validKind = operation.isOnBudget
+            ? ["checking", "savings", "cash", "credit"].contains(operation.kind)
+            : ["loan", "tracking"].contains(operation.kind)
+        guard validKind else {
+            throw BudgetApplicationError.invalidOperation("Choose a budget account type for On budget, or Loan/Tracking for Tracking.")
+        }
         do { try await repository.createAccount(operation) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func update(_ operation: UpdateAccountMetadataOperation) async throws {
+        guard !operation.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw BudgetApplicationError.invalidOperation("Enter an account name.")
+        }
+        let cashTypes = Set(["checking", "savings", "cash"])
+        let trackingTypes = Set(["loan", "tracking"])
+        let safe = operation.kind == operation.currentKind
+            || (operation.isOnBudget && cashTypes.contains(operation.currentKind) && cashTypes.contains(operation.kind))
+            || (!operation.isOnBudget && trackingTypes.contains(operation.currentKind) && trackingTypes.contains(operation.kind))
+        guard safe else {
+            throw BudgetApplicationError.invalidOperation("This type change could reinterpret financial history. Create the appropriate account and move or reconcile explicitly instead.")
+        }
+        do { try await repository.updateAccount(operation) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

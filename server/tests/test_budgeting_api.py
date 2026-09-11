@@ -204,6 +204,77 @@ def test_contributor_can_transact_but_cannot_change_plan(
     ).status_code == 403
 
 
+def test_account_metadata_edit_preserves_balance_and_ready_to_assign(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    created = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts",
+        headers=auth(owner_token),
+        json={"name": "Everyday", "account_type": "checking", "is_on_budget": True, "starting_balance_minor": 200000},
+    )
+    assert created.status_code == 201
+    account_id = created.json()["id"]
+    month = date.today().replace(day=1).isoformat()
+    before_balance = client.get(f"/api/v1/budgets/{budget['id']}/accounts/{account_id}/balance", headers=auth(owner_token)).json()
+    before_rta = client.get(f"/api/v1/budgets/{budget['id']}/months/{month}", headers=auth(owner_token)).json()["ready_to_assign_minor"]
+
+    updated = client.patch(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account_id}",
+        headers=auth(owner_token),
+        json={"name": "Emergency Savings", "account_type": "savings"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Emergency Savings"
+    assert updated.json()["account_type"] == "savings"
+    assert updated.json()["is_on_budget"] is True
+
+    listed = client.get(f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token)).json()
+    assert [(item["name"], item["account_type"]) for item in listed] == [("Emergency Savings", "savings")]
+    assert client.get(f"/api/v1/budgets/{budget['id']}/accounts/{account_id}/balance", headers=auth(owner_token)).json() == before_balance
+    assert client.get(f"/api/v1/budgets/{budget['id']}/months/{month}", headers=auth(owner_token)).json()["ready_to_assign_minor"] == before_rta == 200000
+
+
+def test_account_metadata_rejects_financial_reclassification_and_unauthorized_edit(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    contributor_token = add_member(session_factory, client, "contribute", budget["id"])
+
+    unsafe = client.patch(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}",
+        headers=auth(owner_token),
+        json={"name": "Card", "account_type": "credit"},
+    )
+    assert unsafe.status_code == 422
+    assert "reinterpret financial history" in unsafe.json()["detail"]
+    assert client.patch(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}",
+        headers=auth(contributor_token),
+        json={"name": "Renamed", "account_type": "checking"},
+    ).status_code == 403
+
+
+def test_account_creation_enforces_budget_treatment_type_families(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    for payload in (
+        {"name": "Budget Loan", "account_type": "loan", "is_on_budget": True},
+        {"name": "Tracked Cash", "account_type": "checking", "is_on_budget": False},
+        {"name": "Tracked Card", "account_type": "credit", "is_on_budget": False},
+    ):
+        response = client.post(f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token), json=payload)
+        assert response.status_code == 422
+    tracking = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts",
+        headers=auth(owner_token),
+        json={"name": "Mortgage", "account_type": "loan", "is_on_budget": False, "starting_balance_minor": -25000000},
+    )
+    assert tracking.status_code == 201
+
+
 def test_viewer_cannot_add_transaction(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])

@@ -60,6 +60,68 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertFalse(app.buttons["Budgets"].exists)
     }
 
+    func testFreshAccountMetadataEditPreservesBalanceAndExposesTreatment() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=accounts"]
+        app.launch()
+
+        app.buttons["Add Account"].tap()
+        XCTAssertTrue(app.navigationBars["New Account"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.segmentedControls["new-account-treatment"].exists)
+        app.textFields["new-account-name"].tap()
+        app.textFields["new-account-name"].typeText("Test Checking")
+        app.textFields["Balance"].tap()
+        app.textFields["Balance"].typeText("2000.00")
+        app.buttons["Create"].tap()
+
+        XCTAssertTrue(app.navigationBars["Accounts"].waitForExistence(timeout: 5))
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'account-row-' AND label CONTAINS 'Test Checking'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.tap()
+        XCTAssertTrue(app.staticTexts["$2,000.00"].waitForExistence(timeout: 5))
+        app.buttons["account-settings-action"].tap()
+        XCTAssertTrue(app.navigationBars["Account Settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Budget treatment"].exists)
+        XCTAssertFalse(app.textFields["Balance"].exists, "metadata settings must not expose a balance editor")
+
+        let name = app.textFields["account-settings-name"]
+        name.tap()
+        name.typeKey("a", modifierFlags: .command)
+        name.typeText("Emergency Savings")
+        app.buttons["account-settings-type"].tap()
+        app.buttons["Savings"].tap()
+        app.buttons["Save"].tap()
+
+        XCTAssertTrue(app.navigationBars["Emergency Savings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["$2,000.00"].exists)
+    }
+
+    func testEmptyCategoryGroupRemainsVisibleAndDefaultsCategoryCreation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=plan"]
+        app.launch()
+
+        app.buttons["Create Category Group"].tap()
+        XCTAssertTrue(app.navigationBars["New Category Group"].waitForExistence(timeout: 5))
+        app.textFields["new-group-name"].tap()
+        app.textFields["new-group-name"].typeText("Monthly Expenses")
+        app.buttons["Create"].tap()
+
+        XCTAssertTrue(app.staticTexts["Monthly Expenses"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No categories yet"].exists)
+        let addCategory = app.buttons["empty-group-add-category-demo-group-monthly-expenses"]
+        XCTAssertTrue(addCategory.exists)
+        addCategory.tap()
+        XCTAssertTrue(app.navigationBars["New Category"].waitForExistence(timeout: 5))
+        app.textFields["new-category-name"].tap()
+        app.textFields["new-category-name"].typeText("Groceries")
+        app.buttons["Create"].tap()
+
+        XCTAssertTrue(app.staticTexts["Monthly Expenses"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Groceries'")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == 'Monthly Expenses'")).count, 1)
+    }
+
     func testProductionPlanAssignmentFieldCanClearReplaceAndSave() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=plan"]

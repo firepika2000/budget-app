@@ -240,6 +240,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { guard demo.createCategory(name: name, group: groupName.isEmpty ? newGroupName : groupName) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func createGroup(name: String) async throws { if !demo.groupOrder.contains(name) { demo.groupOrder.append(name) } }
     func createAccount(_ operation: CreateAccountOperation) async throws { demo.createAccount(name: operation.name, type: operation.kind, isOnBudget: operation.isOnBudget, startingBalance: operation.openingBalanceMinor) }
+    func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws {
+        guard demo.updateAccount(id: operation.accountID, name: operation.name, type: operation.kind) else { throw workspaceRepositoryError("Account not found.") }
+    }
     func createRequest(_ value: APIFinancialRequestCreate) async throws { demo.requests.insert(.init(id: UUID().uuidString, member: demo.persona, amount: value.requestedAmountMinor, categoryID: value.destinationCategoryID, reason: value.reason, status: "Pending", date: .demo(monthsAgo: 0, day: 30)), at: 0) }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws {
         guard let index = demo.categories.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Category not found.") }
@@ -319,6 +322,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { var targetGroupID = groupID; if !newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { targetGroupID = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: newGroupName), token: token).id }; _ = try await client.createCategory(budgetID: budget.id, category: APICategoryCreate(groupID: targetGroupID, name: name, delegatedUserID: delegatedUserID), token: token) }
     func createGroup(name: String) async throws { _ = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: name), token: token) }
     func createAccount(_ operation: CreateAccountOperation) async throws { _ = try await client.createAccount(budgetID: budget.id, account: APIAccountCreate(name: operation.name, accountType: operation.kind, isOnBudget: operation.isOnBudget, startingBalanceMinor: operation.openingBalanceMinor), token: token) }
+    func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws { _ = try await client.updateAccount(budgetID: budget.id, accountID: operation.accountID, account: APIAccountUpdate(name: operation.name, accountType: operation.kind), token: token) }
     func createRequest(_ value: APIFinancialRequestCreate) async throws { _ = try await client.createFinancialRequest(budgetID: budget.id, request: value, token: token) }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws { _ = try await client.updateCategory(budgetID: budget.id, categoryID: id, category: value, token: token); if existingDelegatedUserID != delegatedUserID { _ = try await client.updateCategoryDelegation(budgetID: budget.id, categoryID: id, delegatedUserID: delegatedUserID, token: token) } }
     func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { _ = try await client.updateCategoryGroup(budgetID: budget.id, groupID: id, group: value, token: token) }
@@ -514,6 +518,11 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func createAccount(_ operation: CreateAccountOperation) async throws {
         try await services().accounts.create(operation)
+        await refresh()
+    }
+
+    func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws {
+        try await services().accounts.update(operation)
         await refresh()
     }
 
@@ -900,6 +909,7 @@ private struct LivePlanView: View {
     @State private var managing: APICategory?
     @State private var showGroups = false
     @State private var showGroupCreation = false
+    @State private var preferredCategoryGroupID = ""
     @State private var focus = PlanFocus.all
     private var rows: [APICategoryMonth] { (store.summary?.categories ?? []).filter { row in switch focus { case .all: true; case .underfunded: (row.underfundedMinor ?? 0) > 0; case .overspent: row.isOverspent; case .funded: (row.underfundedMinor ?? 0) == 0 && !row.isOverspent; case .available: row.availableMinor > 0 } } }
     // A brand-new Budget has no groups/categories. Surface a discoverable primary action to create
@@ -937,7 +947,7 @@ private struct LivePlanView: View {
                         if activation.canManageStructure {
                             Button {
                                 if activation.needsGroup { showGroupCreation = true }
-                                else { showCategory = true }
+                                else { preferredCategoryGroupID = ""; showCategory = true }
                             } label: {
                                 Label(store.groups.isEmpty ? "Create Category Group" : "Add Category", systemImage: "folder.badge.plus").frame(maxWidth: .infinity)
                             }
@@ -958,13 +968,22 @@ private struct LivePlanView: View {
                 }
             }
             ForEach(store.groups.sorted { $0.sortOrder < $1.sortOrder }) { group in
+                let groupCategories = store.categories.filter { $0.groupID == group.id && !$0.isArchived }
                 let groupRows = rows.filter { row in store.categories.first(where: { $0.id == row.categoryID })?.groupID == group.id }
-                if !groupRows.isEmpty { Section(group.name) { ForEach(groupRows) { category in NavigationLink { LivePlanCategoryDetailView(categoryID: category.categoryID, assign: { editing = category }, move: { movePresentation = .init(sourceCategoryID: category.categoryID) }, manage: { managing = store.categories.first(where: { $0.id == category.categoryID }) }) } label: { PlanCategoryRow(category: category) }.accessibilityIdentifier("plan-category-\(category.categoryID)").contextMenu { if let model = store.categories.first(where: { $0.id == category.categoryID }), canManage(model) { Button("Manage Category", systemImage: "pencil") { managing = model } } } } } }
+                if groupCategories.isEmpty {
+                    Section(group.name) {
+                        Text("No categories yet").foregroundStyle(.secondary)
+                        if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") {
+                            Button("Add Category", systemImage: "folder.badge.plus") { preferredCategoryGroupID = group.id; showCategory = true }
+                                .accessibilityIdentifier("empty-group-add-category-\(group.id)")
+                        }
+                    }
+                } else if !groupRows.isEmpty { Section(group.name) { ForEach(groupRows) { category in NavigationLink { LivePlanCategoryDetailView(categoryID: category.categoryID, assign: { editing = category }, move: { movePresentation = .init(sourceCategoryID: category.categoryID) }, manage: { managing = store.categories.first(where: { $0.id == category.categoryID }) }) } label: { PlanCategoryRow(category: category) }.accessibilityIdentifier("plan-category-\(category.categoryID)").contextMenu { if let model = store.categories.first(where: { $0.id == category.categoryID }), canManage(model) { Button("Manage Category", systemImage: "pencil") { managing = model } } } } } }
             }
         }.accessibilityIdentifier("plan-screen").navigationTitle("Plan").toolbar {
             Menu {
                 if store.delegatedBudget == nil && store.budget.can("assign_money") { Button("Smart Funding", systemImage: "sparkles") { showSmartFunding = true } }
-                if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") { Button("Add category", systemImage: "folder.badge.plus") { showCategory = true } }
+                if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") { Button("Add category", systemImage: "folder.badge.plus") { preferredCategoryGroupID = ""; showCategory = true } }
                 if store.budget.can("manage_budget_structure") { Button("Manage groups", systemImage: "folder") { showGroups = true } }
                 if store.budget.can("move_money") { Button("Move money", systemImage: "arrow.left.arrow.right") { movePresentation = .init(sourceCategoryID: nil) } }
                 if store.budget.can("request_money") { Button("Request money", systemImage: "hand.raised") { showRequest = true } }
@@ -998,6 +1017,7 @@ private struct LivePlanView: View {
                 budget: store.budget,
                 groups: store.groups,
                 onSaved: reload,
+                initialGroupID: preferredCategoryGroupID,
                 delegatedUserID: store.budget.can("manage_own_categories") && !store.budget.can("manage_budget_structure") ? session.profile?.id : nil
             )
     }
@@ -1018,7 +1038,7 @@ private struct GroupCreationView: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Group name", text: $name)
+                TextField("Group name", text: $name).accessibilityIdentifier("new-group-name")
                 Text("Groups keep related categories together, such as Monthly Bills or Savings Goals.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
@@ -1359,7 +1379,7 @@ private struct LiveAccountsView: View {
     var body: some View {
         List {
             ForEach(store.accounts) { account in
-                NavigationLink { LiveAccountRegisterView(account: account) } label: {
+                NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: {
                     HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: account.accountType == "credit" ? "creditcard.fill" : "building.columns.fill") }; Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } }
                 }
                 .accessibilityIdentifier("account-row-\(account.id)")
@@ -1389,10 +1409,13 @@ private struct LiveAccountsView: View {
 
 struct LiveAccountRegisterView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    let account: APIAccount
+    let initialAccount: APIAccount
     @State private var showAdd = false
     @State private var transferPresentation: TransferPresentation?
     @State private var showReconcile = false
+    @State private var showSettings = false
+
+    private var account: APIAccount { store.accounts.first(where: { $0.id == initialAccount.id }) ?? initialAccount }
 
     private var transactions: [APITransaction] { store.transactions(for: account) }
     private var paymentReserve: Int64? {
@@ -1434,11 +1457,13 @@ struct LiveAccountRegisterView: View {
                 if store.budget.can("create_transaction") { Button("Add Transaction", systemImage: "plus") { showAdd = true } }
                 if store.budget.can("create_transaction") { Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation(sourceID: account.id) } }
                 if store.budget.can("reconcile_account") { Button("Reconcile", systemImage: "checkmark.seal") { showReconcile = true } }
+                if store.budget.can("manage_budget_structure") { Button("Account Settings", systemImage: "gearshape") { showSettings = true }.accessibilityIdentifier("account-settings-action") }
             }
         }
         .sheet(isPresented: $showAdd) { entry }
         .sheet(item: $transferPresentation) { presentation in transfer(presentation) }
         .sheet(isPresented: $showReconcile) { reconcile }
+        .sheet(isPresented: $showSettings) { AccountSettingsView(account: account) }
         .refreshable { await store.refresh() }
     }
 

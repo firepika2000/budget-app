@@ -280,7 +280,7 @@
     await api("/budgets", { method: "POST", body: JSON.stringify({ household_id: household.id, name: values.name, currency_code: values.currency }) }); await loadSession(); toast("Budget created");
   }));
   $("add-account-button").addEventListener("click", () => openFields("New account", [{ id: "name", label: "Account name" }, { id: "type", label: "Type", type: "select", options: ["checking", "savings", "cash", "credit", "loan", "tracking"] }], async (values) => {
-    await api(`/budgets/${state.selected.id}/accounts`, { method: "POST", body: JSON.stringify({ name: values.name, account_type: values.type, is_on_budget: values.type !== "tracking" }) }); await selectBudget(state.selected.id); toast("Account added");
+    await api(`/budgets/${state.selected.id}/accounts`, { method: "POST", body: JSON.stringify({ name: values.name, account_type: values.type, is_on_budget: !["tracking", "loan"].includes(values.type) }) }); await selectBudget(state.selected.id); toast("Account added");
   }));
   $("add-category-button").addEventListener("click", () => openFields("New category", [{ id: "group", label: "Group name" }, { id: "name", label: "Category name" }], async (values) => {
     const group = await api(`/budgets/${state.selected.id}/category-groups`, { method: "POST", body: JSON.stringify({ name: values.group }) });

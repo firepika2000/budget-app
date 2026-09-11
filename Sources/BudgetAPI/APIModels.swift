@@ -367,6 +367,21 @@ public struct APIAccountCreate: Encodable, Sendable {
     }
 }
 
+public struct APIAccountUpdate: Encodable, Equatable, Sendable {
+    public let name: String
+    public let accountType: String
+
+    public init(name: String, accountType: String) {
+        self.name = name
+        self.accountType = accountType
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case accountType = "account_type"
+    }
+}
+
 public struct APICategoryGroup: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let budgetID: String

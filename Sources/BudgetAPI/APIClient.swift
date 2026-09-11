@@ -121,6 +121,20 @@ public struct APIClient {
         )
     }
 
+    public func updateAccount(
+        budgetID: String,
+        accountID: String,
+        account: APIAccountUpdate,
+        token: String
+    ) async throws -> APIAccount {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)",
+            method: "PATCH",
+            token: token,
+            body: account
+        )
+    }
+
     public func categoryGroups(budgetID: String, token: String) async throws -> [APICategoryGroup] {
         try await send(path: "api/v1/budgets/\(budgetID)/category-groups", token: token)
     }

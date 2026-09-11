@@ -53,6 +53,7 @@ from .models import (
 )
 from .schemas import (
     AccountCreate,
+    AccountUpdate,
     AccountBalanceResponse,
     AccountResponse,
     AllocationOperationResponse,
@@ -78,6 +79,31 @@ from .schemas import (
     TransferCreate,
     TransferResponse,
 )
+
+ON_BUDGET_CASH_TYPES = {"checking", "savings", "cash"}
+TRACKING_TYPES = {"loan", "tracking"}
+
+
+def validate_account_treatment(account_type: str, is_on_budget: bool) -> None:
+    valid = account_type in (ON_BUDGET_CASH_TYPES | {"credit"}) if is_on_budget else account_type in TRACKING_TYPES
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Choose a budget account type for On budget, or Loan/Tracking for Tracking.",
+        )
+
+
+def validate_account_type_transition(account: Account, account_type: str) -> None:
+    if account_type == account.account_type:
+        return
+    if account.is_on_budget and account.account_type in ON_BUDGET_CASH_TYPES and account_type in ON_BUDGET_CASH_TYPES:
+        return
+    if not account.is_on_budget and account.account_type in TRACKING_TYPES and account_type in TRACKING_TYPES:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail="This account type change would reinterpret financial history. Create the appropriate account and transfer or reconcile explicitly instead.",
+    )
 from .planning import target_funding
 
 
@@ -251,6 +277,7 @@ def create_account(
     db: Session = Depends(get_db),
 ) -> Account:
     require_budget_capability(db, user, budget_id, "manage_budget_structure")
+    validate_account_treatment(body.account_type, body.is_on_budget)
     account_values = body.model_dump(exclude={"starting_balance_minor"})
     account = Account(budget_id=budget_id, **account_values)
     db.add(account)
@@ -269,6 +296,32 @@ def create_account(
             is_cleared=True,
             created_by_user_id=user.id,
         ))
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+@router.patch("/accounts/{account_id}", response_model=AccountResponse)
+def update_account(
+    budget_id: str,
+    account_id: str,
+    body: AccountUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Account:
+    require_budget_capability(db, user, budget_id, "manage_budget_structure")
+    account = db.get(Account, account_id)
+    if account is None or account.budget_id != budget_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    validate_account_type_transition(account, body.account_type)
+    account.name = body.name.strip()
+    if not account.name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Enter an account name.")
+    account.account_type = body.account_type
+    if account.account_type == "credit" and account.payment_category_id:
+        payment_category = db.get(Category, account.payment_category_id)
+        if payment_category is not None and payment_category.system_type == "credit_payment":
+            payment_category.name = f"{account.name} Payment"
     db.commit()
     db.refresh(account)
     return account

@@ -35,6 +35,25 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(json["is_on_budget"] as? Bool, true)
     }
 
+    func testAccountMetadataUpdateCannotCarryBalanceOrBudgetTreatment() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "PATCH")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1")
+            let body = try requestBody(request)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json as NSDictionary, ["name": "Savings", "account_type": "savings"] as NSDictionary)
+            let response = Data(#"{"id":"a1","budget_id":"b1","name":"Savings","account_type":"savings","is_on_budget":true,"is_closed":false,"reconciled_balance_minor":null,"payment_category_id":null}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let account = try await client.updateAccount(budgetID: "b1", accountID: "a1", account: .init(name: "Savings", accountType: "savings"), token: "secret")
+        XCTAssertEqual(account.name, "Savings")
+        XCTAssertTrue(account.isOnBudget)
+    }
+
     func testBootstrapStatusDiscoversUninitializedServerWithoutAuthentication() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

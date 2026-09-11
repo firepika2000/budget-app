@@ -123,6 +123,11 @@ class AccountCreate(BaseModel):
     starting_balance_minor: int = Field(default=0, ge=MIN_INT64, le=MAX_INT64)
 
 
+class AccountUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    account_type: Literal["checking", "savings", "cash", "credit", "loan", "tracking"]
+
+
 class AccountResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

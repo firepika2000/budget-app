@@ -584,13 +584,25 @@ struct AccountCreationView: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Account name", text: $name)
+                TextField("Account name", text: $name).accessibilityIdentifier("new-account-name")
+                Picker("Budget treatment", selection: $isOnBudget) {
+                    Text("On budget").tag(true)
+                    Text("Tracking").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("new-account-treatment")
+                .onChange(of: isOnBudget) { _, value in accountType = value ? "checking" : "tracking" }
                 Picker("Type", selection: $accountType) {
-                    ForEach(["checking", "savings", "cash", "credit", "loan", "tracking"], id: \.self) {
-                        Text($0.capitalized).tag($0)
+                    ForEach(availableTypes, id: \.self) {
+                        Text(accountTypeTitle($0)).tag($0)
                     }
                 }
-                Toggle("Include in budget", isOn: $isOnBudget)
+                .accessibilityIdentifier("new-account-type")
+                Text(isOnBudget
+                     ? "Budget accounts participate in Unassigned and category planning."
+                     : "Tracking accounts affect net worth only and never create money to assign.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 Section("Current balance") {
                     CurrencyAmountField(
                         "Balance",
@@ -631,6 +643,12 @@ struct AccountCreationView: View {
             : CurrencyText.parseMinorUnits(startingBalance, currencyCode: budget.currencyCode)
     }
 
+    private var availableTypes: [String] { isOnBudget ? ["checking", "savings", "cash", "credit"] : ["tracking", "loan"] }
+
+    private func accountTypeTitle(_ type: String) -> String {
+        switch type { case "credit": "Credit Card"; case "loan": "Loan / Liability"; case "tracking": "Asset / Tracking"; default: type.capitalized }
+    }
+
     private func save() async {
         isSaving = true
         defer { isSaving = false }
@@ -643,11 +661,77 @@ struct AccountCreationView: View {
     }
 }
 
+struct AccountSettingsView: View {
+    @EnvironmentObject private var workspace: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let account: APIAccount
+    @State private var name: String
+    @State private var accountType: String
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(account: APIAccount) {
+        self.account = account
+        _name = State(initialValue: account.name)
+        _accountType = State(initialValue: account.accountType)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Account") {
+                    TextField("Account name", text: $name).accessibilityIdentifier("account-settings-name")
+                    Picker("Type", selection: $accountType) {
+                        ForEach(safeTypes, id: \.self) { Text(typeTitle($0)).tag($0) }
+                    }
+                    .accessibilityIdentifier("account-settings-type")
+                    LabeledContent("Budget treatment", value: account.isOnBudget ? "On budget" : "Tracking")
+                }
+                Section {
+                    Text("Budget treatment cannot be changed after creation because doing so would reinterpret Unassigned, category activity, transfers, and historical reports.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Text("Balances are not account metadata. Correct them with transactions or Reconcile from the account register.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Account Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+            }
+            .overlay { if isSaving { ProgressView() } }
+            .alert("Unable to update account", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(errorMessage ?? "Unknown error") }
+        }
+    }
+
+    private var safeTypes: [String] {
+        if account.isOnBudget { return ["checking", "savings", "cash"].contains(account.accountType) ? ["checking", "savings", "cash"] : [account.accountType] }
+        return ["loan", "tracking"].contains(account.accountType) ? ["tracking", "loan"] : [account.accountType]
+    }
+
+    private func typeTitle(_ type: String) -> String {
+        switch type { case "credit": "Credit Card"; case "loan": "Loan / Liability"; case "tracking": "Asset / Tracking"; default: type.capitalized }
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            try await workspace.updateAccount(.init(accountID: account.id, name: name, currentKind: account.accountType, kind: accountType, isOnBudget: account.isOnBudget))
+            dismiss()
+        } catch { errorMessage = error.localizedDescription }
+    }
+}
+
 struct CategoryCreationView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget
     let groups: [APICategoryGroup]
     let onSaved: () async -> Void
+    var initialGroupID: String = ""
     var delegatedUserID: String? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -659,7 +743,7 @@ struct CategoryCreationView: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Category name", text: $name)
+                TextField("Category name", text: $name).accessibilityIdentifier("new-category-name")
                 if !groups.isEmpty {
                     Picker("Group", selection: $groupID) {
                         ForEach(groups) { Text($0.name).tag($0.id) }
@@ -683,7 +767,7 @@ struct CategoryCreationView: View {
             .alert("Unable to create category", isPresented: errorBinding) {
                 Button("OK", role: .cancel) {}
             } message: { Text(errorMessage ?? "Unknown error") }
-            .onAppear { if groupID.isEmpty { groupID = groups.first?.id ?? "" } }
+            .onAppear { if groupID.isEmpty { groupID = groups.contains(where: { $0.id == initialGroupID }) ? initialGroupID : groups.first?.id ?? "" } }
         }
     }
 
