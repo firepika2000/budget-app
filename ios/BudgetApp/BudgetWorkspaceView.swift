@@ -984,10 +984,11 @@ private struct LivePlanView: View {
             Menu {
                 if store.delegatedBudget == nil && store.budget.can("assign_money") { Button("Smart Funding", systemImage: "sparkles") { showSmartFunding = true } }
                 if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") { Button("Add category", systemImage: "folder.badge.plus") { preferredCategoryGroupID = ""; showCategory = true } }
-                if store.budget.can("manage_budget_structure") { Button("Manage groups", systemImage: "folder") { showGroups = true } }
+                if store.budget.can("manage_budget_structure") { Button("Add category group", systemImage: "folder.badge.plus") { showGroupCreation = true }.accessibilityIdentifier("add-category-group-action") }
+                if store.budget.can("manage_budget_structure") { Button("Manage groups", systemImage: "folder") { showGroups = true }.accessibilityIdentifier("manage-category-groups-action") }
                 if store.budget.can("move_money") { Button("Move money", systemImage: "arrow.left.arrow.right") { movePresentation = .init(sourceCategoryID: nil) } }
                 if store.budget.can("request_money") { Button("Request money", systemImage: "hand.raised") { showRequest = true } }
-            } label: { Image(systemName: "plus") }
+            } label: { Image(systemName: "plus") }.accessibilityIdentifier("plan-add-menu")
         }
         .sheet(item: $editing) { category in editAssignment(category) }
         .sheet(item: $movePresentation) { presentation in moveMoney(initialSourceCategoryID: presentation.sourceCategoryID) }
@@ -1068,16 +1069,17 @@ private struct LiveGroupManagementView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @Environment(\.dismiss) private var dismiss
     @State private var editing: APICategoryGroup?
-    var body: some View { NavigationStack { List { ForEach(store.groups.sorted { $0.sortOrder < $1.sortOrder }) { group in Button { editing=group } label: { HStack { VStack(alignment:.leading){Text(group.name);Text(group.isArchived ? "Hidden" : "Visible").font(.caption).foregroundStyle(.secondary)};Spacer();Text("Order \(group.sortOrder)").foregroundStyle(.secondary) } } } }.navigationTitle("Category Groups").toolbar { ToolbarItem(placement:.confirmationAction){Button("Done"){dismiss()}} }.sheet(item:$editing){LiveGroupEditor(group:$0)} } }
+    @State private var showGroupCreation = false
+    var body: some View { NavigationStack { List { ForEach(store.groups.sorted { $0.sortOrder < $1.sortOrder }) { group in Button { editing=group } label: { HStack { VStack(alignment:.leading){Text(group.name);Text(group.isArchived ? "Hidden" : "Visible").font(.caption).foregroundStyle(.secondary)};Spacer();Image(systemName:"chevron.right").font(.caption).foregroundStyle(.tertiary) } } } }.navigationTitle("Category Groups").toolbar { ToolbarItem(placement:.cancellationAction){Button("Add Group",systemImage:"plus"){showGroupCreation=true}.accessibilityIdentifier("manage-groups-add-action")};ToolbarItem(placement:.confirmationAction){Button("Done"){dismiss()}} }.sheet(item:$editing){LiveGroupEditor(group:$0)}.sheet(isPresented:$showGroupCreation){GroupCreationView()} } }
 }
 
 private struct LiveGroupEditor: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore; @Environment(\.dismiss) private var dismiss
     let group: APICategoryGroup
-    @State private var name: String; @State private var order: Int; @State private var archived: Bool; @State private var saving=false; @State private var error:String?; @State private var confirmDelete=false
-    init(group: APICategoryGroup){self.group=group;_name=State(initialValue:group.name);_order=State(initialValue:group.sortOrder);_archived=State(initialValue:group.isArchived)}
-    var body: some View { NavigationStack { Form { TextField("Name",text:$name);Stepper("Order \(order)",value:$order,in:0...10_000);Toggle("Hidden",isOn:$archived);Section{Text("Hiding a group preserves every category and its financial history.").font(.footnote).foregroundStyle(.secondary)};Section{Button("Delete Empty Group",role:.destructive){confirmDelete=true}} }.navigationTitle("Manage Group").toolbar{ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || saving)}}.confirmationDialog("Delete this group?",isPresented:$confirmDelete){Button("Delete Empty Group",role:.destructive){Task{await remove()}}} .alert("Unable to update group",isPresented:Binding(get:{error != nil},set:{if !$0{error=nil}})){Button("OK",role:.cancel){}}message:{Text(error ?? "Unknown error")} } }
-    private func save()async{saving=true;defer{saving=false};do{try await store.updateGroup(id:group.id,value:APICategoryGroupUpdate(name:name,sortOrder:order,isArchived:archived));dismiss()}catch{self.error=error.localizedDescription}}
+    @State private var name: String; @State private var archived: Bool; @State private var saving=false; @State private var error:String?; @State private var confirmDelete=false
+    init(group: APICategoryGroup){self.group=group;_name=State(initialValue:group.name);_archived=State(initialValue:group.isArchived)}
+    var body: some View { NavigationStack { Form { TextField("Name",text:$name);Toggle("Hidden",isOn:$archived);Section{Text("Hiding a group preserves every category and its financial history.").font(.footnote).foregroundStyle(.secondary)};Section{Button("Delete Empty Group",role:.destructive){confirmDelete=true}} }.navigationTitle("Manage Group").toolbar{ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || saving)}}.confirmationDialog("Delete this group?",isPresented:$confirmDelete){Button("Delete Empty Group",role:.destructive){Task{await remove()}}} .alert("Unable to update group",isPresented:Binding(get:{error != nil},set:{if !$0{error=nil}})){Button("OK",role:.cancel){}}message:{Text(error ?? "Unknown error")} } }
+    private func save()async{saving=true;defer{saving=false};do{try await store.updateGroup(id:group.id,value:APICategoryGroupUpdate(name:name,sortOrder:group.sortOrder,isArchived:archived));dismiss()}catch{self.error=error.localizedDescription}}
     private func remove()async{saving=true;defer{saving=false};do{try await store.deleteGroup(id:group.id);dismiss()}catch{self.error=error.localizedDescription}}
 }
 

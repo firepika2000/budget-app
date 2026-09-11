@@ -146,6 +146,29 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testAdditionalGroupCreationPreservesPopulatedPlanAndFinancialState() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let categoriesBefore = store.categories
+        let summaryBefore = store.summary
+        let balancesBefore = store.accountBalances
+
+        try await store.createGroup(name: "Savings Goals")
+        let newGroup = try XCTUnwrap(store.groups.first(where: { $0.name == "Savings Goals" }))
+        XCTAssertFalse(store.categories.contains(where: { $0.groupID == newGroup.id }))
+        XCTAssertEqual(store.categories, categoriesBefore)
+        XCTAssertEqual(store.summary, summaryBefore)
+        XCTAssertEqual(store.accountBalances, balancesBefore)
+
+        await store.refresh()
+        XCTAssertEqual(store.groups.filter { $0.name == "Savings Goals" }.count, 1)
+        XCTAssertTrue(store.categories.contains(where: { $0.name == "Groceries" }))
+        try await store.createCategory(groupID: newGroup.id, newGroupName: "", name: "Rainy Day Reserve", delegatedUserID: nil)
+        XCTAssertEqual(store.categories.first(where: { $0.name == "Rainy Day Reserve" })?.groupID, newGroup.id)
+        XCTAssertEqual(store.groups.filter { $0.name == "Savings Goals" }.count, 1)
+    }
+
+    @MainActor
     func testScheduledRepositoryCRUDRecurrencesAndFutureIncomeStayNonSpendable() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

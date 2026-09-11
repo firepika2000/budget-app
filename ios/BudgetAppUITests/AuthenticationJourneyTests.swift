@@ -122,6 +122,59 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == 'Monthly Expenses'")).count, 1)
     }
 
+    func testPopulatedPlanCanCreateAndManageAdditionalCategoryGroups() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=plan"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        app.buttons["Create Category Group"].tap()
+        XCTAssertTrue(app.navigationBars["New Category Group"].waitForExistence(timeout: 5))
+        app.textFields["new-group-name"].tap()
+        app.textFields["new-group-name"].typeText("Monthly Expenses")
+        app.buttons["Create"].tap()
+        let addFirstCategory = app.buttons["empty-group-add-category-demo-group-monthly-expenses"]
+        XCTAssertTrue(addFirstCategory.waitForExistence(timeout: 5))
+        addFirstCategory.tap()
+        app.textFields["new-category-name"].tap()
+        app.textFields["new-category-name"].typeText("Groceries")
+        app.buttons["Create"].tap()
+        XCTAssertTrue(app.staticTexts["Monthly Expenses"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Groceries'")).firstMatch.exists)
+
+        app.buttons["plan-add-menu"].tap()
+        XCTAssertTrue(app.buttons["add-category-group-action"].waitForExistence(timeout: 5))
+        app.buttons["add-category-group-action"].tap()
+        XCTAssertTrue(app.navigationBars["New Category Group"].waitForExistence(timeout: 5))
+        app.textFields["new-group-name"].tap()
+        app.textFields["new-group-name"].typeText("Savings Goals")
+        app.buttons["Create"].tap()
+
+        XCTAssertTrue(app.staticTexts["Savings Goals"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No categories yet"].exists)
+        let addCategory = app.buttons["empty-group-add-category-demo-group-savings-goals"]
+        XCTAssertTrue(addCategory.exists)
+        addCategory.tap()
+        XCTAssertTrue(app.navigationBars["New Category"].waitForExistence(timeout: 5))
+        app.textFields["new-category-name"].tap()
+        app.textFields["new-category-name"].typeText("Emergency Fund")
+        app.buttons["Create"].tap()
+
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Emergency Fund'")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Groceries'")).firstMatch.exists)
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == 'Savings Goals'")).count, 1)
+
+        app.buttons["plan-add-menu"].tap()
+        app.buttons["manage-category-groups-action"].tap()
+        XCTAssertTrue(app.navigationBars["Category Groups"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["manage-groups-add-action"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Order '")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Savings Goals"].exists)
+        XCTAssertTrue(app.staticTexts["Monthly Expenses"].exists)
+        app.buttons["manage-groups-add-action"].tap()
+        XCTAssertTrue(app.navigationBars["New Category Group"].waitForExistence(timeout: 5))
+    }
+
     func testProductionPlanAssignmentFieldCanClearReplaceAndSave() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=plan"]
