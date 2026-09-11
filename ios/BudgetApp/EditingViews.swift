@@ -748,6 +748,8 @@ struct CategoryCreationView: View {
                     Picker("Group", selection: $groupID) {
                         ForEach(groups) { Text($0.name).tag($0.id) }
                     }
+                    .accessibilityIdentifier("new-category-group")
+                    .accessibilityValue(groups.first(where: { $0.id == groupID })?.name ?? "No group selected")
                 }
                 if delegatedUserID == nil {
                     TextField(groups.isEmpty ? "First group name" : "Or create a new group", text: $newGroupName)

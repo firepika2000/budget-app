@@ -126,6 +126,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=plan"]
         app.launch()
+        let groupPicker = app.descendants(matching: .any).matching(identifier: "new-category-group").firstMatch
 
         XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
         app.buttons["Create Category Group"].tap()
@@ -153,9 +154,12 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Savings Goals"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["No categories yet"].exists)
         let addCategory = app.buttons["empty-group-add-category-demo-group-savings-goals"]
-        XCTAssertTrue(addCategory.exists)
+        if !addCategory.exists { app.swipeUp() }
+        XCTAssertTrue(addCategory.waitForExistence(timeout: 5))
         addCategory.tap()
         XCTAssertTrue(app.navigationBars["New Category"].waitForExistence(timeout: 5))
+        XCTAssertTrue(groupPicker.waitForExistence(timeout: 5))
+        XCTAssertEqual(groupPicker.value as? String, "Savings Goals")
         app.textFields["new-category-name"].tap()
         app.textFields["new-category-name"].typeText("Emergency Fund")
         app.buttons["Create"].tap()
@@ -163,6 +167,33 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Emergency Fund'")).firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Groceries'")).firstMatch.exists)
         XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == 'Savings Goals'")).count, 1)
+
+        app.swipeDown()
+        let monthlyAddCategory = app.buttons["group-add-category-demo-group-monthly-expenses"]
+        XCTAssertTrue(monthlyAddCategory.waitForExistence(timeout: 5))
+        monthlyAddCategory.tap()
+        XCTAssertTrue(app.navigationBars["New Category"].waitForExistence(timeout: 5))
+        XCTAssertTrue(groupPicker.waitForExistence(timeout: 5))
+        XCTAssertEqual(groupPicker.value as? String, "Monthly Expenses")
+        app.textFields["new-category-name"].tap()
+        app.textFields["new-category-name"].typeText("Utilities")
+        app.buttons["Create"].tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Utilities'")).firstMatch.waitForExistence(timeout: 5))
+
+        app.swipeUp()
+        let savingsAddCategory = app.buttons["group-add-category-demo-group-savings-goals"]
+        XCTAssertTrue(savingsAddCategory.waitForExistence(timeout: 5))
+        savingsAddCategory.tap()
+        XCTAssertTrue(app.navigationBars["New Category"].waitForExistence(timeout: 5))
+        XCTAssertTrue(groupPicker.waitForExistence(timeout: 5))
+        XCTAssertEqual(groupPicker.value as? String, "Savings Goals")
+        app.buttons["Cancel"].tap()
+        app.buttons["plan-add-menu"].tap()
+        app.buttons["global-add-category-action"].tap()
+        XCTAssertTrue(app.navigationBars["New Category"].waitForExistence(timeout: 5))
+        XCTAssertTrue(groupPicker.waitForExistence(timeout: 5))
+        XCTAssertEqual(groupPicker.value as? String, "Monthly Expenses", "global creation must use its normal first-group default, not stale contextual state")
+        app.buttons["Cancel"].tap()
 
         app.buttons["plan-add-menu"].tap()
         app.buttons["manage-category-groups-action"].tap()

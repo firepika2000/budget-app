@@ -903,13 +903,12 @@ private struct LivePlanView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var editing: APICategoryMonth?
     @State private var movePresentation: MoveMoneyPresentation?
-    @State private var showCategory = false
+    @State private var categoryCreation: CategoryCreationPresentation?
     @State private var showSmartFunding = false
     @State private var showRequest = false
     @State private var managing: APICategory?
     @State private var showGroups = false
     @State private var showGroupCreation = false
-    @State private var preferredCategoryGroupID = ""
     @State private var focus = PlanFocus.all
     private var rows: [APICategoryMonth] { (store.summary?.categories ?? []).filter { row in switch focus { case .all: true; case .underfunded: (row.underfundedMinor ?? 0) > 0; case .overspent: row.isOverspent; case .funded: (row.underfundedMinor ?? 0) == 0 && !row.isOverspent; case .available: row.availableMinor > 0 } } }
     // A brand-new Budget has no groups/categories. Surface a discoverable primary action to create
@@ -947,7 +946,7 @@ private struct LivePlanView: View {
                         if activation.canManageStructure {
                             Button {
                                 if activation.needsGroup { showGroupCreation = true }
-                                else { preferredCategoryGroupID = ""; showCategory = true }
+                                else { categoryCreation = .global }
                             } label: {
                                 Label(store.groups.isEmpty ? "Create Category Group" : "Add Category", systemImage: "folder.badge.plus").frame(maxWidth: .infinity)
                             }
@@ -974,16 +973,30 @@ private struct LivePlanView: View {
                     Section(group.name) {
                         Text("No categories yet").foregroundStyle(.secondary)
                         if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") {
-                            Button("Add Category", systemImage: "folder.badge.plus") { preferredCategoryGroupID = group.id; showCategory = true }
+                            Button("Add Category", systemImage: "folder.badge.plus") { categoryCreation = .contextual(groupID: group.id) }
                                 .accessibilityIdentifier("empty-group-add-category-\(group.id)")
                         }
                     }
-                } else if !groupRows.isEmpty { Section(group.name) { ForEach(groupRows) { category in NavigationLink { LivePlanCategoryDetailView(categoryID: category.categoryID, assign: { editing = category }, move: { movePresentation = .init(sourceCategoryID: category.categoryID) }, manage: { managing = store.categories.first(where: { $0.id == category.categoryID }) }) } label: { PlanCategoryRow(category: category) }.accessibilityIdentifier("plan-category-\(category.categoryID)").contextMenu { if let model = store.categories.first(where: { $0.id == category.categoryID }), canManage(model) { Button("Manage Category", systemImage: "pencil") { managing = model } } } } } }
+                } else if !groupRows.isEmpty {
+                    Section(group.name) {
+                        ForEach(groupRows) { category in
+                            NavigationLink {
+                                LivePlanCategoryDetailView(categoryID: category.categoryID, assign: { editing = category }, move: { movePresentation = .init(sourceCategoryID: category.categoryID) }, manage: { managing = store.categories.first(where: { $0.id == category.categoryID }) })
+                            } label: { PlanCategoryRow(category: category) }
+                                .accessibilityIdentifier("plan-category-\(category.categoryID)")
+                                .contextMenu { if let model = store.categories.first(where: { $0.id == category.categoryID }), canManage(model) { Button("Manage Category", systemImage: "pencil") { managing = model } } }
+                        }
+                        if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") {
+                            Button("Add Category", systemImage: "folder.badge.plus") { categoryCreation = .contextual(groupID: group.id) }
+                                .accessibilityIdentifier("group-add-category-\(group.id)")
+                        }
+                    }
+                }
             }
         }.accessibilityIdentifier("plan-screen").navigationTitle("Plan").toolbar {
             Menu {
                 if store.delegatedBudget == nil && store.budget.can("assign_money") { Button("Smart Funding", systemImage: "sparkles") { showSmartFunding = true } }
-                if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") { Button("Add category", systemImage: "folder.badge.plus") { preferredCategoryGroupID = ""; showCategory = true } }
+                if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") { Button("Add category", systemImage: "folder.badge.plus") { categoryCreation = .global }.accessibilityIdentifier("global-add-category-action") }
                 if store.budget.can("manage_budget_structure") { Button("Add category group", systemImage: "folder.badge.plus") { showGroupCreation = true }.accessibilityIdentifier("add-category-group-action") }
                 if store.budget.can("manage_budget_structure") { Button("Manage groups", systemImage: "folder") { showGroups = true }.accessibilityIdentifier("manage-category-groups-action") }
                 if store.budget.can("move_money") { Button("Move money", systemImage: "arrow.left.arrow.right") { movePresentation = .init(sourceCategoryID: nil) } }
@@ -992,7 +1005,7 @@ private struct LivePlanView: View {
         }
         .sheet(item: $editing) { category in editAssignment(category) }
         .sheet(item: $movePresentation) { presentation in moveMoney(initialSourceCategoryID: presentation.sourceCategoryID) }
-        .sheet(isPresented: $showCategory) { createCategory }
+        .sheet(item: $categoryCreation) { presentation in createCategory(presentation) }
         .sheet(isPresented: $showSmartFunding) { smartFunding }
         .sheet(isPresented: $showRequest) { FundingRequestView(budget: store.budget, categories: store.categories, onSaved: reload) }
         .sheet(item: $managing) { category in LiveCategoryEditView(budget: store.budget, category: category, groups: store.groups, members: store.householdMembers, onSaved: reload) }
@@ -1013,12 +1026,12 @@ private struct LivePlanView: View {
             AllocationTransferView(budget: store.budget, categories: summary.categories, expectedAllocationVersion: summary.allocationVersion, initialSourceCategoryID: initialSourceCategoryID, onSaved: reload)
         }
     }
-    @ViewBuilder private var createCategory: some View {
+    @ViewBuilder private func createCategory(_ presentation: CategoryCreationPresentation) -> some View {
         CategoryCreationView(
                 budget: store.budget,
                 groups: store.groups,
                 onSaved: reload,
-                initialGroupID: preferredCategoryGroupID,
+                initialGroupID: presentation.groupID ?? "",
                 delegatedUserID: store.budget.can("manage_own_categories") && !store.budget.can("manage_budget_structure") ? session.profile?.id : nil
             )
     }
@@ -1028,6 +1041,14 @@ private struct LivePlanView: View {
     private func reload() async { await store.refresh() }
     private func canManage(_ category: APICategory) -> Bool { store.budget.can("manage_budget_structure") || (store.budget.can("manage_own_categories") && category.delegatedUserID == session.profile?.id) }
     private func changeMonth(_ value: Int) { if let next = Calendar.current.date(byAdding: .month, value: value, to: store.planMonth) { store.planMonth = next; Task { await reload() } } }
+}
+
+private struct CategoryCreationPresentation: Identifiable {
+    let id = UUID()
+    let groupID: String?
+
+    static var global: Self { .init(groupID: nil) }
+    static func contextual(groupID: String) -> Self { .init(groupID: groupID) }
 }
 
 private struct GroupCreationView: View {
