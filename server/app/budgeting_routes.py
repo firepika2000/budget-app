@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.exc import IntegrityError
 
 from .access import (
     can_access_resource,
@@ -29,6 +30,7 @@ from .allocation import (
 from .database import get_db
 from .dependencies import get_current_user
 from .credit import add_payment_reserve_event, add_purchase_reserve_events, ensure_credit_payment_category
+from .category_names import normalized_category_name
 from .models import (
     Account,
     AllowancePlan,
@@ -322,7 +324,12 @@ def update_account(
         payment_category = db.get(Category, account.payment_category_id)
         if payment_category is not None and payment_category.system_type == "credit_payment":
             payment_category.name = f"{account.name} Payment"
-    db.commit()
+            payment_category.name_key = normalized_category_name(payment_category.name)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A category with this name already exists in the group")
     db.refresh(account)
     return account
 
@@ -473,22 +480,34 @@ def create_category(
         ))
         if member is None:
             raise HTTPException(status_code=422, detail="Delegated user must be an active household member")
-    category = Category(budget_id=budget_id, **body.model_dump())
-    db.add(category)
-    db.flush()
-    if is_own_delegated_creation:
-        profile = db.scalar(select(BudgetAccessProfile).where(
-            BudgetAccessProfile.budget_id == budget_id,
-            BudgetAccessProfile.user_id == user.id,
-        ))
-        if profile is not None and profile.restrict_categories:
-            db.add(ResourceGrant(
-                budget_id=budget_id,
-                user_id=user.id,
-                resource_type="category",
-                resource_id=category.id,
+    category_name = body.name.strip()
+    name_key = normalized_category_name(category_name)
+    if not name_key:
+        raise HTTPException(status_code=422, detail="Enter a category name")
+    existing_names = db.scalars(select(Category.name).where(Category.group_id == body.group_id)).all()
+    if any(normalized_category_name(name) == name_key for name in existing_names):
+        raise HTTPException(status_code=409, detail="A category with this name already exists in the group")
+    category_values = body.model_dump(exclude={"name"})
+    category = Category(budget_id=budget_id, name=category_name, name_key=name_key, **category_values)
+    try:
+        db.add(category)
+        db.flush()
+        if is_own_delegated_creation:
+            profile = db.scalar(select(BudgetAccessProfile).where(
+                BudgetAccessProfile.budget_id == budget_id,
+                BudgetAccessProfile.user_id == user.id,
             ))
-    db.commit()
+            if profile is not None and profile.restrict_categories:
+                db.add(ResourceGrant(
+                    budget_id=budget_id,
+                    user_id=user.id,
+                    resource_type="category",
+                    resource_id=category.id,
+                ))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A category with this name already exists in the group")
     db.refresh(category)
     return category
 
@@ -546,19 +565,28 @@ def update_category(
     group = db.get(CategoryGroup, body.group_id)
     if group is None or group.budget_id != budget_id:
         raise HTTPException(status_code=422, detail="Invalid category group")
-    duplicate = db.scalar(select(Category.id).where(
-        Category.budget_id == budget_id,
+    category_name = body.name.strip()
+    name_key = normalized_category_name(category_name)
+    if not name_key:
+        raise HTTPException(status_code=422, detail="Enter a category name")
+    sibling_rows = db.execute(select(Category.id, Category.name).where(
         Category.group_id == body.group_id,
-        Category.name == body.name.strip(),
         Category.id != category_id,
-    ))
-    if duplicate is not None:
+    )).all()
+    conflicting_siblings = [row for row in sibling_rows if normalized_category_name(row.name) == name_key]
+    current_key = normalized_category_name(category.name)
+    if conflicting_siblings and name_key != current_key:
         raise HTTPException(status_code=409, detail="A category with this name already exists in the group")
     category.group_id = body.group_id
-    category.name = body.name.strip()
+    category.name = category_name
+    category.name_key = None if conflicting_siblings else name_key
     category.sort_order = body.sort_order
     category.is_archived = body.is_archived
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A category with this name already exists in the group")
     db.refresh(category)
     return category
 

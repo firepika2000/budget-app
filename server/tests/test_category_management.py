@@ -2,6 +2,59 @@ from .conftest import auth
 from .test_budgeting_api import add_member, create_budget, create_budget_structure
 
 
+def test_category_names_are_normalized_unique_within_group_but_allowed_across_groups(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    _, category = create_budget_structure(client, owner_token, budget["id"])
+    path = f"/api/v1/budgets/{budget['id']}"
+    first_group = client.get(f"{path}/category-groups", headers=auth(owner_token)).json()[0]
+    second_group = client.post(
+        f"{path}/category-groups",
+        headers=auth(owner_token),
+        json={"name": "Savings Goals", "sort_order": 1},
+    ).json()
+    before_categories = client.get(f"{path}/categories", headers=auth(owner_token)).json()
+
+    for duplicate_name in ("Groceries", "groceries", "  GROCERIES  "):
+        rejected = client.post(
+            f"{path}/categories",
+            headers=auth(owner_token),
+            json={"group_id": first_group["id"], "name": duplicate_name},
+        )
+        assert rejected.status_code == 409
+        assert "already exists" in rejected.json()["detail"]
+    assert client.get(f"{path}/categories", headers=auth(owner_token)).json() == before_categories
+
+    cross_group = client.post(
+        f"{path}/categories",
+        headers=auth(owner_token),
+        json={"group_id": second_group["id"], "name": " groceries "},
+    )
+    assert cross_group.status_code == 201
+    assert cross_group.json()["name"] == "groceries"
+
+    vacation = client.post(
+        f"{path}/categories",
+        headers=auth(owner_token),
+        json={"group_id": second_group["id"], "name": "Vacation"},
+    ).json()
+    conflict = client.put(
+        f"{path}/categories/{vacation['id']}",
+        headers=auth(owner_token),
+        json={"group_id": second_group["id"], "name": " GROCERIES ", "sort_order": 0, "is_archived": False},
+    )
+    assert conflict.status_code == 409
+
+    own_normalized = client.put(
+        f"{path}/categories/{category['id']}",
+        headers=auth(owner_token),
+        json={"group_id": first_group["id"], "name": " groceries ", "sort_order": 0, "is_archived": False},
+    )
+    assert own_normalized.status_code == 200
+    assert own_normalized.json()["name"] == "groceries"
+
+
 def test_group_lifecycle_ordering_and_safe_delete(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     _, category = create_budget_structure(client, owner_token, budget["id"])

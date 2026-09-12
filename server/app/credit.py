@@ -15,6 +15,7 @@ from .models import (
     Transaction,
     User,
 )
+from .category_names import normalized_category_name
 
 
 def ensure_credit_payment_category(db: Session, account: Account) -> Category:
@@ -40,6 +41,7 @@ def ensure_credit_payment_category(db: Session, account: Account) -> Category:
         budget_id=account.budget_id,
         group_id=group.id,
         name=f"{account.name} Payment",
+        name_key=normalized_category_name(f"{account.name} Payment"),
         sort_order=0,
         system_type="credit_payment",
         linked_account_id=account.id,

@@ -181,11 +181,15 @@ class CategoryGroup(Base):
 
 class Category(Base):
     __tablename__ = "categories"
+    __table_args__ = (
+        UniqueConstraint("group_id", "name_key", name="uq_categories_group_name_key"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
     group_id: Mapped[str] = mapped_column(ForeignKey("category_groups.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(100))
+    name_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     system_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)

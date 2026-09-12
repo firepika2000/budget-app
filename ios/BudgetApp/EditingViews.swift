@@ -744,6 +744,11 @@ struct CategoryCreationView: View {
         NavigationStack {
             Form {
                 TextField("Category name", text: $name).accessibilityIdentifier("new-category-name")
+                if categoryNameConflict {
+                    Text("A category with this name already exists in the selected group.")
+                        .font(.footnote).foregroundStyle(.red)
+                        .accessibilityIdentifier("category-name-conflict")
+                }
                 if !groups.isEmpty {
                     Picker("Group", selection: $groupID) {
                         ForEach(groups) { Text($0.name).tag($0.id) }
@@ -762,7 +767,7 @@ struct CategoryCreationView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") { Task { await save() } }.disabled(isSaving || name.isEmpty || targetGroupMissing)
+                    Button("Create") { Task { await save() } }.disabled(isSaving || normalizedCategoryName(name).isEmpty || targetGroupMissing || categoryNameConflict)
                 }
             }
             .overlay { if isSaving { ProgressView() } }
@@ -774,6 +779,11 @@ struct CategoryCreationView: View {
     }
 
     private var targetGroupMissing: Bool { groupID.isEmpty && newGroupName.isEmpty }
+    private var categoryNameConflict: Bool {
+        guard newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !groupID.isEmpty else { return false }
+        let key = normalizedCategoryName(name)
+        return !key.isEmpty && workspace.categories.contains { $0.groupID == groupID && normalizedCategoryName($0.name) == key }
+    }
     private var errorBinding: Binding<Bool> {
         Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
     }

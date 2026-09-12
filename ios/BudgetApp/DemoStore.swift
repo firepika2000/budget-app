@@ -276,7 +276,12 @@ final class DemoStore: ObservableObject {
 
     @discardableResult
     func createCategory(name: String, group: String = "Personal", initialAssignment: Int64 = 0) -> Bool {
-        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, initialAssignment >= 0 else { return fail(.invalidAmount) }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetGroup = isRestricted ? "My Budget" : group
+        guard !trimmedName.isEmpty, initialAssignment >= 0 else { return fail(.invalidAmount) }
+        guard !categories.contains(where: { $0.group == targetGroup && normalizedCategoryName($0.name) == normalizedCategoryName(trimmedName) }) else {
+            return failMessage("A category with this name already exists in the group.")
+        }
         if isRestricted && initialAssignment > delegatedReadyToAssign {
             return fail(.exceedsDelegatedAuthority(available: delegatedReadyToAssign))
         }
@@ -285,8 +290,8 @@ final class DemoStore: ObservableObject {
         }
         categories.append(.init(
             id: UUID().uuidString,
-            group: isRestricted ? "My Budget" : group,
-            name: name,
+            group: targetGroup,
+            name: trimmedName,
             icon: "folder.fill",
             assigned: initialAssignment,
             activity: 0,
@@ -464,6 +469,11 @@ final class DemoStore: ObservableObject {
 
     private func fail(_ error: DemoMutationError) -> Bool {
         errorMessage = error.localizedDescription
+        return false
+    }
+
+    private func failMessage(_ message: String) -> Bool {
+        errorMessage = message
         return false
     }
 

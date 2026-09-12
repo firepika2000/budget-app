@@ -246,7 +246,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func createRequest(_ value: APIFinancialRequestCreate) async throws { demo.requests.insert(.init(id: UUID().uuidString, member: demo.persona, amount: value.requestedAmountMinor, categoryID: value.destinationCategoryID, reason: value.reason, status: "Pending", date: .demo(monthsAgo: 0, day: 30)), at: 0) }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws {
         guard let index = demo.categories.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Category not found.") }
-        demo.categories[index].name = value.name; demo.categories[index].group = groupName ?? demo.categories[index].group; demo.categories[index].isHidden = value.isArchived
+        let targetGroup = groupName ?? demo.categories[index].group
+        guard !demo.categories.contains(where: { $0.id != id && $0.group == targetGroup && normalizedCategoryName($0.name) == normalizedCategoryName(value.name) }) else { throw workspaceRepositoryError("A category with this name already exists in the group.") }
+        demo.categories[index].name = value.name.trimmingCharacters(in: .whitespacesAndNewlines); demo.categories[index].group = targetGroup; demo.categories[index].isHidden = value.isArchived
     }
     func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws {
         guard let currentName else { throw workspaceRepositoryError("Category group not found.") }
@@ -505,7 +507,12 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func createCategory(groupID: String, newGroupName: String, name: String, delegatedUserID: String?) async throws {
-        try await commands().createCategory(groupID: groupID, groupName: groups.first(where: { $0.id == groupID })?.name ?? "", newGroupName: newGroupName, name: name, delegatedUserID: delegatedUserID)
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { throw workspaceRepositoryError("Enter a category name.") }
+        if !groupID.isEmpty && categories.contains(where: { $0.groupID == groupID && normalizedCategoryName($0.name) == normalizedCategoryName(trimmedName) }) {
+            throw workspaceRepositoryError("A category with this name already exists in the group.")
+        }
+        try await commands().createCategory(groupID: groupID, groupName: groups.first(where: { $0.id == groupID })?.name ?? "", newGroupName: newGroupName, name: trimmedName, delegatedUserID: delegatedUserID)
         await refresh()
     }
 
@@ -533,6 +540,9 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func updateCategory(id: String, value: APICategoryUpdate, delegatedUserID: String?) async throws {
         let existing = categories.first(where: { $0.id == id })
+        if categories.contains(where: { $0.id != id && $0.groupID == value.groupID && normalizedCategoryName($0.name) == normalizedCategoryName(value.name) }) {
+            throw workspaceRepositoryError("A category with this name already exists in the group.")
+        }
         try await commands().updateCategory(id: id, value: value, groupName: groups.first(where: { $0.id == value.groupID })?.name, existingDelegatedUserID: existing?.delegatedUserID, delegatedUserID: delegatedUserID)
         await refresh()
     }
@@ -1626,7 +1636,8 @@ private struct LiveCategoryEditView: View {
         self.budget = budget; self.category = category; self.groups = groups; self.members = members; self.onSaved = onSaved
         _name = State(initialValue: category.name); _groupID = State(initialValue: category.groupID); _sortOrder = State(initialValue: category.sortOrder); _archived = State(initialValue: category.isArchived); _delegatedUserID = State(initialValue: category.delegatedUserID ?? "")
     }
-    var body: some View { NavigationStack { Form { TextField("Name", text: $name); Picker("Group", selection: $groupID) { ForEach(groups.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } };Stepper("Order \(sortOrder)",value:$sortOrder,in:0...10_000); if budget.can("manage_allowances") { Picker("Delegated budget", selection: $delegatedUserID) { Text("Household / private").tag(""); ForEach(members.filter { $0.role != "owner" && $0.isActive }) { Text($0.displayName).tag($0.userID) } } }; Toggle("Archived", isOn: $archived); if archived { Text("Archived categories remain in historical reports but are hidden from new spending and assignments.").font(.footnote).foregroundStyle(.secondary) };Section{Button("Delete Unused Category",role:.destructive){confirmDelete=true};Text("Categories with transactions, allocations, targets, or other financial history cannot be deleted. Archive them instead.").font(.footnote).foregroundStyle(.secondary)} }.navigationTitle("Manage Category").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || groupID.isEmpty || isSaving) } }.confirmationDialog("Delete this category?",isPresented:$confirmDelete){Button("Delete Unused Category",role:.destructive){Task{await remove()}}}.alert("Unable to update category", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } } }
+    var body: some View { NavigationStack { Form { TextField("Name", text: $name); if categoryNameConflict { Text("A category with this name already exists in the selected group.").font(.footnote).foregroundStyle(.red).accessibilityIdentifier("category-name-conflict") }; Picker("Group", selection: $groupID) { ForEach(groups.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } };Stepper("Order \(sortOrder)",value:$sortOrder,in:0...10_000); if budget.can("manage_allowances") { Picker("Delegated budget", selection: $delegatedUserID) { Text("Household / private").tag(""); ForEach(members.filter { $0.role != "owner" && $0.isActive }) { Text($0.displayName).tag($0.userID) } } }; Toggle("Archived", isOn: $archived); if archived { Text("Archived categories remain in historical reports but are hidden from new spending and assignments.").font(.footnote).foregroundStyle(.secondary) };Section{Button("Delete Unused Category",role:.destructive){confirmDelete=true};Text("Categories with transactions, allocations, targets, or other financial history cannot be deleted. Archive them instead.").font(.footnote).foregroundStyle(.secondary)} }.navigationTitle("Manage Category").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(normalizedCategoryName(name).isEmpty || groupID.isEmpty || isSaving || categoryNameConflict) } }.confirmationDialog("Delete this category?",isPresented:$confirmDelete){Button("Delete Unused Category",role:.destructive){Task{await remove()}}}.alert("Unable to update category", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } } }
+    private var categoryNameConflict: Bool { let key=normalizedCategoryName(name); return !key.isEmpty && workspace.categories.contains { $0.id != category.id && $0.groupID == groupID && normalizedCategoryName($0.name) == key } }
     private func save() async { isSaving = true; defer { isSaving = false }; do { try await workspace.updateCategory(id: category.id, value: APICategoryUpdate(groupID: groupID, name: name, sortOrder: sortOrder, isArchived: archived), delegatedUserID: delegatedUserID.isEmpty ? nil : delegatedUserID); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func remove()async{isSaving=true;defer{isSaving=false};do{try await workspace.deleteCategory(id:category.id);dismiss()}catch{errorMessage=error.localizedDescription}}
 }

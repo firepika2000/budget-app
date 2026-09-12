@@ -169,6 +169,50 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testCategoryNamesAreNormalizedUniqueWithinGroupWithoutFinancialMutation() async throws {
+        let store = BudgetWorkspaceStore.demo(fresh: true)
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        try await store.createGroup(name: "Savings Goals")
+        try await store.createGroup(name: "Monthly Expenses")
+        let savings = try XCTUnwrap(store.groups.first(where: { $0.name == "Savings Goals" }))
+        let monthly = try XCTUnwrap(store.groups.first(where: { $0.name == "Monthly Expenses" }))
+        try await store.createCategory(groupID: savings.id, newGroupName: "", name: "Emergency Fund", delegatedUserID: nil)
+        let summaryBefore = store.summary
+        let balancesBefore = store.accountBalances
+        let transactionsBefore = store.transactions
+
+        for duplicateName in ["Emergency Fund", "emergency fund", "  EMERGENCY FUND  "] {
+            do {
+                try await store.createCategory(groupID: savings.id, newGroupName: "", name: duplicateName, delegatedUserID: nil)
+                XCTFail("Expected duplicate category rejection for \(duplicateName)")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("already exists"))
+            }
+        }
+        XCTAssertEqual(store.summary, summaryBefore)
+        XCTAssertEqual(store.accountBalances, balancesBefore)
+        XCTAssertEqual(store.transactions, transactionsBefore)
+        XCTAssertEqual(store.categories.filter { $0.groupID == savings.id }.count, 1)
+
+        try await store.createCategory(groupID: monthly.id, newGroupName: "", name: " emergency fund ", delegatedUserID: nil)
+        try await store.createCategory(groupID: savings.id, newGroupName: "", name: "Vacation", delegatedUserID: nil)
+        let vacation = try XCTUnwrap(store.categories.first(where: { $0.name == "Vacation" }))
+        do {
+            try await store.updateCategory(id: vacation.id, value: .init(groupID: savings.id, name: "EMERGENCY FUND", sortOrder: vacation.sortOrder, isArchived: false), delegatedUserID: nil)
+            XCTFail("Expected conflicting rename rejection")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("already exists"))
+        }
+        let emergency = try XCTUnwrap(store.categories.first(where: { $0.groupID == savings.id && $0.name == "Emergency Fund" }))
+        try await store.updateCategory(id: emergency.id, value: .init(groupID: savings.id, name: " emergency fund ", sortOrder: emergency.sortOrder, isArchived: false), delegatedUserID: nil)
+        XCTAssertEqual(store.categories.first(where: { $0.id == emergency.id })?.name, "emergency fund")
+
+        let directDemo = DemoStore()
+        XCTAssertFalse(directDemo.createCategory(name: " groceries ", group: "Food"))
+        XCTAssertTrue(directDemo.errorMessage?.contains("already exists") == true)
+    }
+
+    @MainActor
     func testScheduledRepositoryCRUDRecurrencesAndFutureIncomeStayNonSpendable() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

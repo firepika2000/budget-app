@@ -1,6 +1,11 @@
 import BudgetAPI
 import Foundation
 
+func normalizedCategoryName(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased(with: Locale(identifier: "en_US_POSIX"))
+}
+
 // MARK: - Canonical product operations
 
 struct CreateAccountOperation: Equatable, Sendable {
