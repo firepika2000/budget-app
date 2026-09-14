@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select
@@ -53,20 +54,18 @@ def list_delegated_budgets(
     return [serialize_policy(db, policy) for policy in policies]
 
 
-@router.get("/me", response_model=DelegatedBudgetPolicyResponse)
+@router.get("/me", response_model=Optional[DelegatedBudgetPolicyResponse])
 def get_my_delegated_budget(
     budget_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> dict:
+) -> Optional[dict]:
     budget = require_budget_capability(db, user, budget_id, "view_categories")
     policy = db.scalar(select(DelegatedBudgetPolicy).where(
         DelegatedBudgetPolicy.budget_id == budget.id,
         DelegatedBudgetPolicy.user_id == user.id,
     ))
-    if policy is None:
-        raise HTTPException(status_code=404, detail="Delegated budget not found")
-    return serialize_policy(db, policy)
+    return None if policy is None else serialize_policy(db, policy)
 
 
 @router.put("/{user_id}", response_model=DelegatedBudgetPolicyResponse)

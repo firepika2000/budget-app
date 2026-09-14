@@ -21,6 +21,15 @@ def add_child(session_factory, client):
         return child.id, create_access_token(child.id, client.app.state.settings)
 
 
+def test_no_delegated_policy_is_a_successful_empty_state(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/delegated-budgets/me", headers=auth(owner_token)
+    )
+    assert response.status_code == 200
+    assert response.json() is None
+
+
 def configure_child(client, owner_token, budget_id, child_id, account_id, category_id):
     category_ids = category_id if isinstance(category_id, list) else [category_id]
     grant = client.put(

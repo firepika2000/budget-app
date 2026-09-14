@@ -472,26 +472,19 @@ final class APIClientTests: XCTestCase {
         }
     }
 
-    func testDelegatedBudgetNotFoundSurfacesAsServer404() async throws {
-        // The owner has no delegated budget, so /delegated-budgets/me returns 404 by design. The
-        // workspace loads it with `try?`, so the contract is: a 404 throws server(404) (→ nil),
-        // never a decode crash or a swallowed success.
+    func testMissingOptionalPlanningResourcesDecodeSuccessfulNull() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
         let session = URLSession(configuration: configuration)
         MockURLProtocol.handler = { request in
-            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/delegated-budgets/me")
-            let body = Data(#"{"detail":"Delegated budget not found"}"#.utf8)
-            return (HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!, body)
+            XCTAssertTrue(["/api/v1/budgets/b1/delegated-budgets/me", "/api/v1/budgets/b1/categories/c1/target"].contains(request.url?.path ?? ""))
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("null".utf8))
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
-        do {
-            _ = try await client.delegatedBudget(budgetID: "b1", token: "secret")
-            XCTFail("Expected a 404")
-        } catch let APIClientError.server(status, message) {
-            XCTAssertEqual(status, 404)
-            XCTAssertEqual(message, "Delegated budget not found")
-        }
+        let delegated = try await client.delegatedBudget(budgetID: "b1", token: "secret")
+        let target = try await client.categoryTarget(budgetID: "b1", categoryID: "c1", token: "secret")
+        XCTAssertNil(delegated)
+        XCTAssertNil(target)
     }
 }
 

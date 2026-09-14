@@ -188,7 +188,7 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/delegation", method: "PUT", token: token, body: APICategoryDelegationUpdate(delegatedUserID: delegatedUserID))
     }
 
-    public func categoryTarget(budgetID: String, categoryID: String, token: String) async throws -> APICategoryTarget { try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/target", token: token) }
+    public func categoryTarget(budgetID: String, categoryID: String, token: String) async throws -> APICategoryTarget? { try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/target", token: token) }
     public func upsertCategoryTarget(budgetID: String, categoryID: String, target: APICategoryTargetUpsert, token: String) async throws -> APICategoryTarget { try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/target", method: "PUT", token: token, body: target) }
     public func deleteCategoryTarget(budgetID: String, categoryID: String, token: String) async throws { let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/target", method: "DELETE", token: token) }
 
@@ -393,7 +393,7 @@ public struct APIClient {
         )
     }
 
-    public func delegatedBudget(budgetID: String, token: String) async throws -> APIDelegatedBudget {
+    public func delegatedBudget(budgetID: String, token: String) async throws -> APIDelegatedBudget? {
         try await send(path: "api/v1/budgets/\(budgetID)/delegated-budgets/me", token: token)
     }
 

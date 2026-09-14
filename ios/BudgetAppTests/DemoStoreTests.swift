@@ -406,10 +406,16 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertFalse(rows.isEmpty)
         XCTAssertTrue(rows.allSatisfy { $0.accountID == account.id })
         XCTAssertEqual(rows.map(\.occurredOn), rows.map(\.occurredOn).sorted(by: >))
+        XCTAssertEqual(store.transactions(for: account).map(\.id), rows.map(\.id), "same-date ordering must remain stable")
         XCTAssertTrue(rows.contains { $0.transferID != nil })
         XCTAssertTrue(store.transactions(for: destination).contains { $0.transferID != nil })
         XCTAssertTrue(rows.contains { !$0.splits.isEmpty })
         XCTAssertEqual(store.balance(for: account), store.clearedBalance(for: account) + store.unclearedBalance(for: account))
+
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift"))
+        XCTAssertTrue(source.contains("compactDate(transaction.occurredOn)"), "posted register rows must show their transaction date")
+        XCTAssertTrue(source.contains("ScheduledActivityPresentation"), "all upcoming and forecast schedule rows must share an explicit Scheduled/date treatment")
+        XCTAssertFalse(source.contains("if $0.occurredOn == $1.occurredOn { return $0.id"), "same-date ordering must not use UUID order")
     }
 
     @MainActor

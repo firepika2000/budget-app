@@ -468,6 +468,7 @@ class TransactionResponse(BaseModel):
     category_id: Optional[str]
     amount_minor: int
     occurred_on: date
+    created_at: datetime
     payee_name: str
     memo: str
     is_cleared: bool

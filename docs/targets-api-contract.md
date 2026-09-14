@@ -32,7 +32,7 @@ One target per category (`UNIQUE(category_id)`).
 
 ### `GET /categories/{category_id}/target` — read
 - **Capability:** `view_categories`. **Scope:** enforced.
-- **Returns:** `200` `CategoryTargetResponse`, or `404` when none / out of scope (indistinguishable — no existence leak).
+- **Returns:** `200` `CategoryTargetResponse`, or `200 null` when the visible category has no target. Missing, cross-budget, or out-of-scope categories remain `404` to prevent existence leaks.
 
 ### `DELETE /categories/{category_id}/target` — delete  *(added this workstream)*
 - **Capability:** `manage_planning`. **Scope:** enforced.
@@ -55,7 +55,7 @@ Per category, the month summary carries `recommended_contribution_minor` and `un
 - **Types & round-trip:** all four types create + read back; annual via `recurrence_months=12`.
 - **Math:** monthly & savings recommendation/underfunded (by-date in `test_planning`).
 - **Accounting invariants:** create/edit/deactivate/delete leave RTA, `allocation_version`, assigned, Σ allocation postings, account balance, and transaction count unchanged; large future target adds no spendable cash; recommendation ≠ assignment; delete removes no transactions.
-- **Delete semantics:** `204`; subsequent `GET` `404`; delete-when-none `404`; re-create works.
+- **Delete semantics:** `204`; subsequent `GET` is `200 null`; delete-when-none remains `404`; re-create works.
 - **Authorization/privacy:** `manage_planning` required (`403` without); scoped planner limited to visible categories; hidden category create/read/delete all `404` (no leak); cross-budget category `404`; deactivated member `404` while history is preserved.
 - **Validation:** negative/zero/over-Int64 amount, invalid enum, malformed date, missing required date/recurrence, out-of-range priority, negative minimum, nonexistent category.
 - **Concurrency:** deterministic last-writer-wins; exactly one row per category.

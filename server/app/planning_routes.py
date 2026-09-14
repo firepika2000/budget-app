@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -71,22 +72,21 @@ def upsert_category_target(
     return target
 
 
-@router.get("/categories/{category_id}/target", response_model=CategoryTargetResponse)
+@router.get("/categories/{category_id}/target", response_model=Optional[CategoryTargetResponse])
 def get_category_target(
     budget_id: str,
     category_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> CategoryTarget:
+) -> Optional[CategoryTarget]:
     budget = require_budget_capability(db, user, budget_id, "view_categories")
-    if not can_access_resource(db, user, budget, "category", category_id):
+    category = db.get(Category, category_id)
+    if category is None or category.budget_id != budget_id or not can_access_resource(db, user, budget, "category", category_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target not found")
     target = db.scalar(select(CategoryTarget).where(
         CategoryTarget.budget_id == budget_id,
         CategoryTarget.category_id == category_id,
     ))
-    if target is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target not found")
     return target
 
 

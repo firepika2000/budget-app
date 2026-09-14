@@ -660,9 +660,20 @@ final class BudgetWorkspaceStore: ObservableObject {
     func unclearedBalance(for account: APIAccount) -> Int64 { accountBalances[account.id]?.unclearedBalanceMinor ?? transactions.filter { $0.accountID == account.id && !$0.isCleared }.reduce(0) { $0 + $1.amountMinor } }
     func transactions(for account: APIAccount) -> [APITransaction] {
         transactions.filter { $0.accountID == account.id }.sorted {
-            if $0.occurredOn == $1.occurredOn { return $0.id > $1.id }
+            if $0.occurredOn == $1.occurredOn {
+                if $0.createdAt != $1.createdAt { return ($0.createdAt ?? "") > ($1.createdAt ?? "") }
+                if $0.payeeName != $1.payeeName { return $0.payeeName.localizedStandardCompare($1.payeeName) == .orderedAscending }
+                if $0.amountMinor != $1.amountMinor { return $0.amountMinor > $1.amountMinor }
+                return $0.memo.localizedStandardCompare($1.memo) == .orderedAscending
+            }
             return $0.occurredOn > $1.occurredOn
         }
+    }
+
+    static func compactDate(_ value: String, now: Date = Date()) -> String {
+        let date = parseDate(value)
+        let includeYear = Calendar.current.component(.year, from: date) != Calendar.current.component(.year, from: now)
+        return includeYear ? date.formatted(.dateTime.month(.abbreviated).day().year()) : date.formatted(.dateTime.month(.abbreviated).day())
     }
 
     func reportRange(calendar: Calendar = .current, now: Date = Date()) -> (Date, Date) {
@@ -863,7 +874,7 @@ private struct LiveHomeView: View {
 
 private struct LiveForecastView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    var body: some View { List { if let forecast = store.forecast { Section { Text("Projected values include schedules but are not spendable until entered.").font(.footnote).foregroundStyle(.secondary) }; Section("Household cash") { LabeledContent("Today", value: store.format(forecast.actualTotalOnBudgetMinor)); LabeledContent("At \(forecast.through)", value: store.format(forecast.projectedTotalOnBudgetMinor)); LabeledContent("Lowest", value: store.format(forecast.lowestProjectedTotalMinor)) }; Section("Accounts") { ForEach(forecast.accounts) { account in VStack(alignment: .leading) { Text(account.name); HStack { Text("Now \(store.format(account.actualBalanceMinor))"); Spacer(); Text("Projected \(store.format(account.projectedBalanceMinor))") }.font(.caption).foregroundStyle(.secondary) } } }; Section("Scheduled activity") { if forecast.occurrences.isEmpty { Text("No scheduled transactions in this period").foregroundStyle(.secondary) }; ForEach(forecast.occurrences) { item in if let schedule = store.scheduledTransactions.first(where: { $0.id == item.scheduledTransactionID }) { NavigationLink { LiveScheduledTransactionEditor(schedule: schedule, currencyCode: store.budget.currencyCode) } label: { HStack { VStack(alignment: .leading) { Text(item.name); Text(item.occurredOn).font(.caption).foregroundStyle(.secondary) }; Spacer(); Text(store.format(item.amountMinor)).monospacedDigit() } } } else { HStack { Text(item.name); Spacer(); Text(store.format(item.amountMinor)).monospacedDigit() } } } } } }.navigationTitle("Forecast") }
+    var body: some View { List { if let forecast = store.forecast { Section { Text("Projected values include schedules but are not spendable until entered.").font(.footnote).foregroundStyle(.secondary) }; Section("Household cash") { LabeledContent("Today", value: store.format(forecast.actualTotalOnBudgetMinor)); LabeledContent("At \(forecast.through)", value: store.format(forecast.projectedTotalOnBudgetMinor)); LabeledContent("Lowest", value: store.format(forecast.lowestProjectedTotalMinor)) }; Section("Accounts") { ForEach(forecast.accounts) { account in VStack(alignment: .leading) { Text(account.name); HStack { Text("Now \(store.format(account.actualBalanceMinor))"); Spacer(); Text("Projected \(store.format(account.projectedBalanceMinor))") }.font(.caption).foregroundStyle(.secondary) } } }; Section("Scheduled activity") { if forecast.occurrences.isEmpty { Text("No scheduled transactions in this period").foregroundStyle(.secondary) }; ForEach(forecast.occurrences) { item in if let schedule = store.scheduledTransactions.first(where: { $0.id == item.scheduledTransactionID }) { NavigationLink { LiveScheduledTransactionEditor(schedule: schedule, currencyCode: store.budget.currencyCode) } label: { ScheduledActivityPresentation(name: item.name, amountMinor: item.amountMinor, occurrenceDate: item.occurredOn, context: item.categoryID.flatMap { id in store.categories.first(where: { $0.id == id })?.name }) } } else { ScheduledActivityPresentation(name: item.name, amountMinor: item.amountMinor, occurrenceDate: item.occurredOn, context: nil) } } } } }.navigationTitle("Forecast") }
 }
 
 private struct LiveRequestDetailView: View {
@@ -1263,18 +1274,31 @@ private struct ScheduledTransactionRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: kind.symbol).frame(width: 28, height: 28).foregroundStyle(kind == .income ? Theme.healthy : kind == .transfer ? Theme.projected : Theme.attention)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.name).fontWeight(.medium)
-                Text(item.isActive ? "\(accountName(item.accountID)) · \(recurrence)" : "Paused · no forecast or realization").font(.caption).foregroundStyle(item.isActive ? .secondary : Theme.attention)
-                if let category = item.categoryID { Text(store.categories.first(where: { $0.id == category })?.name ?? "Category").font(.caption2).foregroundStyle(.secondary) }
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 3) { Text(store.format(item.amountMinor)).monospacedDigit(); Text(item.nextDate).font(.caption).foregroundStyle(BudgetWorkspaceStore.parseDate(item.nextDate) <= Date() ? Theme.danger : .secondary) }
+            ScheduledActivityPresentation(name: item.name, amountMinor: item.amountMinor, occurrenceDate: item.nextDate, context: item.isActive ? "\(accountName(item.accountID)) · \(recurrence)" : "Paused · no forecast or realization")
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.name), \(item.isActive ? "active" : "paused"), \(kind.rawValue), \(store.format(item.amountMinor)), \(recurrence), next \(item.nextDate)")
     }
     private func accountName(_ id: String) -> String { store.accounts.first(where: { $0.id == id })?.name ?? "Account" }
+}
+
+private struct ScheduledActivityPresentation: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let name: String
+    let amountMinor: Int64
+    let occurrenceDate: String
+    let context: String?
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name).fontWeight(.medium)
+                if let context, !context.isEmpty { Text(context).font(.caption).foregroundStyle(.secondary) }
+                Text("Scheduled \(BudgetWorkspaceStore.compactDate(occurrenceDate))").font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(store.format(amountMinor)).monospacedDigit()
+        }
+    }
 }
 
 private struct LiveScheduledTransactionEditor: View {
@@ -1359,10 +1383,10 @@ private struct LiveTransactionLink: View {
         if let transferID = transaction.transferID,
            let counterpart = store.transactions.first(where: { $0.transferID == transferID && $0.id != transaction.id }),
            let account = store.accounts.first(where: { $0.id == counterpart.accountID }) {
-            return "\(transaction.amountMinor < 0 ? "To" : "From") \(account.name)"
+            return "\(transaction.amountMinor < 0 ? "To" : "From") \(account.name) · \(BudgetWorkspaceStore.compactDate(transaction.occurredOn))"
         }
         let category = store.categoryName(transaction)
-        return category.isEmpty ? transaction.occurredOn : category
+        return [category, BudgetWorkspaceStore.compactDate(transaction.occurredOn)].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
 

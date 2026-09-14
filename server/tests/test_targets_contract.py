@@ -164,7 +164,9 @@ def test_delete_target_is_idempotent_contract(client, owner_token, session_facto
     client.put(target_url(budget["id"], category["id"]), headers=auth(owner_token),
                json={"target_type": "monthly_funding", "target_amount_minor": 40000})
     assert client.delete(target_url(budget["id"], category["id"]), headers=auth(owner_token)).status_code == 204
-    assert client.get(target_url(budget["id"], category["id"]), headers=auth(owner_token)).status_code == 404
+    absent = client.get(target_url(budget["id"], category["id"]), headers=auth(owner_token))
+    assert absent.status_code == 200
+    assert absent.json() is None
     # Deleting again (none present) is 404, not 500.
     assert client.delete(target_url(budget["id"], category["id"]), headers=auth(owner_token)).status_code == 404
     # Re-creating after delete works.

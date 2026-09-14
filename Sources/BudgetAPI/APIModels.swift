@@ -491,6 +491,7 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
     public let categoryID: String?
     public let amountMinor: Int64
     public let occurredOn: String
+    public let createdAt: String?
     public let payeeName: String
     public let memo: String
     public let isCleared: Bool
@@ -507,6 +508,7 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
         case categoryID = "category_id"
         case amountMinor = "amount_minor"
         case occurredOn = "occurred_on"
+        case createdAt = "created_at"
         case payeeName = "payee_name"
         case isCleared = "is_cleared"
         case isReconciled = "is_reconciled"
