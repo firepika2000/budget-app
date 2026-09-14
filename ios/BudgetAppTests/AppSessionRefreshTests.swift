@@ -62,6 +62,18 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertEqual(context, .deterministic)
     }
 
+    @MainActor
+    func testProductionWorkspaceRebindsCommandsAfterAccessTokenRotation() {
+        let budget = APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD")
+        let serverURL = URL(string: "https://budget.example.com")!
+        let store = BudgetWorkspaceStore.production(context: .live(budget: budget, serverURL: serverURL, token: "A1"))
+
+        XCTAssertTrue(store.usesLiveCredential("A1"))
+        store.updateLiveCredentials(serverURL: serverURL, token: "A2")
+        XCTAssertFalse(store.usesLiveCredential("A1"))
+        XCTAssertTrue(store.usesLiveCredential("A2"), "all subsequent commands, including schedule creation, must use the rotated access token")
+    }
+
     // Concurrent refresh demand must collapse to exactly one network refresh, and the rotated
     // credentials (A2/R2) must be what remains — no losing caller re-submits the old token or clears
     // the newer credentials, and no user-facing error is produced.

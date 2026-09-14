@@ -439,6 +439,19 @@ final class BudgetWorkspaceStore: ObservableObject {
         await loadSnapshot()
     }
 
+    func updateLiveCredentials(serverURL: URL, token: String) {
+        guard let current = dataSource as? LiveWorkspaceDataSource,
+              current.serverURL != serverURL || current.token != token else { return }
+        let source = LiveWorkspaceDataSource(budget: budget, serverURL: serverURL, token: token)
+        dataSource = source
+        commandRepository = source.commands
+        applicationServices = BudgetApplicationServices(repository: source.commands)
+    }
+
+    func usesLiveCredential(_ token: String) -> Bool {
+        (dataSource as? LiveWorkspaceDataSource)?.token == token
+    }
+
     private func loadSnapshot() async {
         isLoading = true
         defer { isLoading = false }
@@ -727,6 +740,11 @@ struct BudgetWorkspaceView: View {
         .tint(Theme.accent)
         .overlay { if store.isLoading { ProgressView().padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
         .task { await reload() }
+        .onChange(of: session.token) { _, token in
+            guard let token, let serverURL = session.serverURL else { return }
+            store.updateLiveCredentials(serverURL: serverURL, token: token)
+            Task { await reload() }
+        }
         .alert("Unable to complete request", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("Retry") { Task { await reload() } }; Button("Cancel", role: .cancel) {}
         } message: { Text(store.errorMessage ?? "Unknown error") }
@@ -1319,7 +1337,7 @@ private struct LiveScheduledTransactionEditor: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; if store.budget.can("manage_planning") { ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(!valid || saving) } } }
             .confirmationDialog("Enter this occurrence now?", isPresented: $confirmRealize) { Button("Enter Now") { Task { await realize() } } } message: { Text("This creates an actual transaction. It is no longer forecast-only.") }
             .confirmationDialog("Delete this schedule?", isPresented: $confirmDelete) { Button("Delete Schedule", role: .destructive) { Task { await remove() } } }
-            .alert("Unable to update schedule", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
+            .alert(schedule == nil ? "Unable to create schedule" : "Unable to update schedule", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
         }
     }
     private func payload(isActive: Bool? = nil) -> ScheduleOperation { .init(accountID: accountID, destinationAccountID: kind == .transfer ? destinationAccountID : nil, categoryID: kind == .expense ? categoryID : nil, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: kind == .expense ? -(parsed ?? 0) : parsed ?? 0, nextDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrenceUnit, intervalCount: recurrenceUnit == "once" ? 1 : intervalCount, memo: memo, isActive: isActive ?? active) }

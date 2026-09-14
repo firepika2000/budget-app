@@ -52,6 +52,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(editor.contains("openingBalanceMinor: balance"))
         XCTAssertTrue(editor.contains("selection: $date, in: ...Date()"), "ordinary transaction entry must not accept future actual dates")
         XCTAssertTrue(workspace.contains("Button(\"Schedule Transaction\""), "the production Activity action menu must expose canonical schedule creation")
+        XCTAssertTrue(workspace.contains(".onChange(of: session.token)"), "the production workspace must rebind its repository after access-token rotation")
+        XCTAssertTrue(workspace.contains("schedule == nil ? \"Unable to create schedule\" : \"Unable to update schedule\""))
         XCTAssertFalse(editor.contains("APITransactionCreate("), "production editors must emit canonical application operations")
         XCTAssertFalse(editor.contains("let serverURL"), "editors must submit through the shared workspace store, not own transport configuration")
         XCTAssertFalse(editor.contains("let token"), "credentials must not leak into local editing state")
