@@ -188,6 +188,7 @@ protocol TransactionCommandRepository: AnyObject {
     func recordTransaction(_ operation: RecordTransactionOperation) async throws
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws
     func deleteTransaction(id: String) async throws
+    func duplicateTransaction(id: String, occurredOn: String) async throws
     func transferMoney(_ operation: TransferMoneyOperation) async throws
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws
     func deleteTransfer(id: String) async throws
@@ -301,6 +302,11 @@ struct TransactionService {
 
     func delete(id: String) async throws {
         do { try await repository.deleteTransaction(id: id) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func duplicate(id: String, occurredOn: String) async throws {
+        do { try await repository.duplicateTransaction(id: id, occurredOn: occurredOn) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

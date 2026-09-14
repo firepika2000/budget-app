@@ -392,6 +392,14 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
 
     func deleteTransaction(id: String) async throws { guard demo.deleteTransaction(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func duplicateTransaction(id: String, occurredOn: String) async throws {
+        guard let source = demo.transactions.first(where: { $0.id == id }), source.transferID == nil, !source.scheduled else { throw workspaceRepositoryError("This system-linked transaction must be recreated through its specialized workflow") }
+        let amounts = demo.canonicalCategoryAmounts(for: source)
+        let singleCategory = amounts.count == 1 ? amounts.keys.first : nil
+        let splits = amounts.count > 1 ? amounts.keys.sorted().map { TransactionSplitOperation(categoryID: $0, amountMinor: amounts[$0]!, memo: "") } : []
+        let operation = RecordTransactionOperation(accountID: source.accountID, categoryID: singleCategory, amountMinor: source.amount, occurredOn: occurredOn, payeeName: source.payee, payeeID: demo.payees.first(where: { $0.name == source.payee })?.id, memo: source.memo, isCleared: false, splits: splits, flag: source.flag, tags: source.tags, attachmentMetadata: [])
+        guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
+    }
     func transferMoney(_ operation: TransferMoneyOperation) async throws { guard demo.transfer(amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { guard demo.updateTransfer(id: id, amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func deleteTransfer(id: String) async throws { guard demo.deleteTransfer(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
@@ -487,6 +495,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func recordTransaction(_ operation: RecordTransactionOperation) async throws { _ = try await client.createTransaction(budgetID: budget.id, transaction: operation.apiValue, token: token) }
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: operation.apiValue, token: token) }
     func deleteTransaction(id: String) async throws { try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
+    func duplicateTransaction(id: String, occurredOn: String) async throws { _ = try await client.duplicateTransaction(budgetID: budget.id, transactionID: id, occurredOn: occurredOn, token: token) }
     func transferMoney(_ operation: TransferMoneyOperation) async throws { _ = try await client.createTransfer(budgetID: budget.id, transfer: operation.apiValue, token: token) }
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: operation.apiValue, token: token) }
     func deleteTransfer(id: String) async throws { try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
@@ -663,6 +672,11 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func deleteTransaction(id: String) async throws {
         try await services().transactions.delete(id: id)
+        await refresh()
+    }
+
+    func duplicateTransaction(id: String, occurredOn: String) async throws {
+        try await services().transactions.duplicate(id: id, occurredOn: occurredOn)
         await refresh()
     }
 
@@ -1628,6 +1642,7 @@ private struct LiveTransactionDetailView: View {
     @State private var showEdit = false
     @State private var editTransfer: TransferPresentation?
     @State private var confirmDelete = false
+    @State private var confirmDuplicate = false
     @State private var isDeleting = false
     var transaction: APITransaction? { store.transactions.first(where: { $0.id == transactionID }) }
     var body: some View {
@@ -1647,6 +1662,7 @@ private struct LiveTransactionDetailView: View {
                 } else if transaction.transferID == nil {
                     Menu {
                         if store.budget.can("edit_transaction") { Button("Edit", systemImage: "pencil") { showEdit = true } }
+                        if store.budget.can("create_transaction"), transaction.scheduledTransactionID == nil, !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Duplicate", systemImage: "plus.square.on.square") { confirmDuplicate = true }.accessibilityIdentifier("duplicate-transaction-action") }
                         if store.budget.can("delete_transaction") { Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true } }
                     } label: { Image(systemName: "ellipsis.circle") }
                 }
@@ -1654,6 +1670,7 @@ private struct LiveTransactionDetailView: View {
         }
             .sheet(isPresented: $showEdit) { if let transaction { LiveTransactionEditView(budget: store.budget, transaction: transaction, accounts: store.accounts, categories: store.categories, onSaved: reload) } }
             .sheet(item: $editTransfer) { LiveTransferView(presentation: $0, budget: store.budget, accounts: store.accounts, onSaved: reload) }
+            .confirmationDialog("Duplicate this transaction?", isPresented: $confirmDuplicate, titleVisibility: .visible) { Button("Duplicate Transaction") { Task { await duplicateTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text("A new uncleared copy dated today will post through the normal accounting engine. Attachments are not copied.") }
             .confirmationDialog(transaction?.transferID == nil ? "Delete this transaction?" : "Delete this transfer?", isPresented: $confirmDelete, titleVisibility: .visible) { Button(transaction?.transferID == nil ? "Delete Transaction" : "Delete Transfer", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text(transaction?.transferID == nil ? "This cannot be undone and will immediately update the plan and reports." : "Both linked account entries will be removed atomically. Your plan and categories will not change.") }
     }
     private func reload() async { await store.refresh() }
@@ -1674,6 +1691,12 @@ private struct LiveTransactionDetailView: View {
         guard let transaction else { return }
         isDeleting = true; defer { isDeleting = false }
         do { if let transferID = transaction.transferID { try await store.deleteTransfer(id: transferID) } else { try await store.deleteTransaction(id: transaction.id) }; dismiss() }
+        catch { store.errorMessage = error.localizedDescription }
+    }
+    private func duplicateTransaction() async {
+        guard let transaction else { return }
+        isDeleting = true; defer { isDeleting = false }
+        do { try await store.duplicateTransaction(id: transaction.id, occurredOn: BudgetWorkspaceStore.dateString(Date())) }
         catch { store.errorMessage = error.localizedDescription }
     }
 }

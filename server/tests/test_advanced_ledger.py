@@ -459,7 +459,7 @@ def test_transaction_edit_recalculates_category_reports_and_account(client, owne
     assert deleted.status_code == 204
     with session_factory() as db:
         history = db.query(TransactionChange).filter_by(transaction_id=transaction["id"]).all()
-        assert [item.action for item in history] == ["updated", "deleted"]
+        assert [item.action for item in history] == ["created", "updated", "deleted"]
         assert history[-1].before_json is not None
 
 

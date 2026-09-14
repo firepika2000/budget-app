@@ -79,6 +79,7 @@ from .schemas import (
     SmartFundingCommit,
     SmartFundingPreviewResponse,
     TransactionCreate,
+    TransactionDuplicateRequest,
     TransactionPageResponse,
     TransactionResponse,
     TransactionUpdate,
@@ -989,9 +990,55 @@ def create_transaction(
         category_amounts=category_amounts,
         actor=user,
     )
+    record_transaction_change(db, transaction, user, "created", after=transaction_snapshot(transaction))
     db.commit()
     db.refresh(transaction)
     return transaction
+
+
+@router.post("/transactions/{transaction_id}/duplicate", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
+def duplicate_transaction(
+    budget_id: str,
+    transaction_id: str,
+    body: TransactionDuplicateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Transaction:
+    budget = require_budget_capability(db, user, budget_id, "create_transaction")
+    original = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.id == transaction_id, Transaction.budget_id == budget_id,
+    ))
+    if original is None or not can_access_resource(db, user, budget, "account", original.account_id):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if original.transfer_id is not None or original.scheduled_transaction_id is not None or original.payee_name in {"Starting Balance", "Reconciliation adjustment"}:
+        raise HTTPException(status_code=409, detail="This system-linked transaction must be recreated through its specialized workflow")
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    category_ids = ([original.category_id] if original.category_id is not None else []) + [split.category_id for split in original.splits]
+    if visible_categories is not None and any(category_id not in visible_categories for category_id in category_ids):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    duplicate = create_transaction(
+        budget_id,
+        TransactionCreate(
+            account_id=original.account_id,
+            category_id=original.category_id,
+            payee_id=original.payee_id,
+            amount_minor=original.amount_minor,
+            occurred_on=body.occurred_on,
+            payee_name=original.payee_name,
+            memo=original.memo,
+            is_cleared=False,
+            flag=original.flag,
+            tags=list(original.tags),
+            attachment_metadata=[],
+            splits=[{"category_id": split.category_id, "amount_minor": split.amount_minor, "memo": split.memo} for split in original.splits],
+        ),
+        user,
+        db,
+    )
+    record_transaction_change(db, duplicate, user, "duplicated", before=transaction_snapshot(original), after=transaction_snapshot(duplicate))
+    db.commit()
+    db.refresh(duplicate)
+    return duplicate
 
 
 @router.put("/transactions/{transaction_id}", response_model=TransactionResponse)

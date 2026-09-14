@@ -567,6 +567,12 @@ public struct APITransactionQuery: Equatable, Sendable {
     }
 }
 
+public struct APITransactionDuplicate: Encodable, Equatable, Sendable {
+    public let occurredOn: String
+    public init(occurredOn: String) { self.occurredOn = occurredOn }
+    enum CodingKeys: String, CodingKey { case occurredOn = "occurred_on" }
+}
+
 public struct APITransferCreate: Encodable, Sendable {
     public let sourceAccountID: String
     public let destinationAccountID: String

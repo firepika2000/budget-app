@@ -184,6 +184,10 @@ public struct APIClient {
         return try await send(path: "api/v1/budgets/\(budgetID)/transactions/search", queryItems: items, token: token)
     }
 
+    public func duplicateTransaction(budgetID: String, transactionID: String, occurredOn: String, token: String) async throws -> APITransaction {
+        try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/duplicate", method: "POST", token: token, body: APITransactionDuplicate(occurredOn: occurredOn))
+    }
+
     public func categories(budgetID: String, token: String) async throws -> [APICategory] {
         try await send(path: "api/v1/budgets/\(budgetID)/categories", token: token)
     }

@@ -468,4 +468,25 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["Apply"].tap()
         XCTAssertTrue(app.buttons["transaction-row-t1"].waitForExistence(timeout: 5))
     }
+
+    func testProductionTransactionDetailDuplicatesThroughCanonicalWorkspace() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        app.buttons["transaction-row-t1"].tap()
+        XCTAssertTrue(app.navigationBars["Transaction"].waitForExistence(timeout: 5))
+        app.buttons["More"].tap()
+        app.buttons["duplicate-transaction-action"].tap()
+        XCTAssertTrue(app.buttons["Duplicate Transaction"].waitForExistence(timeout: 5))
+        app.buttons["Duplicate Transaction"].tap()
+
+        XCTAssertTrue(app.navigationBars["Transaction"].waitForExistence(timeout: 5))
+        app.navigationBars["Transaction"].buttons["Activity"].tap()
+        let matchingRows = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'transaction-row-' AND label CONTAINS 'Fresh Market'")
+        )
+        XCTAssertEqual(matchingRows.count, 2, "duplication must refresh the canonical Activity browser with one additional posted row")
+    }
 }

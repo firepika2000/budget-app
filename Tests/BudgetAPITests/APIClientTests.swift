@@ -203,6 +203,24 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(page.items.first?.createdByUserID, "u1")
     }
 
+    func testDuplicateTransactionUsesExplicitDateContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/t1/duplicate")
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+            XCTAssertEqual(json["occurred_on"] as? String, "2026-09-14")
+            let response = Data(#"{"id":"t2","budget_id":"b1","account_id":"a1","category_id":"c1","payee_id":null,"amount_minor":-1200,"occurred_on":"2026-09-14","created_at":"2026-09-14T12:00:00Z","payee_name":"Market","memo":"","is_cleared":false,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":null,"scheduled_transaction_id":null,"splits":[]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let copy = try await client.duplicateTransaction(budgetID: "b1", transactionID: "t1", occurredOn: "2026-09-14", token: "secret")
+        XCTAssertEqual(copy.id, "t2")
+        XCTAssertFalse(copy.isCleared)
+    }
+
     func testPayeeManagementUsesBudgetScopedContracts() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
