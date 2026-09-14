@@ -1,4 +1,5 @@
 import hashlib
+import json
 import shutil
 from datetime import date, timedelta
 
@@ -115,6 +116,9 @@ def test_make_recurring_preserves_posting_and_uses_robust_future_calendar(client
     assert schedule["memo"] == "template"
     after = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()
     assert after == before
+    with session_factory() as db:
+        audit = db.query(TransactionChange).filter_by(transaction_id=original["id"], action="schedule_created").one()
+        assert json.loads(audit.after_json)["scheduled_transaction_id"] == schedule["id"]
 
 
 def test_encrypted_attachment_round_trip_detach_and_gc(client, owner_token, session_factory, tmp_path):

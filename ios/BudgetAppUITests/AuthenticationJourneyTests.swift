@@ -527,9 +527,11 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.textFields["void-reason"].typeText("Duplicate charge")
         app.buttons["confirm-void-action"].tap()
         XCTAssertTrue(app.navigationBars["Transaction"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["VOIDED"].waitForExistence(timeout: 5))
+        let postingStatus = app.staticTexts["transaction-posting-status"]
+        XCTAssertTrue(postingStatus.waitForExistence(timeout: 5))
+        XCTAssertTrue(postingStatus.label.contains("VOIDED"))
         app.navigationBars["Transaction"].buttons["Activity"].tap()
-        XCTAssertTrue(app.staticTexts["REVERSAL"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'transaction-posting-reversal-'")).firstMatch.waitForExistence(timeout: 5))
     }
 
     func testProductionActivityBulkSelectionUpdatesThroughCanonicalWorkspace() {

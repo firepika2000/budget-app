@@ -1184,6 +1184,7 @@ def create_schedule_from_transaction(
         memo=original.memo, is_active=True, created_by_user_id=user.id,
     )
     db.add(schedule)
+    db.flush()
     record_transaction_change(db, original, user, "schedule_created", before=transaction_snapshot(original), after=json.dumps({"scheduled_transaction_id": schedule.id}))
     db.commit()
     db.refresh(schedule)

@@ -435,17 +435,19 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
     func voidTransaction(id: String, reason: String) async throws {
-        guard let index = demo.transactions.firstIndex(where: { $0.id == id }), demo.transactions[index].status == "posted", demo.transactions[index].transferID == nil, !demo.transactions[index].reconciled else { throw workspaceRepositoryError("Only an unreconciled posted transaction can be voided") }
-        let source = demo.transactions[index]
+        guard let source = demo.transactions.first(where: { $0.id == id }), source.status == "posted", source.transferID == nil, !source.reconciled else { throw workspaceRepositoryError("Only an unreconciled posted transaction can be voided") }
         let amounts = demo.canonicalCategoryAmounts(for: source)
         let splits = amounts.count > 1 ? amounts.keys.sorted().map { TransactionSplitOperation(categoryID: $0, amountMinor: -amounts[$0]!, memo: "") } : []
         let operation = RecordTransactionOperation(accountID: source.accountID, categoryID: amounts.count == 1 ? amounts.keys.first : nil, amountMinor: -source.amount, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Reversal: \(source.payee)", memo: reason.isEmpty ? "Void reversal." : "Void reversal. \(reason)", isCleared: false, splits: splits, flag: source.flag, tags: source.tags, attachmentMetadata: [])
-        guard demo.recordCanonicalTransaction(operation), let reversalIndex = demo.transactions.indices.last else { throw workspaceRepositoryError(demo.errorMessage) }
+        let reversalID = UUID().uuidString
+        guard demo.recordCanonicalTransaction(operation, id: reversalID),
+              let reversalIndex = demo.transactions.firstIndex(where: { $0.id == reversalID }),
+              let originalIndex = demo.transactions.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError(demo.errorMessage) }
         demo.transactions[reversalIndex].status = "reversal"
         demo.transactions[reversalIndex].reversalOfTransactionID = id
-        demo.transactions[index].status = "voided"
-        demo.transactions[index].voidReason = reason.isEmpty ? nil : reason
-        demo.transactions[index].reversalTransactionID = demo.transactions[reversalIndex].id
+        demo.transactions[originalIndex].status = "voided"
+        demo.transactions[originalIndex].voidReason = reason.isEmpty ? nil : reason
+        demo.transactions[originalIndex].reversalTransactionID = reversalID
     }
     func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws {
         guard let source = demo.transactions.first(where: { $0.id == id }), source.status == "posted", source.transferID == nil, source.categoryIDs.count <= 1 else { throw workspaceRepositoryError("This transaction cannot be used as a recurring template") }
@@ -1774,7 +1776,7 @@ private struct LiveTransactionLink: View {
     let transaction: APITransaction
     var body: some View {
         NavigationLink { LiveTransactionDetailView(transactionID: transaction.id) } label: {
-            HStack { VStack(alignment: .leading) { HStack(spacing: 5) { if transaction.flag != nil { Image(systemName: "flag.fill").foregroundStyle(flagColor) }; Text(transaction.payeeName.isEmpty ? "No payee" : transaction.payeeName); if transaction.status == "voided" { Text("VOIDED").font(.caption2.bold()).foregroundStyle(.red) } else if transaction.status == "reversal" { Text("REVERSAL").font(.caption2.bold()).foregroundStyle(.orange) } }; Text(secondaryText).font(.caption).foregroundStyle(.secondary); if let tags = transaction.tags, !tags.isEmpty { Text(tags.map { "#\($0)" }.joined(separator: " ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1) } }; Spacer(); Text(store.format(transaction.amountMinor)).monospacedDigit() }
+            HStack { VStack(alignment: .leading) { HStack(spacing: 5) { if transaction.flag != nil { Image(systemName: "flag.fill").foregroundStyle(flagColor) }; Text(transaction.payeeName.isEmpty ? "No payee" : transaction.payeeName); if transaction.status == "voided" { Text("VOIDED").font(.caption2.bold()).foregroundStyle(.red).accessibilityIdentifier("transaction-posting-voided-\(transaction.id)") } else if transaction.status == "reversal" { Text("REVERSAL").font(.caption2.bold()).foregroundStyle(.orange).accessibilityIdentifier("transaction-posting-reversal-\(transaction.id)") } }; Text(secondaryText).font(.caption).foregroundStyle(.secondary); if let tags = transaction.tags, !tags.isEmpty { Text(tags.map { "#\($0)" }.joined(separator: " ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1) } }; Spacer(); Text(store.format(transaction.amountMinor)).monospacedDigit() }
         }
         .accessibilityIdentifier("transaction-row-\(transaction.id)")
     }
@@ -1806,7 +1808,7 @@ private struct LiveTransactionDetailView: View {
         List {
             if let transaction {
                 Section { Text(store.format(transaction.amountMinor)).font(.largeTitle.bold()).frame(maxWidth: .infinity).padding() }
-                Section("Details") { LabeledContent("Payee", value: transaction.payeeName); if let linked = linkedAccountName(for: transaction) { LabeledContent("Linked account", value: linked) } else { LabeledContent("Category", value: store.categoryName(transaction)) }; LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Posting", value: (transaction.status ?? "posted").uppercased()); LabeledContent("Clearing") { Text(transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared").accessibilityIdentifier("transaction-status") }; LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo); LabeledContent("Flag", value: transaction.flag?.capitalized ?? "None"); LabeledContent("Tags", value: transaction.tags?.isEmpty == false ? transaction.tags!.map { "#\($0)" }.joined(separator: " ") : "None") }
+                Section("Details") { LabeledContent("Payee", value: transaction.payeeName); if let linked = linkedAccountName(for: transaction) { LabeledContent("Linked account", value: linked) } else { LabeledContent("Category", value: store.categoryName(transaction)) }; LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Posting") { Text((transaction.status ?? "posted").uppercased()).accessibilityIdentifier("transaction-posting-status") }; LabeledContent("Clearing") { Text(transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared").accessibilityIdentifier("transaction-status") }; LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo); LabeledContent("Flag", value: transaction.flag?.capitalized ?? "None"); LabeledContent("Tags", value: transaction.tags?.isEmpty == false ? transaction.tags!.map { "#\($0)" }.joined(separator: " ") : "None") }
                 if transaction.status == "voided" { Section("Void audit") { LabeledContent("Reason", value: transaction.voidReason ?? "No reason supplied"); if let reversal = transaction.reversalTransactionID { NavigationLink("Open reversal") { LiveTransactionDetailView(transactionID: reversal) } } } }
                 if transaction.status == "reversal", let original = transaction.reversalOfTransactionID { Section("Reversal audit") { NavigationLink("Open voided original") { LiveTransactionDetailView(transactionID: original) } } }
                 TransactionAttachmentsView(transaction: transaction)
