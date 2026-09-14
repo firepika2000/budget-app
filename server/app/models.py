@@ -415,6 +415,12 @@ class Transaction(Base):
     flag: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list)
     attachment_metadata: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(20), default="posted", index=True)
+    voided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    voided_by_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    void_reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    reversal_of_transaction_id: Mapped[Optional[str]] = mapped_column(ForeignKey("transactions.id", ondelete="RESTRICT"), nullable=True, unique=True)
+    reversal_transaction_id: Mapped[Optional[str]] = mapped_column(ForeignKey("transactions.id", ondelete="RESTRICT"), nullable=True, unique=True)
     created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     splits: Mapped[list["TransactionSplit"]] = relationship(
@@ -446,6 +452,24 @@ class TransactionChange(Base):
     before_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     after_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class TransactionAttachment(Base):
+    __tablename__ = "transaction_attachments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.id", ondelete="RESTRICT"), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(100))
+    byte_count: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(100), unique=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    detached_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    detached_by_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    purge_after: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class CreditCardReserveEvent(Base):

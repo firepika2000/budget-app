@@ -2627,3 +2627,33 @@ A successful Budget App should allow the following statement to be true:
 > ordinary users to administer a database.
 
 That is the product this specification defines.
+
+------------------------------------------------------------------------
+
+# 42. v0.5 Transaction-History Decisions
+
+## 42.1 One-way void and reversal
+
+Voiding never rewrites or removes the original posting. The original becomes `VOIDED` with the
+timestamp, actor, and optional reason. A new current-dated `REVERSAL` posting exactly compensates its
+financial effects and links bidirectionally to the original. There is no unvoid operation. Reconciled
+transactions require a separately entered correction and linked transfers cannot be voided one leg at
+a time.
+
+## 42.2 Create schedule from transaction
+
+“Make Recurring” preserves the posted transaction unchanged and creates a new forecast-only schedule
+from its compatible fields. Its first occurrence must be future and is visible/editable before save.
+Calendar advancement clamps end-of-month and leap-year dates to a valid logical date. The schedule has
+no actual financial effect until ordinary server realization.
+
+## 42.3 Managed attachments
+
+PDF, JPEG, PNG, and HEIC files may be attached to transactions, up to 10 MB each and 20 active
+attachments per transaction. Metadata belongs to the budget database; encrypted bytes belong to
+provider-managed storage. Every operation rechecks transaction visibility and capability. Filenames
+are sanitized, content signatures validated, and SHA-256 integrity recorded. Detach creates a
+30-day tombstone before garbage collection. Voids retain original attachments. Full encrypted server
+backup and restore includes database metadata, encrypted objects, integrity data, and attachment-key
+recovery material. This server-managed encryption design remains compatible with a future portable
+client-side encrypted representation without claiming end-to-end encryption in v0.5.

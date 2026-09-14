@@ -488,6 +488,28 @@ class TransactionDuplicateRequest(BaseModel):
     occurred_on: date
 
 
+class TransactionVoidRequest(BaseModel):
+    reason: str = Field(default="", max_length=500)
+
+
+class TransactionScheduleRequest(BaseModel):
+    recurrence_unit: Literal["days", "weeks", "months", "years"]
+    interval_count: int = Field(default=1, gt=0, le=365)
+    next_date: Optional[date] = None
+
+
+class TransactionAttachmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    transaction_id: str
+    filename: str
+    content_type: str
+    byte_count: int
+    sha256: str
+    created_at: datetime
+    detached_at: Optional[datetime] = None
+
+
 class TransactionBulkUpdateRequest(BaseModel):
     transaction_ids: list[str] = Field(min_length=1, max_length=200)
     action: Literal["set_cleared", "set_flag", "add_tags", "remove_tags"]
@@ -547,6 +569,12 @@ class TransactionResponse(BaseModel):
     created_by_user_id: str
     transfer_id: Optional[str]
     scheduled_transaction_id: Optional[str] = None
+    status: str = "posted"
+    voided_at: Optional[datetime] = None
+    voided_by_user_id: Optional[str] = None
+    void_reason: Optional[str] = None
+    reversal_of_transaction_id: Optional[str] = None
+    reversal_transaction_id: Optional[str] = None
     splits: list[TransactionSplitResponse] = Field(default_factory=list)
 
 

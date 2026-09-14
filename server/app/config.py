@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import os
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -10,6 +11,8 @@ class Settings:
     access_token_minutes: int = 30
     refresh_token_days: int = 30
     allowed_hosts: tuple[str, ...] = ("localhost", "127.0.0.1", "testserver")
+    attachment_storage_path: str = "attachments"
+    attachment_encryption_key: Optional[str] = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -32,4 +35,6 @@ class Settings:
             database_url=database_url,
             jwt_secret=jwt_secret,
             allowed_hosts=allowed_hosts,
+            attachment_storage_path=os.environ.get("BUDGET_APP_ATTACHMENT_STORAGE_PATH", "attachments"),
+            attachment_encryption_key=os.environ.get("BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY"),
         )

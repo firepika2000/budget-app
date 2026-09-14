@@ -24,10 +24,11 @@ def session_factory():
 
 
 @pytest.fixture
-def client(session_factory):
+def client(session_factory, tmp_path):
     settings = Settings(
         database_url="sqlite://",
         jwt_secret="test-secret-that-is-longer-than-32-characters",
+        attachment_storage_path=str(tmp_path / "attachments"),
     )
     app = create_app(settings)
     app.state.session_factory = session_factory
@@ -76,4 +77,3 @@ def freeze_today(monkeypatch, when: date, *modules) -> None:
 
     for module in modules:
         monkeypatch.setattr(module, "date", _FrozenDate)
-

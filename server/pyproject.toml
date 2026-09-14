@@ -9,6 +9,7 @@ description = "Self-hosted API for Budget App"
 requires-python = ">=3.9"
 dependencies = [
     "alembic>=1.14,<2",
+    "cryptography>=43,<47",
     "fastapi>=0.115,<1",
     "psycopg[binary]>=3.2,<4",
     "pwdlib[argon2]>=0.2,<1",

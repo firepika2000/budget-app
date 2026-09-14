@@ -3,13 +3,14 @@ from __future__ import annotations
 import csv
 import base64
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
+import hashlib
 from io import StringIO
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.exc import IntegrityError
@@ -52,6 +53,7 @@ from .models import (
     Payee,
     ResourceGrant,
     Transaction,
+    TransactionAttachment,
     TransactionChange,
     TransactionSplit,
     User,
@@ -78,15 +80,22 @@ from .schemas import (
     ReconcileResponse,
     SmartFundingCommit,
     SmartFundingPreviewResponse,
+    ScheduledTransactionResponse,
     TransactionBulkUpdateRequest,
     TransactionCreate,
     TransactionDuplicateRequest,
+    TransactionVoidRequest,
+    TransactionScheduleRequest,
+    TransactionAttachmentResponse,
     TransactionPageResponse,
     TransactionResponse,
     TransactionUpdate,
     TransferCreate,
     TransferResponse,
 )
+from .models import ScheduledTransaction
+from .planning import next_occurrence
+from .attachment_storage import AttachmentStorage, safe_filename, validate_content
 
 ON_BUDGET_CASH_TYPES = {"checking", "savings", "cash"}
 TRACKING_TYPES = {"loan", "tracking"}
@@ -132,6 +141,10 @@ def transaction_snapshot(transaction: Transaction) -> str:
         "flag": transaction.flag,
         "tags": transaction.tags,
         "attachment_metadata": transaction.attachment_metadata,
+        "status": transaction.status,
+        "voided_at": transaction.voided_at.isoformat() if transaction.voided_at else None,
+        "reversal_of_transaction_id": transaction.reversal_of_transaction_id,
+        "reversal_transaction_id": transaction.reversal_transaction_id,
         "transfer_id": transaction.transfer_id,
         "splits": [{"category_id": item.category_id, "amount_minor": item.amount_minor, "memo": item.memo} for item in transaction.splits],
     }, sort_keys=True, separators=(",", ":"))
@@ -1055,7 +1068,7 @@ def duplicate_transaction(
     ))
     if original is None or not can_access_resource(db, user, budget, "account", original.account_id):
         raise HTTPException(status_code=404, detail="Transaction not found")
-    if original.transfer_id is not None or original.scheduled_transaction_id is not None or original.payee_name in {"Starting Balance", "Reconciliation adjustment"}:
+    if original.status != "posted" or original.transfer_id is not None or original.scheduled_transaction_id is not None or original.payee_name in {"Starting Balance", "Reconciliation adjustment"}:
         raise HTTPException(status_code=409, detail="This system-linked transaction must be recreated through its specialized workflow")
     visible_categories = visible_resource_ids(db, user, budget, "category")
     category_ids = ([original.category_id] if original.category_id is not None else []) + [split.category_id for split in original.splits]
@@ -1086,6 +1099,232 @@ def duplicate_transaction(
     return duplicate
 
 
+@router.post("/transactions/{transaction_id}/void", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
+def void_transaction(
+    budget_id: str,
+    transaction_id: str,
+    body: TransactionVoidRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Transaction:
+    budget = require_budget_capability(db, user, budget_id, "delete_transaction")
+    original = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.id == transaction_id, Transaction.budget_id == budget_id,
+    ).with_for_update())
+    if original is None or not can_access_resource(db, user, budget, "account", original.account_id):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if original.status != "posted":
+        raise HTTPException(status_code=409, detail="Only a posted transaction can be voided")
+    if original.transfer_id is not None:
+        raise HTTPException(status_code=409, detail="Linked transfers cannot be voided one leg at a time")
+    if original.is_reconciled:
+        raise HTTPException(status_code=409, detail="Reconciled transactions require a new explicit correcting transaction")
+    if original.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
+        raise HTTPException(status_code=403, detail="You may only void your own transactions")
+    category_ids = ([original.category_id] if original.category_id else []) + [item.category_id for item in original.splits]
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    if visible_categories is not None and any(item not in visible_categories for item in category_ids):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    account = db.scalar(select(Account).where(Account.id == original.account_id).with_for_update())
+    categories = {item.id: item for item in db.scalars(select(Category).where(Category.id.in_(category_ids)).with_for_update())} if category_ids else {}
+    now = datetime.now(timezone.utc)
+    reversal = Transaction(
+        budget_id=budget_id, account_id=original.account_id, category_id=original.category_id,
+        payee_id=original.payee_id, amount_minor=-original.amount_minor, occurred_on=now.date(),
+        payee_name=f"Reversal: {original.payee_name or 'Transaction'}"[:150],
+        memo=(f"Void reversal. {body.reason}" if body.reason else "Void reversal.")[:500],
+        is_cleared=False, flag=original.flag, tags=list(original.tags), attachment_metadata=[],
+        created_by_user_id=user.id, status="reversal", reversal_of_transaction_id=original.id,
+    )
+    reversal.splits = [TransactionSplit(category_id=item.category_id, amount_minor=-item.amount_minor, memo=item.memo) for item in original.splits]
+    db.add(reversal)
+    db.flush()
+    category_amounts = ([(categories[original.category_id], -original.amount_minor)] if original.category_id else [(categories[item.category_id], -item.amount_minor) for item in original.splits])
+    add_purchase_reserve_events(db, account=account, transaction=reversal, category_amounts=category_amounts, actor=user)
+    original.status = "voided"
+    original.voided_at = now
+    original.voided_by_user_id = user.id
+    original.void_reason = body.reason or None
+    original.reversal_transaction_id = reversal.id
+    record_transaction_change(db, original, user, "voided", before=None, after=transaction_snapshot(original))
+    record_transaction_change(db, reversal, user, "reversal_created", after=transaction_snapshot(reversal))
+    db.commit()
+    db.refresh(reversal)
+    return reversal
+
+
+@router.post("/transactions/{transaction_id}/schedule", response_model=ScheduledTransactionResponse, status_code=status.HTTP_201_CREATED)
+def create_schedule_from_transaction(
+    budget_id: str,
+    transaction_id: str,
+    body: TransactionScheduleRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ScheduledTransaction:
+    budget = require_budget_capability(db, user, budget_id, "manage_planning")
+    original = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(Transaction.id == transaction_id, Transaction.budget_id == budget_id))
+    if original is None or not can_access_resource(db, user, budget, "account", original.account_id):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if original.status != "posted" or original.transfer_id is not None or original.payee_name in {"Starting Balance", "Reconciliation adjustment"}:
+        raise HTTPException(status_code=409, detail="This transaction cannot be used as a recurring template")
+    if original.splits:
+        raise HTTPException(status_code=409, detail="Split schedules are not supported yet")
+    if original.category_id and not can_access_resource(db, user, budget, "category", original.category_id):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    next_date = body.next_date or next_occurrence(original.occurred_on, body.recurrence_unit, body.interval_count)
+    while next_date is not None and next_date <= date.today():
+        next_date = next_occurrence(next_date, body.recurrence_unit, body.interval_count)
+    if next_date is None or next_date <= date.today():
+        raise HTTPException(status_code=422, detail="Next occurrence must be in the future")
+    schedule = ScheduledTransaction(
+        budget_id=budget_id, account_id=original.account_id, category_id=original.category_id,
+        name=original.payee_name or "Recurring transaction", amount_minor=original.amount_minor,
+        next_date=next_date, recurrence_unit=body.recurrence_unit, interval_count=body.interval_count,
+        memo=original.memo, is_active=True, created_by_user_id=user.id,
+    )
+    db.add(schedule)
+    record_transaction_change(db, original, user, "schedule_created", before=transaction_snapshot(original), after=json.dumps({"scheduled_transaction_id": schedule.id}))
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
+
+def _attachment_transaction(db: Session, user: User, budget: Budget, transaction_id: str) -> Transaction:
+    transaction = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.id == transaction_id, Transaction.budget_id == budget.id,
+    ))
+    if transaction is None or not can_access_resource(db, user, budget, "account", transaction.account_id):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    category_ids = ([transaction.category_id] if transaction.category_id else []) + [item.category_id for item in transaction.splits]
+    if visible_categories is not None and any(item not in visible_categories for item in category_ids):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return transaction
+
+
+def _attachment_store(request: Request) -> AttachmentStorage:
+    settings = request.app.state.settings
+    return AttachmentStorage(settings.attachment_storage_path, settings.jwt_secret, settings.attachment_encryption_key)
+
+
+@router.get("/transactions/{transaction_id}/attachments", response_model=list[TransactionAttachmentResponse])
+def list_transaction_attachments(
+    budget_id: str, transaction_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> list[TransactionAttachment]:
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    _attachment_transaction(db, user, budget, transaction_id)
+    return list(db.scalars(select(TransactionAttachment).where(
+        TransactionAttachment.transaction_id == transaction_id, TransactionAttachment.detached_at.is_(None),
+    ).order_by(TransactionAttachment.created_at)))
+
+
+@router.post("/transactions/{transaction_id}/attachments", response_model=TransactionAttachmentResponse, status_code=status.HTTP_201_CREATED)
+def attach_transaction_file(
+    request: Request,
+    budget_id: str,
+    transaction_id: str,
+    content: bytes = Body(..., media_type="application/octet-stream"),
+    filename: str = Header(..., alias="X-Attachment-Filename"),
+    content_type: str = Header(..., alias="X-Attachment-Content-Type"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TransactionAttachment:
+    budget = require_budget_capability(db, user, budget_id, "edit_transaction")
+    transaction = _attachment_transaction(db, user, budget, transaction_id)
+    if transaction.status == "reversal":
+        raise HTTPException(status_code=409, detail="Attach supporting documents to the original transaction")
+    count = db.scalar(select(func.count()).select_from(TransactionAttachment).where(
+        TransactionAttachment.transaction_id == transaction_id, TransactionAttachment.detached_at.is_(None),
+    )) or 0
+    if count >= 20:
+        raise HTTPException(status_code=422, detail="A transaction may have at most 20 attachments")
+    normalized_type = content_type.split(";", 1)[0].strip().lower()
+    try:
+        validate_content(content, normalized_type)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    attachment = TransactionAttachment(
+        budget_id=budget_id, transaction_id=transaction_id, filename=safe_filename(filename),
+        content_type=normalized_type, byte_count=len(content), sha256=hashlib.sha256(content).hexdigest(),
+        storage_key=str(uuid4()), created_by_user_id=user.id,
+    )
+    storage = _attachment_store(request)
+    storage.write(attachment.storage_key, content)
+    db.add(attachment)
+    record_transaction_change(db, transaction, user, "attachment_added", after=json.dumps({"attachment_id": attachment.id, "filename": attachment.filename, "sha256": attachment.sha256}, sort_keys=True))
+    try:
+        db.commit()
+    except Exception:
+        storage.delete(attachment.storage_key)
+        raise
+    db.refresh(attachment)
+    return attachment
+
+
+@router.get("/transactions/{transaction_id}/attachments/{attachment_id}")
+def download_transaction_attachment(
+    request: Request, budget_id: str, transaction_id: str, attachment_id: str,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> Response:
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    _attachment_transaction(db, user, budget, transaction_id)
+    attachment = db.scalar(select(TransactionAttachment).where(
+        TransactionAttachment.id == attachment_id, TransactionAttachment.transaction_id == transaction_id,
+        TransactionAttachment.budget_id == budget_id, TransactionAttachment.detached_at.is_(None),
+    ))
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    try:
+        content = _attachment_store(request).read(attachment.storage_key)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=500, detail="Attachment storage is unavailable") from None
+    if hashlib.sha256(content).hexdigest() != attachment.sha256:
+        raise HTTPException(status_code=500, detail="Attachment integrity check failed")
+    return Response(content, media_type=attachment.content_type, headers={
+        "Content-Disposition": f'attachment; filename="{attachment.filename.replace(chr(34), "")}"',
+        "X-Content-SHA256": attachment.sha256,
+    })
+
+
+@router.delete("/transactions/{transaction_id}/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def detach_transaction_attachment(
+    budget_id: str, transaction_id: str, attachment_id: str,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> None:
+    budget = require_budget_capability(db, user, budget_id, "edit_transaction")
+    transaction = _attachment_transaction(db, user, budget, transaction_id)
+    attachment = db.scalar(select(TransactionAttachment).where(
+        TransactionAttachment.id == attachment_id, TransactionAttachment.transaction_id == transaction_id,
+        TransactionAttachment.budget_id == budget_id, TransactionAttachment.detached_at.is_(None),
+    ).with_for_update())
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    now = datetime.now(timezone.utc)
+    attachment.detached_at = now
+    attachment.detached_by_user_id = user.id
+    attachment.purge_after = now + timedelta(days=30)
+    record_transaction_change(db, transaction, user, "attachment_detached", before=json.dumps({"attachment_id": attachment.id, "sha256": attachment.sha256}, sort_keys=True))
+    db.commit()
+
+
+@router.post("/attachments/garbage-collect")
+def garbage_collect_attachments(
+    request: Request, budget_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> dict[str, int]:
+    require_budget_capability(db, user, budget_id, "manage_budget_structure")
+    now = datetime.now(timezone.utc)
+    rows = list(db.scalars(select(TransactionAttachment).where(
+        TransactionAttachment.budget_id == budget_id,
+        TransactionAttachment.purge_after.is_not(None), TransactionAttachment.purge_after <= now,
+    )))
+    storage = _attachment_store(request)
+    for attachment in rows:
+        storage.delete(attachment.storage_key)
+        db.delete(attachment)
+    db.commit()
+    return {"purged": len(rows)}
+
+
 @router.put("/transactions/{transaction_id}", response_model=TransactionResponse)
 def update_transaction(
     budget_id: str,
@@ -1101,6 +1340,8 @@ def update_transaction(
     ).with_for_update())
     if transaction is None or transaction.transfer_id is not None:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    if transaction.status != "posted":
+        raise HTTPException(status_code=409, detail="Voided and reversal transactions are immutable")
     if transaction.is_reconciled:
         raise HTTPException(status_code=409, detail="Reconciled transactions cannot be edited")
     if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
@@ -1155,6 +1396,8 @@ def delete_transaction(
     transaction = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(Transaction.id == transaction_id))
     if transaction is None or transaction.budget_id != budget_id or transaction.transfer_id is not None:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    if transaction.status != "posted":
+        raise HTTPException(status_code=409, detail="Voided and reversal transactions cannot be deleted")
     if transaction.is_reconciled:
         raise HTTPException(status_code=409, detail="Reconciled transactions cannot be deleted")
     if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):

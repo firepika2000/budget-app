@@ -6,6 +6,8 @@ services:
       BUDGET_APP_DATABASE_URL: postgresql+psycopg://budget:${BUDGET_APP_DB_PASSWORD}@database:5432/budget
       BUDGET_APP_JWT_SECRET: ${BUDGET_APP_JWT_SECRET}
       BUDGET_APP_ALLOWED_HOSTS: ${BUDGET_APP_ALLOWED_HOSTS}
+      BUDGET_APP_ATTACHMENT_STORAGE_PATH: /var/lib/budget-app/attachments
+      BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY: ${BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY:-}
     ports:
       - "127.0.0.1:8080:8080"
     read_only: true
@@ -15,6 +17,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    volumes:
+      - budget_attachments:/var/lib/budget-app/attachments
     depends_on:
       database:
         condition: service_healthy
@@ -38,3 +42,4 @@ services:
 
 volumes:
   budget_database:
+  budget_attachments:
