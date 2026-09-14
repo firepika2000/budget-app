@@ -70,6 +70,12 @@ private struct PayeeEditorView: View {
                         LabeledContent("Transactions", value: "\(payee.transactionCount)")
                         LabeledContent("Net amount", value: store.format(payee.netAmountMinor))
                     }
+                    let history = store.transactions.filter { $0.payeeID == payee.id }
+                    if !history.isEmpty {
+                        Section("Recent transactions") {
+                            ForEach(history.prefix(10)) { transaction in LiveTransactionLink(transaction: transaction) }
+                        }
+                    }
                     Section("Aliases") {
                         ForEach(store.payees.first(where: { $0.id == payee.id })?.aliases ?? []) { alias in
                             Text(alias.displayName)
@@ -1710,10 +1716,11 @@ private struct LiveTransactionLink: View {
     let transaction: APITransaction
     var body: some View {
         NavigationLink { LiveTransactionDetailView(transactionID: transaction.id) } label: {
-            HStack { VStack(alignment: .leading) { Text(transaction.payeeName.isEmpty ? "No payee" : transaction.payeeName); Text(secondaryText).font(.caption).foregroundStyle(.secondary) }; Spacer(); Text(store.format(transaction.amountMinor)).monospacedDigit() }
+            HStack { VStack(alignment: .leading) { HStack(spacing: 5) { if transaction.flag != nil { Image(systemName: "flag.fill").foregroundStyle(flagColor) }; Text(transaction.payeeName.isEmpty ? "No payee" : transaction.payeeName) }; Text(secondaryText).font(.caption).foregroundStyle(.secondary); if let tags = transaction.tags, !tags.isEmpty { Text(tags.map { "#\($0)" }.joined(separator: " ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1) } }; Spacer(); Text(store.format(transaction.amountMinor)).monospacedDigit() }
         }
         .accessibilityIdentifier("transaction-row-\(transaction.id)")
     }
+    private var flagColor: Color { switch transaction.flag { case "red": .red; case "orange": .orange; case "yellow": .yellow; case "green": .green; case "blue": .blue; case "purple": .purple; default: .secondary } }
     private var secondaryText: String {
         if let transferID = transaction.transferID,
            let counterpart = store.transactions.first(where: { $0.transferID == transferID && $0.id != transaction.id }),
@@ -1739,7 +1746,7 @@ private struct LiveTransactionDetailView: View {
         List {
             if let transaction {
                 Section { Text(store.format(transaction.amountMinor)).font(.largeTitle.bold()).frame(maxWidth: .infinity).padding() }
-                Section("Details") { LabeledContent("Payee", value: transaction.payeeName); if let linked = linkedAccountName(for: transaction) { LabeledContent("Linked account", value: linked) } else { LabeledContent("Category", value: store.categoryName(transaction)) }; LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Status") { Text(transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared").accessibilityIdentifier("transaction-status") }; LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo) }
+                Section("Details") { LabeledContent("Payee", value: transaction.payeeName); if let linked = linkedAccountName(for: transaction) { LabeledContent("Linked account", value: linked) } else { LabeledContent("Category", value: store.categoryName(transaction)) }; LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Status") { Text(transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared").accessibilityIdentifier("transaction-status") }; LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo); LabeledContent("Flag", value: transaction.flag?.capitalized ?? "None"); LabeledContent("Tags", value: transaction.tags?.isEmpty == false ? transaction.tags!.map { "#\($0)" }.joined(separator: " ") : "None") }
                 if transaction.transferID != nil && transaction.isReconciled { Section { Label("This transfer includes reconciled history and cannot be edited or deleted.", systemImage: "lock.fill").font(.footnote).foregroundStyle(.secondary) } }
             }
         }.navigationTitle(transaction?.transferID == nil ? "Transaction" : "Transfer Detail").toolbar {
