@@ -1027,6 +1027,12 @@ public struct APIPayeeAlias: Identifiable, Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case id; case displayName = "display_name" }
 }
 
+public struct APIPayeeAliasCreate: Encodable, Equatable, Sendable {
+    public let displayName: String
+    public init(displayName: String) { self.displayName = displayName }
+    enum CodingKeys: String, CodingKey { case displayName = "display_name" }
+}
+
 public struct APIPayee: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let householdID: String

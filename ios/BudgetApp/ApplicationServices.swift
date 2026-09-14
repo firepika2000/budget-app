@@ -205,6 +205,8 @@ protocol PayeeCommandRepository: AnyObject {
     func createPayee(_ operation: CreatePayeeOperation) async throws
     func updatePayee(_ operation: UpdatePayeeOperation) async throws
     func mergePayee(sourceID: String, destinationID: String) async throws
+    func createPayeeAlias(payeeID: String, displayName: String) async throws
+    func deletePayeeAlias(payeeID: String, aliasID: String) async throws
 }
 
 @MainActor
@@ -419,6 +421,13 @@ struct PayeeService {
     func merge(sourceID: String, destinationID: String) async throws {
         guard sourceID != destinationID else { throw BudgetApplicationError.invalidOperation("Choose a different destination payee.") }
         do { try await repository.mergePayee(sourceID: sourceID, destinationID: destinationID) } catch { throw BudgetApplicationError.map(error) }
+    }
+    func createAlias(payeeID: String, displayName: String) async throws {
+        guard !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw BudgetApplicationError.invalidOperation("Enter an alias.") }
+        do { try await repository.createPayeeAlias(payeeID: payeeID, displayName: displayName) } catch { throw BudgetApplicationError.map(error) }
+    }
+    func deleteAlias(payeeID: String, aliasID: String) async throws {
+        do { try await repository.deletePayeeAlias(payeeID: payeeID, aliasID: aliasID) } catch { throw BudgetApplicationError.map(error) }
     }
 }
 

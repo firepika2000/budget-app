@@ -239,6 +239,31 @@ final class APIClientTests: XCTestCase {
         XCTAssertTrue(rows.isEmpty)
     }
 
+    func testPayeeAliasCreateAndDeleteUseProtectedResourcePaths() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var requestCount = 0
+        MockURLProtocol.handler = { request in
+            requestCount += 1
+            if requestCount == 1 {
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/payees/p1/aliases")
+                let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+                XCTAssertEqual(json["display_name"] as? String, "Corner Shop")
+                return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data(#"{"id":"a1","display_name":"Corner Shop"}"#.utf8))
+            }
+            XCTAssertEqual(request.httpMethod, "DELETE")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/payees/p1/aliases/a1")
+            return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let alias = try await client.createPayeeAlias(budgetID: "b1", payeeID: "p1", displayName: "Corner Shop", token: "secret")
+        XCTAssertEqual(alias.displayName, "Corner Shop")
+        try await client.deletePayeeAlias(budgetID: "b1", payeeID: "p1", aliasID: alias.id, token: "secret")
+        XCTAssertEqual(requestCount, 2)
+    }
+
     func testPayeeManagementUsesBudgetScopedContracts() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

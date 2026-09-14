@@ -43,6 +43,7 @@ private struct PayeeEditorView: View {
     @State private var categoryID: String
     @State private var isArchived: Bool
     @State private var mergeDestinationID = ""
+    @State private var newAlias = ""
     @State private var errorMessage: String?
     @State private var isSaving = false
 
@@ -68,6 +69,17 @@ private struct PayeeEditorView: View {
                     Section("History") {
                         LabeledContent("Transactions", value: "\(payee.transactionCount)")
                         LabeledContent("Net amount", value: store.format(payee.netAmountMinor))
+                    }
+                    Section("Aliases") {
+                        ForEach(store.payees.first(where: { $0.id == payee.id })?.aliases ?? []) { alias in
+                            Text(alias.displayName)
+                        }
+                        .onDelete { offsets in Task { await deleteAliases(payee.id, offsets: offsets) } }
+                        HStack {
+                            TextField("New alias", text: $newAlias).accessibilityIdentifier("payee-alias-name")
+                            Button("Add") { Task { await addAlias(payee.id) } }.disabled(newAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving).accessibilityIdentifier("add-payee-alias")
+                        }
+                        Text("Aliases match future payee names to this identity. They never rewrite transaction history or choose a category.").font(.footnote).foregroundStyle(.secondary)
                     }
                     let destinations = store.payees.filter { $0.id != payee.id }
                     if !destinations.isEmpty {
@@ -106,6 +118,8 @@ private struct PayeeEditorView: View {
         do { try await store.mergePayee(sourceID: sourceID, destinationID: mergeDestinationID); dismiss() }
         catch { errorMessage = error.localizedDescription }
     }
+    private func addAlias(_ payeeID: String) async { isSaving = true; defer { isSaving = false }; do { try await store.createPayeeAlias(payeeID: payeeID, displayName: newAlias); newAlias = "" } catch { errorMessage = error.localizedDescription } }
+    private func deleteAliases(_ payeeID: String, offsets: IndexSet) async { let aliases = store.payees.first(where: { $0.id == payeeID })?.aliases ?? []; do { for offset in offsets { try await store.deletePayeeAlias(payeeID: payeeID, aliasID: aliases[offset].id) } } catch { errorMessage = error.localizedDescription } }
 }
 
 struct FreshBudgetActivationState: Equatable {
@@ -215,7 +229,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let history = demo.visibleTransactions.filter { $0.payee == item.name }
             return ["id": item.id, "household_id": budget.householdID, "display_name": item.name, "is_archived": item.isArchived,
                     "merged_into_payee_id": NSNull(), "default_category_id": item.defaultCategoryID ?? NSNull(),
-                    "transaction_count": history.count, "net_amount_minor": history.reduce(Int64(0)) { $0 + $1.amount }, "aliases": []] as [String: Any]
+                    "transaction_count": history.count, "net_amount_minor": history.reduce(Int64(0)) { $0 + $1.amount }, "aliases": item.aliases.enumerated().map { ["id": "\(item.id)-alias-\($0.offset)", "display_name": $0.element] }] as [String: Any]
         })
         let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"
         // Best-effort credit spend per category from demo transactions on credit-kind accounts,
@@ -384,6 +398,17 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         for index in demo.transactions.indices where demo.transactions[index].payee == source.name { demo.transactions[index].payee = destination.name }
         demo.payees.removeAll { $0.id == sourceID }
     }
+    func createPayeeAlias(payeeID: String, displayName: String) async throws {
+        guard let index = demo.payees.firstIndex(where: { $0.id == payeeID }) else { throw workspaceRepositoryError("Payee not found.") }
+        let alias = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !demo.payees.flatMap(\.aliases).contains(where: { $0.caseInsensitiveCompare(alias) == .orderedSame }) else { throw workspaceRepositoryError("This alias is already in use.") }
+        demo.payees[index].aliases.append(alias)
+    }
+    func deletePayeeAlias(payeeID: String, aliasID: String) async throws {
+        guard let index = demo.payees.firstIndex(where: { $0.id == payeeID }), let offset = Int(aliasID.split(separator: "-").last ?? "") else { throw workspaceRepositoryError("Alias not found.") }
+        guard demo.payees[index].aliases.indices.contains(offset) else { throw workspaceRepositoryError("Alias not found.") }
+        demo.payees[index].aliases.remove(at: offset)
+    }
     func recordTransaction(_ operation: RecordTransactionOperation) async throws {
         guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
@@ -504,6 +529,8 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func createPayee(_ operation: CreatePayeeOperation) async throws { _ = try await client.createPayee(budgetID: budget.id, payee: APIPayeeCreate(displayName: operation.displayName, defaultCategoryID: operation.defaultCategoryID), token: token) }
     func updatePayee(_ operation: UpdatePayeeOperation) async throws { _ = try await client.updatePayee(budgetID: budget.id, payeeID: operation.payeeID, payee: APIPayeeUpdate(displayName: operation.displayName, isArchived: operation.isArchived, defaultCategoryID: operation.defaultCategoryID), token: token) }
     func mergePayee(sourceID: String, destinationID: String) async throws { _ = try await client.mergePayee(budgetID: budget.id, payeeID: sourceID, destinationPayeeID: destinationID, token: token) }
+    func createPayeeAlias(payeeID: String, displayName: String) async throws { _ = try await client.createPayeeAlias(budgetID: budget.id, payeeID: payeeID, displayName: displayName, token: token) }
+    func deletePayeeAlias(payeeID: String, aliasID: String) async throws { try await client.deletePayeeAlias(budgetID: budget.id, payeeID: payeeID, aliasID: aliasID, token: token) }
 
     func recordTransaction(_ operation: RecordTransactionOperation) async throws { _ = try await client.createTransaction(budgetID: budget.id, transaction: operation.apiValue, token: token) }
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: operation.apiValue, token: token) }
@@ -683,6 +710,8 @@ final class BudgetWorkspaceStore: ObservableObject {
     func createPayee(_ operation: CreatePayeeOperation) async throws { try await services().payees.create(operation); await refresh() }
     func updatePayee(_ operation: UpdatePayeeOperation) async throws { try await services().payees.update(operation); await refresh() }
     func mergePayee(sourceID: String, destinationID: String) async throws { try await services().payees.merge(sourceID: sourceID, destinationID: destinationID); await refresh() }
+    func createPayeeAlias(payeeID: String, displayName: String) async throws { try await services().payees.createAlias(payeeID: payeeID, displayName: displayName); await refresh() }
+    func deletePayeeAlias(payeeID: String, aliasID: String) async throws { try await services().payees.deleteAlias(payeeID: payeeID, aliasID: aliasID); await refresh() }
 
     func deleteTransaction(id: String) async throws {
         try await services().transactions.delete(id: id)
@@ -2219,7 +2248,7 @@ private struct LiveTransactionEditView: View {
         _payee=State(initialValue:transaction.payeeName); _payeeID=State(initialValue:transaction.payeeID); _amount=State(initialValue:CurrencyText.editable(abs(transaction.amountMinor),currencyCode:budget.currencyCode)); _accountID=State(initialValue:transaction.accountID); _categoryID=State(initialValue:transaction.categoryID ?? ""); _memo=State(initialValue:transaction.memo); _cleared=State(initialValue:transaction.isCleared); _date=State(initialValue:Self.parseDate(transaction.occurredOn)); _isInflow=State(initialValue:transaction.amountMinor > 0); _isSplit=State(initialValue:!transaction.splits.isEmpty); _splitRows=State(initialValue:transaction.splits.map { WorkspaceSplitDraft(categoryID:$0.categoryID,amount:CurrencyText.editable(abs($0.amountMinor),currencyCode:budget.currencyCode),memo:$0.memo) }); _flag=State(initialValue:transaction.flag ?? ""); _tags=State(initialValue:(transaction.tags ?? []).joined(separator:", ")); _attachments=State(initialValue:(transaction.attachmentMetadata ?? []).compactMap{$0["name"]}.joined(separator:", "))
     }
     var body: some View { NavigationStack { Form {
-        TextField("Payee",text:$payee).onChange(of:payee){_,value in if workspace.payees.first(where:{$0.id==payeeID})?.displayName != value { payeeID=nil }}; if !workspace.payees.isEmpty { Menu("Choose saved payee",systemImage:"person.text.rectangle"){ForEach(workspace.payees){item in Button(item.displayName){payeeID=item.id;payee=item.displayName;if categoryID.isEmpty,let suggested=item.defaultCategoryID{categoryID=suggested}}}} }; CurrencyAmountField("Amount", text:$amount, currencyCode:budget.currencyCode); Toggle("Income / inflow",isOn:$isInflow); Picker("Account",selection:$accountID){ForEach(accounts.filter{!$0.isClosed}){Text($0.name).tag($0.id)}}; DatePicker("Date",selection:$date,displayedComponents:.date); Toggle("Split across categories",isOn:$isSplit).disabled(isInflow)
+        TextField("Payee",text:$payee).onChange(of:payee){_,value in if workspace.payees.first(where:{$0.id==payeeID})?.displayName != value { payeeID=nil }}; if !workspace.payees.isEmpty { Menu("Choose saved payee",systemImage:"person.text.rectangle"){ForEach(workspace.payees.sorted { lhs, rhs in lhs.transactionCount == rhs.transactionCount ? lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending : lhs.transactionCount > rhs.transactionCount }){item in Button(item.displayName){payeeID=item.id;payee=item.displayName;if categoryID.isEmpty,let suggested=item.defaultCategoryID{categoryID=suggested}}}} }; CurrencyAmountField("Amount", text:$amount, currencyCode:budget.currencyCode); Toggle("Income / inflow",isOn:$isInflow); Picker("Account",selection:$accountID){ForEach(accounts.filter{!$0.isClosed}){Text($0.name).tag($0.id)}}; DatePicker("Date",selection:$date,displayedComponents:.date); Toggle("Split across categories",isOn:$isSplit).disabled(isInflow)
         if isSplit { Section("Splits") { ForEach($splitRows) { $row in Picker("Category",selection:$row.categoryID){Text("Select").tag("");ForEach(categories.filter{!$0.isArchived}){Text($0.name).tag($0.id)}};CurrencyAmountField("Split amount", text:$row.amount, currencyCode:budget.currencyCode, allowsZero:true);TextField("Split memo",text:$row.memo) }; Button("Add split",systemImage:"plus"){splitRows.append(.init())}; if let remaining { LabeledContent("Remaining",value:CurrencyText.editable(remaining,currencyCode:budget.currencyCode)).foregroundStyle(remaining == 0 ? Color.secondary : Color.red) } } } else if !isInflow { Picker("Category",selection:$categoryID){Text("Uncategorized").tag("");ForEach(categories.filter{!$0.isArchived}){Text($0.name).tag($0.id)}} }
         TextField("Memo",text:$memo); Picker("Flag",selection:$flag){Text("None").tag("");Text("Red").tag("red");Text("Orange").tag("orange");Text("Yellow").tag("yellow");Text("Green").tag("green");Text("Blue").tag("blue");Text("Purple").tag("purple")}; TextField("Tags (comma separated)",text:$tags);TextField("Attachment names (metadata only)",text:$attachments);Toggle("Cleared",isOn:$cleared)
     }.navigationTitle("Edit Transaction").toolbar { ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(isSaving || parsed == nil || !splitsValid)} }.alert("Unable to save",isPresented:Binding(get:{errorMessage != nil},set:{if !$0{errorMessage=nil}})){Button("OK",role:.cancel){}}message:{Text(errorMessage ?? "Unknown error")} } }

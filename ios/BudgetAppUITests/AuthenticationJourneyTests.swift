@@ -446,6 +446,24 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(app.textFields["Payee"].value as? String, "Neighborhood Market")
     }
 
+    func testProductionPayeeManagementAddsAliasWithoutRewritingHistory() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo"]
+        app.launch()
+
+        app.buttons["profile-settings-button"].tap()
+        app.buttons["Household and access"].tap()
+        app.buttons["Payees"].tap()
+        XCTAssertTrue(app.navigationBars["Payees"].waitForExistence(timeout: 5))
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'payee-row-'")).firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Edit Payee"].waitForExistence(timeout: 5))
+        app.textFields["payee-alias-name"].tap()
+        app.textFields["payee-alias-name"].typeText("Corner Shop")
+        app.buttons["add-payee-alias"].tap()
+        XCTAssertTrue(app.staticTexts["Corner Shop"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Transactions"].exists)
+    }
+
     func testProductionActivityUsesCanonicalSearchAndFilterBrowser() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=activity"]

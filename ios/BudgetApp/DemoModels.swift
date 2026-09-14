@@ -115,6 +115,7 @@ struct DemoPayee: Identifiable, Hashable {
     var name: String
     var isArchived = false
     var defaultCategoryID: String? = nil
+    var aliases: [String] = []
 }
 
 struct DemoSchedule: Identifiable, Hashable {

@@ -277,6 +277,14 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/payees/\(payeeID)/merge", method: "POST", token: token, body: APIPayeeMerge(destinationPayeeID: destinationPayeeID))
     }
 
+    public func createPayeeAlias(budgetID: String, payeeID: String, displayName: String, token: String) async throws -> APIPayeeAlias {
+        try await send(path: "api/v1/budgets/\(budgetID)/payees/\(payeeID)/aliases", method: "POST", token: token, body: APIPayeeAliasCreate(displayName: displayName))
+    }
+
+    public func deletePayeeAlias(budgetID: String, payeeID: String, aliasID: String, token: String) async throws {
+        let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/payees/\(payeeID)/aliases/\(aliasID)", method: "DELETE", token: token)
+    }
+
     public func createTransfer(budgetID: String, transfer: APITransferCreate, token: String) async throws -> APITransferResponse {
         try await send(path: "api/v1/budgets/\(budgetID)/transfers", method: "POST", token: token, body: transfer)
     }
