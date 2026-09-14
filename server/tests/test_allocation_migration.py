@@ -3,7 +3,60 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
+
+
+def migration_config() -> Config:
+    return Config(str(Path(__file__).parents[1] / "alembic.ini"))
+
+
+def test_migration_graph_fits_version_table_and_has_one_valid_head():
+    scripts = ScriptDirectory.from_config(migration_config())
+    revisions = list(scripts.walk_revisions())
+    revision_ids = [item.revision for item in revisions]
+
+    assert len(scripts.get_heads()) == 1
+    assert len(revision_ids) == len(set(revision_ids))
+    assert all(len(revision_id) <= 32 for revision_id in revision_ids)
+
+    known = set(revision_ids)
+    for item in revisions:
+        parents = item.down_revision
+        if parents is None:
+            continue
+        if isinstance(parents, str):
+            parents = (parents,)
+        assert set(parents) <= known
+
+
+def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
+    database_path = tmp_path / "v04-to-v05.db"
+    database_url = f"sqlite:///{database_path}"
+    monkeypatch.setenv("BUDGET_APP_DATABASE_URL", database_url)
+    monkeypatch.setenv(
+        "BUDGET_APP_JWT_SECRET", "migration-test-secret-that-is-longer-than-32-characters"
+    )
+    config = migration_config()
+    command.upgrade(config, "0017_category_name_uniqueness")
+    engine = create_engine(database_url)
+    with engine.connect() as connection:
+        version = connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar_one()
+        assert version == "0017_category_name_uniqueness"
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        version = connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar_one()
+        attachment_count = connection.execute(
+            text("SELECT COUNT(*) FROM transaction_attachments")
+        ).scalar_one()
+        assert version == "0019_txn_rev_attach"
+        assert attachment_count == 0
 
 
 def test_existing_monthly_assignment_is_backfilled_into_balanced_ledger(

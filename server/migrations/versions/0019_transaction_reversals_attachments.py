@@ -3,7 +3,7 @@
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0019_transaction_reversals_attachments"
+revision = "0019_txn_rev_attach"
 down_revision = "0018_first_class_payees"
 branch_labels = None
 depends_on = None
