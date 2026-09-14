@@ -270,6 +270,22 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testReportRangeUsesFixtureClockOnlyForDeterministicProvider() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = calendar.date(from: DateComponents(year: 2031, month: 4, day: 18))!
+
+        let demo = BudgetWorkspaceStore.demo()
+        let demoRange = demo.reportRange(calendar: calendar, now: now)
+        XCTAssertEqual(calendar.dateComponents([.year, .month, .day], from: demoRange.1), DateComponents(year: 2026, month: 9, day: 30))
+
+        let live = BudgetWorkspaceStore(budget: demo.budget)
+        let liveRange = live.reportRange(calendar: calendar, now: now)
+        XCTAssertEqual(calendar.dateComponents([.year, .month, .day], from: liveRange.0), DateComponents(year: 2031, month: 3, day: 20))
+        XCTAssertEqual(calendar.dateComponents([.year, .month, .day], from: liveRange.1), DateComponents(year: 2031, month: 4, day: 18))
+    }
+
+    @MainActor
     func testScheduledRealizationAdvancesAndOnceDeactivatesWithWorkspaceRefresh() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

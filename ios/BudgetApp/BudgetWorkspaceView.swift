@@ -677,7 +677,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func reportRange(calendar: Calendar = .current, now: Date = Date()) -> (Date, Date) {
-        let effectiveNow = dataSource == nil ? now : Date.demo(monthsAgo: 0, day: 30)
+        let effectiveNow = dataSource is DemoWorkspaceDataSource ? Date.demo(monthsAgo: 0, day: 30) : now
         let end = calendar.startOfDay(for: reportPeriod == "custom" ? customReportEnd : effectiveNow)
         let start: Date
         switch reportPeriod {
