@@ -497,7 +497,9 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
     public let memo: String
     public let isCleared: Bool
     public let isReconciled: Bool
+    public let createdByUserID: String?
     public let transferID: String?
+    public let scheduledTransactionID: String?
     public let flag: String?
     public let tags: [String]?
     public let attachmentMetadata: [[String: String]]?
@@ -514,8 +516,54 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
         case payeeName = "payee_name"
         case isCleared = "is_cleared"
         case isReconciled = "is_reconciled"
+        case createdByUserID = "created_by_user_id"
         case transferID = "transfer_id"
+        case scheduledTransactionID = "scheduled_transaction_id"
         case attachmentMetadata = "attachment_metadata"
+    }
+}
+
+public struct APITransactionPage: Decodable, Equatable, Sendable {
+    public let items: [APITransaction]
+    public let nextCursor: String?
+    public let totalCount: Int
+    public init(items: [APITransaction], nextCursor: String?, totalCount: Int) {
+        self.items = items; self.nextCursor = nextCursor; self.totalCount = totalCount
+    }
+    enum CodingKeys: String, CodingKey {
+        case items
+        case nextCursor = "next_cursor"
+        case totalCount = "total_count"
+    }
+}
+
+public struct APITransactionQuery: Equatable, Sendable {
+    public var search: String
+    public var accountIDs: [String]
+    public var categoryIDs: [String]
+    public var payeeIDs: [String]
+    public var startDate: String?
+    public var endDate: String?
+    public var minimumAmountMinor: Int64?
+    public var maximumAmountMinor: Int64?
+    public var transactionType: String?
+    public var cleared: Bool?
+    public var reconciled: Bool?
+    public var flags: [String]
+    public var tags: [String]
+    public var actorUserIDs: [String]
+    public var isTransfer: Bool?
+    public var isScheduledRealization: Bool?
+    public var sort: String
+    public var limit: Int
+    public var cursor: String?
+
+    public init(search: String = "", accountIDs: [String] = [], categoryIDs: [String] = [], payeeIDs: [String] = [], startDate: String? = nil, endDate: String? = nil, minimumAmountMinor: Int64? = nil, maximumAmountMinor: Int64? = nil, transactionType: String? = nil, cleared: Bool? = nil, reconciled: Bool? = nil, flags: [String] = [], tags: [String] = [], actorUserIDs: [String] = [], isTransfer: Bool? = nil, isScheduledRealization: Bool? = nil, sort: String = "date_desc", limit: Int = 50, cursor: String? = nil) {
+        self.search = search; self.accountIDs = accountIDs; self.categoryIDs = categoryIDs; self.payeeIDs = payeeIDs
+        self.startDate = startDate; self.endDate = endDate; self.minimumAmountMinor = minimumAmountMinor; self.maximumAmountMinor = maximumAmountMinor
+        self.transactionType = transactionType; self.cleared = cleared; self.reconciled = reconciled; self.flags = flags; self.tags = tags
+        self.actorUserIDs = actorUserIDs; self.isTransfer = isTransfer; self.isScheduledRealization = isScheduledRealization
+        self.sort = sort; self.limit = limit; self.cursor = cursor
     }
 }
 

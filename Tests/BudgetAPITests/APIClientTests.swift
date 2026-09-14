@@ -175,6 +175,34 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(transaction.payeeID, "p1")
     }
 
+    func testTransactionBrowserEncodesTypedFiltersAndDecodesPage() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/search")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertTrue(items.contains(.init(name: "q", value: "market")))
+            XCTAssertTrue(items.contains(.init(name: "account_id", value: "a1")))
+            XCTAssertTrue(items.contains(.init(name: "category_id", value: "c1")))
+            XCTAssertTrue(items.contains(.init(name: "minimum_amount_minor", value: "-5000")))
+            XCTAssertTrue(items.contains(.init(name: "cleared", value: "true")))
+            XCTAssertTrue(items.contains(.init(name: "sort", value: "amount_asc")))
+            XCTAssertTrue(items.contains(.init(name: "cursor", value: "opaque")))
+            let response = Data(#"{"items":[{"id":"t1","budget_id":"b1","account_id":"a1","category_id":"c1","payee_id":"p1","amount_minor":-1200,"occurred_on":"2026-09-04","created_at":"2026-09-04T12:00:00Z","payee_name":"Market","memo":"","is_cleared":true,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":null,"scheduled_transaction_id":null,"splits":[]}],"next_cursor":"next","total_count":2}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let page = try await client.searchTransactions(
+            budgetID: "b1",
+            query: .init(search: "market", accountIDs: ["a1"], categoryIDs: ["c1"], minimumAmountMinor: -5000, cleared: true, sort: "amount_asc", cursor: "opaque"),
+            token: "secret"
+        )
+        XCTAssertEqual(page.totalCount, 2)
+        XCTAssertEqual(page.nextCursor, "next")
+        XCTAssertEqual(page.items.first?.createdByUserID, "u1")
+    }
+
     func testPayeeManagementUsesBudgetScopedContracts() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

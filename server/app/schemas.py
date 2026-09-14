@@ -480,6 +480,7 @@ class TransactionResponse(BaseModel):
     attachment_metadata: list[dict[str, str]] = Field(default_factory=list)
     created_by_user_id: str
     transfer_id: Optional[str]
+    scheduled_transaction_id: Optional[str] = None
     splits: list[TransactionSplitResponse] = Field(default_factory=list)
 
 

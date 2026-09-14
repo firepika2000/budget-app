@@ -369,14 +369,14 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
-        app.navigationBars["Activity"].buttons.element(boundBy: 1).tap()
+        app.buttons["add-activity-action"].tap()
         XCTAssertTrue(app.buttons["Schedule Transaction"].waitForExistence(timeout: 5))
         app.buttons["Schedule Transaction"].tap()
         XCTAssertTrue(app.navigationBars["New Schedule"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.datePickers["schedule-next-date"].exists)
         app.buttons["Cancel"].tap()
 
-        app.navigationBars["Activity"].buttons.element(boundBy: 1).tap()
+        app.buttons["add-activity-action"].tap()
         app.buttons["Transaction"].tap()
         XCTAssertTrue(app.navigationBars["New Transaction"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Transactions record money that has already happened. Use Schedule Transaction for a future expense, income, or transfer."].exists)
@@ -444,5 +444,28 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["saved-payee-menu"].tap()
         app.buttons["Neighborhood Market"].tap()
         XCTAssertEqual(app.textFields["Payee"].value as? String, "Neighborhood Market")
+    }
+
+    func testProductionActivityUsesCanonicalSearchAndFilterBrowser() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["transaction-row-t1"].waitForExistence(timeout: 5))
+        app.buttons["transaction-filter-action"].tap()
+        XCTAssertTrue(app.navigationBars["Filter Activity"].waitForExistence(timeout: 5))
+        app.buttons["Type, All types"].tap()
+        app.buttons["Income"].tap()
+        app.buttons["Apply"].tap()
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["transaction-row-t1"].waitForExistence(timeout: 1), "spending must be excluded from an income-only server-equivalent query")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Showing '")).firstMatch.waitForExistence(timeout: 5))
+
+        app.buttons["transaction-filter-action"].tap()
+        app.swipeUp()
+        app.buttons["Reset filters"].tap()
+        app.buttons["Apply"].tap()
+        XCTAssertTrue(app.buttons["transaction-row-t1"].waitForExistence(timeout: 5))
     }
 }

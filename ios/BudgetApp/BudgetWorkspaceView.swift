@@ -149,7 +149,7 @@ protocol WorkspaceDataSource: AnyObject {
 }
 
 @MainActor
-protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRepository, TransactionCommandRepository, ScheduleCommandRepository, PayeeCommandRepository {
+protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRepository, TransactionCommandRepository, TransactionBrowserRepository, ScheduleCommandRepository, PayeeCommandRepository {
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws
     func createGroup(name: String) async throws
     func createRequest(_ value: APIFinancialRequestCreate) async throws
@@ -209,7 +209,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let splitBase = ids.isEmpty ? 0 : item.amount / Int64(ids.count)
             var remainder = ids.isEmpty ? 0 : item.amount % Int64(ids.count)
             let splits: [[String: Any]] = ids.count > 1 ? ids.enumerated().map { index, id in let extra: Int64 = remainder == 0 ? 0 : (remainder > 0 ? 1 : -1); if remainder != 0 { remainder -= extra }; return ["id": "\(item.id)-\(index)", "category_id": id, "amount_minor": item.categoryAmounts[id] ?? splitBase + extra, "memo": ""] } : []
-            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "payee_id": demo.payees.first(where: { $0.name == item.payee })?.id ?? NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "is_cleared": item.cleared, "is_reconciled": item.reconciled, "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "splits": splits]
+            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "payee_id": demo.payees.first(where: { $0.name == item.payee })?.id ?? NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "is_cleared": item.cleared, "is_reconciled": item.reconciled, "created_by_user_id": demo.persona.rawValue.lowercased(), "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "scheduled_transaction_id": NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "splits": splits]
         })
         let payeeRows: [APIPayee] = try decode(demo.payees.filter { !$0.isArchived }.map { item in
             let history = demo.visibleTransactions.filter { $0.payee == item.name }
@@ -324,6 +324,50 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 }
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
+    func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage {
+        let report = WorkspaceReportQuery(start: .distantPast, end: .distantFuture, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", includeTracking: true)
+        var rows = try await snapshot(planMonth: Date(), report: report).transactions
+        let text = query.search.trimmingCharacters(in: .whitespacesAndNewlines)
+        rows = rows.filter { item in
+            let categoryIDs = Set(([item.categoryID].compactMap { $0 }) + item.splits.map(\.categoryID))
+            return (text.isEmpty || item.payeeName.localizedCaseInsensitiveContains(text) || item.memo.localizedCaseInsensitiveContains(text) || (item.flag ?? "").localizedCaseInsensitiveContains(text) || (item.tags ?? []).contains(where: { $0.localizedCaseInsensitiveContains(text) }))
+                && (query.accountIDs.isEmpty || query.accountIDs.contains(item.accountID))
+                && (query.categoryIDs.isEmpty || !categoryIDs.isDisjoint(with: query.categoryIDs))
+                && (query.payeeIDs.isEmpty || item.payeeID.map(query.payeeIDs.contains) == true)
+                && (query.startDate == nil || item.occurredOn >= query.startDate!)
+                && (query.endDate == nil || item.occurredOn <= query.endDate!)
+                && (query.minimumAmountMinor == nil || item.amountMinor >= query.minimumAmountMinor!)
+                && (query.maximumAmountMinor == nil || item.amountMinor <= query.maximumAmountMinor!)
+                && (query.cleared == nil || item.isCleared == query.cleared!)
+                && (query.reconciled == nil || item.isReconciled == query.reconciled!)
+                && (query.flags.isEmpty || item.flag.map(query.flags.contains) == true)
+                && (query.tags.isEmpty || !(Set(item.tags ?? []).isDisjoint(with: query.tags)))
+                && (query.actorUserIDs.isEmpty || item.createdByUserID.map(query.actorUserIDs.contains) == true)
+                && (query.isTransfer == nil || (item.transferID != nil) == query.isTransfer!)
+                && (query.isScheduledRealization == nil || (item.scheduledTransactionID != nil) == query.isScheduledRealization!)
+                && Self.matchesType(item, query.transactionType, categoryIDs: categoryIDs)
+        }
+        switch query.sort {
+        case "date_asc": rows.sort { ($0.occurredOn, $0.createdAt ?? "", $0.id) < ($1.occurredOn, $1.createdAt ?? "", $1.id) }
+        case "amount_desc": rows.sort { ($0.amountMinor, $0.id) > ($1.amountMinor, $1.id) }
+        case "amount_asc": rows.sort { ($0.amountMinor, $0.id) < ($1.amountMinor, $1.id) }
+        case "payee_asc": rows.sort { ($0.payeeName.localizedLowercase, $0.id) < ($1.payeeName.localizedLowercase, $1.id) }
+        default: rows.sort { ($0.occurredOn, $0.createdAt ?? "", $0.id) > ($1.occurredOn, $1.createdAt ?? "", $1.id) }
+        }
+        let start = query.cursor.flatMap { cursor in rows.firstIndex(where: { $0.id == cursor }).map { $0 + 1 } } ?? 0
+        let end = min(start + query.limit, rows.count)
+        let page = start < end ? Array(rows[start..<end]) : []
+        return APITransactionPage(items: page, nextCursor: end < rows.count ? page.last?.id : nil, totalCount: rows.count)
+    }
+    private static func matchesType(_ item: APITransaction, _ type: String?, categoryIDs: Set<String>) -> Bool {
+        switch type {
+        case "transfer": return item.transferID != nil
+        case "income": return item.transferID == nil && item.amountMinor > 0 && categoryIDs.isEmpty
+        case "spending": return item.transferID == nil && item.amountMinor < 0 && !categoryIDs.isEmpty
+        case "refund": return item.transferID == nil && item.amountMinor > 0 && !categoryIDs.isEmpty
+        default: return true
+        }
+    }
     func createPayee(_ operation: CreatePayeeOperation) async throws {
         let name = operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !demo.payees.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { throw workspaceRepositoryError("A payee with this name already exists.") }
@@ -433,6 +477,8 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     let token: String
     private var client: APIClient { get throws { try APIClient(baseURL: serverURL) } }
     init(budget: APIBudget, serverURL: URL, token: String) { self.budget = budget; self.serverURL = serverURL; self.token = token }
+
+    func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try await client.searchTransactions(budgetID: budget.id, query: query, token: token) }
 
     func createPayee(_ operation: CreatePayeeOperation) async throws { _ = try await client.createPayee(budgetID: budget.id, payee: APIPayeeCreate(displayName: operation.displayName, defaultCategoryID: operation.defaultCategoryID), token: token) }
     func updatePayee(_ operation: UpdatePayeeOperation) async throws { _ = try await client.updatePayee(budgetID: budget.id, payeeID: operation.payeeID, payee: APIPayeeUpdate(displayName: operation.displayName, isArchived: operation.isArchived, defaultCategoryID: operation.defaultCategoryID), token: token) }
@@ -618,6 +664,10 @@ final class BudgetWorkspaceStore: ObservableObject {
     func deleteTransaction(id: String) async throws {
         try await services().transactions.delete(id: id)
         await refresh()
+    }
+
+    func browseTransactions(_ query: APITransactionQuery) async throws -> APITransactionPage {
+        try await services().transactions.browse(query)
     }
 
     func createTransfer(_ operation: TransferMoneyOperation) async throws {
@@ -1343,21 +1393,37 @@ private struct LiveSmartFundingView: View {
 private struct LiveActivityView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var search = ""
+    @State private var filter = TransactionBrowserFilter()
+    @State private var rows: [APITransaction] = []
+    @State private var nextCursor: String?
+    @State private var totalCount = 0
+    @State private var loading = false
+    @State private var errorMessage: String?
+    @State private var showFilters = false
     @State private var showAdd = false
     @State private var showSchedule = false
     @State private var transferPresentation: TransferPresentation?
-    var filtered: [APITransaction] { store.transactions.filter { search.isEmpty || $0.payeeName.localizedCaseInsensitiveContains(search) || $0.memo.localizedCaseInsensitiveContains(search) || store.categoryName($0).localizedCaseInsensitiveContains(search) } }
+    private var queryKey: String { "\(search)|\(filter)" }
     var body: some View {
         List {
             Section("Planning") { NavigationLink { LiveScheduledTransactionsView() } label: { Label("Scheduled transactions", systemImage: "calendar.badge.clock") } }
-            Section("Posted activity") { ForEach(filtered) { LiveTransactionLink(transaction: $0) } }
+            Section("Posted activity") {
+                if rows.isEmpty && !loading && errorMessage == nil { ContentUnavailableView("No matching transactions", systemImage: "line.3.horizontal.decrease.circle", description: Text("Try changing your search or filters.")) }
+                ForEach(rows) { LiveTransactionLink(transaction: $0) }
+                if let errorMessage { VStack(alignment: .leading, spacing: 8) { Text(errorMessage).foregroundStyle(.secondary); Button("Retry") { Task { await load(reset: true) } } } }
+                else if nextCursor != nil { Button { Task { await load(reset: false) } } label: { HStack { Spacer(); if loading { ProgressView() } else { Text("Load more") }; Spacer() } }.disabled(loading) }
+                else if !rows.isEmpty { Text("Showing \(rows.count) of \(totalCount)").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity) }
+            }
         }
-            .searchable(text: $search, prompt: "Payee, memo, or category")
+            .searchable(text: $search, prompt: "Payee, memo, flag, or tag")
             .navigationTitle("Activity")
-            .toolbar { if store.budget.can("create_transaction") || store.budget.can("manage_planning") { Menu { if store.budget.can("create_transaction") { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } }; if store.budget.can("manage_planning") { Button("Schedule Transaction", systemImage: "calendar.badge.plus") { showSchedule = true }.accessibilityIdentifier("schedule-transaction-action") } } label: { Image(systemName: "plus") } } }
+            .toolbar { Button { showFilters = true } label: { Image(systemName: filter.isEmpty ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill") }.accessibilityLabel("Filter transactions").accessibilityIdentifier("transaction-filter-action"); if store.budget.can("create_transaction") || store.budget.can("manage_planning") { Menu { if store.budget.can("create_transaction") { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } }; if store.budget.can("manage_planning") { Button("Schedule Transaction", systemImage: "calendar.badge.plus") { showSchedule = true }.accessibilityIdentifier("schedule-transaction-action") } } label: { Image(systemName: "plus") }.accessibilityIdentifier("add-activity-action") } }
             .sheet(isPresented: $showAdd) { entry }
             .sheet(isPresented: $showSchedule) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode) }
             .sheet(item: $transferPresentation) { presentation in transfer(presentation) }
+            .sheet(isPresented: $showFilters) { TransactionFilterView(current: filter) { filter = $0 } }
+            .task(id: queryKey) { if !search.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }; guard !Task.isCancelled else { return }; await load(reset: true) }
+            .refreshable { await store.refresh(); await load(reset: true) }
     }
     @ViewBuilder private func transfer(_ presentation: TransferPresentation) -> some View {
         LiveTransferView(presentation: presentation, budget: store.budget, accounts: store.accounts, onSaved: reload)
@@ -1365,7 +1431,40 @@ private struct LiveActivityView: View {
     @ViewBuilder private var entry: some View {
         TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, onSaved: reload)
     }
-    private func reload() async { await store.refresh() }
+    private func reload() async { await store.refresh(); await load(reset: true) }
+    private func load(reset: Bool) async {
+        if loading && !reset { return }; loading = true; defer { loading = false }
+        do { let page = try await store.browseTransactions(filter.query(search: search, currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor)); rows = reset ? page.items : rows + page.items; nextCursor = page.nextCursor; totalCount = page.totalCount; errorMessage = nil }
+        catch { if !Task.isCancelled { errorMessage = error.localizedDescription } }
+    }
+}
+
+private struct TransactionBrowserFilter: Equatable, CustomStringConvertible {
+    var accountID = ""; var categoryID = ""; var payeeID = ""; var memberID = ""
+    var type = "all"; var status = "all"; var sort = "date_desc"; var linkage = "all"
+    var flag = ""; var tag = ""; var minimum = ""; var maximum = ""
+    var usesStartDate = false; var startDate = Date(); var usesEndDate = false; var endDate = Date()
+    var isEmpty: Bool { accountID.isEmpty && categoryID.isEmpty && payeeID.isEmpty && memberID.isEmpty && type == "all" && status == "all" && sort == "date_desc" && linkage == "all" && flag.isEmpty && tag.isEmpty && minimum.isEmpty && maximum.isEmpty && !usesStartDate && !usesEndDate }
+    var description: String { [accountID, categoryID, payeeID, memberID, type, status, sort, linkage, flag, tag, minimum, maximum, String(usesStartDate), BudgetWorkspaceStore.dateString(startDate), String(usesEndDate), BudgetWorkspaceStore.dateString(endDate)].joined(separator: "|") }
+    func query(search: String, currencyCode: String, cursor: String?) -> APITransactionQuery {
+        APITransactionQuery(search: search, accountIDs: accountID.isEmpty ? [] : [accountID], categoryIDs: categoryID.isEmpty ? [] : [categoryID], payeeIDs: payeeID.isEmpty ? [] : [payeeID], startDate: usesStartDate ? BudgetWorkspaceStore.dateString(startDate) : nil, endDate: usesEndDate ? BudgetWorkspaceStore.dateString(endDate) : nil, minimumAmountMinor: minimum.isEmpty ? nil : CurrencyText.parseMinorUnits(minimum, currencyCode: currencyCode), maximumAmountMinor: maximum.isEmpty ? nil : CurrencyText.parseMinorUnits(maximum, currencyCode: currencyCode), transactionType: type == "all" ? nil : type, cleared: status == "cleared" ? true : status == "uncleared" ? false : nil, reconciled: status == "reconciled" ? true : nil, flags: flag.isEmpty ? [] : [flag], tags: tag.isEmpty ? [] : [tag], actorUserIDs: memberID.isEmpty ? [] : [memberID], isTransfer: linkage == "transfer" ? true : nil, isScheduledRealization: linkage == "scheduled" ? true : nil, sort: sort, limit: 50, cursor: cursor)
+    }
+}
+
+private struct TransactionFilterView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: TransactionBrowserFilter
+    let onApply: (TransactionBrowserFilter) -> Void
+    init(current: TransactionBrowserFilter, onApply: @escaping (TransactionBrowserFilter) -> Void) { _draft = State(initialValue: current); self.onApply = onApply }
+    var body: some View { NavigationStack { Form {
+        Section("Resources") { Picker("Account", selection: $draft.accountID) { Text("All accounts").tag(""); ForEach(store.accounts) { Text($0.name).tag($0.id) } }; Picker("Category", selection: $draft.categoryID) { Text("All categories").tag(""); ForEach(store.categories) { Text($0.name).tag($0.id) } }; Picker("Payee", selection: $draft.payeeID) { Text("All payees").tag(""); ForEach(store.payees) { Text($0.displayName).tag($0.id) } }; if !store.householdMembers.isEmpty { Picker("Member", selection: $draft.memberID) { Text("All authorized members").tag(""); ForEach(store.householdMembers) { Text($0.displayName).tag($0.userID) } } } }
+        Section("Transaction") { Picker("Type", selection: $draft.type) { Text("All types").tag("all"); Text("Spending").tag("spending"); Text("Income").tag("income"); Text("Refund").tag("refund"); Text("Transfer").tag("transfer") }; Picker("Status", selection: $draft.status) { Text("Any status").tag("all"); Text("Cleared").tag("cleared"); Text("Uncleared").tag("uncleared"); Text("Reconciled").tag("reconciled") }; Picker("Source", selection: $draft.linkage) { Text("Any source").tag("all"); Text("Transfers").tag("transfer"); Text("Realized schedules").tag("scheduled") }; TextField("Flag", text: $draft.flag); TextField("Tag", text: $draft.tag) }
+        Section("Date range") { Toggle("Starting date", isOn: $draft.usesStartDate); if draft.usesStartDate { DatePicker("From", selection: $draft.startDate, displayedComponents: .date) }; Toggle("Ending date", isOn: $draft.usesEndDate); if draft.usesEndDate { DatePicker("Through", selection: $draft.endDate, displayedComponents: .date) } }
+        Section("Signed amount") { CurrencyAmountField("Minimum", text: $draft.minimum, currencyCode: store.budget.currencyCode, allowsNegative: true, allowsZero: true); CurrencyAmountField("Maximum", text: $draft.maximum, currencyCode: store.budget.currencyCode, allowsNegative: true, allowsZero: true); Text("Outflows are negative; inflows are positive.").font(.caption).foregroundStyle(.secondary) }
+        Section("Sort") { Picker("Order", selection: $draft.sort) { Text("Newest first").tag("date_desc"); Text("Oldest first").tag("date_asc"); Text("Largest amount").tag("amount_desc"); Text("Smallest amount").tag("amount_asc"); Text("Payee A–Z").tag("payee_asc") } }
+        Section { Button("Reset filters") { draft = TransactionBrowserFilter() } }
+    }.navigationTitle("Filter Activity").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { onApply(draft); dismiss() } } } } }
 }
 
 private enum ScheduledKind: String, CaseIterable, Identifiable {

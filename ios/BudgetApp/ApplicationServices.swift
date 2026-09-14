@@ -194,6 +194,11 @@ protocol TransactionCommandRepository: AnyObject {
 }
 
 @MainActor
+protocol TransactionBrowserRepository: AnyObject {
+    func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage
+}
+
+@MainActor
 protocol PayeeCommandRepository: AnyObject {
     func createPayee(_ operation: CreatePayeeOperation) async throws
     func updatePayee(_ operation: UpdatePayeeOperation) async throws
@@ -208,7 +213,7 @@ protocol ScheduleCommandRepository: AnyObject {
     func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation
 }
 
-typealias CoreFinancialRepository = AccountCommandRepository & PlanningCommandRepository & TransactionCommandRepository & ScheduleCommandRepository & PayeeCommandRepository
+typealias CoreFinancialRepository = AccountCommandRepository & PlanningCommandRepository & TransactionCommandRepository & TransactionBrowserRepository & ScheduleCommandRepository & PayeeCommandRepository
 
 // MARK: - Shared application services
 
@@ -274,8 +279,13 @@ struct BudgetPlanningService {
 
 @MainActor
 struct TransactionService {
-    private let repository: any TransactionCommandRepository
-    init(repository: any TransactionCommandRepository) { self.repository = repository }
+    private let repository: any TransactionCommandRepository & TransactionBrowserRepository
+    init(repository: any TransactionCommandRepository & TransactionBrowserRepository) { self.repository = repository }
+
+    func browse(_ query: APITransactionQuery) async throws -> APITransactionPage {
+        do { return try await repository.browseTransactions(query: query) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
 
     func record(_ operation: RecordTransactionOperation) async throws {
         try validate(operation)

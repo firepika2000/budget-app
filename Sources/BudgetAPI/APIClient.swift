@@ -162,6 +162,28 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/transactions", token: token)
     }
 
+    public func searchTransactions(budgetID: String, query: APITransactionQuery, token: String) async throws -> APITransactionPage {
+        var items = [URLQueryItem(name: "sort", value: query.sort), URLQueryItem(name: "limit", value: String(query.limit))]
+        if !query.search.isEmpty { items.append(URLQueryItem(name: "q", value: query.search)) }
+        items += query.accountIDs.map { URLQueryItem(name: "account_id", value: $0) }
+        items += query.categoryIDs.map { URLQueryItem(name: "category_id", value: $0) }
+        items += query.payeeIDs.map { URLQueryItem(name: "payee_id", value: $0) }
+        if let value = query.startDate { items.append(URLQueryItem(name: "start_date", value: value)) }
+        if let value = query.endDate { items.append(URLQueryItem(name: "end_date", value: value)) }
+        if let value = query.minimumAmountMinor { items.append(URLQueryItem(name: "minimum_amount_minor", value: String(value))) }
+        if let value = query.maximumAmountMinor { items.append(URLQueryItem(name: "maximum_amount_minor", value: String(value))) }
+        if let value = query.transactionType { items.append(URLQueryItem(name: "transaction_type", value: value)) }
+        if let value = query.cleared { items.append(URLQueryItem(name: "cleared", value: String(value))) }
+        if let value = query.reconciled { items.append(URLQueryItem(name: "reconciled", value: String(value))) }
+        items += query.flags.map { URLQueryItem(name: "flag", value: $0) }
+        items += query.tags.map { URLQueryItem(name: "tag", value: $0) }
+        items += query.actorUserIDs.map { URLQueryItem(name: "actor_user_id", value: $0) }
+        if let value = query.isTransfer { items.append(URLQueryItem(name: "is_transfer", value: String(value))) }
+        if let value = query.isScheduledRealization { items.append(URLQueryItem(name: "is_scheduled_realization", value: String(value))) }
+        if let value = query.cursor { items.append(URLQueryItem(name: "cursor", value: value)) }
+        return try await send(path: "api/v1/budgets/\(budgetID)/transactions/search", queryItems: items, token: token)
+    }
+
     public func categories(budgetID: String, token: String) async throws -> [APICategory] {
         try await send(path: "api/v1/budgets/\(budgetID)/categories", token: token)
     }
