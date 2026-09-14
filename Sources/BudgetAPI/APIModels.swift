@@ -489,6 +489,7 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let accountID: String
     public let categoryID: String?
+    public let payeeID: String?
     public let amountMinor: Int64
     public let occurredOn: String
     public let createdAt: String?
@@ -506,6 +507,7 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
         case id, memo, splits, flag, tags
         case accountID = "account_id"
         case categoryID = "category_id"
+        case payeeID = "payee_id"
         case amountMinor = "amount_minor"
         case occurredOn = "occurred_on"
         case createdAt = "created_at"
@@ -901,6 +903,7 @@ public struct APIAllowancePlan: Identifiable, Decodable, Equatable, Sendable {
 public struct APITransactionCreate: Encodable, Equatable, Sendable {
     public let accountID: String
     public let categoryID: String?
+    public let payeeID: String?
     public let amountMinor: Int64
     public let occurredOn: String
     public let payeeName: String
@@ -914,6 +917,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
     public init(
         accountID: String,
         categoryID: String?,
+        payeeID: String? = nil,
         amountMinor: Int64,
         occurredOn: String,
         payeeName: String,
@@ -926,6 +930,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
     ) {
         self.accountID = accountID
         self.categoryID = categoryID
+        self.payeeID = payeeID
         self.amountMinor = amountMinor
         self.occurredOn = occurredOn
         self.payeeName = payeeName
@@ -941,12 +946,58 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         case memo, splits, flag, tags
         case accountID = "account_id"
         case categoryID = "category_id"
+        case payeeID = "payee_id"
         case amountMinor = "amount_minor"
         case occurredOn = "occurred_on"
         case payeeName = "payee_name"
         case isCleared = "is_cleared"
         case attachmentMetadata = "attachment_metadata"
     }
+}
+
+public struct APIPayeeAlias: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let displayName: String
+    enum CodingKeys: String, CodingKey { case id; case displayName = "display_name" }
+}
+
+public struct APIPayee: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let householdID: String
+    public let displayName: String
+    public let isArchived: Bool
+    public let mergedIntoPayeeID: String?
+    public let defaultCategoryID: String?
+    public let transactionCount: Int
+    public let netAmountMinor: Int64
+    public let aliases: [APIPayeeAlias]
+    enum CodingKeys: String, CodingKey {
+        case id, aliases
+        case householdID = "household_id", displayName = "display_name", isArchived = "is_archived"
+        case mergedIntoPayeeID = "merged_into_payee_id", defaultCategoryID = "default_category_id"
+        case transactionCount = "transaction_count", netAmountMinor = "net_amount_minor"
+    }
+}
+
+public struct APIPayeeCreate: Encodable, Equatable, Sendable {
+    public let displayName: String
+    public let defaultCategoryID: String?
+    public init(displayName: String, defaultCategoryID: String? = nil) { self.displayName = displayName; self.defaultCategoryID = defaultCategoryID }
+    enum CodingKeys: String, CodingKey { case displayName = "display_name", defaultCategoryID = "default_category_id" }
+}
+
+public struct APIPayeeUpdate: Encodable, Equatable, Sendable {
+    public let displayName: String
+    public let isArchived: Bool
+    public let defaultCategoryID: String?
+    public init(displayName: String, isArchived: Bool, defaultCategoryID: String? = nil) { self.displayName = displayName; self.isArchived = isArchived; self.defaultCategoryID = defaultCategoryID }
+    enum CodingKeys: String, CodingKey { case displayName = "display_name", isArchived = "is_archived", defaultCategoryID = "default_category_id" }
+}
+
+public struct APIPayeeMerge: Encodable, Equatable, Sendable {
+    public let destinationPayeeID: String
+    public init(destinationPayeeID: String) { self.destinationPayeeID = destinationPayeeID }
+    enum CodingKeys: String, CodingKey { case destinationPayeeID = "destination_payee_id" }
 }
 
 public struct APITransactionSplitCreate: Encodable, Equatable, Sendable {

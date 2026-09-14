@@ -8,6 +8,7 @@ final class DemoStore: ObservableObject {
     @Published var accounts: [DemoAccount]
     @Published var categories: [DemoCategory]
     @Published var transactions: [DemoTransaction]
+    @Published var payees: [DemoPayee]
     @Published var schedules: [DemoSchedule]
     @Published var requests: [DemoRequest]
     @Published var allowances: [DemoAllowance]
@@ -26,6 +27,7 @@ final class DemoStore: ObservableObject {
         accounts = Self.seedAccounts
         categories = Self.seedCategories
         transactions = Self.seedTransactions
+        payees = Self.seedPayees
         schedules = Self.seedSchedules
         requests = Self.seedRequests
         allowances = Self.seedAllowances
@@ -84,6 +86,7 @@ final class DemoStore: ObservableObject {
         accounts = Self.seedAccounts
         categories = Self.seedCategories
         transactions = Self.seedTransactions
+        payees = Self.seedPayees
         schedules = Self.seedSchedules
         requests = Self.seedRequests
         allowances = Self.seedAllowances
@@ -94,6 +97,12 @@ final class DemoStore: ObservableObject {
     }
 
     func setUnassigned(_ value: Int64) { unassignedMinor = value }
+
+    static func payeeID(_ name: String) -> String { "demo-payee-" + name.lowercased().filter { $0.isLetter || $0.isNumber } }
+    private static var seedPayees: [DemoPayee] {
+        let system = Set(["transfer", "starting balance", "reconciliation adjustment"])
+        return Array(Set(seedTransactions.map(\.payee))).filter { !system.contains($0.lowercased()) }.sorted().map { DemoPayee(id: payeeID($0), name: $0) }
+    }
 
     func createAccount(name: String, type: String, isOnBudget: Bool, startingBalance: Int64 = 0) {
         let id = UUID().uuidString

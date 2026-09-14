@@ -110,6 +110,13 @@ struct DemoTransaction: Identifiable, Hashable {
     var transferID: String? = nil
 }
 
+struct DemoPayee: Identifiable, Hashable {
+    let id: String
+    var name: String
+    var isArchived = false
+    var defaultCategoryID: String? = nil
+}
+
 struct DemoSchedule: Identifiable, Hashable {
     let id: String
     var accountID: String

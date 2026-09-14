@@ -227,6 +227,26 @@ public struct APIClient {
         )
     }
 
+    public func payees(budgetID: String, includeArchived: Bool = false, token: String) async throws -> [APIPayee] {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/payees",
+            queryItems: [URLQueryItem(name: "include_archived", value: String(includeArchived))],
+            token: token
+        )
+    }
+
+    public func createPayee(budgetID: String, payee: APIPayeeCreate, token: String) async throws -> APIPayee {
+        try await send(path: "api/v1/budgets/\(budgetID)/payees", method: "POST", token: token, body: payee)
+    }
+
+    public func updatePayee(budgetID: String, payeeID: String, payee: APIPayeeUpdate, token: String) async throws -> APIPayee {
+        try await send(path: "api/v1/budgets/\(budgetID)/payees/\(payeeID)", method: "PUT", token: token, body: payee)
+    }
+
+    public func mergePayee(budgetID: String, payeeID: String, destinationPayeeID: String, token: String) async throws -> APIPayee {
+        try await send(path: "api/v1/budgets/\(budgetID)/payees/\(payeeID)/merge", method: "POST", token: token, body: APIPayeeMerge(destinationPayeeID: destinationPayeeID))
+    }
+
     public func createTransfer(budgetID: String, transfer: APITransferCreate, token: String) async throws -> APITransferResponse {
         try await send(path: "api/v1/budgets/\(budgetID)/transfers", method: "POST", token: token, body: transfer)
     }

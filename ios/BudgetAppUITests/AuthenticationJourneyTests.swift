@@ -413,4 +413,36 @@ final class AuthenticationJourneyTests: XCTestCase {
             "realization must refresh the authoritative workspace and expose exactly one posted transaction"
         )
     }
+
+    func testProductionPayeeManagementFeedsSharedTransactionEditor() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo"]
+        app.launch()
+
+        app.buttons["profile-settings-button"].tap()
+        XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
+        app.buttons["Household and access"].tap()
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
+        app.buttons["Payees"].tap()
+        XCTAssertTrue(app.navigationBars["Payees"].waitForExistence(timeout: 5))
+        app.buttons["add-payee-action"].tap()
+        XCTAssertTrue(app.navigationBars["New Payee"].waitForExistence(timeout: 5))
+        app.textFields["payee-name"].tap()
+        app.textFields["payee-name"].typeText("Neighborhood Market")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["New Payee"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Neighborhood Market"].waitForExistence(timeout: 5))
+
+        app.navigationBars.buttons["Household"].tap()
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
+        app.tabBars.buttons["Activity"].tap()
+        app.buttons.matching(identifier: "Add").firstMatch.tap()
+        app.buttons["Transaction"].tap()
+        XCTAssertTrue(app.navigationBars["New Transaction"].waitForExistence(timeout: 5))
+        app.buttons["saved-payee-menu"].tap()
+        app.buttons["Neighborhood Market"].tap()
+        XCTAssertEqual(app.textFields["Payee"].value as? String, "Neighborhood Market")
+    }
 }

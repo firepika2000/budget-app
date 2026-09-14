@@ -10,6 +10,104 @@ enum Theme {
     static let projected = Color.indigo
 }
 
+private struct PayeeManagementView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @State private var showCreate = false
+    var body: some View {
+        List {
+            if store.payees.isEmpty {
+                ContentUnavailableView("No saved payees", systemImage: "person.text.rectangle", description: Text("Save payees for consistent transaction history and category suggestions."))
+            } else {
+                ForEach(store.payees) { payee in
+                    NavigationLink { PayeeEditorView(payee: payee) } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(payee.displayName)
+                            Text("\(payee.transactionCount) transaction\(payee.transactionCount == 1 ? "" : "s") · \(store.format(payee.netAmountMinor)) net")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }.accessibilityIdentifier("payee-row-\(payee.id)")
+                }
+            }
+        }
+        .navigationTitle("Payees")
+        .toolbar { Button("Add Payee", systemImage: "plus") { showCreate = true }.accessibilityIdentifier("add-payee-action") }
+        .sheet(isPresented: $showCreate) { PayeeEditorView(payee: nil) }
+    }
+}
+
+private struct PayeeEditorView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let payee: APIPayee?
+    @State private var name: String
+    @State private var categoryID: String
+    @State private var isArchived: Bool
+    @State private var mergeDestinationID = ""
+    @State private var errorMessage: String?
+    @State private var isSaving = false
+
+    init(payee: APIPayee?) {
+        self.payee = payee
+        _name = State(initialValue: payee?.displayName ?? "")
+        _categoryID = State(initialValue: payee?.defaultCategoryID ?? "")
+        _isArchived = State(initialValue: payee?.isArchived ?? false)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Payee") {
+                    TextField("Name", text: $name).accessibilityIdentifier("payee-name")
+                    Picker("Default category", selection: $categoryID) {
+                        Text("No suggestion").tag("")
+                        ForEach(store.categories.filter { !$0.isArchived }) { Text($0.name).tag($0.id) }
+                    }
+                    if payee != nil { Toggle("Archived", isOn: $isArchived) }
+                }
+                if let payee {
+                    Section("History") {
+                        LabeledContent("Transactions", value: "\(payee.transactionCount)")
+                        LabeledContent("Net amount", value: store.format(payee.netAmountMinor))
+                    }
+                    let destinations = store.payees.filter { $0.id != payee.id }
+                    if !destinations.isEmpty {
+                        Section("Merge") {
+                            Picker("Move history to", selection: $mergeDestinationID) {
+                                Text("Choose payee").tag("")
+                                ForEach(destinations) { Text($0.displayName).tag($0.id) }
+                            }
+                            Button("Merge Payee", role: .destructive) { Task { await merge(payee.id) } }.disabled(mergeDestinationID.isEmpty || isSaving)
+                            Text("Transactions keep their identities and audit history. The source payee is archived.").font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle(payee == nil ? "New Payee" : "Edit Payee")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving) }
+            }
+            .alert("Unable to save payee", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
+        }
+    }
+
+    private func save() async {
+        isSaving = true; defer { isSaving = false }
+        do {
+            if let payee { try await store.updatePayee(.init(payeeID: payee.id, displayName: name, isArchived: isArchived, defaultCategoryID: categoryID.isEmpty ? nil : categoryID)) }
+            else { try await store.createPayee(.init(displayName: name, defaultCategoryID: categoryID.isEmpty ? nil : categoryID)) }
+            dismiss()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func merge(_ sourceID: String) async {
+        isSaving = true; defer { isSaving = false }
+        do { try await store.mergePayee(sourceID: sourceID, destinationID: mergeDestinationID); dismiss() }
+        catch { errorMessage = error.localizedDescription }
+    }
+}
+
 struct FreshBudgetActivationState: Equatable {
     let accountCount: Int
     let groupCount: Int
@@ -28,6 +126,7 @@ struct FreshBudgetActivationState: Equatable {
 struct WorkspaceSnapshot {
     var accounts: [APIAccount]; var accountBalances: [String: APIAccountBalance]; var categories: [APICategory]; var groups: [APICategoryGroup]
     var transactions: [APITransaction]; var summary: APIMonthSummary?
+    var payees: [APIPayee] = []
     var requests: [APIFinancialRequest]; var allowances: [APIAllowancePlan]
     var spending: APISpendingReport?; var income: APIIncomeSpendingReport?
     var delegated: APIDelegatedBudget?; var forecast: APIForecast?
@@ -50,7 +149,7 @@ protocol WorkspaceDataSource: AnyObject {
 }
 
 @MainActor
-protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRepository, TransactionCommandRepository, ScheduleCommandRepository {
+protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRepository, TransactionCommandRepository, ScheduleCommandRepository, PayeeCommandRepository {
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws
     func createGroup(name: String) async throws
     func createRequest(_ value: APIFinancialRequestCreate) async throws
@@ -110,7 +209,13 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let splitBase = ids.isEmpty ? 0 : item.amount / Int64(ids.count)
             var remainder = ids.isEmpty ? 0 : item.amount % Int64(ids.count)
             let splits: [[String: Any]] = ids.count > 1 ? ids.enumerated().map { index, id in let extra: Int64 = remainder == 0 ? 0 : (remainder > 0 ? 1 : -1); if remainder != 0 { remainder -= extra }; return ["id": "\(item.id)-\(index)", "category_id": id, "amount_minor": item.categoryAmounts[id] ?? splitBase + extra, "memo": ""] } : []
-            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "is_cleared": item.cleared, "is_reconciled": item.reconciled, "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "splits": splits]
+            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "payee_id": demo.payees.first(where: { $0.name == item.payee })?.id ?? NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "is_cleared": item.cleared, "is_reconciled": item.reconciled, "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "splits": splits]
+        })
+        let payeeRows: [APIPayee] = try decode(demo.payees.filter { !$0.isArchived }.map { item in
+            let history = demo.visibleTransactions.filter { $0.payee == item.name }
+            return ["id": item.id, "household_id": budget.householdID, "display_name": item.name, "is_archived": item.isArchived,
+                    "merged_into_payee_id": NSNull(), "default_category_id": item.defaultCategoryID ?? NSNull(),
+                    "transaction_count": history.count, "net_amount_minor": history.reduce(Int64(0)) { $0 + $1.amount }, "aliases": []] as [String: Any]
         })
         let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"
         // Best-effort credit spend per category from demo transactions on credit-kind accounts,
@@ -212,19 +317,36 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let onBudgetAccounts = visibleAccounts.filter(\.isOnBudget)
         let actualTotal = onBudgetAccounts.reduce(Int64(0)) { $0 + $1.balance }, projectedTotal = onBudgetAccounts.reduce(Int64(0)) { $0 + (projected[$1.id] ?? $1.balance) }
         let demoForecast: APIForecast = try decode(["as_of": BudgetWorkspaceStore.dateString(forecastStart), "through": BudgetWorkspaceStore.dateString(forecastThrough), "currency_code": budget.currencyCode, "actual_total_on_budget_minor": actualTotal, "projected_total_on_budget_minor": projectedTotal, "lowest_projected_total_minor": min(actualTotal, projectedTotal), "accounts": forecastAccounts, "occurrences": occurrenceRows])
-        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, requests: requestRows, allowances: [], spending: spending, income: income, delegated: delegated, forecast: demoForecast, members: [], delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
+        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: [], spending: spending, income: income, delegated: delegated, forecast: demoForecast, members: [], delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
     }
 
     private func decode<T: Decodable>(_ value: Any) throws -> T { try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value)) }
 }
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
+    func createPayee(_ operation: CreatePayeeOperation) async throws {
+        let name = operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !demo.payees.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { throw workspaceRepositoryError("A payee with this name already exists.") }
+        demo.payees.append(.init(id: DemoStore.payeeID(name), name: name, defaultCategoryID: operation.defaultCategoryID))
+    }
+    func updatePayee(_ operation: UpdatePayeeOperation) async throws {
+        guard let index = demo.payees.firstIndex(where: { $0.id == operation.payeeID }) else { throw workspaceRepositoryError("Payee not found.") }
+        let old = demo.payees[index].name; demo.payees[index].name = operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        demo.payees[index].isArchived = operation.isArchived; demo.payees[index].defaultCategoryID = operation.defaultCategoryID
+        for transactionIndex in demo.transactions.indices where demo.transactions[transactionIndex].payee == old { demo.transactions[transactionIndex].payee = demo.payees[index].name }
+    }
+    func mergePayee(sourceID: String, destinationID: String) async throws {
+        guard let source = demo.payees.first(where: { $0.id == sourceID }), let destination = demo.payees.first(where: { $0.id == destinationID }) else { throw workspaceRepositoryError("Payee not found.") }
+        for index in demo.transactions.indices where demo.transactions[index].payee == source.name { demo.transactions[index].payee = destination.name }
+        demo.payees.removeAll { $0.id == sourceID }
+    }
     func recordTransaction(_ operation: RecordTransactionOperation) async throws {
         guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws {
         guard demo.updateCanonicalTransaction(id: id, operation: operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
+
     func deleteTransaction(id: String) async throws { guard demo.deleteTransaction(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func transferMoney(_ operation: TransferMoneyOperation) async throws { guard demo.transfer(amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { guard demo.updateTransfer(id: id, amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
@@ -312,6 +434,10 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     private var client: APIClient { get throws { try APIClient(baseURL: serverURL) } }
     init(budget: APIBudget, serverURL: URL, token: String) { self.budget = budget; self.serverURL = serverURL; self.token = token }
 
+    func createPayee(_ operation: CreatePayeeOperation) async throws { _ = try await client.createPayee(budgetID: budget.id, payee: APIPayeeCreate(displayName: operation.displayName, defaultCategoryID: operation.defaultCategoryID), token: token) }
+    func updatePayee(_ operation: UpdatePayeeOperation) async throws { _ = try await client.updatePayee(budgetID: budget.id, payeeID: operation.payeeID, payee: APIPayeeUpdate(displayName: operation.displayName, isArchived: operation.isArchived, defaultCategoryID: operation.defaultCategoryID), token: token) }
+    func mergePayee(sourceID: String, destinationID: String) async throws { _ = try await client.mergePayee(budgetID: budget.id, payeeID: sourceID, destinationPayeeID: destinationID, token: token) }
+
     func recordTransaction(_ operation: RecordTransactionOperation) async throws { _ = try await client.createTransaction(budgetID: budget.id, transaction: operation.apiValue, token: token) }
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: operation.apiValue, token: token) }
     func deleteTransaction(id: String) async throws { try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
@@ -362,12 +488,13 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let start = BudgetWorkspaceStore.dateString(report.start), end = BudgetWorkspaceStore.dateString(report.end)
         async let loadedAccounts = client.accounts(budgetID: budget.id, token: token)
         async let loadedTransactions = client.transactions(budgetID: budget.id, token: token)
+        async let loadedPayees = client.payees(budgetID: budget.id, token: token)
         async let loadedCategories = client.categories(budgetID: budget.id, token: token)
         async let loadedGroups = client.categoryGroups(budgetID: budget.id, token: token)
         async let loadedSummary = client.monthSummary(budgetID: budget.id, month: String(month), token: token)
         async let loadedSpending = client.spendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], categoryIDs: report.categoryID.isEmpty ? [] : [report.categoryID], categoryGroups: report.categoryGroup.isEmpty ? [] : [report.categoryGroup], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], transactionType: report.transactionType.isEmpty ? nil : report.transactionType, cleared: report.cleared == "all" ? nil : report.cleared == "cleared", includeTracking: report.includeTracking, token: token)
         async let loadedIncome = client.incomeSpendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], cleared: report.cleared == "all" ? nil : report.cleared == "cleared", includeTracking: report.includeTracking, token: token)
-        let (accounts, transactions, categories, groups, summary, spending, income) = try await (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome)
+        let (accounts, transactions, payees, categories, groups, summary, spending, income) = try await (loadedAccounts, loadedTransactions, loadedPayees, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome)
         let allocationOperations = budget.can("view_allocation_history") ? (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] : []
         let schedules = budget.can("view_transactions") ? try await client.scheduledTransactions(budgetID: budget.id, includeInactive: true, token: token) : []
         let targets = await withTaskGroup(of: APICategoryTarget?.self) { group in for category in categories { group.addTask { try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: self.token) } }; var values: [APICategoryTarget] = []; for await target in group { if let target { values.append(target) } }; return values }
@@ -378,7 +505,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let forecast: APIForecast? = if budget.can("view_account_balances") { try? await client.forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(Calendar.current.date(byAdding: .day, value: 90, to: Date())!), token: token) } else { nil }
         let members = budget.can("manage_allowances") ? (try? await client.householdMembers(householdID: budget.householdID, token: token)) ?? [] : []
         let delegatedBudgets = budget.can("manage_allowances") ? (try? await client.delegatedBudgets(budgetID: budget.id, token: token)) ?? [] : []
-        return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, requests: requests, allowances: allowances, spending: spending, income: income, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, targets: targets, schedules: schedules)
+        return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, payees: payees, requests: requests, allowances: allowances, spending: spending, income: income, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, targets: targets, schedules: schedules)
     }
 }
 
@@ -388,6 +515,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var summary: APIMonthSummary?
     @Published var accounts: [APIAccount] = []
     @Published var accountBalances: [String: APIAccountBalance] = [:]
+    @Published var payees: [APIPayee] = []
     @Published var categories: [APICategory] = []
     @Published var groups: [APICategoryGroup] = []
     @Published var transactions: [APITransaction] = []
@@ -460,7 +588,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 let range = reportRange()
                 let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, includeTracking: includeTrackingAccounts)
                 let value = try await dataSource.snapshot(planMonth: planMonth, report: query)
-                accounts = value.accounts; accountBalances = value.accountBalances; categories = value.categories; groups = value.groups; transactions = value.transactions
+                accounts = value.accounts; accountBalances = value.accountBalances; categories = value.categories; groups = value.groups; transactions = value.transactions; payees = value.payees
                 summary = value.summary; requests = value.requests; allowances = value.allowances; spendingReport = value.spending
                 incomeReport = value.income; delegatedBudget = value.delegated; forecast = value.forecast
                 householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; allocationOperations = value.allocationOperations; errorMessage = nil
@@ -482,6 +610,10 @@ final class BudgetWorkspaceStore: ObservableObject {
         try await services().transactions.update(id: id, operation: operation)
         await refresh()
     }
+
+    func createPayee(_ operation: CreatePayeeOperation) async throws { try await services().payees.create(operation); await refresh() }
+    func updatePayee(_ operation: UpdatePayeeOperation) async throws { try await services().payees.update(operation); await refresh() }
+    func mergePayee(sourceID: String, destinationID: String) async throws { try await services().payees.merge(sourceID: sourceID, destinationID: destinationID); await refresh() }
 
     func deleteTransaction(id: String) async throws {
         try await services().transactions.delete(id: id)
@@ -1847,7 +1979,7 @@ struct LiveHouseholdView: View {
                             NavigationLink { LiveDelegatedPolicyView(session: session, store: store, member: member) } label: {
                                 VStack(alignment: .leading) {
                                     Text(member.displayName)
-                                    if let policy = store.delegatedBudgets.first(where: { $0.userID == member.userID }) {
+                                    if let policy = delegatedPolicy(for: member.userID) {
                                         Text("Authority \(store.format(policy.authorityMinor)) · \(policy.allowReallocation ? "can reallocate" : "locked")")
                                             .font(.caption).foregroundStyle(.secondary)
                                     } else {
@@ -1857,6 +1989,9 @@ struct LiveHouseholdView: View {
                             }
                         }
                     }
+                }
+                Section("Financial organization") {
+                    NavigationLink { PayeeManagementView() } label: { Label("Payees", systemImage: "person.text.rectangle") }
                 }
                 Section("Self-hosting") {
                     LabeledContent("Data Source", value: session.sourceMode.title)
@@ -1872,6 +2007,10 @@ struct LiveHouseholdView: View {
         .environmentObject(session)
         .environmentObject(store)
         .accessibilityIdentifier("household-profile-screen")
+    }
+
+    private func delegatedPolicy(for userID: String) -> APIDelegatedBudget? {
+        store.delegatedBudgets.first { $0.userID == userID }
     }
 }
 
@@ -1890,14 +2029,14 @@ private struct LiveTransactionEditView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget; let transaction: APITransaction; let accounts: [APIAccount]; let categories: [APICategory]; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var payee: String; @State private var amount: String; @State private var accountID: String; @State private var categoryID: String; @State private var memo: String; @State private var cleared: Bool; @State private var date: Date; @State private var isInflow: Bool; @State private var isSplit: Bool; @State private var splitRows: [WorkspaceSplitDraft]; @State private var flag: String; @State private var tags: String; @State private var attachments: String
+    @State private var payee: String; @State private var payeeID: String?; @State private var amount: String; @State private var accountID: String; @State private var categoryID: String; @State private var memo: String; @State private var cleared: Bool; @State private var date: Date; @State private var isInflow: Bool; @State private var isSplit: Bool; @State private var splitRows: [WorkspaceSplitDraft]; @State private var flag: String; @State private var tags: String; @State private var attachments: String
     @State private var isSaving = false; @State private var errorMessage: String?
     init(budget: APIBudget, transaction: APITransaction, accounts: [APIAccount], categories: [APICategory], onSaved: @escaping () async -> Void) {
         self.budget=budget; self.transaction=transaction; self.accounts=accounts; self.categories=categories; self.onSaved=onSaved
-        _payee=State(initialValue:transaction.payeeName); _amount=State(initialValue:CurrencyText.editable(abs(transaction.amountMinor),currencyCode:budget.currencyCode)); _accountID=State(initialValue:transaction.accountID); _categoryID=State(initialValue:transaction.categoryID ?? ""); _memo=State(initialValue:transaction.memo); _cleared=State(initialValue:transaction.isCleared); _date=State(initialValue:Self.parseDate(transaction.occurredOn)); _isInflow=State(initialValue:transaction.amountMinor > 0); _isSplit=State(initialValue:!transaction.splits.isEmpty); _splitRows=State(initialValue:transaction.splits.map { WorkspaceSplitDraft(categoryID:$0.categoryID,amount:CurrencyText.editable(abs($0.amountMinor),currencyCode:budget.currencyCode),memo:$0.memo) }); _flag=State(initialValue:transaction.flag ?? ""); _tags=State(initialValue:(transaction.tags ?? []).joined(separator:", ")); _attachments=State(initialValue:(transaction.attachmentMetadata ?? []).compactMap{$0["name"]}.joined(separator:", "))
+        _payee=State(initialValue:transaction.payeeName); _payeeID=State(initialValue:transaction.payeeID); _amount=State(initialValue:CurrencyText.editable(abs(transaction.amountMinor),currencyCode:budget.currencyCode)); _accountID=State(initialValue:transaction.accountID); _categoryID=State(initialValue:transaction.categoryID ?? ""); _memo=State(initialValue:transaction.memo); _cleared=State(initialValue:transaction.isCleared); _date=State(initialValue:Self.parseDate(transaction.occurredOn)); _isInflow=State(initialValue:transaction.amountMinor > 0); _isSplit=State(initialValue:!transaction.splits.isEmpty); _splitRows=State(initialValue:transaction.splits.map { WorkspaceSplitDraft(categoryID:$0.categoryID,amount:CurrencyText.editable(abs($0.amountMinor),currencyCode:budget.currencyCode),memo:$0.memo) }); _flag=State(initialValue:transaction.flag ?? ""); _tags=State(initialValue:(transaction.tags ?? []).joined(separator:", ")); _attachments=State(initialValue:(transaction.attachmentMetadata ?? []).compactMap{$0["name"]}.joined(separator:", "))
     }
     var body: some View { NavigationStack { Form {
-        TextField("Payee",text:$payee); CurrencyAmountField("Amount", text:$amount, currencyCode:budget.currencyCode); Toggle("Income / inflow",isOn:$isInflow); Picker("Account",selection:$accountID){ForEach(accounts.filter{!$0.isClosed}){Text($0.name).tag($0.id)}}; DatePicker("Date",selection:$date,displayedComponents:.date); Toggle("Split across categories",isOn:$isSplit).disabled(isInflow)
+        TextField("Payee",text:$payee).onChange(of:payee){_,value in if workspace.payees.first(where:{$0.id==payeeID})?.displayName != value { payeeID=nil }}; if !workspace.payees.isEmpty { Menu("Choose saved payee",systemImage:"person.text.rectangle"){ForEach(workspace.payees){item in Button(item.displayName){payeeID=item.id;payee=item.displayName;if categoryID.isEmpty,let suggested=item.defaultCategoryID{categoryID=suggested}}}} }; CurrencyAmountField("Amount", text:$amount, currencyCode:budget.currencyCode); Toggle("Income / inflow",isOn:$isInflow); Picker("Account",selection:$accountID){ForEach(accounts.filter{!$0.isClosed}){Text($0.name).tag($0.id)}}; DatePicker("Date",selection:$date,displayedComponents:.date); Toggle("Split across categories",isOn:$isSplit).disabled(isInflow)
         if isSplit { Section("Splits") { ForEach($splitRows) { $row in Picker("Category",selection:$row.categoryID){Text("Select").tag("");ForEach(categories.filter{!$0.isArchived}){Text($0.name).tag($0.id)}};CurrencyAmountField("Split amount", text:$row.amount, currencyCode:budget.currencyCode, allowsZero:true);TextField("Split memo",text:$row.memo) }; Button("Add split",systemImage:"plus"){splitRows.append(.init())}; if let remaining { LabeledContent("Remaining",value:CurrencyText.editable(remaining,currencyCode:budget.currencyCode)).foregroundStyle(remaining == 0 ? Color.secondary : Color.red) } } } else if !isInflow { Picker("Category",selection:$categoryID){Text("Uncategorized").tag("");ForEach(categories.filter{!$0.isArchived}){Text($0.name).tag($0.id)}} }
         TextField("Memo",text:$memo); Picker("Flag",selection:$flag){Text("None").tag("");Text("Red").tag("red");Text("Orange").tag("orange");Text("Yellow").tag("yellow");Text("Green").tag("green");Text("Blue").tag("blue");Text("Purple").tag("purple")}; TextField("Tags (comma separated)",text:$tags);TextField("Attachment names (metadata only)",text:$attachments);Toggle("Cleared",isOn:$cleared)
     }.navigationTitle("Edit Transaction").toolbar { ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(isSaving || parsed == nil || !splitsValid)} }.alert("Unable to save",isPresented:Binding(get:{errorMessage != nil},set:{if !$0{errorMessage=nil}})){Button("OK",role:.cancel){}}message:{Text(errorMessage ?? "Unknown error")} } }
@@ -1905,7 +2044,7 @@ private struct LiveTransactionEditView: View {
     private var parsedSplits:[TransactionSplitOperation]?{guard isSplit else{return []};var values:[TransactionSplitOperation]=[];for row in splitRows{guard !row.categoryID.isEmpty,let value=CurrencyText.parseMinorUnits(row.amount,currencyCode:budget.currencyCode),value>=0 else{return nil};values.append(.init(categoryID:row.categoryID,amountMinor:-value,memo:row.memo))};return values}
     private var remaining:Int64?{guard let parsed,let parsedSplits else{return nil};return parsed - parsedSplits.reduce(0){$0+$1.amountMinor}}
     private var splitsValid:Bool{!isSplit || (parsedSplits?.count ?? 0)>=2 && remaining==0}
-    private func save() async { guard let parsed,let parsedSplits else{return};isSaving=true;defer{isSaving=false};do{try await workspace.updateTransaction(id:transaction.id,operation:RecordTransactionOperation(accountID:accountID,categoryID:isSplit || isInflow || categoryID.isEmpty ? nil:categoryID,amountMinor:parsed,occurredOn:BudgetWorkspaceStore.dateString(date),payeeName:payee,memo:memo,isCleared:cleared,splits:parsedSplits,flag:flag.isEmpty ? nil:flag,tags:commaValues(tags),attachmentMetadata:commaValues(attachments).map{["name":$0]}));dismiss()}catch{errorMessage=error.localizedDescription} }
+    private func save() async { guard let parsed,let parsedSplits else{return};isSaving=true;defer{isSaving=false};do{try await workspace.updateTransaction(id:transaction.id,operation:RecordTransactionOperation(accountID:accountID,categoryID:isSplit || isInflow || categoryID.isEmpty ? nil:categoryID,amountMinor:parsed,occurredOn:BudgetWorkspaceStore.dateString(date),payeeName:payee,payeeID:payeeID,memo:memo,isCleared:cleared,splits:parsedSplits,flag:flag.isEmpty ? nil:flag,tags:commaValues(tags),attachmentMetadata:commaValues(attachments).map{["name":$0]}));dismiss()}catch{errorMessage=error.localizedDescription} }
     private func commaValues(_ value:String)->[String]{value.split(separator:",").map{$0.trimmingCharacters(in:.whitespacesAndNewlines)}.filter{!$0.isEmpty}}
     private static func parseDate(_ value:String)->Date{let formatter=DateFormatter();formatter.locale=Locale(identifier:"en_US_POSIX");formatter.dateFormat="yyyy-MM-dd";return formatter.date(from:value) ?? Date()}
 }

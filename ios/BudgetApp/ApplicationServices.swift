@@ -51,6 +51,7 @@ struct RecordTransactionOperation: Equatable, Sendable {
     let amountMinor: Int64
     let occurredOn: String
     let payeeName: String
+    var payeeID: String? = nil
     let memo: String
     let isCleared: Bool
     let splits: [TransactionSplitOperation]
@@ -58,6 +59,9 @@ struct RecordTransactionOperation: Equatable, Sendable {
     let tags: [String]
     let attachmentMetadata: [[String: String]]
 }
+
+struct CreatePayeeOperation: Equatable, Sendable { let displayName: String; let defaultCategoryID: String? }
+struct UpdatePayeeOperation: Equatable, Sendable { let payeeID: String; let displayName: String; let isArchived: Bool; let defaultCategoryID: String? }
 
 struct TransferMoneyOperation: Equatable, Sendable {
     let sourceAccountID: String
@@ -190,6 +194,13 @@ protocol TransactionCommandRepository: AnyObject {
 }
 
 @MainActor
+protocol PayeeCommandRepository: AnyObject {
+    func createPayee(_ operation: CreatePayeeOperation) async throws
+    func updatePayee(_ operation: UpdatePayeeOperation) async throws
+    func mergePayee(sourceID: String, destinationID: String) async throws
+}
+
+@MainActor
 protocol ScheduleCommandRepository: AnyObject {
     func createSchedule(_ operation: ScheduleOperation) async throws
     func updateSchedule(id: String, operation: ScheduleOperation) async throws
@@ -197,7 +208,7 @@ protocol ScheduleCommandRepository: AnyObject {
     func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation
 }
 
-typealias CoreFinancialRepository = AccountCommandRepository & PlanningCommandRepository & TransactionCommandRepository & ScheduleCommandRepository
+typealias CoreFinancialRepository = AccountCommandRepository & PlanningCommandRepository & TransactionCommandRepository & ScheduleCommandRepository & PayeeCommandRepository
 
 // MARK: - Shared application services
 
@@ -359,12 +370,32 @@ struct BudgetApplicationServices {
     let planning: BudgetPlanningService
     let transactions: TransactionService
     let schedules: ScheduleService
+    let payees: PayeeService
 
     init(repository: any CoreFinancialRepository) {
         accounts = AccountService(repository: repository)
         planning = BudgetPlanningService(repository: repository)
         transactions = TransactionService(repository: repository)
         schedules = ScheduleService(repository: repository)
+        payees = PayeeService(repository: repository)
+    }
+}
+
+@MainActor
+struct PayeeService {
+    private let repository: any PayeeCommandRepository
+    init(repository: any PayeeCommandRepository) { self.repository = repository }
+    func create(_ operation: CreatePayeeOperation) async throws {
+        guard !operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw BudgetApplicationError.invalidOperation("Enter a payee name.") }
+        do { try await repository.createPayee(operation) } catch { throw BudgetApplicationError.map(error) }
+    }
+    func update(_ operation: UpdatePayeeOperation) async throws {
+        guard !operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw BudgetApplicationError.invalidOperation("Enter a payee name.") }
+        do { try await repository.updatePayee(operation) } catch { throw BudgetApplicationError.map(error) }
+    }
+    func merge(sourceID: String, destinationID: String) async throws {
+        guard sourceID != destinationID else { throw BudgetApplicationError.invalidOperation("Choose a different destination payee.") }
+        do { try await repository.mergePayee(sourceID: sourceID, destinationID: destinationID) } catch { throw BudgetApplicationError.map(error) }
     }
 }
 
@@ -375,6 +406,7 @@ extension RecordTransactionOperation {
         APITransactionCreate(
             accountID: accountID,
             categoryID: categoryID,
+            payeeID: payeeID,
             amountMinor: amountMinor,
             occurredOn: occurredOn,
             payeeName: payeeName,

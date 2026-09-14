@@ -144,6 +144,81 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(transaction.amountMinor, -12345)
     }
 
+    func testCreateTransactionCarriesCanonicalPayeeIdentity() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any]
+            )
+            XCTAssertEqual(json["payee_id"] as? String, "p1")
+            XCTAssertEqual(json["payee_name"] as? String, "Neighborhood Market")
+            let response = Data(#"{"id":"t1","budget_id":"b1","account_id":"a1","category_id":"c1","payee_id":"p1","amount_minor":-12345,"occurred_on":"2026-09-04","payee_name":"Neighborhood Market","memo":"","is_cleared":false,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":null,"splits":[]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+
+        let transaction = try await client.createTransaction(
+            budgetID: "b1",
+            transaction: APITransactionCreate(
+                accountID: "a1",
+                categoryID: "c1",
+                payeeID: "p1",
+                amountMinor: -12345,
+                occurredOn: "2026-09-04",
+                payeeName: "Neighborhood Market"
+            ),
+            token: "secret"
+        )
+
+        XCTAssertEqual(transaction.payeeID, "p1")
+    }
+
+    func testPayeeManagementUsesBudgetScopedContracts() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var requestCount = 0
+        MockURLProtocol.handler = { request in
+            requestCount += 1
+            switch requestCount {
+            case 1:
+                XCTAssertEqual(request.httpMethod, "GET")
+                XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/payees")
+                XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems, [.init(name: "include_archived", value: "true")])
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("[]".utf8))
+            case 2:
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/payees")
+                let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+                XCTAssertEqual(json["display_name"] as? String, "Neighborhood Market")
+                XCTAssertEqual(json["default_category_id"] as? String, "c1")
+                let response = Data(#"{"id":"p1","household_id":"h1","display_name":"Neighborhood Market","is_archived":false,"merged_into_payee_id":null,"default_category_id":"c1","transaction_count":0,"net_amount_minor":0,"aliases":[]}"#.utf8)
+                return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, response)
+            default:
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/payees/p1/merge")
+                let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+                XCTAssertEqual(json["destination_payee_id"] as? String, "p2")
+                let response = Data(#"{"id":"p2","household_id":"h1","display_name":"Grocer","is_archived":false,"merged_into_payee_id":null,"default_category_id":null,"transaction_count":1,"net_amount_minor":-12345,"aliases":[]}"#.utf8)
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+            }
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+
+        _ = try await client.payees(budgetID: "b1", includeArchived: true, token: "secret")
+        let created = try await client.createPayee(
+            budgetID: "b1",
+            payee: .init(displayName: "Neighborhood Market", defaultCategoryID: "c1"),
+            token: "secret"
+        )
+        XCTAssertEqual(created.defaultCategoryID, "c1")
+        let merged = try await client.mergePayee(budgetID: "b1", payeeID: "p1", destinationPayeeID: "p2", token: "secret")
+        XCTAssertEqual(merged.id, "p2")
+        XCTAssertEqual(requestCount, 3)
+    }
+
     func testCreateTransactionEncodesBalancedSplits() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
