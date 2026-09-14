@@ -1,4 +1,13 @@
-from app.models import AllocationOperation, FinancialRequest, Household, Membership, RequestAction, User
+from app.models import (
+    AllocationOperation,
+    FinancialRequest,
+    Household,
+    Membership,
+    RequestAction,
+    Transaction,
+    TransactionChange,
+    User,
+)
 from app.security import create_access_token, hash_password
 
 from .conftest import auth
@@ -683,3 +692,96 @@ def test_transaction_edit_and_delete_enforce_scope_and_ownership(
         f"/api/v1/budgets/{budget['id']}/transactions/{own['id']}",
         headers=auth(child_token),
     ).status_code == 204
+
+
+def test_scoped_transfer_requires_both_directions_and_attributes_actor(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    savings = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts",
+        headers=auth(owner_token),
+        json={"name": "Savings", "account_type": "savings", "is_on_budget": True},
+    ).json()
+    child_id, child_token = add_child(session_factory, client)
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/grants", headers=auth(owner_token),
+        json={"user_id": child_id, "permission": "contribute"},
+    ).status_code == 200
+
+    access_url = f"/api/v1/budgets/{budget['id']}/access/{child_id}"
+    capabilities = [
+        "view_budget", "view_accounts", "view_categories", "view_transactions",
+        "create_transaction", "edit_transaction", "delete_transaction",
+    ]
+    assert client.put(
+        access_url,
+        headers=auth(owner_token),
+        json={
+            "capabilities": capabilities,
+            "restrict_accounts": True,
+            "account_ids": [checking["id"]],
+            "restrict_categories": True,
+            "category_ids": [category["id"]],
+        },
+    ).status_code == 200
+
+    transfer_url = f"/api/v1/budgets/{budget['id']}/transfers"
+    base = {"amount_minor": 1_000, "occurred_on": "2026-09-04"}
+    for source, destination in ((checking, savings), (savings, checking)):
+        denied = client.post(
+            transfer_url,
+            headers=auth(child_token),
+            json={
+                **base,
+                "source_account_id": source["id"],
+                "destination_account_id": destination["id"],
+            },
+        )
+        assert denied.status_code == 422
+
+    assert client.put(
+        access_url,
+        headers=auth(owner_token),
+        json={
+            "capabilities": capabilities,
+            "restrict_accounts": True,
+            "account_ids": [checking["id"], savings["id"]],
+            "restrict_categories": True,
+            "category_ids": [category["id"]],
+        },
+    ).status_code == 200
+    created = client.post(
+        transfer_url,
+        headers=auth(child_token),
+        json={
+            **base,
+            "source_account_id": checking["id"],
+            "destination_account_id": savings["id"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    transfer_id = created.json()["transfer_id"]
+
+    edited = client.put(
+        f"{transfer_url}/{transfer_id}",
+        headers=auth(child_token),
+        json={
+            **base,
+            "amount_minor": 1_500,
+            "source_account_id": checking["id"],
+            "destination_account_id": savings["id"],
+        },
+    )
+    assert edited.status_code == 200, edited.text
+    with session_factory() as db:
+        legs = db.query(Transaction).filter_by(transfer_id=transfer_id).all()
+        assert len(legs) == 2
+        assert {leg.created_by_user_id for leg in legs} == {child_id}
+        changes = db.query(TransactionChange).filter(
+            TransactionChange.transaction_id.in_([leg.id for leg in legs]),
+            TransactionChange.action == "updated",
+        ).all()
+        assert len(changes) == 2
+        assert {change.actor_user_id for change in changes} == {child_id}
