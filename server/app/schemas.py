@@ -447,6 +447,30 @@ class TransactionCreate(BaseModel):
     attachment_metadata: list[dict[str, str]] = Field(default_factory=list, max_length=20)
     splits: list[TransactionSplitCreate] = Field(default_factory=list, max_length=100)
 
+    @field_validator("flag")
+    @classmethod
+    def normalize_flag(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        return normalized or None
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            tag = item.strip().lower()
+            if not tag:
+                continue
+            if len(tag) > 40:
+                raise ValueError("each tag must be at most 40 characters")
+            if tag not in seen:
+                normalized.append(tag)
+                seen.add(tag)
+        return normalized
+
     @model_validator(mode="after")
     def validate_category_shape(self) -> "TransactionCreate":
         if self.category_id is not None and self.splits:
@@ -462,6 +486,44 @@ class TransactionUpdate(TransactionCreate):
 
 class TransactionDuplicateRequest(BaseModel):
     occurred_on: date
+
+
+class TransactionBulkUpdateRequest(BaseModel):
+    transaction_ids: list[str] = Field(min_length=1, max_length=200)
+    action: Literal["set_cleared", "set_flag", "add_tags", "remove_tags"]
+    cleared: Optional[bool] = None
+    flag: Optional[str] = Field(default=None, max_length=30)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("transaction_ids")
+    @classmethod
+    def unique_transaction_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("transaction_ids must be unique")
+        return value
+
+    @field_validator("flag")
+    @classmethod
+    def normalize_bulk_flag(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip().lower() or None
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_bulk_tags(cls, value: list[str]) -> list[str]:
+        normalized = TransactionCreate.normalize_tags(value)
+        if not normalized:
+            raise ValueError("tags must contain at least one non-empty tag")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_action_value(self) -> "TransactionBulkUpdateRequest":
+        if self.action == "set_cleared" and self.cleared is None:
+            raise ValueError("cleared is required for set_cleared")
+        if self.action in {"add_tags", "remove_tags"} and not self.tags:
+            raise ValueError("tags are required for tag actions")
+        return self
 
 
 class TransactionResponse(BaseModel):

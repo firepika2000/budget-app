@@ -221,6 +221,24 @@ final class APIClientTests: XCTestCase {
         XCTAssertFalse(copy.isCleared)
     }
 
+    func testBulkTransactionUpdateUsesAtomicTypedContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/bulk")
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+            XCTAssertEqual(json["transaction_ids"] as? [String], ["t1", "t2"])
+            XCTAssertEqual(json["action"] as? String, "add_tags")
+            XCTAssertEqual(json["tags"] as? [String], ["reviewed"])
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("[]".utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let rows = try await client.bulkUpdateTransactions(budgetID: "b1", update: .init(transactionIDs: ["t1", "t2"], action: "add_tags", tags: ["reviewed"]), token: "secret")
+        XCTAssertTrue(rows.isEmpty)
+    }
+
     func testPayeeManagementUsesBudgetScopedContracts() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

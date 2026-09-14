@@ -400,6 +400,19 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let operation = RecordTransactionOperation(accountID: source.accountID, categoryID: singleCategory, amountMinor: source.amount, occurredOn: occurredOn, payeeName: source.payee, payeeID: demo.payees.first(where: { $0.name == source.payee })?.id, memo: source.memo, isCleared: false, splits: splits, flag: source.flag, tags: source.tags, attachmentMetadata: [])
         guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
+    func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
+        guard update.transactionIDs.allSatisfy({ id in demo.transactions.contains(where: { $0.id == id && !$0.reconciled && $0.transferID == nil && !$0.scheduled && !["Starting Balance", "Reconciliation adjustment"].contains($0.payee) }) }) else { throw workspaceRepositoryError("System-linked or reconciled transactions cannot be changed in bulk") }
+        for id in update.transactionIDs {
+            guard let index = demo.transactions.firstIndex(where: { $0.id == id }) else { continue }
+            switch update.action {
+            case "set_cleared": demo.transactions[index].cleared = update.cleared ?? false
+            case "set_flag": demo.transactions[index].flag = update.flag
+            case "add_tags": demo.transactions[index].tags = Array(Set(demo.transactions[index].tags + update.tags)).sorted()
+            case "remove_tags": demo.transactions[index].tags.removeAll(where: Set(update.tags).contains)
+            default: throw workspaceRepositoryError("Unsupported bulk action")
+            }
+        }
+    }
     func transferMoney(_ operation: TransferMoneyOperation) async throws { guard demo.transfer(amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { guard demo.updateTransfer(id: id, amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func deleteTransfer(id: String) async throws { guard demo.deleteTransfer(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
@@ -496,6 +509,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: operation.apiValue, token: token) }
     func deleteTransaction(id: String) async throws { try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
     func duplicateTransaction(id: String, occurredOn: String) async throws { _ = try await client.duplicateTransaction(budgetID: budget.id, transactionID: id, occurredOn: occurredOn, token: token) }
+    func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws { _ = try await client.bulkUpdateTransactions(budgetID: budget.id, update: update, token: token) }
     func transferMoney(_ operation: TransferMoneyOperation) async throws { _ = try await client.createTransfer(budgetID: budget.id, transfer: operation.apiValue, token: token) }
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: operation.apiValue, token: token) }
     func deleteTransfer(id: String) async throws { try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
@@ -677,6 +691,11 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func duplicateTransaction(id: String, occurredOn: String) async throws {
         try await services().transactions.duplicate(id: id, occurredOn: occurredOn)
+        await refresh()
+    }
+
+    func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
+        try await services().transactions.bulkUpdate(update)
         await refresh()
     }
 
@@ -1417,13 +1436,21 @@ private struct LiveActivityView: View {
     @State private var showAdd = false
     @State private var showSchedule = false
     @State private var transferPresentation: TransferPresentation?
+    @State private var selecting = false
+    @State private var selectedIDs: Set<String> = []
+    @State private var showTagPrompt = false
+    @State private var bulkTag = ""
     private var queryKey: String { "\(search)|\(filter)" }
     var body: some View {
         List {
             Section("Planning") { NavigationLink { LiveScheduledTransactionsView() } label: { Label("Scheduled transactions", systemImage: "calendar.badge.clock") } }
             Section("Posted activity") {
                 if rows.isEmpty && !loading && errorMessage == nil { ContentUnavailableView("No matching transactions", systemImage: "line.3.horizontal.decrease.circle", description: Text("Try changing your search or filters.")) }
-                ForEach(rows) { LiveTransactionLink(transaction: $0) }
+                ForEach(rows) { transaction in
+                    if selecting {
+                        bulkRow(transaction)
+                    } else { LiveTransactionLink(transaction: transaction) }
+                }
                 if let errorMessage { VStack(alignment: .leading, spacing: 8) { Text(errorMessage).foregroundStyle(.secondary); Button("Retry") { Task { await load(reset: true) } } } }
                 else if nextCursor != nil { Button { Task { await load(reset: false) } } label: { HStack { Spacer(); if loading { ProgressView() } else { Text("Load more") }; Spacer() } }.disabled(loading) }
                 else if !rows.isEmpty { Text("Showing \(rows.count) of \(totalCount)").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity) }
@@ -1431,7 +1458,9 @@ private struct LiveActivityView: View {
         }
             .searchable(text: $search, prompt: "Payee, memo, flag, or tag")
             .navigationTitle("Activity")
-            .toolbar { Button { showFilters = true } label: { Image(systemName: filter.isEmpty ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill") }.accessibilityLabel("Filter transactions").accessibilityIdentifier("transaction-filter-action"); if store.budget.can("create_transaction") || store.budget.can("manage_planning") { Menu { if store.budget.can("create_transaction") { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } }; if store.budget.can("manage_planning") { Button("Schedule Transaction", systemImage: "calendar.badge.plus") { showSchedule = true }.accessibilityIdentifier("schedule-transaction-action") } } label: { Image(systemName: "plus") }.accessibilityIdentifier("add-activity-action") } }
+            .toolbar { if store.budget.can("edit_transaction") { Button(selecting ? "Done" : "Select") { selecting.toggle(); if !selecting { selectedIDs.removeAll() } }.accessibilityIdentifier("bulk-select-action") }; Button { showFilters = true } label: { Image(systemName: filter.isEmpty ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill") }.accessibilityLabel("Filter transactions").accessibilityIdentifier("transaction-filter-action"); if !selecting && (store.budget.can("create_transaction") || store.budget.can("manage_planning")) { Menu { if store.budget.can("create_transaction") { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } }; if store.budget.can("manage_planning") { Button("Schedule Transaction", systemImage: "calendar.badge.plus") { showSchedule = true }.accessibilityIdentifier("schedule-transaction-action") } } label: { Image(systemName: "plus") }.accessibilityIdentifier("add-activity-action") } }
+            .safeAreaInset(edge: .bottom) { if selecting { bulkBar } }
+            .alert("Add tag", isPresented: $showTagPrompt) { TextField("Tag", text: $bulkTag); Button("Apply") { Task { await bulkUpdate(action: "add_tags", tags: [bulkTag]) } }.disabled(bulkTag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty); Button("Cancel", role: .cancel) {} } message: { Text("The tag will be added to all selected transactions.") }
             .sheet(isPresented: $showAdd) { entry }
             .sheet(isPresented: $showSchedule) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode) }
             .sheet(item: $transferPresentation) { presentation in transfer(presentation) }
@@ -1446,6 +1475,38 @@ private struct LiveActivityView: View {
         TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, onSaved: reload)
     }
     private func reload() async { await store.refresh(); await load(reset: true) }
+    private func bulkRow(_ transaction: APITransaction) -> some View {
+        let title = transaction.payeeName.isEmpty ? "Transaction" : transaction.payeeName
+        let amount = store.format(transaction.amountMinor)
+        return Button { toggleSelection(transaction) } label: {
+            HStack {
+                Image(systemName: selectedIDs.contains(transaction.id) ? "checkmark.circle.fill" : "circle")
+                VStack(alignment: .leading) {
+                    Text(title)
+                    Text(transaction.occurredOn).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(amount).monospacedDigit()
+            }
+        }
+        .disabled(!canBulkEdit(transaction))
+        .accessibilityIdentifier("bulk-transaction-row-\(transaction.id)")
+    }
+    private func canBulkEdit(_ transaction: APITransaction) -> Bool { !transaction.isReconciled && transaction.transferID == nil && transaction.scheduledTransactionID == nil && !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) }
+    private func toggleSelection(_ transaction: APITransaction) { if selectedIDs.contains(transaction.id) { selectedIDs.remove(transaction.id) } else { selectedIDs.insert(transaction.id) } }
+    @ViewBuilder private var bulkBar: some View {
+        HStack {
+            Text("\(selectedIDs.count) selected").font(.subheadline).foregroundStyle(.secondary)
+            Spacer()
+            Menu("Update") {
+                Button("Mark Cleared") { Task { await bulkUpdate(action: "set_cleared", cleared: true) } }
+                Button("Mark Uncleared") { Task { await bulkUpdate(action: "set_cleared", cleared: false) } }
+                Menu("Set Flag") { ForEach(["red", "orange", "yellow", "green", "blue", "purple"], id: \.self) { color in Button(color.capitalized) { Task { await bulkUpdate(action: "set_flag", flag: color) } } }; Button("Remove Flag") { Task { await bulkUpdate(action: "set_flag") } } }
+                Button("Add Tag") { bulkTag = ""; showTagPrompt = true }
+            }.disabled(selectedIDs.isEmpty || loading).accessibilityIdentifier("bulk-update-menu")
+        }.padding(.horizontal).padding(.vertical, 10).background(.bar)
+    }
+    private func bulkUpdate(action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String] = []) async { loading = true; defer { loading = false }; do { try await store.bulkUpdateTransactions(.init(transactionIDs: selectedIDs.sorted(), action: action, cleared: cleared, flag: flag, tags: tags)); selectedIDs.removeAll(); selecting = false; await load(reset: true); errorMessage = nil } catch { errorMessage = error.localizedDescription } }
     private func load(reset: Bool) async {
         if loading && !reset { return }; loading = true; defer { loading = false }
         do { let page = try await store.browseTransactions(filter.query(search: search, currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor)); rows = reset ? page.items : rows + page.items; nextCursor = page.nextCursor; totalCount = page.totalCount; errorMessage = nil }
@@ -1649,7 +1710,7 @@ private struct LiveTransactionDetailView: View {
         List {
             if let transaction {
                 Section { Text(store.format(transaction.amountMinor)).font(.largeTitle.bold()).frame(maxWidth: .infinity).padding() }
-                Section("Details") { LabeledContent("Payee", value: transaction.payeeName); if let linked = linkedAccountName(for: transaction) { LabeledContent("Linked account", value: linked) } else { LabeledContent("Category", value: store.categoryName(transaction)) }; LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Status", value: transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared"); LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo) }
+                Section("Details") { LabeledContent("Payee", value: transaction.payeeName); if let linked = linkedAccountName(for: transaction) { LabeledContent("Linked account", value: linked) } else { LabeledContent("Category", value: store.categoryName(transaction)) }; LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Status") { Text(transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared").accessibilityIdentifier("transaction-status") }; LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo) }
                 if transaction.transferID != nil && transaction.isReconciled { Section { Label("This transfer includes reconciled history and cannot be edited or deleted.", systemImage: "lock.fill").font(.footnote).foregroundStyle(.secondary) } }
             }
         }.navigationTitle(transaction?.transferID == nil ? "Transaction" : "Transfer Detail").toolbar {

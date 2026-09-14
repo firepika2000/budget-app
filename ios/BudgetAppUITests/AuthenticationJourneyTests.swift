@@ -489,4 +489,23 @@ final class AuthenticationJourneyTests: XCTestCase {
         )
         XCTAssertEqual(matchingRows.count, 2, "duplication must refresh the canonical Activity browser with one additional posted row")
     }
+
+    func testProductionActivityBulkSelectionUpdatesThroughCanonicalWorkspace() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        app.buttons["bulk-select-action"].tap()
+        app.buttons["bulk-transaction-row-t1"].tap()
+        app.buttons["bulk-update-menu"].tap()
+        app.buttons["Mark Cleared"].tap()
+
+        XCTAssertTrue(app.buttons["transaction-row-t1"].waitForExistence(timeout: 5))
+        app.buttons["transaction-row-t1"].tap()
+        XCTAssertTrue(app.navigationBars["Transaction"].waitForExistence(timeout: 5))
+        let status = app.staticTexts["transaction-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.label.contains("Cleared"))
+    }
 }

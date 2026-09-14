@@ -188,6 +188,10 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/duplicate", method: "POST", token: token, body: APITransactionDuplicate(occurredOn: occurredOn))
     }
 
+    public func bulkUpdateTransactions(budgetID: String, update: APITransactionBulkUpdate, token: String) async throws -> [APITransaction] {
+        try await send(path: "api/v1/budgets/\(budgetID)/transactions/bulk", method: "POST", token: token, body: update)
+    }
+
     public func categories(budgetID: String, token: String) async throws -> [APICategory] {
         try await send(path: "api/v1/budgets/\(budgetID)/categories", token: token)
     }

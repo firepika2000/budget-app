@@ -189,6 +189,7 @@ protocol TransactionCommandRepository: AnyObject {
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws
     func deleteTransaction(id: String) async throws
     func duplicateTransaction(id: String, occurredOn: String) async throws
+    func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws
     func transferMoney(_ operation: TransferMoneyOperation) async throws
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws
     func deleteTransfer(id: String) async throws
@@ -307,6 +308,12 @@ struct TransactionService {
 
     func duplicate(id: String, occurredOn: String) async throws {
         do { try await repository.duplicateTransaction(id: id, occurredOn: occurredOn) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func bulkUpdate(_ update: APITransactionBulkUpdate) async throws {
+        guard !update.transactionIDs.isEmpty else { throw BudgetApplicationError.invalidOperation("Select at least one transaction.") }
+        do { try await repository.bulkUpdateTransactions(update) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

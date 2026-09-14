@@ -573,6 +573,18 @@ public struct APITransactionDuplicate: Encodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case occurredOn = "occurred_on" }
 }
 
+public struct APITransactionBulkUpdate: Encodable, Equatable, Sendable {
+    public let transactionIDs: [String]
+    public let action: String
+    public let cleared: Bool?
+    public let flag: String?
+    public let tags: [String]
+    public init(transactionIDs: [String], action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String] = []) {
+        self.transactionIDs = transactionIDs; self.action = action; self.cleared = cleared; self.flag = flag; self.tags = tags
+    }
+    enum CodingKeys: String, CodingKey { case transactionIDs = "transaction_ids"; case action, cleared, flag, tags }
+}
+
 public struct APITransferCreate: Encodable, Sendable {
     public let sourceAccountID: String
     public let destinationAccountID: String

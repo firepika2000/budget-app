@@ -78,6 +78,7 @@ from .schemas import (
     ReconcileResponse,
     SmartFundingCommit,
     SmartFundingPreviewResponse,
+    TransactionBulkUpdateRequest,
     TransactionCreate,
     TransactionDuplicateRequest,
     TransactionPageResponse,
@@ -994,6 +995,50 @@ def create_transaction(
     db.commit()
     db.refresh(transaction)
     return transaction
+
+
+@router.post("/transactions/bulk", response_model=list[TransactionResponse])
+def bulk_update_transactions(
+    budget_id: str,
+    body: TransactionBulkUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[Transaction]:
+    budget = require_budget_capability(db, user, budget_id, "edit_transaction")
+    transactions = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.budget_id == budget_id, Transaction.id.in_(body.transaction_ids),
+    )))
+    if len(transactions) != len(body.transaction_ids):
+        raise HTTPException(status_code=404, detail="One or more transactions were not found")
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    for transaction in transactions:
+        category_ids = ([transaction.category_id] if transaction.category_id is not None else []) + [split.category_id for split in transaction.splits]
+        if (visible_accounts is not None and transaction.account_id not in visible_accounts) or (visible_categories is not None and any(category_id not in visible_categories for category_id in category_ids)):
+            raise HTTPException(status_code=404, detail="One or more transactions were not found")
+        if transaction.is_reconciled:
+            raise HTTPException(status_code=409, detail="Reconciled transactions cannot be changed in bulk")
+        if transaction.transfer_id is not None or transaction.scheduled_transaction_id is not None or transaction.payee_name in {"Starting Balance", "Reconciliation adjustment"}:
+            raise HTTPException(status_code=409, detail="System-linked transactions must be changed through their specialized workflow")
+
+    by_id = {transaction.id: transaction for transaction in transactions}
+    ordered = [by_id[transaction_id] for transaction_id in body.transaction_ids]
+    for transaction in ordered:
+        before = transaction_snapshot(transaction)
+        if body.action == "set_cleared":
+            transaction.is_cleared = bool(body.cleared)
+        elif body.action == "set_flag":
+            transaction.flag = body.flag
+        elif body.action == "add_tags":
+            transaction.tags = list(dict.fromkeys([*transaction.tags, *body.tags]))[:20]
+        else:
+            removed = set(body.tags)
+            transaction.tags = [tag for tag in transaction.tags if tag not in removed]
+        record_transaction_change(db, transaction, user, "bulk_updated", before=before, after=transaction_snapshot(transaction))
+    db.commit()
+    for transaction in ordered:
+        db.refresh(transaction)
+    return ordered
 
 
 @router.post("/transactions/{transaction_id}/duplicate", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
