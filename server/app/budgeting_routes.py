@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import csv
+import base64
 import json
 from datetime import date, datetime, timezone
 from io import StringIO
+from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
@@ -77,6 +79,7 @@ from .schemas import (
     SmartFundingCommit,
     SmartFundingPreviewResponse,
     TransactionCreate,
+    TransactionPageResponse,
     TransactionResponse,
     TransactionUpdate,
     TransferCreate,
@@ -802,17 +805,11 @@ def transfer_allocation(
     }
 
 
-@router.get("/transactions", response_model=list[TransactionResponse])
-def list_transactions(
-    budget_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[Transaction]:
-    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+def _visible_transactions(db: Session, user: User, budget: Budget) -> list[Transaction]:
     transactions = list(db.scalars(select(Transaction).options(
         selectinload(Transaction.splits)
     ).where(
-        Transaction.budget_id == budget_id
+        Transaction.budget_id == budget.id
     ).order_by(Transaction.occurred_on.desc(), Transaction.created_at.desc())))
     visible_accounts = visible_resource_ids(db, user, budget, "account")
     visible_categories = visible_resource_ids(db, user, budget, "category")
@@ -824,6 +821,116 @@ def list_transactions(
             or (bool(item.splits) and all(split.category_id in visible_categories for split in item.splits))
         )
     )]
+
+
+@router.get("/transactions/search", response_model=TransactionPageResponse)
+def search_transactions(
+    budget_id: str,
+    q: str = Query(default="", max_length=150),
+    account_id: list[str] = Query(default=[]),
+    category_id: list[str] = Query(default=[]),
+    payee_id: list[str] = Query(default=[]),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    minimum_amount_minor: Optional[int] = None,
+    maximum_amount_minor: Optional[int] = None,
+    transaction_type: Optional[str] = Query(default=None, pattern="^(income|spending|refund|transfer)$"),
+    cleared: Optional[bool] = None,
+    reconciled: Optional[bool] = None,
+    flag: list[str] = Query(default=[]),
+    tag: list[str] = Query(default=[]),
+    actor_user_id: list[str] = Query(default=[]),
+    is_transfer: Optional[bool] = None,
+    is_scheduled_realization: Optional[bool] = None,
+    sort: str = Query(default="date_desc", pattern="^(date_desc|date_asc|amount_desc|amount_asc|payee_asc)$"),
+    limit: int = Query(default=50, ge=1, le=200),
+    cursor: Optional[str] = Query(default=None, max_length=200),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TransactionPageResponse:
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    if start_date is not None and end_date is not None and start_date > end_date:
+        raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
+
+    rows = _visible_transactions(db, user, budget)
+    search_text = q.strip().casefold()
+
+    def matches(item: Transaction) -> bool:
+        category_ids = {item.category_id} if item.category_id is not None else {split.category_id for split in item.splits}
+        if search_text and not any(search_text in value.casefold() for value in [item.payee_name, item.memo, item.flag or "", *item.tags]):
+            return False
+        if account_id and item.account_id not in account_id:
+            return False
+        if category_id and not category_ids.intersection(category_id):
+            return False
+        if payee_id and item.payee_id not in payee_id:
+            return False
+        if start_date is not None and item.occurred_on < start_date:
+            return False
+        if end_date is not None and item.occurred_on > end_date:
+            return False
+        if minimum_amount_minor is not None and item.amount_minor < minimum_amount_minor:
+            return False
+        if maximum_amount_minor is not None and item.amount_minor > maximum_amount_minor:
+            return False
+        if cleared is not None and item.is_cleared is not cleared:
+            return False
+        if reconciled is not None and item.is_reconciled is not reconciled:
+            return False
+        if flag and item.flag not in flag:
+            return False
+        if tag and not set(item.tags).intersection(tag):
+            return False
+        if actor_user_id and item.created_by_user_id not in actor_user_id:
+            return False
+        if is_transfer is not None and (item.transfer_id is not None) is not is_transfer:
+            return False
+        if is_scheduled_realization is not None and (item.scheduled_transaction_id is not None) is not is_scheduled_realization:
+            return False
+        if transaction_type == "transfer" and item.transfer_id is None:
+            return False
+        if transaction_type == "income" and not (item.transfer_id is None and item.amount_minor > 0 and not category_ids):
+            return False
+        if transaction_type == "spending" and not (item.transfer_id is None and item.amount_minor < 0 and bool(category_ids)):
+            return False
+        if transaction_type == "refund" and not (item.transfer_id is None and item.amount_minor > 0 and bool(category_ids)):
+            return False
+        return True
+
+    filtered = [item for item in rows if matches(item)]
+    if sort == "date_asc":
+        filtered.sort(key=lambda item: (item.occurred_on, item.created_at, item.id))
+    elif sort == "amount_desc":
+        filtered.sort(key=lambda item: (-item.amount_minor, -item.occurred_on.toordinal(), item.id))
+    elif sort == "amount_asc":
+        filtered.sort(key=lambda item: (item.amount_minor, -item.occurred_on.toordinal(), item.id))
+    elif sort == "payee_asc":
+        filtered.sort(key=lambda item: (item.payee_name.casefold(), -item.occurred_on.toordinal(), item.id))
+    else:
+        filtered.sort(key=lambda item: (item.occurred_on, item.created_at, item.id), reverse=True)
+
+    start = 0
+    if cursor is not None:
+        try:
+            cursor_id = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+            start = next(index + 1 for index, item in enumerate(filtered) if item.id == cursor_id)
+        except (ValueError, UnicodeError, StopIteration):
+            raise HTTPException(status_code=422, detail="Invalid or stale transaction cursor") from None
+    page = filtered[start:start + limit]
+    next_cursor = None
+    if start + limit < len(filtered) and page:
+        next_cursor = base64.urlsafe_b64encode(page[-1].id.encode("utf-8")).decode("ascii")
+    return TransactionPageResponse(items=page, next_cursor=next_cursor, total_count=len(filtered))
+
+
+@router.get("/transactions", response_model=list[TransactionResponse])
+def list_transactions(
+    budget_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[Transaction]:
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    return _visible_transactions(db, user, budget)
 
 
 @router.post("/transactions", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)

@@ -483,6 +483,12 @@ class TransactionResponse(BaseModel):
     splits: list[TransactionSplitResponse] = Field(default_factory=list)
 
 
+class TransactionPageResponse(BaseModel):
+    items: list[TransactionResponse]
+    next_cursor: Optional[str] = None
+    total_count: int
+
+
 class PayeeCreate(BaseModel):
     display_name: str = Field(min_length=1, max_length=150)
     default_category_id: Optional[str] = None
