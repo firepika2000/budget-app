@@ -92,7 +92,11 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["Savings"].tap()
         app.buttons["Save"].tap()
 
-        XCTAssertTrue(app.navigationBars["Emergency Savings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Account Settings"].waitForNonExistence(timeout: 5))
+        app.navigationBars.buttons["Accounts"].tap()
+        let updatedRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'account-row-' AND label CONTAINS 'Emergency Savings'")).firstMatch
+        XCTAssertTrue(updatedRow.waitForExistence(timeout: 5))
+        updatedRow.tap()
         XCTAssertTrue(app.staticTexts["$2,000.00"].exists)
     }
 
