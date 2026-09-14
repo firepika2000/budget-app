@@ -305,7 +305,7 @@ final class AuthenticationJourneyTests: XCTestCase {
 
         XCTAssertTrue(app.navigationBars["Transfer"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Transfer"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["To High-Yield Savings"].exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'To High-Yield Savings'" )).firstMatch.exists)
 
         let transferRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'transaction-row-'")).matching(NSPredicate(format: "label CONTAINS 'Transfer'")).firstMatch
         XCTAssertTrue(transferRow.waitForExistence(timeout: 5)); transferRow.tap()
@@ -318,7 +318,12 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["-$20.00"].waitForExistence(timeout: 5))
         app.buttons["More"].tap(); app.buttons["delete-transfer-action"].tap(); app.buttons["Delete Transfer"].tap()
         XCTAssertTrue(app.navigationBars["Transfer Detail"].waitForNonExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["To High-Yield Savings"].exists)
+        XCTAssertFalse(
+            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'transaction-row-'"))
+                .matching(NSPredicate(format: "label CONTAINS 'To High-Yield Savings'"))
+                .firstMatch.exists,
+            "deleting the transfer must remove its canonical row from the originating register"
+        )
     }
 
     func testMoveMoneyFromCategoryPreservesSourceContextAndUsesUnassignedTerm() {
