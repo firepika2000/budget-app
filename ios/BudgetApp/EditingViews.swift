@@ -73,7 +73,12 @@ struct TransactionEntryView: View {
                         }
                     }
                 }
-                DatePicker("Date", selection: $date, displayedComponents: .date)
+                Section {
+                    DatePicker("Date", selection: $date, in: ...Date(), displayedComponents: .date)
+                        .accessibilityIdentifier("transaction-date")
+                } footer: {
+                    Text("Transactions record money that has already happened. Use Schedule Transaction for a future expense, income, or transfer.")
+                }
                 TextField("Memo", text: $memo)
                 Picker("Flag", selection: $flag) { Text("None").tag(""); Text("Red").tag("red"); Text("Orange").tag("orange"); Text("Yellow").tag("yellow"); Text("Green").tag("green"); Text("Blue").tag("blue"); Text("Purple").tag("purple") }
                 TextField("Tags (comma separated)", text: $tags)

@@ -353,4 +353,23 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Household Checking"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["transaction-row-t2"].exists)
     }
+
+    func testProductionActivitySeparatesActualAndScheduledEntry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        app.navigationBars["Activity"].buttons.element(boundBy: 1).tap()
+        XCTAssertTrue(app.buttons["Schedule Transaction"].waitForExistence(timeout: 5))
+        app.buttons["Schedule Transaction"].tap()
+        XCTAssertTrue(app.navigationBars["New Schedule"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.datePickers["schedule-next-date"].exists)
+        app.buttons["Cancel"].tap()
+
+        app.navigationBars["Activity"].buttons.element(boundBy: 1).tap()
+        app.buttons["Transaction"].tap()
+        XCTAssertTrue(app.navigationBars["New Transaction"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Transactions record money that has already happened. Use Schedule Transaction for a future expense, income, or transfer."].exists)
+    }
 }

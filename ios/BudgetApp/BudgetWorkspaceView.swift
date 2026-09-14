@@ -1183,6 +1183,7 @@ private struct LiveActivityView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var search = ""
     @State private var showAdd = false
+    @State private var showSchedule = false
     @State private var transferPresentation: TransferPresentation?
     var filtered: [APITransaction] { store.transactions.filter { search.isEmpty || $0.payeeName.localizedCaseInsensitiveContains(search) || $0.memo.localizedCaseInsensitiveContains(search) || store.categoryName($0).localizedCaseInsensitiveContains(search) } }
     var body: some View {
@@ -1192,8 +1193,9 @@ private struct LiveActivityView: View {
         }
             .searchable(text: $search, prompt: "Payee, memo, or category")
             .navigationTitle("Activity")
-            .toolbar { if store.budget.can("create_transaction") { Menu { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } } label: { Image(systemName: "plus") } } }
+            .toolbar { if store.budget.can("create_transaction") || store.budget.can("manage_planning") { Menu { if store.budget.can("create_transaction") { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } }; if store.budget.can("manage_planning") { Button("Schedule Transaction", systemImage: "calendar.badge.plus") { showSchedule = true }.accessibilityIdentifier("schedule-transaction-action") } } label: { Image(systemName: "plus") } } }
             .sheet(isPresented: $showAdd) { entry }
+            .sheet(isPresented: $showSchedule) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode) }
             .sheet(item: $transferPresentation) { presentation in transfer(presentation) }
     }
     @ViewBuilder private func transfer(_ presentation: TransferPresentation) -> some View {
@@ -1281,7 +1283,7 @@ private struct LiveScheduledTransactionEditor: View {
     init(schedule: APIScheduledTransaction?, currencyCode: String) {
         self.schedule = schedule; self.currencyCode = currencyCode
         let inferred: ScheduledKind = schedule?.destinationAccountID != nil ? .transfer : (schedule?.amountMinor ?? -1) > 0 ? .income : .expense
-        _kind = State(initialValue: inferred); _accountID = State(initialValue: schedule?.accountID ?? ""); _destinationAccountID = State(initialValue: schedule?.destinationAccountID ?? ""); _categoryID = State(initialValue: schedule?.categoryID ?? ""); _name = State(initialValue: schedule?.name ?? ""); _amount = State(initialValue: CurrencyText.editable(abs(schedule?.amountMinor ?? 0), currencyCode: currencyCode)); _nextDate = State(initialValue: schedule.map { BudgetWorkspaceStore.parseDate($0.nextDate) } ?? Date()); _recurrenceUnit = State(initialValue: schedule?.recurrenceUnit ?? "months"); _intervalCount = State(initialValue: schedule?.intervalCount ?? 1); _memo = State(initialValue: schedule?.memo ?? ""); _active = State(initialValue: schedule?.isActive ?? true)
+        _kind = State(initialValue: inferred); _accountID = State(initialValue: schedule?.accountID ?? ""); _destinationAccountID = State(initialValue: schedule?.destinationAccountID ?? ""); _categoryID = State(initialValue: schedule?.categoryID ?? ""); _name = State(initialValue: schedule?.name ?? ""); _amount = State(initialValue: CurrencyText.editable(abs(schedule?.amountMinor ?? 0), currencyCode: currencyCode)); _nextDate = State(initialValue: schedule.map { BudgetWorkspaceStore.parseDate($0.nextDate) } ?? Calendar.current.date(byAdding: .day, value: 1, to: Date())!); _recurrenceUnit = State(initialValue: schedule?.recurrenceUnit ?? "months"); _intervalCount = State(initialValue: schedule?.intervalCount ?? 1); _memo = State(initialValue: schedule?.memo ?? ""); _active = State(initialValue: schedule?.isActive ?? true)
     }
     private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: store.budget.currencyCode), value > 0 else { return nil }; return value }
     private var due: Bool { schedule?.isActive == true && Calendar.current.startOfDay(for: nextDate) <= Calendar.current.startOfDay(for: Date()) }
@@ -1299,7 +1301,8 @@ private struct LiveScheduledTransactionEditor: View {
                     TextField("Memo", text: $memo, axis: .vertical)
                 }
                 Section("Schedule") {
-                    DatePicker("Next occurrence", selection: $nextDate, displayedComponents: .date)
+                    DatePicker("Next occurrence", selection: $nextDate, in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
+                        .accessibilityIdentifier("schedule-next-date")
                     Picker("Repeats", selection: $recurrenceUnit) { Text("Once").tag("once"); Text("Days").tag("days"); Text("Weeks").tag("weeks"); Text("Months").tag("months"); Text("Years").tag("years") }
                     if recurrenceUnit != "once" { Stepper("Every \(intervalCount) \(recurrenceUnit)", value: $intervalCount, in: 1...365) }
                     Toggle("Active", isOn: $active)
