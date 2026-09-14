@@ -1,6 +1,8 @@
 import BudgetAPI
 import SwiftUI
 import Charts
+import UniformTypeIdentifiers
+import QuickLook
 
 enum Theme {
     static let accent = Color(red: 0.10, green: 0.40, blue: 0.36)
@@ -188,6 +190,7 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
 @MainActor
 final class DemoWorkspaceDataSource: WorkspaceDataSource {
     let demo: DemoStore
+    private var attachmentData: [String: Data] = [:]
     let budget: APIBudget
 
     init(fresh: Bool = false) {
@@ -229,7 +232,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let splitBase = ids.isEmpty ? 0 : item.amount / Int64(ids.count)
             var remainder = ids.isEmpty ? 0 : item.amount % Int64(ids.count)
             let splits: [[String: Any]] = ids.count > 1 ? ids.enumerated().map { index, id in let extra: Int64 = remainder == 0 ? 0 : (remainder > 0 ? 1 : -1); if remainder != 0 { remainder -= extra }; return ["id": "\(item.id)-\(index)", "category_id": id, "amount_minor": item.categoryAmounts[id] ?? splitBase + extra, "memo": ""] } : []
-            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "payee_id": demo.payees.first(where: { $0.name == item.payee })?.id ?? NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "is_cleared": item.cleared, "is_reconciled": item.reconciled, "created_by_user_id": demo.persona.rawValue.lowercased(), "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "scheduled_transaction_id": NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "splits": splits]
+            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "payee_id": demo.payees.first(where: { $0.name == item.payee })?.id ?? NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "is_cleared": item.cleared, "is_reconciled": item.reconciled, "created_by_user_id": demo.persona.rawValue.lowercased(), "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "scheduled_transaction_id": NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "status": item.status, "void_reason": item.voidReason ?? NSNull(), "reversal_of_transaction_id": item.reversalOfTransactionID ?? NSNull(), "reversal_transaction_id": item.reversalTransactionID ?? NSNull(), "splits": splits]
         })
         let payeeRows: [APIPayee] = try decode(demo.payees.filter { !$0.isArchived }.map { item in
             let history = demo.visibleTransactions.filter { $0.payee == item.name }
@@ -431,6 +434,40 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let operation = RecordTransactionOperation(accountID: source.accountID, categoryID: singleCategory, amountMinor: source.amount, occurredOn: occurredOn, payeeName: source.payee, payeeID: demo.payees.first(where: { $0.name == source.payee })?.id, memo: source.memo, isCleared: false, splits: splits, flag: source.flag, tags: source.tags, attachmentMetadata: [])
         guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
+    func voidTransaction(id: String, reason: String) async throws {
+        guard let index = demo.transactions.firstIndex(where: { $0.id == id }), demo.transactions[index].status == "posted", demo.transactions[index].transferID == nil, !demo.transactions[index].reconciled else { throw workspaceRepositoryError("Only an unreconciled posted transaction can be voided") }
+        let source = demo.transactions[index]
+        let amounts = demo.canonicalCategoryAmounts(for: source)
+        let splits = amounts.count > 1 ? amounts.keys.sorted().map { TransactionSplitOperation(categoryID: $0, amountMinor: -amounts[$0]!, memo: "") } : []
+        let operation = RecordTransactionOperation(accountID: source.accountID, categoryID: amounts.count == 1 ? amounts.keys.first : nil, amountMinor: -source.amount, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Reversal: \(source.payee)", memo: reason.isEmpty ? "Void reversal." : "Void reversal. \(reason)", isCleared: false, splits: splits, flag: source.flag, tags: source.tags, attachmentMetadata: [])
+        guard demo.recordCanonicalTransaction(operation), let reversalIndex = demo.transactions.indices.last else { throw workspaceRepositoryError(demo.errorMessage) }
+        demo.transactions[reversalIndex].status = "reversal"
+        demo.transactions[reversalIndex].reversalOfTransactionID = id
+        demo.transactions[index].status = "voided"
+        demo.transactions[index].voidReason = reason.isEmpty ? nil : reason
+        demo.transactions[index].reversalTransactionID = demo.transactions[reversalIndex].id
+    }
+    func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws {
+        guard let source = demo.transactions.first(where: { $0.id == id }), source.status == "posted", source.transferID == nil, source.categoryIDs.count <= 1 else { throw workspaceRepositoryError("This transaction cannot be used as a recurring template") }
+        demo.schedules.append(.init(id: UUID().uuidString, accountID: source.accountID, destinationAccountID: nil, categoryID: source.categoryIDs.first, name: source.payee, amount: source.amount, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: source.memo, isActive: true))
+    }
+    func transactionAttachments(id: String) async throws -> [APITransactionAttachment] {
+        guard let transaction = demo.transactions.first(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found") }
+        guard let name = transaction.attachmentName else { return [] }
+        let data = attachmentData[id] ?? Data()
+        return [try JSONDecoder().decode(APITransactionAttachment.self, from: JSONSerialization.data(withJSONObject: ["id": "demo-attachment-\(id)", "transaction_id": id, "filename": name, "content_type": "application/pdf", "byte_count": data.count, "sha256": "demo", "created_at": "2026-09-14T00:00:00Z", "detached_at": NSNull()]))]
+    }
+    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws {
+        guard let index = demo.transactions.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found") }
+        demo.transactions[index].attachmentName = filename
+        attachmentData[id] = data
+    }
+    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { attachmentData[transactionID] ?? Data() }
+    func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws {
+        guard let index = demo.transactions.firstIndex(where: { $0.id == transactionID }) else { throw workspaceRepositoryError("Transaction not found") }
+        demo.transactions[index].attachmentName = nil
+        attachmentData.removeValue(forKey: transactionID)
+    }
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
         guard update.transactionIDs.allSatisfy({ id in demo.transactions.contains(where: { $0.id == id && !$0.reconciled && $0.transferID == nil && !$0.scheduled && !["Starting Balance", "Reconciliation adjustment"].contains($0.payee) }) }) else { throw workspaceRepositoryError("System-linked or reconciled transactions cannot be changed in bulk") }
         for id in update.transactionIDs {
@@ -542,6 +579,12 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: operation.apiValue, token: token) }
     func deleteTransaction(id: String) async throws { try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
     func duplicateTransaction(id: String, occurredOn: String) async throws { _ = try await client.duplicateTransaction(budgetID: budget.id, transactionID: id, occurredOn: occurredOn, token: token) }
+    func voidTransaction(id: String, reason: String) async throws { _ = try await client.voidTransaction(budgetID: budget.id, transactionID: id, reason: reason, token: token) }
+    func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws { _ = try await client.createScheduleFromTransaction(budgetID: budget.id, transactionID: id, request: .init(recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, nextDate: operation.nextDate), token: token) }
+    func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await client.transactionAttachments(budgetID: budget.id, transactionID: id, token: token) }
+    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { _ = try await client.uploadTransactionAttachment(budgetID: budget.id, transactionID: id, filename: filename, contentType: contentType, data: data, token: token) }
+    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await client.downloadTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
+    func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await client.detachTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws { _ = try await client.bulkUpdateTransactions(budgetID: budget.id, update: update, token: token) }
     func transferMoney(_ operation: TransferMoneyOperation) async throws { _ = try await client.createTransfer(budgetID: budget.id, transfer: operation.apiValue, token: token) }
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: operation.apiValue, token: token) }
@@ -728,6 +771,21 @@ final class BudgetWorkspaceStore: ObservableObject {
         try await services().transactions.duplicate(id: id, occurredOn: occurredOn)
         await refresh()
     }
+
+    func voidTransaction(id: String, reason: String) async throws {
+        try await services().transactions.void(id: id, reason: reason)
+        await refresh()
+    }
+
+    func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws {
+        try await services().transactions.makeRecurring(id: id, operation: operation)
+        await refresh()
+    }
+
+    func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await services().transactions.attachments(id: id) }
+    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await services().transactions.uploadAttachment(id: id, filename: filename, contentType: contentType, data: data); await refresh() }
+    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await services().transactions.downloadAttachment(transactionID: transactionID, attachmentID: attachmentID) }
+    func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await services().transactions.detachAttachment(transactionID: transactionID, attachmentID: attachmentID); await refresh() }
 
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
         try await services().transactions.bulkUpdate(update)
@@ -1716,7 +1774,7 @@ private struct LiveTransactionLink: View {
     let transaction: APITransaction
     var body: some View {
         NavigationLink { LiveTransactionDetailView(transactionID: transaction.id) } label: {
-            HStack { VStack(alignment: .leading) { HStack(spacing: 5) { if transaction.flag != nil { Image(systemName: "flag.fill").foregroundStyle(flagColor) }; Text(transaction.payeeName.isEmpty ? "No payee" : transaction.payeeName) }; Text(secondaryText).font(.caption).foregroundStyle(.secondary); if let tags = transaction.tags, !tags.isEmpty { Text(tags.map { "#\($0)" }.joined(separator: " ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1) } }; Spacer(); Text(store.format(transaction.amountMinor)).monospacedDigit() }
+            HStack { VStack(alignment: .leading) { HStack(spacing: 5) { if transaction.flag != nil { Image(systemName: "flag.fill").foregroundStyle(flagColor) }; Text(transaction.payeeName.isEmpty ? "No payee" : transaction.payeeName); if transaction.status == "voided" { Text("VOIDED").font(.caption2.bold()).foregroundStyle(.red) } else if transaction.status == "reversal" { Text("REVERSAL").font(.caption2.bold()).foregroundStyle(.orange) } }; Text(secondaryText).font(.caption).foregroundStyle(.secondary); if let tags = transaction.tags, !tags.isEmpty { Text(tags.map { "#\($0)" }.joined(separator: " ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1) } }; Spacer(); Text(store.format(transaction.amountMinor)).monospacedDigit() }
         }
         .accessibilityIdentifier("transaction-row-\(transaction.id)")
     }
@@ -1740,17 +1798,22 @@ private struct LiveTransactionDetailView: View {
     @State private var editTransfer: TransferPresentation?
     @State private var confirmDelete = false
     @State private var confirmDuplicate = false
+    @State private var showVoid = false
+    @State private var showRecurring = false
     @State private var isDeleting = false
     var transaction: APITransaction? { store.transactions.first(where: { $0.id == transactionID }) }
     var body: some View {
         List {
             if let transaction {
                 Section { Text(store.format(transaction.amountMinor)).font(.largeTitle.bold()).frame(maxWidth: .infinity).padding() }
-                Section("Details") { LabeledContent("Payee", value: transaction.payeeName); if let linked = linkedAccountName(for: transaction) { LabeledContent("Linked account", value: linked) } else { LabeledContent("Category", value: store.categoryName(transaction)) }; LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Status") { Text(transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared").accessibilityIdentifier("transaction-status") }; LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo); LabeledContent("Flag", value: transaction.flag?.capitalized ?? "None"); LabeledContent("Tags", value: transaction.tags?.isEmpty == false ? transaction.tags!.map { "#\($0)" }.joined(separator: " ") : "None") }
+                Section("Details") { LabeledContent("Payee", value: transaction.payeeName); if let linked = linkedAccountName(for: transaction) { LabeledContent("Linked account", value: linked) } else { LabeledContent("Category", value: store.categoryName(transaction)) }; LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Posting", value: (transaction.status ?? "posted").uppercased()); LabeledContent("Clearing") { Text(transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared").accessibilityIdentifier("transaction-status") }; LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo); LabeledContent("Flag", value: transaction.flag?.capitalized ?? "None"); LabeledContent("Tags", value: transaction.tags?.isEmpty == false ? transaction.tags!.map { "#\($0)" }.joined(separator: " ") : "None") }
+                if transaction.status == "voided" { Section("Void audit") { LabeledContent("Reason", value: transaction.voidReason ?? "No reason supplied"); if let reversal = transaction.reversalTransactionID { NavigationLink("Open reversal") { LiveTransactionDetailView(transactionID: reversal) } } } }
+                if transaction.status == "reversal", let original = transaction.reversalOfTransactionID { Section("Reversal audit") { NavigationLink("Open voided original") { LiveTransactionDetailView(transactionID: original) } } }
+                TransactionAttachmentsView(transaction: transaction)
                 if transaction.transferID != nil && transaction.isReconciled { Section { Label("This transfer includes reconciled history and cannot be edited or deleted.", systemImage: "lock.fill").font(.footnote).foregroundStyle(.secondary) } }
             }
         }.navigationTitle(transaction?.transferID == nil ? "Transaction" : "Transfer Detail").toolbar {
-            if let transaction, !transaction.isReconciled {
+            if let transaction, !transaction.isReconciled, (transaction.status ?? "posted") == "posted" {
                 if let transfer = transferPresentation(for: transaction) {
                     Menu {
                         if store.budget.can("edit_transaction") { Button("Edit Transfer", systemImage: "pencil") { editTransfer = transfer }.accessibilityIdentifier("edit-transfer-action") }
@@ -1760,6 +1823,8 @@ private struct LiveTransactionDetailView: View {
                     Menu {
                         if store.budget.can("edit_transaction") { Button("Edit", systemImage: "pencil") { showEdit = true } }
                         if store.budget.can("create_transaction"), transaction.scheduledTransactionID == nil, !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Duplicate", systemImage: "plus.square.on.square") { confirmDuplicate = true }.accessibilityIdentifier("duplicate-transaction-action") }
+                        if store.budget.can("manage_planning"), transaction.splits.isEmpty, !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Make Recurring", systemImage: "repeat") { showRecurring = true }.accessibilityIdentifier("make-recurring-action") }
+                        if store.budget.can("delete_transaction"), !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Void with Reversal", systemImage: "arrow.uturn.backward.circle") { showVoid = true }.accessibilityIdentifier("void-transaction-action") }
                         if store.budget.can("delete_transaction") { Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true } }
                     } label: { Image(systemName: "ellipsis.circle") }
                 }
@@ -1767,6 +1832,8 @@ private struct LiveTransactionDetailView: View {
         }
             .sheet(isPresented: $showEdit) { if let transaction { LiveTransactionEditView(budget: store.budget, transaction: transaction, accounts: store.accounts, categories: store.categories, onSaved: reload) } }
             .sheet(item: $editTransfer) { LiveTransferView(presentation: $0, budget: store.budget, accounts: store.accounts, onSaved: reload) }
+            .sheet(isPresented: $showVoid) { if let transaction { TransactionVoidView(transaction: transaction) } }
+            .sheet(isPresented: $showRecurring) { if let transaction { MakeRecurringView(transaction: transaction) } }
             .confirmationDialog("Duplicate this transaction?", isPresented: $confirmDuplicate, titleVisibility: .visible) { Button("Duplicate Transaction") { Task { await duplicateTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text("A new uncleared copy dated today will post through the normal accounting engine. Attachments are not copied.") }
             .confirmationDialog(transaction?.transferID == nil ? "Delete this transaction?" : "Delete this transfer?", isPresented: $confirmDelete, titleVisibility: .visible) { Button(transaction?.transferID == nil ? "Delete Transaction" : "Delete Transfer", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text(transaction?.transferID == nil ? "This cannot be undone and will immediately update the plan and reports." : "Both linked account entries will be removed atomically. Your plan and categories will not change.") }
     }
@@ -1796,6 +1863,55 @@ private struct LiveTransactionDetailView: View {
         do { try await store.duplicateTransaction(id: transaction.id, occurredOn: BudgetWorkspaceStore.dateString(Date())) }
         catch { store.errorMessage = error.localizedDescription }
     }
+}
+
+private struct TransactionVoidView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let transaction: APITransaction
+    @State private var reason = ""
+    @State private var saving = false
+    @State private var error: String?
+    var body: some View { NavigationStack { Form { Section { Text("The original posting remains visible and a current-dated reversal exactly compensates it. This cannot be undone.").foregroundStyle(.secondary); TextField("Reason (optional)", text: $reason, axis: .vertical).accessibilityIdentifier("void-reason") } }.navigationTitle("Void Transaction").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Void & Reverse", role: .destructive) { Task { await save() } }.disabled(saving).accessibilityIdentifier("confirm-void-action") } }.alert("Unable to void", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") } } }
+    private func save() async { saving = true; defer { saving = false }; do { try await store.voidTransaction(id: transaction.id, reason: reason); dismiss() } catch { self.error = error.localizedDescription } }
+}
+
+private struct MakeRecurringView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let transaction: APITransaction
+    @State private var unit = "months"
+    @State private var interval = 1
+    @State private var nextDate: Date
+    @State private var saving = false
+    @State private var error: String?
+    init(transaction: APITransaction) {
+        self.transaction = transaction
+        let original = BudgetWorkspaceStore.parseDate(transaction.occurredOn)
+        let future = Calendar.current.date(byAdding: .month, value: 1, to: original) ?? Date().addingTimeInterval(2_592_000)
+        _nextDate = State(initialValue: max(future, Calendar.current.date(byAdding: .day, value: 1, to: Date())!))
+    }
+    var body: some View { NavigationStack { Form { Section("Template") { LabeledContent("Payee", value: transaction.payeeName); LabeledContent("Amount", value: store.format(transaction.amountMinor)); Text("The existing posted transaction remains unchanged.").font(.footnote).foregroundStyle(.secondary) }; Section("Recurrence") { Picker("Frequency", selection: $unit) { Text("Days").tag("days"); Text("Weeks").tag("weeks"); Text("Months").tag("months"); Text("Years").tag("years") }; Stepper("Every \(interval) \(unit)", value: $interval, in: 1...365); if unit == "weeks" { Button("Biweekly") { interval = 2 } }; DatePicker("Next occurrence", selection: $nextDate, in: Calendar.current.startOfDay(for: Date()).addingTimeInterval(86_400)..., displayedComponents: .date).accessibilityIdentifier("recurring-next-date") }; Section { Text("Saving creates forecast only. No account, category, or actual Activity value changes until realization.").font(.footnote).foregroundStyle(.secondary) } }.navigationTitle("Make Recurring").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save Schedule") { Task { await save() } }.disabled(saving).accessibilityIdentifier("save-recurring-action") } }.alert("Unable to create schedule", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") } } }
+    private func save() async { saving = true; defer { saving = false }; do { try await store.createScheduleFromTransaction(id: transaction.id, operation: .init(recurrenceUnit: unit, intervalCount: interval, nextDate: BudgetWorkspaceStore.dateString(nextDate))); dismiss() } catch { self.error = error.localizedDescription } }
+}
+
+private struct TransactionAttachmentsView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let transaction: APITransaction
+    @State private var attachments: [APITransactionAttachment] = []
+    @State private var importing = false
+    @State private var previewURL: URL?
+    @State private var error: String?
+    var body: some View { Section("Attachments") { if attachments.isEmpty { Text("No attachments").foregroundStyle(.secondary) }; ForEach(attachments) { attachment in HStack { Button { Task { await open(attachment) } } label: { VStack(alignment: .leading) { Text(attachment.filename); Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file)).font(.caption).foregroundStyle(.secondary) } }; Spacer(); if store.budget.can("edit_transaction") { Button("Detach", systemImage: "trash", role: .destructive) { Task { await detach(attachment) } }.labelStyle(.iconOnly) } } }; if store.budget.can("edit_transaction"), transaction.status != "reversal", attachments.count < 20 { Button("Add Attachment", systemImage: "paperclip") { importing = true }.accessibilityIdentifier("add-attachment-action") }; Text("PDF, JPEG, PNG, or HEIC · 10 MB maximum · detached files retained 30 days").font(.caption).foregroundStyle(.secondary) }
+        .task { await load() }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .jpeg, .png, .heic]) { result in Task { await importFile(result) } }
+        .quickLookPreview($previewURL)
+        .alert("Attachment error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
+    }
+    private func load() async { do { attachments = try await store.transactionAttachments(id: transaction.id) } catch { self.error = error.localizedDescription } }
+    private func importFile(_ result: Result<URL, Error>) async { do { let url = try result.get(); let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }; let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey]); guard (values.fileSize ?? 0) <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Attachments must be 10 MB or smaller.") }; let data = try Data(contentsOf: url, options: .mappedIfSafe); try await store.uploadTransactionAttachment(id: transaction.id, filename: url.lastPathComponent, contentType: values.contentType?.preferredMIMEType ?? "application/octet-stream", data: data); await load() } catch { self.error = error.localizedDescription } }
+    private func open(_ attachment: APITransactionAttachment) async { do { let data = try await store.downloadTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); let directory = FileManager.default.temporaryDirectory.appending(path: "BudgetAttachmentPreview", directoryHint: .isDirectory); try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true); let url = directory.appending(path: attachment.filename); try data.write(to: url, options: .atomic); previewURL = url } catch { self.error = error.localizedDescription } }
+    private func detach(_ attachment: APITransactionAttachment) async { do { try await store.detachTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); await load() } catch { self.error = error.localizedDescription } }
 }
 
 private struct LiveAccountsView: View {
@@ -2248,22 +2364,22 @@ private struct LiveTransactionEditView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget; let transaction: APITransaction; let accounts: [APIAccount]; let categories: [APICategory]; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var payee: String; @State private var payeeID: String?; @State private var amount: String; @State private var accountID: String; @State private var categoryID: String; @State private var memo: String; @State private var cleared: Bool; @State private var date: Date; @State private var isInflow: Bool; @State private var isSplit: Bool; @State private var splitRows: [WorkspaceSplitDraft]; @State private var flag: String; @State private var tags: String; @State private var attachments: String
+    @State private var payee: String; @State private var payeeID: String?; @State private var amount: String; @State private var accountID: String; @State private var categoryID: String; @State private var memo: String; @State private var cleared: Bool; @State private var date: Date; @State private var isInflow: Bool; @State private var isSplit: Bool; @State private var splitRows: [WorkspaceSplitDraft]; @State private var flag: String; @State private var tags: String
     @State private var isSaving = false; @State private var errorMessage: String?
     init(budget: APIBudget, transaction: APITransaction, accounts: [APIAccount], categories: [APICategory], onSaved: @escaping () async -> Void) {
         self.budget=budget; self.transaction=transaction; self.accounts=accounts; self.categories=categories; self.onSaved=onSaved
-        _payee=State(initialValue:transaction.payeeName); _payeeID=State(initialValue:transaction.payeeID); _amount=State(initialValue:CurrencyText.editable(abs(transaction.amountMinor),currencyCode:budget.currencyCode)); _accountID=State(initialValue:transaction.accountID); _categoryID=State(initialValue:transaction.categoryID ?? ""); _memo=State(initialValue:transaction.memo); _cleared=State(initialValue:transaction.isCleared); _date=State(initialValue:Self.parseDate(transaction.occurredOn)); _isInflow=State(initialValue:transaction.amountMinor > 0); _isSplit=State(initialValue:!transaction.splits.isEmpty); _splitRows=State(initialValue:transaction.splits.map { WorkspaceSplitDraft(categoryID:$0.categoryID,amount:CurrencyText.editable(abs($0.amountMinor),currencyCode:budget.currencyCode),memo:$0.memo) }); _flag=State(initialValue:transaction.flag ?? ""); _tags=State(initialValue:(transaction.tags ?? []).joined(separator:", ")); _attachments=State(initialValue:(transaction.attachmentMetadata ?? []).compactMap{$0["name"]}.joined(separator:", "))
+        _payee=State(initialValue:transaction.payeeName); _payeeID=State(initialValue:transaction.payeeID); _amount=State(initialValue:CurrencyText.editable(abs(transaction.amountMinor),currencyCode:budget.currencyCode)); _accountID=State(initialValue:transaction.accountID); _categoryID=State(initialValue:transaction.categoryID ?? ""); _memo=State(initialValue:transaction.memo); _cleared=State(initialValue:transaction.isCleared); _date=State(initialValue:Self.parseDate(transaction.occurredOn)); _isInflow=State(initialValue:transaction.amountMinor > 0); _isSplit=State(initialValue:!transaction.splits.isEmpty); _splitRows=State(initialValue:transaction.splits.map { WorkspaceSplitDraft(categoryID:$0.categoryID,amount:CurrencyText.editable(abs($0.amountMinor),currencyCode:budget.currencyCode),memo:$0.memo) }); _flag=State(initialValue:transaction.flag ?? ""); _tags=State(initialValue:(transaction.tags ?? []).joined(separator:", "))
     }
     var body: some View { NavigationStack { Form {
         TextField("Payee",text:$payee).onChange(of:payee){_,value in if workspace.payees.first(where:{$0.id==payeeID})?.displayName != value { payeeID=nil }}; if !workspace.payees.isEmpty { Menu("Choose saved payee",systemImage:"person.text.rectangle"){ForEach(workspace.payees.sorted { lhs, rhs in lhs.transactionCount == rhs.transactionCount ? lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending : lhs.transactionCount > rhs.transactionCount }){item in Button(item.displayName){payeeID=item.id;payee=item.displayName;if categoryID.isEmpty,let suggested=item.defaultCategoryID{categoryID=suggested}}}} }; CurrencyAmountField("Amount", text:$amount, currencyCode:budget.currencyCode); Toggle("Income / inflow",isOn:$isInflow); Picker("Account",selection:$accountID){ForEach(accounts.filter{!$0.isClosed}){Text($0.name).tag($0.id)}}; DatePicker("Date",selection:$date,displayedComponents:.date); Toggle("Split across categories",isOn:$isSplit).disabled(isInflow)
         if isSplit { Section("Splits") { ForEach($splitRows) { $row in Picker("Category",selection:$row.categoryID){Text("Select").tag("");ForEach(categories.filter{!$0.isArchived}){Text($0.name).tag($0.id)}};CurrencyAmountField("Split amount", text:$row.amount, currencyCode:budget.currencyCode, allowsZero:true);TextField("Split memo",text:$row.memo) }; Button("Add split",systemImage:"plus"){splitRows.append(.init())}; if let remaining { LabeledContent("Remaining",value:CurrencyText.editable(remaining,currencyCode:budget.currencyCode)).foregroundStyle(remaining == 0 ? Color.secondary : Color.red) } } } else if !isInflow { Picker("Category",selection:$categoryID){Text("Uncategorized").tag("");ForEach(categories.filter{!$0.isArchived}){Text($0.name).tag($0.id)}} }
-        TextField("Memo",text:$memo); Picker("Flag",selection:$flag){Text("None").tag("");Text("Red").tag("red");Text("Orange").tag("orange");Text("Yellow").tag("yellow");Text("Green").tag("green");Text("Blue").tag("blue");Text("Purple").tag("purple")}; TextField("Tags (comma separated)",text:$tags);TextField("Attachment names (metadata only)",text:$attachments);Toggle("Cleared",isOn:$cleared)
+        TextField("Memo",text:$memo); Picker("Flag",selection:$flag){Text("None").tag("");Text("Red").tag("red");Text("Orange").tag("orange");Text("Yellow").tag("yellow");Text("Green").tag("green");Text("Blue").tag("blue");Text("Purple").tag("purple")}; TextField("Tags (comma separated)",text:$tags);Text("Manage attachments from transaction detail.").font(.footnote).foregroundStyle(.secondary);Toggle("Cleared",isOn:$cleared)
     }.navigationTitle("Edit Transaction").toolbar { ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(isSaving || parsed == nil || !splitsValid)} }.alert("Unable to save",isPresented:Binding(get:{errorMessage != nil},set:{if !$0{errorMessage=nil}})){Button("OK",role:.cancel){}}message:{Text(errorMessage ?? "Unknown error")} } }
     private var parsed:Int64?{guard let value=CurrencyText.parseMinorUnits(amount,currencyCode:budget.currencyCode),value>0 else{return nil};return isInflow ? value : -value}
     private var parsedSplits:[TransactionSplitOperation]?{guard isSplit else{return []};var values:[TransactionSplitOperation]=[];for row in splitRows{guard !row.categoryID.isEmpty,let value=CurrencyText.parseMinorUnits(row.amount,currencyCode:budget.currencyCode),value>=0 else{return nil};values.append(.init(categoryID:row.categoryID,amountMinor:-value,memo:row.memo))};return values}
     private var remaining:Int64?{guard let parsed,let parsedSplits else{return nil};return parsed - parsedSplits.reduce(0){$0+$1.amountMinor}}
     private var splitsValid:Bool{!isSplit || (parsedSplits?.count ?? 0)>=2 && remaining==0}
-    private func save() async { guard let parsed,let parsedSplits else{return};isSaving=true;defer{isSaving=false};do{try await workspace.updateTransaction(id:transaction.id,operation:RecordTransactionOperation(accountID:accountID,categoryID:isSplit || isInflow || categoryID.isEmpty ? nil:categoryID,amountMinor:parsed,occurredOn:BudgetWorkspaceStore.dateString(date),payeeName:payee,payeeID:payeeID,memo:memo,isCleared:cleared,splits:parsedSplits,flag:flag.isEmpty ? nil:flag,tags:commaValues(tags),attachmentMetadata:commaValues(attachments).map{["name":$0]}));dismiss()}catch{errorMessage=error.localizedDescription} }
+    private func save() async { guard let parsed,let parsedSplits else{return};isSaving=true;defer{isSaving=false};do{try await workspace.updateTransaction(id:transaction.id,operation:RecordTransactionOperation(accountID:accountID,categoryID:isSplit || isInflow || categoryID.isEmpty ? nil:categoryID,amountMinor:parsed,occurredOn:BudgetWorkspaceStore.dateString(date),payeeName:payee,payeeID:payeeID,memo:memo,isCleared:cleared,splits:parsedSplits,flag:flag.isEmpty ? nil:flag,tags:commaValues(tags),attachmentMetadata:transaction.attachmentMetadata ?? []));dismiss()}catch{errorMessage=error.localizedDescription} }
     private func commaValues(_ value:String)->[String]{value.split(separator:",").map{$0.trimmingCharacters(in:.whitespacesAndNewlines)}.filter{!$0.isEmpty}}
     private static func parseDate(_ value:String)->Date{let formatter=DateFormatter();formatter.locale=Locale(identifier:"en_US_POSIX");formatter.dateFormat="yyyy-MM-dd";return formatter.date(from:value) ?? Date()}
 }

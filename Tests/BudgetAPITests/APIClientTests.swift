@@ -221,6 +221,49 @@ final class APIClientTests: XCTestCase {
         XCTAssertFalse(copy.isCleared)
     }
 
+    func testVoidAndMakeRecurringUseExplicitAuditContracts() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var requestNumber = 0
+        MockURLProtocol.handler = { request in
+            defer { requestNumber += 1 }
+            if requestNumber == 0 {
+                XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/t1/void")
+                let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+                XCTAssertEqual(json["reason"] as? String, "Duplicate")
+                return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data(#"{"id":"r1","account_id":"a1","category_id":"c1","payee_id":null,"amount_minor":1200,"occurred_on":"2026-09-14","payee_name":"Reversal: Market","memo":"","is_cleared":false,"is_reconciled":false,"transfer_id":null,"scheduled_transaction_id":null,"status":"reversal","reversal_of_transaction_id":"t1","splits":[]}"#.utf8))
+            }
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/t1/schedule")
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+            XCTAssertEqual(json["recurrence_unit"] as? String, "months")
+            XCTAssertEqual(json["next_date"] as? String, "2026-10-14")
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data(#"{"id":"s1","budget_id":"b1","account_id":"a1","destination_account_id":null,"category_id":"c1","name":"Market","amount_minor":-1200,"next_date":"2026-10-14","recurrence_unit":"months","interval_count":1,"memo":"","is_active":true,"last_realized_on":null}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let reversal = try await client.voidTransaction(budgetID: "b1", transactionID: "t1", reason: "Duplicate", token: "secret")
+        XCTAssertEqual(reversal.status, "reversal")
+        let schedule = try await client.createScheduleFromTransaction(budgetID: "b1", transactionID: "t1", request: .init(recurrenceUnit: "months", nextDate: "2026-10-14"), token: "secret")
+        XCTAssertEqual(schedule.id, "s1")
+    }
+
+    func testAttachmentUploadUsesManagedBinaryContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/t1/attachments")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Attachment-Filename"), "receipt.pdf")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Attachment-Content-Type"), "application/pdf")
+            XCTAssertEqual(try requestBody(request), Data("%PDF-test".utf8))
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data(#"{"id":"at1","transaction_id":"t1","filename":"receipt.pdf","content_type":"application/pdf","byte_count":9,"sha256":"hash","created_at":"2026-09-14T12:00:00Z","detached_at":null}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let result = try await client.uploadTransactionAttachment(budgetID: "b1", transactionID: "t1", filename: "receipt.pdf", contentType: "application/pdf", data: Data("%PDF-test".utf8), token: "secret")
+        XCTAssertEqual(result.id, "at1")
+    }
+
     func testBulkTransactionUpdateUsesAtomicTypedContract() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

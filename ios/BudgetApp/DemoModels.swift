@@ -108,6 +108,10 @@ struct DemoTransaction: Identifiable, Hashable {
     var scheduled = false
     var reconciled = false
     var transferID: String? = nil
+    var status = "posted"
+    var voidReason: String? = nil
+    var reversalOfTransactionID: String? = nil
+    var reversalTransactionID: String? = nil
 }
 
 struct DemoPayee: Identifiable, Hashable {

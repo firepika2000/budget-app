@@ -513,6 +513,25 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testVoidAndMakeRecurringUseCanonicalDemoServicesWithoutRewritingOriginal() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let original = try XCTUnwrap(store.transactions.first(where: { $0.id == "t1" }))
+        let balanceBefore = store.accounts.map { ($0.id, store.balance(for: $0)) }
+        try await store.createScheduleFromTransaction(id: original.id, operation: .init(recurrenceUnit: "months", intervalCount: 1, nextDate: "2026-10-03"))
+        XCTAssertEqual(store.transactions.first(where: { $0.id == original.id })?.amountMinor, original.amountMinor)
+        XCTAssertTrue(store.scheduledTransactions.contains { $0.name == original.payeeName && $0.nextDate == "2026-10-03" })
+        XCTAssertEqual(store.accounts.map { ($0.id, store.balance(for: $0)) }.map(\.1), balanceBefore.map(\.1))
+        try await store.voidTransaction(id: original.id, reason: "Test reversal")
+        let voided = try XCTUnwrap(store.transactions.first(where: { $0.id == original.id }))
+        let reversal = try XCTUnwrap(store.transactions.first(where: { $0.reversalOfTransactionID == original.id }))
+        XCTAssertEqual(voided.status, "voided")
+        XCTAssertEqual(reversal.status, "reversal")
+        XCTAssertEqual(reversal.amountMinor, -original.amountMinor)
+        XCTAssertEqual(voided.reversalTransactionID, reversal.id)
+    }
+
+    @MainActor
     func testHouseholdProfileHierarchyResolvesSharedDependenciesWhenRendered() throws {
         let session = AppSession()
         let store = BudgetWorkspaceStore.demo()

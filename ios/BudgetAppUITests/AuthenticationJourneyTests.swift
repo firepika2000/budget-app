@@ -508,6 +508,30 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(matchingRows.count, 2, "duplication must refresh the canonical Activity browser with one additional posted row")
     }
 
+    func testProductionTransactionDetailMakesRecurringThenCreatesAuditableReversal() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+        XCTAssertTrue(app.buttons["transaction-row-t1"].waitForExistence(timeout: 5))
+        app.buttons["transaction-row-t1"].tap()
+        app.buttons["More"].tap()
+        app.buttons["make-recurring-action"].tap()
+        XCTAssertTrue(app.navigationBars["Make Recurring"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.datePickers["recurring-next-date"].exists)
+        app.buttons["save-recurring-action"].tap()
+        XCTAssertTrue(app.navigationBars["Transaction"].waitForExistence(timeout: 5))
+        app.buttons["More"].tap()
+        app.buttons["void-transaction-action"].tap()
+        XCTAssertTrue(app.navigationBars["Void Transaction"].waitForExistence(timeout: 5))
+        app.textFields["void-reason"].tap()
+        app.textFields["void-reason"].typeText("Duplicate charge")
+        app.buttons["confirm-void-action"].tap()
+        XCTAssertTrue(app.navigationBars["Transaction"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["VOIDED"].waitForExistence(timeout: 5))
+        app.navigationBars["Transaction"].buttons["Activity"].tap()
+        XCTAssertTrue(app.staticTexts["REVERSAL"].waitForExistence(timeout: 5))
+    }
+
     func testProductionActivityBulkSelectionUpdatesThroughCanonicalWorkspace() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=activity"]

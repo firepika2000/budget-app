@@ -188,6 +188,44 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/duplicate", method: "POST", token: token, body: APITransactionDuplicate(occurredOn: occurredOn))
     }
 
+    public func voidTransaction(budgetID: String, transactionID: String, reason: String, token: String) async throws -> APITransaction {
+        try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/void", method: "POST", token: token, body: APITransactionVoid(reason: reason))
+    }
+
+    public func createScheduleFromTransaction(budgetID: String, transactionID: String, request: APITransactionSchedule, token: String) async throws -> APIScheduledTransaction {
+        try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/schedule", method: "POST", token: token, body: request)
+    }
+
+    public func transactionAttachments(budgetID: String, transactionID: String, token: String) async throws -> [APITransactionAttachment] {
+        try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/attachments", token: token)
+    }
+
+    public func uploadTransactionAttachment(budgetID: String, transactionID: String, filename: String, contentType: String, data: Data, token: String) async throws -> APITransactionAttachment {
+        var request = URLRequest(url: baseURL.appending(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/attachments"))
+        request.httpMethod = "POST"; request.httpBody = data
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue(filename, forHTTPHeaderField: "X-Attachment-Filename")
+        request.setValue(contentType, forHTTPHeaderField: "X-Attachment-Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (body, response) = try await session.data(for: request)
+        try validate(response: response, data: body)
+        guard let value = try? JSONDecoder().decode(APITransactionAttachment.self, from: body) else { throw APIClientError.invalidResponse }
+        return value
+    }
+
+    public func downloadTransactionAttachment(budgetID: String, transactionID: String, attachmentID: String, token: String) async throws -> Data {
+        var request = URLRequest(url: baseURL.appending(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/attachments/\(attachmentID)"))
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (body, response) = try await session.data(for: request)
+        try validate(response: response, data: body)
+        return body
+    }
+
+    public func detachTransactionAttachment(budgetID: String, transactionID: String, attachmentID: String, token: String) async throws {
+        let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/attachments/\(attachmentID)", method: "DELETE", token: token)
+    }
+
     public func bulkUpdateTransactions(budgetID: String, update: APITransactionBulkUpdate, token: String) async throws -> [APITransaction] {
         try await send(path: "api/v1/budgets/\(budgetID)/transactions/bulk", method: "POST", token: token, body: update)
     }
@@ -483,6 +521,14 @@ public struct APIClient {
         components?.queryItems = queryItems
         guard let url = components?.url else { throw APIClientError.invalidServerURL }
         return try await send(url: url, method: "GET", token: token, bodyData: nil)
+    }
+
+    private func validate(response: URLResponse, data: Data) throws {
+        guard let http = response as? HTTPURLResponse else { throw APIClientError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            let message = (try? JSONDecoder().decode(APIErrorBody.self, from: data).detail) ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+            throw APIClientError.server(status: http.statusCode, message: message)
+        }
     }
 
     private func send<Response: Decodable>(

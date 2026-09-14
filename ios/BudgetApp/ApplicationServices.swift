@@ -60,6 +60,12 @@ struct RecordTransactionOperation: Equatable, Sendable {
     let attachmentMetadata: [[String: String]]
 }
 
+struct MakeRecurringOperation: Equatable, Sendable {
+    let recurrenceUnit: String
+    let intervalCount: Int
+    let nextDate: String
+}
+
 struct CreatePayeeOperation: Equatable, Sendable { let displayName: String; let defaultCategoryID: String? }
 struct UpdatePayeeOperation: Equatable, Sendable { let payeeID: String; let displayName: String; let isArchived: Bool; let defaultCategoryID: String? }
 
@@ -189,6 +195,12 @@ protocol TransactionCommandRepository: AnyObject {
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws
     func deleteTransaction(id: String) async throws
     func duplicateTransaction(id: String, occurredOn: String) async throws
+    func voidTransaction(id: String, reason: String) async throws
+    func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws
+    func transactionAttachments(id: String) async throws -> [APITransactionAttachment]
+    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws
+    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data
+    func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws
     func transferMoney(_ operation: TransferMoneyOperation) async throws
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws
@@ -310,6 +322,38 @@ struct TransactionService {
 
     func duplicate(id: String, occurredOn: String) async throws {
         do { try await repository.duplicateTransaction(id: id, occurredOn: occurredOn) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func void(id: String, reason: String) async throws {
+        do { try await repository.voidTransaction(id: id, reason: reason) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func makeRecurring(id: String, operation: MakeRecurringOperation) async throws {
+        guard !operation.nextDate.isEmpty else { throw BudgetApplicationError.invalidOperation("Choose a future next occurrence.") }
+        do { try await repository.createScheduleFromTransaction(id: id, operation: operation) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func attachments(id: String) async throws -> [APITransactionAttachment] {
+        do { return try await repository.transactionAttachments(id: id) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func uploadAttachment(id: String, filename: String, contentType: String, data: Data) async throws {
+        guard data.count <= 10 * 1024 * 1024 else { throw BudgetApplicationError.invalidOperation("Attachments must be 10 MB or smaller.") }
+        do { try await repository.uploadTransactionAttachment(id: id, filename: filename, contentType: contentType, data: data) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func downloadAttachment(transactionID: String, attachmentID: String) async throws -> Data {
+        do { return try await repository.downloadTransactionAttachment(transactionID: transactionID, attachmentID: attachmentID) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func detachAttachment(transactionID: String, attachmentID: String) async throws {
+        do { try await repository.detachTransactionAttachment(transactionID: transactionID, attachmentID: attachmentID) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

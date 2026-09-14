@@ -503,6 +503,12 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
     public let flag: String?
     public let tags: [String]?
     public let attachmentMetadata: [[String: String]]?
+    public let status: String?
+    public let voidedAt: String?
+    public let voidedByUserID: String?
+    public let voidReason: String?
+    public let reversalOfTransactionID: String?
+    public let reversalTransactionID: String?
     public let splits: [APITransactionSplit]
 
     enum CodingKeys: String, CodingKey {
@@ -520,6 +526,12 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
         case transferID = "transfer_id"
         case scheduledTransactionID = "scheduled_transaction_id"
         case attachmentMetadata = "attachment_metadata"
+        case status
+        case voidedAt = "voided_at"
+        case voidedByUserID = "voided_by_user_id"
+        case voidReason = "void_reason"
+        case reversalOfTransactionID = "reversal_of_transaction_id"
+        case reversalTransactionID = "reversal_transaction_id"
     }
 }
 
@@ -571,6 +583,44 @@ public struct APITransactionDuplicate: Encodable, Equatable, Sendable {
     public let occurredOn: String
     public init(occurredOn: String) { self.occurredOn = occurredOn }
     enum CodingKeys: String, CodingKey { case occurredOn = "occurred_on" }
+}
+
+public struct APITransactionVoid: Encodable, Equatable, Sendable {
+    public let reason: String
+    public init(reason: String = "") { self.reason = reason }
+}
+
+public struct APITransactionSchedule: Encodable, Equatable, Sendable {
+    public let recurrenceUnit: String
+    public let intervalCount: Int
+    public let nextDate: String?
+    public init(recurrenceUnit: String, intervalCount: Int = 1, nextDate: String? = nil) {
+        self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.nextDate = nextDate
+    }
+    enum CodingKeys: String, CodingKey {
+        case recurrenceUnit = "recurrence_unit"
+        case intervalCount = "interval_count"
+        case nextDate = "next_date"
+    }
+}
+
+public struct APITransactionAttachment: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let transactionID: String
+    public let filename: String
+    public let contentType: String
+    public let byteCount: Int64
+    public let sha256: String
+    public let createdAt: String
+    public let detachedAt: String?
+    enum CodingKeys: String, CodingKey {
+        case id, filename, sha256
+        case transactionID = "transaction_id"
+        case contentType = "content_type"
+        case byteCount = "byte_count"
+        case createdAt = "created_at"
+        case detachedAt = "detached_at"
+    }
 }
 
 public struct APITransactionBulkUpdate: Encodable, Equatable, Sendable {

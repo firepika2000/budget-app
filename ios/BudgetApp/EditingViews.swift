@@ -21,7 +21,6 @@ struct TransactionEntryView: View {
     @State private var isSplit = false
     @State private var flag = ""
     @State private var tags = ""
-    @State private var attachments = ""
     @State private var splitRows = [SplitDraft(), SplitDraft()]
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -96,7 +95,7 @@ struct TransactionEntryView: View {
                 TextField("Memo", text: $memo)
                 Picker("Flag", selection: $flag) { Text("None").tag(""); Text("Red").tag("red"); Text("Orange").tag("orange"); Text("Yellow").tag("yellow"); Text("Green").tag("green"); Text("Blue").tag("blue"); Text("Purple").tag("purple") }
                 TextField("Tags (comma separated)", text: $tags)
-                TextField("Attachment names (metadata only)", text: $attachments)
+                Text("Save the transaction, then add PDF or image attachments from its detail screen.").font(.footnote).foregroundStyle(.secondary)
                 Toggle("Cleared", isOn: $isCleared)
             }
             .navigationTitle("New Transaction")
@@ -182,7 +181,7 @@ struct TransactionEntryView: View {
                     splits: parsedSplits,
                     flag: flag.isEmpty ? nil : flag,
                     tags: commaValues(tags),
-                    attachmentMetadata: commaValues(attachments).map { ["name": $0] }
+                    attachmentMetadata: []
                 )
             )
             await onSaved()
