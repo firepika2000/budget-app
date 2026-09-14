@@ -103,6 +103,50 @@ class Budget(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class Payee(Base):
+    __tablename__ = "payees"
+    __table_args__ = (UniqueConstraint("household_id", "name_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
+    display_name: Mapped[str] = mapped_column(String(150))
+    # Nullable so a migration can preserve ambiguous case/whitespace legacy variants without
+    # destructively merging them. All new non-conflicting payees receive a normalized key.
+    name_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    merged_into_payee_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("payees.id", ondelete="RESTRICT"), index=True, nullable=True
+    )
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class PayeeAlias(Base):
+    __tablename__ = "payee_aliases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    payee_id: Mapped[str] = mapped_column(ForeignKey("payees.id", ondelete="CASCADE"), index=True)
+    display_name: Mapped[str] = mapped_column(String(150))
+    name_key: Mapped[str] = mapped_column(String(255), index=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class PayeeBudgetPreference(Base):
+    __tablename__ = "payee_budget_preferences"
+    __table_args__ = (UniqueConstraint("payee_id", "budget_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    payee_id: Mapped[str] = mapped_column(ForeignKey("payees.id", ondelete="CASCADE"), index=True)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    default_category_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("categories.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    updated_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
 class BudgetGrant(Base):
     __tablename__ = "budget_grants"
     __table_args__ = (UniqueConstraint("budget_id", "user_id"),)
@@ -361,6 +405,7 @@ class Transaction(Base):
     # Provenance for transactions realized from a scheduled transaction. Plain string (not an FK)
     # so the lineage survives deletion of the originating schedule.
     scheduled_transaction_id: Mapped[Optional[str]] = mapped_column(String(36), index=True, nullable=True)
+    payee_id: Mapped[Optional[str]] = mapped_column(ForeignKey("payees.id", ondelete="SET NULL"), index=True, nullable=True)
     amount_minor: Mapped[int] = mapped_column(BigInteger)
     occurred_on: Mapped[date] = mapped_column(Date, index=True)
     payee_name: Mapped[str] = mapped_column(String(150), default="")

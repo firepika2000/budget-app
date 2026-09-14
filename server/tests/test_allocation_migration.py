@@ -203,8 +203,18 @@ def test_populated_v030_database_upgrades_to_current_revision_without_data_loss(
         assert connection.execute(text("SELECT COUNT(*) FROM transaction_changes")).scalar_one() == 0
         # New v0.4 transaction metadata columns initialize safely for existing rows.
         row = connection.execute(text(
-            "SELECT flag, tags, attachment_metadata FROM transactions WHERE id = 'txn-1'"
+            "SELECT flag, tags, attachment_metadata, payee_id, amount_minor FROM transactions WHERE id = 'txn-1'"
         )).mappings().one()
         assert row["flag"] is None
         assert row["tags"] == "[]"
         assert row["attachment_metadata"] == "[]"
+        assert row["amount_minor"] == 500000
+        assert row["payee_id"] is not None
+        payee = connection.execute(text(
+            "SELECT household_id, display_name, name_key, is_archived, merged_into_payee_id "
+            "FROM payees WHERE id = :id"
+        ), {"id": row["payee_id"]}).mappings().one()
+        assert payee == {
+            "household_id": "household-1", "display_name": "Payroll", "name_key": "payroll",
+            "is_archived": 0, "merged_into_payee_id": None,
+        }

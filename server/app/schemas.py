@@ -60,7 +60,7 @@ class BudgetCreate(BaseModel):
 CapabilityName = Literal[
     "view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports", "view_allocation_history",
     "create_transaction", "edit_transaction", "delete_transaction", "request_money", "assign_money", "move_money", "manage_own_categories", "reconcile_account",
-    "manage_budget_structure", "manage_planning", "manage_allowances", "approve_request", "export_data",
+    "manage_budget_structure", "manage_payees", "manage_planning", "manage_allowances", "approve_request", "export_data",
 ]
 
 
@@ -436,6 +436,7 @@ class TransactionSplitResponse(BaseModel):
 class TransactionCreate(BaseModel):
     account_id: str
     category_id: Optional[str] = None
+    payee_id: Optional[str] = None
     amount_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
     occurred_on: date
     payee_name: str = Field(default="", max_length=150)
@@ -466,6 +467,7 @@ class TransactionResponse(BaseModel):
     budget_id: str
     account_id: str
     category_id: Optional[str]
+    payee_id: Optional[str] = None
     amount_minor: int
     occurred_on: date
     created_at: datetime
@@ -479,6 +481,43 @@ class TransactionResponse(BaseModel):
     created_by_user_id: str
     transfer_id: Optional[str]
     splits: list[TransactionSplitResponse] = Field(default_factory=list)
+
+
+class PayeeCreate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=150)
+    default_category_id: Optional[str] = None
+
+
+class PayeeUpdate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=150)
+    is_archived: bool = False
+    default_category_id: Optional[str] = None
+
+
+class PayeeAliasCreate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=150)
+
+
+class PayeeAliasResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    display_name: str
+
+
+class PayeeResponse(BaseModel):
+    id: str
+    household_id: str
+    display_name: str
+    is_archived: bool
+    merged_into_payee_id: Optional[str] = None
+    default_category_id: Optional[str] = None
+    transaction_count: int = 0
+    net_amount_minor: int = 0
+    aliases: list[PayeeAliasResponse] = Field(default_factory=list)
+
+
+class PayeeMerge(BaseModel):
+    destination_payee_id: str
 
 
 class SpendingCategoryReport(BaseModel):
