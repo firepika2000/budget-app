@@ -68,6 +68,38 @@ def test_void_rejects_reconciled_transfer_and_reversal(client, owner_token, sess
     assert client.post(endpoint(budget["id"], original["id"], "void"), headers=auth(owner_token), json={}).status_code == 409
 
 
+def test_void_income_and_categorized_refund_net_exactly(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    income = record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=9000, payee_name="Income", occurred_on=date.today().isoformat())
+    refund = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=1200, payee_name="Refund", occurred_on=date.today().isoformat())
+    for transaction in (income, refund):
+        assert client.post(endpoint(budget["id"], transaction["id"], "void"), headers=auth(owner_token), json={}).status_code == 201
+    balance = client.get(f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/balance", headers=auth(owner_token)).json()
+    assert balance["working_balance_minor"] == 0
+    summary = client.get(f"/api/v1/budgets/{budget['id']}/months/{date.today().replace(day=1).isoformat()}", headers=auth(owner_token)).json()
+    assert next(item for item in summary["categories"] if item["category_id"] == category["id"])["activity_minor"] == 0
+
+
+def test_void_unfunded_card_purchase_has_no_phantom_reserve(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    _, category = create_budget_structure(client, owner_token, budget["id"])
+    card = create_credit_card(client, owner_token, budget["id"])
+    original = record(client, owner_token, budget["id"], account_id=card["id"], category_id=category["id"], amount_minor=-5000, occurred_on=date.today().isoformat())
+    assert client.post(endpoint(budget["id"], original["id"], "void"), headers=auth(owner_token), json={}).status_code == 201
+    with session_factory() as db:
+        assert sum(item.amount_minor for item in db.query(CreditCardReserveEvent).filter_by(credit_account_id=card["id"])) == 0
+
+
+def test_void_rejects_single_transfer_leg(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    source, _ = create_budget_structure(client, owner_token, budget["id"])
+    destination = client.post(f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token), json={"name": "Savings", "account_type": "savings", "is_on_budget": True}).json()
+    transfer = client.post(f"/api/v1/budgets/{budget['id']}/transfers", headers=auth(owner_token), json={"source_account_id": source["id"], "destination_account_id": destination["id"], "amount_minor": 100, "occurred_on": date.today().isoformat()}).json()
+    leg = transfer["source"]
+    assert client.post(endpoint(budget["id"], leg["id"], "void"), headers=auth(owner_token), json={}).status_code == 409
+
+
 def test_make_recurring_preserves_posting_and_uses_robust_future_calendar(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])
@@ -104,6 +136,7 @@ def test_encrypted_attachment_round_trip_detach_and_gc(client, owner_token, sess
     downloaded = client.get(f"{url}/{attachment['id']}", headers=auth(owner_token))
     assert downloaded.content == content
     assert downloaded.headers["x-content-sha256"] == attachment["sha256"]
+    assert client.delete(f"/api/v1/budgets/{budget['id']}/transactions/{transaction['id']}", headers=auth(owner_token)).status_code == 409
     assert client.delete(f"{url}/{attachment['id']}", headers=auth(owner_token)).status_code == 204
     assert client.get(f"{url}/{attachment['id']}", headers=auth(owner_token)).status_code == 404
     with session_factory() as db:

@@ -1127,6 +1127,7 @@ def void_transaction(
         raise HTTPException(status_code=404, detail="Transaction not found")
     account = db.scalar(select(Account).where(Account.id == original.account_id).with_for_update())
     categories = {item.id: item for item in db.scalars(select(Category).where(Category.id.in_(category_ids)).with_for_update())} if category_ids else {}
+    before_snapshot = transaction_snapshot(original)
     now = datetime.now(timezone.utc)
     reversal = Transaction(
         budget_id=budget_id, account_id=original.account_id, category_id=original.category_id,
@@ -1146,7 +1147,7 @@ def void_transaction(
     original.voided_by_user_id = user.id
     original.void_reason = body.reason or None
     original.reversal_transaction_id = reversal.id
-    record_transaction_change(db, original, user, "voided", before=None, after=transaction_snapshot(original))
+    record_transaction_change(db, original, user, "voided", before=before_snapshot, after=transaction_snapshot(original))
     record_transaction_change(db, reversal, user, "reversal_created", after=transaction_snapshot(reversal))
     db.commit()
     db.refresh(reversal)
@@ -1231,6 +1232,8 @@ def attach_transaction_file(
 ) -> TransactionAttachment:
     budget = require_budget_capability(db, user, budget_id, "edit_transaction")
     transaction = _attachment_transaction(db, user, budget, transaction_id)
+    if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
+        raise HTTPException(status_code=403, detail="You may only attach files to your own transactions")
     if transaction.status == "reversal":
         raise HTTPException(status_code=409, detail="Attach supporting documents to the original transaction")
     count = db.scalar(select(func.count()).select_from(TransactionAttachment).where(
@@ -1293,6 +1296,8 @@ def detach_transaction_attachment(
 ) -> None:
     budget = require_budget_capability(db, user, budget_id, "edit_transaction")
     transaction = _attachment_transaction(db, user, budget, transaction_id)
+    if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
+        raise HTTPException(status_code=403, detail="You may only detach files from your own transactions")
     attachment = db.scalar(select(TransactionAttachment).where(
         TransactionAttachment.id == attachment_id, TransactionAttachment.transaction_id == transaction_id,
         TransactionAttachment.budget_id == budget_id, TransactionAttachment.detached_at.is_(None),
@@ -1404,6 +1409,11 @@ def delete_transaction(
         raise HTTPException(status_code=403, detail="You may only delete your own transactions")
     if not can_access_resource(db, user, budget, "account", transaction.account_id):
         raise HTTPException(status_code=404, detail="Transaction not found")
+    attachment_count = db.scalar(select(func.count()).select_from(TransactionAttachment).where(
+        TransactionAttachment.transaction_id == transaction.id,
+    )) or 0
+    if attachment_count:
+        raise HTTPException(status_code=409, detail="Transactions with retained attachment history cannot be deleted; use Void with Reversal")
     record_transaction_change(db, transaction, user, "deleted", before=transaction_snapshot(transaction))
     db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.source_transaction_id == transaction.id))
     db.delete(transaction)
