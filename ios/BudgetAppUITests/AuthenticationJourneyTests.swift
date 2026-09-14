@@ -372,4 +372,36 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["New Transaction"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Transactions record money that has already happened. Use Schedule Transaction for a future expense, income, or transfer."].exists)
     }
+
+    func testProductionScheduledOccurrenceRealizesThroughPostedActivity() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        XCTAssertFalse(
+            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'transaction-row-' AND label CONTAINS 'Electric utility'")).firstMatch.exists,
+            "a scheduled occurrence must not appear in posted activity before realization"
+        )
+
+        app.buttons["Scheduled transactions"].tap()
+        XCTAssertTrue(app.navigationBars["Scheduled"].waitForExistence(timeout: 5))
+        let schedule = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Electric utility,'")).firstMatch
+        XCTAssertTrue(schedule.waitForExistence(timeout: 5))
+        schedule.tap()
+
+        XCTAssertTrue(app.navigationBars["Edit Schedule"].waitForExistence(timeout: 5))
+        app.buttons["Enter Now"].tap()
+        let confirmation = app.sheets.buttons["Enter Now"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.tap()
+
+        XCTAssertTrue(app.navigationBars["Scheduled"].waitForExistence(timeout: 5))
+        app.navigationBars["Scheduled"].buttons["Activity"].tap()
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'transaction-row-' AND label CONTAINS 'Electric utility'")).firstMatch.waitForExistence(timeout: 5),
+            "realization must refresh the authoritative workspace and expose exactly one posted transaction"
+        )
+    }
 }
