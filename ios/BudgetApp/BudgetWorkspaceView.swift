@@ -118,7 +118,14 @@ private struct PayeeEditorView: View {
             if let payee { try await store.updatePayee(.init(payeeID: payee.id, displayName: name, isArchived: isArchived, defaultCategoryID: categoryID.isEmpty ? nil : categoryID)) }
             else { try await store.createPayee(.init(displayName: name, defaultCategoryID: categoryID.isEmpty ? nil : categoryID)) }
             dismiss()
-        } catch { errorMessage = error.localizedDescription }
+        } catch is CancellationError {
+            // A credential-generation change supersedes this snapshot with an immediate current-token load.
+        } catch let error as URLError where error.code == .cancelled {
+            // URLSession can bridge structured task cancellation as URLError.cancelled.
+        } catch {
+            guard !Task.isCancelled else { return }
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func merge(_ sourceID: String) async {
@@ -562,12 +569,32 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
 private func workspaceRepositoryError(_ message: String?) -> NSError { NSError(domain: "BudgetWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: message ?? "Unable to complete the change."]) }
 
 @MainActor
+private final class LiveWorkspaceCredentials {
+    private(set) var serverURL: URL
+    private(set) var token: String
+    let clientFactory: (URL) throws -> APIClient
+
+    init(serverURL: URL, token: String, clientFactory: @escaping (URL) throws -> APIClient) {
+        self.serverURL = serverURL
+        self.token = token
+        self.clientFactory = clientFactory
+    }
+
+    func update(serverURL: URL, token: String) {
+        self.serverURL = serverURL
+        self.token = token
+    }
+
+    func client() throws -> APIClient { try clientFactory(serverURL) }
+}
+
+@MainActor
 private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     let budget: APIBudget
-    let serverURL: URL
-    let token: String
-    private var client: APIClient { get throws { try APIClient(baseURL: serverURL) } }
-    init(budget: APIBudget, serverURL: URL, token: String) { self.budget = budget; self.serverURL = serverURL; self.token = token }
+    private let credentials: LiveWorkspaceCredentials
+    private var token: String { credentials.token }
+    private var client: APIClient { get throws { try credentials.client() } }
+    init(budget: APIBudget, credentials: LiveWorkspaceCredentials) { self.budget = budget; self.credentials = credentials }
 
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try await client.searchTransactions(budgetID: budget.id, query: query, token: token) }
 
@@ -621,16 +648,21 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
 @MainActor
 private final class LiveWorkspaceDataSource: WorkspaceDataSource {
     let budget: APIBudget
-    let serverURL: URL
-    let token: String
+    private let credentials: LiveWorkspaceCredentials
+    var serverURL: URL { credentials.serverURL }
+    var token: String { credentials.token }
     let commands: LiveWorkspaceCommandRepository
-    init(budget: APIBudget, serverURL: URL, token: String) {
-        self.budget = budget; self.serverURL = serverURL; self.token = token
-        commands = LiveWorkspaceCommandRepository(budget: budget, serverURL: serverURL, token: token)
+    init(budget: APIBudget, serverURL: URL, token: String, clientFactory: @escaping (URL) throws -> APIClient = { try APIClient(baseURL: $0) }) {
+        self.budget = budget
+        let credentials = LiveWorkspaceCredentials(serverURL: serverURL, token: token, clientFactory: clientFactory)
+        self.credentials = credentials
+        commands = LiveWorkspaceCommandRepository(budget: budget, credentials: credentials)
     }
 
+    func updateCredentials(serverURL: URL, token: String) { credentials.update(serverURL: serverURL, token: token) }
+
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
-        let client = try APIClient(baseURL: serverURL)
+        let client = try credentials.client()
         let month = BudgetWorkspaceStore.dateString(planMonth).prefix(7) + "-01"
         let start = BudgetWorkspaceStore.dateString(report.start), end = BudgetWorkspaceStore.dateString(report.end)
         async let loadedAccounts = client.accounts(budgetID: budget.id, token: token)
@@ -677,6 +709,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var targets: [String: APICategoryTarget] = [:]
     @Published var scheduledTransactions: [APIScheduledTransaction] = []
     @Published var forecast: APIForecast?
+    @Published private(set) var liveCredentialRevision = 0
     @Published var reportPeriod = "30d"
     @Published var customReportStart = Calendar.current.date(byAdding: .day, value: -29, to: Date())!
     @Published var customReportEnd = Date()
@@ -698,9 +731,9 @@ final class BudgetWorkspaceStore: ObservableObject {
     init(budget: APIBudget) { self.budget = budget; dataSource = nil; commandRepository = nil; applicationServices = nil }
     private init(dataSource: DemoWorkspaceDataSource) { self.budget = dataSource.budget; self.dataSource = dataSource; commandRepository = dataSource; applicationServices = BudgetApplicationServices(repository: dataSource) }
     static func demo(fresh: Bool = false) -> BudgetWorkspaceStore { BudgetWorkspaceStore(dataSource: DemoWorkspaceDataSource(fresh: fresh)) }
-    static func production(context: WorkspaceRouteContext) -> BudgetWorkspaceStore {
+    static func production(context: WorkspaceRouteContext, clientFactory: @escaping (URL) throws -> APIClient = { try APIClient(baseURL: $0) }) -> BudgetWorkspaceStore {
         guard case let .live(budget, serverURL, token) = context else { return .demo() }
-        let source = LiveWorkspaceDataSource(budget: budget, serverURL: serverURL, token: token)
+        let source = LiveWorkspaceDataSource(budget: budget, serverURL: serverURL, token: token, clientFactory: clientFactory)
         let store = BudgetWorkspaceStore(budget: source.budget)
         store.dataSource = source; store.commandRepository = source.commands; store.applicationServices = BudgetApplicationServices(repository: source.commands)
         return store
@@ -717,10 +750,8 @@ final class BudgetWorkspaceStore: ObservableObject {
     func updateLiveCredentials(serverURL: URL, token: String) {
         guard let current = dataSource as? LiveWorkspaceDataSource,
               current.serverURL != serverURL || current.token != token else { return }
-        let source = LiveWorkspaceDataSource(budget: budget, serverURL: serverURL, token: token)
-        dataSource = source
-        commandRepository = source.commands
-        applicationServices = BudgetApplicationServices(repository: source.commands)
+        current.updateCredentials(serverURL: serverURL, token: token)
+        liveCredentialRevision += 1
     }
 
     func usesLiveCredential(_ token: String) -> Bool {
@@ -1060,11 +1091,11 @@ struct BudgetWorkspaceView: View {
         .id(activeTab)
         .tint(Theme.accent)
         .overlay { if store.isLoading { ProgressView().padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
-        .task { await reload() }
-        .onChange(of: session.token) { _, token in
-            guard let token, let serverURL = session.serverURL else { return }
-            store.updateLiveCredentials(serverURL: serverURL, token: token)
-            Task { await reload() }
+        .task(id: session.token) {
+            if let token = session.token, let serverURL = session.serverURL {
+                store.updateLiveCredentials(serverURL: serverURL, token: token)
+            }
+            await reload()
         }
         .alert("Unable to complete request", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("Retry") { Task { await reload() } }; Button("Cancel", role: .cancel) {}
@@ -1905,12 +1936,24 @@ private struct TransactionAttachmentsView: View {
     @State private var previewURL: URL?
     @State private var error: String?
     var body: some View { Section("Attachments") { if attachments.isEmpty { Text("No attachments").foregroundStyle(.secondary) }; ForEach(attachments) { attachment in HStack { Button { Task { await open(attachment) } } label: { VStack(alignment: .leading) { Text(attachment.filename); Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file)).font(.caption).foregroundStyle(.secondary) } }; Spacer(); if store.budget.can("edit_transaction") { Button("Detach", systemImage: "trash", role: .destructive) { Task { await detach(attachment) } }.labelStyle(.iconOnly) } } }; if store.budget.can("edit_transaction"), transaction.status != "reversal", attachments.count < 20 { Button("Add Attachment", systemImage: "paperclip") { importing = true }.accessibilityIdentifier("add-attachment-action") }; Text("PDF, JPEG, PNG, or HEIC · 10 MB maximum · detached files retained 30 days").font(.caption).foregroundStyle(.secondary) }
-        .task { await load() }
+        .task(id: store.liveCredentialRevision) { await load() }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .jpeg, .png, .heic]) { result in Task { await importFile(result) } }
         .quickLookPreview($previewURL)
         .alert("Attachment error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
     }
-    private func load() async { do { attachments = try await store.transactionAttachments(id: transaction.id) } catch { self.error = error.localizedDescription } }
+    private func load() async {
+        do {
+            attachments = try await store.transactionAttachments(id: transaction.id)
+            error = nil
+        } catch is CancellationError {
+            // Credential rotation cancels the stale load and immediately starts one with the current token.
+        } catch let error as URLError where error.code == .cancelled {
+            // URLSession reports task cancellation through URLError on some OS releases.
+        } catch {
+            guard !Task.isCancelled else { return }
+            self.error = error.localizedDescription
+        }
+    }
     private func importFile(_ result: Result<URL, Error>) async { do { let url = try result.get(); let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }; let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey]); guard (values.fileSize ?? 0) <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Attachments must be 10 MB or smaller.") }; let data = try Data(contentsOf: url, options: .mappedIfSafe); try await store.uploadTransactionAttachment(id: transaction.id, filename: url.lastPathComponent, contentType: values.contentType?.preferredMIMEType ?? "application/octet-stream", data: data); await load() } catch { self.error = error.localizedDescription } }
     private func open(_ attachment: APITransactionAttachment) async { do { let data = try await store.downloadTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); let directory = FileManager.default.temporaryDirectory.appending(path: "BudgetAttachmentPreview", directoryHint: .isDirectory); try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true); let url = directory.appending(path: attachment.filename); try data.write(to: url, options: .atomic); previewURL = url } catch { self.error = error.localizedDescription } }
     private func detach(_ attachment: APITransactionAttachment) async { do { try await store.detachTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); await load() } catch { self.error = error.localizedDescription } }

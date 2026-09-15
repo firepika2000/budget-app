@@ -74,6 +74,53 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertTrue(store.usesLiveCredential("A2"), "all subsequent commands, including schedule creation, must use the rotated access token")
     }
 
+    @MainActor
+    func testLiveWorkspaceAttachmentsAndCommandsUseRotatedCredentialWithoutReconstruction() async throws {
+        let requests = CredentialRequestRecorder()
+        RefreshMockURLProtocol.handler = { request in
+            let authorization = request.value(forHTTPHeaderField: "Authorization") ?? ""
+            requests.append(path: request.url?.path ?? "", authorization: authorization)
+            if authorization == "Bearer A1", requests.count > 1 {
+                return Self.json(401, #"{"detail":"Invalid or expired credentials"}"#)
+            }
+            if request.url?.path.hasSuffix("/attachments") == true {
+                return Self.json(200, "[]")
+            }
+            if request.url?.path.hasSuffix("/schedule") == true {
+                return Self.json(201, #"{"id":"s1","budget_id":"b1","account_id":"a1","destination_account_id":null,"category_id":"c1","name":"Market","amount_minor":-1200,"next_date":"2026-10-15","recurrence_unit":"months","interval_count":1,"memo":"","is_active":true,"last_realized_on":null}"#)
+            }
+            return Self.json(404, "{}")
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let budget = APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD")
+        let serverURL = URL(string: "https://budget.example.com")!
+        let store = BudgetWorkspaceStore.production(
+            context: .live(budget: budget, serverURL: serverURL, token: "A1"),
+            clientFactory: { try APIClient(baseURL: $0, session: session) }
+        )
+
+        let beforeRotation = try await store.transactionAttachments(id: "t1")
+        XCTAssertEqual(beforeRotation, [])
+        store.updateLiveCredentials(serverURL: serverURL, token: "A2")
+        XCTAssertEqual(store.liveCredentialRevision, 1)
+        let afterRotation = try await store.transactionAttachments(id: "t1")
+        XCTAssertEqual(afterRotation, [])
+        try await store.createScheduleFromTransaction(
+            id: "t1",
+            operation: .init(recurrenceUnit: "months", intervalCount: 1, nextDate: "2026-10-15")
+        )
+
+        XCTAssertEqual(Array(requests.authorizations.prefix(3)), ["Bearer A1", "Bearer A2", "Bearer A2"])
+        XCTAssertEqual(Array(requests.paths.prefix(3)), [
+            "/api/v1/budgets/b1/transactions/t1/attachments",
+            "/api/v1/budgets/b1/transactions/t1/attachments",
+            "/api/v1/budgets/b1/transactions/t1/schedule",
+        ])
+        XCTAssertTrue(requests.authorizations.dropFirst().allSatisfy { $0 == "Bearer A2" })
+    }
+
     // Concurrent refresh demand must collapse to exactly one network refresh, and the rotated
     // credentials (A2/R2) must be what remains — no losing caller re-submits the old token or clears
     // the newer credentials, and no user-facing error is produced.
@@ -591,6 +638,17 @@ private final class Counter: @unchecked Sendable {
     private var count = 0
     func increment() -> Int { lock.lock(); defer { lock.unlock() }; count += 1; return count }
     var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+}
+
+private final class CredentialRequestRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(String, String)] = []
+    func append(path: String, authorization: String) {
+        lock.lock(); entries.append((path, authorization)); lock.unlock()
+    }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return entries.count }
+    var paths: [String] { lock.lock(); defer { lock.unlock() }; return entries.map(\.0) }
+    var authorizations: [String] { lock.lock(); defer { lock.unlock() }; return entries.map(\.1) }
 }
 
 /// Deterministic barrier: lets a test hold the single in-flight refresh open until every concurrent
