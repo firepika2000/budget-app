@@ -447,6 +447,37 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testQuickClearingUsesCanonicalMutationWithoutChangingFinancialStateAndLocksAfterReconcile() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let transaction = try XCTUnwrap(store.transactions.first(where: { $0.id == "t1" }))
+        let account = try XCTUnwrap(store.accounts.first(where: { $0.id == transaction.accountID }))
+        let workingBefore = store.balance(for: account)
+        let readyBefore = store.summary?.readyToAssignMinor
+        let planBefore = store.summary?.categories.map { "\($0.categoryID)|\($0.activityMinor)|\($0.availableMinor)" }
+
+        XCTAssertTrue(store.canQuickSetCleared(transaction))
+        try await store.setTransactionCleared(id: transaction.id, cleared: true)
+        XCTAssertTrue(try XCTUnwrap(store.transactions.first(where: { $0.id == transaction.id })).isCleared)
+        XCTAssertEqual(store.balance(for: account), workingBefore)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, readyBefore)
+        XCTAssertEqual(store.summary?.categories.map { "\($0.categoryID)|\($0.activityMinor)|\($0.availableMinor)" }, planBefore)
+
+        try await store.setTransactionCleared(id: transaction.id, cleared: false)
+        XCTAssertFalse(try XCTUnwrap(store.transactions.first(where: { $0.id == transaction.id })).isCleared)
+        try await store.setTransactionCleared(id: transaction.id, cleared: true)
+        try await store.reconcile(accountID: account.id, statementBalance: store.clearedBalance(for: account), throughDate: "2099-12-31", createAdjustment: false, reason: "")
+        let reconciled = try XCTUnwrap(store.transactions.first(where: { $0.id == transaction.id }))
+        XCTAssertTrue(reconciled.isReconciled)
+        XCTAssertFalse(store.canQuickSetCleared(reconciled))
+        do {
+            try await store.setTransactionCleared(id: transaction.id, cleared: false)
+            XCTFail("reconciled transactions must reject quick clearing")
+        } catch {}
+        XCTAssertTrue(try XCTUnwrap(store.transactions.first(where: { $0.id == transaction.id })).isCleared)
+    }
+
+    @MainActor
     func testCanonicalAccountTransferConservesPlanAndCreatesLinkedRegisterLegs() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

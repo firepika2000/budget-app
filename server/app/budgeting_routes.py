@@ -1029,8 +1029,12 @@ def bulk_update_transactions(
         category_ids = ([transaction.category_id] if transaction.category_id is not None else []) + [split.category_id for split in transaction.splits]
         if (visible_accounts is not None and transaction.account_id not in visible_accounts) or (visible_categories is not None and any(category_id not in visible_categories for category_id in category_ids)):
             raise HTTPException(status_code=404, detail="One or more transactions were not found")
+        if transaction.status != "posted":
+            raise HTTPException(status_code=409, detail="Voided and reversal transactions are immutable")
         if transaction.is_reconciled:
             raise HTTPException(status_code=409, detail="Reconciled transactions cannot be changed in bulk")
+        if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
+            raise HTTPException(status_code=403, detail="You may only edit your own transactions")
         if transaction.transfer_id is not None or transaction.scheduled_transaction_id is not None or transaction.payee_name in {"Starting Balance", "Reconciliation adjustment"}:
             raise HTTPException(status_code=409, detail="System-linked transactions must be changed through their specialized workflow")
 

@@ -330,6 +330,50 @@ final class AuthenticationJourneyTests: XCTestCase {
         )
     }
 
+    func testAccountRegisterQuickClearingAndReconciledLockout() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=accounts"]
+        app.launch()
+
+        app.buttons["account-row-visa"].tap()
+        let row = app.buttons["transaction-row-t1"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertEqual(row.value as? String, "Details")
+        row.swipeLeft()
+        app.buttons["Clear"].tap()
+        XCTAssertEqual(row.value as? String, "C · Details")
+
+        row.swipeLeft()
+        app.buttons["Unclear"].tap()
+        XCTAssertEqual(row.value as? String, "Details")
+        row.swipeLeft()
+        app.buttons["Clear"].tap()
+        app.buttons["Reconcile"].tap()
+        XCTAssertTrue(app.navigationBars.matching(NSPredicate(format: "identifier BEGINSWITH 'Reconcile'")).firstMatch.waitForExistence(timeout: 5))
+        app.navigationBars["Reconcile Everyday Visa"].buttons["Reconcile"].tap()
+        XCTAssertTrue(app.navigationBars["Reconcile Everyday Visa"].waitForNonExistence(timeout: 5))
+        XCTAssertEqual(row.value as? String, "R · Details")
+        row.swipeLeft()
+        XCTAssertFalse(app.buttons["Clear"].exists)
+        XCTAssertFalse(app.buttons["Unclear"].exists)
+    }
+
+    func testActivityUsesTheSharedQuickClearingInteraction() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+
+        let row = app.buttons["transaction-row-t1"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertEqual(row.value as? String, "Uncleared")
+        row.swipeLeft()
+        app.buttons["Clear"].tap()
+        XCTAssertEqual(row.value as? String, "Cleared")
+        row.swipeLeft()
+        app.buttons["Unclear"].tap()
+        XCTAssertEqual(row.value as? String, "Uncleared")
+    }
+
     func testMoveMoneyFromCategoryPreservesSourceContextAndUsesUnassignedTerm() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=plan"]

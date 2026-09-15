@@ -2,7 +2,7 @@ from app.models import Transaction, TransactionChange
 
 from .conftest import auth
 from .test_advanced_ledger import record
-from .test_budgeting_api import create_budget, create_budget_structure
+from .test_budgeting_api import add_member, create_budget, create_budget_structure
 
 
 def _bulk(client, token, budget_id, transaction_ids, action, **values):
@@ -62,3 +62,30 @@ def test_bulk_rejects_system_linked_rows_without_partial_mutation(client, owner_
     assert response.status_code == 409
     rows = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()
     assert next(row for row in rows if row["id"] == ordinary["id"])["is_cleared"] is False
+
+
+def test_single_transaction_clearing_persists_without_financial_mutation_or_permission_bypass(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    transaction = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-4321)
+
+    cleared = _bulk(client, owner_token, budget["id"], [transaction["id"]], "set_cleared", cleared=True)
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()[0]["is_cleared"] is True
+    assert cleared.json()[0]["amount_minor"] == -4321
+    assert cleared.json()[0]["category_id"] == category["id"]
+    persisted = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()
+    assert next(row for row in persisted if row["id"] == transaction["id"])["is_cleared"] is True
+
+    contributor_token = add_member(session_factory, client, "contribute", budget["id"])
+    denied = _bulk(client, contributor_token, budget["id"], [transaction["id"]], "set_cleared", cleared=False)
+    assert denied.status_code == 403
+    persisted = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()
+    assert next(row for row in persisted if row["id"] == transaction["id"])["is_cleared"] is True
+
+    with session_factory() as db:
+        row = db.get(Transaction, transaction["id"])
+        row.is_reconciled = True
+        db.commit()
+    reconciled = _bulk(client, owner_token, budget["id"], [transaction["id"]], "set_cleared", cleared=False)
+    assert reconciled.status_code == 409

@@ -282,6 +282,26 @@ final class APIClientTests: XCTestCase {
         XCTAssertTrue(rows.isEmpty)
     }
 
+    func testSingleQuickClearIssuesExactlyOneCanonicalMutation() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var requestCount = 0
+        MockURLProtocol.handler = { request in
+            requestCount += 1
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/bulk")
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+            XCTAssertEqual(json["transaction_ids"] as? [String], ["t1"])
+            XCTAssertEqual(json["action"] as? String, "set_cleared")
+            XCTAssertEqual(json["cleared"] as? Bool, true)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("[]".utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        _ = try await client.bulkUpdateTransactions(budgetID: "b1", update: .init(transactionIDs: ["t1"], action: "set_cleared", cleared: true), token: "secret")
+        XCTAssertEqual(requestCount, 1)
+    }
+
     func testPayeeAliasCreateAndDeleteUseProtectedResourcePaths() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

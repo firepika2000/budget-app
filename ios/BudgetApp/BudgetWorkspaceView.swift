@@ -814,6 +814,21 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
 
+    func canQuickSetCleared(_ transaction: APITransaction) -> Bool {
+        budget.can("edit_transaction")
+            && (transaction.status ?? "posted") == "posted"
+            && !transaction.isReconciled
+            && transaction.transferID == nil
+            && transaction.scheduledTransactionID == nil
+            && !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName)
+    }
+
+    func setTransactionCleared(id: String, cleared: Bool) async throws {
+        guard let transaction = transactions.first(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found.") }
+        guard canQuickSetCleared(transaction) else { throw workspaceRepositoryError("This transaction cannot be changed through quick clearing.") }
+        try await bulkUpdateTransactions(.init(transactionIDs: [id], action: "set_cleared", cleared: cleared))
+    }
+
     func createPayee(_ operation: CreatePayeeOperation) async throws { try await services().payees.create(operation); await refresh() }
     func updatePayee(_ operation: UpdatePayeeOperation) async throws { try await services().payees.update(operation); await refresh() }
     func mergePayee(sourceID: String, destinationID: String) async throws { try await services().payees.merge(sourceID: sourceID, destinationID: destinationID); await refresh() }
@@ -1619,7 +1634,7 @@ private struct LiveActivityView: View {
                 ForEach(rows) { transaction in
                     if selecting {
                         bulkRow(transaction)
-                    } else { LiveTransactionLink(transaction: transaction) }
+                    } else { LiveTransactionLink(transaction: transaction, allowsQuickClearing: true) { await load(reset: true) } }
                 }
                 if let errorMessage { VStack(alignment: .leading, spacing: 8) { Text(errorMessage).foregroundStyle(.secondary); Button("Retry") { Task { await load(reset: true) } } } }
                 else if nextCursor != nil { Button { Task { await load(reset: false) } } label: { HStack { Spacer(); if loading { ProgressView() } else { Text("Load more") }; Spacer() } }.disabled(loading) }
@@ -1849,11 +1864,36 @@ private struct LiveScheduledTransactionEditor: View {
 private struct LiveTransactionLink: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let transaction: APITransaction
+    var allowsQuickClearing = false
+    var onClearingChanged: (() async -> Void)? = nil
+    @State private var changingCleared = false
+    @State private var clearingError: String?
     var body: some View {
         NavigationLink { LiveTransactionDetailView(transactionID: transaction.id) } label: {
             HStack { VStack(alignment: .leading) { HStack(spacing: 5) { if transaction.flag != nil { Image(systemName: "flag.fill").foregroundStyle(flagColor) }; Text(transaction.payeeName.isEmpty ? "No payee" : transaction.payeeName); if transaction.status == "voided" { Text("VOIDED").font(.caption2.bold()).foregroundStyle(.red).accessibilityIdentifier("transaction-posting-voided-\(transaction.id)") } else if transaction.status == "reversal" { Text("REVERSAL").font(.caption2.bold()).foregroundStyle(.orange).accessibilityIdentifier("transaction-posting-reversal-\(transaction.id)") } }; Text(secondaryText).font(.caption).foregroundStyle(.secondary); if let tags = transaction.tags, !tags.isEmpty { Text(tags.map { "#\($0)" }.joined(separator: " ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1) } }; Spacer(); Text(store.format(transaction.amountMinor)).monospacedDigit() }
         }
         .accessibilityIdentifier("transaction-row-\(transaction.id)")
+        .accessibilityValue(transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared")
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            if allowsQuickClearing && store.canQuickSetCleared(transaction) {
+                Button(transaction.isCleared ? "Unclear" : "Clear", systemImage: transaction.isCleared ? "circle" : "checkmark.circle.fill") {
+                    Task { await changeCleared(to: !transaction.isCleared) }
+                }
+                .tint(transaction.isCleared ? .orange : .green)
+                .disabled(changingCleared)
+                .accessibilityIdentifier("quick-clear-\(transaction.id)")
+            }
+        }
+        .alert("Unable to update clearing status", isPresented: Binding(get: { clearingError != nil }, set: { if !$0 { clearingError = nil } })) { Button("OK", role: .cancel) {} } message: { Text(clearingError ?? "Unknown error") }
+    }
+    private func changeCleared(to cleared: Bool) async {
+        guard !changingCleared else { return }
+        changingCleared = true
+        defer { changingCleared = false }
+        do {
+            try await store.setTransactionCleared(id: transaction.id, cleared: cleared)
+            await onClearingChanged?()
+        } catch { clearingError = error.localizedDescription }
     }
     private var flagColor: Color { switch transaction.flag { case "red": .red; case "orange": .orange; case "yellow": .yellow; case "green": .green; case "blue": .blue; case "purple": .purple; default: .secondary } }
     private var secondaryText: String {
@@ -2188,7 +2228,7 @@ struct LiveAccountRegisterView: View {
                     ContentUnavailableView("No transactions", systemImage: "list.bullet.rectangle", description: Text("Transactions recorded in this account will appear here."))
                 } else {
                     ForEach(transactions) { transaction in
-                        LiveTransactionLink(transaction: transaction)
+                        LiveTransactionLink(transaction: transaction, allowsQuickClearing: true)
                             .badge(registerBadge(transaction))
                     }
                 }
