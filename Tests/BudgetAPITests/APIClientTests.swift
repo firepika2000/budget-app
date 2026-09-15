@@ -295,11 +295,28 @@ final class APIClientTests: XCTestCase {
             XCTAssertEqual(json["transaction_ids"] as? [String], ["t1"])
             XCTAssertEqual(json["action"] as? String, "set_cleared")
             XCTAssertEqual(json["cleared"] as? Bool, true)
+            XCTAssertNil(json["tags"], "clearing-only requests must omit unrelated tags")
+            XCTAssertNil(json["flag"], "clearing-only requests must omit unrelated flag")
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("[]".utf8))
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
         _ = try await client.bulkUpdateTransactions(budgetID: "b1", update: .init(transactionIDs: ["t1"], action: "set_cleared", cleared: true), token: "secret")
         XCTAssertEqual(requestCount, 1)
+    }
+
+    func testBulkMetadataOperationsOmitUnchangedFields() throws {
+        func json(_ update: APITransactionBulkUpdate) throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(update)) as? [String: Any])
+        }
+        let flag = try json(.init(transactionIDs: ["t1"], action: "set_flag", flag: "blue"))
+        XCTAssertEqual(flag["flag"] as? String, "blue")
+        XCTAssertNil(flag["cleared"])
+        XCTAssertNil(flag["tags"])
+
+        let addTags = try json(.init(transactionIDs: ["t1"], action: "add_tags", tags: ["reviewed"]))
+        XCTAssertEqual(addTags["tags"] as? [String], ["reviewed"])
+        XCTAssertNil(addTags["cleared"])
+        XCTAssertNil(addTags["flag"])
     }
 
     func testPayeeAliasCreateAndDeleteUseProtectedResourcePaths() async throws {

@@ -628,8 +628,8 @@ public struct APITransactionBulkUpdate: Encodable, Equatable, Sendable {
     public let action: String
     public let cleared: Bool?
     public let flag: String?
-    public let tags: [String]
-    public init(transactionIDs: [String], action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String] = []) {
+    public let tags: [String]?
+    public init(transactionIDs: [String], action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String]? = nil) {
         self.transactionIDs = transactionIDs; self.action = action; self.cleared = cleared; self.flag = flag; self.tags = tags
     }
     enum CodingKeys: String, CodingKey { case transactionIDs = "transaction_ids"; case action, cleared, flag, tags }

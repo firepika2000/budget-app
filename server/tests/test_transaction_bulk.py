@@ -67,13 +67,26 @@ def test_bulk_rejects_system_linked_rows_without_partial_mutation(client, owner_
 def test_single_transaction_clearing_persists_without_financial_mutation_or_permission_bypass(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])
-    transaction = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-4321)
+    transactions = [
+        record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-4321),
+        record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-2222, tags=["existing"]),
+        record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-3333, payee_name="Metadata Payee", memo="keep exactly", flag="purple"),
+    ]
+    def unchanged_metadata(row):
+        return {key: value for key, value in row.items() if key != "is_cleared"}
 
-    cleared = _bulk(client, owner_token, budget["id"], [transaction["id"]], "set_cleared", cleared=True)
-    assert cleared.status_code == 200, cleared.text
-    assert cleared.json()[0]["is_cleared"] is True
-    assert cleared.json()[0]["amount_minor"] == -4321
-    assert cleared.json()[0]["category_id"] == category["id"]
+    for transaction in transactions:
+        cleared = _bulk(client, owner_token, budget["id"], [transaction["id"]], "set_cleared", cleared=True)
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()[0]["is_cleared"] is True
+        assert unchanged_metadata(cleared.json()[0]) == unchanged_metadata(transaction)
+        uncleared = _bulk(client, owner_token, budget["id"], [transaction["id"]], "set_cleared", cleared=False)
+        assert uncleared.status_code == 200, uncleared.text
+        assert uncleared.json()[0]["is_cleared"] is False
+        assert unchanged_metadata(uncleared.json()[0]) == unchanged_metadata(transaction)
+
+    transaction = transactions[0]
+    assert _bulk(client, owner_token, budget["id"], [transaction["id"]], "set_cleared", cleared=True).status_code == 200
     persisted = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()
     assert next(row for row in persisted if row["id"] == transaction["id"])["is_cleared"] is True
 

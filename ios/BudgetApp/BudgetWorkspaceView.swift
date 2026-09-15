@@ -487,8 +487,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             switch update.action {
             case "set_cleared": demo.transactions[index].cleared = update.cleared ?? false
             case "set_flag": demo.transactions[index].flag = update.flag
-            case "add_tags": demo.transactions[index].tags = Array(Set(demo.transactions[index].tags + update.tags)).sorted()
-            case "remove_tags": demo.transactions[index].tags.removeAll(where: Set(update.tags).contains)
+            case "add_tags": demo.transactions[index].tags = Array(Set(demo.transactions[index].tags + (update.tags ?? []))).sorted()
+            case "remove_tags": demo.transactions[index].tags.removeAll(where: Set(update.tags ?? []).contains)
             default: throw workspaceRepositoryError("Unsupported bulk action")
             }
         }
@@ -1691,7 +1691,7 @@ private struct LiveActivityView: View {
             }.disabled(selectedIDs.isEmpty || loading).accessibilityIdentifier("bulk-update-menu")
         }.padding(.horizontal).padding(.vertical, 10).background(.bar)
     }
-    private func bulkUpdate(action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String] = []) async { loading = true; defer { loading = false }; do { try await store.bulkUpdateTransactions(.init(transactionIDs: selectedIDs.sorted(), action: action, cleared: cleared, flag: flag, tags: tags)); selectedIDs.removeAll(); selecting = false; await load(reset: true); errorMessage = nil } catch { errorMessage = error.localizedDescription } }
+    private func bulkUpdate(action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String]? = nil) async { loading = true; defer { loading = false }; do { try await store.bulkUpdateTransactions(.init(transactionIDs: selectedIDs.sorted(), action: action, cleared: cleared, flag: flag, tags: tags)); selectedIDs.removeAll(); selecting = false; await load(reset: true); errorMessage = nil } catch { errorMessage = error.localizedDescription } }
     private func load(reset: Bool) async {
         if loading && !reset { return }; loading = true; defer { loading = false }
         do { let page = try await store.browseTransactions(filter.query(search: search, currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor)); rows = reset ? page.items : rows + page.items; nextCursor = page.nextCursor; totalCount = page.totalCount; errorMessage = nil }
