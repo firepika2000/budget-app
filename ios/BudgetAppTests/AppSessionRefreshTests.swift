@@ -132,6 +132,31 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testAttachmentPreviewDownloadsWithoutDetachAndConfirmedRemovalDetachesOnce() async throws {
+        let requests = CredentialRequestRecorder()
+        RefreshMockURLProtocol.handler = { request in
+            requests.append(path: "\(request.httpMethod ?? "GET") \(request.url?.path ?? "")", authorization: request.value(forHTTPHeaderField: "Authorization") ?? "")
+            if request.httpMethod == "DELETE" { return Self.json(204, "") }
+            return (200, Data([0xFF, 0xD8, 0xFF, 0xD9]))
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let budget = APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD")
+        let store = BudgetWorkspaceStore.production(
+            context: .live(budget: budget, serverURL: URL(string: "https://budget.example.com")!, token: "A1"),
+            clientFactory: { try APIClient(baseURL: $0, session: session) }
+        )
+
+        let data = try await store.downloadTransactionAttachment(transactionID: "t1", attachmentID: "att1")
+        XCTAssertFalse(data.isEmpty)
+        XCTAssertEqual(requests.paths.filter { $0.hasPrefix("DELETE ") }.count, 0, "preview/download must never detach")
+
+        try await store.detachTransactionAttachment(transactionID: "t1", attachmentID: "att1")
+        XCTAssertEqual(requests.paths.filter { $0 == "DELETE /api/v1/budgets/b1/transactions/t1/attachments/att1" }.count, 1)
+    }
+
+    @MainActor
     func testLongLivedWorkspaceSearchRefreshesExpiredSessionAtRequestExecution() async throws {
         let requests = CredentialRequestRecorder()
         let expired = Self.jwt(expiration: Date().timeIntervalSince1970 - 60)

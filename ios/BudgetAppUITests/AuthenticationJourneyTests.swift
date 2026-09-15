@@ -526,6 +526,29 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertFalse(choosePhoto.exists, "choosing Photos must dismiss the source dialog and present the native picker")
     }
 
+    func testProductionAttachmentPreviewDoesNotRemoveAndRemovalRequiresConfirmation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+
+        app.buttons["transaction-row-t1"].tap()
+        let preview = app.buttons["attachment-preview-demo-attachment-t1"]
+        let remove = app.buttons["attachment-remove-demo-attachment-t1"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertTrue(remove.exists)
+
+        preview.tap()
+        XCTAssertTrue(app.navigationBars["receipt-placeholder.jpg"].waitForExistence(timeout: 5), "preview must navigate to the downloaded attachment")
+        app.navigationBars["receipt-placeholder.jpg"].buttons.firstMatch.tap()
+        XCTAssertTrue(remove.waitForExistence(timeout: 5), "returning from preview must leave the attachment attached")
+
+        remove.tap()
+        XCTAssertTrue(app.staticTexts["Remove Attachment?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(preview.exists, "opening removal confirmation must not detach")
+        app.buttons["Remove Attachment"].tap()
+        XCTAssertFalse(preview.waitForExistence(timeout: 2), "confirmed removal must detach exactly this attachment")
+    }
+
     func testProductionTransactionDetailMakesRecurringThenCreatesAuditableReversal() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=activity"]

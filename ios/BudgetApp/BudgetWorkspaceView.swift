@@ -1973,6 +1973,7 @@ private struct MakeRecurringView: View {
 }
 
 private struct TransactionAttachmentsView: View {
+    private enum PendingSource { case camera, photos, files }
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let transaction: APITransaction
     @State private var attachments: [APITransactionAttachment] = []
@@ -1981,21 +1982,28 @@ private struct TransactionAttachmentsView: View {
     @State private var choosingPhoto = false
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showingCamera = false
+    @State private var pendingSource: PendingSource?
+    @State private var pendingRemoval: APITransactionAttachment?
     @State private var previewURL: URL?
     @State private var error: String?
-    var body: some View { Section("Attachments") { if attachments.isEmpty { Text("No attachments").foregroundStyle(.secondary) }; ForEach(attachments) { attachment in HStack { Button { Task { await open(attachment) } } label: { VStack(alignment: .leading) { Text(attachment.filename); Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file)).font(.caption).foregroundStyle(.secondary) } }; Spacer(); if store.budget.can("edit_transaction") { Button("Detach", systemImage: "trash", role: .destructive) { Task { await detach(attachment) } }.labelStyle(.iconOnly) } } }; if store.budget.can("edit_transaction"), transaction.status != "reversal", attachments.count < 20 { Button("Add Attachment", systemImage: "paperclip") { showingSources = true }.accessibilityIdentifier("add-attachment-action") }; Text("PDF, JPEG, PNG, or HEIC · 10 MB maximum · detached files retained 30 days").font(.caption).foregroundStyle(.secondary) }
+    var body: some View { Section("Attachments") { if attachments.isEmpty { Text("No attachments").foregroundStyle(.secondary) }; ForEach(attachments) { attachment in HStack(spacing: 12) { Button { Task { await open(attachment) } } label: { VStack(alignment: .leading) { Text(attachment.filename); Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file)).font(.caption).foregroundStyle(.secondary) }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityIdentifier("attachment-preview-\(attachment.id)").accessibilityLabel("Preview \(attachment.filename)"); if store.budget.can("edit_transaction") { Button { pendingRemoval = attachment } label: { Image(systemName: "trash").frame(minWidth: 44, minHeight: 44) }.buttonStyle(.borderless).foregroundStyle(.red).accessibilityIdentifier("attachment-remove-\(attachment.id)").accessibilityLabel("Remove \(attachment.filename)") } } }; if store.budget.can("edit_transaction"), transaction.status != "reversal", attachments.count < 20 { Button("Add Attachment", systemImage: "paperclip") { showingSources = true }.accessibilityIdentifier("add-attachment-action") }; Text("PDF, JPEG, PNG, or HEIC · 10 MB maximum · detached files retained 30 days").font(.caption).foregroundStyle(.secondary) }
         .task(id: store.liveCredentialRevision) { await load() }
         .confirmationDialog("Add Attachment", isPresented: $showingSources, titleVisibility: .visible) {
-            Button("Take Photo", systemImage: "camera") { requestCamera() }.accessibilityIdentifier("attachment-take-photo")
-            Button("Choose Photo", systemImage: "photo.on.rectangle") { choosingPhoto = true }.accessibilityIdentifier("attachment-choose-photo")
-            Button("Choose File", systemImage: "folder") { importingFile = true }.accessibilityIdentifier("attachment-choose-file")
+            Button("Take Photo", systemImage: "camera") { queue(.camera) }.accessibilityIdentifier("attachment-take-photo")
+            Button("Choose Photo", systemImage: "photo.on.rectangle") { queue(.photos) }.accessibilityIdentifier("attachment-choose-photo")
+            Button("Choose File", systemImage: "folder") { queue(.files) }.accessibilityIdentifier("attachment-choose-file")
             Button("Cancel", role: .cancel) {}
         }
+        .onChange(of: showingSources) { _, presented in if !presented { presentQueuedSourceAfterDismissal() } }
         .photosPicker(isPresented: $choosingPhoto, selection: $selectedPhoto, matching: .images)
         .onChange(of: selectedPhoto) { _, item in guard let item else { return }; Task { await importPhoto(item) } }
         .fileImporter(isPresented: $importingFile, allowedContentTypes: [.pdf, .jpeg, .png, .heic]) { result in Task { await importFile(result) } }
         .sheet(isPresented: $showingCamera) { AttachmentCameraPicker { image in Task { await importCameraImage(image) } } }
-        .quickLookPreview($previewURL)
+        .navigationDestination(item: $previewURL) { url in AttachmentPreviewController(url: url).navigationTitle(url.lastPathComponent).navigationBarTitleDisplayMode(.inline) }
+        .confirmationDialog("Remove Attachment?", isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }), titleVisibility: .visible, presenting: pendingRemoval) { attachment in
+            Button("Remove Attachment", role: .destructive) { pendingRemoval = nil; Task { await detach(attachment) } }
+            Button("Cancel", role: .cancel) { pendingRemoval = nil }
+        } message: { attachment in Text("\(attachment.filename) will be detached and retained for 30 days before permanent deletion.") }
         .alert("Attachment error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
     }
     private func load() async {
@@ -2031,6 +2039,25 @@ private struct TransactionAttachmentsView: View {
         try await store.uploadTransactionAttachment(id: transaction.id, filename: filename, contentType: contentType, data: data)
         await load()
     }
+    private func queue(_ source: PendingSource) {
+        pendingSource = source
+        showingSources = false
+    }
+    private func presentQueuedSourceAfterDismissal() {
+        guard let source = pendingSource else { return }
+        Task { @MainActor in
+            // A confirmation dialog remains in UIKit's dismissal transition briefly after its
+            // binding becomes false. Wait for that transition before presenting another modal.
+            try? await Task.sleep(for: .milliseconds(350))
+            guard pendingSource != nil, !showingSources else { return }
+            pendingSource = nil
+            switch source {
+            case .camera: requestCamera()
+            case .photos: choosingPhoto = true
+            case .files: importingFile = true
+            }
+        }
+    }
     private func requestCamera() {
         guard UIImagePickerController.isSourceTypeAvailable(.camera) else { error = "Camera is not available on this device."; return }
         switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -2043,6 +2070,23 @@ private struct TransactionAttachmentsView: View {
     }
     private func open(_ attachment: APITransactionAttachment) async { do { let data = try await store.downloadTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); let directory = FileManager.default.temporaryDirectory.appending(path: "BudgetAttachmentPreview", directoryHint: .isDirectory); try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true); let url = directory.appending(path: attachment.filename); try data.write(to: url, options: .atomic); previewURL = url } catch { self.error = error.localizedDescription } }
     private func detach(_ attachment: APITransactionAttachment) async { do { try await store.detachTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); await load() } catch { self.error = error.localizedDescription } }
+}
+
+private struct AttachmentPreviewController: UIViewControllerRepresentable {
+    let url: URL
+    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+    func updateUIViewController(_ uiViewController: QLPreviewController, context: Context) {}
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        let url: URL
+        init(url: URL) { self.url = url }
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { url as NSURL }
+    }
 }
 
 private struct AttachmentCameraPicker: UIViewControllerRepresentable {
