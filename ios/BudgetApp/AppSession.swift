@@ -248,8 +248,9 @@ final class AppSession: ObservableObject {
     }
 
     func createBudget(name: String, currencyCode: String, householdID: String) async {
-        guard sourceMode == .liveServer, let serverURL, let token else { return }
+        guard sourceMode == .liveServer else { return }
         await perform {
+            let (serverURL, token) = try await self.currentLiveCredentials(caller: "createBudget")
             let client = try self.clientFactory(serverURL)
             let created = try await client.createBudget(APIBudgetCreate(householdID: householdID, name: name, currencyCode: currencyCode), token: token)
             self.budgets = try await client.budgets(token: token)
@@ -350,6 +351,16 @@ final class AppSession: ObservableObject {
             }
             throw error
         }
+    }
+
+    /// The sole execution-time credential gateway for long-lived Live services. Callers must not
+    /// retain the returned token beyond the request they are about to execute.
+    func currentLiveCredentials(forceRefresh: Bool = false, caller: String) async throws -> (URL, String) {
+        try await refreshIfNeeded(force: forceRefresh, caller: caller)
+        guard sourceMode == .liveServer, !authInvalidated, let serverURL, let token else {
+            throw APIClientError.server(status: 401, message: "Authentication required")
+        }
+        return (serverURL, token)
     }
 
     // Concurrent callers converge on one network refresh. The first caller installs the shared task;

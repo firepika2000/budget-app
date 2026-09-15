@@ -55,6 +55,16 @@ final class AppSessionRefreshTests: XCTestCase {
     private static func json(_ status: Int, _ body: String) -> (Int, Data) { (status, Data(body.utf8)) }
     private static let rotated = #"{"access_token":"A2","refresh_token":"R2","token_type":"bearer"}"#
 
+    private static func jwt(expiration: TimeInterval) -> String {
+        func encode(_ value: String) -> String {
+            Data(value.utf8).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
+        }
+        return "\(encode(#"{"alg":"none"}"#)).\(encode("{\"exp\":\(Int(expiration))}")).signature"
+    }
+
     @MainActor
     func testDeterministicSourceUsesSharedWorkspaceRoute() {
         let session = AppSession(defaults: UserDefaults(suiteName: "DeterministicShell.\(UUID().uuidString)")!, keychain: InMemoryTokenStore([:]), initialMode: .deterministic)
@@ -119,6 +129,48 @@ final class AppSessionRefreshTests: XCTestCase {
             "/api/v1/budgets/b1/transactions/t1/schedule",
         ])
         XCTAssertTrue(requests.authorizations.dropFirst().allSatisfy { $0 == "Bearer A2" })
+    }
+
+    @MainActor
+    func testLongLivedWorkspaceSearchRefreshesExpiredSessionAtRequestExecution() async throws {
+        let requests = CredentialRequestRecorder()
+        let expired = Self.jwt(expiration: Date().timeIntervalSince1970 - 60)
+        let current = Self.jwt(expiration: Date().timeIntervalSince1970 + 3600)
+        let session = makeSession(access: expired, refresh: "R1") { request in
+            let authorization = request.value(forHTTPHeaderField: "Authorization") ?? ""
+            requests.append(path: request.url?.path ?? "", authorization: authorization)
+            switch request.url?.path {
+            case "/api/v1/auth/refresh":
+                return Self.json(200, "{\"access_token\":\"\(current)\",\"refresh_token\":\"R2\",\"token_type\":\"bearer\"}")
+            case "/api/v1/budgets/b1/transactions/search":
+                return Self.json(200, #"{"items":[],"next_cursor":null,"total_count":0}"#)
+            default:
+                return Self.json(404, "{}")
+            }
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let urlSession = URLSession(configuration: configuration)
+        let budget = APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD")
+        let store = BudgetWorkspaceStore.production(
+            context: .live(budget: budget, serverURL: URL(string: "https://budget.example.com")!, token: expired),
+            clientFactory: { try APIClient(baseURL: $0, session: urlSession) }
+        )
+        store.bindLiveCredentialAuthority { [weak session] forceRefresh in
+            guard let session else { throw APIClientError.server(status: 401, message: "Authentication required") }
+            return try await session.currentLiveCredentials(forceRefresh: forceRefresh, caller: "test.transaction-search")
+        }
+
+        async let firstPage = store.browseTransactions(APITransactionQuery())
+        async let reconstructedActivityPage = store.browseTransactions(APITransactionQuery())
+        let (page, duplicatePage) = try await (firstPage, reconstructedActivityPage)
+
+        XCTAssertEqual(page.totalCount, 0)
+        XCTAssertEqual(duplicatePage.totalCount, 0)
+        XCTAssertEqual(requests.paths, ["/api/v1/auth/refresh", "/api/v1/budgets/b1/transactions/search"])
+        XCTAssertEqual(requests.authorizations.last, "Bearer \(current)")
+        XCTAssertFalse(requests.authorizations.contains("Bearer \(expired)"), "the expired token must not reach transaction search")
+        XCTAssertTrue(store.usesLiveCredential(current))
     }
 
     // Concurrent refresh demand must collapse to exactly one network refresh, and the rotated

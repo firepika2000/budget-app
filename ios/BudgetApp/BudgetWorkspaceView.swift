@@ -569,10 +569,12 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
 private func workspaceRepositoryError(_ message: String?) -> NSError { NSError(domain: "BudgetWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: message ?? "Unable to complete the change."]) }
 
 @MainActor
-private final class LiveWorkspaceCredentials {
+final class LiveWorkspaceCredentials {
+    typealias Resolver = @MainActor (_ forceRefresh: Bool) async throws -> (URL, String)
     private(set) var serverURL: URL
     private(set) var token: String
     let clientFactory: (URL) throws -> APIClient
+    private var resolver: Resolver?
 
     init(serverURL: URL, token: String, clientFactory: @escaping (URL) throws -> APIClient) {
         self.serverURL = serverURL
@@ -583,6 +585,14 @@ private final class LiveWorkspaceCredentials {
     func update(serverURL: URL, token: String) {
         self.serverURL = serverURL
         self.token = token
+    }
+
+    func bind(_ resolver: @escaping Resolver) { self.resolver = resolver }
+
+    func prepare(forceRefresh: Bool = false) async throws {
+        guard let resolver else { return }
+        let (serverURL, token) = try await resolver(forceRefresh)
+        update(serverURL: serverURL, token: token)
     }
 
     func client() throws -> APIClient { try clientFactory(serverURL) }
@@ -596,53 +606,54 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     private var client: APIClient { get throws { try credentials.client() } }
     init(budget: APIBudget, credentials: LiveWorkspaceCredentials) { self.budget = budget; self.credentials = credentials }
 
-    func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try await client.searchTransactions(budgetID: budget.id, query: query, token: token) }
+    func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try await credentials.prepare(); return try await client.searchTransactions(budgetID: budget.id, query: query, token: token) }
 
-    func createPayee(_ operation: CreatePayeeOperation) async throws { _ = try await client.createPayee(budgetID: budget.id, payee: APIPayeeCreate(displayName: operation.displayName, defaultCategoryID: operation.defaultCategoryID), token: token) }
-    func updatePayee(_ operation: UpdatePayeeOperation) async throws { _ = try await client.updatePayee(budgetID: budget.id, payeeID: operation.payeeID, payee: APIPayeeUpdate(displayName: operation.displayName, isArchived: operation.isArchived, defaultCategoryID: operation.defaultCategoryID), token: token) }
-    func mergePayee(sourceID: String, destinationID: String) async throws { _ = try await client.mergePayee(budgetID: budget.id, payeeID: sourceID, destinationPayeeID: destinationID, token: token) }
-    func createPayeeAlias(payeeID: String, displayName: String) async throws { _ = try await client.createPayeeAlias(budgetID: budget.id, payeeID: payeeID, displayName: displayName, token: token) }
-    func deletePayeeAlias(payeeID: String, aliasID: String) async throws { try await client.deletePayeeAlias(budgetID: budget.id, payeeID: payeeID, aliasID: aliasID, token: token) }
+    func createPayee(_ operation: CreatePayeeOperation) async throws { try await credentials.prepare(); _ = try await client.createPayee(budgetID: budget.id, payee: APIPayeeCreate(displayName: operation.displayName, defaultCategoryID: operation.defaultCategoryID), token: token) }
+    func updatePayee(_ operation: UpdatePayeeOperation) async throws { try await credentials.prepare(); _ = try await client.updatePayee(budgetID: budget.id, payeeID: operation.payeeID, payee: APIPayeeUpdate(displayName: operation.displayName, isArchived: operation.isArchived, defaultCategoryID: operation.defaultCategoryID), token: token) }
+    func mergePayee(sourceID: String, destinationID: String) async throws { try await credentials.prepare(); _ = try await client.mergePayee(budgetID: budget.id, payeeID: sourceID, destinationPayeeID: destinationID, token: token) }
+    func createPayeeAlias(payeeID: String, displayName: String) async throws { try await credentials.prepare(); _ = try await client.createPayeeAlias(budgetID: budget.id, payeeID: payeeID, displayName: displayName, token: token) }
+    func deletePayeeAlias(payeeID: String, aliasID: String) async throws { try await credentials.prepare(); try await client.deletePayeeAlias(budgetID: budget.id, payeeID: payeeID, aliasID: aliasID, token: token) }
 
-    func recordTransaction(_ operation: RecordTransactionOperation) async throws { _ = try await client.createTransaction(budgetID: budget.id, transaction: operation.apiValue, token: token) }
-    func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: operation.apiValue, token: token) }
-    func deleteTransaction(id: String) async throws { try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
-    func duplicateTransaction(id: String, occurredOn: String) async throws { _ = try await client.duplicateTransaction(budgetID: budget.id, transactionID: id, occurredOn: occurredOn, token: token) }
-    func voidTransaction(id: String, reason: String) async throws { _ = try await client.voidTransaction(budgetID: budget.id, transactionID: id, reason: reason, token: token) }
-    func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws { _ = try await client.createScheduleFromTransaction(budgetID: budget.id, transactionID: id, request: .init(recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, nextDate: operation.nextDate), token: token) }
-    func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await client.transactionAttachments(budgetID: budget.id, transactionID: id, token: token) }
-    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { _ = try await client.uploadTransactionAttachment(budgetID: budget.id, transactionID: id, filename: filename, contentType: contentType, data: data, token: token) }
-    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await client.downloadTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
-    func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await client.detachTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
-    func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws { _ = try await client.bulkUpdateTransactions(budgetID: budget.id, update: update, token: token) }
-    func transferMoney(_ operation: TransferMoneyOperation) async throws { _ = try await client.createTransfer(budgetID: budget.id, transfer: operation.apiValue, token: token) }
-    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: operation.apiValue, token: token) }
-    func deleteTransfer(id: String) async throws { try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
-    func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID, request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason, expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor), token: token) }
-    func assignMoney(_ operation: AssignMoneyOperation) async throws { _ = try await client.updateAssignment(budgetID: budget.id, categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor, expectedAllocationVersion: operation.expectedVersion, token: token) }
-    func moveMoney(_ operation: MoveMoneyOperation) async throws { _ = try await client.transferAllocation(budgetID: budget.id, transfer: APIAllocationTransferCreate(sourceCategoryID: operation.sourceCategoryID, destinationCategoryID: operation.destinationCategoryID, amountMinor: operation.amountMinor, occurredOn: operation.occurredOn, note: operation.note, expectedAllocationVersion: operation.expectedVersion), token: token) }
-    func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { var targetGroupID = groupID; if !newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { targetGroupID = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: newGroupName), token: token).id }; _ = try await client.createCategory(budgetID: budget.id, category: APICategoryCreate(groupID: targetGroupID, name: name, delegatedUserID: delegatedUserID), token: token) }
-    func createGroup(name: String) async throws { _ = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: name), token: token) }
-    func createAccount(_ operation: CreateAccountOperation) async throws { _ = try await client.createAccount(budgetID: budget.id, account: APIAccountCreate(name: operation.name, accountType: operation.kind, isOnBudget: operation.isOnBudget, startingBalanceMinor: operation.openingBalanceMinor), token: token) }
-    func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws { _ = try await client.updateAccount(budgetID: budget.id, accountID: operation.accountID, account: APIAccountUpdate(name: operation.name, accountType: operation.kind), token: token) }
-    func createRequest(_ value: APIFinancialRequestCreate) async throws { _ = try await client.createFinancialRequest(budgetID: budget.id, request: value, token: token) }
-    func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws { _ = try await client.updateCategory(budgetID: budget.id, categoryID: id, category: value, token: token); if existingDelegatedUserID != delegatedUserID { _ = try await client.updateCategoryDelegation(budgetID: budget.id, categoryID: id, delegatedUserID: delegatedUserID, token: token) } }
-    func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { _ = try await client.updateCategoryGroup(budgetID: budget.id, groupID: id, group: value, token: token) }
-    func deleteGroup(id: String, currentName: String?) async throws { try await client.deleteCategoryGroup(budgetID: budget.id, groupID: id, token: token) }
-    func deleteCategory(id: String) async throws { try await client.deleteCategory(budgetID: budget.id, categoryID: id, token: token) }
-    func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws { _ = try await client.upsertCategoryTarget(budgetID: budget.id, categoryID: categoryID, target: value, token: token) }
-    func deleteTarget(categoryID: String) async throws { try await client.deleteCategoryTarget(budgetID: budget.id, categoryID: categoryID, token: token) }
-    func createSchedule(_ operation: ScheduleOperation) async throws { _ = try await client.createScheduledTransaction(budgetID: budget.id, schedule: operation.apiValue, token: token) }
-    func updateSchedule(id: String, operation: ScheduleOperation) async throws { _ = try await client.updateScheduledTransaction(budgetID: budget.id, scheduleID: id, schedule: operation.apiValue, token: token) }
-    func deleteSchedule(id: String) async throws { try await client.deleteScheduledTransaction(budgetID: budget.id, scheduleID: id, token: token) }
+    func recordTransaction(_ operation: RecordTransactionOperation) async throws { try await credentials.prepare(); _ = try await client.createTransaction(budgetID: budget.id, transaction: operation.apiValue, token: token) }
+    func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { try await credentials.prepare(); _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: operation.apiValue, token: token) }
+    func deleteTransaction(id: String) async throws { try await credentials.prepare(); try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
+    func duplicateTransaction(id: String, occurredOn: String) async throws { try await credentials.prepare(); _ = try await client.duplicateTransaction(budgetID: budget.id, transactionID: id, occurredOn: occurredOn, token: token) }
+    func voidTransaction(id: String, reason: String) async throws { try await credentials.prepare(); _ = try await client.voidTransaction(budgetID: budget.id, transactionID: id, reason: reason, token: token) }
+    func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws { try await credentials.prepare(); _ = try await client.createScheduleFromTransaction(budgetID: budget.id, transactionID: id, request: .init(recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, nextDate: operation.nextDate), token: token) }
+    func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await credentials.prepare(); return try await client.transactionAttachments(budgetID: budget.id, transactionID: id, token: token) }
+    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await credentials.prepare(); _ = try await client.uploadTransactionAttachment(budgetID: budget.id, transactionID: id, filename: filename, contentType: contentType, data: data, token: token) }
+    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await credentials.prepare(); return try await client.downloadTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
+    func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await credentials.prepare(); try await client.detachTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
+    func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws { try await credentials.prepare(); _ = try await client.bulkUpdateTransactions(budgetID: budget.id, update: update, token: token) }
+    func transferMoney(_ operation: TransferMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.createTransfer(budgetID: budget.id, transfer: operation.apiValue, token: token) }
+    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: operation.apiValue, token: token) }
+    func deleteTransfer(id: String) async throws { try await credentials.prepare(); try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
+    func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { try await credentials.prepare(); _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID, request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason, expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor), token: token) }
+    func assignMoney(_ operation: AssignMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.updateAssignment(budgetID: budget.id, categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor, expectedAllocationVersion: operation.expectedVersion, token: token) }
+    func moveMoney(_ operation: MoveMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.transferAllocation(budgetID: budget.id, transfer: APIAllocationTransferCreate(sourceCategoryID: operation.sourceCategoryID, destinationCategoryID: operation.destinationCategoryID, amountMinor: operation.amountMinor, occurredOn: operation.occurredOn, note: operation.note, expectedAllocationVersion: operation.expectedVersion), token: token) }
+    func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { try await credentials.prepare(); var targetGroupID = groupID; if !newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { targetGroupID = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: newGroupName), token: token).id }; _ = try await client.createCategory(budgetID: budget.id, category: APICategoryCreate(groupID: targetGroupID, name: name, delegatedUserID: delegatedUserID), token: token) }
+    func createGroup(name: String) async throws { try await credentials.prepare(); _ = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: name), token: token) }
+    func createAccount(_ operation: CreateAccountOperation) async throws { try await credentials.prepare(); _ = try await client.createAccount(budgetID: budget.id, account: APIAccountCreate(name: operation.name, accountType: operation.kind, isOnBudget: operation.isOnBudget, startingBalanceMinor: operation.openingBalanceMinor), token: token) }
+    func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws { try await credentials.prepare(); _ = try await client.updateAccount(budgetID: budget.id, accountID: operation.accountID, account: APIAccountUpdate(name: operation.name, accountType: operation.kind), token: token) }
+    func createRequest(_ value: APIFinancialRequestCreate) async throws { try await credentials.prepare(); _ = try await client.createFinancialRequest(budgetID: budget.id, request: value, token: token) }
+    func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws { try await credentials.prepare(); _ = try await client.updateCategory(budgetID: budget.id, categoryID: id, category: value, token: token); if existingDelegatedUserID != delegatedUserID { _ = try await client.updateCategoryDelegation(budgetID: budget.id, categoryID: id, delegatedUserID: delegatedUserID, token: token) } }
+    func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { try await credentials.prepare(); _ = try await client.updateCategoryGroup(budgetID: budget.id, groupID: id, group: value, token: token) }
+    func deleteGroup(id: String, currentName: String?) async throws { try await credentials.prepare(); try await client.deleteCategoryGroup(budgetID: budget.id, groupID: id, token: token) }
+    func deleteCategory(id: String) async throws { try await credentials.prepare(); try await client.deleteCategory(budgetID: budget.id, categoryID: id, token: token) }
+    func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws { try await credentials.prepare(); _ = try await client.upsertCategoryTarget(budgetID: budget.id, categoryID: categoryID, target: value, token: token) }
+    func deleteTarget(categoryID: String) async throws { try await credentials.prepare(); try await client.deleteCategoryTarget(budgetID: budget.id, categoryID: categoryID, token: token) }
+    func createSchedule(_ operation: ScheduleOperation) async throws { try await credentials.prepare(); _ = try await client.createScheduledTransaction(budgetID: budget.id, schedule: operation.apiValue, token: token) }
+    func updateSchedule(id: String, operation: ScheduleOperation) async throws { try await credentials.prepare(); _ = try await client.updateScheduledTransaction(budgetID: budget.id, scheduleID: id, schedule: operation.apiValue, token: token) }
+    func deleteSchedule(id: String) async throws { try await credentials.prepare(); try await client.deleteScheduledTransaction(budgetID: budget.id, scheduleID: id, token: token) }
     func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation {
+        try await credentials.prepare()
         let value = try await client.realizeScheduledTransaction(budgetID: budget.id, scheduleID: id, token: token)
         return ScheduledRealizationObservation(scheduleID: value.scheduledTransactionID, transactionIDs: value.transactionIDs, realizedOn: value.realizedOn, nextDate: value.nextDate, isActive: value.isActive, lastRealizedOn: value.lastRealizedOn)
     }
-    func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws { _ = try await client.decideFinancialRequest(budgetID: budget.id, requestID: id, decision: APIFinancialRequestDecision(decision: decision, expectedRequestVersion: version, approvedAmountMinor: amount, sourceCategoryID: sourceCategoryID, note: note), token: token) }
-    func smartFundingPreview(month: String) async throws -> APISmartFundingPreview { try await client.smartFundingPreview(budgetID: budget.id, month: month, token: token) }
-    func commitSmartFunding(_ preview: APISmartFundingPreview) async throws { _ = try await client.commitSmartFunding(budgetID: budget.id, month: preview.month, expectedAllocationVersion: preview.allocationVersion, token: token) }
-    func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { _ = try await client.updateDelegatedBudget(budgetID: budget.id, userID: userID, policy: value, token: token) }
+    func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws { try await credentials.prepare(); _ = try await client.decideFinancialRequest(budgetID: budget.id, requestID: id, decision: APIFinancialRequestDecision(decision: decision, expectedRequestVersion: version, approvedAmountMinor: amount, sourceCategoryID: sourceCategoryID, note: note), token: token) }
+    func smartFundingPreview(month: String) async throws -> APISmartFundingPreview { try await credentials.prepare(); return try await client.smartFundingPreview(budgetID: budget.id, month: month, token: token) }
+    func commitSmartFunding(_ preview: APISmartFundingPreview) async throws { try await credentials.prepare(); _ = try await client.commitSmartFunding(budgetID: budget.id, month: preview.month, expectedAllocationVersion: preview.allocationVersion, token: token) }
+    func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { try await credentials.prepare(); _ = try await client.updateDelegatedBudget(budgetID: budget.id, userID: userID, policy: value, token: token) }
 }
 
 @MainActor
@@ -660,8 +671,10 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
     }
 
     func updateCredentials(serverURL: URL, token: String) { credentials.update(serverURL: serverURL, token: token) }
+    func bindCredentialAuthority(_ resolver: @escaping LiveWorkspaceCredentials.Resolver) { credentials.bind(resolver) }
 
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
+        try await credentials.prepare()
         let client = try credentials.client()
         let month = BudgetWorkspaceStore.dateString(planMonth).prefix(7) + "-01"
         let start = BudgetWorkspaceStore.dateString(report.start), end = BudgetWorkspaceStore.dateString(report.end)
@@ -727,6 +740,9 @@ final class BudgetWorkspaceStore: ObservableObject {
     private var dataSource: WorkspaceDataSource?
     private var commandRepository: WorkspaceCommandRepository?
     private var applicationServices: BudgetApplicationServices?
+    private var transactionBrowseTask: Task<APITransactionPage, Error>?
+    private var transactionBrowseQuery: APITransactionQuery?
+    private var transactionBrowseOperationID: UUID?
 
     init(budget: APIBudget) { self.budget = budget; dataSource = nil; commandRepository = nil; applicationServices = nil }
     private init(dataSource: DemoWorkspaceDataSource) { self.budget = dataSource.budget; self.dataSource = dataSource; commandRepository = dataSource; applicationServices = BudgetApplicationServices(repository: dataSource) }
@@ -752,6 +768,12 @@ final class BudgetWorkspaceStore: ObservableObject {
               current.serverURL != serverURL || current.token != token else { return }
         current.updateCredentials(serverURL: serverURL, token: token)
         liveCredentialRevision += 1
+    }
+
+
+    func bindLiveCredentialAuthority(_ resolver: @escaping LiveWorkspaceCredentials.Resolver) {
+        guard let current = dataSource as? LiveWorkspaceDataSource else { return }
+        current.bindCredentialAuthority(resolver)
     }
 
     func usesLiveCredential(_ token: String) -> Bool {
@@ -826,7 +848,23 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func browseTransactions(_ query: APITransactionQuery) async throws -> APITransactionPage {
-        try await services().transactions.browse(query)
+        if transactionBrowseQuery == query, let transactionBrowseTask {
+            return try await transactionBrowseTask.value
+        }
+        let service = try services().transactions
+        let operationID = UUID()
+        let task = Task { try await service.browse(query) }
+        transactionBrowseQuery = query
+        transactionBrowseTask = task
+        transactionBrowseOperationID = operationID
+        defer {
+            if transactionBrowseOperationID == operationID {
+                transactionBrowseTask = nil
+                transactionBrowseQuery = nil
+                transactionBrowseOperationID = nil
+            }
+        }
+        return try await task.value
     }
 
     func createTransfer(_ operation: TransferMoneyOperation) async throws {
@@ -1091,7 +1129,10 @@ struct BudgetWorkspaceView: View {
         .id(activeTab)
         .tint(Theme.accent)
         .overlay { if store.isLoading { ProgressView().padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
-        .task(id: session.token) {
+        .task(id: session.token) { [session] in
+            store.bindLiveCredentialAuthority { forceRefresh in
+                return try await session.currentLiveCredentials(forceRefresh: forceRefresh, caller: "workspace.request")
+            }
             if let token = session.token, let serverURL = session.serverURL {
                 store.updateLiveCredentials(serverURL: serverURL, token: token)
             }
