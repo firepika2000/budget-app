@@ -3,6 +3,9 @@ import SwiftUI
 import Charts
 import UniformTypeIdentifiers
 import QuickLook
+import PhotosUI
+import AVFoundation
+import UIKit
 
 enum Theme {
     static let accent = Color(red: 0.10, green: 0.40, blue: 0.36)
@@ -1973,12 +1976,25 @@ private struct TransactionAttachmentsView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let transaction: APITransaction
     @State private var attachments: [APITransactionAttachment] = []
-    @State private var importing = false
+    @State private var showingSources = false
+    @State private var importingFile = false
+    @State private var choosingPhoto = false
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showingCamera = false
     @State private var previewURL: URL?
     @State private var error: String?
-    var body: some View { Section("Attachments") { if attachments.isEmpty { Text("No attachments").foregroundStyle(.secondary) }; ForEach(attachments) { attachment in HStack { Button { Task { await open(attachment) } } label: { VStack(alignment: .leading) { Text(attachment.filename); Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file)).font(.caption).foregroundStyle(.secondary) } }; Spacer(); if store.budget.can("edit_transaction") { Button("Detach", systemImage: "trash", role: .destructive) { Task { await detach(attachment) } }.labelStyle(.iconOnly) } } }; if store.budget.can("edit_transaction"), transaction.status != "reversal", attachments.count < 20 { Button("Add Attachment", systemImage: "paperclip") { importing = true }.accessibilityIdentifier("add-attachment-action") }; Text("PDF, JPEG, PNG, or HEIC · 10 MB maximum · detached files retained 30 days").font(.caption).foregroundStyle(.secondary) }
+    var body: some View { Section("Attachments") { if attachments.isEmpty { Text("No attachments").foregroundStyle(.secondary) }; ForEach(attachments) { attachment in HStack { Button { Task { await open(attachment) } } label: { VStack(alignment: .leading) { Text(attachment.filename); Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file)).font(.caption).foregroundStyle(.secondary) } }; Spacer(); if store.budget.can("edit_transaction") { Button("Detach", systemImage: "trash", role: .destructive) { Task { await detach(attachment) } }.labelStyle(.iconOnly) } } }; if store.budget.can("edit_transaction"), transaction.status != "reversal", attachments.count < 20 { Button("Add Attachment", systemImage: "paperclip") { showingSources = true }.accessibilityIdentifier("add-attachment-action") }; Text("PDF, JPEG, PNG, or HEIC · 10 MB maximum · detached files retained 30 days").font(.caption).foregroundStyle(.secondary) }
         .task(id: store.liveCredentialRevision) { await load() }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .jpeg, .png, .heic]) { result in Task { await importFile(result) } }
+        .confirmationDialog("Add Attachment", isPresented: $showingSources, titleVisibility: .visible) {
+            Button("Take Photo", systemImage: "camera") { requestCamera() }.accessibilityIdentifier("attachment-take-photo")
+            Button("Choose Photo", systemImage: "photo.on.rectangle") { choosingPhoto = true }.accessibilityIdentifier("attachment-choose-photo")
+            Button("Choose File", systemImage: "folder") { importingFile = true }.accessibilityIdentifier("attachment-choose-file")
+            Button("Cancel", role: .cancel) {}
+        }
+        .photosPicker(isPresented: $choosingPhoto, selection: $selectedPhoto, matching: .images)
+        .onChange(of: selectedPhoto) { _, item in guard let item else { return }; Task { await importPhoto(item) } }
+        .fileImporter(isPresented: $importingFile, allowedContentTypes: [.pdf, .jpeg, .png, .heic]) { result in Task { await importFile(result) } }
+        .sheet(isPresented: $showingCamera) { AttachmentCameraPicker { image in Task { await importCameraImage(image) } } }
         .quickLookPreview($previewURL)
         .alert("Attachment error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
     }
@@ -1995,9 +2011,62 @@ private struct TransactionAttachmentsView: View {
             self.error = error.localizedDescription
         }
     }
-    private func importFile(_ result: Result<URL, Error>) async { do { let url = try result.get(); let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }; let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey]); guard (values.fileSize ?? 0) <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Attachments must be 10 MB or smaller.") }; let data = try Data(contentsOf: url, options: .mappedIfSafe); try await store.uploadTransactionAttachment(id: transaction.id, filename: url.lastPathComponent, contentType: values.contentType?.preferredMIMEType ?? "application/octet-stream", data: data); await load() } catch { self.error = error.localizedDescription } }
+    private func importFile(_ result: Result<URL, Error>) async { do { let url = try result.get(); let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }; let values = try url.resourceValues(forKeys: [.contentTypeKey]); let data = try Data(contentsOf: url, options: .mappedIfSafe); try await upload(data: data, filename: url.lastPathComponent, contentType: values.contentType?.preferredMIMEType ?? "application/octet-stream") } catch { self.error = error.localizedDescription } }
+    private func importPhoto(_ item: PhotosPickerItem) async {
+        defer { selectedPhoto = nil }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else { throw workspaceRepositoryError("The selected photo could not be read.") }
+            let type = item.supportedContentTypes.first(where: { $0.conforms(to: .heic) || $0.conforms(to: .jpeg) || $0.conforms(to: .png) }) ?? .jpeg
+            try await upload(data: data, filename: "photo-\(UUID().uuidString).\(type.preferredFilenameExtension ?? "jpg")", contentType: type.preferredMIMEType ?? "image/jpeg")
+        } catch { self.error = error.localizedDescription }
+    }
+    private func importCameraImage(_ image: UIImage) async {
+        do {
+            guard let data = image.jpegData(compressionQuality: 0.9) else { throw workspaceRepositoryError("The captured photo could not be encoded.") }
+            try await upload(data: data, filename: "camera-\(UUID().uuidString).jpg", contentType: "image/jpeg")
+        } catch { self.error = error.localizedDescription }
+    }
+    private func upload(data: Data, filename: String, contentType: String) async throws {
+        guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Attachments must be 10 MB or smaller.") }
+        try await store.uploadTransactionAttachment(id: transaction.id, filename: filename, contentType: contentType, data: data)
+        await load()
+    }
+    private func requestCamera() {
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else { error = "Camera is not available on this device."; return }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: showingCamera = true
+        case .notDetermined:
+            Task { if await AVCaptureDevice.requestAccess(for: .video) { showingCamera = true } else { error = "Camera access was denied. You can enable it in Settings or choose an existing photo or file." } }
+        case .denied, .restricted: error = "Camera access is unavailable. You can enable it in Settings or choose an existing photo or file."
+        @unknown default: error = "Camera access is unavailable. Choose an existing photo or file."
+        }
+    }
     private func open(_ attachment: APITransactionAttachment) async { do { let data = try await store.downloadTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); let directory = FileManager.default.temporaryDirectory.appending(path: "BudgetAttachmentPreview", directoryHint: .isDirectory); try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true); let url = directory.appending(path: attachment.filename); try data.write(to: url, options: .atomic); previewURL = url } catch { self.error = error.localizedDescription } }
     private func detach(_ attachment: APITransactionAttachment) async { do { try await store.detachTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); await load() } catch { self.error = error.localizedDescription } }
+}
+
+private struct AttachmentCameraPicker: UIViewControllerRepresentable {
+    let onCapture: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.mediaTypes = [UTType.image.identifier]
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let parent: AttachmentCameraPicker
+        init(parent: AttachmentCameraPicker) { self.parent = parent }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { parent.dismiss() }
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage { parent.onCapture(image) }
+            parent.dismiss()
+        }
+    }
 }
 
 private struct LiveAccountsView: View {

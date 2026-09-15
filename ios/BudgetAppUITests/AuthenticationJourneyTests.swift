@@ -508,6 +508,24 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(matchingRows.count, 2, "duplication must refresh the canonical Activity browser with one additional posted row")
     }
 
+    func testProductionAttachmentSourceChooserOffersCameraPhotosAndFiles() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["transaction-row-t1"].waitForExistence(timeout: 5))
+        app.buttons["transaction-row-t1"].tap()
+        XCTAssertTrue(app.navigationBars["Transaction"].waitForExistence(timeout: 5))
+        app.buttons["add-attachment-action"].tap()
+
+        XCTAssertTrue(app.buttons.matching(identifier: "attachment-take-photo").firstMatch.waitForExistence(timeout: 5))
+        let choosePhoto = app.buttons.matching(identifier: "attachment-choose-photo").firstMatch
+        XCTAssertTrue(choosePhoto.exists)
+        XCTAssertTrue(app.buttons.matching(identifier: "attachment-choose-file").firstMatch.exists)
+        choosePhoto.tap()
+        XCTAssertFalse(choosePhoto.exists, "choosing Photos must dismiss the source dialog and present the native picker")
+    }
+
     func testProductionTransactionDetailMakesRecurringThenCreatesAuditableReversal() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=activity"]

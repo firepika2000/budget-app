@@ -380,6 +380,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Budget App";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Budget App uses the camera only when you choose to photograph a transaction attachment.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Budget App connects to your self-hosted budget server on the local network.";
@@ -468,6 +469,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Budget App";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Budget App uses the camera only when you choose to photograph a transaction attachment.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Budget App connects to your self-hosted budget server on the local network.";
