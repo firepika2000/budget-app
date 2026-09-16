@@ -1659,12 +1659,14 @@ struct BudgetWorkspaceView: View {
 
 private struct WorkspaceProfileView: View {
     @EnvironmentObject private var session: AppSession
+    @EnvironmentObject private var appearance: AppearancePreference
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var store: BudgetWorkspaceStore
     let startOnboarding: () -> Void
     @State private var showHousehold = false
     @State private var showConnection = false
     @State private var showCreate = false
+    @State private var showAppearance = false
 
     var body: some View {
         NavigationStack {
@@ -1679,6 +1681,14 @@ private struct WorkspaceProfileView: View {
                     Text("Masks monetary values throughout this budget and conceals the workspace in the app switcher.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                }
+                Section("Appearance") {
+                    Button { showAppearance = true } label: {
+                        LabeledContent("Appearance", value: appearance.selection.title)
+                    }
+                    .accessibilityIdentifier("appearance-settings-action")
+                    Text("System follows your iPhone appearance automatically. Light and Dark stay fixed on this device.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 if session.sourceMode == .liveServer {
                     Section("Budgets") {
@@ -1712,10 +1722,30 @@ private struct WorkspaceProfileView: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .navigationDestination(isPresented: $showHousehold) { LiveHouseholdView(session: session, store: store) }
             .navigationDestination(isPresented: $showConnection) { ServerConnectionSettingsView() }
+            .navigationDestination(isPresented: $showAppearance) { AppearanceSettingsView() }
             .sheet(isPresented: $showCreate) {
                 BudgetCreationView(households: session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? [])
             }
         }
+    }
+}
+
+private struct AppearanceSettingsView: View {
+    @EnvironmentObject private var appearance: AppearancePreference
+    var body: some View {
+        Form {
+            Section {
+                Picker("Appearance", selection: $appearance.selection) {
+                    ForEach(AppAppearance.allCases) { option in Text(option.title).tag(option) }
+                }
+                .pickerStyle(.inline)
+                .accessibilityIdentifier("appearance-picker")
+            } footer: {
+                Text("This presentation preference is stored on this device. It does not change your budget or Hide Amounts setting.")
+            }
+        }
+        .navigationTitle("Appearance")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

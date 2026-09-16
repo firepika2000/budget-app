@@ -32,9 +32,11 @@ struct BudgetApp: App {
     // SwiftUI may reconstruct the App value while scenes are being connected. Keep the production
     // composition root explicit so every reconstructed root receives the same process session.
     @StateObject private var session: AppSession
+    @StateObject private var appearance: AppearancePreference
 
     init() {
         _session = StateObject(wrappedValue: AppSession.production)
+        _appearance = StateObject(wrappedValue: AppearancePreference(defaults: AppearancePreference.productionDefaults))
         #if DEBUG
         RuntimeBuildIdentity.logStartup()
         #endif
@@ -44,6 +46,8 @@ struct BudgetApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(session)
+                .environmentObject(appearance)
+                .preferredColorScheme(appearance.selection.colorScheme)
         }
     }
 }

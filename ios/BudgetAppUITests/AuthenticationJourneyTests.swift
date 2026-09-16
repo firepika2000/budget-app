@@ -1,6 +1,29 @@
 import XCTest
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testAppearancePreferenceUsesProductionSettingsAndPersistsAcrossRelaunch() {
+        let suite = "BudgetAppUITests.Appearance.\(UUID().uuidString)"
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=home", "--ui-test-appearance-suite=\(suite)"]
+        app.launch()
+
+        app.buttons["profile-settings-button"].tap()
+        XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
+        app.buttons["appearance-settings-action"].tap()
+        XCTAssertTrue(app.navigationBars["Appearance"].waitForExistence(timeout: 5))
+        app.buttons["Dark"].tap()
+        XCTAssertTrue(app.buttons["Dark"].isSelected || app.buttons["Dark"].value as? String == "1")
+
+        app.terminate(); app.launch()
+        app.buttons["profile-settings-button"].tap()
+        app.buttons["appearance-settings-action"].tap()
+        XCTAssertTrue(app.navigationBars["Appearance"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Dark"].isSelected || app.buttons["Dark"].value as? String == "1")
+        app.buttons["Light"].tap()
+        app.buttons["System"].tap()
+        XCTAssertTrue(app.buttons["System"].isSelected || app.buttons["System"].value as? String == "1")
+    }
+
     func testHomeQuickActionsOpenCanonicalProductionEditors() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=home"]

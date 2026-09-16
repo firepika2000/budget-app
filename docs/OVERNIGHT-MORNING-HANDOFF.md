@@ -890,3 +890,15 @@ month-end/leap-year boundaries, promotional-rate transition, final partial payme
 bounds, and +$50/+100/+250 scenarios. Focused server and matching BudgetCore vectors PASS.
 Full backend PASS (286 collected with 11 PostgreSQL-only skips), Swift package PASS (29 BudgetCore +
 44 BudgetAPI), and `git diff --check` PASS.
+
+## Product checkpoint — application appearance
+
+Status: **ENGINEERING VERIFIED**
+
+Profile & Settings now owns an Appearance destination with System, Light, and Dark choices. System is
+the default and leaves the root color scheme unset so live iOS changes propagate; Light and Dark are
+applied once at the application composition root. The preference is intentionally device-local
+presentation state in UserDefaults—not budget data, not user-synced server state—and remains separate
+from Hide Amounts and its app-switcher shield. A native persistence test and an isolated production-
+composition XCUITest covering Dark → terminate/relaunch → Light → System PASS on Xcode 27 Beta without
+changing the human's real preference domain or erasing Simulator data. No migration is required.
