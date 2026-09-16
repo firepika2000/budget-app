@@ -417,6 +417,34 @@ Verification:
 - full backend and native XCTest: pending final checkpoint verification;
 - no migration or mutation of Live, attachment, or Simulator data.
 
+## v0.6 checkpoint — historical Plan Performance
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+A dedicated server report now walks allocation postings, categorized transaction/split activity, and
+credit-card reserve events once to produce exact monthly Plan observations: assigned, actual spending,
+carried and ending Available, overspending, and Unassigned. Move Money nets to zero new assignment;
+refunds reduce spending; card reserve movement remains visible as category activity but is excluded
+from spending so a funded card purchase is never counted twice. Historical points reconcile to the
+canonical current-month summary at the same boundary.
+
+Authorization scope is applied before aggregation. Restricted members receive only visible account
+and category effects, and household Unassigned remains zero rather than leaking owner cash or hidden
+allocation postings. The production Insights screen renders an accessible assigned-versus-spent
+history chart with exact monthly values and an explicit empty state. Transaction-only Insights filters
+hide the history rather than implying unsupported filtered planning semantics. Demo supplies the same
+report DTO to the same production view.
+
+Verification so far: focused analytics PASS (29 tests); Swift package PASS (27 BudgetCore + 38
+BudgetAPI); Xcode 27 Beta production build on the preserved iPhone 17 Pro Max / iOS 27 simulator PASS.
+Focused native composition and broad checkpoint suites remain pending. No migration or persisted-data
+mutation was introduced.
+
+One-, five-, and eleven-year disposable Plan histories at ten categorized entries per month remain
+monthly and bounded below 50 KB with a constant query-count guard of 20 statements. SQLite endpoint
+test calls on this host were approximately 0.03 s, 0.07 s, and 0.12 s respectively. Focused native
+Demo/live contract verification also passes.
+
 ## v0.6 checkpoint — Debt Insights hardening
 
 Status: **ENGINEERING VERIFIED — commit/push pending**

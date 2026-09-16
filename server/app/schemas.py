@@ -744,6 +744,25 @@ class DebtReportResponse(BaseModel):
     accounts: list[DebtAccount]
 
 
+class PlanPerformancePoint(BaseModel):
+    period_start: date
+    period_end: date
+    assigned_minor: int
+    activity_minor: int
+    spending_minor: int
+    carried_available_minor: int
+    available_minor: int
+    overspent_minor: int
+    ready_to_assign_minor: int
+
+
+class PlanPerformanceReportResponse(BaseModel):
+    start_date: date
+    end_date: date
+    currency_code: str
+    points: list[PlanPerformancePoint]
+
+
 class TransferCreate(BaseModel):
     source_account_id: str
     destination_account_id: str

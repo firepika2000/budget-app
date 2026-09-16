@@ -885,6 +885,36 @@ public struct APIDebtReport: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIPlanPerformancePoint: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { periodStart }
+    public let periodStart: String
+    public let periodEnd: String
+    public let assignedMinor: Int64
+    public let activityMinor: Int64
+    public let spendingMinor: Int64
+    public let carriedAvailableMinor: Int64
+    public let availableMinor: Int64
+    public let overspentMinor: Int64
+    public let readyToAssignMinor: Int64
+    enum CodingKeys: String, CodingKey {
+        case periodStart = "period_start", periodEnd = "period_end"
+        case assignedMinor = "assigned_minor", activityMinor = "activity_minor", spendingMinor = "spending_minor"
+        case carriedAvailableMinor = "carried_available_minor", availableMinor = "available_minor"
+        case overspentMinor = "overspent_minor", readyToAssignMinor = "ready_to_assign_minor"
+    }
+}
+
+public struct APIPlanPerformanceReport: Decodable, Equatable, Sendable {
+    public let startDate: String
+    public let endDate: String
+    public let currencyCode: String
+    public let points: [APIPlanPerformancePoint]
+    enum CodingKeys: String, CodingKey {
+        case points
+        case startDate = "start_date", endDate = "end_date", currencyCode = "currency_code"
+    }
+}
+
 public struct APIForecastOccurrence: Identifiable, Decodable, Equatable, Sendable {
     public var id: String { "\(scheduledTransactionID)-\(occurredOn)" }
     public let scheduledTransactionID: String; public let name: String; public let occurredOn: String; public let accountID: String; public let destinationAccountID: String?; public let categoryID: String?; public let amountMinor: Int64

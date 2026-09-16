@@ -448,6 +448,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("net-worth-history-chart"))
         XCTAssertTrue(contents.contains("debt-history-chart"))
         XCTAssertTrue(contents.contains("spending-trends-chart"))
+        XCTAssertTrue(contents.contains("plan-performance-history-chart"))
         XCTAssertTrue(contents.contains("spending-trend-payee-"))
         XCTAssertTrue(contents.contains("debt-account-"))
         XCTAssertTrue(contents.contains("plan-performance-category-"))
@@ -477,6 +478,9 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(debt.accounts.allSatisfy { account in
             store.accounts.contains { $0.id == account.accountID && ["credit", "loan"].contains($0.accountType) }
         })
+        let plan = try XCTUnwrap(store.planPerformanceReport)
+        XCTAssertEqual(plan.points.last?.availableMinor, store.summary?.categories.reduce(Int64(0)) { $0 + $1.availableMinor })
+        XCTAssertEqual(plan.points.last?.readyToAssignMinor, store.summary?.readyToAssignMinor)
     }
 
     @MainActor

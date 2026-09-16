@@ -687,6 +687,149 @@ def test_debt_long_history_is_monthly_exact_and_response_bounded(
     assert len(statements) <= 15
 
 
+def test_plan_performance_history_reconciles_assignments_activity_rollover_and_card_reserve(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    dining = add_category(client, owner_token, budget["id"], "Food", "Dining")
+    card = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Card", "account_type": "credit"},
+    ).json()
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100000,
+           occurred_on="2026-06-30")
+    for category, amount in ((groceries, 30000), (dining, 10000)):
+        assigned = client.put(
+            f"/api/v1/budgets/{budget['id']}/categories/{category['id']}/assignment",
+            headers=auth(owner_token), json={"month": "2026-07-01", "assigned_minor": amount},
+        )
+        assert assigned.status_code == 200, assigned.text
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=-12000,
+           occurred_on="2026-07-15", splits=[
+               {"category_id": groceries["id"], "amount_minor": -8000},
+               {"category_id": dining["id"], "amount_minor": -4000},
+           ])
+    moved = client.post(
+        f"/api/v1/budgets/{budget['id']}/allocation-transfers", headers=auth(owner_token),
+        json={"source_category_id": groceries["id"], "destination_category_id": dining["id"],
+              "amount_minor": 5000, "occurred_on": "2026-08-01", "expected_allocation_version": 2},
+    )
+    assert moved.status_code == 201, moved.text
+    record(client, owner_token, budget["id"], account_id=card["id"], category_id=dining["id"],
+           amount_minor=-4000, occurred_on="2026-08-02")
+    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=groceries["id"],
+           amount_minor=2000, occurred_on="2026-08-03")
+
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/plan-performance"
+        "?start_date=2026-07-01&end_date=2026-08-31", headers=auth(owner_token),
+    )
+    assert response.status_code == 200, response.text
+    july, august = response.json()["points"]
+    assert july == {
+        "period_start": "2026-07-01", "period_end": "2026-07-31",
+        "assigned_minor": 40000, "activity_minor": -12000, "spending_minor": 12000,
+        "carried_available_minor": 0, "available_minor": 28000,
+        "overspent_minor": 0, "ready_to_assign_minor": 60000,
+    }
+    assert august["assigned_minor"] == 0  # Move Money nets to zero; it is not new funding.
+    assert august["carried_available_minor"] == 28000
+    assert august["activity_minor"] == 2000  # -4,000 spending + 4,000 reserve + 2,000 refund.
+    assert august["spending_minor"] == 2000  # Purchase less refund; reserve is not double-counted.
+    assert august["available_minor"] == 30000
+    assert august["ready_to_assign_minor"] == 60000
+    current = client.get(
+        f"/api/v1/budgets/{budget['id']}/months/2026-08-01", headers=auth(owner_token),
+    ).json()
+    assert current["ready_to_assign_minor"] == august["ready_to_assign_minor"]
+    assert current["total_assigned_minor"] == august["assigned_minor"]
+    assert sum(row["activity_minor"] for row in current["categories"]) == august["activity_minor"]
+    assert sum(row["available_minor"] for row in current["categories"]) == august["available_minor"]
+
+
+def test_plan_performance_restricted_scope_cannot_leak_hidden_plan_values(
+    client, owner_token, session_factory
+):
+    from .test_delegated_access import add_child, configure_child
+
+    budget = create_budget(client, owner_token, session_factory)
+    checking, hidden = create_budget_structure(client, owner_token, budget["id"])
+    visible = add_category(client, owner_token, budget["id"], "Delegated", "Allowance")
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=500000,
+           occurred_on="2026-08-31")
+    client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{hidden['id']}/assignment",
+        headers=auth(owner_token), json={"month": "2026-09-01", "assigned_minor": 100000},
+    )
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, checking["id"], visible["id"])
+    expanded = client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token),
+        json={"capabilities": ["view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports"],
+              "restrict_accounts": True, "account_ids": [checking["id"]],
+              "restrict_categories": True, "category_ids": [visible["id"]]},
+    )
+    assert expanded.status_code == 200
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/plan-performance"
+        "?start_date=2026-09-01&end_date=2026-09-30", headers=auth(child_token),
+    )
+    assert response.status_code == 200, response.text
+    point = response.json()["points"][0]
+    assert point["ready_to_assign_minor"] == 0
+    assert point["assigned_minor"] == 0
+    assert point["available_minor"] == 0
+    assert hidden["id"] not in response.text and "100000" not in response.text
+
+
+@pytest.mark.parametrize("month_count", [12, 60, 132])
+def test_plan_performance_long_history_is_monthly_bounded_and_constant_query_count(
+    client, owner_token, session_factory, month_count
+):
+    from datetime import date
+    import json
+    from sqlalchemy import event, select
+    from app.models import Transaction, User
+
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    with session_factory() as db:
+        owner_id = db.scalar(select(User.id).where(User.email == "owner@example.com"))
+        rows = []
+        for month_index in range(month_count):
+            year = 2016 + month_index // 12
+            month = month_index % 12 + 1
+            rows.extend(Transaction(
+                budget_id=budget["id"], account_id=account["id"], category_id=category["id"],
+                amount_minor=-100, occurred_on=date(year, month, day), created_by_user_id=owner_id,
+            ) for day in range(1, 11))
+        db.add_all(rows)
+        db.commit()
+    end_year = 2016 + (month_count - 1) // 12
+    end_month = (month_count - 1) % 12 + 1
+    statements = []
+    engine = session_factory.kw["bind"]
+    def capture(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        response = client.get(
+            f"/api/v1/budgets/{budget['id']}/reports/plan-performance"
+            f"?start_date=2016-01-01&end_date={end_year:04d}-{end_month:02d}-28",
+            headers=auth(owner_token),
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["points"]) == month_count
+    assert all(point["spending_minor"] == 1000 for point in body["points"])
+    assert body["points"][-1]["available_minor"] == -(month_count * 1000)
+    assert len(json.dumps(body)) < 50_000
+    assert len(statements) <= 20
+
+
 def test_net_worth_rejects_hidden_account_filter_and_never_aggregates_it(
     client, owner_token, session_factory
 ):

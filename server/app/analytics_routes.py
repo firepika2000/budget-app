@@ -12,8 +12,8 @@ from .access import has_capability, is_household_owner, visible_resource_ids
 from .budgeting_routes import require_budget_capability
 from .database import get_db
 from .dependencies import get_current_user
-from .models import Account, Category, CategoryGroup, Membership, Transaction, User
-from .schemas import DebtReportResponse, IncomeSpendingReportResponse, NetWorthReportResponse, SpendingReportResponse, SpendingTrendsReportResponse
+from .models import Account, AllocationOperation, AllocationPosting, Category, CategoryGroup, CreditCardReserveEvent, Membership, Transaction, User
+from .schemas import DebtReportResponse, IncomeSpendingReportResponse, NetWorthReportResponse, PlanPerformanceReportResponse, SpendingReportResponse, SpendingTrendsReportResponse
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/reports")
@@ -487,3 +487,114 @@ def debt_report(
         "points": points,
         "accounts": rows,
     }
+
+
+@router.get("/plan-performance", response_model=PlanPerformanceReportResponse)
+def plan_performance_report(
+    budget_id: str,
+    start_date: date,
+    end_date: date,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return historical planning observations from allocation, activity, and reserve ledgers."""
+    if start_date > end_date:
+        raise HTTPException(status_code=422, detail="Report start date must not follow end date")
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    category_query = select(Category.id).where(Category.budget_id == budget_id)
+    if visible_categories is not None:
+        category_query = category_query.where(Category.id.in_(visible_categories))
+    category_ids = set(db.scalars(category_query))
+    account_query = select(Account).where(Account.budget_id == budget_id)
+    if visible_accounts is not None:
+        account_query = account_query.where(Account.id.in_(visible_accounts))
+    accounts = list(db.scalars(account_query))
+    account_ids = {item.id for item in accounts}
+    cash_account_ids = {item.id for item in accounts if item.is_on_budget and item.account_type in ("checking", "savings", "cash")}
+
+    allocation_rows = db.execute(
+        select(AllocationPosting, AllocationOperation)
+        .join(AllocationOperation, AllocationOperation.id == AllocationPosting.operation_id)
+        .where(AllocationPosting.budget_id == budget_id, AllocationOperation.occurred_on <= end_date)
+        .order_by(AllocationOperation.occurred_on, AllocationPosting.id)
+    ).all()
+    transactions = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.budget_id == budget_id,
+        Transaction.account_id.in_(account_ids),
+        Transaction.occurred_on <= end_date,
+    ).order_by(Transaction.occurred_on, Transaction.created_at, Transaction.id))) if account_ids else []
+    reserve_events = list(db.scalars(select(CreditCardReserveEvent).where(
+        CreditCardReserveEvent.budget_id == budget_id,
+        CreditCardReserveEvent.payment_category_id.in_(category_ids),
+        CreditCardReserveEvent.occurred_on <= end_date,
+    ).order_by(CreditCardReserveEvent.occurred_on, CreditCardReserveEvent.id))) if category_ids else []
+
+    category_balances = {value: 0 for value in category_ids}
+    ready_postings = 0
+    unassigned_cash = 0
+
+    def apply_allocation(posting: AllocationPosting) -> None:
+        nonlocal ready_postings
+        if posting.bucket == "ready_to_assign":
+            if visible_categories is None:
+                ready_postings += posting.amount_minor
+        elif posting.category_id in category_balances:
+            category_balances[posting.category_id] += posting.amount_minor
+
+    def apply_transaction(transaction: Transaction) -> int:
+        nonlocal unassigned_cash
+        if transaction.account_id in cash_account_ids and transaction.transfer_id is None and transaction.category_id is None and not transaction.splits:
+            unassigned_cash += transaction.amount_minor
+        activity = 0
+        if transaction.category_id in category_balances:
+            category_balances[transaction.category_id] += transaction.amount_minor
+            activity += transaction.amount_minor
+        for split in transaction.splits:
+            if split.category_id in category_balances:
+                category_balances[split.category_id] += split.amount_minor
+                activity += split.amount_minor
+        return activity
+
+    def apply_reserve(event: CreditCardReserveEvent) -> int:
+        if event.payment_category_id in category_balances:
+            category_balances[event.payment_category_id] += event.amount_minor
+            return event.amount_minor
+        return 0
+
+    allocation_index = transaction_index = reserve_index = 0
+    while allocation_index < len(allocation_rows) and allocation_rows[allocation_index][1].occurred_on < start_date:
+        apply_allocation(allocation_rows[allocation_index][0]); allocation_index += 1
+    while transaction_index < len(transactions) and transactions[transaction_index].occurred_on < start_date:
+        apply_transaction(transactions[transaction_index]); transaction_index += 1
+    while reserve_index < len(reserve_events) and reserve_events[reserve_index].occurred_on < start_date:
+        apply_reserve(reserve_events[reserve_index]); reserve_index += 1
+
+    points = []
+    cursor = date(start_date.year, start_date.month, 1)
+    while cursor <= end_date:
+        period_start, period_end = max(cursor, start_date), min(_month_end(cursor), end_date)
+        carried = sum(category_balances.values())
+        assigned = activity = transaction_activity = 0
+        while allocation_index < len(allocation_rows) and allocation_rows[allocation_index][1].occurred_on <= period_end:
+            posting, _operation = allocation_rows[allocation_index]
+            if posting.category_id in category_balances:
+                assigned += posting.amount_minor
+            apply_allocation(posting); allocation_index += 1
+        while transaction_index < len(transactions) and transactions[transaction_index].occurred_on <= period_end:
+            value = apply_transaction(transactions[transaction_index])
+            activity += value; transaction_activity += value; transaction_index += 1
+        while reserve_index < len(reserve_events) and reserve_events[reserve_index].occurred_on <= period_end:
+            activity += apply_reserve(reserve_events[reserve_index]); reserve_index += 1
+        available = sum(category_balances.values())
+        points.append({
+            "period_start": period_start, "period_end": period_end,
+            "assigned_minor": assigned, "activity_minor": activity,
+            "spending_minor": -transaction_activity,
+            "carried_available_minor": carried, "available_minor": available,
+            "overspent_minor": sum(max(-value, 0) for value in category_balances.values()),
+            "ready_to_assign_minor": 0 if visible_categories is not None else unassigned_cash + ready_postings,
+        })
+        cursor = _month_end(cursor) + timedelta(days=1)
+    return {"start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code, "points": points}

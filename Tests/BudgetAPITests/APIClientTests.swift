@@ -637,6 +637,22 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(report.accounts.first?.accountID, "card")
     }
 
+    func testPlanPerformanceReportDecodesExactHistoricalObservations() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/reports/plan-performance")
+            let response = Data(#"{"start_date":"2026-07-01","end_date":"2026-08-31","currency_code":"USD","points":[{"period_start":"2026-07-01","period_end":"2026-07-31","assigned_minor":40000,"activity_minor":-12000,"spending_minor":12000,"carried_available_minor":0,"available_minor":28000,"overspent_minor":0,"ready_to_assign_minor":60000}]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let report = try await client.planPerformanceReport(budgetID: "b1", startDate: "2026-07-01", endDate: "2026-08-31", token: "secret")
+        XCTAssertEqual(report.points.first?.assignedMinor, 40_000)
+        XCTAssertEqual(report.points.first?.spendingMinor, 12_000)
+        XCTAssertEqual(report.points.first?.readyToAssignMinor, 60_000)
+    }
+
     func testStructuredConflictDetailSurfacesActionableMessage() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
