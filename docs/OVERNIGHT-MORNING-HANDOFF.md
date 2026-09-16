@@ -251,3 +251,20 @@ Verification:
   Demo exact report reconciliation and the production chart-path guard;
 - `git diff --check`: PASS;
 - no migration and no mutation of Live, attachment, or Simulator data.
+
+## v0.6 checkpoint — report filter security
+
+Status: **ENGINEERING VERIFIED**
+
+Report filters now validate requested accounts and categories against the current budget even for an
+otherwise unrestricted owner, closing a cross-budget filter ambiguity. Restricted members cannot use
+member filters to probe another household actor, and category-group filters are validated against the
+caller's visible category scope before aggregation. Hidden, cross-budget, and nonexistent resource
+probes consistently return the existing privacy-preserving not-found response.
+
+Verification:
+
+- focused analytics: PASS (10 tests);
+- full backend: PASS (204 passed, 10 PostgreSQL-only skipped);
+- `git diff --check`: PASS;
+- no schema migration and no mutation of Live, attachment, or Simulator data.

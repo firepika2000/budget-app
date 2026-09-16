@@ -278,3 +278,47 @@ def test_net_worth_rejects_hidden_account_filter_and_never_aggregates_it(
     assert response.json()["net_worth_minor"] == 0
     forbidden = client.get(f"{url}&account_id={hidden['id']}", headers=auth(child_token))
     assert forbidden.status_code == 404
+
+
+def test_reports_reject_cross_budget_resource_filters(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    create_budget_structure(client, owner_token, budget["id"])
+    other = create_budget(client, owner_token, session_factory)
+    other_account, other_category = create_budget_structure(client, owner_token, other["id"])
+    base = f"/api/v1/budgets/{budget['id']}/reports"
+    period = "start_date=2026-09-01&end_date=2026-09-30"
+
+    for path in (
+        f"spending?{period}&account_id={other_account['id']}",
+        f"spending?{period}&category_id={other_category['id']}",
+        f"income-spending?{period}&account_id={other_account['id']}",
+        f"net-worth?{period}&account_id={other_account['id']}",
+    ):
+        response = client.get(f"{base}/{path}", headers=auth(owner_token))
+        assert response.status_code == 404, (path, response.text)
+
+
+def test_restricted_report_member_and_group_filters_do_not_disclose_hidden_scope(
+    client, owner_token, session_factory
+):
+    from .test_delegated_access import add_child, configure_child
+
+    budget = create_budget(client, owner_token, session_factory)
+    checking, hidden_category = create_budget_structure(client, owner_token, budget["id"])
+    visible_category = add_category(client, owner_token, budget["id"], "Delegated", "Allowance")
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, checking["id"], visible_category["id"])
+    base = f"/api/v1/budgets/{budget['id']}/reports/spending?start_date=2026-09-01&end_date=2026-09-30"
+
+    # A restricted member can filter their own activity, but cannot probe another actor or a
+    # group that contains only hidden categories. Both hidden and nonexistent probes are identical.
+    assert client.get(f"{base}&member_id={child_id}", headers=auth(child_token)).status_code == 200
+    from app.models import User
+    from sqlalchemy import select
+    with session_factory() as db:
+        owner_id = db.scalar(select(User.id).where(User.email == "owner@example.com"))
+    hidden_member = client.get(f"{base}&member_id={owner_id}", headers=auth(child_token))
+    hidden_group = client.get(f"{base}&category_group=Everyday", headers=auth(child_token))
+    assert hidden_member.status_code == 404
+    assert hidden_group.status_code == 404
+    assert hidden_category["id"] not in hidden_group.text

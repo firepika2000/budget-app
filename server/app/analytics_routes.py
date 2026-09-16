@@ -8,11 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from .access import visible_resource_ids
+from .access import has_capability, is_household_owner, visible_resource_ids
 from .budgeting_routes import require_budget_capability
 from .database import get_db
 from .dependencies import get_current_user
-from .models import Account, Category, CategoryGroup, Transaction, User
+from .models import Account, Category, CategoryGroup, Membership, Transaction, User
 from .schemas import IncomeSpendingReportResponse, NetWorthReportResponse, SpendingReportResponse
 
 
@@ -56,10 +56,24 @@ def report_transactions(
     budget = require_budget_capability(db, user, budget_id, "view_reports")
     visible_accounts = visible_resource_ids(db, user, budget, "account")
     visible_categories = visible_resource_ids(db, user, budget, "category")
+    budget_account_ids = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id)))
+    budget_category_ids = set(db.scalars(select(Category.id).where(Category.budget_id == budget_id)))
+    if any(value not in budget_account_ids for value in account_ids):
+        raise HTTPException(status_code=404, detail="Report resource not found")
+    if any(value not in budget_category_ids for value in category_ids):
+        raise HTTPException(status_code=404, detail="Report resource not found")
     if visible_accounts is not None and any(value not in visible_accounts for value in account_ids):
         raise HTTPException(status_code=404, detail="Report resource not found")
     if visible_categories is not None and any(value not in visible_categories for value in category_ids):
         raise HTTPException(status_code=404, detail="Report resource not found")
+    household_member_ids = set(db.scalars(select(Membership.user_id).where(
+        Membership.household_id == budget.household_id, Membership.is_active.is_(True)
+    )))
+    if any(value not in household_member_ids for value in member_ids):
+        raise HTTPException(status_code=404, detail="Report resource not found")
+    if member_ids and not is_household_owner(db, user, budget.household_id) and not has_capability(db, user, budget, "manage_allowances"):
+        if any(value != user.id for value in member_ids):
+            raise HTTPException(status_code=404, detail="Report resource not found")
     query = select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.budget_id == budget_id,
         Transaction.occurred_on >= start_date,
@@ -75,6 +89,13 @@ def report_transactions(
     group_category_ids = set(db.scalars(select(Category.id).join(CategoryGroup, CategoryGroup.id == Category.group_id).where(
         Category.budget_id == budget_id, CategoryGroup.name.in_(category_groups)
     ))) if category_groups else set()
+    if category_groups:
+        visible_group_names = set(db.scalars(select(CategoryGroup.name).join(Category, Category.group_id == CategoryGroup.id).where(
+            Category.budget_id == budget_id,
+            *([] if visible_categories is None else [Category.id.in_(visible_categories)]),
+        )))
+        if any(value not in visible_group_names for value in category_groups):
+            raise HTTPException(status_code=404, detail="Report resource not found")
     tracking_ids = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id, Account.is_on_budget.is_(False))))
     normalized_payees = {value.casefold() for value in payees}
     transactions = [item for item in transactions if (
@@ -221,6 +242,9 @@ def net_worth_report(
     budget = require_budget_capability(db, user, budget_id, "view_reports")
     require_budget_capability(db, user, budget_id, "view_account_balances")
     visible_accounts = visible_resource_ids(db, user, budget, "account")
+    budget_account_ids = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id)))
+    if any(value not in budget_account_ids for value in account_id):
+        raise HTTPException(status_code=404, detail="Report resource not found")
     if visible_accounts is not None and any(value not in visible_accounts for value in account_id):
         raise HTTPException(status_code=404, detail="Report resource not found")
     accounts_query = select(Account).where(Account.budget_id == budget_id)
