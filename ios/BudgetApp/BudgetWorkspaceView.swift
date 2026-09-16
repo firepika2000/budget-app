@@ -245,7 +245,8 @@ struct WorkspaceSnapshot {
 struct WorkspaceReportQuery {
     let start: Date; let end: Date; let accountID: String; let categoryID: String
     let categoryGroup: String; let payee: String; let memberID: String
-    let transactionType: String; let cleared: String; let includeTracking: Bool
+    let transactionType: String; let cleared: String; let flag: String; let tag: String
+    let includeTracking: Bool
 }
 
 @MainActor
@@ -365,7 +366,9 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             && (report.categoryGroup.isEmpty || item.categoryIDs.contains { id in visibleCategories.first(where: { $0.id == id })?.group == report.categoryGroup })
             && (report.payee.isEmpty || item.payee == report.payee)
             && (report.memberID.isEmpty || item.member.rawValue.lowercased() == report.memberID)
-            && (report.cleared == "all" || item.cleared == (report.cleared == "cleared"))
+            && (report.cleared == "all" || (report.cleared == "reconciled" ? item.reconciled : item.cleared == (report.cleared == "cleared")))
+            && (report.flag.isEmpty || item.flag == report.flag)
+            && (report.tag.isEmpty || item.tags.contains(report.tag.lowercased()))
             && (report.transactionType.isEmpty
                 || (report.transactionType == "transfer" && item.transferID != nil)
                 || (report.transactionType == "income" && item.transferID == nil && item.amount > 0 && item.categoryIDs.isEmpty)
@@ -464,7 +467,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage {
-        let report = WorkspaceReportQuery(start: .distantPast, end: .distantFuture, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", includeTracking: true)
+        let report = WorkspaceReportQuery(start: .distantPast, end: .distantFuture, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", includeTracking: true)
         var rows = try await snapshot(planMonth: Date(), report: report).transactions
         let text = query.search.trimmingCharacters(in: .whitespacesAndNewlines)
         rows = rows.filter { item in
@@ -809,8 +812,10 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         async let loadedCategories = client.categories(budgetID: budget.id, token: token)
         async let loadedGroups = client.categoryGroups(budgetID: budget.id, token: token)
         async let loadedSummary = client.monthSummary(budgetID: budget.id, month: String(month), token: token)
-        async let loadedSpending = client.spendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], categoryIDs: report.categoryID.isEmpty ? [] : [report.categoryID], categoryGroups: report.categoryGroup.isEmpty ? [] : [report.categoryGroup], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], transactionType: report.transactionType.isEmpty ? nil : report.transactionType, cleared: report.cleared == "all" ? nil : report.cleared == "cleared", includeTracking: report.includeTracking, token: token)
-        async let loadedIncome = client.incomeSpendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], cleared: report.cleared == "all" ? nil : report.cleared == "cleared", includeTracking: report.includeTracking, token: token)
+        let cleared = report.cleared == "all" || report.cleared == "reconciled" ? nil : report.cleared == "cleared"
+        let reconciled = report.cleared == "reconciled" ? true : nil
+        async let loadedSpending = client.spendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], categoryIDs: report.categoryID.isEmpty ? [] : [report.categoryID], categoryGroups: report.categoryGroup.isEmpty ? [] : [report.categoryGroup], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], transactionType: report.transactionType.isEmpty ? nil : report.transactionType, cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token)
+        async let loadedIncome = client.incomeSpendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token)
         async let loadedNetWorth: APINetWorthReport? = budget.can("view_account_balances") ? client.netWorthReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], includeTracking: report.includeTracking, token: token) : nil
         let (accounts, transactions, categories, groups, summary, spending, income, netWorth) = try await (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome, loadedNetWorth)
         let allocationOperations = budget.can("view_allocation_history") ? (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] : []
@@ -860,6 +865,8 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var reportMemberID = ""
     @Published var reportTransactionType = ""
     @Published var reportCleared = "all"
+    @Published var reportFlag = ""
+    @Published var reportTag = ""
     @Published var includeTrackingAccounts = false
     @Published var planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date()))!
     @Published var isLoading = false
@@ -913,7 +920,7 @@ final class BudgetWorkspaceStore: ObservableObject {
         do {
             if let dataSource {
                 let range = reportRange()
-                let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, includeTracking: includeTrackingAccounts)
+                let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, flag: reportFlag, tag: reportTag, includeTracking: includeTrackingAccounts)
                 let value = try await dataSource.snapshot(planMonth: planMonth, report: query)
                 accounts = value.accounts; accountBalances = value.accountBalances; categories = value.categories; groups = value.groups; transactions = value.transactions; payees = value.payees
                 summary = value.summary; requests = value.requests; allowances = value.allowances; spendingReport = value.spending
@@ -2555,11 +2562,11 @@ private struct LiveInsightsView: View {
                 Section { ContentUnavailableView("No spending in this range", systemImage: "chart.pie", description: Text("Try a wider date range or different filters.")) }
             }
             if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportTransactionType.isEmpty, let report = store.incomeReport { IncomeSpendingTrendsView(report: report) }
-            if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportPayee.isEmpty, store.reportMemberID.isEmpty, store.reportTransactionType.isEmpty, store.reportCleared == "all", let report = store.netWorthReport { NetWorthReportView(report: report) }
+            if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportPayee.isEmpty, store.reportMemberID.isEmpty, store.reportTransactionType.isEmpty, store.reportCleared == "all", store.reportFlag.isEmpty, store.reportTag.isEmpty, let report = store.netWorthReport { NetWorthReportView(report: report) }
             if let summary = store.summary { BudgetPerformanceInsightsView(summary: summary) }
         }.navigationTitle("Insights").toolbar { Button { showFilters = true } label: { Image(systemName: hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") } }.sheet(isPresented: $showFilters) { filters }.navigationDestination(item: $selectedSlice) { slice in if slice.mode == .group { LiveReportGroupView(group: slice.name) } else if let category = store.spendingReport?.categories.first(where: { $0.categoryID == slice.id }) { LiveReportCategoryView(category: category) } }
     }
-    private var hasFilters: Bool { !store.reportAccountID.isEmpty || !store.reportCategoryID.isEmpty || !store.reportCategoryGroup.isEmpty || !store.reportPayee.isEmpty || !store.reportMemberID.isEmpty || !store.reportTransactionType.isEmpty || store.reportCleared != "all" || store.includeTrackingAccounts }
+    private var hasFilters: Bool { !store.reportAccountID.isEmpty || !store.reportCategoryID.isEmpty || !store.reportCategoryGroup.isEmpty || !store.reportPayee.isEmpty || !store.reportMemberID.isEmpty || !store.reportTransactionType.isEmpty || store.reportCleared != "all" || !store.reportFlag.isEmpty || !store.reportTag.isEmpty || store.includeTrackingAccounts }
     private var filters: some View { NavigationStack { Form {
         Picker("Account", selection: $store.reportAccountID) { Text("All accounts").tag(""); ForEach(store.accounts) { Text($0.name).tag($0.id) } }
         Picker("Category", selection: $store.reportCategoryID) { Text("All categories").tag(""); ForEach(store.categories.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } }
@@ -2568,9 +2575,11 @@ private struct LiveInsightsView: View {
         if !store.reportPayee.isEmpty { Button("Clear Payee Filter", role: .destructive) { store.reportPayee = "" } }
         if !store.householdMembers.isEmpty { Picker("Member", selection: $store.reportMemberID) { Text("All members").tag(""); ForEach(store.householdMembers.filter(\.isActive)) { Text($0.displayName).tag($0.userID) } } }
         Picker("Type", selection: $store.reportTransactionType) { Text("All types").tag(""); Text("Spending").tag("spending"); Text("Refunds").tag("refund"); Text("Income").tag("income"); Text("Transfers").tag("transfer") }
-        Picker("Status", selection: $store.reportCleared) { Text("All statuses").tag("all"); Text("Cleared").tag("cleared"); Text("Uncleared").tag("uncleared") }
+        Picker("Status", selection: $store.reportCleared) { Text("All statuses").tag("all"); Text("Cleared").tag("cleared"); Text("Uncleared").tag("uncleared"); Text("Reconciled").tag("reconciled") }
+        TextField("Flag", text: $store.reportFlag).textInputAutocapitalization(.never)
+        TextField("Tag", text: $store.reportTag).textInputAutocapitalization(.never)
         Toggle("Include tracking accounts", isOn: $store.includeTrackingAccounts)
-    }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false; Task { await reload() } } } }.sheet(isPresented: $showReportPayeeSelector) { PayeeSearchSelectionView(title: "Filter by Payee") { store.reportPayee = $0.displayName } } } }
+    }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.reportFlag = ""; store.reportTag = ""; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false; Task { await reload() } } } }.sheet(isPresented: $showReportPayeeSelector) { PayeeSearchSelectionView(title: "Filter by Payee") { store.reportPayee = $0.displayName } } } }
     private func reload() async { await store.refresh() }
 }
 

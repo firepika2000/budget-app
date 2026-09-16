@@ -457,6 +457,9 @@ public struct APIClient {
         payees: [String] = [],
         transactionType: String? = nil,
         cleared: Bool? = nil,
+        reconciled: Bool? = nil,
+        flags: [String] = [],
+        tags: [String] = [],
         includeTracking: Bool = false,
         token: String
     ) async throws -> APISpendingReport {
@@ -468,6 +471,9 @@ public struct APIClient {
         query += payees.map { URLQueryItem(name: "payee", value: $0) }
         if let transactionType { query.append(URLQueryItem(name: "transaction_type", value: transactionType)) }
         if let cleared { query.append(URLQueryItem(name: "cleared", value: String(cleared))) }
+        if let reconciled { query.append(URLQueryItem(name: "reconciled", value: String(reconciled))) }
+        query += flags.map { URLQueryItem(name: "flag", value: $0) }
+        query += tags.map { URLQueryItem(name: "tag", value: $0) }
         if includeTracking { query.append(URLQueryItem(name: "include_tracking", value: "true")) }
         return try await send(
             path: "api/v1/budgets/\(budgetID)/reports/spending",
@@ -484,6 +490,9 @@ public struct APIClient {
         memberIDs: [String] = [],
         payees: [String] = [],
         cleared: Bool? = nil,
+        reconciled: Bool? = nil,
+        flags: [String] = [],
+        tags: [String] = [],
         includeTracking: Bool = false,
         token: String
     ) async throws -> APIIncomeSpendingReport {
@@ -492,6 +501,9 @@ public struct APIClient {
         query += memberIDs.map { URLQueryItem(name: "member_id", value: $0) }
         query += payees.map { URLQueryItem(name: "payee", value: $0) }
         if let cleared { query.append(URLQueryItem(name: "cleared", value: String(cleared))) }
+        if let reconciled { query.append(URLQueryItem(name: "reconciled", value: String(reconciled))) }
+        query += flags.map { URLQueryItem(name: "flag", value: $0) }
+        query += tags.map { URLQueryItem(name: "tag", value: $0) }
         if includeTracking { query.append(URLQueryItem(name: "include_tracking", value: "true")) }
         return try await send(
             path: "api/v1/budgets/\(budgetID)/reports/income-spending",

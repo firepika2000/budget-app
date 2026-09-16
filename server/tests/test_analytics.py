@@ -185,8 +185,12 @@ def test_report_filters_and_inclusive_custom_range(client, owner_token, session_
     checking, groceries = create_budget_structure(client, owner_token, budget["id"])
     dining = add_category(client, owner_token, budget["id"], "Fun", "Dining")
     record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100000, is_cleared=True, occurred_on="2026-09-01", payee_name="Payroll")
-    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=groceries["id"], amount_minor=-5000, is_cleared=True, occurred_on="2026-09-03", payee_name="Costco")
-    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=dining["id"], amount_minor=-3000, is_cleared=False, occurred_on="2026-09-05", payee_name="cafe")
+    grocery_transaction = record(client, owner_token, budget["id"], account_id=checking["id"], category_id=groceries["id"], amount_minor=-5000, is_cleared=True, occurred_on="2026-09-03", payee_name="Costco", flag="orange", tags=["essential", "qa"])
+    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=dining["id"], amount_minor=-3000, is_cleared=False, occurred_on="2026-09-05", payee_name="cafe", flag="blue", tags=["fun"])
+    from app.models import Transaction
+    with session_factory() as db:
+        db.get(Transaction, grocery_transaction["id"]).is_reconciled = True
+        db.commit()
 
     base = f"/api/v1/budgets/{budget['id']}/reports/spending"
 
@@ -206,6 +210,11 @@ def test_report_filters_and_inclusive_custom_range(client, owner_token, session_
     # Cleared-state filter.
     assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&cleared=false")[0] == {dining["id"]}
     assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&cleared=true")[0] == {groceries["id"]}
+    # Reconciled, flag, and normalized tag filters share the canonical report dataset.
+    assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&reconciled=true")[0] == {groceries["id"]}
+    assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&flag=BLUE")[0] == {dining["id"]}
+    assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&tag=ESSENTIAL")[0] == {groceries["id"]}
+    assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&flag=orange&tag=fun")[0] == set()
     # Category-group filter.
     assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&category_group=Fun")[0] == {dining["id"]}
     # Combined filters intersect (Fun group + cleared true has no rows).

@@ -544,13 +544,16 @@ final class APIClientTests: XCTestCase {
             let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
             XCTAssertEqual(Set(components?.queryItems ?? []), Set([
                 URLQueryItem(name: "start_date", value: "2026-08-06"),
-                URLQueryItem(name: "end_date", value: "2026-09-04")
+                URLQueryItem(name: "end_date", value: "2026-09-04"),
+                URLQueryItem(name: "reconciled", value: "true"),
+                URLQueryItem(name: "flag", value: "orange"),
+                URLQueryItem(name: "tag", value: "essential")
             ]))
             let response = Data(#"{"start_date":"2026-08-06","end_date":"2026-09-04","currency_code":"USD","total_spending_minor":3182,"categories":[{"category_id":"dining","category_name":"Dining Out","category_group":"Food","spending_minor":3182,"transaction_ids":["t1"]}]}"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
-        let report = try await client.spendingReport(budgetID: "b1", startDate: "2026-08-06", endDate: "2026-09-04", token: "secret")
+        let report = try await client.spendingReport(budgetID: "b1", startDate: "2026-08-06", endDate: "2026-09-04", reconciled: true, flags: ["orange"], tags: ["essential"], token: "secret")
         XCTAssertEqual(report.totalSpendingMinor, 3182)
         XCTAssertEqual(report.categories.first?.transactionIDs, ["t1"])
     }

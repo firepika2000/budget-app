@@ -452,6 +452,28 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testInsightsMetadataFiltersUseSameDemoReportPathAsLive() async throws {
+        let source = DemoWorkspaceDataSource(fresh: false)
+        let baselineQuery = WorkspaceReportQuery(start: .distantPast, end: .distantFuture, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", includeTracking: true)
+        let baseline = try await source.snapshot(planMonth: Date(), report: baselineQuery)
+        let account = try XCTUnwrap(baseline.accounts.first { $0.isOnBudget && $0.accountType != "credit" })
+        let category = try XCTUnwrap(baseline.categories.first { !$0.isArchived })
+        try await source.recordTransaction(.init(accountID: account.id, categoryID: category.id, amountMinor: -4321, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Metadata filter fixture", memo: "", isCleared: false, splits: [], flag: "orange", tags: ["essential"], attachmentMetadata: []))
+
+        let query = WorkspaceReportQuery(start: .distantPast, end: .distantFuture, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "uncleared", flag: "orange", tag: "essential", includeTracking: true)
+        let filtered = try await source.snapshot(planMonth: Date(), report: query)
+        let contributing = Set(try XCTUnwrap(filtered.spending).categories.flatMap(\.transactionIDs))
+        let candidate = try XCTUnwrap(filtered.transactions.first { $0.payeeName == "Metadata filter fixture" })
+        XCTAssertTrue(contributing.contains(candidate.id))
+        for id in contributing {
+            let transaction = try XCTUnwrap(filtered.transactions.first { $0.id == id })
+            XCTAssertTrue(transaction.tags?.contains("essential") == true)
+            XCTAssertEqual(transaction.flag, "orange")
+            XCTAssertFalse(transaction.isCleared)
+        }
+    }
+
+    @MainActor
     func testDemoAllocationHistoryMatchesLiveContractShape() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

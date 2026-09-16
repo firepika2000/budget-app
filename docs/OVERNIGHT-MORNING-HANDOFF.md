@@ -8,9 +8,9 @@ tag, or release.
 
 - Current branch: `codex/v0.4.0-stabilization`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
-- Current/remote HEAD: `fd1cee46a0a88dd624cf0f0c1dbae33767ff0a62` before the next checkpoint
-- Push status: all checkpoints through interactive trend selection are pushed; the current
-  report-correctness checkpoint is pending commit/push
+- Current/remote HEAD: `89af5837bcd3` before the next checkpoint
+- Push status: all checkpoints through net-worth ledger correctness are pushed; the current filter
+  parity checkpoint is pending commit/push
 - Human Live database at start: `0020_payee_identity_repair`
 - Human Simulator: preserved iPhone 17 Pro Max / iOS 27.0; no erase/reset/uninstall
 
@@ -348,3 +348,24 @@ Verification:
   for the launcher's intentional loopback-bind test;
 - no production-code, schema, Swift, migration, Live-data, attachment, or Simulator-data mutation;
 - `git diff --check`: pending final checkpoint.
+
+## v0.6 checkpoint — Insights metadata filter parity
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Spending and income/cash-flow reports now accept reconciled state, flag, and normalized tag filters
+in addition to their existing server-authoritative resource and transaction filters. The Swift API
+serializes those predicates explicitly, and the shared production Insights filter sheet exposes them.
+Demo applies the same query semantics. Transaction-only filters intentionally suppress the Net Worth
+section instead of implying that account balances were filtered by transaction metadata.
+
+Verification:
+
+- focused analytics: PASS (15 tests), including intersection of clearing/reconciled, flag, and tag
+  predicates;
+- full backend: PASS (208 passed, 10 PostgreSQL-only skipped);
+- Swift package: PASS (27 BudgetCore + 35 BudgetAPI);
+- native XCTest: PASS (69 tests before the added focused parity fixture); focused Demo/Live report
+  filter parity: PASS (1 test);
+- Xcode 27.0 Beta build on existing iPhone 17 Pro Max / iOS 27.0 simulator: PASS;
+- no schema migration or mutation of Live, attachment, or Simulator data.
