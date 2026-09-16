@@ -697,7 +697,7 @@ saved normally. No backend, schema, migration, Simulator data, or Live data chan
 
 ## v0.7 checkpoint — human-readable household access
 
-Status: **ENGINEERING VERIFIED — commit/push pending**
+Status: **ENGINEERING VERIFIED — `d50aa63` + `3b60b5c`, pushed**
 
 The owner-only Household surface now opens a production member-access editor that maps the canonical
 server capability model to View Only, Limited Access, Full Access, and grouped advanced controls.
