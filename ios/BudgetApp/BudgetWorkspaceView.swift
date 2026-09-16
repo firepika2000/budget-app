@@ -8,10 +8,10 @@ import AVFoundation
 import UIKit
 
 enum Theme {
-    static let accent = Color(red: 0.10, green: 0.40, blue: 0.36)
-    static let healthy = Color(red: 0.12, green: 0.48, blue: 0.33)
-    static let attention = Color(red: 0.80, green: 0.48, blue: 0.08)
-    static let danger = Color(red: 0.74, green: 0.18, blue: 0.20)
+    static let accent = Color.teal
+    static let healthy = Color.green
+    static let attention = Color.orange
+    static let danger = Color.red
     static let projected = Color.indigo
 }
 

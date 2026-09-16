@@ -923,3 +923,8 @@ Xcode 27 Beta verification on the preserved iPhone 17 Pro Max / iOS 27 simulator
 XCTest 79/79 PASS, focused hub/report/debt progression XCUITest PASS, recorded-interest focused
 XCUITest PASS, accessibility Dynamic Type navigation coverage updated, Swift package PASS (29
 BudgetCore + 44 BudgetAPI), and `git diff --check` PASS. No backend or migration changed.
+
+The whole-app source audit found no hardcoded white/black backgrounds or text. The only fixed RGB
+values were the shared accent/healthy/attention/danger palette; those now use adaptive system teal,
+green, orange, and red while retaining labels and SF Symbols so meaning is not color-only. The focused
+Dark Mode + accessibility-size hub navigation test PASS. Hide Amounts remains orthogonal and unchanged.
