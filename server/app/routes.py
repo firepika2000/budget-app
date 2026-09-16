@@ -23,6 +23,7 @@ from .models import (
     CapabilityGrant,
     Category,
     Household,
+    HouseholdAccessEvent,
     HouseholdRole,
     Membership,
     ResourceGrant,
@@ -221,6 +222,9 @@ def upsert_grant(
         db.add(grant)
     else:
         grant.permission = body.permission
+    db.add(HouseholdAccessEvent(household_id=budget.household_id, actor_user_id=user.id,
+                                subject_user_id=body.user_id, event_type="budget_grant_updated",
+                                detail=f"{budget.name}: {body.permission}"))
     db.commit()
     db.refresh(grant)
     return grant
@@ -257,6 +261,9 @@ def revoke_grant(
         BudgetAccessProfile.budget_id == budget_id,
         BudgetAccessProfile.user_id == member_user_id,
     ))
+    db.add(HouseholdAccessEvent(household_id=budget.household_id, actor_user_id=user.id,
+                                subject_user_id=member_user_id, event_type="budget_grant_revoked",
+                                detail=budget.name))
     db.commit()
 
 
@@ -414,6 +421,9 @@ def configure_access_profile(
         for resource_type, ids in (("account", body.account_ids), ("category", body.category_ids))
         for resource_id in ids
     ])
+    db.add(HouseholdAccessEvent(household_id=budget.household_id, actor_user_id=user.id,
+                                subject_user_id=member_user_id, event_type="access_profile_updated",
+                                detail=budget.name))
     db.commit()
     db.refresh(profile)
     return access_profile_response(db, budget, member, profile)

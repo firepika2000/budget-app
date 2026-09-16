@@ -21,6 +21,43 @@ final class APIClientTests: XCTestCase {
         XCTAssertNoThrow(try APIClient(baseURL: URL(string: "http://localhost:8080")!))
     }
 
+    func testHouseholdLifecycleUsesOwnerScopedAuthenticatedRoutes() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var requests: [String] = []
+        MockURLProtocol.handler = { request in
+            requests.append("\(request.httpMethod ?? "") \(request.url?.path ?? "")")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current-token")
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/access-events") {
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(#"[{"id":"e1","event_type":"member_removed","actor_display_name":"Owner","subject_display_name":"Sam","detail":null,"created_at":"2026-09-16T12:00:00Z"}]"#.utf8))
+            }
+            if request.httpMethod == "POST" {
+                return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data(#"{"invitation_token":"private-code","email":"sam@example.com","role":"adult","expires_at":"2026-09-23T12:00:00Z"}"#.utf8))
+            }
+            if request.httpMethod == "DELETE" {
+                return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data())
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("[]".utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        _ = try await client.householdInvitations(householdID: "h1", token: "current-token")
+        let secret = try await client.createHouseholdInvitation(householdID: "h1", value: .init(email: "sam@example.com", role: "adult"), token: "current-token")
+        XCTAssertEqual(secret.invitationToken, "private-code")
+        try await client.cancelHouseholdInvitation(householdID: "h1", invitationID: "i1", token: "current-token")
+        try await client.removeHouseholdMember(householdID: "h1", userID: "u2", token: "current-token")
+        let events = try await client.householdAccessEvents(householdID: "h1", token: "current-token")
+        XCTAssertEqual(events.first?.eventType, "member_removed")
+        XCTAssertEqual(requests, [
+            "GET /api/v1/households/h1/invitations",
+            "POST /api/v1/households/h1/invitations",
+            "DELETE /api/v1/households/h1/invitations/i1",
+            "DELETE /api/v1/households/h1/members/u2",
+            "GET /api/v1/households/h1/access-events",
+        ])
+    }
+
     func testAccountCreateEncodesExactStartingBalanceMinorUnits() throws {
         let data = try JSONEncoder().encode(
             APIAccountCreate(

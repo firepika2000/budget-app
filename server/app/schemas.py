@@ -1053,6 +1053,25 @@ class InvitationResponse(BaseModel):
     expires_at: str
 
 
+class InvitationSummary(BaseModel):
+    id: str
+    email: str
+    role: str
+    status: Literal["pending", "accepted", "expired", "canceled"]
+    expires_at: str
+    created_at: str
+    created_by_display_name: str
+
+
+class HouseholdAccessEventResponse(BaseModel):
+    id: str
+    event_type: str
+    actor_display_name: str
+    subject_display_name: Optional[str] = None
+    detail: Optional[str] = None
+    created_at: str
+
+
 class InvitationAccept(BaseModel):
     invitation_token: str = Field(min_length=20, max_length=200)
     password: str = Field(min_length=12, max_length=256)
@@ -1065,3 +1084,4 @@ class MemberResponse(BaseModel):
     display_name: str
     role: str
     is_active: bool
+    authorization_version: int

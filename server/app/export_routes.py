@@ -22,6 +22,8 @@ from .models import (
     CategoryTarget,
     CreditCardReserveEvent,
     FinancialRequest,
+    HouseholdAccessEvent,
+    Invitation,
     MonthlyAssignment,
     Membership,
     RequestAction,
@@ -72,6 +74,12 @@ def export_budget_json(
         "budget": row_data(budget),
         "household_members": [row_data(item) for item in db.scalars(select(Membership).where(
             Membership.household_id == budget.household_id
+        ))],
+        "household_invitations": [{key: value for key, value in row_data(item).items() if key != "token_hash"} for item in db.scalars(select(Invitation).where(
+            Invitation.household_id == budget.household_id
+        ))],
+        "household_access_events": [row_data(item) for item in db.scalars(select(HouseholdAccessEvent).where(
+            HouseholdAccessEvent.household_id == budget.household_id
         ))],
         "user_directory": [{
             "id": item.id,

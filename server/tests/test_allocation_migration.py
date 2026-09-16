@@ -57,7 +57,7 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
         ).scalar_one()
         report_indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('transactions')"))}
         favorite_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('category_favorites')"))}
-        assert version == "0023_category_favorites"
+        assert version == "0024_member_lifecycle"
         assert attachment_count == 0
         assert "ix_transaction_budget_date_id" in report_indexes
         assert {"budget_id", "user_id", "category_id", "sort_order"} <= favorite_columns

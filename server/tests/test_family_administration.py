@@ -149,3 +149,89 @@ def test_non_owner_cannot_list_members_or_create_invitation(
         headers=auth(adult_token),
         json={"email": "other@example.com", "role": "child"},
     ).status_code == 404
+
+
+def test_owner_can_cancel_resend_and_audit_pending_invitation(client, owner_token, session_factory):
+    with session_factory() as db:
+        household_id = db.query(Household.id).scalar()
+    first = invite(client, owner_token, household_id, email="pending@example.com", role="adult")
+    rows = client.get(f"/api/v1/households/{household_id}/invitations", headers=auth(owner_token))
+    assert rows.status_code == 200
+    pending = rows.json()[0]
+    assert pending["status"] == "pending"
+    assert "invitation_token" not in pending
+
+    resent = client.post(
+        f"/api/v1/households/{household_id}/invitations/{pending['id']}/resend",
+        headers=auth(owner_token),
+    )
+    assert resent.status_code == 200
+    assert resent.json()["invitation_token"] != first["invitation_token"]
+    assert client.post("/api/v1/auth/accept-invitation", json={
+        "invitation_token": first["invitation_token"], "display_name": "Pending",
+        "password": "pending password long enough",
+    }).status_code == 400
+
+    rows = client.get(f"/api/v1/households/{household_id}/invitations", headers=auth(owner_token)).json()
+    replacement = next(row for row in rows if row["status"] == "pending")
+    canceled = client.delete(
+        f"/api/v1/households/{household_id}/invitations/{replacement['id']}",
+        headers=auth(owner_token),
+    )
+    assert canceled.status_code == 204
+    assert client.post("/api/v1/auth/accept-invitation", json={
+        "invitation_token": resent.json()["invitation_token"], "display_name": "Pending",
+        "password": "pending password long enough",
+    }).status_code == 400
+    events = client.get(f"/api/v1/households/{household_id}/access-events", headers=auth(owner_token))
+    assert events.status_code == 200
+    assert {row["event_type"] for row in events.json()} >= {
+        "invitation_created", "invitation_resent", "invitation_canceled"
+    }
+
+
+def test_removed_member_can_rejoin_with_preserved_grants_and_history(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    household_id = budget["household_id"]
+    original = invite(client, owner_token, household_id, email="returning@example.com")
+    member_token = accept(client, original["invitation_token"], display_name="Returning")
+    member = next(row for row in client.get(
+        f"/api/v1/households/{household_id}/members", headers=auth(owner_token)
+    ).json() if row["email"] == "returning@example.com")
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/grants", headers=auth(owner_token),
+        json={"user_id": member["user_id"], "permission": "view"},
+    ).status_code == 200
+    assert client.delete(
+        f"/api/v1/households/{household_id}/members/{member['user_id']}", headers=auth(owner_token)
+    ).status_code == 204
+    assert client.get("/api/v1/budgets", headers=auth(member_token)).json() == []
+
+    recovery = invite(client, owner_token, household_id, email="returning@example.com")
+    recovered_token = accept(
+        client, recovery["invitation_token"], display_name="Returning",
+        password="child password long enough",
+    )
+    visible = client.get("/api/v1/budgets", headers=auth(recovered_token))
+    assert visible.status_code == 200
+    assert [row["id"] for row in visible.json()] == [budget["id"]]
+    events = client.get(f"/api/v1/households/{household_id}/access-events", headers=auth(owner_token)).json()
+    assert [row["event_type"] for row in events].count("invitation_accepted") == 2
+    assert any(row["event_type"] == "member_removed" for row in events)
+
+
+def test_non_owner_can_leave_but_owner_cannot(client, owner_token, session_factory):
+    with session_factory() as db:
+        household = db.query(Household).one()
+        household_id = household.id
+    member_token = accept(client, invite(client, owner_token, household_id)["invitation_token"])
+    assert client.delete(
+        f"/api/v1/households/{household_id}/members/me", headers=auth(member_token)
+    ).status_code == 204
+    owner_leave = client.delete(
+        f"/api/v1/households/{household_id}/members/me", headers=auth(owner_token)
+    )
+    assert owner_leave.status_code == 422
+    assert "owner" in owner_leave.json()["detail"].lower()

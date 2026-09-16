@@ -116,6 +116,53 @@ public struct APIInvitationAccept: Encodable, Sendable {
     }
 }
 
+public struct APIInvitationCreate: Encodable, Equatable, Sendable {
+    public let email: String
+    public let role: String
+    public init(email: String, role: String) { self.email = email; self.role = role }
+}
+
+public struct APIInvitationSecret: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { invitationToken }
+    public let invitationToken: String
+    public let email: String
+    public let role: String
+    public let expiresAt: String
+    enum CodingKeys: String, CodingKey {
+        case email, role
+        case invitationToken = "invitation_token", expiresAt = "expires_at"
+    }
+}
+
+public struct APIInvitationSummary: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let email: String
+    public let role: String
+    public let status: String
+    public let expiresAt: String
+    public let createdAt: String
+    public let createdByDisplayName: String
+    enum CodingKeys: String, CodingKey {
+        case id, email, role, status
+        case expiresAt = "expires_at", createdAt = "created_at"
+        case createdByDisplayName = "created_by_display_name"
+    }
+}
+
+public struct APIHouseholdAccessEvent: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let eventType: String
+    public let actorDisplayName: String
+    public let subjectDisplayName: String?
+    public let detail: String?
+    public let createdAt: String
+    enum CodingKeys: String, CodingKey {
+        case id, detail
+        case eventType = "event_type", actorDisplayName = "actor_display_name"
+        case subjectDisplayName = "subject_display_name", createdAt = "created_at"
+    }
+}
+
 public struct APIHousehold: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let name: String
@@ -135,9 +182,20 @@ public struct APIHouseholdMember: Identifiable, Decodable, Equatable, Sendable {
     public let displayName: String
     public let role: String
     public let isActive: Bool
+    public let authorizationVersion: Int
     enum CodingKeys: String, CodingKey {
         case email, role
         case userID = "user_id", displayName = "display_name", isActive = "is_active"
+        case authorizationVersion = "authorization_version"
+    }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        userID = try values.decode(String.self, forKey: .userID)
+        email = try values.decode(String.self, forKey: .email)
+        displayName = try values.decode(String.self, forKey: .displayName)
+        role = try values.decode(String.self, forKey: .role)
+        isActive = try values.decode(Bool.self, forKey: .isActive)
+        authorizationVersion = try values.decodeIfPresent(Int.self, forKey: .authorizationVersion) ?? 1
     }
 }
 

@@ -259,6 +259,12 @@ protocol WorkspaceDataSource: AnyObject {
 
 @MainActor
 protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRepository, TransactionCommandRepository, TransactionBrowserRepository, ScheduleCommandRepository, PayeeCommandRepository {
+    func householdInvitations() async throws -> [APIInvitationSummary]
+    func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret
+    func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret
+    func cancelHouseholdInvitation(id: String) async throws
+    func removeHouseholdMember(userID: String) async throws
+    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent]
     func accessProfile(userID: String) async throws -> APIAccessProfile
     func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws
@@ -547,6 +553,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 }
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
+    func householdInvitations() async throws -> [APIInvitationSummary] { [] }
+    func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret { try decode(["invitation_token": "DEMO-INVITATION-CODE", "email": value.email, "role": value.role, "expires_at": "2026-09-23T12:00:00Z"]) }
+    func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret { try decode(["invitation_token": "DEMO-INVITATION-CODE", "email": "member@example.test", "role": "adult", "expires_at": "2026-09-23T12:00:00Z"]) }
+    func cancelHouseholdInvitation(id: String) async throws {}
+    func removeHouseholdMember(userID: String) async throws {}
+    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] { [] }
     func accessProfile(userID: String) async throws -> APIAccessProfile {
         if let profile = accessProfiles[userID] { return profile }
         return try decode(["budget_id": budget.id, "user_id": userID, "capabilities": ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"], "restrict_accounts": false, "account_ids": [], "restrict_categories": false, "category_ids": [], "grant_permission": "view", "is_custom": false, "version": 0, "updated_by_user_id": NSNull(), "updated_by_display_name": NSNull(), "updated_at": NSNull()])
@@ -831,6 +843,13 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     private var token: String { credentials.token }
     private var client: APIClient { get throws { try credentials.client() } }
     init(budget: APIBudget, credentials: LiveWorkspaceCredentials) { self.budget = budget; self.credentials = credentials }
+
+    func householdInvitations() async throws -> [APIInvitationSummary] { try await credentials.prepare(); return try await client.householdInvitations(householdID: budget.householdID, token: token) }
+    func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret { try await credentials.prepare(); return try await client.createHouseholdInvitation(householdID: budget.householdID, value: value, token: token) }
+    func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret { try await credentials.prepare(); return try await client.resendHouseholdInvitation(householdID: budget.householdID, invitationID: id, token: token) }
+    func cancelHouseholdInvitation(id: String) async throws { try await credentials.prepare(); try await client.cancelHouseholdInvitation(householdID: budget.householdID, invitationID: id, token: token) }
+    func removeHouseholdMember(userID: String) async throws { try await credentials.prepare(); try await client.removeHouseholdMember(householdID: budget.householdID, userID: userID, token: token) }
+    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] { try await credentials.prepare(); return try await client.householdAccessEvents(householdID: budget.householdID, token: token) }
 
     func accessProfile(userID: String) async throws -> APIAccessProfile { try await credentials.prepare(); return try await client.accessProfile(budgetID: budget.id, userID: userID, token: token) }
     func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile { try await credentials.prepare(); return try await client.updateAccessProfile(budgetID: budget.id, userID: userID, profile: value, token: token) }
@@ -1316,6 +1335,13 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func accessProfile(userID: String) async throws -> APIAccessProfile { try await commands().accessProfile(userID: userID) }
+
+    func householdInvitations() async throws -> [APIInvitationSummary] { try await commands().householdInvitations() }
+    func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret { try await commands().createHouseholdInvitation(value) }
+    func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret { try await commands().resendHouseholdInvitation(id: id) }
+    func cancelHouseholdInvitation(id: String) async throws { try await commands().cancelHouseholdInvitation(id: id) }
+    func removeHouseholdMember(userID: String) async throws { try await commands().removeHouseholdMember(userID: userID); await refresh() }
+    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] { try await commands().householdAccessEvents() }
 
     func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile {
         try await commands().updateAccessProfile(userID: userID, value: value)
@@ -3409,6 +3435,10 @@ struct LiveHouseholdView: View {
                 }
                 if store.budget.effectivePermission == .owner {
                     Section("Household access") {
+                        NavigationLink { HouseholdMemberLifecycleView(store: store) } label: {
+                            Label("Members & Invitations", systemImage: "person.2.badge.gearshape")
+                        }
+                        .accessibilityIdentifier("household-members-lifecycle")
                         ForEach(store.householdMembers.filter { $0.role != "owner" && $0.isActive }) { member in
                             NavigationLink { LiveMemberAccessView(store: store, member: member) } label: {
                                 VStack(alignment: .leading, spacing: 3) {
@@ -3463,6 +3493,108 @@ struct LiveHouseholdView: View {
     private func delegatedPolicy(for userID: String) -> APIDelegatedBudget? {
         store.delegatedBudgets.first { $0.userID == userID }
     }
+}
+
+private struct HouseholdMemberLifecycleView: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    @State private var invitations: [APIInvitationSummary] = []
+    @State private var events: [APIHouseholdAccessEvent] = []
+    @State private var showInvite = false
+    @State private var secret: APIInvitationSecret?
+    @State private var removing: APIHouseholdMember?
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            Section("Members") {
+                ForEach(store.householdMembers.filter { $0.role != "owner" }) { member in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack { Text(member.displayName); Spacer(); Text(member.isActive ? "Active" : "Removed").foregroundStyle(member.isActive ? Theme.healthy : .secondary) }
+                        Text(member.email).font(.caption).foregroundStyle(.secondary)
+                        if member.isActive {
+                            HStack {
+                                NavigationLink("Edit Access") { LiveMemberAccessView(store: store, member: member) }
+                                Spacer()
+                                Button("Remove", role: .destructive) { removing = member }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("Remove \(member.displayName) from household")
+                            }
+                        } else {
+                            Button("Invite to Rejoin") { secret = nil; showInvite = true }
+                                .accessibilityHint("Creates a new invitation; preserved access is restored only after acceptance")
+                        }
+                    }
+                }
+                if store.householdMembers.allSatisfy({ $0.role == "owner" }) { Text("No other household members").foregroundStyle(.secondary) }
+            }
+            Section("Invitations") {
+                ForEach(invitations) { invitation in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack { Text(invitation.email); Spacer(); Text(invitation.status.capitalized).foregroundStyle(invitation.status == "pending" ? Theme.attention : .secondary) }
+                        Text("\(invitation.role.capitalized) · invited by \(invitation.createdByDisplayName)").font(.caption).foregroundStyle(.secondary)
+                        if invitation.status == "pending" || invitation.status == "expired" {
+                            HStack {
+                                Button("Resend") { Task { await resend(invitation) } }.buttonStyle(.borderless)
+                                Spacer()
+                                if invitation.status == "pending" { Button("Cancel", role: .destructive) { Task { await cancel(invitation) } }.buttonStyle(.borderless) }
+                            }
+                        }
+                    }
+                }
+                if invitations.isEmpty && !isLoading { Text("No invitations").foregroundStyle(.secondary) }
+            }
+            if !events.isEmpty {
+                Section("Recent access activity") {
+                    ForEach(events.prefix(20)) { event in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(eventTitle(event))
+                            Text("\(event.actorDisplayName) · \(event.createdAt)").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Members")
+        .toolbar { Button("Invite", systemImage: "person.badge.plus") { showInvite = true }.accessibilityIdentifier("invite-household-member") }
+        .task { await load() }
+        .sheet(isPresented: $showInvite) { HouseholdInvitationCreateView(store: store, recoveredSecret: $secret, onCreated: load) }
+        .sheet(item: $secret) { value in NavigationStack { Form { Section("Invitation code") { Text(value.invitationToken).textSelection(.enabled).accessibilityIdentifier("invitation-code"); Button("Copy Code") { UIPasteboard.general.string = value.invitationToken } }; Section { Text("Send this code privately to \(value.email). It expires in seven days and can be used once.").font(.footnote).foregroundStyle(.secondary) } }.navigationTitle("Invitation Ready").toolbar { Button("Done") { secret = nil } } } }
+        .confirmationDialog("Remove \(removing?.displayName ?? "member")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
+            Button("Remove Member", role: .destructive) { if let member = removing { Task { await remove(member) } } }
+        } message: { Text("Their historical activity remains. Current access stops immediately and can be recovered only through a new invitation.") }
+        .overlay { if isLoading { ProgressView() } }
+        .alert("Unable to update household", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
+    }
+
+    private func eventTitle(_ event: APIHouseholdAccessEvent) -> String {
+        switch event.eventType {
+        case "invitation_created": return "Invitation created for \(event.detail ?? "member")"
+        case "invitation_resent": return "Invitation resent to \(event.detail ?? "member")"
+        case "invitation_canceled": return "Invitation canceled for \(event.detail ?? "member")"
+        case "invitation_accepted": return "\(event.subjectDisplayName ?? "Member") joined"
+        case "member_removed": return "\(event.subjectDisplayName ?? "Member") removed"
+        case "member_left": return "\(event.subjectDisplayName ?? "Member") left"
+        default: return event.eventType.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+    private func load() async { isLoading = true; defer { isLoading = false }; do { async let invitationRows = store.householdInvitations(); async let eventRows = store.householdAccessEvents(); invitations = try await invitationRows; events = try await eventRows; errorMessage = nil } catch { errorMessage = error.localizedDescription } }
+    private func resend(_ invitation: APIInvitationSummary) async { do { secret = try await store.resendHouseholdInvitation(id: invitation.id); await load() } catch { errorMessage = error.localizedDescription } }
+    private func cancel(_ invitation: APIInvitationSummary) async { do { try await store.cancelHouseholdInvitation(id: invitation.id); await load() } catch { errorMessage = error.localizedDescription } }
+    private func remove(_ member: APIHouseholdMember) async { removing = nil; do { try await store.removeHouseholdMember(userID: member.userID); await load() } catch { errorMessage = error.localizedDescription } }
+}
+
+private struct HouseholdInvitationCreateView: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    @Binding var recoveredSecret: APIInvitationSecret?
+    let onCreated: () async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var email = ""
+    @State private var role = "adult"
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    var body: some View { NavigationStack { Form { TextField("Email", text: $email).textContentType(.emailAddress).textInputAutocapitalization(.never).keyboardType(.emailAddress); Picker("Household role", selection: $role) { Text("Adult").tag("adult"); Text("Child").tag("child") }; Section { Text("An invitation creates membership only after the recipient accepts its private code. Budget access is then configured separately.").font(.footnote).foregroundStyle(.secondary) } }.navigationTitle("Invite Member").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Create") { Task { await create() } }.disabled(isSaving || !email.contains("@")) } }.alert("Unable to create invitation", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } } }
+    private func create() async { isSaving = true; defer { isSaving = false }; do { let value = try await store.createHouseholdInvitation(.init(email: email, role: role)); dismiss(); await onCreated(); recoveredSecret = value } catch { errorMessage = error.localizedDescription } }
 }
 
 private enum MemberAccessPreset: String, CaseIterable, Identifiable {

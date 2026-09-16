@@ -717,3 +717,29 @@ non-disclosure, resource scope, and unchanged monthly/account financial observat
 contract coverage proves exact budget-scoped GET/PUT payloads. Native credential-rotation coverage
 includes access-profile reads, and a production-composition XCUITest covers Household → member →
 preset/scope edit → save → reopen. No migration or human Live/Simulator data reset was performed.
+
+## v0.7 checkpoint — recoverable household member lifecycle
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+The owner Household surface now manages active and removed members plus pending, expired, accepted,
+and canceled invitations. Owners can create, cancel, and resend single-use invitations, explicitly
+remove a member after confirmation, invite a removed member to rejoin, and inspect recent human-
+readable access activity. Invitation secrets remain write-only: list and audit responses never expose
+their stored SHA-256 token hashes.
+
+Membership removal now deactivates the durable membership instead of deleting financial or access
+history. Server authorization still rejects inactive members immediately. Reaccepting an authorized
+new invitation reactivates the same membership and recovers its prior budget grant/profile rather
+than creating a duplicate identity. The household owner can neither leave nor be removed, Full Access
+remains non-ownership, and no ownership transfer is implicit. Invitation create/resend/cancel,
+acceptance, member leave/removal, budget-grant change/revocation, and access-profile edits write
+durable actor/time events. Backup export includes invitations without token hashes and the access
+event ledger.
+
+Migration `0024_member_lifecycle` is source-only and was not applied to human Live. Focused lifecycle,
+access-profile, and migration tests PASS (17); the full backend suite PASS with 11 skips; Swift package
+tests PASS (27 BudgetCore + 43 BudgetAPI); and the unsigned Xcode 27 Beta simulator build PASS on the
+preserved iPhone 17 Pro Max / iOS 27 simulator. The repository's existing provenance xattr required
+the established generated-test-bundle ad-hoc-sign workaround. Human interaction acceptance remains
+separate.

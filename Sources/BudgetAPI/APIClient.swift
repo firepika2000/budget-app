@@ -92,6 +92,30 @@ public struct APIClient {
         try await send(path: "api/v1/households/\(householdID)/members", token: token)
     }
 
+    public func householdInvitations(householdID: String, token: String) async throws -> [APIInvitationSummary] {
+        try await send(path: "api/v1/households/\(householdID)/invitations", token: token)
+    }
+
+    public func createHouseholdInvitation(householdID: String, value: APIInvitationCreate, token: String) async throws -> APIInvitationSecret {
+        try await send(path: "api/v1/households/\(householdID)/invitations", method: "POST", token: token, body: value)
+    }
+
+    public func resendHouseholdInvitation(householdID: String, invitationID: String, token: String) async throws -> APIInvitationSecret {
+        try await send(path: "api/v1/households/\(householdID)/invitations/\(invitationID)/resend", method: "POST", token: token)
+    }
+
+    public func cancelHouseholdInvitation(householdID: String, invitationID: String, token: String) async throws {
+        let _: EmptyResponse = try await send(path: "api/v1/households/\(householdID)/invitations/\(invitationID)", method: "DELETE", token: token)
+    }
+
+    public func removeHouseholdMember(householdID: String, userID: String, token: String) async throws {
+        let _: EmptyResponse = try await send(path: "api/v1/households/\(householdID)/members/\(userID)", method: "DELETE", token: token)
+    }
+
+    public func householdAccessEvents(householdID: String, token: String) async throws -> [APIHouseholdAccessEvent] {
+        try await send(path: "api/v1/households/\(householdID)/access-events", token: token)
+    }
+
     public func accessProfile(budgetID: String, userID: String, token: String) async throws -> APIAccessProfile {
         try await send(path: "api/v1/budgets/\(budgetID)/access/\(userID)", token: token)
     }
