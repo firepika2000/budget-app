@@ -617,6 +617,11 @@ class PayeeResponse(BaseModel):
     aliases: list[PayeeAliasResponse] = Field(default_factory=list)
 
 
+class PayeePageResponse(BaseModel):
+    items: list[PayeeResponse]
+    next_cursor: Optional[str] = None
+
+
 class PayeeMerge(BaseModel):
     destination_payee_id: str
 

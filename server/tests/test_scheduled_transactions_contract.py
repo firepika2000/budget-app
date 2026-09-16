@@ -9,7 +9,7 @@ the same accounting engine as manual entry and cannot double-post an occurrence.
 
 from datetime import date, timedelta
 
-from app.models import AllocationPosting, Membership, Transaction
+from app.models import AllocationPosting, Membership, Payee, Transaction
 from app.planning import next_occurrence
 
 from .conftest import auth
@@ -212,6 +212,8 @@ def test_realization_creates_exactly_one_transaction_and_advances(client, owner_
         txn = db.get(Transaction, body["transaction_ids"][0])
         assert txn.scheduled_transaction_id == sid
         assert txn.amount_minor == -40000
+        assert txn.payee_id is not None
+        assert db.get(Payee, txn.payee_id).display_name == "Rent"
     # Category activity moved by the realized amount, exactly once.
     rows = {r["category_id"]: r for r in summary(client, owner_token, budget["id"])["categories"]}
     assert rows[category["id"]]["activity_minor"] == -40000

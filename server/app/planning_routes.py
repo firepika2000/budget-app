@@ -19,6 +19,7 @@ from .models import (
     Transaction,
     User,
 )
+from .payee_identity import resolve_or_create_payee
 from .planning import next_occurrence, occurrences_between
 from .schemas import (
     CategoryTargetResponse,
@@ -293,9 +294,15 @@ def realize_scheduled_transaction(
             add_payment_reserve_event(db, credit_account=account, transfer_id=transfer_id, occurred_on=realized_on, amount_minor=schedule.amount_minor, actor=user, kind="payment_reversal")
         created_ids = [source_txn.id, destination_txn.id]
     else:
+        try:
+            payee_id, payee_name = resolve_or_create_payee(
+                db, budget=budget, user=user, payee_id=None, payee_name=schedule.name,
+            )
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Scheduled payee is archived or merged; edit the schedule before entering it") from None
         transaction = Transaction(
             budget_id=budget_id, account_id=account.id, category_id=schedule.category_id,
-            amount_minor=schedule.amount_minor, occurred_on=realized_on, payee_name=schedule.name,
+            payee_id=payee_id, amount_minor=schedule.amount_minor, occurred_on=realized_on, payee_name=payee_name,
             memo=schedule.memo, is_cleared=False, created_by_user_id=user.id,
             scheduled_transaction_id=schedule.id,
         )

@@ -55,8 +55,35 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
         attachment_count = connection.execute(
             text("SELECT COUNT(*) FROM transaction_attachments")
         ).scalar_one()
-        assert version == "0019_txn_rev_attach"
+        assert version == "0020_payee_identity_repair"
         assert attachment_count == 0
+
+
+def test_0020_repairs_text_only_transaction_payee_identity(tmp_path, monkeypatch):
+    database_path = tmp_path / "payee-repair.db"
+    database_url = f"sqlite:///{database_path}"
+    monkeypatch.setenv("BUDGET_APP_DATABASE_URL", database_url)
+    monkeypatch.setenv("BUDGET_APP_JWT_SECRET", "migration-test-secret-that-is-longer-than-32-characters")
+    config = migration_config()
+    command.upgrade(config, "0019_txn_rev_attach")
+    engine = create_engine(database_url)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.com', 'Owner', 'hash', :now)"), {"now": now})
+        connection.execute(text("INSERT INTO households (id, name, owner_user_id, created_at) VALUES ('h1', 'Home', 'u1', :now)"), {"now": now})
+        connection.execute(text("INSERT INTO budgets (id, household_id, name, currency_code, allocation_version, created_at) VALUES ('b1', 'h1', 'Budget', 'USD', 0, :now)"), {"now": now})
+        connection.execute(text("INSERT INTO accounts (id, budget_id, name, account_type, is_on_budget, is_closed, created_at) VALUES ('a1', 'b1', 'Checking', 'checking', 1, 0, :now)"), {"now": now})
+        connection.execute(text(
+            "INSERT INTO transactions (id, budget_id, account_id, category_id, transfer_id, scheduled_transaction_id, payee_id, amount_minor, occurred_on, payee_name, memo, is_cleared, is_reconciled, flag, tags, attachment_metadata, status, created_by_user_id, created_at) "
+            "VALUES ('t1', 'b1', 'a1', NULL, NULL, NULL, NULL, -200, '2026-09-15', 'Metadata test', '', 1, 0, 'orange', '[]', '[]', 'posted', 'u1', :now)"
+        ), {"now": now})
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        row = connection.execute(text("SELECT payee_id, payee_name, amount_minor, flag FROM transactions WHERE id = 't1'")).mappings().one()
+        assert row["payee_id"] is not None
+        assert {"payee_name": row["payee_name"], "amount_minor": row["amount_minor"], "flag": row["flag"]} == {"payee_name": "Metadata test", "amount_minor": -200, "flag": "orange"}
+        payee = connection.execute(text("SELECT display_name, name_key FROM payees WHERE id = :id"), {"id": row["payee_id"]}).mappings().one()
+        assert payee == {"display_name": "Metadata test", "name_key": "metadata test"}
 
 
 def test_existing_monthly_assignment_is_backfilled_into_balanced_ledger(

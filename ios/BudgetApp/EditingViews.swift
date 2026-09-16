@@ -13,6 +13,8 @@ struct TransactionEntryView: View {
     @State private var categoryID: String?
     @State private var payee = ""
     @State private var payeeID: String?
+    @State private var selectedPayeeName = ""
+    @State private var showPayeeSelector = false
     @State private var amount = ""
     @State private var memo = ""
     @State private var date = Date()
@@ -43,18 +45,9 @@ struct TransactionEntryView: View {
                 }
                 TextField("Payee", text: $payee)
                     .onChange(of: payee) { _, value in
-                        if workspace.payees.first(where: { $0.id == payeeID })?.displayName != value { payeeID = nil }
+                        if payeeID != nil && selectedPayeeName != value { payeeID = nil; selectedPayeeName = "" }
                     }
-                if !workspace.payees.isEmpty {
-                    Menu("Choose saved payee", systemImage: "person.text.rectangle") {
-                        ForEach(workspace.payees) { item in
-                            Button(item.displayName) {
-                                payeeID = item.id; payee = item.displayName
-                                if categoryID == nil, let suggested = item.defaultCategoryID { categoryID = suggested }
-                            }
-                        }
-                    }.accessibilityIdentifier("saved-payee-menu")
-                }
+                Button("Choose saved payee", systemImage: "person.text.rectangle") { showPayeeSelector = true }.accessibilityIdentifier("saved-payee-menu")
                 CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode)
                 Toggle("Income / inflow", isOn: $isInflow)
                 Toggle("Split across categories", isOn: $isSplit)
@@ -125,6 +118,12 @@ struct TransactionEntryView: View {
                 if inflow {
                     categoryID = nil
                     isSplit = false
+                }
+            }
+            .sheet(isPresented: $showPayeeSelector) {
+                PayeeSearchSelectionView { item in
+                    payeeID = item.id; payee = item.displayName; selectedPayeeName = item.displayName
+                    if categoryID == nil, let suggested = item.defaultCategoryID { categoryID = suggested }
                 }
             }
         }

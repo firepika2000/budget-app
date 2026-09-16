@@ -119,6 +119,16 @@ def test_restricted_search_never_leaks_hidden_rows_or_counts(
         assert hidden == {"items": [], "next_cursor": None, "total_count": 0}
         assert private["id"] not in str(hidden)
 
+    hidden_payee = client.get(
+        f"/api/v1/budgets/{budget['id']}/payees/search?q=secret", headers=auth(token)
+    )
+    assert hidden_payee.status_code == 200
+    assert hidden_payee.json() == {"items": [], "next_cursor": None}
+    visible_payee = client.get(
+        f"/api/v1/budgets/{budget['id']}/payees/search?q=shared", headers=auth(token)
+    ).json()
+    assert [item["display_name"] for item in visible_payee["items"]] == ["Shared Shop"]
+
 
 def test_transaction_browser_rejects_invalid_range_and_cursor(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)

@@ -58,6 +58,7 @@ from .models import (
     TransactionSplit,
     User,
 )
+from .payee_identity import resolve_or_create_payee
 from .schemas import (
     AccountCreate,
     AccountUpdate,
@@ -978,11 +979,12 @@ def create_transaction(
         if not can_access_resource(db, user, budget, "category", category.id):
             raise HTTPException(status_code=422, detail="Invalid category")
         categories_by_id[category_id] = category
-    if body.payee_id is not None:
-        payee = db.scalar(select(Payee).where(Payee.id == body.payee_id, Payee.household_id == budget.household_id))
-        if payee is None or payee.is_archived or payee.merged_into_payee_id is not None:
-            raise HTTPException(status_code=422, detail="Invalid payee")
-        body.payee_name = payee.display_name
+    try:
+        body.payee_id, body.payee_name = resolve_or_create_payee(
+            db, budget=budget, user=user, payee_id=body.payee_id, payee_name=body.payee_name,
+        )
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid payee") from None
     transaction_values = body.model_dump(exclude={"splits"})
     transaction = Transaction(
         budget_id=budget_id,
@@ -1373,11 +1375,12 @@ def update_transaction(
         if category is None or category.budget_id != budget_id or category.is_archived or not can_access_resource(db, user, budget, "category", category.id):
             raise HTTPException(status_code=422, detail="Invalid category")
         categories_by_id[category_id] = category
-    if body.payee_id is not None:
-        payee = db.scalar(select(Payee).where(Payee.id == body.payee_id, Payee.household_id == budget.household_id))
-        if payee is None or payee.is_archived or payee.merged_into_payee_id is not None:
-            raise HTTPException(status_code=422, detail="Invalid payee")
-        body.payee_name = payee.display_name
+    try:
+        body.payee_id, body.payee_name = resolve_or_create_payee(
+            db, budget=budget, user=user, payee_id=body.payee_id, payee_name=body.payee_name,
+        )
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid payee") from None
     db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.source_transaction_id == transaction.id))
     values = body.model_dump(exclude={"splits"})
     for key, value in values.items():

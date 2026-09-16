@@ -486,7 +486,11 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["Transaction"].tap()
         XCTAssertTrue(app.navigationBars["New Transaction"].waitForExistence(timeout: 5))
         app.buttons["saved-payee-menu"].tap()
-        app.buttons["Neighborhood Market"].tap()
+        XCTAssertTrue(app.navigationBars["Choose Payee"].waitForExistence(timeout: 5))
+        app.searchFields["Search payees"].tap()
+        app.searchFields["Search payees"].typeText("Neighborhood")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'payee-search-result-' AND label CONTAINS 'Neighborhood Market'")).firstMatch.waitForExistence(timeout: 5))
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'payee-search-result-' AND label CONTAINS 'Neighborhood Market'")).firstMatch.tap()
         XCTAssertEqual(app.textFields["Payee"].value as? String, "Neighborhood Market")
     }
 
@@ -501,11 +505,12 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Payees"].waitForExistence(timeout: 5))
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'payee-row-'")).firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Edit Payee"].waitForExistence(timeout: 5))
+        if !app.textFields["payee-alias-name"].exists { app.swipeUp() }
         app.textFields["payee-alias-name"].tap()
         app.textFields["payee-alias-name"].typeText("Corner Shop")
         app.buttons["add-payee-alias"].tap()
         XCTAssertTrue(app.staticTexts["Corner Shop"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Transactions"].exists)
+        XCTAssertTrue(app.navigationBars["Edit Payee"].exists)
     }
 
     func testProductionActivityUsesCanonicalSearchAndFilterBrowser() {
@@ -517,12 +522,18 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["transaction-row-t1"].waitForExistence(timeout: 5))
         app.buttons["transaction-filter-action"].tap()
         XCTAssertTrue(app.navigationBars["Filter Activity"].waitForExistence(timeout: 5))
+        app.buttons["activity-payee-selector"].tap()
+        XCTAssertTrue(app.navigationBars["Filter by Payee"].waitForExistence(timeout: 5))
+        app.searchFields["Search payees"].tap()
+        app.searchFields["Search payees"].typeText("Fresh")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'payee-search-result-'")).firstMatch.waitForExistence(timeout: 5))
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'payee-search-result-'")).firstMatch.tap()
         app.buttons["Type, All types"].tap()
         app.buttons["Income"].tap()
         app.buttons["Apply"].tap()
         XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["transaction-row-t1"].waitForExistence(timeout: 1), "spending must be excluded from an income-only server-equivalent query")
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Showing '")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No matching transactions"].waitForExistence(timeout: 5), "the combined existing-payee and income filters should produce the production empty state")
 
         app.buttons["transaction-filter-action"].tap()
         app.swipeUp()

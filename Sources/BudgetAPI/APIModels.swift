@@ -1101,6 +1101,16 @@ public struct APIPayee: Identifiable, Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIPayeePage: Decodable, Equatable, Sendable {
+    public let items: [APIPayee]
+    public let nextCursor: String?
+    public init(items: [APIPayee], nextCursor: String?) {
+        self.items = items
+        self.nextCursor = nextCursor
+    }
+    enum CodingKeys: String, CodingKey { case items; case nextCursor = "next_cursor" }
+}
+
 public struct APIPayeeCreate: Encodable, Equatable, Sendable {
     public let displayName: String
     public let defaultCategoryID: String?

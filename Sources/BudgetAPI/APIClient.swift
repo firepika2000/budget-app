@@ -303,6 +303,16 @@ public struct APIClient {
         )
     }
 
+    public func searchPayees(budgetID: String, query: String = "", includeArchived: Bool = false, limit: Int = 20, cursor: String? = nil, token: String) async throws -> APIPayeePage {
+        var queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "include_archived", value: String(includeArchived)),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        if let cursor { queryItems.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try await send(path: "api/v1/budgets/\(budgetID)/payees/search", queryItems: queryItems, token: token)
+    }
+
     public func createPayee(budgetID: String, payee: APIPayeeCreate, token: String) async throws -> APIPayee {
         try await send(path: "api/v1/budgets/\(budgetID)/payees", method: "POST", token: token, body: payee)
     }

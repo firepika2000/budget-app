@@ -15,15 +15,83 @@ enum Theme {
     static let projected = Color.indigo
 }
 
+struct PayeeSearchSelectionView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let includeArchived: Bool
+    let excludedID: String?
+    let onSelect: (APIPayee) -> Void
+    @State private var query = ""
+    @State private var rows: [APIPayee] = []
+    @State private var nextCursor: String?
+    @State private var loading = false
+    @State private var errorMessage: String?
+
+    init(title: String = "Choose Payee", includeArchived: Bool = false, excludedID: String? = nil, onSelect: @escaping (APIPayee) -> Void) {
+        self.title = title; self.includeArchived = includeArchived; self.excludedID = excludedID; self.onSelect = onSelect
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if rows.isEmpty && !loading {
+                    ContentUnavailableView(query.isEmpty ? "No recent payees" : "No matching payees", systemImage: "magnifyingglass", description: Text(query.isEmpty ? "Start typing to search saved payees." : "Filtering only selects an existing payee."))
+                }
+                ForEach(rows.filter { $0.id != excludedID }) { payee in
+                    Button {
+                        onSelect(payee); dismiss()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(payee.displayName)
+                            if !payee.aliases.isEmpty { Text(payee.aliases.map(\.displayName).joined(separator: ", ")).font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }
+                    .accessibilityIdentifier("payee-search-result-\(payee.id)")
+                }
+                if nextCursor != nil {
+                    Button("Load More") { Task { await load(reset: false) } }.disabled(loading).accessibilityIdentifier("payee-search-load-more")
+                }
+            }
+            .overlay { if loading && rows.isEmpty { ProgressView() } }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search payees")
+            .task(id: query) { try? await Task.sleep(for: .milliseconds(250)); guard !Task.isCancelled else { return }; await load(reset: true) }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .alert("Unable to search payees", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
+        }
+    }
+
+    private func load(reset: Bool) async {
+        if !reset && loading { return }
+        let requestedQuery = query
+        loading = true
+        defer { if requestedQuery == query { loading = false } }
+        do {
+            let page = try await store.searchPayees(query: requestedQuery, includeArchived: includeArchived, limit: 20, cursor: reset ? nil : nextCursor)
+            guard requestedQuery == query else { return }
+            rows = reset ? page.items : rows + page.items
+            nextCursor = page.nextCursor
+            errorMessage = nil
+        } catch is CancellationError {
+        } catch { if !Task.isCancelled { errorMessage = error.localizedDescription } }
+    }
+}
+
 private struct PayeeManagementView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var showCreate = false
+    @State private var query = ""
+    @State private var rows: [APIPayee] = []
+    @State private var nextCursor: String?
+    @State private var loading = false
     var body: some View {
         List {
-            if store.payees.isEmpty {
+            if rows.isEmpty && !loading {
                 ContentUnavailableView("No saved payees", systemImage: "person.text.rectangle", description: Text("Save payees for consistent transaction history and category suggestions."))
             } else {
-                ForEach(store.payees) { payee in
+                ForEach(rows) { payee in
                     NavigationLink { PayeeEditorView(payee: payee) } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(payee.displayName)
@@ -33,11 +101,17 @@ private struct PayeeManagementView: View {
                     }.accessibilityIdentifier("payee-row-\(payee.id)")
                 }
             }
+            if nextCursor != nil { Button("Load More") { Task { await load(reset: false) } }.disabled(loading) }
         }
         .navigationTitle("Payees")
+        .searchable(text: $query, prompt: "Search payees")
+        .task(id: query) { try? await Task.sleep(for: .milliseconds(250)); guard !Task.isCancelled else { return }; await load(reset: true) }
+        .onAppear { Task { await load(reset: true) } }
         .toolbar { Button("Add Payee", systemImage: "plus") { showCreate = true }.accessibilityIdentifier("add-payee-action") }
-        .sheet(isPresented: $showCreate) { PayeeEditorView(payee: nil) }
+        .sheet(isPresented: $showCreate, onDismiss: { Task { await load(reset: true) } }) { PayeeEditorView(payee: nil) }
+        .overlay { if loading && rows.isEmpty { ProgressView() } }
     }
+    private func load(reset: Bool) async { if !reset && loading { return }; let requestedQuery = query; loading = true; defer { if requestedQuery == query { loading = false } }; do { let page = try await store.searchPayees(query: requestedQuery, includeArchived: true, limit: 20, cursor: reset ? nil : nextCursor); guard requestedQuery == query else { return }; rows = reset ? page.items : rows + page.items; nextCursor = page.nextCursor } catch {} }
 }
 
 private struct PayeeEditorView: View {
@@ -48,7 +122,10 @@ private struct PayeeEditorView: View {
     @State private var categoryID: String
     @State private var isArchived: Bool
     @State private var mergeDestinationID = ""
+    @State private var mergeDestinationName = ""
+    @State private var showMergeSelector = false
     @State private var newAlias = ""
+    @State private var aliases: [APIPayeeAlias]
     @State private var errorMessage: String?
     @State private var isSaving = false
 
@@ -57,6 +134,7 @@ private struct PayeeEditorView: View {
         _name = State(initialValue: payee?.displayName ?? "")
         _categoryID = State(initialValue: payee?.defaultCategoryID ?? "")
         _isArchived = State(initialValue: payee?.isArchived ?? false)
+        _aliases = State(initialValue: payee?.aliases ?? [])
     }
 
     var body: some View {
@@ -82,7 +160,7 @@ private struct PayeeEditorView: View {
                         }
                     }
                     Section("Aliases") {
-                        ForEach(store.payees.first(where: { $0.id == payee.id })?.aliases ?? []) { alias in
+                        ForEach(aliases) { alias in
                             Text(alias.displayName)
                         }
                         .onDelete { offsets in Task { await deleteAliases(payee.id, offsets: offsets) } }
@@ -92,16 +170,10 @@ private struct PayeeEditorView: View {
                         }
                         Text("Aliases match future payee names to this identity. They never rewrite transaction history or choose a category.").font(.footnote).foregroundStyle(.secondary)
                     }
-                    let destinations = store.payees.filter { $0.id != payee.id }
-                    if !destinations.isEmpty {
-                        Section("Merge") {
-                            Picker("Move history to", selection: $mergeDestinationID) {
-                                Text("Choose payee").tag("")
-                                ForEach(destinations) { Text($0.displayName).tag($0.id) }
-                            }
-                            Button("Merge Payee", role: .destructive) { Task { await merge(payee.id) } }.disabled(mergeDestinationID.isEmpty || isSaving)
-                            Text("Transactions keep their identities and audit history. The source payee is archived.").font(.footnote).foregroundStyle(.secondary)
-                        }
+                    Section("Merge") {
+                        Button { showMergeSelector = true } label: { LabeledContent("Move history to", value: mergeDestinationName.isEmpty ? "Choose payee" : mergeDestinationName) }
+                        Button("Merge Payee", role: .destructive) { Task { await merge(payee.id) } }.disabled(mergeDestinationID.isEmpty || isSaving)
+                        Text("Transactions keep their identities and audit history. The source payee is archived.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -112,6 +184,7 @@ private struct PayeeEditorView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving) }
             }
             .alert("Unable to save payee", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
+            .sheet(isPresented: $showMergeSelector) { PayeeSearchSelectionView(title: "Merge Into", excludedID: payee?.id) { selected in mergeDestinationID = selected.id; mergeDestinationName = selected.displayName } }
         }
     }
 
@@ -136,8 +209,9 @@ private struct PayeeEditorView: View {
         do { try await store.mergePayee(sourceID: sourceID, destinationID: mergeDestinationID); dismiss() }
         catch { errorMessage = error.localizedDescription }
     }
-    private func addAlias(_ payeeID: String) async { isSaving = true; defer { isSaving = false }; do { try await store.createPayeeAlias(payeeID: payeeID, displayName: newAlias); newAlias = "" } catch { errorMessage = error.localizedDescription } }
-    private func deleteAliases(_ payeeID: String, offsets: IndexSet) async { let aliases = store.payees.first(where: { $0.id == payeeID })?.aliases ?? []; do { for offset in offsets { try await store.deletePayeeAlias(payeeID: payeeID, aliasID: aliases[offset].id) } } catch { errorMessage = error.localizedDescription } }
+    private func addAlias(_ payeeID: String) async { isSaving = true; defer { isSaving = false }; do { try await store.createPayeeAlias(payeeID: payeeID, displayName: newAlias); newAlias = ""; await reloadAliases(payeeID) } catch { errorMessage = error.localizedDescription } }
+    private func deleteAliases(_ payeeID: String, offsets: IndexSet) async { do { for offset in offsets { try await store.deletePayeeAlias(payeeID: payeeID, aliasID: aliases[offset].id) }; await reloadAliases(payeeID) } catch { errorMessage = error.localizedDescription } }
+    private func reloadAliases(_ payeeID: String) async { do { let page = try await store.searchPayees(query: name, includeArchived: true, limit: 20); if let current = page.items.first(where: { $0.id == payeeID }) { aliases = current.aliases } } catch { errorMessage = error.localizedDescription } }
 }
 
 struct FreshBudgetActivationState: Equatable {
@@ -401,6 +475,21 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         default: return true
         }
     }
+    func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        var values: [APIPayee] = try decode(demo.payees.filter { item in
+            (includeArchived || !item.isArchived) && (needle.isEmpty || item.name.localizedCaseInsensitiveContains(needle) || item.aliases.contains { $0.localizedCaseInsensitiveContains(needle) })
+        }.map { item in
+            let history = demo.visibleTransactions.filter { $0.payee == item.name }
+            return ["id": item.id, "household_id": budget.householdID, "display_name": item.name, "is_archived": item.isArchived,
+                    "merged_into_payee_id": NSNull(), "default_category_id": item.defaultCategoryID ?? NSNull(),
+                    "transaction_count": history.count, "net_amount_minor": history.reduce(Int64(0)) { $0 + $1.amount }, "aliases": item.aliases.enumerated().map { ["id": "\(item.id)-alias-\($0.offset)", "display_name": $0.element] }] as [String: Any]
+        })
+        values.sort { lhs, rhs in lhs.transactionCount == rhs.transactionCount ? lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending : lhs.transactionCount > rhs.transactionCount }
+        let start = Int(cursor ?? "") ?? 0
+        let end = min(start + limit, values.count)
+        return APIPayeePage(items: start < end ? Array(values[start..<end]) : [], nextCursor: end < values.count ? String(end) : nil)
+    }
     func createPayee(_ operation: CreatePayeeOperation) async throws {
         let name = operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !demo.payees.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { throw workspaceRepositoryError("A payee with this name already exists.") }
@@ -610,6 +699,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     init(budget: APIBudget, credentials: LiveWorkspaceCredentials) { self.budget = budget; self.credentials = credentials }
 
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try await credentials.prepare(); return try await client.searchTransactions(budgetID: budget.id, query: query, token: token) }
+    func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage { try await credentials.prepare(); return try await client.searchPayees(budgetID: budget.id, query: query, includeArchived: includeArchived, limit: limit, cursor: cursor, token: token) }
 
     func createPayee(_ operation: CreatePayeeOperation) async throws { try await credentials.prepare(); _ = try await client.createPayee(budgetID: budget.id, payee: APIPayeeCreate(displayName: operation.displayName, defaultCategoryID: operation.defaultCategoryID), token: token) }
     func updatePayee(_ operation: UpdatePayeeOperation) async throws { try await credentials.prepare(); _ = try await client.updatePayee(budgetID: budget.id, payeeID: operation.payeeID, payee: APIPayeeUpdate(displayName: operation.displayName, isArchived: operation.isArchived, defaultCategoryID: operation.defaultCategoryID), token: token) }
@@ -683,13 +773,12 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let start = BudgetWorkspaceStore.dateString(report.start), end = BudgetWorkspaceStore.dateString(report.end)
         async let loadedAccounts = client.accounts(budgetID: budget.id, token: token)
         async let loadedTransactions = client.transactions(budgetID: budget.id, token: token)
-        async let loadedPayees = client.payees(budgetID: budget.id, token: token)
         async let loadedCategories = client.categories(budgetID: budget.id, token: token)
         async let loadedGroups = client.categoryGroups(budgetID: budget.id, token: token)
         async let loadedSummary = client.monthSummary(budgetID: budget.id, month: String(month), token: token)
         async let loadedSpending = client.spendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], categoryIDs: report.categoryID.isEmpty ? [] : [report.categoryID], categoryGroups: report.categoryGroup.isEmpty ? [] : [report.categoryGroup], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], transactionType: report.transactionType.isEmpty ? nil : report.transactionType, cleared: report.cleared == "all" ? nil : report.cleared == "cleared", includeTracking: report.includeTracking, token: token)
         async let loadedIncome = client.incomeSpendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], cleared: report.cleared == "all" ? nil : report.cleared == "cleared", includeTracking: report.includeTracking, token: token)
-        let (accounts, transactions, payees, categories, groups, summary, spending, income) = try await (loadedAccounts, loadedTransactions, loadedPayees, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome)
+        let (accounts, transactions, categories, groups, summary, spending, income) = try await (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome)
         let allocationOperations = budget.can("view_allocation_history") ? (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] : []
         let schedules = budget.can("view_transactions") ? try await client.scheduledTransactions(budgetID: budget.id, includeInactive: true, token: token) : []
         let targets = await withTaskGroup(of: APICategoryTarget?.self) { group in for category in categories { group.addTask { try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: self.token) } }; var values: [APICategoryTarget] = []; for await target in group { if let target { values.append(target) } }; return values }
@@ -700,7 +789,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let forecast: APIForecast? = if budget.can("view_account_balances") { try? await client.forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(Calendar.current.date(byAdding: .day, value: 90, to: Date())!), token: token) } else { nil }
         let members = budget.can("manage_allowances") ? (try? await client.householdMembers(householdID: budget.householdID, token: token)) ?? [] : []
         let delegatedBudgets = budget.can("manage_allowances") ? (try? await client.delegatedBudgets(budgetID: budget.id, token: token)) ?? [] : []
-        return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, payees: payees, requests: requests, allowances: allowances, spending: spending, income: income, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, targets: targets, schedules: schedules)
+        return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, payees: [], requests: requests, allowances: allowances, spending: spending, income: income, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, targets: targets, schedules: schedules)
     }
 }
 
@@ -830,6 +919,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func createPayee(_ operation: CreatePayeeOperation) async throws { try await services().payees.create(operation); await refresh() }
+    func searchPayees(query: String = "", includeArchived: Bool = false, limit: Int = 20, cursor: String? = nil) async throws -> APIPayeePage { try await services().payees.search(query: query, includeArchived: includeArchived, limit: limit, cursor: cursor) }
     func updatePayee(_ operation: UpdatePayeeOperation) async throws { try await services().payees.update(operation); await refresh() }
     func mergePayee(sourceID: String, destinationID: String) async throws { try await services().payees.merge(sourceID: sourceID, destinationID: destinationID); await refresh() }
     func createPayeeAlias(payeeID: String, displayName: String) async throws { try await services().payees.createAlias(payeeID: payeeID, displayName: displayName); await refresh() }
@@ -1700,7 +1790,7 @@ private struct LiveActivityView: View {
 }
 
 private struct TransactionBrowserFilter: Equatable, CustomStringConvertible {
-    var accountID = ""; var categoryID = ""; var payeeID = ""; var memberID = ""
+    var accountID = ""; var categoryID = ""; var payeeID = ""; var payeeName = ""; var memberID = ""
     var type = "all"; var status = "all"; var sort = "date_desc"; var linkage = "all"
     var flag = ""; var tag = ""; var minimum = ""; var maximum = ""
     var usesStartDate = false; var startDate = Date(); var usesEndDate = false; var endDate = Date()
@@ -1715,16 +1805,17 @@ private struct TransactionFilterView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @Environment(\.dismiss) private var dismiss
     @State private var draft: TransactionBrowserFilter
+    @State private var showPayeeSelector = false
     let onApply: (TransactionBrowserFilter) -> Void
     init(current: TransactionBrowserFilter, onApply: @escaping (TransactionBrowserFilter) -> Void) { _draft = State(initialValue: current); self.onApply = onApply }
     var body: some View { NavigationStack { Form {
-        Section("Resources") { Picker("Account", selection: $draft.accountID) { Text("All accounts").tag(""); ForEach(store.accounts) { Text($0.name).tag($0.id) } }; Picker("Category", selection: $draft.categoryID) { Text("All categories").tag(""); ForEach(store.categories) { Text($0.name).tag($0.id) } }; Picker("Payee", selection: $draft.payeeID) { Text("All payees").tag(""); ForEach(store.payees) { Text($0.displayName).tag($0.id) } }; if !store.householdMembers.isEmpty { Picker("Member", selection: $draft.memberID) { Text("All authorized members").tag(""); ForEach(store.householdMembers) { Text($0.displayName).tag($0.userID) } } } }
+        Section("Resources") { Picker("Account", selection: $draft.accountID) { Text("All accounts").tag(""); ForEach(store.accounts) { Text($0.name).tag($0.id) } }; Picker("Category", selection: $draft.categoryID) { Text("All categories").tag(""); ForEach(store.categories) { Text($0.name).tag($0.id) } }; Button { showPayeeSelector = true } label: { LabeledContent("Payee", value: draft.payeeName.isEmpty ? "All payees" : draft.payeeName) }.accessibilityIdentifier("activity-payee-selector"); if !draft.payeeID.isEmpty { Button("Clear Payee Filter", role: .destructive) { draft.payeeID = ""; draft.payeeName = "" } }; if !store.householdMembers.isEmpty { Picker("Member", selection: $draft.memberID) { Text("All authorized members").tag(""); ForEach(store.householdMembers) { Text($0.displayName).tag($0.userID) } } } }
         Section("Transaction") { Picker("Type", selection: $draft.type) { Text("All types").tag("all"); Text("Spending").tag("spending"); Text("Income").tag("income"); Text("Refund").tag("refund"); Text("Transfer").tag("transfer") }; Picker("Status", selection: $draft.status) { Text("Any status").tag("all"); Text("Cleared").tag("cleared"); Text("Uncleared").tag("uncleared"); Text("Reconciled").tag("reconciled") }; Picker("Source", selection: $draft.linkage) { Text("Any source").tag("all"); Text("Transfers").tag("transfer"); Text("Realized schedules").tag("scheduled") }; TextField("Flag", text: $draft.flag); TextField("Tag", text: $draft.tag) }
         Section("Date range") { Toggle("Starting date", isOn: $draft.usesStartDate); if draft.usesStartDate { DatePicker("From", selection: $draft.startDate, displayedComponents: .date) }; Toggle("Ending date", isOn: $draft.usesEndDate); if draft.usesEndDate { DatePicker("Through", selection: $draft.endDate, displayedComponents: .date) } }
         Section("Signed amount") { CurrencyAmountField("Minimum", text: $draft.minimum, currencyCode: store.budget.currencyCode, allowsNegative: true, allowsZero: true); CurrencyAmountField("Maximum", text: $draft.maximum, currencyCode: store.budget.currencyCode, allowsNegative: true, allowsZero: true); Text("Outflows are negative; inflows are positive.").font(.caption).foregroundStyle(.secondary) }
         Section("Sort") { Picker("Order", selection: $draft.sort) { Text("Newest first").tag("date_desc"); Text("Oldest first").tag("date_asc"); Text("Largest amount").tag("amount_desc"); Text("Smallest amount").tag("amount_asc"); Text("Payee A–Z").tag("payee_asc") } }
         Section { Button("Reset filters") { draft = TransactionBrowserFilter() } }
-    }.navigationTitle("Filter Activity").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { onApply(draft); dismiss() } } } } }
+    }.navigationTitle("Filter Activity").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { onApply(draft); dismiss() } } }.sheet(isPresented: $showPayeeSelector) { PayeeSearchSelectionView(title: "Filter by Payee") { payee in draft.payeeID = payee.id; draft.payeeName = payee.displayName } } } }
 }
 
 private enum ScheduledKind: String, CaseIterable, Identifiable {
@@ -2415,6 +2506,7 @@ private struct LiveInsightsView: View {
     @State private var breakdownMode = SpendingBreakdownMode.category
     @State private var selectedAngle: Int64?
     @State private var selectedSlice: SpendingBreakdownSlice?
+    @State private var showReportPayeeSelector = false
     var body: some View {
         List {
             Section { Picker("Period", selection: $store.reportPeriod) { Text("30 Days").tag("30d"); Text("60 Days").tag("60d"); Text("90 Days").tag("90d"); Text("3 Months").tag("3m"); Text("6 Months").tag("6m"); Text("Year to Date").tag("ytd"); Text("1 Year").tag("1y"); Text("Custom").tag("custom") }.onChange(of: store.reportPeriod) { _, _ in Task { await reload() } }; if store.reportPeriod == "custom" { DatePicker("From", selection: $store.customReportStart, displayedComponents: .date); DatePicker("Through", selection: $store.customReportEnd, displayedComponents: .date); Button("Apply custom range") { Task { await reload() } } } }
@@ -2434,12 +2526,13 @@ private struct LiveInsightsView: View {
         Picker("Account", selection: $store.reportAccountID) { Text("All accounts").tag(""); ForEach(store.accounts) { Text($0.name).tag($0.id) } }
         Picker("Category", selection: $store.reportCategoryID) { Text("All categories").tag(""); ForEach(store.categories.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } }
         Picker("Category group", selection: $store.reportCategoryGroup) { Text("All groups").tag(""); ForEach(store.groups) { Text($0.name).tag($0.name) } }
-        Picker("Payee", selection: $store.reportPayee) { Text("All payees").tag(""); ForEach(Array(Set(store.transactions.map(\.payeeName))).filter { !$0.isEmpty }.sorted(), id: \.self) { Text($0).tag($0) } }
+        Button { showReportPayeeSelector = true } label: { LabeledContent("Payee", value: store.reportPayee.isEmpty ? "All payees" : store.reportPayee) }
+        if !store.reportPayee.isEmpty { Button("Clear Payee Filter", role: .destructive) { store.reportPayee = "" } }
         if !store.householdMembers.isEmpty { Picker("Member", selection: $store.reportMemberID) { Text("All members").tag(""); ForEach(store.householdMembers.filter(\.isActive)) { Text($0.displayName).tag($0.userID) } } }
         Picker("Type", selection: $store.reportTransactionType) { Text("All types").tag(""); Text("Spending").tag("spending"); Text("Refunds").tag("refund"); Text("Income").tag("income"); Text("Transfers").tag("transfer") }
         Picker("Status", selection: $store.reportCleared) { Text("All statuses").tag("all"); Text("Cleared").tag("cleared"); Text("Uncleared").tag("uncleared") }
         Toggle("Include tracking accounts", isOn: $store.includeTrackingAccounts)
-    }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false; Task { await reload() } } } } } }
+    }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false; Task { await reload() } } } }.sheet(isPresented: $showReportPayeeSelector) { PayeeSearchSelectionView(title: "Filter by Payee") { store.reportPayee = $0.displayName } } } }
     private func reload() async { await store.refresh() }
 }
 
@@ -2604,16 +2697,17 @@ private struct LiveTransactionEditView: View {
     let budget: APIBudget; let transaction: APITransaction; let accounts: [APIAccount]; let categories: [APICategory]; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var payee: String; @State private var payeeID: String?; @State private var amount: String; @State private var accountID: String; @State private var categoryID: String; @State private var memo: String; @State private var cleared: Bool; @State private var date: Date; @State private var isInflow: Bool; @State private var isSplit: Bool; @State private var splitRows: [WorkspaceSplitDraft]; @State private var flag: String; @State private var tags: String
+    @State private var selectedPayeeName: String; @State private var showPayeeSelector = false
     @State private var isSaving = false; @State private var errorMessage: String?
     init(budget: APIBudget, transaction: APITransaction, accounts: [APIAccount], categories: [APICategory], onSaved: @escaping () async -> Void) {
         self.budget=budget; self.transaction=transaction; self.accounts=accounts; self.categories=categories; self.onSaved=onSaved
-        _payee=State(initialValue:transaction.payeeName); _payeeID=State(initialValue:transaction.payeeID); _amount=State(initialValue:CurrencyText.editable(abs(transaction.amountMinor),currencyCode:budget.currencyCode)); _accountID=State(initialValue:transaction.accountID); _categoryID=State(initialValue:transaction.categoryID ?? ""); _memo=State(initialValue:transaction.memo); _cleared=State(initialValue:transaction.isCleared); _date=State(initialValue:Self.parseDate(transaction.occurredOn)); _isInflow=State(initialValue:transaction.amountMinor > 0); _isSplit=State(initialValue:!transaction.splits.isEmpty); _splitRows=State(initialValue:transaction.splits.map { WorkspaceSplitDraft(categoryID:$0.categoryID,amount:CurrencyText.editable(abs($0.amountMinor),currencyCode:budget.currencyCode),memo:$0.memo) }); _flag=State(initialValue:transaction.flag ?? ""); _tags=State(initialValue:(transaction.tags ?? []).joined(separator:", "))
+        _payee=State(initialValue:transaction.payeeName); _payeeID=State(initialValue:transaction.payeeID); _selectedPayeeName=State(initialValue:transaction.payeeID == nil ? "" : transaction.payeeName); _amount=State(initialValue:CurrencyText.editable(abs(transaction.amountMinor),currencyCode:budget.currencyCode)); _accountID=State(initialValue:transaction.accountID); _categoryID=State(initialValue:transaction.categoryID ?? ""); _memo=State(initialValue:transaction.memo); _cleared=State(initialValue:transaction.isCleared); _date=State(initialValue:Self.parseDate(transaction.occurredOn)); _isInflow=State(initialValue:transaction.amountMinor > 0); _isSplit=State(initialValue:!transaction.splits.isEmpty); _splitRows=State(initialValue:transaction.splits.map { WorkspaceSplitDraft(categoryID:$0.categoryID,amount:CurrencyText.editable(abs($0.amountMinor),currencyCode:budget.currencyCode),memo:$0.memo) }); _flag=State(initialValue:transaction.flag ?? ""); _tags=State(initialValue:(transaction.tags ?? []).joined(separator:", "))
     }
     var body: some View { NavigationStack { Form {
-        TextField("Payee",text:$payee).onChange(of:payee){_,value in if workspace.payees.first(where:{$0.id==payeeID})?.displayName != value { payeeID=nil }}; if !workspace.payees.isEmpty { Menu("Choose saved payee",systemImage:"person.text.rectangle"){ForEach(workspace.payees.sorted { lhs, rhs in lhs.transactionCount == rhs.transactionCount ? lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending : lhs.transactionCount > rhs.transactionCount }){item in Button(item.displayName){payeeID=item.id;payee=item.displayName;if categoryID.isEmpty,let suggested=item.defaultCategoryID{categoryID=suggested}}}} }; CurrencyAmountField("Amount", text:$amount, currencyCode:budget.currencyCode); Toggle("Income / inflow",isOn:$isInflow); Picker("Account",selection:$accountID){ForEach(accounts.filter{!$0.isClosed}){Text($0.name).tag($0.id)}}; DatePicker("Date",selection:$date,displayedComponents:.date); Toggle("Split across categories",isOn:$isSplit).disabled(isInflow)
+        TextField("Payee",text:$payee).onChange(of:payee){_,value in if payeeID != nil && selectedPayeeName != value { payeeID=nil;selectedPayeeName="" }}; Button("Choose saved payee",systemImage:"person.text.rectangle"){showPayeeSelector=true}.accessibilityIdentifier("saved-payee-menu"); CurrencyAmountField("Amount", text:$amount, currencyCode:budget.currencyCode); Toggle("Income / inflow",isOn:$isInflow); Picker("Account",selection:$accountID){ForEach(accounts.filter{!$0.isClosed}){Text($0.name).tag($0.id)}}; DatePicker("Date",selection:$date,displayedComponents:.date); Toggle("Split across categories",isOn:$isSplit).disabled(isInflow)
         if isSplit { Section("Splits") { ForEach($splitRows) { $row in Picker("Category",selection:$row.categoryID){Text("Select").tag("");ForEach(categories.filter{!$0.isArchived}){Text($0.name).tag($0.id)}};CurrencyAmountField("Split amount", text:$row.amount, currencyCode:budget.currencyCode, allowsZero:true);TextField("Split memo",text:$row.memo) }; Button("Add split",systemImage:"plus"){splitRows.append(.init())}; if let remaining { LabeledContent("Remaining",value:CurrencyText.editable(remaining,currencyCode:budget.currencyCode)).foregroundStyle(remaining == 0 ? Color.secondary : Color.red) } } } else if !isInflow { Picker("Category",selection:$categoryID){Text("Uncategorized").tag("");ForEach(categories.filter{!$0.isArchived}){Text($0.name).tag($0.id)}} }
         TextField("Memo",text:$memo); Picker("Flag",selection:$flag){Text("None").tag("");Text("Red").tag("red");Text("Orange").tag("orange");Text("Yellow").tag("yellow");Text("Green").tag("green");Text("Blue").tag("blue");Text("Purple").tag("purple")}; TextField("Tags (comma separated)",text:$tags);Text("Manage attachments from transaction detail.").font(.footnote).foregroundStyle(.secondary);Toggle("Cleared",isOn:$cleared)
-    }.navigationTitle("Edit Transaction").toolbar { ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(isSaving || parsed == nil || !splitsValid)} }.alert("Unable to save",isPresented:Binding(get:{errorMessage != nil},set:{if !$0{errorMessage=nil}})){Button("OK",role:.cancel){}}message:{Text(errorMessage ?? "Unknown error")} } }
+    }.navigationTitle("Edit Transaction").toolbar { ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(isSaving || parsed == nil || !splitsValid)} }.alert("Unable to save",isPresented:Binding(get:{errorMessage != nil},set:{if !$0{errorMessage=nil}})){Button("OK",role:.cancel){}}message:{Text(errorMessage ?? "Unknown error")}.sheet(isPresented:$showPayeeSelector){PayeeSearchSelectionView{item in payeeID=item.id;payee=item.displayName;selectedPayeeName=item.displayName;if categoryID.isEmpty,let suggested=item.defaultCategoryID{categoryID=suggested}}} } }
     private var parsed:Int64?{guard let value=CurrencyText.parseMinorUnits(amount,currencyCode:budget.currencyCode),value>0 else{return nil};return isInflow ? value : -value}
     private var parsedSplits:[TransactionSplitOperation]?{guard isSplit else{return []};var values:[TransactionSplitOperation]=[];for row in splitRows{guard !row.categoryID.isEmpty,let value=CurrencyText.parseMinorUnits(row.amount,currencyCode:budget.currencyCode),value>=0 else{return nil};values.append(.init(categoryID:row.categoryID,amountMinor:-value,memo:row.memo))};return values}
     private var remaining:Int64?{guard let parsed,let parsedSplits else{return nil};return parsed - parsedSplits.reduce(0){$0+$1.amountMinor}}

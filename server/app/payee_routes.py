@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, func, select
+import base64
+import binascii
+import json
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import and_, delete, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -9,9 +14,9 @@ from .access import can_access_resource, visible_resource_ids
 from .budgeting_routes import require_budget_capability
 from .database import get_db
 from .dependencies import get_current_user
-from .models import Budget, Category, Payee, PayeeAlias, PayeeBudgetPreference, Transaction, TransactionChange, User
+from .models import Budget, Category, Payee, PayeeAlias, PayeeBudgetPreference, Transaction, TransactionChange, TransactionSplit, User
 from .payee_names import display_payee_name, normalized_payee_name
-from .schemas import PayeeAliasCreate, PayeeAliasResponse, PayeeCreate, PayeeMerge, PayeeResponse, PayeeUpdate
+from .schemas import PayeeAliasCreate, PayeeAliasResponse, PayeeCreate, PayeeMerge, PayeePageResponse, PayeeResponse, PayeeUpdate
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
@@ -52,6 +57,72 @@ def _response(db: Session, budget: Budget, payee: Payee, visible: list[Transacti
         "transaction_count": len(rows), "net_amount_minor": sum(row.amount_minor for row in rows),
         "aliases": list(db.scalars(select(PayeeAlias).where(PayeeAlias.payee_id == payee.id).order_by(PayeeAlias.display_name))),
     }
+
+
+def _visible_transaction_conditions(user: User, budget: Budget, db: Session) -> list:
+    conditions = [Transaction.budget_id == budget.id]
+    accounts = visible_resource_ids(db, user, budget, "account")
+    categories = visible_resource_ids(db, user, budget, "category")
+    if accounts is not None:
+        conditions.append(Transaction.account_id.in_(accounts))
+    if categories is not None:
+        disallowed_split = exists(select(TransactionSplit.id).where(
+            TransactionSplit.transaction_id == Transaction.id,
+            TransactionSplit.category_id.not_in(categories),
+        ))
+        conditions.append(or_(
+            Transaction.category_id.in_(categories),
+            and_(Transaction.category_id.is_(None), ~disallowed_split),
+        ))
+    return conditions
+
+
+@router.get("/payees/search", response_model=PayeePageResponse)
+def search_payees(
+    budget_id: str,
+    q: str = Query(default="", max_length=150),
+    include_archived: bool = False,
+    limit: int = Query(default=20, ge=1, le=50),
+    cursor: Optional[str] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PayeePageResponse:
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    try:
+        offset = 0 if cursor is None else int(base64.urlsafe_b64decode(cursor.encode("ascii")).decode("ascii"))
+        if offset < 0:
+            raise ValueError
+    except (ValueError, UnicodeError, binascii.Error):
+        raise HTTPException(status_code=422, detail="Invalid payee cursor") from None
+
+    visible_conditions = _visible_transaction_conditions(user, budget, db)
+    visible_count = select(func.count(Transaction.id)).where(
+        *visible_conditions, Transaction.payee_id == Payee.id,
+    ).correlate(Payee).scalar_subquery()
+    query = select(Payee).where(Payee.household_id == budget.household_id)
+    if not include_archived:
+        query = query.where(Payee.is_archived.is_(False), Payee.merged_into_payee_id.is_(None))
+    scoped = visible_resource_ids(db, user, budget, "account") is not None or visible_resource_ids(db, user, budget, "category") is not None
+    if scoped:
+        query = query.where(visible_count > 0)
+    key = normalized_payee_name(q)
+    if key:
+        alias_match = exists(select(PayeeAlias.id).where(
+            PayeeAlias.payee_id == Payee.id,
+            PayeeAlias.name_key.contains(key),
+        ))
+        query = query.where(or_(Payee.name_key.contains(key), alias_match))
+    query = query.order_by(visible_count.desc(), func.lower(Payee.display_name), Payee.id).offset(offset).limit(limit + 1)
+    rows = list(db.scalars(query))
+    page, has_more = rows[:limit], len(rows) > limit
+    visible = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
+        *_visible_transaction_conditions(user, budget, db),
+        Transaction.payee_id.in_([item.id for item in page]),
+    ))) if page else []
+    next_cursor = None
+    if has_more:
+        next_cursor = base64.urlsafe_b64encode(str(offset + limit).encode("ascii")).decode("ascii")
+    return PayeePageResponse(items=[_response(db, budget, item, visible) for item in page], next_cursor=next_cursor)
 
 
 @router.get("/payees", response_model=list[PayeeResponse])
@@ -113,7 +184,19 @@ def update_payee(budget_id: str, payee_id: str, body: PayeeUpdate, user: User = 
     name = display_payee_name(body.display_name)
     if not name:
         raise HTTPException(status_code=422, detail="Enter a payee name")
+    old_name = payee.display_name
     payee.display_name, payee.name_key, payee.is_archived = name, normalized_payee_name(name), body.is_archived
+    if name != old_name:
+        for transaction in db.scalars(select(Transaction).where(Transaction.payee_id == payee.id)):
+            transaction.payee_name = name
+            db.add(TransactionChange(
+                budget_id=transaction.budget_id,
+                transaction_id=transaction.id,
+                actor_user_id=user.id,
+                action="payee_renamed",
+                before_json=json.dumps({"payee_id": payee.id, "payee_name": old_name}),
+                after_json=json.dumps({"payee_id": payee.id, "payee_name": name}),
+            ))
     _set_preference(db, budget, payee, body.default_category_id, user)
     try:
         db.commit()

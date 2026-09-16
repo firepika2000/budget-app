@@ -388,6 +388,25 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(requestCount, 3)
     }
 
+    func testPayeeSearchUsesBoundedServerAuthoritativePage() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/payees/search")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(items.first(where: { $0.name == "q" })?.value, "metadata")
+            XCTAssertEqual(items.first(where: { $0.name == "limit" })?.value, "20")
+            XCTAssertEqual(items.first(where: { $0.name == "cursor" })?.value, "next")
+            let response = Data(#"{"items":[{"id":"p1","household_id":"h1","display_name":"Metadata test","is_archived":false,"merged_into_payee_id":null,"default_category_id":"c1","transaction_count":1,"net_amount_minor":-200,"aliases":[]}],"next_cursor":null}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let page = try await client.searchPayees(budgetID: "b1", query: "metadata", limit: 20, cursor: "next", token: "secret")
+        XCTAssertEqual(page.items.map(\.displayName), ["Metadata test"])
+        XCTAssertNil(page.nextCursor)
+    }
+
     func testCreateTransactionEncodesBalancedSplits() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

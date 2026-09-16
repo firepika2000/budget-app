@@ -214,6 +214,7 @@ protocol TransactionBrowserRepository: AnyObject {
 
 @MainActor
 protocol PayeeCommandRepository: AnyObject {
+    func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage
     func createPayee(_ operation: CreatePayeeOperation) async throws
     func updatePayee(_ operation: UpdatePayeeOperation) async throws
     func mergePayee(sourceID: String, destinationID: String) async throws
@@ -454,6 +455,10 @@ struct BudgetApplicationServices {
 struct PayeeService {
     private let repository: any PayeeCommandRepository
     init(repository: any PayeeCommandRepository) { self.repository = repository }
+    func search(query: String = "", includeArchived: Bool = false, limit: Int = 20, cursor: String? = nil) async throws -> APIPayeePage {
+        do { return try await repository.searchPayees(query: query, includeArchived: includeArchived, limit: limit, cursor: cursor) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
     func create(_ operation: CreatePayeeOperation) async throws {
         guard !operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw BudgetApplicationError.invalidOperation("Enter a payee name.") }
         do { try await repository.createPayee(operation) } catch { throw BudgetApplicationError.map(error) }
