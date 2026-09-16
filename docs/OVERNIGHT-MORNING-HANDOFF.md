@@ -768,3 +768,22 @@ workspace resources.
 Focused request, allowance, access, and migration tests PASS (23). The Xcode 27 Beta unsigned build
 PASS on the preserved iPhone 17 Pro Max / iOS 27 simulator. Migrations `0024` and `0025` remain
 source-only and were not applied to the human Live database.
+
+## v0.7 checkpoint — guided onboarding and product education
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+The production workspace now offers an optional seven-part guide for an owner’s genuinely empty
+budget. It teaches accounts as money location, Plan as purpose, posted activity, money movement,
+targets/schedules/cards/reconciliation, forecast-versus-current money, and Insights. Every lesson
+states its financial consequence before routing to the existing production tab; the guide itself
+never creates or changes authoritative accounts, balances, allocations, schedules, or transactions.
+Populated and delegated budgets are not interrupted.
+
+Progress is scoped to the member and budget, survives workspace reconstruction, can be skipped and
+resumed, and can be restarted after completion from Profile & Settings. Reduced Motion avoids the
+lesson transition animation, while native semantic headings, labels, hints, Dynamic Type, scrolling,
+and VoiceOver accessibility remain available. A production-composition XCUITest caught and drove a
+fix for an initial Continue-versus-Restart wiring error, then passed the complete automatic-present →
+advance → skip → Profile resume → production Plan route on Xcode 27 Beta and the preserved iPhone 17
+Pro Max / iOS 27 simulator. A native XCTest proves persistence and financial-state neutrality.

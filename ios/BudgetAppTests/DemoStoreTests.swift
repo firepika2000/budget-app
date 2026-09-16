@@ -6,6 +6,33 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testGuidedOnboardingProgressPersistsWithoutMutatingFinancialState() async {
+        let store = BudgetWorkspaceStore.demo(fresh: true)
+        await store.refresh()
+        let userID = "onboarding-test-\(UUID().uuidString)"
+        let prefix = "budget.guided-onboarding.\(userID).\(store.budget.id)"
+        defer {
+            for suffix in ["step", "dismissed", "completed"] { UserDefaults.standard.removeObject(forKey: "\(prefix).\(suffix)") }
+        }
+        let beforeAccounts = store.accounts
+        let beforeCategories = store.categories
+        let beforeTransactions = store.transactions
+        let beforeSummary = store.summary
+        store.configureOnboarding(userID: userID)
+        XCTAssertTrue(store.isGenuinelyEmptyForOnboarding)
+        store.saveOnboarding(step: 4, dismissed: true, completed: false)
+
+        let restored = BudgetWorkspaceStore.demo(fresh: true)
+        restored.configureOnboarding(userID: userID)
+        XCTAssertEqual(restored.onboardingStep, 4)
+        XCTAssertTrue(restored.onboardingDismissed)
+        XCTAssertFalse(restored.onboardingCompleted)
+        XCTAssertEqual(store.accounts, beforeAccounts)
+        XCTAssertEqual(store.categories, beforeCategories)
+        XCTAssertEqual(store.transactions, beforeTransactions)
+        XCTAssertEqual(store.summary, beforeSummary)
+    }
+    @MainActor
     func testDemoHouseholdAccessPersistsPresetAndScopeWithoutChangingWorkspaceMoney() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()

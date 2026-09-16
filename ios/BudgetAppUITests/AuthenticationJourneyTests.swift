@@ -37,7 +37,7 @@ final class AuthenticationJourneyTests: XCTestCase {
 
     func testFreshHomeHasIntentionalUpcomingAndActivityEmptyStates() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=home"]
+        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=home", "--skip-guided-onboarding"]
         app.launch()
 
         XCTAssertTrue(app.descendants(matching: .any)["home-upcoming-empty"].waitForExistence(timeout: 5))
@@ -187,7 +187,7 @@ final class AuthenticationJourneyTests: XCTestCase {
 
     func testFreshProductionWorkspaceTabsAndGlobalProfileRemainReachable() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "--demo-fresh-budget"]
+        app.launchArguments = ["--demo", "--demo-fresh-budget", "--skip-guided-onboarding"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["runtime-build-identity"].waitForExistence(timeout: 5))
@@ -221,9 +221,35 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertFalse(app.buttons["Budgets"].exists)
     }
 
+    func testFreshProductionWorkspaceGuidedOnboardingCanSkipResumeAndRoute() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-fresh-budget", "--ui-test-reset-guided-onboarding"]
+        app.launch()
+
+        let guide = app.descendants(matching: .any)["guided-onboarding"]
+        XCTAssertTrue(guide.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Guided Tour"].exists)
+        XCTAssertTrue(app.staticTexts["Where money lives"].exists)
+        XCTAssertTrue(app.staticTexts["Next useful action: add your first real account."].exists)
+
+        app.buttons["Next"].tap()
+        XCTAssertTrue(app.staticTexts["What money is for"].waitForExistence(timeout: 5))
+        app.buttons["Skip"].tap()
+        XCTAssertTrue(guide.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.tabBars.buttons["Home"].exists)
+
+        app.buttons["profile-settings-button"].tap()
+        XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
+        app.buttons["Continue Guided Tour"].tap()
+        XCTAssertTrue(app.staticTexts["What money is for"].waitForExistence(timeout: 5), "the production guide must resume at its persisted lesson")
+        app.buttons["Open Plan"].tap()
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Create Category Group"].exists)
+    }
+
     func testFreshAccountMetadataEditPreservesBalanceAndExposesTreatment() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=accounts"]
+        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=accounts", "--skip-guided-onboarding"]
         app.launch()
 
         app.buttons["Add Account"].tap()
@@ -263,7 +289,7 @@ final class AuthenticationJourneyTests: XCTestCase {
 
     func testEmptyCategoryGroupRemainsVisibleAndDefaultsCategoryCreation() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=plan"]
+        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=plan", "--skip-guided-onboarding"]
         app.launch()
 
         app.buttons["Create Category Group"].tap()
@@ -289,7 +315,7 @@ final class AuthenticationJourneyTests: XCTestCase {
 
     func testPopulatedPlanCanCreateAndManageAdditionalCategoryGroups() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=plan"]
+        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=plan", "--skip-guided-onboarding"]
         app.launch()
         let groupPicker = app.descendants(matching: .any).matching(identifier: "new-category-group").firstMatch
 

@@ -1036,6 +1036,9 @@ final class BudgetWorkspaceStore: ObservableObject {
             UserDefaults.standard.synchronize()
         }
     }
+    @Published private(set) var onboardingStep = 0
+    @Published private(set) var onboardingDismissed = false
+    @Published private(set) var onboardingCompleted = false
     private var dataSource: WorkspaceDataSource?
     private var commandRepository: WorkspaceCommandRepository?
     private var applicationServices: BudgetApplicationServices?
@@ -1043,6 +1046,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     private var transactionBrowseQuery: APITransactionQuery?
     private var transactionBrowseOperationID: UUID?
     private var privacyPreferenceKey: String?
+    private var onboardingPreferencePrefix: String?
 
     init(budget: APIBudget) { self.budget = budget; dataSource = nil; commandRepository = nil; applicationServices = nil }
     private init(dataSource: DemoWorkspaceDataSource) {
@@ -1299,6 +1303,31 @@ final class BudgetWorkspaceStore: ObservableObject {
         hideAmounts = UserDefaults.standard.bool(forKey: key)
     }
 
+    func configureOnboarding(userID: String?) {
+        let identity = userID ?? "anonymous"
+        let prefix = "budget.guided-onboarding.\(identity).\(budget.id)"
+        guard prefix != onboardingPreferencePrefix else { return }
+        onboardingPreferencePrefix = prefix
+        onboardingStep = UserDefaults.standard.integer(forKey: "\(prefix).step")
+        onboardingDismissed = UserDefaults.standard.bool(forKey: "\(prefix).dismissed")
+        onboardingCompleted = UserDefaults.standard.bool(forKey: "\(prefix).completed")
+    }
+
+    func saveOnboarding(step: Int? = nil, dismissed: Bool? = nil, completed: Bool? = nil) {
+        guard let prefix = onboardingPreferencePrefix else { return }
+        if let step { onboardingStep = step; UserDefaults.standard.set(step, forKey: "\(prefix).step") }
+        if let dismissed { onboardingDismissed = dismissed; UserDefaults.standard.set(dismissed, forKey: "\(prefix).dismissed") }
+        if let completed { onboardingCompleted = completed; UserDefaults.standard.set(completed, forKey: "\(prefix).completed") }
+        UserDefaults.standard.synchronize()
+    }
+
+    func restartOnboarding() { saveOnboarding(step: 0, dismissed: false, completed: false) }
+    func resumeOnboarding() { saveOnboarding(dismissed: false, completed: false) }
+
+    var isGenuinelyEmptyForOnboarding: Bool {
+        budget.effectivePermission == .owner && accounts.isEmpty && categories.isEmpty && transactions.isEmpty
+    }
+
     func setHideAmounts(_ hidden: Bool) {
         hideAmounts = hidden
     }
@@ -1474,6 +1503,8 @@ struct BudgetWorkspaceView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store: BudgetWorkspaceStore
     @State private var showingSettings = false
+    @State private var showingOnboarding = false
+    @State private var didEvaluateOnboarding = false
     @State private var selectedTab: Int
     private let selectionOverride: Binding<Int>?
 
@@ -1525,6 +1556,10 @@ struct BudgetWorkspaceView: View {
         .privacySensitive(store.hideAmounts)
         .task(id: session.token) { [session] in
             store.configurePrivacy(userID: session.profile?.id)
+            store.configureOnboarding(userID: session.profile?.id ?? (session.sourceMode == .deterministic ? "deterministic-demo-user" : nil))
+            if ProcessInfo.processInfo.arguments.contains("--ui-test-reset-guided-onboarding") {
+                store.restartOnboarding()
+            }
             store.bindLiveCredentialAuthority { forceRefresh in
                 return try await session.currentLiveCredentials(forceRefresh: forceRefresh, caller: "workspace.request")
             }
@@ -1532,14 +1567,31 @@ struct BudgetWorkspaceView: View {
                 store.updateLiveCredentials(serverURL: serverURL, token: token)
             }
             await reload()
+            if !didEvaluateOnboarding {
+                didEvaluateOnboarding = true
+                showingOnboarding = !ProcessInfo.processInfo.arguments.contains("--skip-guided-onboarding")
+                    && store.isGenuinelyEmptyForOnboarding
+                    && !store.onboardingDismissed
+                    && !store.onboardingCompleted
+            }
         }
         .alert("Unable to complete request", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("Retry") { Task { await reload() } }; Button("Cancel", role: .cancel) {}
         } message: { Text(store.errorMessage ?? "Unknown error") }
         .sheet(isPresented: $showingSettings) {
-            WorkspaceProfileView(store: store)
+            WorkspaceProfileView(store: store) {
+                if store.onboardingCompleted { store.restartOnboarding() } else { store.resumeOnboarding() }
+                showingOnboarding = true
+            }
                 .environmentObject(session)
                 .environmentObject(store)
+        }
+        .sheet(isPresented: $showingOnboarding) {
+            GuidedOnboardingView(store: store) { tab in
+                showingOnboarding = false
+                tabSelection.wrappedValue = tab
+            }
+            .environmentObject(store)
         }
         // Keep workspace dependencies outside every presentation modifier so
         // sheets and their navigation destinations inherit the same instances.
@@ -1558,6 +1610,7 @@ private struct WorkspaceProfileView: View {
     @EnvironmentObject private var session: AppSession
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var store: BudgetWorkspaceStore
+    let startOnboarding: () -> Void
     @State private var showHousehold = false
     @State private var showConnection = false
     @State private var showCreate = false
@@ -1589,6 +1642,12 @@ private struct WorkspaceProfileView: View {
                     }
                 }
                 Section("Household") { Button("Household and access", systemImage: "person.3") { showHousehold = true } }
+                Section("Help & Education") {
+                    Button(store.onboardingCompleted ? "Restart Guided Tour" : "Continue Guided Tour", systemImage: "graduationcap") {
+                        dismiss(); startOnboarding()
+                    }
+                    Text("Learn with your real budget. The guide never creates accounts, balances, allocations, or transactions for you.").font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("Connection") {
                     LabeledContent("Source", value: session.sourceMode.title)
                     LabeledContent("Status", value: session.connectionStatus.title)
@@ -1606,6 +1665,78 @@ private struct WorkspaceProfileView: View {
                 BudgetCreationView(households: session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? [])
             }
         }
+    }
+}
+
+private struct GuidedOnboardingView: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    let openTab: (Int) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var step: Int
+
+    init(store: BudgetWorkspaceStore, openTab: @escaping (Int) -> Void) {
+        self.store = store; self.openTab = openTab
+        _step = State(initialValue: min(max(store.onboardingStep, 0), Self.lessons.count - 1))
+    }
+
+    private struct Lesson {
+        let title: String; let symbol: String; let explanation: String; let consequence: String; let action: String; let tab: Int
+    }
+    private static let lessons = [
+        Lesson(title: "Where money lives", symbol: "building.columns", explanation: "Accounts answer where your money is. Add real checking, savings, cash, and card balances in Accounts.", consequence: "Creating an account with an opening balance changes authoritative account and Ready to Assign values.", action: "Open Accounts", tab: 3),
+        Lesson(title: "What money is for", symbol: "square.grid.2x2", explanation: "Your Plan gives current money a purpose. Categories do not create money; assigning moves Ready to Assign into a purpose.", consequence: "Creating groups/categories is organizational. Assigning money changes the Plan, not the bank balance.", action: "Open Plan", tab: 1),
+        Lesson(title: "Record real activity", symbol: "plus.circle", explanation: "Transactions belong to accounts and spending categories. Posted spending reduces both the account balance and category Available.", consequence: "Saving a transaction changes authoritative financial data. Canceling its editor changes nothing.", action: "Open Activity", tab: 2),
+        Lesson(title: "Adjust the plan", symbol: "arrow.left.arrow.right", explanation: "When priorities change, move available money between categories. A move conserves the total amount of household money.", consequence: "A move changes category purposes but not account balances or Ready to Assign.", action: "Open Plan", tab: 1),
+        Lesson(title: "Plan ahead safely", symbol: "calendar.badge.clock", explanation: "Targets and schedules guide future decisions. Credit-card reserves protect funded purchases, and reconciliation confirms cleared reality.", consequence: "Targets and schedules are guidance only. Scheduled money becomes actual only when entered; reconciliation finalizes observed cleared activity.", action: "Open Plan", tab: 1),
+        Lesson(title: "Forecast is not cash", symbol: "chart.line.uptrend.xyaxis", explanation: "Forecast includes future scheduled income and expenses. Future income can help you prepare, but it is not spendable until received.", consequence: "Viewing Forecast never changes balances, Available, or Ready to Assign.", action: "Open Home", tab: 0),
+        Lesson(title: "Understand the story", symbol: "chart.xyaxis.line", explanation: "Insights explains spending, cash flow, net worth, debt, and plan performance from authorized posted history.", consequence: "Filters and charts are read-only and never alter financial records.", action: "Open Insights", tab: 4),
+    ]
+    private var lesson: Lesson { Self.lessons[step] }
+    private var completionText: String {
+        switch step {
+        case 0: return store.accounts.isEmpty ? "Next useful action: add your first real account." : "You have \(store.accounts.filter { !$0.isClosed }.count) open account(s)."
+        case 1: return store.categories.isEmpty ? "Next useful action: create a category group and category." : "Your Plan has \(store.categories.filter { !$0.isArchived }.count) active categories."
+        case 2: return store.transactions.isEmpty ? "Next useful action: record your first transaction when real activity occurs." : "Your budget contains posted activity."
+        default: return "Explore this in the production workspace whenever it is useful."
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    HStack { Image(systemName: lesson.symbol).font(.system(size: 34)).foregroundStyle(Theme.accent).accessibilityHidden(true); Spacer(); Text("\(step + 1) of \(Self.lessons.count)").font(.subheadline).foregroundStyle(.secondary).accessibilityLabel("Lesson \(step + 1) of \(Self.lessons.count)") }
+                    Text(lesson.title).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
+                    Text(lesson.explanation).font(.title3)
+                    GroupBox("What changes") { Text(lesson.consequence).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4) }
+                    Label(completionText, systemImage: "lightbulb").foregroundStyle(.secondary)
+                    Button(lesson.action) { store.saveOnboarding(step: min(step + 1, Self.lessons.count - 1)); openTab(lesson.tab) }
+                        .buttonStyle(.borderedProminent).controlSize(.large).frame(maxWidth: .infinity)
+                        .accessibilityHint("Closes the guide and opens the real workspace. No financial action is performed.")
+                }
+                .padding()
+            }
+            .navigationTitle("Guided Tour")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Skip") { store.saveOnboarding(step: step, dismissed: true); dismiss() } }
+                ToolbarItemGroup(placement: .bottomBar) {
+                    Button("Back") { changeStep(-1) }.disabled(step == 0)
+                    Spacer()
+                    if step == Self.lessons.count - 1 { Button("Finish") { store.saveOnboarding(step: step, dismissed: false, completed: true); dismiss() }.fontWeight(.semibold) }
+                    else { Button("Next") { changeStep(1) } }
+                }
+            }
+        }
+        .interactiveDismissDisabled(false)
+        .onDisappear { if !store.onboardingCompleted && !store.onboardingDismissed { store.saveOnboarding(step: step) } }
+        .accessibilityIdentifier("guided-onboarding")
+    }
+    private func changeStep(_ delta: Int) {
+        let next = min(max(step + delta, 0), Self.lessons.count - 1)
+        if reduceMotion { step = next } else { withAnimation(.easeInOut(duration: 0.2)) { step = next } }
+        store.saveOnboarding(step: next)
     }
 }
 
