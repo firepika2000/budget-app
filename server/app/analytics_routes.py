@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import csv
 from datetime import date, timedelta
+import io
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
+from starlette.responses import Response
 
 from .access import has_capability, is_household_owner, visible_resource_ids
 from .budgeting_routes import require_budget_capability
@@ -18,6 +21,13 @@ from .schemas import DebtReportResponse, IncomeSpendingReportResponse, NetWorthR
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/reports")
+
+
+def _csv_text(value: object) -> object:
+    """Prevent spreadsheet formula execution while retaining human-readable open-format text."""
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@")):
+        return f"'{value}"
+    return value
 
 
 def _month_end(value: date) -> date:
@@ -641,3 +651,50 @@ def resilience_report(
             "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification.",
         },
     }
+
+
+@router.get("/export.csv", response_class=Response)
+def report_export_csv(
+    budget_id: str,
+    start_date: date,
+    end_date: date,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Export bounded report observations as interoperable CSV, distinct from backup JSON."""
+    require_budget_capability(db, user, budget_id, "export_data")
+    spending = spending_report(
+        budget_id, start_date, end_date, account_id=[], category_id=[], category_group=[],
+        member_id=[], payee=[], transaction_type=None, cleared=None, reconciled=None, flag=[], tag=[],
+        include_tracking=False, user=user, db=db,
+    )
+    income = income_spending_report(
+        budget_id, start_date, end_date, account_id=[], member_id=[], payee=[], cleared=None,
+        reconciled=None, flag=[], tag=[], include_tracking=False, user=user, db=db,
+    )
+    worth = net_worth_report(
+        budget_id, start_date, end_date, account_id=[], include_tracking=True,
+        include_transaction_ids=False, user=user, db=db,
+    )
+    debt = debt_report(budget_id, start_date, end_date, account_id=[], user=user, db=db)
+    plan = plan_performance_report(budget_id, start_date, end_date, user=user, db=db)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(["report", "period_start", "period_end", "dimension", "name", "amount_minor", "currency_code"])
+    currency = spending["currency_code"]
+    for row in spending["categories"]:
+        writer.writerow(["spending", start_date, end_date, "category", _csv_text(row["category_name"]), row["spending_minor"], currency])
+    for row in income["periods"]:
+        for name, key in (("income", "income_minor"), ("spending", "spending_minor"), ("net_cash_flow", "difference_minor")):
+            writer.writerow(["cash_flow", row["period_start"], row["period_end"], "metric", name, row[key], currency])
+    for row in worth["points"]:
+        writer.writerow(["net_worth", row["as_of"], row["as_of"], "metric", "net_worth", row["net_worth_minor"], currency])
+    for row in debt["points"]:
+        writer.writerow(["debt", row["as_of"], row["as_of"], "metric", "debt", row["debt_minor"], currency])
+    for row in plan["points"]:
+        for name, key in (("assigned", "assigned_minor"), ("spent", "spending_minor"), ("available", "available_minor"), ("unassigned", "ready_to_assign_minor")):
+            writer.writerow(["plan", row["period_start"], row["period_end"], "metric", name, row[key], currency])
+    filename = f"budget-reports-{start_date.isoformat()}-{end_date.isoformat()}.csv"
+    return Response(output.getvalue(), media_type="text/csv; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    })

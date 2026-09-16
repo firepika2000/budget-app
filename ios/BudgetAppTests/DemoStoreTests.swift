@@ -450,6 +450,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("spending-trends-chart"))
         XCTAssertTrue(contents.contains("plan-performance-history-chart"))
         XCTAssertTrue(contents.contains("financial-resilience-insights"))
+        XCTAssertTrue(contents.contains("prepare-report-csv"))
+        XCTAssertTrue(contents.contains("share-report-csv"))
         XCTAssertTrue(contents.contains("spending-trend-payee-"))
         XCTAssertTrue(contents.contains("debt-account-"))
         XCTAssertTrue(contents.contains("plan-performance-category-"))
@@ -485,6 +487,25 @@ final class DemoStoreTests: XCTestCase {
         let resilience = try XCTUnwrap(store.resilienceReport)
         XCTAssertEqual(resilience.expectedMarginMinor, resilience.scheduledIncomeMinor - resilience.scheduledOutflowsMinor)
         XCTAssertNil(resilience.essentialExpenseCoverageDays)
+    }
+
+    @MainActor
+    func testDemoReportExportUsesCanonicalOpenCSVContract() async throws {
+        let source = DemoWorkspaceDataSource(fresh: false)
+        let calendar = Calendar(identifier: .gregorian)
+        let end = Date()
+        let start = try XCTUnwrap(calendar.date(byAdding: .year, value: -2, to: end))
+        let query = WorkspaceReportQuery(start: start, end: end, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+
+        let data = try await source.exportReports(report: query)
+        let csv = try XCTUnwrap(String(data: data, encoding: .utf8))
+
+        XCTAssertTrue(csv.hasPrefix("report,period_start,period_end,dimension,name,amount_minor,currency_code\n"))
+        XCTAssertTrue(csv.contains("spending,"))
+        XCTAssertTrue(csv.contains("cash_flow,"))
+        XCTAssertTrue(csv.contains("net_worth,"))
+        XCTAssertTrue(csv.contains("debt,"))
+        XCTAssertTrue(csv.contains("plan,"))
     }
 
     @MainActor

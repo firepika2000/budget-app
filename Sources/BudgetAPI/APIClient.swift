@@ -581,6 +581,17 @@ public struct APIClient {
         ], token: token)
     }
 
+    public func reportExportCSV(budgetID: String, startDate: String, endDate: String, token: String) async throws -> Data {
+        var components = URLComponents(url: baseURL.appending(path: "api/v1/budgets/\(budgetID)/reports/export.csv"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "start_date", value: startDate), URLQueryItem(name: "end_date", value: endDate)]
+        guard let url = components?.url else { throw APIClientError.invalidServerURL }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (body, response) = try await session.data(for: request)
+        try validate(response: response, data: body)
+        return body
+    }
+
     public func delegatedBudget(budgetID: String, token: String) async throws -> APIDelegatedBudget? {
         try await send(path: "api/v1/budgets/\(budgetID)/delegated-budgets/me", token: token)
     }

@@ -510,3 +510,27 @@ Verification so far:
 - focused native XCTest and the production Insights XCUITest drill journey: PASS;
 - full backend and broad native suites: pending final v0.6 closure verification;
 - no migration or mutation of Live, attachment, or Simulator data.
+
+## v0.6 checkpoint — open-format report export
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Insights now provides an authorized CSV export for the selected report date range. The server composes
+the file from the canonical Spending, Income vs Spending, Net Worth, Debt, and Plan Performance report
+services; monetary observations remain exact integer minor units and all existing report visibility
+rules apply before rows are written. The format is intentionally open and human-readable, and the UI
+states clearly that it is distinct from the full-fidelity encrypted backup/restore lifecycle.
+
+The export is protected by the `export_data` capability, uses the current Live credential after token
+rotation, quotes CSV fields, and prefixes spreadsheet formula leaders in user-controlled labels. Demo
+uses the same production Insights UI and emits the same column contract from its canonical report DTOs.
+No report export mutates financial state, and no migration or persisted Live/Simulator data change was
+introduced.
+
+Verification: focused backend CSV tests PASS (2 tests); full backend PASS (with the 10 expected
+environment-gated skips); Swift package PASS (27 BudgetCore + 40 BudgetAPI); focused native Demo
+export PASS; and the full native XCTest suite PASS (73 tests). Native verification used Xcode 27 Beta
+on the preserved iPhone 17 Pro Max / iOS 27 simulator. The sandboxed backend run could not bind its
+launcher test socket; rerunning the identical suite outside that socket restriction passed. No XCUITest
+was added for the system share sheet because the native store/composition and API boundary tests cover
+the application-owned behavior without automating Apple-owned sharing UI.

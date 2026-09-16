@@ -254,6 +254,7 @@ struct WorkspaceReportQuery {
 protocol WorkspaceDataSource: AnyObject {
     var budget: APIBudget { get }
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot
+    func exportReports(report: WorkspaceReportQuery) async throws -> Data
 }
 
 @MainActor
@@ -509,6 +510,29 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let cashIDs = Set(visibleAccounts.filter { $0.isOnBudget && ["checking", "savings", "cash"].contains($0.kind.rawValue) }.map(\.id))
         let resilience: APIResilienceReport = try decode(["as_of": demoForecast.asOf, "through": demoForecast.through, "currency_code": budget.currencyCode, "cash_buffer_minor": demoForecast.accounts.filter { cashIDs.contains($0.accountID) }.reduce(Int64(0)) { $0 + $1.actualBalanceMinor }, "current_on_budget_minor": demoForecast.actualTotalOnBudgetMinor, "projected_on_budget_minor": demoForecast.projectedTotalOnBudgetMinor, "lowest_projected_on_budget_minor": demoForecast.lowestProjectedTotalMinor, "scheduled_income_minor": scheduledIncome, "scheduled_outflows_minor": scheduledOutflows, "expected_margin_minor": scheduledIncome - scheduledOutflows, "essential_expense_coverage_days": NSNull(), "emergency_fund_coverage_days": NSNull(), "unavailable_metrics": ["essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.", "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification."]])
         return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: [], spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: demoForecast, members: [], delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
+    }
+
+    func exportReports(report: WorkspaceReportQuery) async throws -> Data {
+        let value = try await snapshot(planMonth: Date(), report: report)
+        func field(_ value: String) -> String {
+            let safe = value.first.map { "=+-@".contains($0) } == true ? "'\(value)" : value
+            return "\"\(safe.replacingOccurrences(of: "\"", with: "\"\""))\""
+        }
+        var rows = ["report,period_start,period_end,dimension,name,amount_minor,currency_code"]
+        for item in value.spending?.categories ?? [] { rows.append("spending,\(BudgetWorkspaceStore.dateString(report.start)),\(BudgetWorkspaceStore.dateString(report.end)),category,\(field(item.categoryName)),\(item.spendingMinor),\(budget.currencyCode)") }
+        for point in value.income?.periods ?? [] {
+            rows.append("cash_flow,\(point.periodStart),\(point.periodEnd),metric,income,\(point.incomeMinor),\(budget.currencyCode)")
+            rows.append("cash_flow,\(point.periodStart),\(point.periodEnd),metric,spending,\(point.spendingMinor),\(budget.currencyCode)")
+        }
+        for point in value.netWorth?.points ?? [] { rows.append("net_worth,\(point.asOf),\(point.asOf),metric,net_worth,\(point.netWorthMinor),\(budget.currencyCode)") }
+        for point in value.debt?.points ?? [] { rows.append("debt,\(point.asOf),\(point.asOf),metric,debt,\(point.debtMinor),\(budget.currencyCode)") }
+        for point in value.planPerformance?.points ?? [] {
+            rows.append("plan,\(point.periodStart),\(point.periodEnd),metric,assigned,\(point.assignedMinor),\(budget.currencyCode)")
+            rows.append("plan,\(point.periodStart),\(point.periodEnd),metric,spending,\(point.spendingMinor),\(budget.currencyCode)")
+            rows.append("plan,\(point.periodStart),\(point.periodEnd),metric,available,\(point.availableMinor),\(budget.currencyCode)")
+            rows.append("plan,\(point.periodStart),\(point.periodEnd),metric,unassigned,\(point.readyToAssignMinor),\(budget.currencyCode)")
+        }
+        return Data((rows.joined(separator: "\n") + "\n").utf8)
     }
 
     private func decode<T: Decodable>(_ value: Any) throws -> T { try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value)) }
@@ -884,6 +908,14 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let delegatedBudgets = budget.can("manage_allowances") ? (try? await client.delegatedBudgets(budgetID: budget.id, token: token)) ?? [] : []
         return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, payees: [], requests: requests, allowances: allowances, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, targets: targets, schedules: schedules)
     }
+
+    func exportReports(report: WorkspaceReportQuery) async throws -> Data {
+        try await credentials.prepare()
+        return try await credentials.client().reportExportCSV(
+            budgetID: budget.id, startDate: BudgetWorkspaceStore.dateString(report.start),
+            endDate: BudgetWorkspaceStore.dateString(report.end), token: token
+        )
+    }
 }
 
 @MainActor
@@ -993,6 +1025,19 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func refresh() async { await loadSnapshot() }
+
+    func exportReports() async throws -> URL {
+        guard budget.can("export_data"), let dataSource else {
+            throw APIClientError.server(status: 403, message: "Report export is not available for this budget.")
+        }
+        let range = reportRange()
+        let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, flag: reportFlag, tag: reportTag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTrackingAccounts)
+        let data = try await dataSource.exportReports(report: query)
+        let name = "budget-reports-\(Self.dateString(range.0))-\(Self.dateString(range.1)).csv"
+        let url = FileManager.default.temporaryDirectory.appending(path: name)
+        try data.write(to: url, options: .atomic)
+        return url
+    }
 
     func createTransaction(_ operation: RecordTransactionOperation) async throws {
         try await services().transactions.record(operation)
@@ -2609,6 +2654,8 @@ private struct LiveInsightsView: View {
     @State private var selectedAngle: Int64?
     @State private var selectedSlice: SpendingBreakdownSlice?
     @State private var showReportPayeeSelector = false
+    @State private var exportURL: URL?
+    @State private var exportError: String?
     var body: some View {
         List {
             Section { Picker("Period", selection: $store.reportPeriod) { Text("30 Days").tag("30d"); Text("60 Days").tag("60d"); Text("90 Days").tag("90d"); Text("3 Months").tag("3m"); Text("6 Months").tag("6m"); Text("Year to Date").tag("ytd"); Text("1 Year").tag("1y"); Text("Custom").tag("custom") }.onChange(of: store.reportPeriod) { _, _ in Task { await reload() } }; if store.reportPeriod == "custom" { DatePicker("From", selection: $store.customReportStart, displayedComponents: .date); DatePicker("Through", selection: $store.customReportEnd, displayedComponents: .date); Button("Apply custom range") { Task { await reload() } } } }
@@ -2627,7 +2674,16 @@ private struct LiveInsightsView: View {
             if !hasFilters, let report = store.planPerformanceReport { HistoricalPlanPerformanceView(report: report) }
             if !hasFilters, let report = store.resilienceReport { ResilienceInsightsView(report: report) }
             if let summary = store.summary { BudgetPerformanceInsightsView(summary: summary) }
+            if store.budget.can("export_data") {
+                Section("Export") {
+                    if let exportURL { ShareLink(item: exportURL) { Label("Share Report CSV", systemImage: "square.and.arrow.up") }.accessibilityIdentifier("share-report-csv") }
+                    Button { Task { await prepareExport() } } label: { Label(exportURL == nil ? "Prepare Report CSV" : "Refresh Report CSV", systemImage: "tablecells") }
+                        .accessibilityIdentifier("prepare-report-csv")
+                    Text("CSV is an open, human-readable report export. Full-fidelity backup and restore remain separate.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }.navigationTitle("Insights").toolbar { Button { showFilters = true } label: { Image(systemName: hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") } }.sheet(isPresented: $showFilters) { filters }.navigationDestination(item: $selectedSlice) { slice in if slice.mode == .group { LiveReportGroupView(group: slice.name) } else if let category = store.spendingReport?.categories.first(where: { $0.categoryID == slice.id }) { LiveReportCategoryView(category: category) } }
+        .alert("Unable to export reports", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) { Button("OK", role: .cancel) {} } message: { Text(exportError ?? "Unknown error") }
     }
     private var hasFilters: Bool { !store.reportAccountID.isEmpty || !store.reportCategoryID.isEmpty || !store.reportCategoryGroup.isEmpty || !store.reportPayee.isEmpty || !store.reportMemberID.isEmpty || !store.reportTransactionType.isEmpty || store.reportCleared != "all" || !store.reportFlag.isEmpty || !store.reportTag.isEmpty || store.includeTrackingAccounts }
     private var filters: some View { NavigationStack { Form {
@@ -2644,6 +2700,10 @@ private struct LiveInsightsView: View {
         Toggle("Include tracking accounts", isOn: $store.includeTrackingAccounts)
     }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.reportFlag = ""; store.reportTag = ""; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false; Task { await reload() } } } }.sheet(isPresented: $showReportPayeeSelector) { PayeeSearchSelectionView(title: "Filter by Payee") { store.reportPayee = $0.displayName } } } }
     private func reload() async { await store.refresh() }
+    private func prepareExport() async {
+        do { exportURL = try await store.exportReports() }
+        catch { exportError = error.localizedDescription }
+    }
 }
 
 private struct SpendingTrendsView: View {

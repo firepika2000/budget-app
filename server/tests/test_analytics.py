@@ -920,6 +920,48 @@ def test_resilience_report_filters_hidden_accounts_and_schedules_before_aggregat
     assert hidden["id"] not in response.text and "Private bonus" not in response.text
 
 
+def test_report_csv_export_is_open_bounded_and_spreadsheet_safe(
+    client, owner_token, session_factory
+):
+    import csv
+    import io
+
+    budget = create_budget(client, owner_token, session_factory)
+    checking, _category = create_budget_structure(client, owner_token, budget["id"])
+    formula_category = add_category(client, owner_token, budget["id"], "Audit", "=IMPORTDATA(secret)")
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=10000,
+           occurred_on="2026-09-01")
+    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=formula_category["id"],
+           amount_minor=-2500, occurred_on="2026-09-02")
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/export.csv"
+        "?start_date=2026-09-01&end_date=2026-09-30", headers=auth(owner_token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "budget-reports-2026-09-01-2026-09-30.csv" in response.headers["content-disposition"]
+    rows = list(csv.DictReader(io.StringIO(response.text)))
+    assert {row["report"] for row in rows} >= {"spending", "cash_flow", "net_worth", "debt", "plan"}
+    spending = next(row for row in rows if row["report"] == "spending")
+    assert spending["name"] == "'=IMPORTDATA(secret)"
+    assert spending["amount_minor"] == "2500"
+    assert all(set(row) == {"report", "period_start", "period_end", "dimension", "name", "amount_minor", "currency_code"} for row in rows)
+
+
+def test_report_csv_export_requires_export_capability(client, owner_token, session_factory):
+    from .test_delegated_access import add_child, configure_child
+
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, checking["id"], category["id"])
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/export.csv"
+        "?start_date=2026-09-01&end_date=2026-09-30", headers=auth(child_token),
+    )
+    assert response.status_code == 403
+
+
 def test_net_worth_rejects_hidden_account_filter_and_never_aggregates_it(
     client, owner_token, session_factory
 ):
