@@ -31,6 +31,7 @@ from .allocation import (
     require_version,
 )
 from .database import get_db
+from .debt_projection import ProjectionTerms, project_debt
 from .dependencies import get_current_user
 from .credit import add_payment_reserve_event, add_purchase_reserve_events, ensure_credit_payment_category
 from .category_names import normalized_category_name
@@ -67,6 +68,8 @@ from .schemas import (
     AccountBalanceResponse,
     AccountDebtTermsResponse,
     AccountDebtTermsUpsert,
+    DebtProjectionRequest,
+    DebtProjectionResponse,
     AccountResponse,
     AllocationOperationResponse,
     AllocationTransferCreate,
@@ -127,6 +130,12 @@ def debt_terms_response(terms: AccountDebtTerms) -> dict:
         column.key: getattr(terms, column.key)
         for column in AccountDebtTerms.__table__.columns
     } | {"projection_ready": ready, "missing_projection_fields": missing}
+
+
+def account_working_balance(db: Session, account_id: str) -> int:
+    return int(db.scalar(select(func.coalesce(func.sum(Transaction.amount_minor), 0)).where(
+        Transaction.account_id == account_id
+    )) or 0)
 
 
 def validate_account_treatment(account_type: str, is_on_budget: bool) -> None:
@@ -455,6 +464,54 @@ def delete_account_debt_terms(
         db.delete(terms)
         db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/accounts/{account_id}/debt-projection", response_model=DebtProjectionResponse)
+def debt_projection(
+    budget_id: str,
+    account_id: str,
+    body: DebtProjectionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    budget = require_budget_capability(db, user, budget_id, "view_account_balances")
+    account = db.get(Account, account_id)
+    if account is None or account.budget_id != budget_id or account.account_type not in {"credit", "loan"} or not can_access_resource(
+        db, user, budget, "account", account_id
+    ):
+        raise HTTPException(status_code=404, detail="Account not found")
+    principal = max(-account_working_balance(db, account_id), 0)
+    terms = db.get(AccountDebtTerms, account_id)
+    if terms is None:
+        missing = ["debt_terms"]
+    else:
+        _, missing = debt_terms_readiness(terms)
+    base = {
+        "account_id": account_id, "currency_code": budget.currency_code,
+        "starting_principal_minor": principal, "extra_payment_minor": body.extra_payment_minor,
+    }
+    if missing:
+        return base | {"status": "incomplete", "missing_projection_fields": missing}
+    result = project_debt(
+        principal, body.first_payment_on,
+        ProjectionTerms(
+            annual_rate_basis_points=terms.annual_rate_basis_points,
+            payment_frequency=terms.payment_frequency,
+            scheduled_payment_minor=terms.scheduled_payment_minor,
+            minimum_payment_rule=terms.minimum_payment_rule,
+            minimum_payment_minor=terms.minimum_payment_minor,
+            minimum_payment_rate_basis_points=terms.minimum_payment_rate_basis_points,
+            promotional_rate_basis_points=terms.promotional_rate_basis_points,
+            promotional_ends_on=terms.promotional_ends_on,
+        ),
+        extra_payment_minor=body.extra_payment_minor,
+    )
+    return base | {
+        "status": result.status, "missing_projection_fields": [], "payoff_date": result.payoff_date,
+        "payment_count": result.payment_count, "projected_interest_minor": result.projected_interest_minor,
+        "projected_total_cost_minor": result.projected_total_cost_minor,
+        "points": [point.__dict__ for point in result.points],
+    }
 
 
 @router.get("/accounts/{account_id}/balance", response_model=AccountBalanceResponse)

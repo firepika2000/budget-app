@@ -331,7 +331,7 @@ Verification:
 
 ## v0.6 checkpoint — net-worth ledger correctness
 
-Status: **ENGINEERING VERIFIED — commit/push pending**
+Status: **ENGINEERING VERIFIED**
 
 The historical net-worth contract now has explicit end-to-end regression fixtures for opening
 history before the requested range, inclusive end boundaries, liabilities, credit-card purchases and
@@ -869,3 +869,24 @@ PostgreSQL-only skips), Swift package PASS (27 BudgetCore + 44 BudgetAPI), nativ
 graph PASS, and `git diff --check` PASS. The UI regression reaches the real Insights shell and proves
 the explicitly classified Demo posting contributes exactly `$32.00`; a text-only historical memo is
 still excluded. Human Live data and Simulator data were not reset or migrated.
+
+## v0.8 checkpoint — exact single-debt payoff engine
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+The provider-neutral projection boundary now exists in both the authoritative server domain and
+BudgetCore for deterministic/future Local providers. APR is an integer basis-point rate; each period
+accrues `principal × basis points / (10,000 × periods per year)`, rounds half-up once to a minor unit,
+then applies an end-of-period payment. Weekly uses 52 periods, biweekly 26, and monthly 12. Final
+payments are capped to principal plus interest, loops are bounded to 1,200 periods, and payments that
+do not exceed accrued interest return `non_amortizing` with no invented payoff date.
+
+The account-scoped server contract reads the authorized account balance and persisted debt terms,
+accepts only ephemeral first-payment and extra-payment scenario inputs, and returns incomplete fields,
+payoff date/count, projected interest/total cost, and the exact principal/interest/payment trajectory.
+Scenario requests write neither ledger nor terms. Golden coverage includes zero and high APR,
+insufficient payment, fixed/percentage/greater-of card rules, weekly/biweekly/monthly calendars,
+month-end/leap-year boundaries, promotional-rate transition, final partial payment, explicit iteration
+bounds, and +$50/+100/+250 scenarios. Focused server and matching BudgetCore vectors PASS.
+Full backend PASS (286 collected with 11 PostgreSQL-only skips), Swift package PASS (29 BudgetCore +
+44 BudgetAPI), and `git diff --check` PASS.

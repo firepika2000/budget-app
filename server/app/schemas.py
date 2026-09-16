@@ -209,6 +209,34 @@ class AccountDebtTermsResponse(AccountDebtTermsUpsert):
     updated_at: datetime
 
 
+class DebtProjectionRequest(BaseModel):
+    first_payment_on: date
+    extra_payment_minor: int = Field(default=0, ge=0, le=MAX_INT64)
+
+
+class DebtProjectionPointResponse(BaseModel):
+    payment_number: int
+    payment_date: date
+    starting_principal_minor: int
+    interest_minor: int
+    payment_minor: int
+    ending_principal_minor: int
+
+
+class DebtProjectionResponse(BaseModel):
+    account_id: str
+    currency_code: str
+    status: Literal["incomplete", "paid_off", "non_amortizing", "iteration_limit"]
+    missing_projection_fields: list[str] = Field(default_factory=list)
+    starting_principal_minor: int
+    extra_payment_minor: int
+    payoff_date: Optional[date] = None
+    payment_count: int = 0
+    projected_interest_minor: int = 0
+    projected_total_cost_minor: int = 0
+    points: list[DebtProjectionPointResponse] = Field(default_factory=list)
+
+
 class CategoryGroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     sort_order: int = 0
