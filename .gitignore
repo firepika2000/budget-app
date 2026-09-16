@@ -1,12 +1,16 @@
 .DS_Store
 .build/
+.build-spm/
+.swiftpm/
 DerivedData/
 *DerivedData/
 .derived-data/
 *.xcuserstate
+**/xcuserdata/
 .env
 server/.env.development
 server/backups/
+server/attachments/
 data/
 .venv/
 __pycache__/

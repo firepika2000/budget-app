@@ -6,11 +6,10 @@ tag, or release.
 
 ## Repository checkpoint
 
-- Current branch: `codex/v0.4.0-stabilization`
+- Current branch: `codex/development`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
-- Current/remote HEAD: `89af5837bcd3` before the next checkpoint
-- Push status: all checkpoints through net-worth ledger correctness are pushed; the current filter
-  parity checkpoint is pending commit/push
+- Current/remote HEAD: `d048b5fa0f427d0e4c21901d162cff9e07d169e8` before the Git-hygiene checkpoint
+- Push status: all v0.6 checkpoints through report calendar boundaries are pushed
 - Human Live database at start: `0020_payee_identity_repair`
 - Human Simulator: preserved iPhone 17 Pro Max / iOS 27.0; no erase/reset/uninstall
 
@@ -381,3 +380,15 @@ contract and prevents the prior class of UTC rollover drift.
 
 Verification: focused analytics PASS (16 tests); focused Xcode 27 Beta native DST/UTC-boundary test
 PASS; no production code, schema, or persisted data changed.
+
+## Git hygiene checkpoint
+
+The ongoing autonomous stream now uses `codex/development`; its local and remote refs were created at
+`d048b5f` after the verified calendar-boundary checkpoint was published. Before removal, both
+`codex/v0.4.0-stabilization` and `codex/v0.3.0-native-experience` had zero commits not reachable from
+`codex/development`, and neither was referenced by another worktree. Their local and remote refs were
+removed. `main`, `origin/main`, and legitimate release tags `v0.1.0`, `v0.2.0`, and `v0.3.0` remain.
+No commit or tag history was rewritten or lost.
+
+Generated Swift build directories, Xcode user data, and the local attachment store are now ignored;
+no generated or human attachment data was deleted.
