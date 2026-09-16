@@ -105,6 +105,8 @@ struct DemoTransaction: Identifiable, Hashable {
     var flag: String? = nil
     var attachmentName: String? = nil
     var tags: [String] = []
+    var financialClassification: String? = nil
+    var splitFinancialClassifications: [String: String] = [:]
     var scheduled = false
     var reconciled = false
     var transferID: String? = nil
@@ -133,6 +135,7 @@ struct DemoSchedule: Identifiable, Hashable {
     var recurrenceUnit: String
     var intervalCount: Int = 1
     var memo: String = ""
+    var financialClassification: String? = nil
     var isActive = true
     var lastRealizedOn: String? = nil
 }

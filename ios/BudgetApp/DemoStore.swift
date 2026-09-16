@@ -370,7 +370,11 @@ final class DemoStore: ObservableObject {
             id: id, date: occurredOn, payee: operation.payeeName, memo: operation.memo,
             accountID: operation.accountID, categoryIDs: Array(amounts.keys).sorted(), categoryAmounts: amounts,
             amount: operation.amountMinor, member: persona, cleared: operation.isCleared, flag: operation.flag,
-            attachmentName: operation.attachmentMetadata.first?["name"], tags: operation.tags
+            attachmentName: operation.attachmentMetadata.first?["name"], tags: operation.tags,
+            financialClassification: operation.financialClassification,
+            splitFinancialClassifications: Dictionary(uniqueKeysWithValues: operation.splits.compactMap { split in
+                split.financialClassification.map { (split.categoryID, $0) }
+            })
         )
         applyCanonicalTransaction(transaction)
         transactions.insert(transaction, at: 0)
@@ -531,7 +535,8 @@ final class DemoStore: ObservableObject {
             .init(id:"t3",date:.demo(monthsAgo:0,day:8),payee:"Corner Bistro",memo:"Family dinner",accountID:"mastercard",categoryIDs:["dining"],amount:-8640,member:.partner,cleared:true),
             .init(id:"t4",date:.demo(monthsAgo:0,day:11),payee:"Home Center",memo:"Paint and repair supplies",accountID:"checking",categoryIDs:["repair","maintenance"],amount:-12640,member:.rey,cleared:true,flag:"Split"),
             .init(id:"t5",date:.demo(monthsAgo:0,day:15),payee:"Auto Loan Payment",memo:"Principal $315 · Interest $97",accountID:"checking",categoryIDs:["maintenance"],amount:-41200,member:.rey,cleared:true),
-            .init(id:"t6",date:.demo(monthsAgo:0,day:20),payee:"Weekly Allowance",memo:"Alex: spend, save, give",accountID:"checking",categoryIDs:["alexallow","alexsave"],amount:-2000,member:.alex,cleared:true,scheduled:true)
+            .init(id:"t6",date:.demo(monthsAgo:0,day:20),payee:"Weekly Allowance",memo:"Alex: spend, save, give",accountID:"checking",categoryIDs:["alexallow","alexsave"],amount:-2000,member:.alex,cleared:true,scheduled:true),
+            .init(id:"t7",date:.demo(monthsAgo:0,day:14),payee:"Card issuer",memo:"Posted finance charge",accountID:"visa",categoryIDs:["maintenance"],amount:-3200,member:.rey,cleared:true,financialClassification:"interest_charge")
         ]
         let merchants = ["Fresh Market","Fuel Station","Electric Co.","Neighborhood Cafe","Pharmacy","Internet Service"]
         let category = ["groceries","fuel","electric","dining","medical","internet"]

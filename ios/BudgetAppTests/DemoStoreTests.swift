@@ -630,6 +630,22 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDemoRecordedInterestUsesExplicitClassificationAndServerShapedFilter() async throws {
+        let source = DemoWorkspaceDataSource(fresh: false)
+        let start = Calendar.current.date(byAdding: .year, value: -2, to: Date())!
+        let end = Calendar.current.date(byAdding: .year, value: 2, to: Date())!
+        let all = try await source.snapshot(planMonth: Date(), report: WorkspaceReportQuery(start: start, end: end, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true))
+        let debt = try XCTUnwrap(all.debt)
+        XCTAssertEqual(debt.recordedInterestRangeMinor, 3_200)
+        XCTAssertNotNil(debt.interestTrackingStartedOn)
+        XCTAssertEqual(all.transactions.first(where: { $0.payeeName == "Auto Loan Payment" })?.financialClassification, nil, "memo text must never manufacture interest")
+
+        let filtered = try await source.browseTransactions(query: APITransactionQuery(transactionType: "interest_charge"))
+        XCTAssertEqual(filtered.items.map(\.payeeName), ["Card issuer"])
+        XCTAssertEqual(filtered.items.first?.financialClassification, "interest_charge")
+    }
+
+    @MainActor
     func testDemoSpendingTrendsUseProductionContractForEveryDimension() async throws {
         let source = DemoWorkspaceDataSource(fresh: false)
         let rangeStart = Calendar.current.date(byAdding: .year, value: -2, to: Date())!

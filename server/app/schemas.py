@@ -352,6 +352,7 @@ class ScheduledTransactionCreate(BaseModel):
     recurrence_unit: Literal["once", "days", "weeks", "months", "years"]
     interval_count: int = Field(default=1, gt=0, le=365)
     memo: str = Field(default="", max_length=500)
+    financial_classification: Optional[Literal["interest_charge"]] = None
 
     @model_validator(mode="after")
     def validate_schedule_shape(self) -> "ScheduledTransactionCreate":
@@ -362,6 +363,8 @@ class ScheduledTransactionCreate(BaseModel):
                 raise ValueError("scheduled transfer accounts must be different")
             if self.category_id is not None or self.payee_id is not None or self.amount_minor < 0:
                 raise ValueError("scheduled transfers use a positive amount and no category or payee")
+        if self.financial_classification == "interest_charge" and self.amount_minor >= 0:
+            raise ValueError("interest charges must be outflows")
         return self
 
 
@@ -384,6 +387,7 @@ class ScheduledTransactionResponse(BaseModel):
     recurrence_unit: str
     interval_count: int
     memo: str
+    financial_classification: Optional[str] = None
     is_active: bool
     last_realized_on: Optional[date] = None
 
@@ -489,6 +493,13 @@ class TransactionSplitCreate(BaseModel):
     category_id: str
     amount_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
     memo: str = Field(default="", max_length=500)
+    financial_classification: Optional[Literal["interest_charge"]] = None
+
+    @model_validator(mode="after")
+    def validate_financial_classification(self) -> "TransactionSplitCreate":
+        if self.financial_classification == "interest_charge" and self.amount_minor >= 0:
+            raise ValueError("interest charge split portions must be outflows")
+        return self
 
 
 class TransactionSplitResponse(BaseModel):
@@ -498,6 +509,7 @@ class TransactionSplitResponse(BaseModel):
     category_id: str
     amount_minor: int
     memo: str
+    financial_classification: Optional[str] = None
 
 
 class TransactionCreate(BaseModel):
@@ -508,6 +520,7 @@ class TransactionCreate(BaseModel):
     occurred_on: date
     payee_name: str = Field(default="", max_length=150)
     memo: str = Field(default="", max_length=500)
+    financial_classification: Optional[Literal["interest_charge"]] = None
     is_cleared: bool = False
     flag: Optional[str] = Field(default=None, max_length=30)
     tags: list[str] = Field(default_factory=list, max_length=20)
@@ -544,6 +557,10 @@ class TransactionCreate(BaseModel):
             raise ValueError("use either category_id or splits, not both")
         if self.splits and sum(split.amount_minor for split in self.splits) != self.amount_minor:
             raise ValueError("split amounts must equal transaction amount")
+        if self.financial_classification is not None and self.splits:
+            raise ValueError("classify split portions instead of the parent transaction")
+        if self.financial_classification == "interest_charge" and self.amount_minor >= 0:
+            raise ValueError("interest charges must be outflows")
         return self
 
 
@@ -628,6 +645,7 @@ class TransactionResponse(BaseModel):
     created_at: datetime
     payee_name: str
     memo: str
+    financial_classification: Optional[str] = None
     is_cleared: bool
     is_reconciled: bool
     flag: Optional[str]
@@ -805,6 +823,7 @@ class DebtAccount(BaseModel):
     account_type: str
     is_on_budget: bool
     debt_minor: int
+    recorded_interest_minor: int
 
 
 class DebtReportResponse(BaseModel):
@@ -814,6 +833,11 @@ class DebtReportResponse(BaseModel):
     opening_debt_minor: int
     debt_minor: int
     principal_reduction_minor: int
+    recorded_interest_range_minor: int
+    recorded_interest_month_minor: int
+    recorded_interest_ytd_minor: int
+    recorded_interest_trailing_12_minor: int
+    interest_tracking_started_on: Optional[date]
     points: list[DebtPoint]
     accounts: list[DebtAccount]
 

@@ -17,6 +17,7 @@ struct TransactionEntryView: View {
     @State private var showPayeeSelector = false
     @State private var amount = ""
     @State private var memo = ""
+    @State private var financialClassification = ""
     @State private var date = Date()
     @State private var isInflow = false
     @State private var isCleared = false
@@ -50,6 +51,13 @@ struct TransactionEntryView: View {
                 Button("Choose saved payee", systemImage: "person.text.rectangle") { showPayeeSelector = true }.accessibilityIdentifier("saved-payee-menu")
                 CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode)
                 Toggle("Income / inflow", isOn: $isInflow)
+                if selectedAccountIsDebt && !isInflow && !isSplit {
+                    Picker("Classification", selection: $financialClassification) {
+                        Text("Ordinary transaction").tag("")
+                        Text("Interest charge").tag("interest_charge")
+                    }
+                    .accessibilityIdentifier("transaction-classification")
+                }
                 Toggle("Split across categories", isOn: $isSplit)
                     .disabled(isInflow)
                 if isSplit {
@@ -63,6 +71,12 @@ struct TransactionEntryView: View {
                             }
                             CurrencyAmountField("Split amount", text: $row.amount, currencyCode: budget.currencyCode, allowsZero: true)
                             TextField("Split memo", text: $row.memo)
+                            if selectedAccountIsDebt {
+                                Picker("Split classification", selection: $row.financialClassification) {
+                                    Text("Ordinary").tag("")
+                                    Text("Interest charge").tag("interest_charge")
+                                }
+                            }
                         }
                         Button("Add another split", systemImage: "plus") { splitRows.append(SplitDraft()) }
                         if let remainingSplitAmount {
@@ -118,8 +132,10 @@ struct TransactionEntryView: View {
                 if inflow {
                     categoryID = nil
                     isSplit = false
+                    financialClassification = ""
                 }
             }
+            .onChange(of: accountID) { _, _ in if !selectedAccountIsDebt { financialClassification = "" } }
             .sheet(isPresented: $showPayeeSelector) {
                 PayeeSearchSelectionView { item in
                     payeeID = item.id; payee = item.displayName; selectedPayeeName = item.displayName
@@ -142,7 +158,7 @@ struct TransactionEntryView: View {
             guard !row.categoryID.isEmpty,
                   let amount = CurrencyText.parseMinorUnits(row.amount, currencyCode: budget.currencyCode),
                   amount >= 0 else { return nil }
-            result.append(TransactionSplitOperation(categoryID: row.categoryID, amountMinor: -amount, memo: row.memo))
+            result.append(TransactionSplitOperation(categoryID: row.categoryID, amountMinor: -amount, memo: row.memo, financialClassification: row.financialClassification.isEmpty ? nil : row.financialClassification))
         }
         return result
     }
@@ -176,6 +192,7 @@ struct TransactionEntryView: View {
                     payeeName: payee,
                     payeeID: payeeID,
                     memo: memo,
+                    financialClassification: financialClassification.isEmpty || isSplit ? nil : financialClassification,
                     isCleared: isCleared,
                     splits: parsedSplits,
                     flag: flag.isEmpty ? nil : flag,
@@ -190,6 +207,11 @@ struct TransactionEntryView: View {
         }
     }
 
+    private var selectedAccountIsDebt: Bool {
+        guard let type = accounts.first(where: { $0.id == accountID })?.accountType else { return false }
+        return type == "credit" || type == "loan"
+    }
+
     private func commaValues(_ value: String) -> [String] {
         value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
@@ -200,6 +222,7 @@ private struct SplitDraft: Identifiable {
     var categoryID = ""
     var amount = ""
     var memo = ""
+    var financialClassification = ""
 }
 
 struct AllocationTransferView: View {

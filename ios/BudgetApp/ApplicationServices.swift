@@ -43,6 +43,7 @@ struct TransactionSplitOperation: Equatable, Sendable {
     let categoryID: String
     let amountMinor: Int64
     let memo: String
+    var financialClassification: String? = nil
 }
 
 struct RecordTransactionOperation: Equatable, Sendable {
@@ -53,6 +54,7 @@ struct RecordTransactionOperation: Equatable, Sendable {
     let payeeName: String
     var payeeID: String? = nil
     let memo: String
+    var financialClassification: String? = nil
     let isCleared: Bool
     let splits: [TransactionSplitOperation]
     let flag: String?
@@ -98,14 +100,15 @@ struct ScheduleOperation: Equatable, Sendable {
     let recurrenceUnit: String
     let intervalCount: Int
     let memo: String
+    let financialClassification: String?
     let isActive: Bool
 
     init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, payeeID: String? = nil, name: String,
          amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1,
-         memo: String = "", isActive: Bool = true) {
+         memo: String = "", financialClassification: String? = nil, isActive: Bool = true) {
         self.accountID = accountID; self.destinationAccountID = destinationAccountID; self.categoryID = categoryID; self.payeeID = payeeID
         self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate; self.recurrenceUnit = recurrenceUnit
-        self.intervalCount = intervalCount; self.memo = memo; self.isActive = isActive
+        self.intervalCount = intervalCount; self.memo = memo; self.financialClassification = financialClassification; self.isActive = isActive
     }
 }
 
@@ -496,8 +499,9 @@ extension RecordTransactionOperation {
             occurredOn: occurredOn,
             payeeName: payeeName,
             memo: memo,
+            financialClassification: financialClassification,
             isCleared: isCleared,
-            splits: splits.map { APITransactionSplitCreate(categoryID: $0.categoryID, amountMinor: $0.amountMinor, memo: $0.memo) },
+            splits: splits.map { APITransactionSplitCreate(categoryID: $0.categoryID, amountMinor: $0.amountMinor, memo: $0.memo, financialClassification: $0.financialClassification) },
             flag: flag,
             tags: tags,
             attachmentMetadata: attachmentMetadata
@@ -513,6 +517,6 @@ extension TransferMoneyOperation {
 
 extension ScheduleOperation {
     var apiValue: APIScheduledTransactionCreate {
-        APIScheduledTransactionCreate(accountID: accountID, destinationAccountID: destinationAccountID, categoryID: categoryID, payeeID: payeeID, name: name, amountMinor: amountMinor, nextDate: nextDate, recurrenceUnit: recurrenceUnit, intervalCount: intervalCount, memo: memo, isActive: isActive)
+        APIScheduledTransactionCreate(accountID: accountID, destinationAccountID: destinationAccountID, categoryID: categoryID, payeeID: payeeID, name: name, amountMinor: amountMinor, nextDate: nextDate, recurrenceUnit: recurrenceUnit, intervalCount: intervalCount, memo: memo, financialClassification: financialClassification, isActive: isActive)
     }
 }

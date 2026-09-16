@@ -393,6 +393,7 @@ class ScheduledTransaction(Base):
     recurrence_unit: Mapped[str] = mapped_column(String(20))
     interval_count: Mapped[int] = mapped_column(Integer, default=1)
     memo: Mapped[str] = mapped_column(String(500), default="")
+    financial_classification: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_realized_on: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
@@ -479,6 +480,7 @@ class Transaction(Base):
     occurred_on: Mapped[date] = mapped_column(Date, index=True)
     payee_name: Mapped[str] = mapped_column(String(150), default="")
     memo: Mapped[str] = mapped_column(String(500), default="")
+    financial_classification: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     is_cleared: Mapped[bool] = mapped_column(Boolean, default=False)
     is_reconciled: Mapped[bool] = mapped_column(Boolean, default=False)
     flag: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
@@ -507,6 +509,7 @@ class TransactionSplit(Base):
     category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), index=True)
     amount_minor: Mapped[int] = mapped_column(BigInteger)
     memo: Mapped[str] = mapped_column(String(500), default="")
+    financial_classification: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     transaction: Mapped[Transaction] = relationship(back_populates="splits")
 
 

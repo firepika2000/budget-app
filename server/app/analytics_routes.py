@@ -15,7 +15,7 @@ from .access import has_capability, is_household_owner, visible_resource_ids
 from .budgeting_routes import require_budget_capability
 from .database import get_db
 from .dependencies import get_current_user
-from .models import Account, AllocationOperation, AllocationPosting, Category, CategoryGroup, CreditCardReserveEvent, Membership, Transaction, User
+from .models import Account, AllocationOperation, AllocationPosting, Category, CategoryGroup, CreditCardReserveEvent, Membership, Transaction, TransactionSplit, User
 from .planning_routes import forecast
 from .schemas import DebtReportResponse, IncomeSpendingReportResponse, NetWorthReportResponse, PlanPerformanceReportResponse, ResilienceReportResponse, SpendingReportResponse, SpendingTrendsReportResponse
 
@@ -155,6 +155,10 @@ def report_transactions(
             or (transaction_type == "income" and item.transfer_id is None and item.amount_minor > 0 and item.category_id is None and not item.splits)
             or (transaction_type == "spending" and item.transfer_id is None and item.amount_minor < 0 and (item.category_id is not None or bool(item.splits)))
             or (transaction_type == "refund" and item.transfer_id is None and item.amount_minor > 0 and (item.category_id is not None or bool(item.splits)))
+            or (transaction_type == "interest_charge" and item.transfer_id is None and (
+                item.financial_classification == "interest_charge"
+                or any(split.financial_classification == "interest_charge" for split in item.splits)
+            ))
         )
     )]
     return budget, transactions
@@ -170,7 +174,7 @@ def spending_report(
     category_group: list[str] = Query(default=[]),
     member_id: list[str] = Query(default=[]),
     payee: list[str] = Query(default=[]),
-    transaction_type: Optional[str] = Query(default=None, pattern="^(income|spending|refund|transfer)$"),
+    transaction_type: Optional[str] = Query(default=None, pattern="^(income|spending|refund|transfer|interest_charge)$"),
     cleared: Optional[bool] = None,
     reconciled: Optional[bool] = None,
     flag: list[str] = Query(default=[]),
@@ -291,7 +295,7 @@ def spending_trends_report(
     category_group: list[str] = Query(default=[]),
     member_id: list[str] = Query(default=[]),
     payee: list[str] = Query(default=[]),
-    transaction_type: Optional[str] = Query(default=None, pattern="^(income|spending|refund|transfer)$"),
+    transaction_type: Optional[str] = Query(default=None, pattern="^(income|spending|refund|transfer|interest_charge)$"),
     cleared: Optional[bool] = None,
     reconciled: Optional[bool] = None,
     flag: list[str] = Query(default=[]),
@@ -487,7 +491,7 @@ def debt_report(
         query = query.where(Account.id.in_(visible_accounts))
     accounts = list(db.scalars(query.order_by(Account.name, Account.id)))
     account_ids = [account.id for account in accounts]
-    transactions = list(db.scalars(select(Transaction).where(
+    transactions = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.account_id.in_(account_ids), Transaction.occurred_on <= end_date,
     ).order_by(Transaction.occurred_on, Transaction.created_at, Transaction.id))) if account_ids else []
 
@@ -513,12 +517,31 @@ def debt_report(
         points.append({"as_of": as_of, "debt_minor": sum(max(-value, 0) for value in balances.values())})
 
     ending_debt = sum(max(-value, 0) for value in balances.values())
+    def recorded_interest(item: Transaction) -> int:
+        if item.transfer_id is not None:
+            return 0
+        if item.splits:
+            return sum(-split.amount_minor for split in item.splits if split.financial_classification == "interest_charge")
+        return -item.amount_minor if item.financial_classification == "interest_charge" else 0
+
+    classified = [item for item in transactions if recorded_interest(item) != 0]
+    range_interest = sum(recorded_interest(item) for item in classified if item.occurred_on >= start_date)
+    month_start = date(end_date.year, end_date.month, 1)
+    year_start = date(end_date.year, 1, 1)
+    trailing_start = end_date - timedelta(days=364)
+    account_interest = {
+        account_id_value: sum(
+            recorded_interest(item) for item in classified
+            if item.account_id == account_id_value and item.occurred_on >= start_date
+        ) for account_id_value in account_ids
+    }
     rows = [{
         "account_id": account.id,
         "account_name": account.name,
         "account_type": account.account_type,
         "is_on_budget": account.is_on_budget,
         "debt_minor": max(-balances[account.id], 0),
+        "recorded_interest_minor": account_interest[account.id],
     } for account in accounts]
     rows.sort(key=lambda item: (-item["debt_minor"], item["account_name"], item["account_id"]))
     return {
@@ -528,6 +551,11 @@ def debt_report(
         "opening_debt_minor": opening_debt,
         "debt_minor": ending_debt,
         "principal_reduction_minor": opening_debt - ending_debt,
+        "recorded_interest_range_minor": range_interest,
+        "recorded_interest_month_minor": sum(recorded_interest(item) for item in classified if item.occurred_on >= month_start),
+        "recorded_interest_ytd_minor": sum(recorded_interest(item) for item in classified if item.occurred_on >= year_start),
+        "recorded_interest_trailing_12_minor": sum(recorded_interest(item) for item in classified if item.occurred_on >= trailing_start),
+        "interest_tracking_started_on": min((item.occurred_on for item in classified), default=None),
         "points": points,
         "accounts": rows,
     }

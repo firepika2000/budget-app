@@ -530,6 +530,79 @@ def test_debt_history_is_exact_for_loans_cards_and_payments(
     assert card_only["principal_reduction_minor"] == -5000
 
 
+def test_recorded_interest_is_explicit_split_aware_filterable_and_netted(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    _, category = create_budget_structure(client, owner_token, budget["id"])
+    second = add_category(client, owner_token, budget["id"], "Debt", "Interest")
+    card = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Card", "account_type": "credit"},
+    ).json()
+    loan = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Loan", "account_type": "loan", "is_on_budget": False},
+    ).json()
+    card_interest = record(
+        client, owner_token, budget["id"], account_id=card["id"], category_id=category["id"],
+        amount_minor=-10000, occurred_on="2026-09-10", financial_classification="interest_charge",
+    )
+    loan_interest = record(
+        client, owner_token, budget["id"], account_id=loan["id"], amount_minor=-2500,
+        occurred_on="2026-08-10", financial_classification="interest_charge",
+    )
+    split = record(
+        client, owner_token, budget["id"], account_id=card["id"], amount_minor=-4000,
+        occurred_on="2026-09-12", splits=[
+            {"category_id": category["id"], "amount_minor": -3000},
+            {"category_id": second["id"], "amount_minor": -1000, "financial_classification": "interest_charge"},
+        ],
+    )
+    record(
+        client, owner_token, budget["id"], account_id=card["id"], category_id=category["id"],
+        amount_minor=-700, occurred_on="2026-09-13", payee_name="Interest-looking fee",
+    )
+
+    url = f"/api/v1/budgets/{budget['id']}/reports/debt?start_date=2026-08-01&end_date=2026-09-30"
+    body = client.get(url, headers=auth(owner_token)).json()
+    assert body["recorded_interest_range_minor"] == 13500
+    assert body["recorded_interest_month_minor"] == 11000
+    assert body["recorded_interest_ytd_minor"] == 13500
+    assert body["interest_tracking_started_on"] == "2026-08-10"
+    assert {row["account_name"]: row["recorded_interest_minor"] for row in body["accounts"]} == {
+        "Card": 11000, "Loan": 2500,
+    }
+
+    found = client.get(
+        f"/api/v1/budgets/{budget['id']}/transactions/search?transaction_type=interest_charge",
+        headers=auth(owner_token),
+    )
+    assert found.status_code == 200, found.text
+    assert {item["id"] for item in found.json()["items"]} == {card_interest["id"], loan_interest["id"], split["id"]}
+
+    voided = client.post(
+        f"/api/v1/budgets/{budget['id']}/transactions/{card_interest['id']}/void",
+        headers=auth(owner_token), json={"reason": "Issuer correction"},
+    )
+    assert voided.status_code == 201, voided.text
+    after_void = client.get(url, headers=auth(owner_token)).json()
+    assert after_void["recorded_interest_range_minor"] == 3500
+    assert after_void["recorded_interest_month_minor"] == 1000
+
+    loan_only = client.get(url + f"&account_id={loan['id']}", headers=auth(owner_token)).json()
+    assert loan_only["recorded_interest_range_minor"] == 2500
+
+
+def test_interest_classification_requires_debt_account(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    response = client.post(
+        f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token),
+        json={"account_id": checking["id"], "category_id": category["id"], "amount_minor": -10000,
+              "occurred_on": "2026-09-10", "financial_classification": "interest_charge"},
+    )
+    assert response.status_code == 422
+
+
 def test_debt_report_filters_hidden_accounts_before_aggregation(
     client, owner_token, session_factory
 ):
@@ -542,7 +615,7 @@ def test_debt_report_filters_hidden_accounts_before_aggregation(
         json={"name": "Private Mortgage", "account_type": "loan", "is_on_budget": False},
     ).json()
     record(client, owner_token, budget["id"], account_id=hidden["id"], amount_minor=-25000000,
-           occurred_on="2026-01-01")
+           occurred_on="2026-01-01", financial_classification="interest_charge")
     child_id, child_token = add_child(session_factory, client)
     configure_child(client, owner_token, budget["id"], child_id, checking["id"], category["id"])
     expanded = client.put(
@@ -558,6 +631,8 @@ def test_debt_report_filters_hidden_accounts_before_aggregation(
     visible = client.get(url, headers=auth(child_token))
     assert visible.status_code == 200
     assert visible.json()["debt_minor"] == 0
+    assert visible.json()["recorded_interest_range_minor"] == 0
+    assert visible.json()["interest_tracking_started_on"] is None
     assert hidden["id"] not in visible.text and "Private Mortgage" not in visible.text
     assert client.get(f"{url}&account_id={hidden['id']}", headers=auth(child_token)).status_code == 404
 
@@ -679,7 +754,7 @@ def test_debt_long_history_is_monthly_exact_and_response_bounded(
     assert body["debt_minor"] == month_count * 1000
     assert body["accounts"] == [{
         "account_id": loan["id"], "account_name": "Long-lived Loan", "account_type": "loan",
-        "is_on_budget": False, "debt_minor": month_count * 1000,
+        "is_on_budget": False, "debt_minor": month_count * 1000, "recorded_interest_minor": 0,
     }]
     assert len(json.dumps(body)) < 25_000
     # Query work is constant with history length: authorization/scope, accounts, then one ordered

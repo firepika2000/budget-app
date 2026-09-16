@@ -186,7 +186,7 @@ Exact final commands and consolidated acceptance steps will be updated after the
 
 ## v0.6 checkpoint — server-authoritative income/spending trends
 
-Status: **ENGINEERING VERIFIED — commit/push pending**
+Status: **ENGINEERING VERIFIED**
 
 The existing Income vs. Spending report now returns monthly periods clipped to the report's inclusive
 start/end bounds. Every period carries exact integer-minor-unit income, spending, net cash flow, and
@@ -836,3 +836,36 @@ native/UI result, so its finalizer was stopped without erasing Simulator data.
 Final full backend result: 270 collected, 259 passed and 11 explicitly PostgreSQL-gated skips. The
 11 genuine PostgreSQL contention cases were already run and passed against the isolated PostgreSQL 17
 closure cluster; no test silently substituted SQLite for concurrency behavior.
+
+## v0.8 checkpoint — authoritative recorded-interest history
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Actual interest is now an explicit nullable `interest_charge` financial classification on posted
+transactions and split portions. Migration `0027_interest_class` leaves every historical row
+unclassified, so payee, category, and memo text never manufacture history. Classification is carried
+through the canonical create/edit/duplicate/schedule/realization/void/reversal paths and changes no
+ledger amount, category activity, Ready to Assign, card reserve, clearing, or reconciliation rule.
+Only credit-card and loan activity can be classified.
+
+Debt Insights now separates Recorded Interest from debt balance observations and reports the selected
+range, current month, year to date, trailing 12 months, first visible classified date, and authorized
+account contributions in exact minor units. Voids net through their classified reversal rather than
+double counting. The server filters visible debt accounts before loading or aggregating transactions;
+direct hidden account filters continue to return a non-disclosing 404. Transaction search has a
+server-authoritative Interest Charges filter. Transaction entry/edit/detail expose the classification,
+including split portions, without complicating ordinary cash-account entry.
+
+The deterministic provider contains an explicitly classified fixture and preserves classification
+through its canonical mutation, schedule, realization, duplicate, reversal, browser, and report
+adapters. Its older loan-payment memo intentionally remains unclassified, proving Demo does not use
+text heuristics. Migration `0027` is source-only and was not applied to human Live data. The ordered
+unapplied human-Live chain is `0023` → `0024` → `0025` → `0026` → `0027`.
+
+Verification completed on Xcode 27 Beta build `27A5252f` with the preserved iPhone 17 Pro Max / iOS
+27 simulator (`3ABD861E-D38D-4AFD-A356-959266051564`): full backend PASS (274 collected, 11
+PostgreSQL-only skips), Swift package PASS (27 BudgetCore + 44 BudgetAPI), native XCTest PASS
+(78/78), focused production-composition XCUITest PASS, simulator build PASS, the single-head Alembic
+graph PASS, and `git diff --check` PASS. The UI regression reaches the real Insights shell and proves
+the explicitly classified Demo posting contributes exactly `$32.00`; a text-only historical memo is
+still excluded. Human Live data and Simulator data were not reset or migrated.

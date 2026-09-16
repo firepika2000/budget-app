@@ -177,6 +177,8 @@ def create_scheduled_transaction(
         raise HTTPException(status_code=422, detail="Invalid scheduled category")
     if category is not None and not account.is_on_budget:
         raise HTTPException(status_code=422, detail="Tracking accounts cannot affect budget categories")
+    if body.financial_classification is not None and account.account_type not in {"credit", "loan"}:
+        raise HTTPException(status_code=422, detail="Interest charges require a debt account")
     values = body.model_dump()
     if destination is None:
         try:
@@ -218,6 +220,8 @@ def _resolve_schedule_resources(db, user, budget, body):
             raise HTTPException(status_code=422, detail="Tracking accounts cannot affect budget categories")
     elif visible_resource_ids(db, user, budget, "category") is not None:
         raise HTTPException(status_code=422, detail="Invalid scheduled category")
+    if body.financial_classification is not None and account.account_type not in {"credit", "loan"}:
+        raise HTTPException(status_code=422, detail="Interest charges require a debt account")
     return account, destination, category
 
 
@@ -333,6 +337,7 @@ def realize_scheduled_transaction(
             payee_id=payee_id, amount_minor=schedule.amount_minor, occurred_on=realized_on, payee_name=payee_name,
             memo=schedule.memo, is_cleared=False, created_by_user_id=user.id,
             scheduled_transaction_id=schedule.id,
+            financial_classification=schedule.financial_classification,
         )
         db.add(transaction)
         db.flush()

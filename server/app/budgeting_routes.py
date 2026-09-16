@@ -164,6 +164,7 @@ def transaction_snapshot(transaction: Transaction) -> str:
         "payee_name": transaction.payee_name,
         "payee_id": transaction.payee_id,
         "memo": transaction.memo,
+        "financial_classification": transaction.financial_classification,
         "is_cleared": transaction.is_cleared,
         "is_reconciled": transaction.is_reconciled,
         "flag": transaction.flag,
@@ -174,7 +175,7 @@ def transaction_snapshot(transaction: Transaction) -> str:
         "reversal_of_transaction_id": transaction.reversal_of_transaction_id,
         "reversal_transaction_id": transaction.reversal_transaction_id,
         "transfer_id": transaction.transfer_id,
-        "splits": [{"category_id": item.category_id, "amount_minor": item.amount_minor, "memo": item.memo} for item in transaction.splits],
+        "splits": [{"category_id": item.category_id, "amount_minor": item.amount_minor, "memo": item.memo, "financial_classification": item.financial_classification} for item in transaction.splits],
     }, sort_keys=True, separators=(",", ":"))
 
 
@@ -1040,7 +1041,7 @@ def search_transactions(
     end_date: Optional[date] = None,
     minimum_amount_minor: Optional[int] = None,
     maximum_amount_minor: Optional[int] = None,
-    transaction_type: Optional[str] = Query(default=None, pattern="^(income|spending|refund|transfer)$"),
+    transaction_type: Optional[str] = Query(default=None, pattern="^(income|spending|refund|transfer|interest_charge)$"),
     lifecycle_status: list[str] = Query(default=[]),
     cleared: Optional[bool] = None,
     reconciled: Optional[bool] = None,
@@ -1141,6 +1142,11 @@ def search_transactions(
         conditions.extend([Transaction.transfer_id.is_(None), Transaction.amount_minor < 0, has_category])
     elif transaction_type == "refund":
         conditions.extend([Transaction.transfer_id.is_(None), Transaction.amount_minor > 0, has_category])
+    elif transaction_type == "interest_charge":
+        conditions.append(or_(
+            Transaction.financial_classification == "interest_charge",
+            Transaction.splits.any(TransactionSplit.financial_classification == "interest_charge"),
+        ))
     if lifecycle_status:
         conditions.append(Transaction.status.in_(lifecycle_status))
 
@@ -1244,6 +1250,8 @@ def create_transaction(
     account = db.scalar(select(Account).where(Account.id == body.account_id).with_for_update())
     if account is None or account.budget_id != budget_id or account.is_closed:
         raise HTTPException(status_code=422, detail="Invalid account")
+    if (body.financial_classification is not None or any(split.financial_classification is not None for split in body.splits)) and account.account_type not in {"credit", "loan"}:
+        raise HTTPException(status_code=422, detail="Interest charges require a debt account")
     if not can_access_resource(db, user, budget, "account", account.id):
         raise HTTPException(status_code=422, detail="Invalid account")
     category_ids = ([body.category_id] if body.category_id is not None else []) + [
@@ -1365,11 +1373,12 @@ def duplicate_transaction(
             occurred_on=body.occurred_on,
             payee_name=original.payee_name,
             memo=original.memo,
+            financial_classification=original.financial_classification,
             is_cleared=False,
             flag=original.flag,
             tags=list(original.tags),
             attachment_metadata=[],
-            splits=[{"category_id": split.category_id, "amount_minor": split.amount_minor, "memo": split.memo} for split in original.splits],
+            splits=[{"category_id": split.category_id, "amount_minor": split.amount_minor, "memo": split.memo, "financial_classification": split.financial_classification} for split in original.splits],
         ),
         user,
         db,
@@ -1412,10 +1421,11 @@ def void_transaction(
         payee_id=original.payee_id, amount_minor=-original.amount_minor, occurred_on=now.date(),
         payee_name=f"Reversal: {original.payee_name or 'Transaction'}"[:150],
         memo=(f"Void reversal. {body.reason}" if body.reason else "Void reversal.")[:500],
+        financial_classification=original.financial_classification,
         is_cleared=False, flag=original.flag, tags=list(original.tags), attachment_metadata=[],
         created_by_user_id=user.id, status="reversal", reversal_of_transaction_id=original.id,
     )
-    reversal.splits = [TransactionSplit(category_id=item.category_id, amount_minor=-item.amount_minor, memo=item.memo) for item in original.splits]
+    reversal.splits = [TransactionSplit(category_id=item.category_id, amount_minor=-item.amount_minor, memo=item.memo, financial_classification=item.financial_classification) for item in original.splits]
     db.add(reversal)
     db.flush()
     category_amounts = ([(categories[original.category_id], -original.amount_minor)] if original.category_id else [(categories[item.category_id], -item.amount_minor) for item in original.splits])
@@ -1458,6 +1468,7 @@ def create_schedule_from_transaction(
         payee_id=original.payee_id, name=original.payee_name or "Recurring transaction", amount_minor=original.amount_minor,
         next_date=next_date, recurrence_unit=body.recurrence_unit, interval_count=body.interval_count,
         memo=original.memo, is_active=True, created_by_user_id=user.id,
+        financial_classification=original.financial_classification,
     )
     db.add(schedule)
     db.flush()
@@ -1630,6 +1641,8 @@ def update_transaction(
     account = db.scalar(select(Account).where(Account.id == body.account_id).with_for_update())
     if account is None or account.budget_id != budget_id or account.is_closed or not can_access_resource(db, user, budget, "account", account.id):
         raise HTTPException(status_code=422, detail="Invalid account")
+    if (body.financial_classification is not None or any(split.financial_classification is not None for split in body.splits)) and account.account_type not in {"credit", "loan"}:
+        raise HTTPException(status_code=422, detail="Interest charges require a debt account")
     category_ids = ([body.category_id] if body.category_id is not None else []) + [split.category_id for split in body.splits]
     if category_ids and not account.is_on_budget:
         raise HTTPException(status_code=422, detail="Tracking accounts cannot affect budget categories")

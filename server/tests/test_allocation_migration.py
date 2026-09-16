@@ -58,11 +58,13 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
         report_indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('transactions')"))}
         favorite_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('category_favorites')"))}
         debt_term_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('account_debt_terms')"))}
-        assert version == "0026_debt_terms"
+        transaction_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('transactions')"))}
+        assert version == "0027_interest_class"
         assert attachment_count == 0
         assert "ix_transaction_budget_date_id" in report_indexes
         assert {"budget_id", "user_id", "category_id", "sort_order"} <= favorite_columns
         assert {"account_id", "budget_id", "terms_type", "annual_rate_basis_points"} <= debt_term_columns
+        assert "financial_classification" in transaction_columns
 
 
 def test_0026_debt_terms_populated_upgrade_and_downgrade_preserve_accounts(tmp_path, monkeypatch):
@@ -94,6 +96,31 @@ def test_0026_debt_terms_populated_upgrade_and_downgrade_preserve_accounts(tmp_p
         assert "account_debt_terms" not in {
             row[0] for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type = 'table'"))
         }
+
+
+def test_0027_interest_classification_preserves_populated_history(tmp_path, monkeypatch):
+    database_path = tmp_path / "interest-classification.db"
+    database_url = f"sqlite:///{database_path}"
+    monkeypatch.setenv("BUDGET_APP_DATABASE_URL", database_url)
+    monkeypatch.setenv("BUDGET_APP_JWT_SECRET", "migration-test-secret-that-is-longer-than-32-characters")
+    config = migration_config()
+    command.upgrade(config, "0026_debt_terms")
+    engine = create_engine(database_url)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u-interest', 'history@example.com', 'History', 'hash', :now)"), {"now": now})
+        connection.execute(text("INSERT INTO households (id, name, owner_user_id, created_at) VALUES ('h-interest', 'History', 'u-interest', :now)"), {"now": now})
+        connection.execute(text("INSERT INTO budgets (id, household_id, name, currency_code, allocation_version, created_at) VALUES ('b-interest', 'h-interest', 'Budget', 'USD', 0, :now)"), {"now": now})
+        connection.execute(text("INSERT INTO accounts (id, budget_id, name, account_type, is_on_budget, is_closed, created_at) VALUES ('a-interest', 'b-interest', 'Card', 'credit', 1, 0, :now)"), {"now": now})
+        connection.execute(text("INSERT INTO transactions (id, budget_id, account_id, amount_minor, occurred_on, payee_name, memo, is_cleared, is_reconciled, tags, attachment_metadata, status, created_by_user_id, created_at) VALUES ('t-interest', 'b-interest', 'a-interest', -1234, '2026-08-01', 'Legacy issuer', '', 1, 0, '[]', '[]', 'posted', 'u-interest', :now)"), {"now": now})
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        row = connection.execute(text("SELECT amount_minor, financial_classification FROM transactions WHERE id='t-interest'")).one()
+        assert row == (-1234, None)
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0027_interest_class"
+    command.downgrade(config, "0026_debt_terms")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT amount_minor FROM transactions WHERE id='t-interest'")).scalar_one() == -1234
 
 
 def test_0020_repairs_text_only_transaction_payee_identity(tmp_path, monkeypatch):

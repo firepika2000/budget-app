@@ -286,11 +286,13 @@ public struct APIScheduledTransaction: Identifiable, Decodable, Equatable, Senda
     public let recurrenceUnit: String
     public let intervalCount: Int
     public let memo: String
+    public let financialClassification: String?
     public let isActive: Bool
     public let lastRealizedOn: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, memo
+        case financialClassification = "financial_classification"
         case budgetID = "budget_id"
         case accountID = "account_id"
         case destinationAccountID = "destination_account_id"
@@ -316,17 +318,19 @@ public struct APIScheduledTransactionCreate: Encodable, Sendable {
     public let recurrenceUnit: String
     public let intervalCount: Int
     public let memo: String
+    public let financialClassification: String?
     public let isActive: Bool
 
-    public init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, payeeID: String? = nil, name: String, amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1, memo: String = "", isActive: Bool = true) {
+    public init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, payeeID: String? = nil, name: String, amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1, memo: String = "", financialClassification: String? = nil, isActive: Bool = true) {
         self.accountID = accountID; self.destinationAccountID = destinationAccountID; self.categoryID = categoryID
         self.payeeID = payeeID
         self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate
-        self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.memo = memo; self.isActive = isActive
+        self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.memo = memo; self.financialClassification = financialClassification; self.isActive = isActive
     }
 
     enum CodingKeys: String, CodingKey {
         case name, memo
+        case financialClassification = "financial_classification"
         case accountID = "account_id"
         case destinationAccountID = "destination_account_id"
         case categoryID = "category_id"
@@ -665,9 +669,11 @@ public struct APITransactionSplit: Identifiable, Decodable, Equatable, Sendable 
     public let categoryID: String
     public let amountMinor: Int64
     public let memo: String
+    public let financialClassification: String?
 
     enum CodingKeys: String, CodingKey {
         case id, memo
+        case financialClassification = "financial_classification"
         case categoryID = "category_id"
         case amountMinor = "amount_minor"
     }
@@ -683,6 +689,7 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
     public let createdAt: String?
     public let payeeName: String
     public let memo: String
+    public let financialClassification: String?
     public let isCleared: Bool
     public let isReconciled: Bool
     public let createdByUserID: String?
@@ -701,6 +708,7 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, memo, splits, flag, tags
+        case financialClassification = "financial_classification"
         case accountID = "account_id"
         case categoryID = "category_id"
         case payeeID = "payee_id"
@@ -1060,9 +1068,10 @@ public struct APIDebtAccount: Identifiable, Decodable, Equatable, Sendable {
     public let accountType: String
     public let isOnBudget: Bool
     public let debtMinor: Int64
+    public let recordedInterestMinor: Int64
     enum CodingKeys: String, CodingKey {
         case accountID = "account_id", accountName = "account_name", accountType = "account_type"
-        case isOnBudget = "is_on_budget", debtMinor = "debt_minor"
+        case isOnBudget = "is_on_budget", debtMinor = "debt_minor", recordedInterestMinor = "recorded_interest_minor"
     }
 }
 
@@ -1073,6 +1082,11 @@ public struct APIDebtReport: Decodable, Equatable, Sendable {
     public let openingDebtMinor: Int64
     public let debtMinor: Int64
     public let principalReductionMinor: Int64
+    public let recordedInterestRangeMinor: Int64
+    public let recordedInterestMonthMinor: Int64
+    public let recordedInterestYTDMinor: Int64
+    public let recordedInterestTrailing12Minor: Int64
+    public let interestTrackingStartedOn: String?
     public let points: [APIDebtPoint]
     public let accounts: [APIDebtAccount]
     enum CodingKeys: String, CodingKey {
@@ -1080,6 +1094,11 @@ public struct APIDebtReport: Decodable, Equatable, Sendable {
         case startDate = "start_date", endDate = "end_date", currencyCode = "currency_code"
         case openingDebtMinor = "opening_debt_minor", debtMinor = "debt_minor"
         case principalReductionMinor = "principal_reduction_minor"
+        case recordedInterestRangeMinor = "recorded_interest_range_minor"
+        case recordedInterestMonthMinor = "recorded_interest_month_minor"
+        case recordedInterestYTDMinor = "recorded_interest_ytd_minor"
+        case recordedInterestTrailing12Minor = "recorded_interest_trailing_12_minor"
+        case interestTrackingStartedOn = "interest_tracking_started_on"
     }
 }
 
@@ -1472,6 +1491,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
     public let occurredOn: String
     public let payeeName: String
     public let memo: String
+    public let financialClassification: String?
     public let isCleared: Bool
     public let splits: [APITransactionSplitCreate]
     public let flag: String?
@@ -1486,6 +1506,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         occurredOn: String,
         payeeName: String,
         memo: String = "",
+        financialClassification: String? = nil,
         isCleared: Bool = false,
         splits: [APITransactionSplitCreate] = [],
         flag: String? = nil,
@@ -1499,6 +1520,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         self.occurredOn = occurredOn
         self.payeeName = payeeName
         self.memo = memo
+        self.financialClassification = financialClassification
         self.isCleared = isCleared
         self.splits = splits
         self.flag = flag
@@ -1508,6 +1530,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case memo, splits, flag, tags
+        case financialClassification = "financial_classification"
         case accountID = "account_id"
         case categoryID = "category_id"
         case payeeID = "payee_id"
@@ -1584,15 +1607,18 @@ public struct APITransactionSplitCreate: Encodable, Equatable, Sendable {
     public let categoryID: String
     public let amountMinor: Int64
     public let memo: String
+    public let financialClassification: String?
 
-    public init(categoryID: String, amountMinor: Int64, memo: String = "") {
+    public init(categoryID: String, amountMinor: Int64, memo: String = "", financialClassification: String? = nil) {
         self.categoryID = categoryID
         self.amountMinor = amountMinor
         self.memo = memo
+        self.financialClassification = financialClassification
     }
 
     enum CodingKeys: String, CodingKey {
         case memo
+        case financialClassification = "financial_classification"
         case categoryID = "category_id"
         case amountMinor = "amount_minor"
     }

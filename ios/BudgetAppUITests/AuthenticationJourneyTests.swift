@@ -162,6 +162,21 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
     }
 
+    func testProductionDebtInsightsExposeExplicitRecordedInterest() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
+        let recordedInterest = app.staticTexts["Recorded Interest"]
+        for _ in 0..<24 where !recordedInterest.exists { app.swipeUp() }
+        XCTAssertTrue(recordedInterest.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Selected range"].exists)
+        let range = app.descendants(matching: .any)["recorded-interest-range"]
+        XCTAssertTrue(range.exists)
+        XCTAssertTrue(range.label.contains("$32.00") || String(describing: range.value).contains("$32.00"))
+    }
+
     func testProductionAuthenticationFieldsAcceptContinuousKeyboardInput() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-test-authentication"]
