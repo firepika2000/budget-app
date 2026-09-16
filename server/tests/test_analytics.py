@@ -120,6 +120,32 @@ def test_income_spending_monthly_trends_are_exact_split_refund_and_range_aware(
     ]
 
 
+def test_income_spending_period_boundaries_handle_leap_day_and_year_rollover(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, _ = create_budget_structure(client, owner_token, budget["id"])
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100,
+           occurred_on="2024-02-29")
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=200,
+           occurred_on="2024-03-01")
+    leap = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/income-spending"
+        "?start_date=2024-02-29&end_date=2024-03-01", headers=auth(owner_token),
+    ).json()
+    assert [(row["period_start"], row["period_end"], row["income_minor"]) for row in leap["periods"]] == [
+        ("2024-02-29", "2024-02-29", 100), ("2024-03-01", "2024-03-01", 200),
+    ]
+
+    year = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/income-spending"
+        "?start_date=2023-12-31&end_date=2024-01-01", headers=auth(owner_token),
+    ).json()
+    assert [(row["period_start"], row["period_end"]) for row in year["periods"]] == [
+        ("2023-12-31", "2023-12-31"), ("2024-01-01", "2024-01-01"),
+    ]
+
+
 def test_report_rejects_inverted_period(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     response = client.get(

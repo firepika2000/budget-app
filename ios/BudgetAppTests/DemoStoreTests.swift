@@ -324,6 +324,24 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveReportRangeUsesLocalCalendarDatesAcrossDSTAndUTCRollover() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let demo = BudgetWorkspaceStore.demo()
+        let live = BudgetWorkspaceStore(budget: demo.budget)
+        live.reportPeriod = "30d"
+
+        // Noon on the day after spring-forward avoids any nonexistent wall-clock component while
+        // proving that report boundaries use local calendar days rather than subtracting 24-hour
+        // UTC intervals.
+        let now = calendar.date(from: DateComponents(year: 2026, month: 3, day: 9, hour: 12))!
+        let range = live.reportRange(calendar: calendar, now: now)
+        XCTAssertEqual(calendar.dateComponents([.year, .month, .day], from: range.0), DateComponents(year: 2026, month: 2, day: 8))
+        XCTAssertEqual(calendar.dateComponents([.year, .month, .day], from: range.1), DateComponents(year: 2026, month: 3, day: 9))
+        XCTAssertEqual(calendar.dateComponents([.day], from: range.0, to: range.1).day, 29)
+    }
+
+    @MainActor
     func testScheduledRealizationAdvancesAndOnceDeactivatesWithWorkspaceRefresh() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

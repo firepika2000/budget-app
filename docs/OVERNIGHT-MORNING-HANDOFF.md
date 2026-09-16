@@ -369,3 +369,15 @@ Verification:
   filter parity: PASS (1 test);
 - Xcode 27.0 Beta build on existing iPhone 17 Pro Max / iOS 27.0 simulator: PASS;
 - no schema migration or mutation of Live, attachment, or Simulator data.
+
+## v0.6 checkpoint — report calendar boundaries
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Deterministic report fixtures now cover leap-day, calendar-month, and year-rollover clipping. Native
+coverage verifies that rolling ranges use local calendar-day arithmetic across the America/New_York
+spring DST transition rather than subtracting fixed UTC hours. This preserves the date-only server
+contract and prevents the prior class of UTC rollover drift.
+
+Verification: focused analytics PASS (16 tests); focused Xcode 27 Beta native DST/UTC-boundary test
+PASS; no production code, schema, or persisted data changed.
