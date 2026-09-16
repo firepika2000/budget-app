@@ -2556,6 +2556,7 @@ private struct LiveInsightsView: View {
             }
             if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportTransactionType.isEmpty, let report = store.incomeReport { IncomeSpendingTrendsView(report: report) }
             if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportPayee.isEmpty, store.reportMemberID.isEmpty, store.reportTransactionType.isEmpty, store.reportCleared == "all", let report = store.netWorthReport { NetWorthReportView(report: report) }
+            if let summary = store.summary { BudgetPerformanceInsightsView(summary: summary) }
         }.navigationTitle("Insights").toolbar { Button { showFilters = true } label: { Image(systemName: hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") } }.sheet(isPresented: $showFilters) { filters }.navigationDestination(item: $selectedSlice) { slice in if slice.mode == .group { LiveReportGroupView(group: slice.name) } else if let category = store.spendingReport?.categories.first(where: { $0.categoryID == slice.id }) { LiveReportCategoryView(category: category) } }
     }
     private var hasFilters: Bool { !store.reportAccountID.isEmpty || !store.reportCategoryID.isEmpty || !store.reportCategoryGroup.isEmpty || !store.reportPayee.isEmpty || !store.reportMemberID.isEmpty || !store.reportTransactionType.isEmpty || store.reportCleared != "all" || store.includeTrackingAccounts }
@@ -2571,6 +2572,46 @@ private struct LiveInsightsView: View {
         Toggle("Include tracking accounts", isOn: $store.includeTrackingAccounts)
     }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false; Task { await reload() } } } }.sheet(isPresented: $showReportPayeeSelector) { PayeeSearchSelectionView(title: "Filter by Payee") { store.reportPayee = $0.displayName } } } }
     private func reload() async { await store.refresh() }
+}
+
+private struct BudgetPerformanceInsightsView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let summary: APIMonthSummary
+    private var underfunded: [APICategoryMonth] { summary.categories.filter { ($0.underfundedMinor ?? 0) > 0 }.sorted { ($0.underfundedMinor ?? 0) > ($1.underfundedMinor ?? 0) } }
+    private var overspent: [APICategoryMonth] { summary.categories.filter(\.isOverspent).sorted { $0.availableMinor < $1.availableMinor } }
+    private var needed: Int64 { underfunded.reduce(0) { $0 + ($1.underfundedMinor ?? 0) } }
+
+    var body: some View {
+        Section("Plan Performance") {
+            LabeledContent("Plan month", value: String(summary.month.prefix(7)))
+            LabeledContent("Assigned", value: store.format(summary.totalAssignedMinor))
+            LabeledContent("Ready to assign", value: store.format(summary.readyToAssignMinor))
+            LabeledContent("Still needed for targets", value: store.format(needed))
+            LabeledContent("Overspent", value: store.format(summary.totalOverspentMinor))
+            if underfunded.isEmpty && overspent.isEmpty {
+                Label("Targets funded and no overspending", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.healthy)
+            } else {
+                ForEach(Array((overspent + underfunded.filter { !$0.isOverspent }).prefix(8))) { row in
+                    if let reportRow = store.spendingReport?.categories.first(where: { $0.categoryID == row.categoryID }) {
+                        NavigationLink { LiveReportCategoryView(category: reportRow) } label: { performanceRow(row) }
+                    } else { performanceRow(row) }
+                }
+                Text("Targets are planning guidance only. They do not create or move money.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityIdentifier("budget-performance-insights")
+    }
+
+    private func performanceRow(_ row: APICategoryMonth) -> some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(row.name)
+                Text(row.isOverspent ? "Overspent" : "Needs target funding").font(.caption).foregroundStyle(row.isOverspent ? Theme.danger : Theme.attention)
+            }
+            Spacer()
+            Text(store.format(row.isOverspent ? abs(row.availableMinor) : (row.underfundedMinor ?? 0))).monospacedDigit()
+        }
+    }
 }
 
 private struct NetWorthReportView: View {

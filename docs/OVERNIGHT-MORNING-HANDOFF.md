@@ -210,6 +210,22 @@ Verification:
 - full backend: PASS (200 passed, 10 PostgreSQL-only skipped); `git diff --check`: PASS;
 - no migration and no mutation of Live, attachment, or Simulator data.
 
+## v0.6 checkpoint — plan and target performance
+
+Status: **ENGINEERING VERIFIED**
+
+Insights now includes a bounded Plan Performance section sourced from the same authoritative monthly
+planning summary used by Plan. It exposes exact assigned, Ready to Assign, target shortfall, and
+overspending values; ranks categories needing attention; explains that targets are non-monetary
+planning guidance; and reuses the existing report/category transaction drill-through when activity is
+available. Demo and Live use the same production view and server-shaped summary contract.
+
+Verification:
+
+- Xcode 27 Beta build and focused native production-source guard: PASS;
+- `git diff --check`: PASS;
+- no backend or migration change and no mutation of Live, attachment, or Simulator data.
+
 ## v0.6 checkpoint — historical net worth
 
 Status: **ENGINEERING VERIFIED**

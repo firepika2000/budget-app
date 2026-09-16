@@ -428,6 +428,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("spending-breakdown-sector-chart"))
         XCTAssertTrue(contents.contains("income-spending-trends-chart"))
         XCTAssertTrue(contents.contains("net-worth-history-chart"))
+        XCTAssertTrue(contents.contains("budget-performance-insights"))
     }
 
     @MainActor
