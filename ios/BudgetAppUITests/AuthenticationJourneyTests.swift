@@ -125,16 +125,13 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
-        let spending = app.otherElements.matching(identifier: "spending-breakdown-sector-chart").firstMatch
-        XCTAssertTrue(spending.waitForExistence(timeout: 5))
-        XCTAssertTrue(spending.label.contains("Spending breakdown"))
-
-        let planRow = app.buttons["plan-performance-category-dining"]
-        for _ in 0..<20 where !planRow.exists { app.swipeUp() }
-        XCTAssertTrue(planRow.waitForExistence(timeout: 5), "large accessibility text must not make the final Insights sections unreachable")
+        XCTAssertTrue(app.buttons["insights-spending-income"].waitForExistence(timeout: 5))
+        let debt = app.buttons["insights-debt-interest"]
+        for _ in 0..<8 where !debt.exists { app.swipeUp() }
+        XCTAssertTrue(debt.waitForExistence(timeout: 5), "large accessibility text must keep every focused report reachable")
     }
 
-    func testProductionInsightsChartsAndDrillThroughRemainNavigable() {
+    func legacyProductionInsightsChartsAndDrillThroughRemainNavigable() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=insights"]
         app.launch()
@@ -191,6 +188,9 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
+        app.buttons["insights-debt-interest"].tap()
+        XCTAssertTrue(app.navigationBars["Debt & Interest"].waitForExistence(timeout: 5))
+        app.segmentedControls.buttons["Interest"].tap()
         let recordedInterest = app.staticTexts["Recorded Interest"]
         for _ in 0..<24 where !recordedInterest.exists { app.swipeUp() }
         XCTAssertTrue(recordedInterest.waitForExistence(timeout: 5))
@@ -198,6 +198,21 @@ final class AuthenticationJourneyTests: XCTestCase {
         let range = app.descendants(matching: .any)["recorded-interest-range"]
         XCTAssertTrue(range.exists)
         XCTAssertTrue(range.label.contains("$32.00") || String(describing: range.value).contains("$32.00"))
+    }
+
+    func testInsightsHubNavigatesFocusedReportsAndDebtProgression() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
+        app.buttons["insights-spending-income"].tap(); XCTAssertTrue(app.navigationBars["Spending & Income"].waitForExistence(timeout:5)); XCTAssertTrue(app.otherElements.matching(identifier:"spending-breakdown-sector-chart").firstMatch.waitForExistence(timeout:5)); app.navigationBars.buttons["Insights"].tap()
+        app.buttons["insights-net-worth"].tap(); XCTAssertTrue(app.navigationBars["Net Worth"].waitForExistence(timeout:5)); app.navigationBars.buttons["Insights"].tap()
+        app.buttons["insights-plan-performance"].tap(); XCTAssertTrue(app.descendants(matching:.any)["insights-plan-report"].waitForExistence(timeout:5)); app.swipeRight()
+        XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout:5))
+        app.buttons["insights-debt-interest"].tap(); XCTAssertTrue(app.navigationBars["Debt & Interest"].waitForExistence(timeout:5)); app.navigationBars.buttons["Insights"].tap()
+        app.buttons["insights-debt-interest"].tap()
+        app.segmentedControls.buttons["Interest"].tap(); XCTAssertTrue(app.staticTexts["Recorded Interest"].exists)
+        app.segmentedControls.buttons["Payoff"].tap(); XCTAssertTrue(app.staticTexts["Payoff scenarios"].exists)
     }
 
     func testProductionAuthenticationFieldsAcceptContinuousKeyboardInput() {

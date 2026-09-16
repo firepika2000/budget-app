@@ -902,3 +902,24 @@ presentation state in UserDefaults—not budget data, not user-synced server sta
 from Hide Amounts and its app-switcher shield. A native persistence test and an isolated production-
 composition XCUITest covering Dark → terminate/relaunch → Light → System PASS on Xcode 27 Beta without
 changing the human's real preference domain or erasing Simulator data. No migration is required.
+
+## Product checkpoint — friendly Insights hub
+
+Status: **ENGINEERING VERIFIED**
+
+The former all-reports-at-once Insights list is now a concise Financial Snapshot and four native
+destinations: Spending & Income, Plan Performance, Net Worth, and Debt & Interest. Detailed charts,
+range controls, exact rows, drill-through, empty states, and CSV report export live on their relevant
+focused screen. Debt & Interest contains Overview / Interest / Payoff progressive disclosure, so the
+remaining v0.8 projection and strategy experience has a bounded home rather than expanding the hub.
+
+`V0.8-INSIGHTS-AUDIT.md` records every current metric/chart, API and authoritative data source,
+calculation meaning, filter/date semantics, permission behavior, drill-through, empty state, chart
+axes, and cross-report invariants. It also records one honest performance gap: detailed chart views are
+no longer constructed at the hub, but the current workspace snapshot still hydrates report payloads
+together, so request-count reduction requires a later repository-contract change.
+
+Xcode 27 Beta verification on the preserved iPhone 17 Pro Max / iOS 27 simulator: build PASS, native
+XCTest 79/79 PASS, focused hub/report/debt progression XCUITest PASS, recorded-interest focused
+XCUITest PASS, accessibility Dynamic Type navigation coverage updated, Swift package PASS (29
+BudgetCore + 44 BudgetAPI), and `git diff --check` PASS. No backend or migration changed.

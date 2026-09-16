@@ -3212,33 +3212,26 @@ private struct LiveInsightsView: View {
     @State private var exportError: String?
     var body: some View {
         List {
-            Section { Picker("Period", selection: $store.reportPeriod) { Text("30 Days").tag("30d"); Text("60 Days").tag("60d"); Text("90 Days").tag("90d"); Text("3 Months").tag("3m"); Text("6 Months").tag("6m"); Text("Year to Date").tag("ytd"); Text("1 Year").tag("1y"); Text("Custom").tag("custom") }.onChange(of: store.reportPeriod) { _, _ in Task { await reload() } }; if store.reportPeriod == "custom" { DatePicker("From", selection: $store.customReportStart, displayedComponents: .date); DatePicker("Through", selection: $store.customReportEnd, displayedComponents: .date); Button("Apply custom range") { Task { await reload() } } } }
-            if let report = store.spendingReport {
-                SpendingBreakdownView(report: report, mode: $breakdownMode, selectedAngle: $selectedAngle, selectedSlice: $selectedSlice)
-                Section("Ranked breakdown") { ForEach(SpendingBreakdownSlice.make(from: report, mode: breakdownMode)) { slice in Button { selectedSlice = slice } label: { HStack { Image(systemName: "circle.fill").foregroundStyle(Theme.accent); VStack(alignment: .leading) { Text(slice.name); Text(slice.percentage(of: report.totalSpendingMinor).formatted(.percent.precision(.fractionLength(1)))).font(.caption).foregroundStyle(.secondary) }; Spacer(); Text(store.format(slice.spendingMinor)).monospacedDigit() }.foregroundStyle(.primary) } } }
-            } else if let message = store.errorMessage {
-                Section { ContentUnavailableView("Unable to load spending", systemImage: "exclamationmark.triangle", description: Text(message)); Button("Retry") { Task { await reload() } } }
-            } else {
-                Section { ContentUnavailableView("No spending in this range", systemImage: "chart.pie", description: Text("Try a wider date range or different filters.")) }
-            }
-            if let trends = store.spendingTrendsReport { SpendingTrendsView(report: trends) }
-            if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportTransactionType.isEmpty, let report = store.incomeReport { IncomeSpendingTrendsView(report: report) }
-            if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportPayee.isEmpty, store.reportMemberID.isEmpty, store.reportTransactionType.isEmpty, store.reportCleared == "all", store.reportFlag.isEmpty, store.reportTag.isEmpty, let report = store.netWorthReport { NetWorthReportView(report: report) }
-            if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportPayee.isEmpty, store.reportMemberID.isEmpty, store.reportTransactionType.isEmpty, store.reportCleared == "all", store.reportFlag.isEmpty, store.reportTag.isEmpty, let report = store.debtReport { DebtReportView(report: report) }
-            if !hasFilters, let report = store.planPerformanceReport { HistoricalPlanPerformanceView(report: report) }
-            if !hasFilters, let report = store.resilienceReport { ResilienceInsightsView(report: report) }
-            if let summary = store.summary { BudgetPerformanceInsightsView(summary: summary) }
-            if store.budget.can("export_data") {
-                Section("Export") {
-                    if let exportURL { ShareLink(item: exportURL) { Label("Share Report CSV", systemImage: "square.and.arrow.up") }.accessibilityIdentifier("share-report-csv") }
-                    Button { Task { await prepareExport() } } label: { Label(exportURL == nil ? "Prepare Report CSV" : "Refresh Report CSV", systemImage: "tablecells") }
-                        .accessibilityIdentifier("prepare-report-csv")
-                    Text("CSV is an open, human-readable report export. Full-fidelity backup and restore remain separate.").font(.caption).foregroundStyle(.secondary)
+            Section("Financial Snapshot") {
+                if let worth = store.netWorthReport { LabeledContent("Net worth", value: store.format(worth.netWorthMinor)) }
+                if let cash = store.incomeReport { LabeledContent("Net cash flow", value: store.format(cash.differenceMinor)) }
+                if let summary = store.summary { LabeledContent("Ready to assign", value: store.format(summary.readyToAssignMinor)) }
+                if let debt = store.debtReport {
+                    LabeledContent("Total debt", value: store.format(debt.debtMinor))
+                    LabeledContent("Recorded interest this month", value: store.format(debt.recordedInterestMonthMinor))
                 }
             }
-        }.navigationTitle("Insights").toolbar { Button { showFilters = true } label: { Image(systemName: hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") } }.sheet(isPresented: $showFilters) { filters }.navigationDestination(item: $selectedSlice) { slice in if slice.mode == .group { LiveReportGroupView(group: slice.name) } else if let category = store.spendingReport?.categories.first(where: { $0.categoryID == slice.id }) { LiveReportCategoryView(category: category) } }
+            Section("Reports") {
+                NavigationLink { SpendingIncomeReportView() } label: { reportLink("Spending & Income", "Where money came from and where it went.", "chart.pie") }.accessibilityIdentifier("insights-spending-income")
+                NavigationLink { PlanPerformanceReportView() } label: { reportLink("Plan Performance", "Assignments, activity, targets, and overspending.", "target") }.accessibilityIdentifier("insights-plan-performance")
+                NavigationLink { NetWorthDestinationView() } label: { reportLink("Net Worth", "Assets, liabilities, and change over time.", "chart.line.uptrend.xyaxis") }.accessibilityIdentifier("insights-net-worth")
+                NavigationLink { DebtInterestDestinationView() } label: { reportLink("Debt & Interest", "Balances, recorded interest, and payoff planning.", "creditcard.trianglebadge.exclamationmark") }.accessibilityIdentifier("insights-debt-interest")
+            }
+            if let resilience = store.resilienceReport { Section("Looking Ahead") { LabeledContent("Expected 30-day margin", value: store.format(resilience.expectedMarginMinor)); Text("Forecast-only scheduled income and outflows. It does not change money available today.").font(.caption).foregroundStyle(.secondary) } }
+        }.navigationTitle("Insights").accessibilityIdentifier("insights-hub")
         .alert("Unable to export reports", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) { Button("OK", role: .cancel) {} } message: { Text(exportError ?? "Unknown error") }
     }
+    private func reportLink(_ title: String, _ explanation: String, _ symbol: String) -> some View { Label { VStack(alignment: .leading, spacing: 3) { Text(title); Text(explanation).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: symbol).foregroundStyle(Theme.accent) } }
     private var hasFilters: Bool { !store.reportAccountID.isEmpty || !store.reportCategoryID.isEmpty || !store.reportCategoryGroup.isEmpty || !store.reportPayee.isEmpty || !store.reportMemberID.isEmpty || !store.reportTransactionType.isEmpty || store.reportCleared != "all" || !store.reportFlag.isEmpty || !store.reportTag.isEmpty || store.includeTrackingAccounts }
     private var filters: some View { NavigationStack { Form {
         Picker("Account", selection: $store.reportAccountID) { Text("All accounts").tag(""); ForEach(store.accounts) { Text($0.name).tag($0.id) } }
@@ -3257,6 +3250,62 @@ private struct LiveInsightsView: View {
     private func prepareExport() async {
         do { exportURL = try await store.exportReports() }
         catch { exportError = error.localizedDescription }
+    }
+}
+
+private struct ReportPeriodControls: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    var body: some View { Section("Period") { Picker("Period", selection: $store.reportPeriod) { Text("30 Days").tag("30d"); Text("60 Days").tag("60d"); Text("90 Days").tag("90d"); Text("3 Months").tag("3m"); Text("6 Months").tag("6m"); Text("Year to Date").tag("ytd"); Text("1 Year").tag("1y"); Text("Custom").tag("custom") }.onChange(of:store.reportPeriod){_,_ in Task{await store.refresh()}}; if store.reportPeriod=="custom" { DatePicker("From",selection:$store.customReportStart,displayedComponents:.date);DatePicker("Through",selection:$store.customReportEnd,displayedComponents:.date);Button("Apply custom range"){Task{await store.refresh()}} } } }
+}
+
+private struct SpendingIncomeReportView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @State private var mode = SpendingBreakdownMode.category
+    @State private var angle: Int64?; @State private var slice: SpendingBreakdownSlice?
+    @State private var exportURL: URL?; @State private var exportError: String?
+    var body: some View { List {
+        ReportPeriodControls()
+        if let income=store.incomeReport { IncomeSpendingTrendsView(report:income) }
+        if let spending=store.spendingReport { SpendingBreakdownView(report:spending,mode:$mode,selectedAngle:$angle,selectedSlice:$slice);Section("Ranked breakdown"){ForEach(SpendingBreakdownSlice.make(from:spending,mode:mode)){item in Button{slice=item}label:{LabeledContent(item.name,value:store.format(item.spendingMinor))}}} }
+        else { ContentUnavailableView("No spending in this range",systemImage:"chart.pie",description:Text("Try a wider date range.")) }
+        if let trends=store.spendingTrendsReport { SpendingTrendsView(report:trends) }
+        if store.budget.can("export_data") { Section("Export") { if let exportURL { ShareLink(item:exportURL){Label("Share Report CSV",systemImage:"square.and.arrow.up")}.accessibilityIdentifier("share-report-csv") };Button{Task{do{exportURL=try await store.exportReports()}catch{exportError=error.localizedDescription}}}label:{Label(exportURL == nil ? "Prepare Report CSV":"Refresh Report CSV",systemImage:"tablecells")}.accessibilityIdentifier("prepare-report-csv") } }
+    }.navigationTitle("Spending & Income").navigationDestination(item:$slice){item in if item.mode == .group {LiveReportGroupView(group:item.name)} else if let category=store.spendingReport?.categories.first(where:{$0.categoryID==item.id}){LiveReportCategoryView(category:category)}}.alert("Unable to export reports",isPresented:Binding(get:{exportError != nil},set:{if !$0{exportError=nil}})){Button("OK",role:.cancel){}}message:{Text(exportError ?? "Unknown error")} }
+}
+
+private struct PlanPerformanceReportView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    var body: some View { List { ReportPeriodControls(); if let summary=store.summary { BudgetPerformanceInsightsView(summary:summary) }; if let report=store.planPerformanceReport { HistoricalPlanPerformanceView(report:report) } else { ContentUnavailableView("No planning history",systemImage:"target",description:Text("Assignments and category activity will appear here.")) } }.navigationTitle("Plan Performance").accessibilityIdentifier("insights-plan-report") }
+}
+
+private struct NetWorthDestinationView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    var body: some View { List { ReportPeriodControls(); if let report=store.netWorthReport { NetWorthReportView(report:report) } else { ContentUnavailableView("No account history",systemImage:"chart.line.uptrend.xyaxis",description:Text("Add an account balance or widen the date range.")) } }.navigationTitle("Net Worth") }
+}
+
+private struct DebtInterestDestinationView: View {
+    enum SectionChoice:String,CaseIterable {case overview="Overview",interest="Interest",payoff="Payoff"}
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @State private var choice=SectionChoice.overview
+    var body: some View { List { Section { Picker("Debt section",selection:$choice){ForEach(SectionChoice.allCases,id:\.self){Text($0.rawValue).tag($0)}}.pickerStyle(.segmented).accessibilityIdentifier("debt-insights-sections") }
+        if let report=store.debtReport { switch choice { case .overview: DebtOverviewContent(report:report); case .interest: DebtInterestContent(report:report); case .payoff: ContentUnavailableView("Payoff scenarios",systemImage:"calendar.badge.clock",description:Text("Add complete Debt Terms to compare projected payoff outcomes. Projections never change your budget.")) } }
+        else { ContentUnavailableView("No debt",systemImage:"checkmark.circle",description:Text("Credit cards and loans will appear here when visible.")) }
+    }.navigationTitle("Debt & Interest") }
+}
+
+private struct DebtOverviewContent: View { @EnvironmentObject private var store:BudgetWorkspaceStore;let report:APIDebtReport;var body:some View{Section("Overview"){LabeledContent("Opening debt",value:store.format(report.openingDebtMinor));LabeledContent("Current debt",value:store.format(report.debtMinor));LabeledContent(report.principalReductionMinor>=0 ? "Principal reduced":"Debt increased",value:store.format(abs(report.principalReductionMinor)));Text("Debt is the visible balance owed on credit cards and loans.").font(.caption).foregroundStyle(.secondary)};Section("Debt Accounts"){ForEach(report.accounts){row in if let account=store.accounts.first(where:{$0.id==row.accountID}){NavigationLink{LiveAccountRegisterView(initialAccount:account)}label:{LabeledContent(row.accountName,value:store.format(row.debtMinor))}}}}} }
+private struct DebtInterestContent: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let report: APIDebtReport
+    var body: some View {
+        Section("Recorded Interest") {
+            LabeledContent("Selected range", value: store.format(report.recordedInterestRangeMinor)).accessibilityIdentifier("recorded-interest-range")
+            LabeledContent("This month", value: store.format(report.recordedInterestMonthMinor))
+            LabeledContent("Year to date", value: store.format(report.recordedInterestYTDMinor))
+            LabeledContent("Trailing 12 months", value: store.format(report.recordedInterestTrailing12Minor))
+            Text(report.interestTrackingStartedOn.map { "Recorded since \($0). Earlier interest may not be classified." } ?? "No explicitly classified interest is recorded for this period.").font(.caption).foregroundStyle(.secondary)
+        }
+        Section("By Account") { ForEach(report.accounts.filter { $0.recordedInterestMinor != 0 }) { row in LabeledContent(row.accountName, value: store.format(row.recordedInterestMinor)) } }
     }
 }
 
