@@ -1,3 +1,5 @@
+import pytest
+
 from .conftest import auth
 from .test_advanced_ledger import add_category, record
 from .test_budgeting_api import create_budget, create_budget_structure
@@ -244,6 +246,11 @@ def test_net_worth_history_is_exact_transfer_neutral_and_account_explainable(
     assert [point["net_worth_minor"] for point in body["points"]] == [75000, 75000]
     assert sum(row["balance_minor"] for row in body["accounts"]) == body["net_worth_minor"]
     assert {row["account_id"] for row in body["accounts"]} == {checking["id"], savings["id"], loan["id"]}
+    assert all(point["transaction_ids"] == [] for point in body["points"])
+    assert all(row["transaction_ids"] == [] for row in body["accounts"])
+    explained = client.get(f"{url}&include_transaction_ids=true", headers=auth(owner_token)).json()
+    assert explained["points"][-1]["transaction_ids"]
+    assert all(row["transaction_ids"] for row in explained["accounts"])
     without_tracking = client.get(f"{url}&include_tracking=false", headers=auth(owner_token)).json()
     assert without_tracking["net_worth_minor"] == 125000
     assert loan["id"] not in str(without_tracking)
@@ -322,3 +329,44 @@ def test_restricted_report_member_and_group_filters_do_not_disclose_hidden_scope
     assert hidden_member.status_code == 404
     assert hidden_group.status_code == 404
     assert hidden_category["id"] not in hidden_group.text
+
+
+@pytest.mark.parametrize("month_count", [12, 60, 132])
+def test_net_worth_long_history_is_monthly_and_default_payload_is_bounded(
+    client, owner_token, session_factory, month_count
+):
+    from datetime import date
+    import json
+    from sqlalchemy import select
+    from app.models import Transaction, User
+
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    with session_factory() as db:
+        owner_id = db.scalar(select(User.id).where(User.email == "owner@example.com"))
+        rows = []
+        # Ten transactions per month over eleven years: enough to catch accidental client hydration
+        # or a response that repeats the complete ledger at every monthly observation.
+        for month_index in range(month_count):
+            year = 2016 + month_index // 12
+            month = month_index % 12 + 1
+            for day in range(1, 11):
+                rows.append(Transaction(
+                    budget_id=budget["id"], account_id=account["id"], amount_minor=100,
+                    occurred_on=date(year, month, day), created_by_user_id=owner_id,
+                ))
+        db.add_all(rows)
+        db.commit()
+
+    end_year = 2016 + (month_count - 1) // 12
+    end_month = (month_count - 1) % 12 + 1
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/net-worth?start_date=2016-01-01&end_date={end_year:04d}-{end_month:02d}-28",
+        headers=auth(owner_token),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["points"]) == month_count
+    assert body["net_worth_minor"] == month_count * 1000
+    assert all(point["transaction_ids"] == [] for point in body["points"])
+    assert len(json.dumps(body)) < 100_000

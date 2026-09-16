@@ -8,4 +8,10 @@ Supported dimensions are account, category, category group, payee, member, trans
 
 Every aggregate includes contributing transaction identifiers. Selecting an aggregate opens the shared transaction list and editor. A successful mutation reloads the repository snapshot and recalculates reports, so changed dates, amounts, accounts, categories, payees, splits, tags, flags, and attachment metadata cannot leave a stale chart behind.
 
+Net-worth history is the bounded exception to embedding provenance by default: the normal response
+contains monthly aggregate points and account contributions without repeating every historical
+transaction identifier at every point. Account drill-through uses the existing authorized, paginated
+register. API diagnostics may explicitly request `include_transaction_ids=true`; callers must not use
+that opt-in for routine long-history hydration.
+
 The server remains the production source of truth. Demo calculations exist to make simulator review deterministic, not to replace production analytics.

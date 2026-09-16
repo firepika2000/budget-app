@@ -268,3 +268,22 @@ Verification:
 - full backend: PASS (204 passed, 10 PostgreSQL-only skipped);
 - `git diff --check`: PASS;
 - no schema migration and no mutation of Live, attachment, or Simulator data.
+
+## v0.6 checkpoint — bounded long-history net worth
+
+Status: **ENGINEERING VERIFIED**
+
+Historical net-worth aggregation now walks the ordered ledger once instead of rescanning the entire
+history for every month. Default responses remain bounded by omitting repeated cumulative transaction
+ID arrays; the production drill-through already uses the authorized paginated account register.
+Explicit provenance remains available through `include_transaction_ids=true` for diagnostic callers.
+
+Synthetic one-, five-, and eleven-year fixtures (ten transactions per month) verify exact monthly
+totals and a bounded default response. PostgreSQL query-plan inspection remains pending because this
+host's automated suite is using SQLite and no disposable PostgreSQL service has been provisioned.
+
+Verification:
+
+- focused analytics: PASS (13 tests);
+- full backend: PASS (206 passed, 10 PostgreSQL-only skipped);
+- no migration and no mutation of Live, attachment, or Simulator data.

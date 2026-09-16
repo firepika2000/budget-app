@@ -234,6 +234,7 @@ def net_worth_report(
     end_date: date,
     account_id: list[str] = Query(default=[]),
     include_tracking: bool = True,
+    include_transaction_ids: bool = False,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -263,28 +264,36 @@ def net_worth_report(
         ).order_by(Transaction.occurred_on, Transaction.created_at, Transaction.id)
     )) if account_ids else []
 
-    def observation(as_of: date) -> tuple[int, int, int, list[str]]:
-        balances = {value: 0 for value in account_ids}
-        contributing_ids = []
-        for transaction in transactions:
-            if transaction.occurred_on <= as_of:
-                balances[transaction.account_id] += transaction.amount_minor
-                contributing_ids.append(transaction.id)
-        assets = sum(max(value, 0) for value in balances.values())
-        liabilities = sum(min(value, 0) for value in balances.values())
-        return assets, liabilities, assets + liabilities, contributing_ids
-
+    # Walk the ordered ledger once. The previous implementation rescanned the complete history for
+    # every monthly point (O(months × transactions)), which becomes pathological for long-lived
+    # budgets. Snapshots retain identical exact/cumulative semantics while aggregation is O(months +
+    # transactions); response serialization remains intentionally explicit for drill-through.
     points = []
     cursor = date(start_date.year, start_date.month, 1)
+    observation_dates = []
     while cursor <= end_date:
-        as_of = min(_month_end(cursor), end_date)
-        assets, liabilities, total, transaction_ids = observation(as_of)
+        observation_dates.append(min(_month_end(cursor), end_date))
+        cursor = _month_end(cursor) + timedelta(days=1)
+    balances = {value: 0 for value in account_ids}
+    contributing_ids: list[str] = []
+    transaction_index = 0
+    for as_of in observation_dates:
+        while transaction_index < len(transactions) and transactions[transaction_index].occurred_on <= as_of:
+            transaction = transactions[transaction_index]
+            balances[transaction.account_id] += transaction.amount_minor
+            contributing_ids.append(transaction.id)
+            transaction_index += 1
+        assets = sum(max(value, 0) for value in balances.values())
+        liabilities = sum(min(value, 0) for value in balances.values())
+        total = assets + liabilities
         points.append({
             "as_of": as_of, "assets_minor": assets, "liabilities_minor": liabilities,
-            "net_worth_minor": total, "transaction_ids": transaction_ids,
+            "net_worth_minor": total,
+            "transaction_ids": list(contributing_ids) if include_transaction_ids else [],
         })
-        cursor = _month_end(cursor) + timedelta(days=1)
-    assets, liabilities, total, _ = observation(end_date)
+    assets = sum(max(value, 0) for value in balances.values())
+    liabilities = sum(min(value, 0) for value in balances.values())
+    total = assets + liabilities
     account_rows = []
     for account in accounts:
         account_transactions = [item for item in transactions if item.account_id == account.id]
@@ -292,7 +301,7 @@ def net_worth_report(
             "account_id": account.id, "account_name": account.name, "account_type": account.account_type,
             "is_on_budget": account.is_on_budget,
             "balance_minor": sum(item.amount_minor for item in account_transactions),
-            "transaction_ids": [item.id for item in account_transactions],
+            "transaction_ids": [item.id for item in account_transactions] if include_transaction_ids else [],
         })
     return {
         "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,
