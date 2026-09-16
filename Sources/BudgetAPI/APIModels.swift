@@ -726,6 +726,48 @@ public struct APISpendingReport: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APISpendingTrendPoint: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { periodStart }
+    public let periodStart: String
+    public let periodEnd: String
+    public let spendingMinor: Int64
+    public let transactionIDs: [String]
+    enum CodingKeys: String, CodingKey {
+        case periodStart = "period_start", periodEnd = "period_end"
+        case spendingMinor = "spending_minor", transactionIDs = "transaction_ids"
+    }
+}
+
+public struct APISpendingTrendSeries: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { dimensionID }
+    public let dimensionID: String
+    public let dimensionName: String
+    public let categoryGroup: String?
+    public let spendingMinor: Int64
+    public let transactionIDs: [String]
+    public let points: [APISpendingTrendPoint]
+    enum CodingKeys: String, CodingKey {
+        case points
+        case dimensionID = "dimension_id", dimensionName = "dimension_name"
+        case categoryGroup = "category_group", spendingMinor = "spending_minor"
+        case transactionIDs = "transaction_ids"
+    }
+}
+
+public struct APISpendingTrendsReport: Decodable, Equatable, Sendable {
+    public let startDate: String
+    public let endDate: String
+    public let currencyCode: String
+    public let dimension: String
+    public let totalSpendingMinor: Int64
+    public let series: [APISpendingTrendSeries]
+    enum CodingKeys: String, CodingKey {
+        case dimension, series
+        case startDate = "start_date", endDate = "end_date", currencyCode = "currency_code"
+        case totalSpendingMinor = "total_spending_minor"
+    }
+}
+
 public struct APIIncomeSpendingReport: Decodable, Equatable, Sendable {
     public let startDate: String
     public let endDate: String

@@ -437,3 +437,29 @@ characterization values, not production PostgreSQL service-level guarantees.
 
 Verification: focused analytics PASS (22 tests). No production code, schema, migration, Swift, Live
 data, attachment data, or Simulator data changed in this hardening checkpoint.
+
+## v0.6 checkpoint — server-authoritative Spending Trends
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+The production Insights composition now includes monthly Spending Trends switchable among category,
+category-group, and payee dimensions without resetting the active date or report filters. The server
+applies authorization and account/category/group/member/payee/type/clearing/flag/tag/tracking scope
+before exact split attribution and refund netting. Transfers are excluded. Series are deterministically
+ranked and bounded to 12 by default (API maximum 25); zero months remain explicit, and partial first
+and final months preserve the inclusive requested dates.
+
+The shared native chart exposes a semantic summary plus exact ranked totals and monthly averages.
+Category and group rows retain their canonical report drill paths; payee rows open contributing
+transactions through the shared production transaction links/editor. Demo emits the same API report
+DTO and renders the same production view hierarchy.
+
+Verification so far:
+
+- focused analytics: PASS (24 tests), including split/refund/transfer, every dimension, limit
+  validation, cross-budget IDs, and hidden category/payee non-disclosure;
+- Swift package: PASS (27 BudgetCore + 37 BudgetAPI);
+- Xcode 27 Beta production build on the preserved iPhone 17 Pro Max / iOS 27 simulator: PASS;
+- focused native XCTest and the production Insights XCUITest drill journey: PASS;
+- full backend and broad native suites: pending final v0.6 closure verification;
+- no migration or mutation of Live, attachment, or Simulator data.

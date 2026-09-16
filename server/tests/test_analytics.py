@@ -120,6 +120,88 @@ def test_income_spending_monthly_trends_are_exact_split_refund_and_range_aware(
     ]
 
 
+def test_spending_trends_are_ranked_split_refund_transfer_and_payee_aware(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    dining = add_category(client, owner_token, budget["id"], "Food", "Dining")
+    savings = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Savings", "account_type": "savings"},
+    ).json()
+    split = record(
+        client, owner_token, budget["id"], account_id=checking["id"], amount_minor=-10000,
+        occurred_on="2026-07-31", payee_name="Market", splits=[
+            {"category_id": groceries["id"], "amount_minor": -7000},
+            {"category_id": dining["id"], "amount_minor": -3000},
+        ],
+    )
+    refund = record(
+        client, owner_token, budget["id"], account_id=checking["id"], category_id=groceries["id"],
+        amount_minor=2500, occurred_on="2026-08-01", payee_name="Market",
+    )
+    dining_purchase = record(
+        client, owner_token, budget["id"], account_id=checking["id"], category_id=dining["id"],
+        amount_minor=-4000, occurred_on="2026-08-31", payee_name="Cafe",
+    )
+    transfer = client.post(
+        f"/api/v1/budgets/{budget['id']}/transfers", headers=auth(owner_token),
+        json={"source_account_id": checking["id"], "destination_account_id": savings["id"],
+              "amount_minor": 2000, "occurred_on": "2026-08-15"},
+    )
+    assert transfer.status_code == 201
+    base = (f"/api/v1/budgets/{budget['id']}/reports/spending-trends"
+            "?start_date=2026-07-15&end_date=2026-08-31")
+
+    category = client.get(f"{base}&dimension=category", headers=auth(owner_token))
+    assert category.status_code == 200, category.text
+    body = category.json()
+    assert body["total_spending_minor"] == 11500
+    assert [(row["dimension_name"], row["spending_minor"]) for row in body["series"]] == [
+        ("Dining", 7000), ("Groceries", 4500),
+    ]
+    by_name = {row["dimension_name"]: row for row in body["series"]}
+    assert [point["spending_minor"] for point in by_name["Groceries"]["points"]] == [7000, -2500]
+    assert set(by_name["Groceries"]["transaction_ids"]) == {split["id"], refund["id"]}
+    assert transfer.json()["transfer_id"] not in category.text
+
+    group = client.get(f"{base}&dimension=group", headers=auth(owner_token)).json()
+    assert [(row["dimension_name"], row["spending_minor"]) for row in group["series"]] == [
+        ("Food", 7000), ("Needs", 4500),
+    ]
+    payee = client.get(f"{base}&dimension=payee", headers=auth(owner_token)).json()
+    assert [(row["dimension_name"], row["spending_minor"]) for row in payee["series"]] == [
+        ("Market", 7500), ("Cafe", 4000),
+    ]
+    assert dining_purchase["id"] in payee["series"][1]["transaction_ids"]
+
+
+def test_spending_trends_limit_and_hidden_scope_are_enforced_before_aggregation(
+    client, owner_token, session_factory
+):
+    from .test_delegated_access import add_child, configure_child
+
+    budget = create_budget(client, owner_token, session_factory)
+    checking, hidden_category = create_budget_structure(client, owner_token, budget["id"])
+    visible_category = add_category(client, owner_token, budget["id"], "Delegated", "Allowance")
+    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=hidden_category["id"],
+           amount_minor=-900000, occurred_on="2026-09-01", payee_name="Private Merchant")
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, checking["id"], visible_category["id"])
+    own = record(client, child_token, budget["id"], account_id=checking["id"], category_id=visible_category["id"],
+                 amount_minor=-2500, occurred_on="2026-09-02", payee_name="Arcade")
+    base = (f"/api/v1/budgets/{budget['id']}/reports/spending-trends"
+            "?start_date=2026-09-01&end_date=2026-09-30")
+    response = client.get(f"{base}&dimension=payee&limit=1", headers=auth(child_token))
+    assert response.status_code == 200, response.text
+    assert response.json()["total_spending_minor"] == 2500
+    assert response.json()["series"][0]["transaction_ids"] == [own["id"]]
+    assert "Private Merchant" not in response.text and hidden_category["id"] not in response.text
+    assert client.get(f"{base}&category_id={hidden_category['id']}", headers=auth(child_token)).status_code == 404
+    assert client.get(f"{base}&limit=26", headers=auth(owner_token)).status_code == 422
+
+
 def test_income_spending_period_boundaries_handle_leap_day_and_year_rollover(
     client, owner_token, session_factory
 ):
@@ -647,6 +729,8 @@ def test_reports_reject_cross_budget_resource_filters(client, owner_token, sessi
     for path in (
         f"spending?{period}&account_id={other_account['id']}",
         f"spending?{period}&category_id={other_category['id']}",
+        f"spending-trends?{period}&account_id={other_account['id']}",
+        f"spending-trends?{period}&category_id={other_category['id']}",
         f"income-spending?{period}&account_id={other_account['id']}",
         f"net-worth?{period}&account_id={other_account['id']}",
     ):

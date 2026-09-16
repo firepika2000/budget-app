@@ -447,6 +447,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("income-spending-trends-chart"))
         XCTAssertTrue(contents.contains("net-worth-history-chart"))
         XCTAssertTrue(contents.contains("debt-history-chart"))
+        XCTAssertTrue(contents.contains("spending-trends-chart"))
+        XCTAssertTrue(contents.contains("spending-trend-payee-"))
         XCTAssertTrue(contents.contains("debt-account-"))
         XCTAssertTrue(contents.contains("plan-performance-category-"))
         XCTAssertTrue(contents.contains(".chartXSelection(value: $selectedDate)"))
@@ -480,13 +482,15 @@ final class DemoStoreTests: XCTestCase {
     @MainActor
     func testInsightsMetadataFiltersUseSameDemoReportPathAsLive() async throws {
         let source = DemoWorkspaceDataSource(fresh: false)
-        let baselineQuery = WorkspaceReportQuery(start: .distantPast, end: .distantFuture, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", includeTracking: true)
+        let rangeStart = Calendar.current.date(byAdding: .year, value: -2, to: Date())!
+        let rangeEnd = Calendar.current.date(byAdding: .year, value: 2, to: Date())!
+        let baselineQuery = WorkspaceReportQuery(start: rangeStart, end: rangeEnd, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
         let baseline = try await source.snapshot(planMonth: Date(), report: baselineQuery)
         let account = try XCTUnwrap(baseline.accounts.first { $0.isOnBudget && $0.accountType != "credit" })
         let category = try XCTUnwrap(baseline.categories.first { !$0.isArchived })
         try await source.recordTransaction(.init(accountID: account.id, categoryID: category.id, amountMinor: -4321, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Metadata filter fixture", memo: "", isCleared: false, splits: [], flag: "orange", tags: ["essential"], attachmentMetadata: []))
 
-        let query = WorkspaceReportQuery(start: .distantPast, end: .distantFuture, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "uncleared", flag: "orange", tag: "essential", includeTracking: true)
+        let query = WorkspaceReportQuery(start: rangeStart, end: rangeEnd, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "uncleared", flag: "orange", tag: "essential", spendingTrendDimension: "category", includeTracking: true)
         let filtered = try await source.snapshot(planMonth: Date(), report: query)
         let contributing = Set(try XCTUnwrap(filtered.spending).categories.flatMap(\.transactionIDs))
         let candidate = try XCTUnwrap(filtered.transactions.first { $0.payeeName == "Metadata filter fixture" })
@@ -496,6 +500,27 @@ final class DemoStoreTests: XCTestCase {
             XCTAssertTrue(transaction.tags?.contains("essential") == true)
             XCTAssertEqual(transaction.flag, "orange")
             XCTAssertFalse(transaction.isCleared)
+        }
+    }
+
+    @MainActor
+    func testDemoSpendingTrendsUseProductionContractForEveryDimension() async throws {
+        let source = DemoWorkspaceDataSource(fresh: false)
+        let rangeStart = Calendar.current.date(byAdding: .year, value: -2, to: Date())!
+        let rangeEnd = Calendar.current.date(byAdding: .year, value: 2, to: Date())!
+        func snapshot(_ dimension: String) async throws -> WorkspaceSnapshot {
+            try await source.snapshot(planMonth: Date(), report: WorkspaceReportQuery(
+                start: rangeStart, end: rangeEnd, accountID: "", categoryID: "",
+                categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all",
+                flag: "", tag: "", spendingTrendDimension: dimension, includeTracking: true
+            ))
+        }
+        for dimension in ["category", "group", "payee"] {
+            let loaded = try await snapshot(dimension)
+            let value = try XCTUnwrap(loaded.spendingTrends)
+            XCTAssertEqual(value.dimension, dimension)
+            XCTAssertEqual(value.series.reduce(Int64(0)) { $0 + $1.spendingMinor }, value.totalSpendingMinor)
+            XCTAssertTrue(value.series.allSatisfy { $0.points.count > 0 })
         }
     }
 

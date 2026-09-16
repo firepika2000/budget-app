@@ -558,6 +558,26 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(report.categories.first?.transactionIDs, ["t1"])
     }
 
+    func testSpendingTrendsUseServerDimensionFiltersAndExactSeries() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/reports/spending-trends")
+            let query = try XCTUnwrap(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems)
+            XCTAssertTrue(query.contains(URLQueryItem(name: "dimension", value: "payee")))
+            XCTAssertTrue(query.contains(URLQueryItem(name: "account_id", value: "a1")))
+            XCTAssertTrue(query.contains(URLQueryItem(name: "tag", value: "essential")))
+            let response = Data(#"{"start_date":"2026-08-01","end_date":"2026-09-30","currency_code":"USD","dimension":"payee","total_spending_minor":9001,"series":[{"dimension_id":"payee:market","dimension_name":"Market","category_group":null,"spending_minor":9001,"transaction_ids":["purchase","refund"],"points":[{"period_start":"2026-08-01","period_end":"2026-08-31","spending_minor":10000,"transaction_ids":["purchase"]},{"period_start":"2026-09-01","period_end":"2026-09-30","spending_minor":-999,"transaction_ids":["refund"]}]}]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let report = try await client.spendingTrendsReport(budgetID: "b1", startDate: "2026-08-01", endDate: "2026-09-30", dimension: "payee", accountIDs: ["a1"], tags: ["essential"], token: "secret")
+        XCTAssertEqual(report.totalSpendingMinor, 9_001)
+        XCTAssertEqual(report.series.first?.points.map(\.spendingMinor), [10_000, -999])
+        XCTAssertEqual(report.series.first?.transactionIDs, ["purchase", "refund"])
+    }
+
     func testIncomeSpendingReportDecodesExactMonthlyTrendAndDrillDownIDs() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

@@ -34,6 +34,20 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(spending.waitForExistence(timeout: 5))
         XCTAssertFalse(spending.label.isEmpty)
 
+        let spendingTrends = app.otherElements.matching(identifier: "spending-trends-chart").firstMatch
+        for _ in 0..<5 where !spendingTrends.exists { app.swipeUp() }
+        XCTAssertTrue(spendingTrends.waitForExistence(timeout: 5))
+        XCTAssertTrue(spendingTrends.label.contains("Spending trends"))
+        let payees = app.segmentedControls.buttons["Payees"]
+        XCTAssertTrue(payees.waitForExistence(timeout: 5))
+        payees.tap()
+        let payeeTrend = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'spending-trend-payee-'")).firstMatch
+        XCTAssertTrue(payeeTrend.waitForExistence(timeout: 5))
+        payeeTrend.tap()
+        XCTAssertTrue(app.navigationBars.element.waitForExistence(timeout: 5))
+        app.navigationBars.buttons["Insights"].tap()
+        XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
+
         let cashFlow = app.otherElements.matching(identifier: "income-spending-trends-chart").firstMatch
         for _ in 0..<5 where !cashFlow.exists { app.swipeUp() }
         XCTAssertTrue(cashFlow.waitForExistence(timeout: 5))

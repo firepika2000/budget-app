@@ -234,7 +234,7 @@ struct WorkspaceSnapshot {
     var transactions: [APITransaction]; var summary: APIMonthSummary?
     var payees: [APIPayee] = []
     var requests: [APIFinancialRequest]; var allowances: [APIAllowancePlan]
-    var spending: APISpendingReport?; var income: APIIncomeSpendingReport?; var netWorth: APINetWorthReport?; var debt: APIDebtReport?
+    var spending: APISpendingReport?; var spendingTrends: APISpendingTrendsReport?; var income: APIIncomeSpendingReport?; var netWorth: APINetWorthReport?; var debt: APIDebtReport?
     var delegated: APIDelegatedBudget?; var forecast: APIForecast?
     var members: [APIHouseholdMember]; var delegatedBudgets: [APIDelegatedBudget]
     var allocationOperations: [APIAllocationOperation] = []
@@ -246,6 +246,7 @@ struct WorkspaceReportQuery {
     let start: Date; let end: Date; let accountID: String; let categoryID: String
     let categoryGroup: String; let payee: String; let memberID: String
     let transactionType: String; let cleared: String; let flag: String; let tag: String
+    let spendingTrendDimension: String
     let includeTracking: Bool
 }
 
@@ -381,6 +382,39 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             return total <= 0 ? nil : ["category_id": category.id, "category_name": category.name, "category_group": category.group, "spending_minor": total, "transaction_ids": contributing.map(\.id)]
         }
         let spending: APISpendingReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "total_spending_minor": spendingRows.reduce(Int64(0)) { $0 + ($1["spending_minor"] as? Int64 ?? 0) }, "categories": spendingRows])
+        var trendPeriods: [(Date, Date)] = []
+        var trendMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: start))!
+        while trendMonth <= report.end {
+            let next = Calendar.current.date(byAdding: .month, value: 1, to: trendMonth)!
+            trendPeriods.append((max(start, trendMonth), min(report.end, Calendar.current.date(byAdding: .day, value: -1, to: next)!)))
+            trendMonth = next
+        }
+        var trendNames: [String: (String, String?)] = [:], trendTotals: [String: Int64] = [:]
+        var trendIDs: [String: [String]] = [:], trendPointTotals: [String: [String: Int64]] = [:], trendPointIDs: [String: [String: [String]]] = [:]
+        for item in included where item.transferID == nil && item.amount != 0 {
+            for (categoryID, amount) in demo.canonicalCategoryAmounts(for: item) {
+                guard let category = visibleCategories.first(where: { $0.id == categoryID }) else { continue }
+                let key: String, name: String, group: String?
+                switch report.spendingTrendDimension {
+                case "group": key = "group:\(category.group)"; name = category.group; group = nil
+                case "payee": name = item.payee.isEmpty ? "No payee" : item.payee; key = "payee:\(name.lowercased())"; group = nil
+                default: key = category.id; name = category.name; group = category.group
+                }
+                trendNames[key] = (name, group); trendTotals[key, default: 0] -= amount; trendIDs[key, default: []].append(item.id)
+                if let period = trendPeriods.first(where: { item.date >= $0.0 && item.date <= $0.1 }) {
+                    let periodKey = dateFormatter.string(from: period.0)
+                    trendPointTotals[key, default: [:]][periodKey, default: 0] -= amount
+                    trendPointIDs[key, default: [:]][periodKey, default: []].append(item.id)
+                }
+            }
+        }
+        let rankedTrendKeys = trendTotals.keys.filter { trendTotals[$0, default: 0] > 0 }.sorted {
+            trendTotals[$0, default: 0] == trendTotals[$1, default: 0] ? (trendNames[$0]?.0 ?? $0) < (trendNames[$1]?.0 ?? $1) : trendTotals[$0, default: 0] > trendTotals[$1, default: 0]
+        }.prefix(12)
+        let trendRows: [[String: Any]] = rankedTrendKeys.map { key in
+            ["dimension_id": key, "dimension_name": trendNames[key]!.0, "category_group": trendNames[key]!.1 ?? NSNull(), "spending_minor": trendTotals[key]!, "transaction_ids": Array(Set(trendIDs[key] ?? [])).sorted(), "points": trendPeriods.map { period in let periodKey = dateFormatter.string(from: period.0); return ["period_start": periodKey, "period_end": dateFormatter.string(from: period.1), "spending_minor": trendPointTotals[key]?[periodKey] ?? 0, "transaction_ids": Array(Set(trendPointIDs[key]?[periodKey] ?? [])).sorted()] }]
+        }
+        let spendingTrends: APISpendingTrendsReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "dimension": report.spendingTrendDimension, "total_spending_minor": trendTotals.values.filter { $0 > 0 }.reduce(0, +), "series": trendRows])
         let reportIncome = included.filter { $0.transferID == nil && $0.amount > 0 && $0.categoryIDs.isEmpty }
         let reportSpending = included.filter { $0.transferID == nil && !$0.categoryIDs.isEmpty }
         let incomeValue = reportIncome.reduce(Int64(0)) { $0 + $1.amount }
@@ -469,7 +503,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let onBudgetAccounts = visibleAccounts.filter(\.isOnBudget)
         let actualTotal = onBudgetAccounts.reduce(Int64(0)) { $0 + $1.balance }, projectedTotal = onBudgetAccounts.reduce(Int64(0)) { $0 + (projected[$1.id] ?? $1.balance) }
         let demoForecast: APIForecast = try decode(["as_of": BudgetWorkspaceStore.dateString(forecastStart), "through": BudgetWorkspaceStore.dateString(forecastThrough), "currency_code": budget.currencyCode, "actual_total_on_budget_minor": actualTotal, "projected_total_on_budget_minor": projectedTotal, "lowest_projected_total_minor": min(actualTotal, projectedTotal), "accounts": forecastAccounts, "occurrences": occurrenceRows])
-        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: [], spending: spending, income: income, netWorth: netWorth, debt: debt, delegated: delegated, forecast: demoForecast, members: [], delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
+        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: [], spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, delegated: delegated, forecast: demoForecast, members: [], delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
     }
 
     private func decode<T: Decodable>(_ value: Any) throws -> T { try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value)) }
@@ -477,7 +511,8 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage {
-        let report = WorkspaceReportQuery(start: .distantPast, end: .distantFuture, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", includeTracking: true)
+        let calendar = Calendar.current
+        let report = WorkspaceReportQuery(start: calendar.date(byAdding: .year, value: -100, to: Date())!, end: calendar.date(byAdding: .year, value: 100, to: Date())!, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
         var rows = try await snapshot(planMonth: Date(), report: report).transactions
         let text = query.search.trimmingCharacters(in: .whitespacesAndNewlines)
         rows = rows.filter { item in
@@ -825,10 +860,11 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let cleared = report.cleared == "all" || report.cleared == "reconciled" ? nil : report.cleared == "cleared"
         let reconciled = report.cleared == "reconciled" ? true : nil
         async let loadedSpending = client.spendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], categoryIDs: report.categoryID.isEmpty ? [] : [report.categoryID], categoryGroups: report.categoryGroup.isEmpty ? [] : [report.categoryGroup], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], transactionType: report.transactionType.isEmpty ? nil : report.transactionType, cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token)
+        async let loadedSpendingTrends = client.spendingTrendsReport(budgetID: budget.id, startDate: start, endDate: end, dimension: report.spendingTrendDimension, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], categoryIDs: report.categoryID.isEmpty ? [] : [report.categoryID], categoryGroups: report.categoryGroup.isEmpty ? [] : [report.categoryGroup], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], transactionType: report.transactionType.isEmpty ? nil : report.transactionType, cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token)
         async let loadedIncome = client.incomeSpendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token)
         async let loadedNetWorth: APINetWorthReport? = budget.can("view_account_balances") ? client.netWorthReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], includeTracking: report.includeTracking, token: token) : nil
         async let loadedDebt: APIDebtReport? = budget.can("view_account_balances") ? client.debtReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], token: token) : nil
-        let (accounts, transactions, categories, groups, summary, spending, income, netWorth, debt) = try await (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedIncome, loadedNetWorth, loadedDebt)
+        let (accounts, transactions, categories, groups, summary, spending, spendingTrends, income, netWorth, debt) = try await (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedSpendingTrends, loadedIncome, loadedNetWorth, loadedDebt)
         let allocationOperations = budget.can("view_allocation_history") ? (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] : []
         let schedules = budget.can("view_transactions") ? try await client.scheduledTransactions(budgetID: budget.id, includeInactive: true, token: token) : []
         let targets = await withTaskGroup(of: APICategoryTarget?.self) { group in for category in categories { group.addTask { try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: self.token) } }; var values: [APICategoryTarget] = []; for await target in group { if let target { values.append(target) } }; return values }
@@ -839,7 +875,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let forecast: APIForecast? = if budget.can("view_account_balances") { try? await client.forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(Calendar.current.date(byAdding: .day, value: 90, to: Date())!), token: token) } else { nil }
         let members = budget.can("manage_allowances") ? (try? await client.householdMembers(householdID: budget.householdID, token: token)) ?? [] : []
         let delegatedBudgets = budget.can("manage_allowances") ? (try? await client.delegatedBudgets(budgetID: budget.id, token: token)) ?? [] : []
-        return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, payees: [], requests: requests, allowances: allowances, spending: spending, income: income, netWorth: netWorth, debt: debt, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, targets: targets, schedules: schedules)
+        return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, payees: [], requests: requests, allowances: allowances, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, targets: targets, schedules: schedules)
     }
 }
 
@@ -856,6 +892,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var requests: [APIFinancialRequest] = []
     @Published var allowances: [APIAllowancePlan] = []
     @Published var spendingReport: APISpendingReport?
+    @Published var spendingTrendsReport: APISpendingTrendsReport?
     @Published var incomeReport: APIIncomeSpendingReport?
     @Published var netWorthReport: APINetWorthReport?
     @Published var debtReport: APIDebtReport?
@@ -879,6 +916,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var reportCleared = "all"
     @Published var reportFlag = ""
     @Published var reportTag = ""
+    @Published var spendingTrendDimension = "category"
     @Published var includeTrackingAccounts = false
     @Published var planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date()))!
     @Published var isLoading = false
@@ -932,10 +970,10 @@ final class BudgetWorkspaceStore: ObservableObject {
         do {
             if let dataSource {
                 let range = reportRange()
-                let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, flag: reportFlag, tag: reportTag, includeTracking: includeTrackingAccounts)
+                let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, flag: reportFlag, tag: reportTag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTrackingAccounts)
                 let value = try await dataSource.snapshot(planMonth: planMonth, report: query)
                 accounts = value.accounts; accountBalances = value.accountBalances; categories = value.categories; groups = value.groups; transactions = value.transactions; payees = value.payees
-                summary = value.summary; requests = value.requests; allowances = value.allowances; spendingReport = value.spending
+                summary = value.summary; requests = value.requests; allowances = value.allowances; spendingReport = value.spending; spendingTrendsReport = value.spendingTrends
                 incomeReport = value.income; netWorthReport = value.netWorth; debtReport = value.debt; delegatedBudget = value.delegated; forecast = value.forecast
                 householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; allocationOperations = value.allocationOperations; errorMessage = nil
                 targets = Dictionary(uniqueKeysWithValues: value.targets.map { ($0.categoryID, $0) })
@@ -2573,6 +2611,7 @@ private struct LiveInsightsView: View {
             } else {
                 Section { ContentUnavailableView("No spending in this range", systemImage: "chart.pie", description: Text("Try a wider date range or different filters.")) }
             }
+            if let trends = store.spendingTrendsReport { SpendingTrendsView(report: trends) }
             if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportTransactionType.isEmpty, let report = store.incomeReport { IncomeSpendingTrendsView(report: report) }
             if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportPayee.isEmpty, store.reportMemberID.isEmpty, store.reportTransactionType.isEmpty, store.reportCleared == "all", store.reportFlag.isEmpty, store.reportTag.isEmpty, let report = store.netWorthReport { NetWorthReportView(report: report) }
             if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportPayee.isEmpty, store.reportMemberID.isEmpty, store.reportTransactionType.isEmpty, store.reportCleared == "all", store.reportFlag.isEmpty, store.reportTag.isEmpty, let report = store.debtReport { DebtReportView(report: report) }
@@ -2594,6 +2633,64 @@ private struct LiveInsightsView: View {
         Toggle("Include tracking accounts", isOn: $store.includeTrackingAccounts)
     }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.reportFlag = ""; store.reportTag = ""; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false; Task { await reload() } } } }.sheet(isPresented: $showReportPayeeSelector) { PayeeSearchSelectionView(title: "Filter by Payee") { store.reportPayee = $0.displayName } } } }
     private func reload() async { await store.refresh() }
+}
+
+private struct SpendingTrendsView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let report: APISpendingTrendsReport
+    private let dateFormatter: DateFormatter = { let value = DateFormatter(); value.locale = Locale(identifier: "en_US_POSIX"); value.dateFormat = "yyyy-MM-dd"; return value }()
+
+    var body: some View {
+        Section("Spending Trends") {
+            Picker("Trend by", selection: $store.spendingTrendDimension) {
+                Text("Categories").tag("category"); Text("Groups").tag("group"); Text("Payees").tag("payee")
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: store.spendingTrendDimension) { _, _ in Task { await store.refresh() } }
+            if report.series.isEmpty {
+                ContentUnavailableView("No spending trend", systemImage: "chart.xyaxis.line", description: Text("Try a wider date range or different filters."))
+            } else {
+                Chart {
+                    ForEach(report.series) { series in
+                        ForEach(series.points) { point in
+                            LineMark(x: .value("Month", dateFormatter.date(from: point.periodStart) ?? .distantPast), y: .value("Spending", point.spendingMinor))
+                                .foregroundStyle(by: .value("Series", series.dimensionName))
+                                .symbol(by: .value("Series", series.dimensionName))
+                        }
+                    }
+                }
+                .chartXAxis { AxisMarks(values: .automatic(desiredCount: min(report.series.first?.points.count ?? 1, 6))) { _ in AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
+                .frame(minHeight: 240)
+                .accessibilityIdentifier("spending-trends-chart")
+                .accessibilityLabel("Spending trends by \(dimensionLabel.lowercased()) from \(report.startDate) through \(report.endDate)")
+                .accessibilityValue("Total spending \(store.format(report.totalSpendingMinor)); \(report.series.count) ranked series. Exact values follow the chart.")
+                ForEach(report.series) { series in destination(for: series) }
+            }
+        }
+    }
+
+    private var dimensionLabel: String { report.dimension == "payee" ? "Payees" : report.dimension == "group" ? "Groups" : "Categories" }
+
+    @ViewBuilder private func destination(for series: APISpendingTrendSeries) -> some View {
+        let months = max(series.points.count, 1)
+        if report.dimension == "category", let category = store.spendingReport?.categories.first(where: { $0.categoryID == series.dimensionID }) {
+            NavigationLink { LiveReportCategoryView(category: category) } label: { trendLabel(series, months: months) }
+                .accessibilityIdentifier("spending-trend-category-\(series.dimensionID)")
+        } else if report.dimension == "group" {
+            NavigationLink { LiveReportGroupView(group: series.dimensionName) } label: { trendLabel(series, months: months) }
+                .accessibilityIdentifier("spending-trend-group-\(series.dimensionID)")
+        } else {
+            NavigationLink { LiveReportTransactionsView(title: series.dimensionName, transactionIDs: series.transactionIDs) } label: { trendLabel(series, months: months) }
+                .accessibilityIdentifier("spending-trend-payee-\(series.dimensionID)")
+        }
+    }
+
+    private func trendLabel(_ series: APISpendingTrendSeries, months: Int) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            LabeledContent(series.dimensionName, value: store.format(series.spendingMinor))
+            Text("Monthly average \(store.format(series.spendingMinor / Int64(months)))").font(.caption).foregroundStyle(.secondary)
+        }
+    }
 }
 
 private struct BudgetPerformanceInsightsView: View {

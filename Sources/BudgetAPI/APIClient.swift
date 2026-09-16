@@ -482,6 +482,31 @@ public struct APIClient {
         )
     }
 
+    public func spendingTrendsReport(
+        budgetID: String, startDate: String, endDate: String, dimension: String,
+        accountIDs: [String] = [], categoryIDs: [String] = [], categoryGroups: [String] = [],
+        memberIDs: [String] = [], payees: [String] = [], transactionType: String? = nil, cleared: Bool? = nil,
+        reconciled: Bool? = nil, flags: [String] = [], tags: [String] = [],
+        includeTracking: Bool = false, token: String
+    ) async throws -> APISpendingTrendsReport {
+        var query = [
+            URLQueryItem(name: "start_date", value: startDate), URLQueryItem(name: "end_date", value: endDate),
+            URLQueryItem(name: "dimension", value: dimension),
+        ]
+        query += accountIDs.map { URLQueryItem(name: "account_id", value: $0) }
+        query += categoryIDs.map { URLQueryItem(name: "category_id", value: $0) }
+        query += categoryGroups.map { URLQueryItem(name: "category_group", value: $0) }
+        query += memberIDs.map { URLQueryItem(name: "member_id", value: $0) }
+        query += payees.map { URLQueryItem(name: "payee", value: $0) }
+        if let transactionType { query.append(URLQueryItem(name: "transaction_type", value: transactionType)) }
+        if let cleared { query.append(URLQueryItem(name: "cleared", value: String(cleared))) }
+        if let reconciled { query.append(URLQueryItem(name: "reconciled", value: String(reconciled))) }
+        query += flags.map { URLQueryItem(name: "flag", value: $0) }
+        query += tags.map { URLQueryItem(name: "tag", value: $0) }
+        if includeTracking { query.append(URLQueryItem(name: "include_tracking", value: "true")) }
+        return try await send(path: "api/v1/budgets/\(budgetID)/reports/spending-trends", queryItems: query, token: token)
+    }
+
     public func incomeSpendingReport(
         budgetID: String,
         startDate: String,

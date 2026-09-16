@@ -13,7 +13,7 @@ from .budgeting_routes import require_budget_capability
 from .database import get_db
 from .dependencies import get_current_user
 from .models import Account, Category, CategoryGroup, Membership, Transaction, User
-from .schemas import DebtReportResponse, IncomeSpendingReportResponse, NetWorthReportResponse, SpendingReportResponse
+from .schemas import DebtReportResponse, IncomeSpendingReportResponse, NetWorthReportResponse, SpendingReportResponse, SpendingTrendsReportResponse
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/reports")
@@ -239,6 +239,93 @@ def income_spending_report(
         "income_transaction_ids": income_ids,
         "spending_transaction_ids": spending_ids,
         "periods": periods,
+    }
+
+
+@router.get("/spending-trends", response_model=SpendingTrendsReportResponse)
+def spending_trends_report(
+    budget_id: str,
+    start_date: date,
+    end_date: date,
+    dimension: str = Query(default="category", pattern="^(category|group|payee)$"),
+    limit: int = Query(default=12, ge=1, le=25),
+    account_id: list[str] = Query(default=[]),
+    category_id: list[str] = Query(default=[]),
+    category_group: list[str] = Query(default=[]),
+    member_id: list[str] = Query(default=[]),
+    payee: list[str] = Query(default=[]),
+    transaction_type: Optional[str] = Query(default=None, pattern="^(income|spending|refund|transfer)$"),
+    cleared: Optional[bool] = None,
+    reconciled: Optional[bool] = None,
+    flag: list[str] = Query(default=[]),
+    tag: list[str] = Query(default=[]),
+    include_tracking: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return ranked monthly spending series from the canonical authorized report dataset."""
+    budget, transactions = report_transactions(
+        db, user, budget_id, start_date, end_date, account_id, category_id, category_group,
+        member_id, payee, transaction_type, cleared, reconciled, flag, tag, include_tracking,
+    )
+    categories = {item.id: item for item in db.scalars(select(Category).where(Category.budget_id == budget_id))}
+    groups = {item.id: item.name for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))}
+    periods = []
+    cursor = date(start_date.year, start_date.month, 1)
+    while cursor <= end_date:
+        periods.append((max(cursor, start_date), min(_month_end(cursor), end_date)))
+        cursor = _month_end(cursor) + timedelta(days=1)
+
+    totals: dict[str, int] = defaultdict(int)
+    names: dict[str, tuple[str, Optional[str]]] = {}
+    point_totals: dict[tuple[str, date], int] = defaultdict(int)
+    series_ids: dict[str, list[str]] = defaultdict(list)
+    point_ids: dict[tuple[str, date], list[str]] = defaultdict(list)
+    for transaction in transactions:
+        if transaction.transfer_id is not None or transaction.amount_minor == 0:
+            continue
+        portions = (
+            [(transaction.category_id, transaction.amount_minor)] if transaction.category_id is not None
+            else [(split.category_id, split.amount_minor) for split in transaction.splits]
+        )
+        for category_key, amount in portions:
+            category = categories.get(category_key)
+            if category is None or amount == 0:
+                continue
+            if dimension == "category":
+                key, name, group = category.id, category.name, groups.get(category.group_id, "Uncategorized")
+            elif dimension == "group":
+                name = groups.get(category.group_id, "Uncategorized")
+                key, group = f"group:{name}", None
+            else:
+                name = transaction.payee_name.strip() or "No payee"
+                key, group = f"payee:{name.casefold()}", None
+            spending = -amount
+            names[key] = (name, group)
+            totals[key] += spending
+            series_ids[key].append(transaction.id)
+            period_start = next(value[0] for value in periods if value[0] <= transaction.occurred_on <= value[1])
+            point_totals[(key, period_start)] += spending
+            point_ids[(key, period_start)].append(transaction.id)
+
+    ranked = [key for key, value in totals.items() if value > 0]
+    ranked.sort(key=lambda key: (-totals[key], names[key][0].casefold(), key))
+    rows = []
+    for key in ranked[:limit]:
+        name, group = names[key]
+        rows.append({
+            "dimension_id": key, "dimension_name": name, "category_group": group,
+            "spending_minor": totals[key], "transaction_ids": list(dict.fromkeys(series_ids[key])),
+            "points": [{
+                "period_start": period_start, "period_end": period_end,
+                "spending_minor": point_totals[(key, period_start)],
+                "transaction_ids": list(dict.fromkeys(point_ids[(key, period_start)])),
+            } for period_start, period_end in periods],
+        })
+    return {
+        "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,
+        "dimension": dimension, "total_spending_minor": sum(totals[key] for key in ranked),
+        "series": rows,
     }
 
 

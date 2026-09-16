@@ -644,6 +644,31 @@ class SpendingReportResponse(BaseModel):
     categories: list[SpendingCategoryReport]
 
 
+class SpendingTrendPoint(BaseModel):
+    period_start: date
+    period_end: date
+    spending_minor: int
+    transaction_ids: list[str]
+
+
+class SpendingTrendSeries(BaseModel):
+    dimension_id: str
+    dimension_name: str
+    category_group: Optional[str] = None
+    spending_minor: int
+    transaction_ids: list[str]
+    points: list[SpendingTrendPoint]
+
+
+class SpendingTrendsReportResponse(BaseModel):
+    start_date: date
+    end_date: date
+    currency_code: str
+    dimension: Literal["category", "group", "payee"]
+    total_spending_minor: int
+    series: list[SpendingTrendSeries]
+
+
 class IncomeSpendingPeriod(BaseModel):
     period_start: date
     period_end: date
