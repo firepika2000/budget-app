@@ -392,3 +392,27 @@ No commit or tag history was rewritten or lost.
 
 Generated Swift build directories, Xcode user data, and the local attachment store are now ignored;
 no generated or human attachment data was deleted.
+
+## v0.6 checkpoint — authoritative Debt Insights
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Debt Insights now comes from a dedicated permission-scoped server report over the exact account
+ledger. It includes credit-card and loan debt only, preserves integer minor units, reports opening
+and current debt plus principal reduction (or debt increase), provides bounded monthly observations,
+and supports authorized account filtering. Hidden account identifiers return the same not-found
+response as unknown resources before aggregation, preventing aggregate or filter leakage.
+
+The production SwiftUI composition renders an accessible native history chart and account-ranked
+contributions. Account rows drill through the existing shared register. Demo builds the same report
+DTO from its exact ledger balances; it does not use a separate presentation. Interest and payoff
+projections are explicitly omitted because the current domain has no authoritative APR,
+minimum-payment, amortization, or principal/interest inputs.
+
+Verification:
+
+- focused analytics: PASS (18 tests), including payments, new debt, filtering, and restricted scope;
+- Swift package: PASS (27 BudgetCore + 36 BudgetAPI after the added debt contract test);
+- Xcode 27 Beta production build on the existing iPhone 17 Pro Max / iOS 27 simulator: PASS;
+- full backend and native XCTest: pending final checkpoint verification;
+- no migration or mutation of Live, attachment, or Simulator data.

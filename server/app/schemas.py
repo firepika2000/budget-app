@@ -695,6 +695,30 @@ class NetWorthReportResponse(BaseModel):
     accounts: list[NetWorthAccount]
 
 
+class DebtPoint(BaseModel):
+    as_of: date
+    debt_minor: int
+
+
+class DebtAccount(BaseModel):
+    account_id: str
+    account_name: str
+    account_type: str
+    is_on_budget: bool
+    debt_minor: int
+
+
+class DebtReportResponse(BaseModel):
+    start_date: date
+    end_date: date
+    currency_code: str
+    opening_debt_minor: int
+    debt_minor: int
+    principal_reduction_minor: int
+    points: list[DebtPoint]
+    accounts: list[DebtAccount]
+
+
 class TransferCreate(BaseModel):
     source_account_id: str
     destination_account_id: str

@@ -13,7 +13,7 @@ from .budgeting_routes import require_budget_capability
 from .database import get_db
 from .dependencies import get_current_user
 from .models import Account, Category, CategoryGroup, Membership, Transaction, User
-from .schemas import IncomeSpendingReportResponse, NetWorthReportResponse, SpendingReportResponse
+from .schemas import DebtReportResponse, IncomeSpendingReportResponse, NetWorthReportResponse, SpendingReportResponse
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/reports")
@@ -322,4 +322,81 @@ def net_worth_report(
         "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,
         "assets_minor": assets, "liabilities_minor": liabilities, "net_worth_minor": total,
         "points": points, "accounts": account_rows,
+    }
+
+
+@router.get("/debt", response_model=DebtReportResponse)
+def debt_report(
+    budget_id: str,
+    start_date: date,
+    end_date: date,
+    account_id: list[str] = Query(default=[]),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return exact debt observations without inventing interest or payoff assumptions."""
+    if start_date > end_date:
+        raise HTTPException(status_code=422, detail="Report start date must not follow end date")
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
+    require_budget_capability(db, user, budget_id, "view_account_balances")
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    budget_accounts = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id)))
+    if any(value not in budget_accounts for value in account_id):
+        raise HTTPException(status_code=404, detail="Report resource not found")
+    if visible_accounts is not None and any(value not in visible_accounts for value in account_id):
+        raise HTTPException(status_code=404, detail="Report resource not found")
+
+    query = select(Account).where(
+        Account.budget_id == budget_id,
+        Account.account_type.in_(("credit", "loan")),
+    )
+    if account_id:
+        query = query.where(Account.id.in_(account_id))
+    if visible_accounts is not None:
+        query = query.where(Account.id.in_(visible_accounts))
+    accounts = list(db.scalars(query.order_by(Account.name, Account.id)))
+    account_ids = [account.id for account in accounts]
+    transactions = list(db.scalars(select(Transaction).where(
+        Transaction.account_id.in_(account_ids), Transaction.occurred_on <= end_date,
+    ).order_by(Transaction.occurred_on, Transaction.created_at, Transaction.id))) if account_ids else []
+
+    balances = {value: 0 for value in account_ids}
+    index = 0
+    while index < len(transactions) and transactions[index].occurred_on < start_date:
+        transaction = transactions[index]
+        balances[transaction.account_id] += transaction.amount_minor
+        index += 1
+    opening_debt = sum(max(-value, 0) for value in balances.values())
+
+    observation_dates = []
+    cursor = date(start_date.year, start_date.month, 1)
+    while cursor <= end_date:
+        observation_dates.append(min(_month_end(cursor), end_date))
+        cursor = _month_end(cursor) + timedelta(days=1)
+    points = []
+    for as_of in observation_dates:
+        while index < len(transactions) and transactions[index].occurred_on <= as_of:
+            transaction = transactions[index]
+            balances[transaction.account_id] += transaction.amount_minor
+            index += 1
+        points.append({"as_of": as_of, "debt_minor": sum(max(-value, 0) for value in balances.values())})
+
+    ending_debt = sum(max(-value, 0) for value in balances.values())
+    rows = [{
+        "account_id": account.id,
+        "account_name": account.name,
+        "account_type": account.account_type,
+        "is_on_budget": account.is_on_budget,
+        "debt_minor": max(-balances[account.id], 0),
+    } for account in accounts]
+    rows.sort(key=lambda item: (-item["debt_minor"], item["account_name"], item["account_id"]))
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "currency_code": budget.currency_code,
+        "opening_debt_minor": opening_debt,
+        "debt_minor": ending_debt,
+        "principal_reduction_minor": opening_debt - ending_debt,
+        "points": points,
+        "accounts": rows,
     }

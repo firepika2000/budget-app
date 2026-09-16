@@ -397,6 +397,92 @@ def test_net_worth_counts_reconciliation_adjustments_and_void_reversals_once(
     assert reconciled.json()["adjustment_transaction_id"] in ids
 
 
+def test_debt_history_is_exact_for_loans_cards_and_payments(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Checking", "account_type": "checking"},
+    ).json()
+    card = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Card", "account_type": "credit"},
+    ).json()
+    loan = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Auto Loan", "account_type": "loan", "is_on_budget": False},
+    ).json()
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100000,
+           occurred_on="2026-06-30")
+    record(client, owner_token, budget["id"], account_id=card["id"], amount_minor=-20000,
+           occurred_on="2026-06-30")
+    record(client, owner_token, budget["id"], account_id=loan["id"], amount_minor=-50000,
+           occurred_on="2026-06-30")
+    payment = client.post(
+        f"/api/v1/budgets/{budget['id']}/transfers", headers=auth(owner_token),
+        json={"source_account_id": checking["id"], "destination_account_id": loan["id"],
+              "amount_minor": 10000, "occurred_on": "2026-07-15"},
+    )
+    assert payment.status_code == 201, payment.text
+    record(client, owner_token, budget["id"], account_id=card["id"], amount_minor=-5000,
+           occurred_on="2026-08-01")
+
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/debt"
+        "?start_date=2026-07-01&end_date=2026-08-31", headers=auth(owner_token),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["opening_debt_minor"] == 70000
+    assert body["debt_minor"] == 65000
+    assert body["principal_reduction_minor"] == 5000
+    assert [point["debt_minor"] for point in body["points"]] == [60000, 65000]
+    assert [(row["account_name"], row["debt_minor"]) for row in body["accounts"]] == [
+        ("Auto Loan", 40000), ("Card", 25000),
+    ]
+    card_only = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/debt"
+        f"?start_date=2026-07-01&end_date=2026-08-31&account_id={card['id']}",
+        headers=auth(owner_token),
+    ).json()
+    assert card_only["opening_debt_minor"] == 20000
+    assert card_only["debt_minor"] == 25000
+    assert card_only["principal_reduction_minor"] == -5000
+
+
+def test_debt_report_filters_hidden_accounts_before_aggregation(
+    client, owner_token, session_factory
+):
+    from .test_delegated_access import add_child, configure_child
+
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    hidden = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Private Mortgage", "account_type": "loan", "is_on_budget": False},
+    ).json()
+    record(client, owner_token, budget["id"], account_id=hidden["id"], amount_minor=-25000000,
+           occurred_on="2026-01-01")
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, checking["id"], category["id"])
+    expanded = client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token),
+        json={
+            "capabilities": ["view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports"],
+            "restrict_accounts": True, "account_ids": [checking["id"]],
+            "restrict_categories": True, "category_ids": [category["id"]],
+        },
+    )
+    assert expanded.status_code == 200, expanded.text
+    url = f"/api/v1/budgets/{budget['id']}/reports/debt?start_date=2026-01-01&end_date=2026-09-30"
+    visible = client.get(url, headers=auth(child_token))
+    assert visible.status_code == 200
+    assert visible.json()["debt_minor"] == 0
+    assert hidden["id"] not in visible.text and "Private Mortgage" not in visible.text
+    assert client.get(f"{url}&account_id={hidden['id']}", headers=auth(child_token)).status_code == 404
+
+
 def test_net_worth_rejects_hidden_account_filter_and_never_aggregates_it(
     client, owner_token, session_factory
 ):

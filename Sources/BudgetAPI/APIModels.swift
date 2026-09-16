@@ -806,6 +806,43 @@ public struct APINetWorthReport: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIDebtPoint: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { asOf }
+    public let asOf: String
+    public let debtMinor: Int64
+    enum CodingKeys: String, CodingKey { case asOf = "as_of", debtMinor = "debt_minor" }
+}
+
+public struct APIDebtAccount: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { accountID }
+    public let accountID: String
+    public let accountName: String
+    public let accountType: String
+    public let isOnBudget: Bool
+    public let debtMinor: Int64
+    enum CodingKeys: String, CodingKey {
+        case accountID = "account_id", accountName = "account_name", accountType = "account_type"
+        case isOnBudget = "is_on_budget", debtMinor = "debt_minor"
+    }
+}
+
+public struct APIDebtReport: Decodable, Equatable, Sendable {
+    public let startDate: String
+    public let endDate: String
+    public let currencyCode: String
+    public let openingDebtMinor: Int64
+    public let debtMinor: Int64
+    public let principalReductionMinor: Int64
+    public let points: [APIDebtPoint]
+    public let accounts: [APIDebtAccount]
+    enum CodingKeys: String, CodingKey {
+        case points, accounts
+        case startDate = "start_date", endDate = "end_date", currencyCode = "currency_code"
+        case openingDebtMinor = "opening_debt_minor", debtMinor = "debt_minor"
+        case principalReductionMinor = "principal_reduction_minor"
+    }
+}
+
 public struct APIForecastOccurrence: Identifiable, Decodable, Equatable, Sendable {
     public var id: String { "\(scheduledTransactionID)-\(occurredOn)" }
     public let scheduledTransactionID: String; public let name: String; public let occurredOn: String; public let accountID: String; public let destinationAccountID: String?; public let categoryID: String?; public let amountMinor: Int64
