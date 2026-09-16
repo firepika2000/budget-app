@@ -11,6 +11,27 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testActivityLifecycleFilterKeepsDemoAndLiveContractParity() async throws {
+        let source = DemoWorkspaceDataSource(fresh: false)
+        try await source.voidTransaction(id: "t1", reason: "Lifecycle filter regression")
+
+        let voided = try await source.browseTransactions(
+            query: APITransactionQuery(lifecycleStatuses: ["voided"])
+        )
+        let reversals = try await source.browseTransactions(
+            query: APITransactionQuery(lifecycleStatuses: ["reversal"])
+        )
+        let posted = try await source.browseTransactions(
+            query: APITransactionQuery(lifecycleStatuses: ["posted"])
+        )
+
+        XCTAssertEqual(voided.items.map(\.id), ["t1"])
+        XCTAssertEqual(reversals.items.count, 1)
+        XCTAssertTrue(reversals.items.allSatisfy { $0.status == "reversal" })
+        XCTAssertFalse(posted.items.contains(where: { $0.id == "t1" }))
+    }
+
+    @MainActor
     func testFreshBudgetStartingBalanceAndActivationSurfacesUseProductionPaths() throws {
         let demo = DemoStore()
         demo.accounts = []

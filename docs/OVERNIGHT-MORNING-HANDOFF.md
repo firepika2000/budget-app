@@ -91,6 +91,36 @@ Payee search/filter unless a later section explicitly records invalidation.
 
 None at this checkpoint.
 
+## v0.5 checkpoint — Activity browser scale and lifecycle filtering
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+The production transaction browser previously called `_visible_transactions`, hydrating every visible
+transaction and every split before applying filters, sorting, and pagination in Python. That made the
+API response look paginated while its memory/query work remained proportional to the household's full
+history.
+
+The browser now applies authorization, resource, text, amount, date, type, clearing, linkage, flag,
+tag, member, and lifecycle predicates in SQL; obtains an authorized count independently; uses stable
+keyset cursors for every supported sort; and hydrates only `limit + 1` rows plus their splits. The
+production Activity filter now distinguishes clearing state from lifecycle and can explicitly select
+Posted, Voided, or Reversal rows. Demo uses the same query semantics.
+
+Verification:
+
+- focused Activity/browser/bulk/payee backend: PASS (20 tests before the final lifecycle additions;
+  Activity browser suite PASS with 8 tests afterward);
+- 3,000-row scale fixture: PASS, with no more than the requested 25 rows plus one look-ahead row loaded;
+- insertion between keyset pages: PASS without a duplicate or skipped older row;
+- full backend: PASS (193 passed, 9 PostgreSQL-only skipped);
+- Swift package: PASS (27 BudgetCore + 33 BudgetAPI);
+- native XCTest before the final parity assertion: PASS (67 tests); focused Demo/Live lifecycle parity:
+  PASS (1 test) and Xcode build PASS;
+- no migration and no financial-semantic change; `git diff --check`: pending final checkpoint.
+
+Human acceptance remains pending for the consolidated Activity search/filter/sort/load-more journey.
+No previously accepted workflow is invalidated.
+
 ## Morning build and migration plan (current; final HEAD will supersede)
 
 - Xcode: `/Users/firepika/Downloads/Xcode-beta.app`

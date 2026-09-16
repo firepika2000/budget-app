@@ -187,6 +187,7 @@ final class APIClientTests: XCTestCase {
             XCTAssertTrue(items.contains(.init(name: "category_id", value: "c1")))
             XCTAssertTrue(items.contains(.init(name: "minimum_amount_minor", value: "-5000")))
             XCTAssertTrue(items.contains(.init(name: "cleared", value: "true")))
+            XCTAssertTrue(items.contains(.init(name: "lifecycle_status", value: "voided")))
             XCTAssertTrue(items.contains(.init(name: "sort", value: "amount_asc")))
             XCTAssertTrue(items.contains(.init(name: "cursor", value: "opaque")))
             let response = Data(#"{"items":[{"id":"t1","budget_id":"b1","account_id":"a1","category_id":"c1","payee_id":"p1","amount_minor":-1200,"occurred_on":"2026-09-04","created_at":"2026-09-04T12:00:00Z","payee_name":"Market","memo":"","is_cleared":true,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":null,"scheduled_transaction_id":null,"splits":[]}],"next_cursor":"next","total_count":2}"#.utf8)
@@ -195,7 +196,7 @@ final class APIClientTests: XCTestCase {
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
         let page = try await client.searchTransactions(
             budgetID: "b1",
-            query: .init(search: "market", accountIDs: ["a1"], categoryIDs: ["c1"], minimumAmountMinor: -5000, cleared: true, sort: "amount_asc", cursor: "opaque"),
+            query: .init(search: "market", accountIDs: ["a1"], categoryIDs: ["c1"], minimumAmountMinor: -5000, lifecycleStatuses: ["voided"], cleared: true, sort: "amount_asc", cursor: "opaque"),
             token: "secret"
         )
         XCTAssertEqual(page.totalCount, 2)

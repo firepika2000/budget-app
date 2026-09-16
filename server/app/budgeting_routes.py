@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
-from sqlalchemy import delete, func, select
+from sqlalchemy import String, and_, cast, delete, false, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.exc import IntegrityError
 
@@ -851,6 +851,7 @@ def search_transactions(
     minimum_amount_minor: Optional[int] = None,
     maximum_amount_minor: Optional[int] = None,
     transaction_type: Optional[str] = Query(default=None, pattern="^(income|spending|refund|transfer)$"),
+    lifecycle_status: list[str] = Query(default=[]),
     cleared: Optional[bool] = None,
     reconciled: Optional[bool] = None,
     flag: list[str] = Query(default=[]),
@@ -867,76 +868,167 @@ def search_transactions(
     budget = require_budget_capability(db, user, budget_id, "view_transactions")
     if start_date is not None and end_date is not None and start_date > end_date:
         raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
+    if any(value not in {"posted", "voided", "reversal"} for value in lifecycle_status):
+        raise HTTPException(status_code=422, detail="Invalid transaction lifecycle status")
 
-    rows = _visible_transactions(db, user, budget)
     search_text = q.strip().casefold()
 
-    def matches(item: Transaction) -> bool:
-        category_ids = {item.category_id} if item.category_id is not None else {split.category_id for split in item.splits}
-        if search_text and not any(search_text in value.casefold() for value in [item.payee_name, item.memo, item.flag or "", *item.tags]):
-            return False
-        if account_id and item.account_id not in account_id:
-            return False
-        if category_id and not category_ids.intersection(category_id):
-            return False
-        if payee_id and item.payee_id not in payee_id:
-            return False
-        if start_date is not None and item.occurred_on < start_date:
-            return False
-        if end_date is not None and item.occurred_on > end_date:
-            return False
-        if minimum_amount_minor is not None and item.amount_minor < minimum_amount_minor:
-            return False
-        if maximum_amount_minor is not None and item.amount_minor > maximum_amount_minor:
-            return False
-        if cleared is not None and item.is_cleared is not cleared:
-            return False
-        if reconciled is not None and item.is_reconciled is not reconciled:
-            return False
-        if flag and item.flag not in flag:
-            return False
-        if tag and not set(item.tags).intersection(tag):
-            return False
-        if actor_user_id and item.created_by_user_id not in actor_user_id:
-            return False
-        if is_transfer is not None and (item.transfer_id is not None) is not is_transfer:
-            return False
-        if is_scheduled_realization is not None and (item.scheduled_transaction_id is not None) is not is_scheduled_realization:
-            return False
-        if transaction_type == "transfer" and item.transfer_id is None:
-            return False
-        if transaction_type == "income" and not (item.transfer_id is None and item.amount_minor > 0 and not category_ids):
-            return False
-        if transaction_type == "spending" and not (item.transfer_id is None and item.amount_minor < 0 and bool(category_ids)):
-            return False
-        if transaction_type == "refund" and not (item.transfer_id is None and item.amount_minor > 0 and bool(category_ids)):
-            return False
-        return True
+    conditions = [Transaction.budget_id == budget.id]
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    if visible_accounts is not None:
+        conditions.append(Transaction.account_id.in_(visible_accounts) if visible_accounts else false())
+    if visible_categories is not None:
+        if visible_categories:
+            conditions.append(or_(
+                Transaction.category_id.in_(visible_categories),
+                and_(
+                    Transaction.category_id.is_(None),
+                    Transaction.splits.any(),
+                    ~Transaction.splits.any(~TransactionSplit.category_id.in_(visible_categories)),
+                ),
+            ))
+        else:
+            conditions.append(false())
+    if search_text:
+        pattern = f"%{search_text}%"
+        conditions.append(or_(
+            func.lower(Transaction.payee_name).like(pattern),
+            func.lower(Transaction.memo).like(pattern),
+            func.lower(func.coalesce(Transaction.flag, "")).like(pattern),
+            func.lower(cast(Transaction.tags, String)).like(pattern),
+        ))
+    if account_id:
+        conditions.append(Transaction.account_id.in_(account_id))
+    if category_id:
+        conditions.append(or_(
+            Transaction.category_id.in_(category_id),
+            Transaction.splits.any(TransactionSplit.category_id.in_(category_id)),
+        ))
+    if payee_id:
+        conditions.append(Transaction.payee_id.in_(payee_id))
+    if start_date is not None:
+        conditions.append(Transaction.occurred_on >= start_date)
+    if end_date is not None:
+        conditions.append(Transaction.occurred_on <= end_date)
+    if minimum_amount_minor is not None:
+        conditions.append(Transaction.amount_minor >= minimum_amount_minor)
+    if maximum_amount_minor is not None:
+        conditions.append(Transaction.amount_minor <= maximum_amount_minor)
+    if cleared is not None:
+        conditions.append(Transaction.is_cleared.is_(cleared))
+    if reconciled is not None:
+        conditions.append(Transaction.is_reconciled.is_(reconciled))
+    if flag:
+        conditions.append(Transaction.flag.in_(flag))
+    if tag:
+        # Tags are normalized strings. JSON containment differs between SQLite
+        # test fixtures and PostgreSQL, so compare the serialized array with
+        # delimiter-aware patterns rather than hydrating every transaction.
+        serialized_tags = cast(Transaction.tags, String)
+        conditions.append(or_(*[
+            or_(
+                serialized_tags.like(f'%"{value}"%'),
+                serialized_tags.like(f"%'{value}'%"),
+            ) for value in tag
+        ]))
+    if actor_user_id:
+        conditions.append(Transaction.created_by_user_id.in_(actor_user_id))
+    if is_transfer is not None:
+        conditions.append(Transaction.transfer_id.is_not(None) if is_transfer else Transaction.transfer_id.is_(None))
+    if is_scheduled_realization is not None:
+        conditions.append(
+            Transaction.scheduled_transaction_id.is_not(None)
+            if is_scheduled_realization else Transaction.scheduled_transaction_id.is_(None)
+        )
 
-    filtered = [item for item in rows if matches(item)]
-    if sort == "date_asc":
-        filtered.sort(key=lambda item: (item.occurred_on, item.created_at, item.id))
-    elif sort == "amount_desc":
-        filtered.sort(key=lambda item: (-item.amount_minor, -item.occurred_on.toordinal(), item.id))
-    elif sort == "amount_asc":
-        filtered.sort(key=lambda item: (item.amount_minor, -item.occurred_on.toordinal(), item.id))
-    elif sort == "payee_asc":
-        filtered.sort(key=lambda item: (item.payee_name.casefold(), -item.occurred_on.toordinal(), item.id))
-    else:
-        filtered.sort(key=lambda item: (item.occurred_on, item.created_at, item.id), reverse=True)
+    has_category = or_(Transaction.category_id.is_not(None), Transaction.splits.any())
+    if transaction_type == "transfer":
+        conditions.append(Transaction.transfer_id.is_not(None))
+    elif transaction_type == "income":
+        conditions.extend([Transaction.transfer_id.is_(None), Transaction.amount_minor > 0, ~has_category])
+    elif transaction_type == "spending":
+        conditions.extend([Transaction.transfer_id.is_(None), Transaction.amount_minor < 0, has_category])
+    elif transaction_type == "refund":
+        conditions.extend([Transaction.transfer_id.is_(None), Transaction.amount_minor > 0, has_category])
+    if lifecycle_status:
+        conditions.append(Transaction.status.in_(lifecycle_status))
 
-    start = 0
+    orderings = {
+        "date_asc": (Transaction.occurred_on.asc(), Transaction.created_at.asc(), Transaction.id.asc()),
+        "amount_desc": (Transaction.amount_minor.desc(), Transaction.occurred_on.desc(), Transaction.id.asc()),
+        "amount_asc": (Transaction.amount_minor.asc(), Transaction.occurred_on.desc(), Transaction.id.asc()),
+        "payee_asc": (func.lower(Transaction.payee_name).asc(), Transaction.occurred_on.desc(), Transaction.id.asc()),
+        "date_desc": (Transaction.occurred_on.desc(), Transaction.created_at.desc(), Transaction.id.desc()),
+    }
+    page_conditions = list(conditions)
     if cursor is not None:
         try:
-            cursor_id = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
-            start = next(index + 1 for index, item in enumerate(filtered) if item.id == cursor_id)
-        except (ValueError, UnicodeError, StopIteration):
+            payload = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8"))
+            if payload.get("v") != 1 or payload.get("sort") != sort:
+                raise ValueError
+            cursor_id = str(payload["id"])
+            cursor_date = date.fromisoformat(payload["date"])
+            if sort in {"date_asc", "date_desc"}:
+                cursor_created = datetime.fromisoformat(payload["created"])
+                if sort == "date_asc":
+                    page_conditions.append(or_(
+                        Transaction.occurred_on > cursor_date,
+                        and_(Transaction.occurred_on == cursor_date, Transaction.created_at > cursor_created),
+                        and_(Transaction.occurred_on == cursor_date, Transaction.created_at == cursor_created, Transaction.id > cursor_id),
+                    ))
+                else:
+                    page_conditions.append(or_(
+                        Transaction.occurred_on < cursor_date,
+                        and_(Transaction.occurred_on == cursor_date, Transaction.created_at < cursor_created),
+                        and_(Transaction.occurred_on == cursor_date, Transaction.created_at == cursor_created, Transaction.id < cursor_id),
+                    ))
+            elif sort in {"amount_asc", "amount_desc"}:
+                cursor_amount = int(payload["amount"])
+                amount_after = Transaction.amount_minor > cursor_amount if sort == "amount_asc" else Transaction.amount_minor < cursor_amount
+                page_conditions.append(or_(
+                    amount_after,
+                    and_(Transaction.amount_minor == cursor_amount, Transaction.occurred_on < cursor_date),
+                    and_(Transaction.amount_minor == cursor_amount, Transaction.occurred_on == cursor_date, Transaction.id > cursor_id),
+                ))
+            else:
+                cursor_payee = str(payload["payee"])
+                lowered_payee = func.lower(Transaction.payee_name)
+                page_conditions.append(or_(
+                    lowered_payee > cursor_payee,
+                    and_(lowered_payee == cursor_payee, Transaction.occurred_on < cursor_date),
+                    and_(lowered_payee == cursor_payee, Transaction.occurred_on == cursor_date, Transaction.id > cursor_id),
+                ))
+        except (ValueError, TypeError, KeyError, UnicodeError, json.JSONDecodeError):
             raise HTTPException(status_code=422, detail="Invalid or stale transaction cursor") from None
-    page = filtered[start:start + limit]
+
+    total_count = db.scalar(select(func.count()).select_from(Transaction).where(*conditions)) or 0
+    rows = list(db.scalars(
+        select(Transaction)
+        .options(selectinload(Transaction.splits))
+        .where(*page_conditions)
+        .order_by(*orderings[sort])
+        .limit(limit + 1)
+    ))
+    page = rows[:limit]
     next_cursor = None
-    if start + limit < len(filtered) and page:
-        next_cursor = base64.urlsafe_b64encode(page[-1].id.encode("utf-8")).decode("ascii")
-    return TransactionPageResponse(items=page, next_cursor=next_cursor, total_count=len(filtered))
+    if len(rows) > limit:
+        last = page[-1]
+        cursor_payload = {
+            "v": 1,
+            "sort": sort,
+            "id": last.id,
+            "date": last.occurred_on.isoformat(),
+        }
+        if sort in {"date_asc", "date_desc"}:
+            cursor_payload["created"] = last.created_at.isoformat()
+        elif sort in {"amount_asc", "amount_desc"}:
+            cursor_payload["amount"] = last.amount_minor
+        else:
+            cursor_payload["payee"] = last.payee_name.casefold()
+        payload = json.dumps(cursor_payload, separators=(",", ":"))
+        next_cursor = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii")
+    return TransactionPageResponse(items=page, next_cursor=next_cursor, total_count=total_count)
 
 
 @router.get("/transactions", response_model=list[TransactionResponse])

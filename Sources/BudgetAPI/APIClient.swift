@@ -173,6 +173,7 @@ public struct APIClient {
         if let value = query.minimumAmountMinor { items.append(URLQueryItem(name: "minimum_amount_minor", value: String(value))) }
         if let value = query.maximumAmountMinor { items.append(URLQueryItem(name: "maximum_amount_minor", value: String(value))) }
         if let value = query.transactionType { items.append(URLQueryItem(name: "transaction_type", value: value)) }
+        items += query.lifecycleStatuses.map { URLQueryItem(name: "lifecycle_status", value: $0) }
         if let value = query.cleared { items.append(URLQueryItem(name: "cleared", value: String(value))) }
         if let value = query.reconciled { items.append(URLQueryItem(name: "reconciled", value: String(value))) }
         items += query.flags.map { URLQueryItem(name: "flag", value: $0) }

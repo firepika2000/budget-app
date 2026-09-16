@@ -564,6 +564,7 @@ public struct APITransactionQuery: Equatable, Sendable {
     public var minimumAmountMinor: Int64?
     public var maximumAmountMinor: Int64?
     public var transactionType: String?
+    public var lifecycleStatuses: [String]
     public var cleared: Bool?
     public var reconciled: Bool?
     public var flags: [String]
@@ -575,10 +576,10 @@ public struct APITransactionQuery: Equatable, Sendable {
     public var limit: Int
     public var cursor: String?
 
-    public init(search: String = "", accountIDs: [String] = [], categoryIDs: [String] = [], payeeIDs: [String] = [], startDate: String? = nil, endDate: String? = nil, minimumAmountMinor: Int64? = nil, maximumAmountMinor: Int64? = nil, transactionType: String? = nil, cleared: Bool? = nil, reconciled: Bool? = nil, flags: [String] = [], tags: [String] = [], actorUserIDs: [String] = [], isTransfer: Bool? = nil, isScheduledRealization: Bool? = nil, sort: String = "date_desc", limit: Int = 50, cursor: String? = nil) {
+    public init(search: String = "", accountIDs: [String] = [], categoryIDs: [String] = [], payeeIDs: [String] = [], startDate: String? = nil, endDate: String? = nil, minimumAmountMinor: Int64? = nil, maximumAmountMinor: Int64? = nil, transactionType: String? = nil, lifecycleStatuses: [String] = [], cleared: Bool? = nil, reconciled: Bool? = nil, flags: [String] = [], tags: [String] = [], actorUserIDs: [String] = [], isTransfer: Bool? = nil, isScheduledRealization: Bool? = nil, sort: String = "date_desc", limit: Int = 50, cursor: String? = nil) {
         self.search = search; self.accountIDs = accountIDs; self.categoryIDs = categoryIDs; self.payeeIDs = payeeIDs
         self.startDate = startDate; self.endDate = endDate; self.minimumAmountMinor = minimumAmountMinor; self.maximumAmountMinor = maximumAmountMinor
-        self.transactionType = transactionType; self.cleared = cleared; self.reconciled = reconciled; self.flags = flags; self.tags = tags
+        self.transactionType = transactionType; self.lifecycleStatuses = lifecycleStatuses; self.cleared = cleared; self.reconciled = reconciled; self.flags = flags; self.tags = tags
         self.actorUserIDs = actorUserIDs; self.isTransfer = isTransfer; self.isScheduledRealization = isScheduledRealization
         self.sort = sort; self.limit = limit; self.cursor = cursor
     }

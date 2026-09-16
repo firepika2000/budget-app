@@ -1,4 +1,8 @@
-from app.models import Household, Membership, User
+from datetime import date, datetime, timezone
+
+from sqlalchemy import event, insert
+
+from app.models import Household, Membership, Transaction, User
 from app.security import create_access_token, hash_password
 
 from .conftest import auth
@@ -56,6 +60,33 @@ def test_transaction_browser_filters_sorts_and_paginates_without_mutation(
 
     # Querying is observational only.
     assert len(client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()) == 3
+
+
+def test_transaction_browser_keyset_cursor_does_not_duplicate_after_newer_insert(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, groceries = create_budget_structure(client, owner_token, budget["id"])
+    oldest = record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=groceries["id"], amount_minor=-100, occurred_on="2026-09-01",
+    )
+    middle = record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=groceries["id"], amount_minor=-200, occurred_on="2026-09-02",
+    )
+    first = _search(client, owner_token, budget["id"], "?limit=1&sort=date_desc")
+    assert [row["id"] for row in first["items"]] == [middle["id"]]
+
+    record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=groceries["id"], amount_minor=-300, occurred_on="2026-09-03",
+    )
+    second = _search(
+        client, owner_token, budget["id"],
+        f"?limit=1&sort=date_desc&cursor={first['next_cursor']}",
+    )
+    assert [row["id"] for row in second["items"]] == [oldest["id"]]
 
 
 def test_transaction_browser_filters_split_categories(client, owner_token, session_factory):
@@ -134,6 +165,117 @@ def test_transaction_browser_rejects_invalid_range_and_cursor(client, owner_toke
     budget = create_budget(client, owner_token, session_factory)
     assert client.get(
         f"/api/v1/budgets/{budget['id']}/transactions/search?start_date=2026-09-05&end_date=2026-09-01",
+        headers=auth(owner_token),
+    ).status_code == 422
+
+
+def test_transaction_browser_pages_in_sql_without_hydrating_the_budget(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, groceries = create_budget_structure(client, owner_token, budget["id"])
+    with session_factory() as db:
+        owner_id = db.query(User.id).filter(User.email == "owner@example.com").scalar()
+        db.execute(insert(Transaction), [
+            {
+                "id": f"scale-{index:05d}",
+                "budget_id": budget["id"],
+                "account_id": account["id"],
+                "category_id": groceries["id"],
+                "amount_minor": -(index + 1),
+                "occurred_on": date(2026, 9, 1),
+                "created_at": datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc),
+                "payee_name": f"Merchant {index:05d}",
+                "memo": "scale characterization",
+                "created_by_user_id": owner_id,
+                "tags": ["scale"],
+                "attachment_metadata": [],
+            }
+            for index in range(3_000)
+        ])
+        db.commit()
+
+    loaded: list[str] = []
+
+    def capture_load(target, _context):
+        if target.budget_id == budget["id"]:
+            loaded.append(target.id)
+
+    event.listen(Transaction, "load", capture_load)
+    try:
+        first = _search(
+            client, owner_token, budget["id"],
+            "?limit=25&sort=amount_asc&tag=scale",
+        )
+    finally:
+        event.remove(Transaction, "load", capture_load)
+
+    assert first["total_count"] == 3_000
+    assert len(first["items"]) == 25
+    assert first["next_cursor"] is not None
+    assert len(loaded) <= 26  # limit + one look-ahead row, never all 3,000
+
+    second = _search(
+        client, owner_token, budget["id"],
+        f"?limit=25&sort=amount_asc&tag=scale&cursor={first['next_cursor']}",
+    )
+    first_ids = {row["id"] for row in first["items"]}
+    second_ids = {row["id"] for row in second["items"]}
+    assert len(second["items"]) == 25
+    assert first_ids.isdisjoint(second_ids)
+    assert [row["amount_minor"] for row in first["items"] + second["items"]] == sorted(
+        row["amount_minor"] for row in first["items"] + second["items"]
+    )
+
+
+def test_transaction_browser_tag_filter_matches_complete_tags_only(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, groceries = create_budget_structure(client, owner_token, budget["id"])
+    exact = record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=groceries["id"], amount_minor=-100, tags=["food"],
+    )
+    record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=groceries["id"], amount_minor=-200, tags=["foodie"],
+    )
+    result = _search(client, owner_token, budget["id"], "?tag=food")
+    assert [row["id"] for row in result["items"]] == [exact["id"]]
+
+
+def test_transaction_browser_filters_posted_voided_and_reversal_lifecycle(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, groceries = create_budget_structure(client, owner_token, budget["id"])
+    original = record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=groceries["id"], amount_minor=-500,
+    )
+    posted = record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=groceries["id"], amount_minor=-700,
+    )
+    voided = client.post(
+        f"/api/v1/budgets/{budget['id']}/transactions/{original['id']}/void",
+        headers=auth(owner_token), json={"reason": "Browser lifecycle test"},
+    )
+    assert voided.status_code == 201, voided.text
+    reversal = voided.json()
+
+    assert [row["id"] for row in _search(
+        client, owner_token, budget["id"], "?lifecycle_status=posted",
+    )["items"]] == [posted["id"]]
+    assert [row["id"] for row in _search(
+        client, owner_token, budget["id"], "?lifecycle_status=voided",
+    )["items"]] == [original["id"]]
+    assert [row["id"] for row in _search(
+        client, owner_token, budget["id"], "?lifecycle_status=reversal",
+    )["items"]] == [reversal["id"]]
+    assert client.get(
+        f"/api/v1/budgets/{budget['id']}/transactions/search?lifecycle_status=deleted",
         headers=auth(owner_token),
     ).status_code == 422
     assert client.get(
