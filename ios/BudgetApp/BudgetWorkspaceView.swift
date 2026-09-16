@@ -234,7 +234,7 @@ struct WorkspaceSnapshot {
     var transactions: [APITransaction]; var summary: APIMonthSummary?
     var payees: [APIPayee] = []
     var requests: [APIFinancialRequest]; var allowances: [APIAllowancePlan]
-    var spending: APISpendingReport?; var spendingTrends: APISpendingTrendsReport?; var income: APIIncomeSpendingReport?; var netWorth: APINetWorthReport?; var debt: APIDebtReport?; var planPerformance: APIPlanPerformanceReport?
+    var spending: APISpendingReport?; var spendingTrends: APISpendingTrendsReport?; var income: APIIncomeSpendingReport?; var netWorth: APINetWorthReport?; var debt: APIDebtReport?; var planPerformance: APIPlanPerformanceReport?; var resilience: APIResilienceReport?
     var delegated: APIDelegatedBudget?; var forecast: APIForecast?
     var members: [APIHouseholdMember]; var delegatedBudgets: [APIDelegatedBudget]
     var allocationOperations: [APIAllocationOperation] = []
@@ -504,7 +504,11 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let onBudgetAccounts = visibleAccounts.filter(\.isOnBudget)
         let actualTotal = onBudgetAccounts.reduce(Int64(0)) { $0 + $1.balance }, projectedTotal = onBudgetAccounts.reduce(Int64(0)) { $0 + (projected[$1.id] ?? $1.balance) }
         let demoForecast: APIForecast = try decode(["as_of": BudgetWorkspaceStore.dateString(forecastStart), "through": BudgetWorkspaceStore.dateString(forecastThrough), "currency_code": budget.currencyCode, "actual_total_on_budget_minor": actualTotal, "projected_total_on_budget_minor": projectedTotal, "lowest_projected_total_minor": min(actualTotal, projectedTotal), "accounts": forecastAccounts, "occurrences": occurrenceRows])
-        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: [], spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, delegated: delegated, forecast: demoForecast, members: [], delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
+        let scheduledIncome = demoForecast.occurrences.filter { $0.destinationAccountID == nil && $0.amountMinor > 0 }.reduce(Int64(0)) { $0 + $1.amountMinor }
+        let scheduledOutflows = demoForecast.occurrences.filter { $0.destinationAccountID == nil && $0.amountMinor < 0 }.reduce(Int64(0)) { $0 - $1.amountMinor }
+        let cashIDs = Set(visibleAccounts.filter { $0.isOnBudget && ["checking", "savings", "cash"].contains($0.kind.rawValue) }.map(\.id))
+        let resilience: APIResilienceReport = try decode(["as_of": demoForecast.asOf, "through": demoForecast.through, "currency_code": budget.currencyCode, "cash_buffer_minor": demoForecast.accounts.filter { cashIDs.contains($0.accountID) }.reduce(Int64(0)) { $0 + $1.actualBalanceMinor }, "current_on_budget_minor": demoForecast.actualTotalOnBudgetMinor, "projected_on_budget_minor": demoForecast.projectedTotalOnBudgetMinor, "lowest_projected_on_budget_minor": demoForecast.lowestProjectedTotalMinor, "scheduled_income_minor": scheduledIncome, "scheduled_outflows_minor": scheduledOutflows, "expected_margin_minor": scheduledIncome - scheduledOutflows, "essential_expense_coverage_days": NSNull(), "emergency_fund_coverage_days": NSNull(), "unavailable_metrics": ["essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.", "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification."]])
+        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: [], spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: demoForecast, members: [], delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
     }
 
     private func decode<T: Decodable>(_ value: Any) throws -> T { try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value)) }
@@ -866,7 +870,8 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         async let loadedNetWorth: APINetWorthReport? = budget.can("view_account_balances") ? client.netWorthReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], includeTracking: report.includeTracking, token: token) : nil
         async let loadedDebt: APIDebtReport? = budget.can("view_account_balances") ? client.debtReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], token: token) : nil
         async let loadedPlanPerformance = client.planPerformanceReport(budgetID: budget.id, startDate: start, endDate: end, token: token)
-        let (accounts, transactions, categories, groups, summary, spending, spendingTrends, income, netWorth, debt, planPerformance) = try await (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedSpendingTrends, loadedIncome, loadedNetWorth, loadedDebt, loadedPlanPerformance)
+        async let loadedResilience: APIResilienceReport? = budget.can("view_account_balances") ? client.resilienceReport(budgetID: budget.id, token: token) : nil
+        let (accounts, transactions, categories, groups, summary, spending, spendingTrends, income, netWorth, debt, planPerformance, resilience) = try await (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedSpendingTrends, loadedIncome, loadedNetWorth, loadedDebt, loadedPlanPerformance, loadedResilience)
         let allocationOperations = budget.can("view_allocation_history") ? (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] : []
         let schedules = budget.can("view_transactions") ? try await client.scheduledTransactions(budgetID: budget.id, includeInactive: true, token: token) : []
         let targets = await withTaskGroup(of: APICategoryTarget?.self) { group in for category in categories { group.addTask { try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: self.token) } }; var values: [APICategoryTarget] = []; for await target in group { if let target { values.append(target) } }; return values }
@@ -877,7 +882,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let forecast: APIForecast? = if budget.can("view_account_balances") { try? await client.forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(Calendar.current.date(byAdding: .day, value: 90, to: Date())!), token: token) } else { nil }
         let members = budget.can("manage_allowances") ? (try? await client.householdMembers(householdID: budget.householdID, token: token)) ?? [] : []
         let delegatedBudgets = budget.can("manage_allowances") ? (try? await client.delegatedBudgets(budgetID: budget.id, token: token)) ?? [] : []
-        return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, payees: [], requests: requests, allowances: allowances, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, targets: targets, schedules: schedules)
+        return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, payees: [], requests: requests, allowances: allowances, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, targets: targets, schedules: schedules)
     }
 }
 
@@ -899,6 +904,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var netWorthReport: APINetWorthReport?
     @Published var debtReport: APIDebtReport?
     @Published var planPerformanceReport: APIPlanPerformanceReport?
+    @Published var resilienceReport: APIResilienceReport?
     @Published var delegatedBudget: APIDelegatedBudget?
     @Published var householdMembers: [APIHouseholdMember] = []
     @Published var delegatedBudgets: [APIDelegatedBudget] = []
@@ -977,7 +983,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 let value = try await dataSource.snapshot(planMonth: planMonth, report: query)
                 accounts = value.accounts; accountBalances = value.accountBalances; categories = value.categories; groups = value.groups; transactions = value.transactions; payees = value.payees
                 summary = value.summary; requests = value.requests; allowances = value.allowances; spendingReport = value.spending; spendingTrendsReport = value.spendingTrends
-                incomeReport = value.income; netWorthReport = value.netWorth; debtReport = value.debt; planPerformanceReport = value.planPerformance; delegatedBudget = value.delegated; forecast = value.forecast
+                incomeReport = value.income; netWorthReport = value.netWorth; debtReport = value.debt; planPerformanceReport = value.planPerformance; resilienceReport = value.resilience; delegatedBudget = value.delegated; forecast = value.forecast
                 householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; allocationOperations = value.allocationOperations; errorMessage = nil
                 targets = Dictionary(uniqueKeysWithValues: value.targets.map { ($0.categoryID, $0) })
                 scheduledTransactions = value.schedules
@@ -2619,6 +2625,7 @@ private struct LiveInsightsView: View {
             if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportPayee.isEmpty, store.reportMemberID.isEmpty, store.reportTransactionType.isEmpty, store.reportCleared == "all", store.reportFlag.isEmpty, store.reportTag.isEmpty, let report = store.netWorthReport { NetWorthReportView(report: report) }
             if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportPayee.isEmpty, store.reportMemberID.isEmpty, store.reportTransactionType.isEmpty, store.reportCleared == "all", store.reportFlag.isEmpty, store.reportTag.isEmpty, let report = store.debtReport { DebtReportView(report: report) }
             if !hasFilters, let report = store.planPerformanceReport { HistoricalPlanPerformanceView(report: report) }
+            if !hasFilters, let report = store.resilienceReport { ResilienceInsightsView(report: report) }
             if let summary = store.summary { BudgetPerformanceInsightsView(summary: summary) }
         }.navigationTitle("Insights").toolbar { Button { showFilters = true } label: { Image(systemName: hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") } }.sheet(isPresented: $showFilters) { filters }.navigationDestination(item: $selectedSlice) { slice in if slice.mode == .group { LiveReportGroupView(group: slice.name) } else if let category = store.spendingReport?.categories.first(where: { $0.categoryID == slice.id }) { LiveReportCategoryView(category: category) } }
     }
@@ -2694,6 +2701,29 @@ private struct SpendingTrendsView: View {
             LabeledContent(series.dimensionName, value: store.format(series.spendingMinor))
             Text("Monthly average \(store.format(series.spendingMinor / Int64(months)))").font(.caption).foregroundStyle(.secondary)
         }
+    }
+}
+
+private struct ResilienceInsightsView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let report: APIResilienceReport
+
+    var body: some View {
+        Section("Financial Resilience") {
+            LabeledContent("Cash buffer", value: store.format(report.cashBufferMinor))
+            Text("Current balances in visible on-budget checking, savings, and cash accounts.").font(.caption).foregroundStyle(.secondary)
+            LabeledContent("Scheduled income", value: store.format(report.scheduledIncomeMinor))
+            LabeledContent("Scheduled outflows", value: store.format(report.scheduledOutflowsMinor))
+            LabeledContent("Expected 30-day margin", value: store.format(report.expectedMarginMinor))
+            LabeledContent("Lowest projected balance", value: store.format(report.lowestProjectedOnBudgetMinor))
+            Text("Expected margin uses active scheduled income and outflows through \(report.through). It is forecast-only and does not change spendable money.").font(.caption).foregroundStyle(.secondary)
+            ForEach(report.unavailableMetrics.keys.sorted(), id: \.self) { key in
+                if let explanation = report.unavailableMetrics[key] {
+                    Label(explanation, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .accessibilityIdentifier("financial-resilience-insights")
     }
 }
 

@@ -830,6 +830,96 @@ def test_plan_performance_long_history_is_monthly_bounded_and_constant_query_cou
     assert len(statements) <= 20
 
 
+def test_resilience_report_uses_visible_cash_and_forecast_without_invented_coverage(
+    client, owner_token, session_factory, monkeypatch
+):
+    from datetime import date
+    from app import analytics_routes, planning_routes
+    from .conftest import freeze_today
+
+    today = date(2026, 9, 1)
+    freeze_today(monkeypatch, today, planning_routes)
+    freeze_today(monkeypatch, today, analytics_routes)
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100000,
+           occurred_on="2026-09-01")
+    for name, amount, next_date in (("Paycheck", 50000, "2026-09-10"), ("Rent", -30000, "2026-09-15")):
+        response = client.post(
+            f"/api/v1/budgets/{budget['id']}/scheduled-transactions", headers=auth(owner_token),
+            json={"account_id": checking["id"], "category_id": category["id"] if amount < 0 else None,
+                  "name": name, "amount_minor": amount, "next_date": next_date,
+                  "recurrence_unit": "once", "interval_count": 1},
+        )
+        assert response.status_code == 201, response.text
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/resilience?horizon_days=30",
+        headers=auth(owner_token),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["cash_buffer_minor"] == 100000
+    assert body["current_on_budget_minor"] == 100000
+    assert body["projected_on_budget_minor"] == 120000
+    assert body["lowest_projected_on_budget_minor"] == 100000
+    assert body["scheduled_income_minor"] == 50000
+    assert body["scheduled_outflows_minor"] == 30000
+    assert body["expected_margin_minor"] == 20000
+    assert body["essential_expense_coverage_days"] is None
+    assert body["emergency_fund_coverage_days"] is None
+    assert set(body["unavailable_metrics"]) == {
+        "essential_expense_coverage_days", "emergency_fund_coverage_days",
+    }
+    assert client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/resilience?horizon_days=91",
+        headers=auth(owner_token),
+    ).status_code == 422
+
+
+def test_resilience_report_filters_hidden_accounts_and_schedules_before_aggregation(
+    client, owner_token, session_factory, monkeypatch
+):
+    from datetime import date
+    from app import analytics_routes, planning_routes
+    from .conftest import freeze_today
+    from .test_delegated_access import add_child, configure_child
+
+    today = date(2026, 9, 1)
+    freeze_today(monkeypatch, today, planning_routes); freeze_today(monkeypatch, today, analytics_routes)
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    hidden = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Private Savings", "account_type": "savings"},
+    ).json()
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=10000,
+           occurred_on="2026-09-01")
+    record(client, owner_token, budget["id"], account_id=hidden["id"], amount_minor=900000,
+           occurred_on="2026-09-01")
+    scheduled = client.post(
+        f"/api/v1/budgets/{budget['id']}/scheduled-transactions", headers=auth(owner_token),
+        json={"account_id": hidden["id"], "name": "Private bonus", "amount_minor": 500000,
+              "next_date": "2026-09-10", "recurrence_unit": "once", "interval_count": 1},
+    )
+    assert scheduled.status_code == 201
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, checking["id"], category["id"])
+    expanded = client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token),
+        json={"capabilities": ["view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports"],
+              "restrict_accounts": True, "account_ids": [checking["id"]],
+              "restrict_categories": True, "category_ids": [category["id"]]},
+    )
+    assert expanded.status_code == 200
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/resilience", headers=auth(child_token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["cash_buffer_minor"] == 10000
+    assert response.json()["scheduled_income_minor"] == 0
+    assert hidden["id"] not in response.text and "Private bonus" not in response.text
+
+
 def test_net_worth_rejects_hidden_account_filter_and_never_aggregates_it(
     client, owner_token, session_factory
 ):

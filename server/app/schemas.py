@@ -763,6 +763,22 @@ class PlanPerformanceReportResponse(BaseModel):
     points: list[PlanPerformancePoint]
 
 
+class ResilienceReportResponse(BaseModel):
+    as_of: date
+    through: date
+    currency_code: str
+    cash_buffer_minor: int
+    current_on_budget_minor: int
+    projected_on_budget_minor: int
+    lowest_projected_on_budget_minor: int
+    scheduled_income_minor: int
+    scheduled_outflows_minor: int
+    expected_margin_minor: int
+    essential_expense_coverage_days: Optional[int] = None
+    emergency_fund_coverage_days: Optional[int] = None
+    unavailable_metrics: dict[str, str]
+
+
 class TransferCreate(BaseModel):
     source_account_id: str
     destination_account_id: str

@@ -449,6 +449,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("debt-history-chart"))
         XCTAssertTrue(contents.contains("spending-trends-chart"))
         XCTAssertTrue(contents.contains("plan-performance-history-chart"))
+        XCTAssertTrue(contents.contains("financial-resilience-insights"))
         XCTAssertTrue(contents.contains("spending-trend-payee-"))
         XCTAssertTrue(contents.contains("debt-account-"))
         XCTAssertTrue(contents.contains("plan-performance-category-"))
@@ -481,6 +482,9 @@ final class DemoStoreTests: XCTestCase {
         let plan = try XCTUnwrap(store.planPerformanceReport)
         XCTAssertEqual(plan.points.last?.availableMinor, store.summary?.categories.reduce(Int64(0)) { $0 + $1.availableMinor })
         XCTAssertEqual(plan.points.last?.readyToAssignMinor, store.summary?.readyToAssignMinor)
+        let resilience = try XCTUnwrap(store.resilienceReport)
+        XCTAssertEqual(resilience.expectedMarginMinor, resilience.scheduledIncomeMinor - resilience.scheduledOutflowsMinor)
+        XCTAssertNil(resilience.essentialExpenseCoverageDays)
     }
 
     @MainActor

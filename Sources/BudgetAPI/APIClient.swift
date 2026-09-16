@@ -575,6 +575,12 @@ public struct APIClient {
         ], token: token)
     }
 
+    public func resilienceReport(budgetID: String, horizonDays: Int = 30, token: String) async throws -> APIResilienceReport {
+        try await send(path: "api/v1/budgets/\(budgetID)/reports/resilience", queryItems: [
+            URLQueryItem(name: "horizon_days", value: String(horizonDays)),
+        ], token: token)
+    }
+
     public func delegatedBudget(budgetID: String, token: String) async throws -> APIDelegatedBudget? {
         try await send(path: "api/v1/budgets/\(budgetID)/delegated-budgets/me", token: token)
     }

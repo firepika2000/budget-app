@@ -445,6 +445,25 @@ monthly and bounded below 50 KB with a constant query-count guard of 20 statemen
 test calls on this host were approximately 0.03 s, 0.07 s, and 0.12 s respectively. Focused native
 Demo/live contract verification also passes.
 
+## v0.6 checkpoint — transparent Financial Resilience
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Financial Resilience now reports only deterministic, explainable observations: visible on-budget
+checking/savings/cash balance as the cash buffer; active scheduled income and outflows over 30 days;
+their expected margin; and the authoritative forecast's current, projected, and lowest on-budget
+balances. Transfers remain forecast-neutral and schedules remain forecast-only. The report reuses the
+canonical visible-account forecast path and requires both report and balance capabilities.
+
+Essential-expense and emergency-fund coverage remain explicitly null with user-visible reasons because
+the domain has no authoritative essential/emergency classification. Scheduled outflows are not called
+"required" because the schedule model has no required/optional marker. No composite score, advice,
+APR, or emergency-runway assumption was introduced.
+
+Verification so far: focused analytics/resilience/plan tests PASS (6 tests); Swift package PASS (27
+BudgetCore + 39 BudgetAPI); Xcode 27 Beta production build on the preserved iPhone 17 Pro Max / iOS
+27 simulator PASS. Broad checkpoint suites remain pending. No migration or persisted-data mutation.
+
 ## v0.6 checkpoint — Debt Insights hardening
 
 Status: **ENGINEERING VERIFIED — commit/push pending**

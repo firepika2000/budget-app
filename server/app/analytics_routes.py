@@ -13,7 +13,8 @@ from .budgeting_routes import require_budget_capability
 from .database import get_db
 from .dependencies import get_current_user
 from .models import Account, AllocationOperation, AllocationPosting, Category, CategoryGroup, CreditCardReserveEvent, Membership, Transaction, User
-from .schemas import DebtReportResponse, IncomeSpendingReportResponse, NetWorthReportResponse, PlanPerformanceReportResponse, SpendingReportResponse, SpendingTrendsReportResponse
+from .planning_routes import forecast
+from .schemas import DebtReportResponse, IncomeSpendingReportResponse, NetWorthReportResponse, PlanPerformanceReportResponse, ResilienceReportResponse, SpendingReportResponse, SpendingTrendsReportResponse
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/reports")
@@ -598,3 +599,45 @@ def plan_performance_report(
         })
         cursor = _month_end(cursor) + timedelta(days=1)
     return {"start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code, "points": points}
+
+
+@router.get("/resilience", response_model=ResilienceReportResponse)
+def resilience_report(
+    budget_id: str,
+    horizon_days: int = Query(default=30, ge=1, le=90),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Expose transparent balance/schedule metrics without inventing essential or emergency labels."""
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
+    require_budget_capability(db, user, budget_id, "view_account_balances")
+    today = date.today()
+    projection = forecast(budget_id=budget_id, through=today + timedelta(days=horizon_days), user=user, db=db)
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    account_query = select(Account.id).where(
+        Account.budget_id == budget_id,
+        Account.is_on_budget.is_(True),
+        Account.account_type.in_(("checking", "savings", "cash")),
+    )
+    if visible_accounts is not None:
+        account_query = account_query.where(Account.id.in_(visible_accounts))
+    cash_ids = set(db.scalars(account_query))
+    actual_by_id = {item.account_id: item.actual_balance_minor for item in projection.accounts}
+    cash_buffer = sum(actual_by_id.get(account_id, 0) for account_id in cash_ids)
+    scheduled_income = sum(item.amount_minor for item in projection.occurrences if item.destination_account_id is None and item.amount_minor > 0)
+    scheduled_outflows = sum(-item.amount_minor for item in projection.occurrences if item.destination_account_id is None and item.amount_minor < 0)
+    return {
+        "as_of": today, "through": projection.through, "currency_code": budget.currency_code,
+        "cash_buffer_minor": cash_buffer,
+        "current_on_budget_minor": projection.actual_total_on_budget_minor,
+        "projected_on_budget_minor": projection.projected_total_on_budget_minor,
+        "lowest_projected_on_budget_minor": projection.lowest_projected_total_minor,
+        "scheduled_income_minor": scheduled_income, "scheduled_outflows_minor": scheduled_outflows,
+        "expected_margin_minor": scheduled_income - scheduled_outflows,
+        "essential_expense_coverage_days": None,
+        "emergency_fund_coverage_days": None,
+        "unavailable_metrics": {
+            "essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.",
+            "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification.",
+        },
+    }

@@ -915,6 +915,32 @@ public struct APIPlanPerformanceReport: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIResilienceReport: Decodable, Equatable, Sendable {
+    public let asOf: String
+    public let through: String
+    public let currencyCode: String
+    public let cashBufferMinor: Int64
+    public let currentOnBudgetMinor: Int64
+    public let projectedOnBudgetMinor: Int64
+    public let lowestProjectedOnBudgetMinor: Int64
+    public let scheduledIncomeMinor: Int64
+    public let scheduledOutflowsMinor: Int64
+    public let expectedMarginMinor: Int64
+    public let essentialExpenseCoverageDays: Int?
+    public let emergencyFundCoverageDays: Int?
+    public let unavailableMetrics: [String: String]
+    enum CodingKeys: String, CodingKey {
+        case through
+        case asOf = "as_of", currencyCode = "currency_code", cashBufferMinor = "cash_buffer_minor"
+        case currentOnBudgetMinor = "current_on_budget_minor", projectedOnBudgetMinor = "projected_on_budget_minor"
+        case lowestProjectedOnBudgetMinor = "lowest_projected_on_budget_minor"
+        case scheduledIncomeMinor = "scheduled_income_minor", scheduledOutflowsMinor = "scheduled_outflows_minor"
+        case expectedMarginMinor = "expected_margin_minor"
+        case essentialExpenseCoverageDays = "essential_expense_coverage_days"
+        case emergencyFundCoverageDays = "emergency_fund_coverage_days", unavailableMetrics = "unavailable_metrics"
+    }
+}
+
 public struct APIForecastOccurrence: Identifiable, Decodable, Equatable, Sendable {
     public var id: String { "\(scheduledTransactionID)-\(occurredOn)" }
     public let scheduledTransactionID: String; public let name: String; public let occurredOn: String; public let accountID: String; public let destinationAccountID: String?; public let categoryID: String?; public let amountMinor: Int64

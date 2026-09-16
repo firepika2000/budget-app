@@ -653,6 +653,24 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(report.points.first?.readyToAssignMinor, 60_000)
     }
 
+    func testResilienceReportKeepsUnavailableMetricsExplicit() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/reports/resilience")
+            XCTAssertTrue(request.url?.query?.contains("horizon_days=30") == true)
+            let response = Data(#"{"as_of":"2026-09-01","through":"2026-10-01","currency_code":"USD","cash_buffer_minor":100000,"current_on_budget_minor":90000,"projected_on_budget_minor":110000,"lowest_projected_on_budget_minor":85000,"scheduled_income_minor":50000,"scheduled_outflows_minor":30000,"expected_margin_minor":20000,"essential_expense_coverage_days":null,"emergency_fund_coverage_days":null,"unavailable_metrics":{"essential_expense_coverage_days":"Classification unavailable."}}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let report = try await client.resilienceReport(budgetID: "b1", token: "secret")
+        XCTAssertEqual(report.cashBufferMinor, 100_000)
+        XCTAssertEqual(report.expectedMarginMinor, 20_000)
+        XCTAssertNil(report.essentialExpenseCoverageDays)
+        XCTAssertEqual(report.unavailableMetrics["essential_expense_coverage_days"], "Classification unavailable.")
+    }
+
     func testStructuredConflictDetailSurfacesActionableMessage() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
