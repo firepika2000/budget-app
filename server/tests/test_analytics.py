@@ -251,10 +251,7 @@ def test_net_worth_history_is_exact_transfer_neutral_and_account_explainable(
     client, owner_token, session_factory
 ):
     budget = create_budget(client, owner_token, session_factory)
-    checking = client.post(
-        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
-        json={"name": "Checking", "account_type": "checking"},
-    ).json()
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
     savings = client.post(
         f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
         json={"name": "Savings", "account_type": "savings"},
@@ -481,6 +478,131 @@ def test_debt_report_filters_hidden_accounts_before_aggregation(
     assert visible.json()["debt_minor"] == 0
     assert hidden["id"] not in visible.text and "Private Mortgage" not in visible.text
     assert client.get(f"{url}&account_id={hidden['id']}", headers=auth(child_token)).status_code == 404
+
+
+def test_debt_history_reconciles_payments_reconciliation_voids_and_net_worth(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    card = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Card", "account_type": "credit"},
+    ).json()
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100000,
+           occurred_on="2026-06-30", is_cleared=True)
+    record(client, owner_token, budget["id"], account_id=card["id"], amount_minor=-20000,
+           occurred_on="2026-06-30", is_cleared=True)
+    assigned = client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{category['id']}/assignment",
+        headers=auth(owner_token), json={"month": "2026-07-01", "assigned_minor": 5000},
+    )
+    assert assigned.status_code == 200, assigned.text
+    purchase = record(
+        client, owner_token, budget["id"], account_id=card["id"], category_id=category["id"], amount_minor=-5000,
+        occurred_on="2026-07-01", is_cleared=True,
+    )
+    payment = client.post(
+        f"/api/v1/budgets/{budget['id']}/transfers", headers=auth(owner_token),
+        json={"source_account_id": checking["id"], "destination_account_id": card["id"],
+              "amount_minor": 3000, "occurred_on": "2026-07-15", "is_cleared": True},
+    )
+    assert payment.status_code == 201, payment.text
+    mistaken = record(
+        client, owner_token, budget["id"], account_id=card["id"], amount_minor=-2000,
+        occurred_on="2026-07-20", is_cleared=True,
+    )
+    voided = client.post(
+        f"/api/v1/budgets/{budget['id']}/transactions/{mistaken['id']}/void",
+        headers=auth(owner_token), json={"reason": "Duplicate"},
+    )
+    assert voided.status_code == 201, voided.text
+    reconciled = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{card['id']}/reconcile",
+        headers=auth(owner_token),
+        json={"statement_balance_minor": -21500, "through_date": "2026-07-31",
+              "create_adjustment": True, "expected_cleared_balance_minor": -24000},
+    )
+    assert reconciled.status_code == 200, reconciled.text
+    assert reconciled.json()["adjustment_amount_minor"] == 2500
+
+    debt = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/debt"
+        "?start_date=2026-07-01&end_date=2026-07-31", headers=auth(owner_token),
+    )
+    net_worth = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/net-worth"
+        "?start_date=2026-07-01&end_date=2026-07-31", headers=auth(owner_token),
+    )
+    assert debt.status_code == 200 and net_worth.status_code == 200
+    debt_body, worth_body = debt.json(), net_worth.json()
+    assert debt_body["opening_debt_minor"] == 20000
+    assert debt_body["debt_minor"] == 21500
+    assert debt_body["principal_reduction_minor"] == -1500
+    assert sum(row["debt_minor"] for row in debt_body["accounts"]) == debt_body["debt_minor"]
+    assert worth_body["assets_minor"] == 97000
+    assert worth_body["liabilities_minor"] == -21500
+    assert worth_body["net_worth_minor"] == 75500
+    assert worth_body["assets_minor"] + worth_body["liabilities_minor"] == worth_body["net_worth_minor"]
+    # The card payment changes account contributions but not household net worth. The void and
+    # reversal net exactly, while the reconciliation adjustment is observed once.
+    assert purchase["id"] != mistaken["id"]
+
+
+@pytest.mark.parametrize("month_count", [12, 60, 132])
+def test_debt_long_history_is_monthly_exact_and_response_bounded(
+    client, owner_token, session_factory, month_count
+):
+    from datetime import date
+    import json
+    from sqlalchemy import event, select
+    from app.models import Transaction, User
+
+    budget = create_budget(client, owner_token, session_factory)
+    loan = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Long-lived Loan", "account_type": "loan", "is_on_budget": False},
+    ).json()
+    with session_factory() as db:
+        owner_id = db.scalar(select(User.id).where(User.email == "owner@example.com"))
+        rows = []
+        for month_index in range(month_count):
+            year = 2016 + month_index // 12
+            month = month_index % 12 + 1
+            rows.extend(Transaction(
+                budget_id=budget["id"], account_id=loan["id"], amount_minor=-100,
+                occurred_on=date(year, month, day), created_by_user_id=owner_id,
+            ) for day in range(1, 11))
+        db.add_all(rows)
+        db.commit()
+
+    end_year = 2016 + (month_count - 1) // 12
+    end_month = (month_count - 1) % 12 + 1
+    statements = []
+    engine = session_factory.kw["bind"]
+    def capture(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        response = client.get(
+            f"/api/v1/budgets/{budget['id']}/reports/debt"
+            f"?start_date=2016-01-01&end_date={end_year:04d}-{end_month:02d}-28",
+            headers=auth(owner_token),
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["points"]) == month_count
+    assert body["debt_minor"] == month_count * 1000
+    assert body["accounts"] == [{
+        "account_id": loan["id"], "account_name": "Long-lived Loan", "account_type": "loan",
+        "is_on_budget": False, "debt_minor": month_count * 1000,
+    }]
+    assert len(json.dumps(body)) < 25_000
+    # Query work is constant with history length: authorization/scope, accounts, then one ordered
+    # ledger read. Guard generously against incidental auth-query evolution while preventing N+1.
+    assert len(statements) <= 15
 
 
 def test_net_worth_rejects_hidden_account_filter_and_never_aggregates_it(

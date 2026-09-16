@@ -416,3 +416,24 @@ Verification:
 - Xcode 27 Beta production build on the existing iPhone 17 Pro Max / iOS 27 simulator: PASS;
 - full backend and native XCTest: pending final checkpoint verification;
 - no migration or mutation of Live, attachment, or Simulator data.
+
+## v0.6 checkpoint — Debt Insights hardening
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Disposable exact-value fixtures now reconcile Debt Insights against Historical Net Worth through a
+credit-card purchase, a funded card payment transfer, a void/reversal pair, and a credit-account
+reconciliation adjustment. They prove that the payment changes debt and account contribution once
+without changing household net worth, the void/reversal nets exactly, the adjustment appears once,
+account debt contributions sum to the report total, and assets plus signed liabilities equal net
+worth. Existing coverage separately proves loan payments, new card debt, multiple debt accounts,
+account filters, tracking debt, zero visible debt, and hidden-account non-disclosure.
+
+One-, five-, and eleven-year disposable histories at ten ledger entries per month produce exactly one
+bounded observation per month, a constant query count (guarded at 15 or fewer statements), and JSON
+payloads below 25 KB even at eleven years. On this host's SQLite test environment, complete endpoint
+test calls were approximately 0.03 s, 0.06 s, and 0.10 s respectively. These are regression
+characterization values, not production PostgreSQL service-level guarantees.
+
+Verification: focused analytics PASS (22 tests). No production code, schema, migration, Swift, Live
+data, attachment data, or Simulator data changed in this hardening checkpoint.
