@@ -44,6 +44,7 @@ from .models import (
     BudgetAccessProfile,
     BudgetPermission,
     Category,
+    CategoryFavorite,
     CategoryGroup,
     CategoryTarget,
     CreditCardReserveEvent,
@@ -70,6 +71,7 @@ from .schemas import (
     AssignmentUpsert,
     CategoryCreate,
     CategoryDelegationUpdate,
+    CategoryFavoriteUpsert,
     CategoryUpdate,
     CategoryGroupCreate,
     CategoryGroupUpdate,
@@ -446,6 +448,13 @@ def list_categories(
     if visible is not None:
         query = query.where(Category.id.in_(visible))
     categories = list(db.scalars(query.order_by(Category.group_id, Category.sort_order, Category.name)))
+    favorite_orders = dict(db.execute(select(
+        CategoryFavorite.category_id, CategoryFavorite.sort_order
+    ).where(
+        CategoryFavorite.budget_id == budget_id,
+        CategoryFavorite.user_id == user.id,
+        CategoryFavorite.category_id.in_([category.id for category in categories]),
+    )).all()) if categories else {}
     return [{
         "id": category.id,
         "budget_id": category.budget_id,
@@ -462,7 +471,68 @@ def list_categories(
             else None
         ),
         "delegated_user_id": category.delegated_user_id,
+        "is_favorite": category.id in favorite_orders,
+        "favorite_sort_order": favorite_orders.get(category.id),
     } for category in categories]
+
+
+@router.put("/categories/{category_id}/favorite", response_model=CategoryResponse)
+def favorite_category(
+    budget_id: str,
+    category_id: str,
+    body: CategoryFavoriteUpsert,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    budget = require_budget_capability(db, user, budget_id, "view_categories")
+    category = db.get(Category, category_id)
+    if category is None or category.budget_id != budget_id or not can_access_resource(db, user, budget, "category", category_id):
+        raise HTTPException(status_code=404, detail="Category not found")
+    favorite = db.scalar(select(CategoryFavorite).where(
+        CategoryFavorite.user_id == user.id,
+        CategoryFavorite.category_id == category_id,
+    ))
+    if favorite is None:
+        favorite = CategoryFavorite(
+            budget_id=budget_id, user_id=user.id, category_id=category_id, sort_order=body.sort_order
+        )
+        db.add(favorite)
+    else:
+        favorite.sort_order = body.sort_order
+    db.commit()
+    return {
+        "id": category.id, "budget_id": category.budget_id, "group_id": category.group_id,
+        "name": category.name, "sort_order": category.sort_order, "is_archived": category.is_archived,
+        "system_type": category.system_type, "linked_account_id": (
+            category.linked_account_id
+            if category.linked_account_id is None or can_access_resource(
+                db, user, budget, "account", category.linked_account_id
+            )
+            else None
+        ),
+        "delegated_user_id": category.delegated_user_id, "is_favorite": True,
+        "favorite_sort_order": favorite.sort_order,
+    }
+
+
+@router.delete("/categories/{category_id}/favorite", status_code=status.HTTP_204_NO_CONTENT)
+def unfavorite_category(
+    budget_id: str,
+    category_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    budget = require_budget_capability(db, user, budget_id, "view_categories")
+    category = db.get(Category, category_id)
+    if category is None or category.budget_id != budget_id or not can_access_resource(db, user, budget, "category", category_id):
+        raise HTTPException(status_code=404, detail="Category not found")
+    favorite = db.scalar(select(CategoryFavorite).where(
+        CategoryFavorite.user_id == user.id,
+        CategoryFavorite.category_id == category_id,
+    ))
+    if favorite is not None:
+        db.delete(favorite)
+        db.commit()
 
 
 @router.post("/categories", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)

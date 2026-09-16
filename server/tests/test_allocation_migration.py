@@ -56,9 +56,11 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
             text("SELECT COUNT(*) FROM transaction_attachments")
         ).scalar_one()
         report_indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('transactions')"))}
-        assert version == "0022_report_query_indexes"
+        favorite_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('category_favorites')"))}
+        assert version == "0023_category_favorites"
         assert attachment_count == 0
         assert "ix_transaction_budget_date_id" in report_indexes
+        assert {"budget_id", "user_id", "category_id", "sort_order"} <= favorite_columns
 
 
 def test_0020_repairs_text_only_transaction_payee_identity(tmp_path, monkeypatch):

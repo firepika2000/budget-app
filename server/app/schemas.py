@@ -190,6 +190,12 @@ class CategoryResponse(BaseModel):
     system_type: Optional[str]
     linked_account_id: Optional[str]
     delegated_user_id: Optional[str]
+    is_favorite: bool = False
+    favorite_sort_order: Optional[int] = None
+
+
+class CategoryFavoriteUpsert(BaseModel):
+    sort_order: int = Field(default=0, ge=0, le=10_000)
 
 
 class CategoryDelegationUpdate(BaseModel):

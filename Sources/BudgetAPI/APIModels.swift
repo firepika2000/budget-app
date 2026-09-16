@@ -457,6 +457,12 @@ public struct APICategoryUpdate: Encodable, Sendable {
     }
 }
 
+public struct APICategoryFavoriteUpsert: Encodable, Sendable {
+    public let sortOrder: Int
+    public init(sortOrder: Int = 0) { self.sortOrder = sortOrder }
+    enum CodingKeys: String, CodingKey { case sortOrder = "sort_order" }
+}
+
 public struct APICategoryTarget: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let categoryID: String
@@ -1109,6 +1115,8 @@ public struct APICategory: Identifiable, Decodable, Equatable, Sendable {
     public let systemType: String?
     public let linkedAccountID: String?
     public let delegatedUserID: String?
+    public let isFavorite: Bool
+    public let favoriteSortOrder: Int?
 
     enum CodingKeys: String, CodingKey {
         case id, name
@@ -1119,6 +1127,23 @@ public struct APICategory: Identifiable, Decodable, Equatable, Sendable {
         case systemType = "system_type"
         case linkedAccountID = "linked_account_id"
         case delegatedUserID = "delegated_user_id"
+        case isFavorite = "is_favorite"
+        case favoriteSortOrder = "favorite_sort_order"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        budgetID = try values.decode(String.self, forKey: .budgetID)
+        groupID = try values.decode(String.self, forKey: .groupID)
+        name = try values.decode(String.self, forKey: .name)
+        sortOrder = try values.decode(Int.self, forKey: .sortOrder)
+        isArchived = try values.decode(Bool.self, forKey: .isArchived)
+        systemType = try values.decodeIfPresent(String.self, forKey: .systemType)
+        linkedAccountID = try values.decodeIfPresent(String.self, forKey: .linkedAccountID)
+        delegatedUserID = try values.decodeIfPresent(String.self, forKey: .delegatedUserID)
+        isFavorite = try values.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        favoriteSortOrder = try values.decodeIfPresent(Int.self, forKey: .favoriteSortOrder)
     }
 }
 

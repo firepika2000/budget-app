@@ -66,6 +66,28 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Dining Out"].waitForExistence(timeout: 5))
     }
 
+    func testPlanCategoryFavoritePersistsAndFiltersThroughProductionWorkspace() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=plan"]
+        app.launch()
+
+        let dining = app.buttons["plan-category-dining"]
+        XCTAssertTrue(dining.waitForExistence(timeout: 5))
+        dining.tap()
+        let favorite = app.buttons["category-favorite-action"]
+        XCTAssertTrue(favorite.waitForExistence(timeout: 5))
+        XCTAssertTrue(favorite.label.contains("Add to favorites"))
+        favorite.tap()
+        XCTAssertTrue(app.buttons["category-favorite-action"].label.contains("Remove from favorites"))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        let focus = app.buttons["Focus, All"]
+        XCTAssertTrue(focus.waitForExistence(timeout: 5))
+        focus.tap()
+        app.buttons["Favorites"].tap()
+        XCTAssertTrue(app.buttons["plan-category-dining"].waitForExistence(timeout: 5))
+    }
+
     func testProductionInsightsRemainReachableInDarkModeAtAccessibilityTextSize() {
         let device = XCUIDevice.shared
         let originalAppearance = device.appearance

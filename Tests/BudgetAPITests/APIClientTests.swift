@@ -54,6 +54,32 @@ final class APIClientTests: XCTestCase {
         XCTAssertTrue(account.isOnBudget)
     }
 
+    func testCategoryFavoriteUsesUserScopedMetadataEndpoints() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var methods: [String] = []
+        MockURLProtocol.handler = { request in
+            methods.append(request.httpMethod ?? "")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/categories/c1/favorite")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
+            if request.httpMethod == "PUT" {
+                let json = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: Any])
+                XCTAssertEqual(json["sort_order"] as? Int, 7)
+                let body = Data(#"{"id":"c1","budget_id":"b1","group_id":"g1","name":"Groceries","sort_order":0,"is_archived":false,"system_type":null,"linked_account_id":null,"delegated_user_id":null,"is_favorite":true,"favorite_sort_order":7}"#.utf8)
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+
+        let favorite = try await client.favoriteCategory(budgetID: "b1", categoryID: "c1", sortOrder: 7, token: "secret")
+        XCTAssertTrue(favorite.isFavorite)
+        XCTAssertEqual(favorite.favoriteSortOrder, 7)
+        try await client.unfavoriteCategory(budgetID: "b1", categoryID: "c1", token: "secret")
+        XCTAssertEqual(methods, ["PUT", "DELETE"])
+    }
+
     func testBootstrapStatusDiscoversUninitializedServerWithoutAuthentication() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

@@ -243,6 +243,19 @@ class Category(Base):
     )
 
 
+class CategoryFavorite(Base):
+    __tablename__ = "category_favorites"
+    __table_args__ = (
+        UniqueConstraint("user_id", "category_id", name="uq_category_favorite_user_category"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id", ondelete="CASCADE"), index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class DelegatedBudgetPolicy(Base):
     __tablename__ = "delegated_budget_policies"
     __table_args__ = (

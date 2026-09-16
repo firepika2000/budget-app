@@ -424,6 +424,29 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(store.transactions.count, before.2)
     }
 
+    @MainActor
+    func testCategoryFavoritePersistsThroughRefreshWithoutChangingMoney() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let category = try XCTUnwrap(store.categories.first { !$0.isFavorite })
+        let before = (
+            store.summary,
+            store.accounts.map { store.balance(for: $0) },
+            store.transactions.count
+        )
+
+        try await store.setCategoryFavorite(id: category.id, isFavorite: true)
+        XCTAssertTrue(try XCTUnwrap(store.categories.first { $0.id == category.id }).isFavorite)
+        await store.refresh()
+        XCTAssertTrue(try XCTUnwrap(store.categories.first { $0.id == category.id }).isFavorite)
+        XCTAssertEqual(store.summary, before.0)
+        XCTAssertEqual(store.accounts.map { store.balance(for: $0) }, before.1)
+        XCTAssertEqual(store.transactions.count, before.2)
+
+        try await store.setCategoryFavorite(id: category.id, isFavorite: false)
+        XCTAssertFalse(try XCTUnwrap(store.categories.first { $0.id == category.id }).isFavorite)
+    }
+
     func testSpendingBreakdownBuildsRankedCategoryAndGroupSlicesFromReportContract() throws {
         let report = try JSONDecoder().decode(APISpendingReport.self, from: Data(#"{"start_date":"2026-08-01","end_date":"2026-08-31","currency_code":"USD","total_spending_minor":10000,"categories":[{"category_id":"food","category_name":"Food","category_group":"Everyday","spending_minor":7001,"transaction_ids":["purchase","refund","split"]},{"category_id":"fuel","category_name":"Fuel","category_group":"Everyday","spending_minor":2999,"transaction_ids":["split"]}]}"#.utf8))
 

@@ -649,3 +649,25 @@ terms, explicit posted-interest classification, exact provider-neutral projectio
 outcomes, avalanche/snowball/custom comparison, visible rollover assumptions, privacy-before-
 projection, and progressive native UI. No financial assumptions, application code, schema, or Live
 database were changed by this planning checkpoint.
+
+## v0.7 checkpoint — personal category favorites and focused Plan
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Plan now supports persisted, per-member category favorites with stable ordering. Favorite metadata is
+stored server-side and is returned only for categories already visible to the authenticated member;
+attempts to favorite hidden categories preserve the existing non-disclosing 404 behavior. Favorites
+are personal rather than household-global, and adding or removing one leaves allocations, activity,
+Available, Unassigned, accounts, and transactions unchanged.
+
+The shared production Plan view adds Favorites alongside its existing underfunded, overspent, funded,
+and available focus modes. Category detail uses the canonical Demo/Live command path to add or remove
+a favorite, refresh authoritative workspace state, and preserve a stable favorite order. Demo maps its
+existing pinned-category state through the same production UI; Live uses the new authenticated
+favorite endpoints. Migration `0023_category_favorites` is committed as source only and was not
+applied to the human Live database.
+
+Focused backend favorite and migration coverage PASS (9 tests), the full Swift package PASS (27
+BudgetCore + 41 BudgetAPI), focused native persistence XCTest PASS, production-composition XCUITest
+PASS, and the Xcode 27 Beta simulator build PASS on the preserved iPhone 17 Pro Max / iOS 27
+simulator. Human interaction and visual acceptance remain separate.
