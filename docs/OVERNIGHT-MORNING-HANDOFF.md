@@ -607,3 +607,19 @@ package suite PASS and all 73 native `BudgetAppTests` PASS. After XCTest had rep
 green result, Xcode 27 Beta remained blocked while saving/cleaning the test-session record; the hung
 tool process was interrupted without erasing or resetting the preserved Simulator. `git diff --check`
 also PASS. No backend code or schema changed in this checkpoint.
+
+## v0.7 checkpoint — actionable needs-attention rows
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Home now ranks overspent categories ahead of underfunded targets, bounds the visible list to five,
+and explains any remaining count rather than allowing a large plan to overwhelm the daily screen.
+Each visible category is a native navigation link into the existing production category detail, where
+capability-gated Assign Money, Move Money, target, and category-management actions remain canonical.
+Pending funding requests retain their existing server-backed detail path. No allocation, target, or
+accounting calculation was moved into the Home presentation.
+
+Focused production-composition XCUITest PASS on Xcode 27 Beta / preserved iPhone 17 Pro Max iOS 27:
+the deterministic Home opened the real Dining Out category detail and exposed the existing Assign
+Money and Move Money resolution actions. The native app compiled as part of this test, and
+`git diff --check` PASS. No backend, migration, or API contract changed.

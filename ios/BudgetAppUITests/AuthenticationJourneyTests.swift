@@ -22,6 +22,19 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["Cancel"].tap()
     }
 
+    func testHomeNeedsAttentionOpensCanonicalCategoryResolution() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=home"]
+        app.launch()
+
+        let attention = app.buttons["home-attention-category-dining"]
+        XCTAssertTrue(attention.waitForExistence(timeout: 5))
+        attention.tap()
+        XCTAssertTrue(app.navigationBars["Dining Out"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Assign money"].exists)
+        XCTAssertTrue(app.buttons["Move money"].exists)
+    }
+
     func testProductionInsightsRemainReachableInDarkModeAtAccessibilityTextSize() {
         let device = XCUIDevice.shared
         let originalAppearance = device.appearance

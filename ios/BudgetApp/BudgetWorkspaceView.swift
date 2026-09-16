@@ -1485,7 +1485,22 @@ private struct LiveHomeView: View {
     @State private var showMoveMoney = false
     @State private var showSchedule = false
     @State private var showRequest = false
+    @State private var editingCategory: APICategoryMonth?
+    @State private var movePresentation: MoveMoneyPresentation?
+    @State private var managingCategory: APICategory?
     private var planRows: [APICategoryMonth] { store.summary?.categories ?? [] }
+    private var pendingRequests: [APIFinancialRequest] { store.requests.filter { $0.status == "pending" } }
+    private var attentionRows: [APICategoryMonth] {
+        planRows
+            .filter { $0.isOverspent || ($0.underfundedMinor ?? 0) > 0 }
+            .sorted {
+                if $0.isOverspent != $1.isOverspent { return $0.isOverspent }
+                let left = $0.isOverspent ? abs($0.availableMinor) : ($0.underfundedMinor ?? 0)
+                let right = $1.isOverspent ? abs($1.availableMinor) : ($1.underfundedMinor ?? 0)
+                if left != right { return left > right }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+    }
     private var canMoveMoney: Bool { store.budget.can("move_money") && planRows.contains(where: { $0.availableMinor > 0 }) && planRows.count > 1 }
     private var hasQuickActions: Bool {
         (store.budget.can("create_transaction") && !store.accounts.filter({ !$0.isClosed }).isEmpty)
@@ -1519,10 +1534,27 @@ private struct LiveHomeView: View {
                     .padding(.vertical, 4)
                 }
             }
-            if let summary = store.summary {
+            if store.summary != nil && (!attentionRows.isEmpty || !pendingRequests.isEmpty) {
                 Section("Needs attention") {
-                    ForEach(summary.categories.filter(\.isOverspent)) { row in Label("\(row.name): \(store.overspendSummary(row) ?? "")", systemImage: (row.creditOverspentMinor ?? 0) > 0 && (row.cashOverspentMinor ?? 0) == 0 ? "creditcard.trianglebadge.exclamationmark" : "exclamationmark.triangle.fill").foregroundStyle(Theme.danger) }
-                    ForEach(store.requests.filter { $0.status == "pending" }) { request in NavigationLink { LiveRequestDetailView(requestID: request.id) } label: { Label("Request pending · \(store.format(request.requestedAmountMinor))", systemImage: "hand.raised.fill") } }
+                    ForEach(attentionRows.prefix(5)) { row in
+                        NavigationLink {
+                            LivePlanCategoryDetailView(
+                                categoryID: row.categoryID,
+                                assign: { editingCategory = row },
+                                move: { movePresentation = .init(sourceCategoryID: row.categoryID) },
+                                manage: { managingCategory = store.categories.first(where: { $0.id == row.categoryID }) }
+                            )
+                        } label: {
+                            HomeAttentionRow(category: row)
+                        }
+                        .accessibilityIdentifier("home-attention-category-\(row.categoryID)")
+                    }
+                    if attentionRows.count > 5 {
+                        Text("\(attentionRows.count - 5) more categor\(attentionRows.count - 5 == 1 ? "y" : "ies") need attention in Plan.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(pendingRequests) { request in NavigationLink { LiveRequestDetailView(requestID: request.id) } label: { Label("Request pending · \(store.format(request.requestedAmountMinor))", systemImage: "hand.raised.fill") } }
                 }
             }
             if !store.scheduledTransactions.isEmpty {
@@ -1545,6 +1577,46 @@ private struct LiveHomeView: View {
         }
         .sheet(isPresented: $showSchedule) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode) }
         .sheet(isPresented: $showRequest) { FundingRequestView(budget: store.budget, categories: store.categories, onSaved: store.refresh) }
+        .sheet(item: $editingCategory) { category in
+            if let summary = store.summary {
+                AssignmentEditView(budget: store.budget, category: category, month: String(BudgetWorkspaceStore.dateString(store.planMonth).prefix(7)) + "-01", expectedAllocationVersion: summary.allocationVersion, onSaved: store.refresh)
+            }
+        }
+        .sheet(item: $movePresentation) { presentation in
+            if let summary = store.summary {
+                AllocationTransferView(budget: store.budget, categories: summary.categories, expectedAllocationVersion: summary.allocationVersion, initialSourceCategoryID: presentation.sourceCategoryID, onSaved: store.refresh)
+            }
+        }
+        .sheet(item: $managingCategory) { category in
+            LiveCategoryEditView(budget: store.budget, category: category, groups: store.groups, members: store.householdMembers, onSaved: store.refresh)
+        }
+    }
+}
+
+private struct HomeAttentionRow: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let category: APICategoryMonth
+    private var isOverspent: Bool { category.isOverspent }
+    private var amount: Int64 { isOverspent ? abs(category.availableMinor) : (category.underfundedMinor ?? 0) }
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: isOverspent ? ((category.creditOverspentMinor ?? 0) > 0 && (category.cashOverspentMinor ?? 0) == 0 ? "creditcard.trianglebadge.exclamationmark" : "exclamationmark.triangle.fill") : "target")
+                .foregroundStyle(isOverspent ? Theme.danger : Theme.attention)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(category.name)
+                Text(isOverspent ? (store.overspendSummary(category) ?? "Overspent") : "Target needs \(store.format(amount))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(store.format(amount))
+                .fontWeight(.semibold)
+                .monospacedDigit()
+                .foregroundStyle(isOverspent ? Theme.danger : Theme.attention)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens this category's resolution actions")
     }
 }
 
