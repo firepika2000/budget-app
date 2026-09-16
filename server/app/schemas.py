@@ -644,6 +644,16 @@ class SpendingReportResponse(BaseModel):
     categories: list[SpendingCategoryReport]
 
 
+class IncomeSpendingPeriod(BaseModel):
+    period_start: date
+    period_end: date
+    income_minor: int
+    spending_minor: int
+    difference_minor: int
+    income_transaction_ids: list[str]
+    spending_transaction_ids: list[str]
+
+
 class IncomeSpendingReportResponse(BaseModel):
     start_date: date
     end_date: date
@@ -654,6 +664,7 @@ class IncomeSpendingReportResponse(BaseModel):
     savings_rate: Optional[float]
     income_transaction_ids: list[str]
     spending_transaction_ids: list[str]
+    periods: list[IncomeSpendingPeriod]
 
 
 class TransferCreate(BaseModel):

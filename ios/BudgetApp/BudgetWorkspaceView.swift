@@ -378,9 +378,23 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             return total <= 0 ? nil : ["category_id": category.id, "category_name": category.name, "category_group": category.group, "spending_minor": total, "transaction_ids": contributing.map(\.id)]
         }
         let spending: APISpendingReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "total_spending_minor": spendingRows.reduce(Int64(0)) { $0 + ($1["spending_minor"] as? Int64 ?? 0) }, "categories": spendingRows])
-        let incomeValue = included.filter { $0.amount > 0 && $0.categoryIDs.isEmpty }.reduce(Int64(0)) { $0 + $1.amount }
+        let reportIncome = included.filter { $0.transferID == nil && $0.amount > 0 && $0.categoryIDs.isEmpty }
+        let reportSpending = included.filter { $0.transferID == nil && !$0.categoryIDs.isEmpty }
+        let incomeValue = reportIncome.reduce(Int64(0)) { $0 + $1.amount }
         let spendingValue = spendingRows.reduce(Int64(0)) { $0 + ($1["spending_minor"] as? Int64 ?? 0) }
-        let income: APIIncomeSpendingReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "income_minor": incomeValue, "spending_minor": spendingValue, "difference_minor": incomeValue - spendingValue, "savings_rate": incomeValue > 0 ? Double(incomeValue - spendingValue) / Double(incomeValue) : NSNull(), "income_transaction_ids": included.filter { $0.amount > 0 && $0.categoryIDs.isEmpty }.map(\.id), "spending_transaction_ids": included.filter { $0.amount < 0 && !$0.categoryIDs.isEmpty }.map(\.id)])
+        var periodRows: [[String: Any]] = []
+        var reportMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: start))!
+        while reportMonth <= report.end {
+            let nextMonth = Calendar.current.date(byAdding: .month, value: 1, to: reportMonth)!
+            let periodStart = max(start, reportMonth), periodEnd = min(report.end, Calendar.current.date(byAdding: .day, value: -1, to: nextMonth)!)
+            let periodIncome = reportIncome.filter { $0.date >= periodStart && $0.date <= periodEnd }
+            let periodSpending = reportSpending.filter { $0.date >= periodStart && $0.date <= periodEnd }
+            let periodIncomeMinor = periodIncome.reduce(Int64(0)) { $0 + $1.amount }
+            let periodSpendingMinor = periodSpending.reduce(Int64(0)) { result, item in result - demo.canonicalCategoryAmounts(for: item).values.reduce(0, +) }
+            periodRows.append(["period_start": dateFormatter.string(from: periodStart), "period_end": dateFormatter.string(from: periodEnd), "income_minor": periodIncomeMinor, "spending_minor": periodSpendingMinor, "difference_minor": periodIncomeMinor - periodSpendingMinor, "income_transaction_ids": periodIncome.map { $0.id }, "spending_transaction_ids": periodSpending.map { $0.id }])
+            reportMonth = nextMonth
+        }
+        let income: APIIncomeSpendingReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "income_minor": incomeValue, "spending_minor": spendingValue, "difference_minor": incomeValue - spendingValue, "savings_rate": incomeValue > 0 ? Double(incomeValue - spendingValue) / Double(incomeValue) : NSNull(), "income_transaction_ids": reportIncome.map(\.id), "spending_transaction_ids": reportSpending.map(\.id), "periods": periodRows])
         let delegated: APIDelegatedBudget? = demo.isRestricted ? try decode(["id": "demo-delegated", "budget_id": budget.id, "user_id": demo.persona.rawValue.lowercased(), "pool_category_id": visibleCategories.first?.id ?? "", "authority_minor": demo.delegatedAuthority, "assigned_minor": demo.delegatedAssigned, "available_to_assign_minor": demo.delegatedReadyToAssign, "allow_category_creation": true, "allow_reallocation": true, "rules": []]) : nil
         let requestRows: [APIFinancialRequest] = try decode(demo.requests.filter { !demo.isRestricted || $0.member == demo.persona }.map { item -> [String: Any] in ["id": item.id, "requester_user_id": item.member.rawValue.lowercased(), "request_type": "additional_allocation", "destination_category_id": item.categoryID, "requested_amount_minor": item.amount, "reason": item.reason, "status": item.status.lowercased().replacingOccurrences(of: " ", with: "_"), "version": item.status == "Pending" ? 0 : 1, "approved_amount_minor": item.approvedAmount.map { $0 as Any } ?? NSNull(), "source_category_id": NSNull(), "allocation_operation_id": NSNull(), "actions": []] })
         // Deterministic allocation history so the same production category-detail view shows
@@ -2520,7 +2534,7 @@ private struct LiveInsightsView: View {
             } else {
                 Section { ContentUnavailableView("No spending in this range", systemImage: "chart.pie", description: Text("Try a wider date range or different filters.")) }
             }
-            if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportTransactionType.isEmpty, let report = store.incomeReport { Section("Income vs. spending") { LabeledContent("Income", value: store.format(report.incomeMinor)); LabeledContent("Spending", value: store.format(report.spendingMinor)); LabeledContent("Difference", value: store.format(report.differenceMinor)); if let rate = report.savingsRate { LabeledContent("Savings rate", value: rate.formatted(.percent.precision(.fractionLength(0)))) } } }
+            if store.reportCategoryID.isEmpty, store.reportCategoryGroup.isEmpty, store.reportTransactionType.isEmpty, let report = store.incomeReport { IncomeSpendingTrendsView(report: report) }
         }.navigationTitle("Insights").toolbar { Button { showFilters = true } label: { Image(systemName: hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle") } }.sheet(isPresented: $showFilters) { filters }.navigationDestination(item: $selectedSlice) { slice in if slice.mode == .group { LiveReportGroupView(group: slice.name) } else if let category = store.spendingReport?.categories.first(where: { $0.categoryID == slice.id }) { LiveReportCategoryView(category: category) } }
     }
     private var hasFilters: Bool { !store.reportAccountID.isEmpty || !store.reportCategoryID.isEmpty || !store.reportCategoryGroup.isEmpty || !store.reportPayee.isEmpty || !store.reportMemberID.isEmpty || !store.reportTransactionType.isEmpty || store.reportCleared != "all" || store.includeTrackingAccounts }
@@ -2536,6 +2550,35 @@ private struct LiveInsightsView: View {
         Toggle("Include tracking accounts", isOn: $store.includeTrackingAccounts)
     }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false; Task { await reload() } } } }.sheet(isPresented: $showReportPayeeSelector) { PayeeSearchSelectionView(title: "Filter by Payee") { store.reportPayee = $0.displayName } } } }
     private func reload() async { await store.refresh() }
+}
+
+private struct IncomeSpendingTrendsView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let report: APIIncomeSpendingReport
+    private let dateFormatter: DateFormatter = { let value = DateFormatter(); value.locale = Locale(identifier: "en_US_POSIX"); value.dateFormat = "yyyy-MM-dd"; return value }()
+
+    var body: some View {
+        Section("Income vs. Spending") {
+            if !report.periods.isEmpty {
+                Chart {
+                    ForEach(report.periods) { period in
+                        BarMark(x: .value("Month", dateFormatter.date(from: period.periodStart) ?? .distantPast), y: .value("Amount", period.incomeMinor))
+                            .foregroundStyle(by: .value("Flow", "Income"))
+                        BarMark(x: .value("Month", dateFormatter.date(from: period.periodStart) ?? .distantPast), y: .value("Amount", period.spendingMinor))
+                            .foregroundStyle(by: .value("Flow", "Spending"))
+                    }
+                }
+                .chartXAxis { AxisMarks(values: .automatic(desiredCount: min(report.periods.count, 6))) { _ in AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
+                .chartYAxis { AxisMarks { value in AxisGridLine(); AxisValueLabel { if let amount = value.as(Int64.self) { Text(store.format(amount)).font(.caption2) } } } }
+                .frame(minHeight: 220)
+                .accessibilityIdentifier("income-spending-trends-chart")
+            }
+            LabeledContent("Income", value: store.format(report.incomeMinor))
+            LabeledContent("Spending", value: store.format(report.spendingMinor))
+            LabeledContent("Net cash flow", value: store.format(report.differenceMinor))
+            if let rate = report.savingsRate { LabeledContent("Savings rate", value: rate.formatted(.percent.precision(.fractionLength(0)))) }
+        }
+    }
 }
 
 enum SpendingBreakdownMode: String, CaseIterable, Identifiable { case group = "Groups", category = "Categories"; var id: Self { self } }

@@ -15,7 +15,7 @@ tag, or release.
 
 ## v0.5 checkpoint — Payee identity hardening
 
-Status: **ENGINEERING VERIFIED — commit/push pending**
+Status: **ENGINEERING VERIFIED**
 
 Defects reproduced and corrected in the working tree:
 
@@ -183,3 +183,29 @@ a real-container human restore pass.
   transformation only links unambiguous active Payees to existing schedules.
 
 Exact final commands and consolidated acceptance steps will be updated after the final pushed checkpoint.
+
+## v0.6 checkpoint — server-authoritative income/spending trends
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+The existing Income vs. Spending report now returns monthly periods clipped to the report's inclusive
+start/end bounds. Every period carries exact integer-minor-unit income, spending, net cash flow, and
+the contributing transaction IDs. It reuses the canonical report transaction scope and classification:
+transfers are excluded, positive categorized portions net refunds against spending, split portions are
+summed exactly, tracking-account behavior follows the report filter, and restricted members cannot gain
+new aggregate visibility.
+
+The shared production Insights hierarchy renders those periods as an accessible Swift Charts grouped
+bar chart. Demo constructs the same DTO and view path; it no longer risks treating the positive leg of a
+demo transfer as income. The implementation plan and remaining net-worth/target-performance work are in
+`V0.6-IMPLEMENTATION-PLAN.md`.
+
+Verification:
+
+- focused backend analytics: PASS (6 tests);
+- Swift package: PASS (27 BudgetCore + 34 BudgetAPI);
+- native XCTest on Xcode 27 Beta, iPhone 17 Pro Max / iOS 27: PASS (68-test full suite plus the new
+  focused Demo/report parity test); the Xcode Beta runner
+  again stalled only while finalizing the already-complete result bundle and was interrupted afterward;
+- full backend: PASS (200 passed, 10 PostgreSQL-only skipped); `git diff --check`: PASS;
+- no migration and no mutation of Live, attachment, or Simulator data.

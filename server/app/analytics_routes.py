@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,6 +17,23 @@ from .schemas import IncomeSpendingReportResponse, SpendingReportResponse
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/reports")
+
+
+def _month_end(value: date) -> date:
+    next_month = date(value.year + (value.month == 12), 1 if value.month == 12 else value.month + 1, 1)
+    return next_month - timedelta(days=1)
+
+
+def _income_spending_values(transactions: list[Transaction]) -> tuple[int, int, list[str], list[str]]:
+    income = [item for item in transactions if item.amount_minor > 0 and item.category_id is None and not item.splits]
+    categorized = [item for item in transactions if item.category_id is not None or item.splits]
+    income_minor = sum(item.amount_minor for item in income)
+    spending_minor = sum(
+        -amount
+        for item in categorized
+        for amount in ([item.amount_minor] if item.category_id is not None else [split.amount_minor for split in item.splits])
+    )
+    return income_minor, spending_minor, [item.id for item in income], [item.id for item in categorized]
 
 
 def report_transactions(
@@ -161,23 +178,29 @@ def income_spending_report(
     budget, transactions = report_transactions(db, user, budget_id, start_date, end_date, account_id, [], [], member_id, payee, None, cleared, include_tracking)
     on_budget_accounts = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id, Account.is_on_budget.is_(True))))
     included = [item for item in transactions if item.transfer_id is None and item.account_id in on_budget_accounts]
-    income = [item for item in included if item.amount_minor > 0 and item.category_id is None and not item.splits]
     # Categorized/split transactions participate in spending; positive categorized amounts are
     # refunds that reduce spending rather than income. Uncategorized inflow alone is income.
-    spending = [item for item in included if item.category_id is not None or item.splits]
-    income_minor = sum(item.amount_minor for item in income)
-    spending_minor = 0
-    for item in spending:
-        portions = (
-            [item.amount_minor] if item.category_id is not None
-            else [split.amount_minor for split in item.splits]
-        )
-        spending_minor += sum(-amount for amount in portions)
+    income_minor, spending_minor, income_ids, spending_ids = _income_spending_values(included)
     difference = income_minor - spending_minor
+    periods = []
+    cursor = date(start_date.year, start_date.month, 1)
+    while cursor <= end_date:
+        period_start, period_end = max(cursor, start_date), min(_month_end(cursor), end_date)
+        period_transactions = [item for item in included if period_start <= item.occurred_on <= period_end]
+        period_income, period_spending, period_income_ids, period_spending_ids = _income_spending_values(period_transactions)
+        periods.append({
+            "period_start": period_start, "period_end": period_end,
+            "income_minor": period_income, "spending_minor": period_spending,
+            "difference_minor": period_income - period_spending,
+            "income_transaction_ids": period_income_ids,
+            "spending_transaction_ids": period_spending_ids,
+        })
+        cursor = _month_end(cursor) + timedelta(days=1)
     return {
         "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,
         "income_minor": income_minor, "spending_minor": spending_minor, "difference_minor": difference,
         "savings_rate": difference / income_minor if income_minor > 0 else None,
-        "income_transaction_ids": [item.id for item in income],
-        "spending_transaction_ids": [item.id for item in spending],
+        "income_transaction_ids": income_ids,
+        "spending_transaction_ids": spending_ids,
+        "periods": periods,
     }

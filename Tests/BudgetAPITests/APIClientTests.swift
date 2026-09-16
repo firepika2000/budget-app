@@ -555,6 +555,22 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(report.categories.first?.transactionIDs, ["t1"])
     }
 
+    func testIncomeSpendingReportDecodesExactMonthlyTrendAndDrillDownIDs() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/reports/income-spending")
+            let response = Data(#"{"start_date":"2026-08-15","end_date":"2026-09-30","currency_code":"USD","income_minor":200000,"spending_minor":11500,"difference_minor":188500,"savings_rate":0.9425,"income_transaction_ids":["income"],"spending_transaction_ids":["split","refund","purchase"],"periods":[{"period_start":"2026-08-15","period_end":"2026-08-31","income_minor":200000,"spending_minor":10000,"difference_minor":190000,"income_transaction_ids":["income"],"spending_transaction_ids":["split"]},{"period_start":"2026-09-01","period_end":"2026-09-30","income_minor":0,"spending_minor":1500,"difference_minor":-1500,"income_transaction_ids":[],"spending_transaction_ids":["refund","purchase"]}]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let report = try await client.incomeSpendingReport(budgetID: "b1", startDate: "2026-08-15", endDate: "2026-09-30", token: "secret")
+        XCTAssertEqual(report.periods.map(\.spendingMinor), [10_000, 1_500])
+        XCTAssertEqual(report.periods[1].spendingTransactionIDs, ["refund", "purchase"])
+        XCTAssertEqual(report.differenceMinor, 188_500)
+    }
+
     func testStructuredConflictDetailSurfacesActionableMessage() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

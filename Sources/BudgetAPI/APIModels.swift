@@ -736,11 +736,30 @@ public struct APIIncomeSpendingReport: Decodable, Equatable, Sendable {
     public let savingsRate: Double?
     public let incomeTransactionIDs: [String]
     public let spendingTransactionIDs: [String]
+    public let periods: [APIIncomeSpendingPeriod]
 
     enum CodingKeys: String, CodingKey {
         case startDate = "start_date", endDate = "end_date", currencyCode = "currency_code"
         case incomeMinor = "income_minor", spendingMinor = "spending_minor", differenceMinor = "difference_minor"
+        case periods
         case savingsRate = "savings_rate", incomeTransactionIDs = "income_transaction_ids", spendingTransactionIDs = "spending_transaction_ids"
+    }
+}
+
+public struct APIIncomeSpendingPeriod: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { periodStart }
+    public let periodStart: String
+    public let periodEnd: String
+    public let incomeMinor: Int64
+    public let spendingMinor: Int64
+    public let differenceMinor: Int64
+    public let incomeTransactionIDs: [String]
+    public let spendingTransactionIDs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case periodStart = "period_start", periodEnd = "period_end"
+        case incomeMinor = "income_minor", spendingMinor = "spending_minor", differenceMinor = "difference_minor"
+        case incomeTransactionIDs = "income_transaction_ids", spendingTransactionIDs = "spending_transaction_ids"
     }
 }
 

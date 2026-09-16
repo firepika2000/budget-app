@@ -55,6 +55,12 @@ def test_income_spending_excludes_transfers_and_recalculates_after_edit(client, 
     assert before["spending_minor"] == 60000
     assert before["difference_minor"] == 40000
     assert before["savings_rate"] == 0.4
+    assert before["periods"] == [{
+        "period_start": "2026-09-01", "period_end": "2026-09-30",
+        "income_minor": 100000, "spending_minor": 60000, "difference_minor": 40000,
+        "income_transaction_ids": before["income_transaction_ids"],
+        "spending_transaction_ids": before["spending_transaction_ids"],
+    }]
     changed = client.put(
         f"/api/v1/budgets/{budget['id']}/transactions/{expense['id']}", headers=auth(owner_token),
         json={"account_id": checking["id"], "category_id": groceries["id"], "amount_minor": -50000, "occurred_on": "2026-09-04"},
@@ -63,6 +69,53 @@ def test_income_spending_excludes_transfers_and_recalculates_after_edit(client, 
     after = client.get(url, headers=auth(owner_token)).json()
     assert after["spending_minor"] == 50000
     assert after["difference_minor"] == 50000
+
+
+def test_income_spending_monthly_trends_are_exact_split_refund_and_range_aware(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    dining = add_category(client, owner_token, budget["id"], "Food", "Dining")
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=200000, occurred_on="2026-07-15")
+    purchase = record(
+        client, owner_token, budget["id"], account_id=checking["id"], amount_minor=-10000,
+        occurred_on="2026-07-31", splits=[
+            {"category_id": groceries["id"], "amount_minor": -7000},
+            {"category_id": dining["id"], "amount_minor": -3000},
+        ],
+    )
+    refund = record(
+        client, owner_token, budget["id"], account_id=checking["id"], category_id=groceries["id"],
+        amount_minor=2500, occurred_on="2026-08-01",
+    )
+    september_purchase = record(
+        client, owner_token, budget["id"], account_id=checking["id"], category_id=dining["id"],
+        amount_minor=-4000, occurred_on="2026-08-31",
+    )
+    report = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/income-spending?start_date=2026-07-15&end_date=2026-08-31",
+        headers=auth(owner_token),
+    )
+    assert report.status_code == 200, report.text
+    body = report.json()
+    assert body["income_minor"] == 200000
+    assert body["spending_minor"] == 11500
+    assert body["difference_minor"] == 188500
+    assert body["periods"] == [
+        {
+            "period_start": "2026-07-15", "period_end": "2026-07-31",
+            "income_minor": 200000, "spending_minor": 10000, "difference_minor": 190000,
+            "income_transaction_ids": body["income_transaction_ids"],
+            "spending_transaction_ids": [purchase["id"]],
+        },
+        {
+            "period_start": "2026-08-01", "period_end": "2026-08-31",
+            "income_minor": 0, "spending_minor": 1500, "difference_minor": -1500,
+            "income_transaction_ids": [],
+            "spending_transaction_ids": [september_purchase["id"], refund["id"]],
+        },
+    ]
 
 
 def test_report_rejects_inverted_period(client, owner_token, session_factory):

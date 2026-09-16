@@ -426,6 +426,21 @@ final class DemoStoreTests: XCTestCase {
         let contents = try String(contentsOf: source)
         XCTAssertTrue(contents.contains("SectorMark(angle:"))
         XCTAssertTrue(contents.contains("spending-breakdown-sector-chart"))
+        XCTAssertTrue(contents.contains("income-spending-trends-chart"))
+    }
+
+    @MainActor
+    func testDemoIncomeSpendingPeriodsReconcileToCanonicalReportWithoutTransfers() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let report = try XCTUnwrap(store.incomeReport)
+        XCTAssertFalse(report.periods.isEmpty)
+        XCTAssertEqual(report.periods.reduce(Int64(0)) { $0 + $1.incomeMinor }, report.incomeMinor)
+        XCTAssertEqual(report.periods.reduce(Int64(0)) { $0 + $1.spendingMinor }, report.spendingMinor)
+        XCTAssertEqual(report.periods.reduce(Int64(0)) { $0 + $1.differenceMinor }, report.differenceMinor)
+        let transferIDs = Set(store.transactions.filter { $0.transferID != nil }.map(\.id))
+        XCTAssertTrue(Set(report.incomeTransactionIDs).isDisjoint(with: transferIDs))
+        XCTAssertTrue(Set(report.spendingTransactionIDs).isDisjoint(with: transferIDs))
     }
 
     @MainActor
