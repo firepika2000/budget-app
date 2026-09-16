@@ -92,6 +92,14 @@ public struct APIClient {
         try await send(path: "api/v1/households/\(householdID)/members", token: token)
     }
 
+    public func accessProfile(budgetID: String, userID: String, token: String) async throws -> APIAccessProfile {
+        try await send(path: "api/v1/budgets/\(budgetID)/access/\(userID)", token: token)
+    }
+
+    public func updateAccessProfile(budgetID: String, userID: String, profile: APIAccessProfileUpsert, token: String) async throws -> APIAccessProfile {
+        try await send(path: "api/v1/budgets/\(budgetID)/access/\(userID)", method: "PUT", token: token, body: profile)
+    }
+
     public func budgets(token: String) async throws -> [APIBudget] {
         try await send(path: "api/v1/budgets", token: token)
     }

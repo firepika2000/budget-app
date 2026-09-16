@@ -141,6 +141,50 @@ public struct APIHouseholdMember: Identifiable, Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIAccessProfileUpsert: Encodable, Equatable, Sendable {
+    public let capabilities: [String]
+    public let restrictAccounts: Bool
+    public let accountIDs: [String]
+    public let restrictCategories: Bool
+    public let categoryIDs: [String]
+    public let expectedVersion: Int?
+
+    public init(capabilities: [String], restrictAccounts: Bool, accountIDs: [String], restrictCategories: Bool, categoryIDs: [String], expectedVersion: Int?) {
+        self.capabilities = capabilities; self.restrictAccounts = restrictAccounts; self.accountIDs = accountIDs
+        self.restrictCategories = restrictCategories; self.categoryIDs = categoryIDs; self.expectedVersion = expectedVersion
+    }
+    enum CodingKeys: String, CodingKey {
+        case capabilities
+        case restrictAccounts = "restrict_accounts", accountIDs = "account_ids"
+        case restrictCategories = "restrict_categories", categoryIDs = "category_ids"
+        case expectedVersion = "expected_version"
+    }
+}
+
+public struct APIAccessProfile: Decodable, Equatable, Sendable {
+    public let budgetID: String
+    public let userID: String
+    public let capabilities: [String]
+    public let restrictAccounts: Bool
+    public let accountIDs: [String]
+    public let restrictCategories: Bool
+    public let categoryIDs: [String]
+    public let grantPermission: String
+    public let isCustom: Bool
+    public let version: Int
+    public let updatedByUserID: String?
+    public let updatedByDisplayName: String?
+    public let updatedAt: String?
+    enum CodingKeys: String, CodingKey {
+        case capabilities, version
+        case budgetID = "budget_id", userID = "user_id"
+        case restrictAccounts = "restrict_accounts", accountIDs = "account_ids"
+        case restrictCategories = "restrict_categories", categoryIDs = "category_ids"
+        case grantPermission = "grant_permission", isCustom = "is_custom"
+        case updatedByUserID = "updated_by_user_id", updatedByDisplayName = "updated_by_display_name", updatedAt = "updated_at"
+    }
+}
+
 public struct APIProfile: Decodable, Equatable, Sendable {
     public let id: String
     public let email: String

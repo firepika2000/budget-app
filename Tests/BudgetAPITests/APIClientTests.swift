@@ -116,6 +116,33 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(budgets, [APIBudget(id: "b1", householdID: "h1", name: "Family", currencyCode: "USD")])
     }
 
+    func testAccessProfileReadAndVersionedUpdateUseBudgetScopedContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var methods: [String] = []
+        MockURLProtocol.handler = { request in
+            methods.append(request.httpMethod ?? "")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/access/u2")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current-token")
+            if request.httpMethod == "PUT" {
+                let json = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: Any])
+                XCTAssertEqual(json["expected_version"] as? Int, 41)
+                XCTAssertEqual(json["restrict_accounts"] as? Bool, true)
+                XCTAssertEqual(json["account_ids"] as? [String], ["a1"])
+            }
+            let version = request.httpMethod == "PUT" ? 42 : 41
+            let body = Data("{\"budget_id\":\"b1\",\"user_id\":\"u2\",\"capabilities\":[\"view_budget\"],\"restrict_accounts\":true,\"account_ids\":[\"a1\"],\"restrict_categories\":false,\"category_ids\":[],\"grant_permission\":\"custom\",\"is_custom\":true,\"version\":\(version),\"updated_by_user_id\":\"u1\",\"updated_by_display_name\":\"Owner\",\"updated_at\":\"2026-09-16T12:00:00Z\"}".utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let profile = try await client.accessProfile(budgetID: "b1", userID: "u2", token: "current-token")
+        XCTAssertEqual(profile.version, 41)
+        let updated = try await client.updateAccessProfile(budgetID: "b1", userID: "u2", profile: .init(capabilities: ["view_budget"], restrictAccounts: true, accountIDs: ["a1"], restrictCategories: false, categoryIDs: [], expectedVersion: profile.version), token: "current-token")
+        XCTAssertEqual(updated.version, 42)
+        XCTAssertEqual(methods, ["GET", "PUT"])
+    }
+
     func testMonthSummaryUsesBudgetScopedPathAndDecodesMinorUnits() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

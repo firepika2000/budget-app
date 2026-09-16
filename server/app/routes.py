@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
@@ -26,6 +28,7 @@ from .models import (
     ResourceGrant,
     SetupState,
     User,
+    now_utc,
 )
 from .schemas import (
     AccessProfileResponse,
@@ -203,8 +206,8 @@ def upsert_grant(
         Membership.user_id == body.user_id,
         Membership.is_active.is_(True),
     ))
-    if member is None:
-        raise HTTPException(status_code=422, detail="User is not an active household member")
+    if member is None or member.role == "owner":
+        raise HTTPException(status_code=422, detail="User is not an active non-owner household member")
     grant = db.scalar(select(BudgetGrant).where(
         BudgetGrant.budget_id == budget.id,
         BudgetGrant.user_id == body.user_id,
@@ -257,6 +260,78 @@ def revoke_grant(
     db.commit()
 
 
+def access_profile_response(
+    db: Session,
+    budget: Budget,
+    member: Membership,
+    profile: Optional[BudgetAccessProfile],
+) -> AccessProfileResponse:
+    member_user = db.get(User, member.user_id)
+    grant = db.scalar(select(BudgetGrant).where(
+        BudgetGrant.budget_id == budget.id,
+        BudgetGrant.user_id == member.user_id,
+    ))
+    if grant is None:
+        raise HTTPException(status_code=422, detail="User needs a budget grant before scoped access")
+    capabilities = (
+        list(db.scalars(select(CapabilityGrant.capability).where(
+            CapabilityGrant.budget_id == budget.id,
+            CapabilityGrant.user_id == member.user_id,
+        )))
+        if profile is not None
+        else sorted(effective_capabilities(db, member_user, budget))
+    )
+    resources = list(db.execute(select(ResourceGrant.resource_type, ResourceGrant.resource_id).where(
+        ResourceGrant.budget_id == budget.id,
+        ResourceGrant.user_id == member.user_id,
+    )).all()) if profile is not None else []
+    updater = db.get(User, profile.updated_by_user_id) if profile is not None else None
+    version = int(profile.updated_at.timestamp() * 1_000_000) if profile is not None else 0
+    return AccessProfileResponse(
+        budget_id=budget.id,
+        user_id=member.user_id,
+        capabilities=sorted(capabilities),
+        restrict_accounts=profile.restrict_accounts if profile is not None else False,
+        account_ids=sorted(resource_id for resource_type, resource_id in resources if resource_type == "account"),
+        restrict_categories=profile.restrict_categories if profile is not None else False,
+        category_ids=sorted(resource_id for resource_type, resource_id in resources if resource_type == "category"),
+        expected_version=None,
+        grant_permission=grant.permission,
+        is_custom=profile is not None,
+        version=version,
+        updated_by_user_id=profile.updated_by_user_id if profile is not None else None,
+        updated_by_display_name=updater.display_name if updater is not None else None,
+        updated_at=profile.updated_at if profile is not None else None,
+    )
+
+
+@router.get(
+    "/budgets/{budget_id}/access/{member_user_id}",
+    response_model=AccessProfileResponse,
+)
+def get_access_profile(
+    budget_id: str,
+    member_user_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AccessProfileResponse:
+    budget = db.get(Budget, budget_id)
+    if budget is None or not is_household_owner(db, user, budget.household_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
+    member = db.scalar(select(Membership).where(
+        Membership.household_id == budget.household_id,
+        Membership.user_id == member_user_id,
+        Membership.is_active.is_(True),
+    ))
+    if member is None or member.role == "owner":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+    profile = db.scalar(select(BudgetAccessProfile).where(
+        BudgetAccessProfile.budget_id == budget_id,
+        BudgetAccessProfile.user_id == member_user_id,
+    ))
+    return access_profile_response(db, budget, member, profile)
+
+
 @router.put(
     "/budgets/{budget_id}/access/{member_user_id}",
     response_model=AccessProfileResponse,
@@ -276,8 +351,8 @@ def configure_access_profile(
         Membership.user_id == member_user_id,
         Membership.is_active.is_(True),
     ))
-    if member is None:
-        raise HTTPException(status_code=422, detail="User is not an active household member")
+    if member is None or member.role == "owner":
+        raise HTTPException(status_code=422, detail="User is not an active non-owner household member")
     if not db.scalar(select(BudgetGrant.id).where(
         BudgetGrant.budget_id == budget_id,
         BudgetGrant.user_id == member_user_id,
@@ -297,7 +372,10 @@ def configure_access_profile(
     profile = db.scalar(select(BudgetAccessProfile).where(
         BudgetAccessProfile.budget_id == budget_id,
         BudgetAccessProfile.user_id == member_user_id,
-    ))
+    ).with_for_update())
+    current_version = int(profile.updated_at.timestamp() * 1_000_000) if profile is not None else 0
+    if body.expected_version is not None and body.expected_version != current_version:
+        raise HTTPException(status_code=409, detail="Access changed since it was loaded. Refresh and try again.")
     if profile is None:
         profile = BudgetAccessProfile(
             budget_id=budget_id,
@@ -305,9 +383,15 @@ def configure_access_profile(
             updated_by_user_id=user.id,
         )
         db.add(profile)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Access changed since it was loaded. Refresh and try again.")
     profile.restrict_accounts = body.restrict_accounts
     profile.restrict_categories = body.restrict_categories
     profile.updated_by_user_id = user.id
+    profile.updated_at = now_utc()
     db.execute(delete(CapabilityGrant).where(
         CapabilityGrant.budget_id == budget_id,
         CapabilityGrant.user_id == member_user_id,
@@ -331,8 +415,5 @@ def configure_access_profile(
         for resource_id in ids
     ])
     db.commit()
-    return AccessProfileResponse(
-        budget_id=budget_id,
-        user_id=member_user_id,
-        **body.model_dump(),
-    )
+    db.refresh(profile)
+    return access_profile_response(db, budget, member, profile)

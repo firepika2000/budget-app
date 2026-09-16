@@ -694,3 +694,26 @@ Focused native XCTest and the production-composition relaunch XCUITest PASS usin
 the preserved iPhone 17 Pro Max / iOS 27 simulator. The Xcode Beta result recorder hung during one
 superseded run after XCTest had finished; the final rebuilt test-without-building run completed and
 saved normally. No backend, schema, migration, Simulator data, or Live data changed.
+
+## v0.7 checkpoint — human-readable household access
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+The owner-only Household surface now opens a production member-access editor that maps the canonical
+server capability model to View Only, Limited Access, Full Access, and grouped advanced controls.
+Account and category visibility can be limited to explicit selections, with validation preventing an
+empty restricted scope. Transfer guidance makes the two-account boundary explicit. Full Access does
+not transfer ownership, and owner records cannot be edited through the member-profile contract.
+
+The backend adds owner-only access-profile inspection, returns canonical effective legacy access or
+persisted custom access, exposes last-change actor/time, and requires an optimistic version on edits.
+The profile row is locked and explicitly timestamped so capability-only changes advance the version;
+stale submissions return 409 rather than silently overwriting a newer configuration. All long-lived
+Live requests resolve the current credential before access reads/writes, while Demo exercises the
+same production view with an in-memory authoritative profile.
+
+Focused backend tests prove persistence, stale-write rejection, owner protection, restricted-member
+non-disclosure, resource scope, and unchanged monthly/account financial observations. Swift API
+contract coverage proves exact budget-scoped GET/PUT payloads. Native credential-rotation coverage
+includes access-profile reads, and a production-composition XCUITest covers Household → member →
+preset/scope edit → save → reopen. No migration or human Live/Simulator data reset was performed.

@@ -95,6 +95,7 @@ class AccessProfileUpsert(BaseModel):
     account_ids: list[str] = Field(default_factory=list)
     restrict_categories: bool = False
     category_ids: list[str] = Field(default_factory=list)
+    expected_version: Optional[int] = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def require_scope_flags(self) -> "AccessProfileUpsert":
@@ -114,6 +115,12 @@ class AccessProfileUpsert(BaseModel):
 class AccessProfileResponse(AccessProfileUpsert):
     budget_id: str
     user_id: str
+    grant_permission: Literal["view", "contribute", "manage"]
+    is_custom: bool
+    version: int
+    updated_by_user_id: Optional[str] = None
+    updated_by_display_name: Optional[str] = None
+    updated_at: Optional[datetime] = None
 
 
 class AccountCreate(BaseModel):
