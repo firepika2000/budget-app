@@ -293,6 +293,7 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
 final class DemoWorkspaceDataSource: WorkspaceDataSource {
     let demo: DemoStore
     private var attachmentData: [String: Data] = [:]
+    private var debtTermsValues: [String: APIAccountDebtTermsUpsert] = [:]
     private var accessProfiles: [String: APIAccessProfile] = [:]
     let budget: APIBudget
 
@@ -753,6 +754,28 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws {
         guard demo.updateAccount(id: operation.accountID, name: operation.name, type: operation.kind) else { throw workspaceRepositoryError("Account not found.") }
     }
+    func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? {
+        guard let value = debtTermsValues[accountID] else { return nil }
+        return try decode([
+            "account_id": accountID, "budget_id": budget.id, "terms_type": value.termsType,
+            "annual_rate_basis_points": value.annualRateBasisPoints ?? NSNull(), "rate_type": value.rateType ?? NSNull(),
+            "payment_frequency": value.paymentFrequency ?? NSNull(), "scheduled_payment_minor": value.scheduledPaymentMinor ?? NSNull(),
+            "minimum_payment_rule": value.minimumPaymentRule ?? NSNull(), "minimum_payment_minor": value.minimumPaymentMinor ?? NSNull(),
+            "minimum_payment_rate_basis_points": value.minimumPaymentRateBasisPoints ?? NSNull(), "due_day": value.dueDay ?? NSNull(),
+            "statement_day": value.statementDay ?? NSNull(), "original_principal_minor": value.originalPrincipalMinor ?? NSNull(),
+            "original_term_months": value.originalTermMonths ?? NSNull(), "remaining_term_months": value.remainingTermMonths ?? NSNull(),
+            "promotional_rate_basis_points": value.promotionalRateBasisPoints ?? NSNull(), "promotional_ends_on": value.promotionalEndsOn ?? NSNull(),
+            "projection_ready": false, "missing_projection_fields": [], "updated_at": "2026-09-16T12:00:00Z",
+        ] as [String: Any])
+    }
+    func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms {
+        debtTermsValues[accountID] = value
+        guard let result = try await accountDebtTerms(accountID: accountID) else {
+            throw workspaceRepositoryError("Debt terms were not saved.")
+        }
+        return result
+    }
+    func deleteAccountDebtTerms(accountID: String) async throws { debtTermsValues.removeValue(forKey: accountID) }
     func createRequest(_ value: APIFinancialRequestCreate) async throws { demo.requests.insert(.init(id: UUID().uuidString, member: demo.persona, amount: value.requestedAmountMinor, categoryID: value.destinationCategoryID, reason: value.reason, status: "Pending", date: .demo(monthsAgo: 0, day: 30)), at: 0) }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws {
         guard let index = demo.categories.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Category not found.") }
@@ -902,6 +925,9 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func createGroup(name: String) async throws { try await credentials.prepare(); _ = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: name), token: token) }
     func createAccount(_ operation: CreateAccountOperation) async throws { try await credentials.prepare(); _ = try await client.createAccount(budgetID: budget.id, account: APIAccountCreate(name: operation.name, accountType: operation.kind, isOnBudget: operation.isOnBudget, startingBalanceMinor: operation.openingBalanceMinor), token: token) }
     func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws { try await credentials.prepare(); _ = try await client.updateAccount(budgetID: budget.id, accountID: operation.accountID, account: APIAccountUpdate(name: operation.name, accountType: operation.kind), token: token) }
+    func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? { try await credentials.prepare(); return try await client.accountDebtTerms(budgetID: budget.id, accountID: accountID, token: token) }
+    func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms { try await credentials.prepare(); return try await client.updateAccountDebtTerms(budgetID: budget.id, accountID: accountID, terms: value, token: token) }
+    func deleteAccountDebtTerms(accountID: String) async throws { try await credentials.prepare(); try await client.deleteAccountDebtTerms(budgetID: budget.id, accountID: accountID, token: token) }
     func createRequest(_ value: APIFinancialRequestCreate) async throws { try await credentials.prepare(); _ = try await client.createFinancialRequest(budgetID: budget.id, request: value, token: token) }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws { try await credentials.prepare(); _ = try await client.updateCategory(budgetID: budget.id, categoryID: id, category: value, token: token); if existingDelegatedUserID != delegatedUserID { _ = try await client.updateCategoryDelegation(budgetID: budget.id, categoryID: id, delegatedUserID: delegatedUserID, token: token) } }
     func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { try await credentials.prepare(); _ = try await client.updateCategoryGroup(budgetID: budget.id, groupID: id, group: value, token: token) }
@@ -1262,6 +1288,18 @@ final class BudgetWorkspaceStore: ObservableObject {
     func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws {
         try await services().accounts.update(operation)
         await refresh()
+    }
+
+    func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? {
+        try await commands().accountDebtTerms(accountID: accountID)
+    }
+
+    func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms {
+        try await commands().updateAccountDebtTerms(accountID: accountID, value: value)
+    }
+
+    func deleteAccountDebtTerms(accountID: String) async throws {
+        try await commands().deleteAccountDebtTerms(accountID: accountID)
     }
 
     func createRequest(_ value: APIFinancialRequestCreate) async throws {

@@ -151,4 +151,4 @@ def test_debt_terms_follow_account_scope_and_export(client, owner_token, session
     ).status_code == 204
     assert client.get(
         f"{path}/accounts/{visible['id']}/debt-terms", headers=auth(owner_token)
-    ).status_code == 404
+    ).json() is None

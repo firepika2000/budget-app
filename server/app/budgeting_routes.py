@@ -382,7 +382,7 @@ def update_account(
     return account
 
 
-@router.get("/accounts/{account_id}/debt-terms", response_model=AccountDebtTermsResponse)
+@router.get("/accounts/{account_id}/debt-terms", response_model=Optional[AccountDebtTermsResponse])
 def get_account_debt_terms(
     budget_id: str,
     account_id: str,
@@ -396,9 +396,7 @@ def get_account_debt_terms(
     ):
         raise HTTPException(status_code=404, detail="Account not found")
     terms = db.get(AccountDebtTerms, account_id)
-    if terms is None:
-        raise HTTPException(status_code=404, detail="Debt terms not found")
-    return debt_terms_response(terms)
+    return debt_terms_response(terms) if terms is not None else None
 
 
 @router.put("/accounts/{account_id}/debt-terms", response_model=AccountDebtTermsResponse)

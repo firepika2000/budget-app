@@ -287,6 +287,36 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["$2,000.00"].exists)
     }
 
+    func testDebtTermsUseProductionAccountSettingsAndPersistWithoutBalanceEditing() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=accounts"]
+        app.launch()
+
+        let loan = app.buttons["account-row-auto"]
+        XCTAssertTrue(loan.waitForExistence(timeout: 5))
+        loan.tap()
+        app.buttons["account-settings-action"].tap()
+        XCTAssertTrue(app.navigationBars["Account Settings"].waitForExistence(timeout: 5))
+        app.buttons["account-debt-terms-action"].tap()
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["These are planning assumptions. Posted balances and actual interest remain separate financial facts."].exists)
+
+        let apr = app.textFields["debt-apr"]
+        apr.tap(); apr.typeText("6.25")
+        let payment = app.textFields["debt-payment"]
+        payment.tap(); payment.typeText("412.00")
+        let dueDay = app.textFields["debt-due-day"]
+        dueDay.tap(); dueDay.typeText("1")
+        app.buttons.matching(NSPredicate(format: "identifier == 'save-debt-terms'")).firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForNonExistence(timeout: 5))
+
+        app.buttons["account-debt-terms-action"].tap()
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["debt-apr"].value as? String, "6.25")
+        XCTAssertEqual(app.textFields["debt-due-day"].value as? String, "1")
+        XCTAssertTrue(app.buttons["Remove Debt Terms"].exists)
+    }
+
     func testEmptyCategoryGroupRemainsVisibleAndDefaultsCategoryCreation() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=plan", "--skip-guided-onboarding"]

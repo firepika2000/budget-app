@@ -181,6 +181,9 @@ enum BudgetApplicationError: LocalizedError, Equatable, Sendable {
 protocol AccountCommandRepository: AnyObject {
     func createAccount(_ operation: CreateAccountOperation) async throws
     func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws
+    func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms?
+    func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms
+    func deleteAccountDebtTerms(accountID: String) async throws
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws
 }
 

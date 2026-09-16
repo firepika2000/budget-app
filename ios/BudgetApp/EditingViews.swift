@@ -695,6 +695,7 @@ struct AccountSettingsView: View {
     @State private var accountType: String
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @State private var showDebtTerms = false
 
     init(account: APIAccount) {
         self.account = account
@@ -719,6 +720,19 @@ struct AccountSettingsView: View {
                     Text("Balances are not account metadata. Correct them with transactions or Reconcile from the account register.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                if ["credit", "loan"].contains(account.accountType) {
+                    Section("Debt planning") {
+                        Button {
+                            showDebtTerms = true
+                        } label: {
+                            Label("Debt Terms", systemImage: "percent")
+                        }
+                        .accessibilityIdentifier("account-debt-terms-action")
+                        Text("Optional planning inputs. Editing them does not change this account's balance, reconciliation, categories, or Ready to Assign.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             .navigationTitle("Account Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -730,6 +744,10 @@ struct AccountSettingsView: View {
             .alert("Unable to update account", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(errorMessage ?? "Unknown error") }
+            .sheet(isPresented: $showDebtTerms) {
+                DebtTermsEditorView(account: account)
+                    .environmentObject(workspace)
+            }
         }
     }
 
@@ -749,6 +767,210 @@ struct AccountSettingsView: View {
             try await workspace.updateAccount(.init(accountID: account.id, name: name, currentKind: account.accountType, kind: accountType, isOnBudget: account.isOnBudget))
             dismiss()
         } catch { errorMessage = error.localizedDescription }
+    }
+}
+
+struct DebtTermsEditorView: View {
+    @EnvironmentObject private var workspace: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let account: APIAccount
+    @State private var apr = ""
+    @State private var rateType = "fixed"
+    @State private var frequency = "monthly"
+    @State private var payment = ""
+    @State private var minimumRule = "fixed"
+    @State private var minimumRate = ""
+    @State private var dueDay = ""
+    @State private var statementDay = ""
+    @State private var originalPrincipal = ""
+    @State private var originalTerm = ""
+    @State private var remainingTerm = ""
+    @State private var promoRate = ""
+    @State private var promoEnd = ""
+    @State private var hasStoredTerms = false
+    @State private var isLoading = true
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    private var isCard: Bool { account.accountType == "credit" }
+    private var currencyCode: String { workspace.budget.currencyCode }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Rate") {
+                    TextField("APR (%)", text: $apr)
+                        .keyboardType(.decimalPad)
+                        .accessibilityIdentifier("debt-apr")
+                    Picker("Rate", selection: $rateType) {
+                        Text("Fixed").tag("fixed")
+                        Text("Variable").tag("variable")
+                    }
+                }
+                if isCard { creditCardFields } else { installmentFields }
+                Section("Projection readiness") {
+                    Text(readinessMessage)
+                        .foregroundStyle(isReady ? Color.secondary : Color.orange)
+                    Text("These are planning assumptions. Posted balances and actual interest remain separate financial facts.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                if hasStoredTerms {
+                    Section {
+                        Button("Remove Debt Terms", role: .destructive) { Task { await remove() } }
+                    }
+                }
+            }
+            .navigationTitle("Debt Terms")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }
+                        .disabled(isLoading || isSaving || !inputsValid)
+                        .accessibilityIdentifier("save-debt-terms")
+                }
+            }
+            .overlay { if isLoading || isSaving { ProgressView() } }
+            .task { await load() }
+            .alert("Unable to update debt terms", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(errorMessage ?? "Unknown error") }
+        }
+    }
+
+    @ViewBuilder private var creditCardFields: some View {
+        Section("Minimum payment") {
+            Picker("Rule", selection: $minimumRule) {
+                Text("Fixed amount").tag("fixed")
+                Text("Percentage").tag("percentage")
+                Text("Greater of both").tag("greater_of")
+            }
+            if minimumRule != "percentage" {
+                CurrencyAmountField("Fixed amount", text: $payment, currencyCode: currencyCode, allowsNegative: false, allowsZero: true)
+                    .accessibilityIdentifier("debt-payment")
+            }
+            if minimumRule != "fixed" {
+                TextField("Balance percentage (%)", text: $minimumRate).keyboardType(.decimalPad)
+            }
+        }
+        Section("Cycle") {
+            TextField("Payment due day", text: $dueDay).keyboardType(.numberPad).accessibilityIdentifier("debt-due-day")
+            TextField("Statement closing day", text: $statementDay).keyboardType(.numberPad)
+        }
+        Section("Promotional rate (optional)") {
+            TextField("Promotional APR (%)", text: $promoRate).keyboardType(.decimalPad)
+            TextField("End date (YYYY-MM-DD)", text: $promoEnd).textInputAutocapitalization(.never)
+        }
+    }
+
+    @ViewBuilder private var installmentFields: some View {
+        Section("Scheduled payment") {
+            Picker("Frequency", selection: $frequency) {
+                Text("Weekly").tag("weekly")
+                Text("Every two weeks").tag("biweekly")
+                Text("Monthly").tag("monthly")
+            }
+            CurrencyAmountField("Payment", text: $payment, currencyCode: currencyCode, allowsNegative: false, allowsZero: true)
+                .accessibilityIdentifier("debt-payment")
+            TextField("Payment due day", text: $dueDay).keyboardType(.numberPad).accessibilityIdentifier("debt-due-day")
+        }
+        Section("Original agreement (optional)") {
+            CurrencyAmountField("Original principal", text: $originalPrincipal, currencyCode: currencyCode, allowsNegative: false, allowsZero: true)
+            TextField("Original term (months)", text: $originalTerm).keyboardType(.numberPad)
+            TextField("Remaining term (months)", text: $remainingTerm).keyboardType(.numberPad)
+        }
+    }
+
+    private var aprBasisPoints: Int? { Self.parseBasisPoints(apr) }
+    private var minimumBasisPoints: Int? { Self.parseBasisPoints(minimumRate) }
+    private var promoBasisPoints: Int? { Self.parseBasisPoints(promoRate) }
+    private var paymentMinor: Int64? { optionalMoney(payment) }
+    private var principalMinor: Int64? { optionalMoney(originalPrincipal) }
+    private var inputsValid: Bool {
+        validOptional(apr, aprBasisPoints) && validOptional(dueDay, Int(dueDay))
+            && (!isCard || (validOptional(statementDay, Int(statementDay))
+                && validOptional(minimumRate, minimumBasisPoints)
+                && validOptional(promoRate, promoBasisPoints)
+                && (promoEnd.isEmpty || Self.validISODate(promoEnd))))
+            && (isCard || (validOptional(payment, paymentMinor)
+                && validOptional(originalPrincipal, principalMinor)
+                && validOptional(originalTerm, Int(originalTerm))
+                && validOptional(remainingTerm, Int(remainingTerm))))
+            && (isCard && minimumRule != "percentage" ? validOptional(payment, paymentMinor) : true)
+    }
+    private var isReady: Bool {
+        let cardPaymentReady = minimumRule == "fixed" ? paymentMinor != nil
+            : minimumRule == "percentage" ? minimumBasisPoints != nil
+            : minimumRule == "greater_of" ? (paymentMinor != nil && minimumBasisPoints != nil)
+            : false
+        return aprBasisPoints != nil && Int(dueDay) != nil
+            && (isCard ? cardPaymentReady : paymentMinor != nil)
+    }
+    private var readinessMessage: String {
+        isReady ? "Ready for projected payoff calculations." : "Projection unavailable until APR, due day, and the required payment rule are complete."
+    }
+
+    private func validOptional<T>(_ text: String, _ value: T?) -> Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || value != nil }
+    private func optionalMoney(_ text: String) -> Int64? {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : CurrencyText.parseMinorUnits(text, currencyCode: currencyCode)
+    }
+    private static func parseBasisPoints(_ text: String) -> Int? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let decimal = Decimal(string: trimmed, locale: Locale(identifier: "en_US_POSIX")), decimal >= 0 else { return nil }
+        var scaled = decimal * 100
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &scaled, 0, .plain)
+        let result = NSDecimalNumber(decimal: rounded).intValue
+        return result <= 100_000 ? result : nil
+    }
+    private static func validISODate(_ value: String) -> Bool {
+        let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: value) != nil
+    }
+    private static func percentText(_ basisPoints: Int?) -> String {
+        guard let basisPoints else { return "" }
+        return NSDecimalNumber(value: basisPoints).dividing(by: 100).stringValue
+    }
+
+    private func load() async {
+        defer { isLoading = false }
+        do {
+            guard let value = try await workspace.accountDebtTerms(accountID: account.id) else { return }
+            hasStoredTerms = true; apr = Self.percentText(value.annualRateBasisPoints)
+            rateType = value.rateType ?? "fixed"; frequency = value.paymentFrequency ?? "monthly"
+            payment = value.scheduledPaymentMinor.map { CurrencyText.editable($0, currencyCode: currencyCode) }
+                ?? value.minimumPaymentMinor.map { CurrencyText.editable($0, currencyCode: currencyCode) } ?? ""
+            minimumRule = value.minimumPaymentRule ?? "fixed"
+            minimumRate = Self.percentText(value.minimumPaymentRateBasisPoints)
+            dueDay = value.dueDay.map(String.init) ?? ""; statementDay = value.statementDay.map(String.init) ?? ""
+            originalPrincipal = value.originalPrincipalMinor.map { CurrencyText.editable($0, currencyCode: currencyCode) } ?? ""
+            originalTerm = value.originalTermMonths.map(String.init) ?? ""; remainingTerm = value.remainingTermMonths.map(String.init) ?? ""
+            promoRate = Self.percentText(value.promotionalRateBasisPoints); promoEnd = value.promotionalEndsOn ?? ""
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func save() async {
+        isSaving = true; defer { isSaving = false }
+        let value = APIAccountDebtTermsUpsert(
+            termsType: isCard ? "credit_card" : "installment_loan", annualRateBasisPoints: aprBasisPoints,
+            rateType: rateType, paymentFrequency: isCard ? "monthly" : frequency,
+            scheduledPaymentMinor: isCard ? nil : paymentMinor, minimumPaymentRule: isCard ? minimumRule : nil,
+            minimumPaymentMinor: isCard && minimumRule != "percentage" ? paymentMinor : nil,
+            minimumPaymentRateBasisPoints: isCard && minimumRule != "fixed" ? minimumBasisPoints : nil,
+            dueDay: Int(dueDay), statementDay: isCard ? Int(statementDay) : nil,
+            originalPrincipalMinor: isCard ? nil : principalMinor, originalTermMonths: isCard ? nil : Int(originalTerm),
+            remainingTermMonths: isCard ? nil : Int(remainingTerm), promotionalRateBasisPoints: isCard ? promoBasisPoints : nil,
+            promotionalEndsOn: isCard && !promoEnd.isEmpty ? promoEnd : nil
+        )
+        do { _ = try await workspace.updateAccountDebtTerms(accountID: account.id, value: value); dismiss() }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    private func remove() async {
+        isSaving = true; defer { isSaving = false }
+        do { try await workspace.deleteAccountDebtTerms(accountID: account.id); dismiss() }
+        catch { errorMessage = error.localizedDescription }
     }
 }
 

@@ -167,6 +167,18 @@ public struct APIClient {
         )
     }
 
+    public func accountDebtTerms(budgetID: String, accountID: String, token: String) async throws -> APIAccountDebtTerms? {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/debt-terms", token: token)
+    }
+
+    public func updateAccountDebtTerms(budgetID: String, accountID: String, terms: APIAccountDebtTermsUpsert, token: String) async throws -> APIAccountDebtTerms {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/debt-terms", method: "PUT", token: token, body: terms)
+    }
+
+    public func deleteAccountDebtTerms(budgetID: String, accountID: String, token: String) async throws {
+        let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/debt-terms", method: "DELETE", token: token)
+    }
+
     public func categoryGroups(budgetID: String, token: String) async throws -> [APICategoryGroup] {
         try await send(path: "api/v1/budgets/\(budgetID)/category-groups", token: token)
     }

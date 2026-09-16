@@ -808,7 +808,7 @@ merge, tag, release claim, Simulator reset, or human-data mutation occurred.
 
 ## v0.8 checkpoint — type-appropriate debt-terms contract
 
-Status: **BACKEND ENGINEERING VERIFIED — application UI remains next**
+Status: **ENGINEERING VERIFIED**
 
 Optional debt planning terms now have a first-class one-to-one account record rather than being
 embedded in balances or inferred from account names. Credit cards support exact basis-point APR,
@@ -822,3 +822,17 @@ payment, term, or projection is guessed. CRUD uses the existing account capabili
 hidden accounts remain non-disclosing, and terms are included in structured backup export. Editing or
 removing terms does not touch transactions, balances, reconciliation, allocations, card reserves, or
 Ready to Assign. Migration `0026_debt_terms` is source-only and was not applied to human Live data.
+
+Account Settings now opens the shared production Debt Terms editor for visible credit-card and loan
+accounts. It uses exact editable currency buffers and basis-point conversion, supports partial saves,
+states projection readiness without inventing results, and resolves Live credentials at request time;
+Demo uses the same view and an isolated in-memory adapter. Focused production XCUITest PASS for
+Accounts → Auto Loan → Account Settings → Debt Terms → save → reopen/persist. Swift PASS (27
+BudgetCore + 44 BudgetAPI), native XCTest PASS (77/77), the Xcode 27 Beta simulator build PASS, focused
+backend/migration PASS (11), and the full backend gate is recorded with the final checkpoint. The
+Xcode Beta runner again stalled only while collecting diagnostics after reporting the complete green
+native/UI result, so its finalizer was stopped without erasing Simulator data.
+
+Final full backend result: 270 collected, 259 passed and 11 explicitly PostgreSQL-gated skips. The
+11 genuine PostgreSQL contention cases were already run and passed against the isolated PostgreSQL 17
+closure cluster; no test silently substituted SQLite for concurrency behavior.

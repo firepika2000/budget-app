@@ -91,6 +91,33 @@ final class APIClientTests: XCTestCase {
         XCTAssertTrue(account.isOnBudget)
     }
 
+    func testDebtTermsUseExactTypedAccountScopedContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "PUT")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/card1/debt-terms")
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: Any])
+            XCTAssertEqual(json["terms_type"] as? String, "credit_card")
+            XCTAssertEqual(json["annual_rate_basis_points"] as? Int, 1999)
+            XCTAssertEqual(json["minimum_payment_minor"] as? Int, 3500)
+            XCTAssertNil(json["scheduled_payment_minor"])
+            let response = Data(#"{"account_id":"card1","budget_id":"b1","terms_type":"credit_card","annual_rate_basis_points":1999,"rate_type":"variable","payment_frequency":"monthly","scheduled_payment_minor":null,"minimum_payment_rule":"fixed","minimum_payment_minor":3500,"minimum_payment_rate_basis_points":null,"due_day":18,"statement_day":21,"original_principal_minor":null,"original_term_months":null,"remaining_term_months":null,"promotional_rate_basis_points":null,"promotional_ends_on":null,"projection_ready":true,"missing_projection_fields":[],"updated_at":"2026-09-16T12:00:00Z"}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let result = try await client.updateAccountDebtTerms(
+            budgetID: "b1", accountID: "card1",
+            terms: .init(termsType: "credit_card", annualRateBasisPoints: 1999, rateType: "variable",
+                         paymentFrequency: "monthly", minimumPaymentRule: "fixed",
+                         minimumPaymentMinor: 3500, dueDay: 18, statementDay: 21),
+            token: "secret"
+        )
+        XCTAssertTrue(result.projectionReady)
+        XCTAssertEqual(result.minimumPaymentMinor, 3500)
+    }
+
     func testCategoryFavoriteUsesUserScopedMetadataEndpoints() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
