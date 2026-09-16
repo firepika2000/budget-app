@@ -404,13 +404,21 @@ struct FundingRequestView: View {
     let budget: APIBudget
     let categories: [APICategory]
     let onSaved: () async -> Void
+    let request: APIFinancialRequest?
 
     @Environment(\.dismiss) private var dismiss
-    @State private var categoryID = ""
-    @State private var amount = ""
-    @State private var reason = ""
+    @State private var categoryID: String
+    @State private var amount: String
+    @State private var reason: String
     @State private var isSaving = false
     @State private var errorMessage: String?
+
+    init(budget: APIBudget, categories: [APICategory], request: APIFinancialRequest? = nil, onSaved: @escaping () async -> Void) {
+        self.budget = budget; self.categories = categories; self.request = request; self.onSaved = onSaved
+        _categoryID = State(initialValue: request?.destinationCategoryID ?? "")
+        _amount = State(initialValue: request.map { CurrencyText.editable($0.requestedAmountMinor, currencyCode: budget.currencyCode) } ?? "")
+        _reason = State(initialValue: request?.reason ?? "")
+    }
 
     var body: some View {
         NavigationStack {
@@ -423,12 +431,12 @@ struct FundingRequestView: View {
                 CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode)
                 TextField("What is this for?", text: $reason, axis: .vertical)
             }
-            .navigationTitle("Request Money")
+            .navigationTitle(request == nil ? "Request Money" : "Revise Request")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Send") { Task { await save() } }
+                    Button(request == nil ? "Send" : "Resubmit") { Task { await save() } }
                         .disabled(parsedAmount == nil || categoryID.isEmpty || isSaving)
                 }
             }
@@ -458,13 +466,13 @@ struct FundingRequestView: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            try await workspace.createRequest(
-                APIFinancialRequestCreate(
+            let value = APIFinancialRequestCreate(
                     destinationCategoryID: categoryID,
                     requestedAmountMinor: parsedAmount,
                     reason: reason
                 )
-            )
+            if let request { try await workspace.reviseRequest(id: request.id, version: request.version, value: value) }
+            else { try await workspace.createRequest(value) }
             await onSaved()
             dismiss()
         } catch {

@@ -743,3 +743,28 @@ tests PASS (27 BudgetCore + 43 BudgetAPI); and the unsigned Xcode 27 Beta simula
 preserved iPhone 17 Pro Max / iOS 27 simulator. The repository's existing provenance xattr required
 the established generated-test-bundle ad-hoc-sign workaround. Human interaction acceptance remains
 separate.
+
+## v0.7 checkpoint — delegated requests and allowance management
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Requests now expose their full canonical lifecycle in the production UI. A requester can cancel a
+pending request after explicit confirmation or revise and resubmit a changes-requested item without
+losing its decision history. New requests carry a 30-day server-authoritative expiration; expiration
+is versioned, recorded as a system action (without fabricating a human actor), and prevents later
+approval/cancellation. Existing requests remain valid because migration `0025_request_lifecycle`
+does not retroactively invent an expiration date. Approval continues to be the only request action
+that moves money, atomically transferring exact minor units between authorized categories.
+
+Owners with allowance authority now have a production management surface for creating weekly or
+calendar-month plans, choosing rollover/use-it-or-lose-it behavior, viewing exact split destinations
+and issuance history, issuing a due plan, pausing it, and reactivating it. Paused plans remain visible
+only in the authorized management query, disappear from the recipient's active list, and do not move
+money or affect forecast. Creation and status changes are money-neutral; Issue Now calls the existing
+allocation application service with optimistic allocation-version protection. Recipient payloads
+continue to redact the funding source, while owner selectors derive only from already-authorized
+workspace resources.
+
+Focused request, allowance, access, and migration tests PASS (23). The Xcode 27 Beta unsigned build
+PASS on the preserved iPhone 17 Pro Max / iOS 27 simulator. Migrations `0024` and `0025` remain
+source-only and were not applied to the human Live database.

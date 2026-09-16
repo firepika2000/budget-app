@@ -164,3 +164,46 @@ def test_use_it_or_lose_it_reclaims_unspent_authority_before_next_issue(
 def test_monthly_allowance_recurrence_is_calendar_safe():
     assert advance_issue_date(date(2026, 1, 31), "month", 1) == date(2026, 2, 28)
     assert advance_issue_date(date(2028, 1, 31), "month", 1) == date(2028, 2, 29)
+
+
+def test_owner_can_manage_paused_allowance_without_forecast_or_money_mutation(
+    client, owner_token, session_factory
+):
+    budget, _, child_token, _, _, _, plan, _ = setup_allowance(
+        client, owner_token, session_factory, "rollover"
+    )
+    before = client.get(
+        f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)
+    ).json()
+    paused = client.delete(
+        f"/api/v1/budgets/{budget['id']}/allowances/{plan['id']}", headers=auth(owner_token)
+    )
+    assert paused.status_code == 204
+    assert client.get(
+        f"/api/v1/budgets/{budget['id']}/allowances", headers=auth(owner_token)
+    ).json() == []
+    management = client.get(
+        f"/api/v1/budgets/{budget['id']}/allowances?include_inactive=true", headers=auth(owner_token)
+    )
+    assert management.status_code == 200
+    assert management.json()[0]["is_active"] is False
+    assert client.get(
+        f"/api/v1/budgets/{budget['id']}/allowances?include_inactive=true", headers=auth(child_token)
+    ).status_code == 403
+    assert client.get(
+        f"/api/v1/budgets/{budget['id']}/allowances", headers=auth(child_token)
+    ).json() == []
+    after = client.get(
+        f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)
+    ).json()
+    for field in ("ready_to_assign_minor", "allocation_version"):
+        assert after[field] == before[field]
+    assert [(row["category_id"], row["available_minor"]) for row in after["categories"]] == [
+        (row["category_id"], row["available_minor"]) for row in before["categories"]
+    ]
+    restored = client.patch(
+        f"/api/v1/budgets/{budget['id']}/allowances/{plan['id']}/status",
+        headers=auth(owner_token), json={"is_active": True},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["is_active"] is True

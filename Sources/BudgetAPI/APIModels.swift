@@ -1283,9 +1283,14 @@ public struct APIFinancialRequestDecision: Encodable, Sendable {
 
 struct APIFinancialRequestCancel: Encodable { let expectedRequestVersion: Int; let note: String; enum CodingKeys: String, CodingKey { case expectedRequestVersion = "expected_request_version", note } }
 
+struct APIFinancialRequestRevision: Encodable {
+    let requestType: String; let destinationCategoryID: String; let requestedAmountMinor: Int64; let reason: String; let expectedRequestVersion: Int
+    enum CodingKeys: String, CodingKey { case reason; case requestType = "request_type", destinationCategoryID = "destination_category_id", requestedAmountMinor = "requested_amount_minor", expectedRequestVersion = "expected_request_version" }
+}
+
 public struct APIRequestAction: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
-    public let actorUserID: String
+    public let actorUserID: String?
     public let action: String
     public let amountMinor: Int64?
     public let note: String
@@ -1311,6 +1316,7 @@ public struct APIFinancialRequest: Identifiable, Decodable, Equatable, Sendable 
     public let approvedAmountMinor: Int64?
     public let sourceCategoryID: String?
     public let allocationOperationID: String?
+    public let expiresAt: String?
     public let actions: [APIRequestAction]
 
     enum CodingKeys: String, CodingKey {
@@ -1322,6 +1328,7 @@ public struct APIFinancialRequest: Identifiable, Decodable, Equatable, Sendable 
         case approvedAmountMinor = "approved_amount_minor"
         case sourceCategoryID = "source_category_id"
         case allocationOperationID = "allocation_operation_id"
+        case expiresAt = "expires_at"
     }
 }
 
@@ -1333,6 +1340,27 @@ public struct APIAllowanceSplit: Decodable, Equatable, Sendable {
         case destinationCategoryID = "destination_category_id"
         case amountMinor = "amount_minor"
     }
+}
+
+public struct APIAllowanceSplitCreate: Encodable, Equatable, Sendable {
+    public let destinationCategoryID: String
+    public let amountMinor: Int64
+    public init(destinationCategoryID: String, amountMinor: Int64) { self.destinationCategoryID = destinationCategoryID; self.amountMinor = amountMinor }
+    enum CodingKeys: String, CodingKey { case destinationCategoryID = "destination_category_id", amountMinor = "amount_minor" }
+}
+
+public struct APIAllowancePlanCreate: Encodable, Equatable, Sendable {
+    public let delegatedUserID: String; public let sourceCategoryID: String; public let name: String; public let amountMinor: Int64; public let nextIssueDate: String; public let recurrenceUnit: String; public let intervalCount: Int; public let rolloverPolicy: String; public let splits: [APIAllowanceSplitCreate]
+    public init(delegatedUserID: String, sourceCategoryID: String, name: String, amountMinor: Int64, nextIssueDate: String, recurrenceUnit: String, intervalCount: Int, rolloverPolicy: String, splits: [APIAllowanceSplitCreate]) { self.delegatedUserID = delegatedUserID; self.sourceCategoryID = sourceCategoryID; self.name = name; self.amountMinor = amountMinor; self.nextIssueDate = nextIssueDate; self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.rolloverPolicy = rolloverPolicy; self.splits = splits }
+    enum CodingKeys: String, CodingKey { case name, splits; case delegatedUserID = "delegated_user_id", sourceCategoryID = "source_category_id", amountMinor = "amount_minor", nextIssueDate = "next_issue_date", recurrenceUnit = "recurrence_unit", intervalCount = "interval_count", rolloverPolicy = "rollover_policy" }
+}
+
+struct APIAllowanceIssueRequest: Encodable { let issueDate: String; let expectedAllocationVersion: Int; enum CodingKeys: String, CodingKey { case issueDate = "issue_date", expectedAllocationVersion = "expected_allocation_version" } }
+struct APIAllowanceStatusUpdate: Encodable { let isActive: Bool; enum CodingKeys: String, CodingKey { case isActive = "is_active" } }
+
+public struct APIAllowanceIssuance: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String; public let planID: String; public let issuedOn: String; public let amountMinor: Int64; public let reclaimedMinor: Int64; public let actorUserID: String; public let createdAt: String; public let nextIssueDate: String
+    enum CodingKeys: String, CodingKey { case id; case planID = "plan_id", issuedOn = "issued_on", amountMinor = "amount_minor", reclaimedMinor = "reclaimed_minor", actorUserID = "actor_user_id", createdAt = "created_at", nextIssueDate = "next_issue_date" }
 }
 
 public struct APIAllowancePlan: Identifiable, Decodable, Equatable, Sendable {

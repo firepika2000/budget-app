@@ -852,7 +852,7 @@ class RequestActionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    actor_user_id: str
+    actor_user_id: Optional[str]
     action: str
     amount_minor: Optional[int]
     note: str
@@ -874,6 +874,7 @@ class FinancialRequestResponse(BaseModel):
     source_category_id: Optional[str]
     allocation_operation_id: Optional[str]
     created_at: datetime
+    expires_at: Optional[datetime]
     resolved_at: Optional[datetime]
     actions: list[RequestActionResponse]
 
@@ -901,6 +902,10 @@ class FinancialRequestDecision(BaseModel):
 class FinancialRequestCancel(BaseModel):
     expected_request_version: int = Field(ge=0)
     note: str = Field(default="", max_length=500)
+
+
+class FinancialRequestRevision(FinancialRequestCreate):
+    expected_request_version: int = Field(ge=0)
 
 
 class AllowanceSplitCreate(BaseModel):
@@ -953,6 +958,10 @@ class AllowancePlanResponse(BaseModel):
 class AllowanceIssueRequest(BaseModel):
     issue_date: date
     expected_allocation_version: int = Field(ge=0)
+
+
+class AllowanceStatusUpdate(BaseModel):
+    is_active: bool
 
 
 class AllowanceIssuanceResponse(BaseModel):

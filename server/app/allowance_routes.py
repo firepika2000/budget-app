@@ -1,7 +1,7 @@
 import calendar
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -24,6 +24,7 @@ from .schemas import (
     AllowanceIssuanceResponse,
     AllowancePlanCreate,
     AllowancePlanResponse,
+    AllowanceStatusUpdate,
 )
 
 
@@ -60,17 +61,19 @@ def serialize_plan(plan: AllowancePlan, *, reveal_source: bool = True) -> dict:
 @router.get("", response_model=list[AllowancePlanResponse])
 def list_allowance_plans(
     budget_id: str,
+    include_inactive: bool = Query(default=False),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     budget = find_visible_budget(db, user, budget_id)
     if budget is None:
         raise HTTPException(status_code=404, detail="Budget not found")
-    query = select(AllowancePlan).options(selectinload(AllowancePlan.splits)).where(
-        AllowancePlan.budget_id == budget_id,
-        AllowancePlan.is_active.is_(True),
-    )
+    query = select(AllowancePlan).options(selectinload(AllowancePlan.splits)).where(AllowancePlan.budget_id == budget_id)
     can_manage = has_capability(db, user, budget, "manage_allowances")
+    if include_inactive and not can_manage:
+        raise HTTPException(status_code=403, detail="Insufficient capability")
+    if not include_inactive:
+        query = query.where(AllowancePlan.is_active.is_(True))
     if not can_manage:
         query = query.where(AllowancePlan.delegated_user_id == user.id)
     return [
@@ -160,6 +163,39 @@ def deactivate_allowance_plan(
         raise HTTPException(status_code=404, detail="Allowance plan not found")
     plan.is_active = False
     db.commit()
+
+
+@router.patch("/{plan_id}/status", response_model=AllowancePlanResponse)
+def update_allowance_status(
+    budget_id: str,
+    plan_id: str,
+    body: AllowanceStatusUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    budget = find_visible_budget(db, user, budget_id)
+    if budget is None:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    if not has_capability(db, user, budget, "manage_allowances"):
+        raise HTTPException(status_code=403, detail="Insufficient capability")
+    plan = db.scalar(select(AllowancePlan).options(selectinload(AllowancePlan.splits)).where(
+        AllowancePlan.id == plan_id, AllowancePlan.budget_id == budget_id
+    ).with_for_update())
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Allowance plan not found")
+    if body.is_active and not plan.is_active:
+        destination_ids = [split.destination_category_id for split in plan.splits]
+        conflicting = db.scalar(select(AllowanceSplit.id).join(AllowancePlan).where(
+            AllowanceSplit.destination_category_id.in_(destination_ids),
+            AllowancePlan.is_active.is_(True),
+            AllowancePlan.id != plan.id,
+        ))
+        if conflicting is not None:
+            raise HTTPException(status_code=409, detail="A destination already belongs to an active allowance plan")
+    plan.is_active = body.is_active
+    db.commit()
+    db.refresh(plan)
+    return serialize_plan(plan)
 
 
 @router.post("/{plan_id}/issue", response_model=AllowanceIssuanceResponse)

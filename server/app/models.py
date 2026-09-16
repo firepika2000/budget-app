@@ -644,6 +644,7 @@ class FinancialRequest(Base):
         ForeignKey("allocation_operations.id", ondelete="RESTRICT"), unique=True, nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -652,7 +653,7 @@ class RequestAction(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     request_id: Mapped[str] = mapped_column(ForeignKey("financial_requests.id", ondelete="CASCADE"), index=True)
-    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    actor_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True)
     action: Mapped[str] = mapped_column(String(30), index=True)
     amount_minor: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     note: Mapped[str] = mapped_column(String(500), default="")

@@ -453,12 +453,22 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/requests/\(requestID)/cancel", method: "POST", token: token, body: APIFinancialRequestCancel(expectedRequestVersion: expectedVersion, note: note))
     }
 
+    public func reviseFinancialRequest(budgetID: String, requestID: String, value: APIFinancialRequestCreate, expectedVersion: Int, token: String) async throws -> APIFinancialRequest {
+        try await send(path: "api/v1/budgets/\(budgetID)/requests/\(requestID)/revise", method: "POST", token: token, body: APIFinancialRequestRevision(requestType: value.requestType, destinationCategoryID: value.destinationCategoryID, requestedAmountMinor: value.requestedAmountMinor, reason: value.reason, expectedRequestVersion: expectedVersion))
+    }
+
     public func allowancePlans(
         budgetID: String,
+        includeInactive: Bool = false,
         token: String
     ) async throws -> [APIAllowancePlan] {
-        try await send(path: "api/v1/budgets/\(budgetID)/allowances", token: token)
+        try await send(path: "api/v1/budgets/\(budgetID)/allowances", queryItems: includeInactive ? [URLQueryItem(name: "include_inactive", value: "true")] : [], token: token)
     }
+
+    public func createAllowancePlan(budgetID: String, value: APIAllowancePlanCreate, token: String) async throws -> APIAllowancePlan { try await send(path: "api/v1/budgets/\(budgetID)/allowances", method: "POST", token: token, body: value) }
+    public func setAllowancePlanActive(budgetID: String, planID: String, isActive: Bool, token: String) async throws -> APIAllowancePlan { try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/status", method: "PATCH", token: token, body: APIAllowanceStatusUpdate(isActive: isActive)) }
+    public func issueAllowance(budgetID: String, planID: String, issueDate: String, expectedAllocationVersion: Int, token: String) async throws -> APIAllowanceIssuance { try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/issue", method: "POST", token: token, body: APIAllowanceIssueRequest(issueDate: issueDate, expectedAllocationVersion: expectedAllocationVersion)) }
+    public func allowanceIssuances(budgetID: String, planID: String, token: String) async throws -> [APIAllowanceIssuance] { try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/issuances", token: token) }
 
     public func forecast(budgetID: String, through: String, token: String) async throws -> APIForecast {
         try await send(path: "api/v1/budgets/\(budgetID)/forecast", queryItems: [URLQueryItem(name: "through", value: through)], token: token)

@@ -278,6 +278,12 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws
     func deleteTarget(categoryID: String) async throws
     func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws
+    func cancelRequest(id: String, version: Int, note: String) async throws
+    func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws
+    func createAllowance(_ value: APIAllowancePlanCreate) async throws
+    func setAllowanceActive(id: String, active: Bool) async throws
+    func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws
+    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance]
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws
@@ -559,6 +565,12 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func cancelHouseholdInvitation(id: String) async throws {}
     func removeHouseholdMember(userID: String) async throws {}
     func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] { [] }
+    func cancelRequest(id: String, version: Int, note: String) async throws {}
+    func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws {}
+    func createAllowance(_ value: APIAllowancePlanCreate) async throws {}
+    func setAllowanceActive(id: String, active: Bool) async throws {}
+    func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws {}
+    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] { [] }
     func accessProfile(userID: String) async throws -> APIAccessProfile {
         if let profile = accessProfiles[userID] { return profile }
         return try decode(["budget_id": budget.id, "user_id": userID, "capabilities": ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"], "restrict_accounts": false, "account_ids": [], "restrict_categories": false, "category_ids": [], "grant_permission": "view", "is_custom": false, "version": 0, "updated_by_user_id": NSNull(), "updated_by_display_name": NSNull(), "updated_at": NSNull()])
@@ -853,6 +865,12 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
 
     func accessProfile(userID: String) async throws -> APIAccessProfile { try await credentials.prepare(); return try await client.accessProfile(budgetID: budget.id, userID: userID, token: token) }
     func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile { try await credentials.prepare(); return try await client.updateAccessProfile(budgetID: budget.id, userID: userID, profile: value, token: token) }
+    func cancelRequest(id: String, version: Int, note: String) async throws { try await credentials.prepare(); _ = try await client.cancelFinancialRequest(budgetID: budget.id, requestID: id, expectedVersion: version, note: note, token: token) }
+    func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws { try await credentials.prepare(); _ = try await client.reviseFinancialRequest(budgetID: budget.id, requestID: id, value: value, expectedVersion: version, token: token) }
+    func createAllowance(_ value: APIAllowancePlanCreate) async throws { try await credentials.prepare(); _ = try await client.createAllowancePlan(budgetID: budget.id, value: value, token: token) }
+    func setAllowanceActive(id: String, active: Bool) async throws { try await credentials.prepare(); _ = try await client.setAllowancePlanActive(budgetID: budget.id, planID: id, isActive: active, token: token) }
+    func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws { try await credentials.prepare(); _ = try await client.issueAllowance(budgetID: budget.id, planID: id, issueDate: issueDate, expectedAllocationVersion: expectedVersion, token: token) }
+    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] { try await credentials.prepare(); return try await client.allowanceIssuances(budgetID: budget.id, planID: id, token: token) }
 
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try await credentials.prepare(); return try await client.searchTransactions(budgetID: budget.id, query: query, token: token) }
     func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage { try await credentials.prepare(); return try await client.searchPayees(budgetID: budget.id, query: query, includeArchived: includeArchived, limit: limit, cursor: cursor, token: token) }
@@ -948,7 +966,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let targets = await withTaskGroup(of: APICategoryTarget?.self) { group in for category in categories { group.addTask { try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: self.token) } }; var values: [APICategoryTarget] = []; for await target in group { if let target { values.append(target) } }; return values }
         let balances = await withTaskGroup(of: APIAccountBalance?.self) { group in for account in accounts { group.addTask { try? await client.accountBalance(budgetID: self.budget.id, accountID: account.id, token: self.token) } }; var values: [APIAccountBalance] = []; for await value in group { if let value { values.append(value) } }; return values }
         let requests = (budget.can("request_money") || budget.can("approve_request")) ? (try? await client.financialRequests(budgetID: budget.id, token: token)) ?? [] : []
-        let allowances = (try? await client.allowancePlans(budgetID: budget.id, token: token)) ?? []
+        let allowances = (try? await client.allowancePlans(budgetID: budget.id, includeInactive: budget.can("manage_allowances"), token: token)) ?? []
         let delegated = try? await client.delegatedBudget(budgetID: budget.id, token: token)
         let forecast: APIForecast? = if budget.can("view_account_balances") { try? await client.forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(Calendar.current.date(byAdding: .day, value: 90, to: Date())!), token: token) } else { nil }
         let members = budget.can("manage_allowances") ? (try? await client.householdMembers(householdID: budget.householdID, token: token)) ?? [] : []
@@ -1335,6 +1353,13 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func accessProfile(userID: String) async throws -> APIAccessProfile { try await commands().accessProfile(userID: userID) }
+
+    func cancelRequest(id: String, version: Int, note: String) async throws { try await commands().cancelRequest(id: id, version: version, note: note); await refresh() }
+    func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws { try await commands().reviseRequest(id: id, version: version, value: value); await refresh() }
+    func createAllowance(_ value: APIAllowancePlanCreate) async throws { try await commands().createAllowance(value); await refresh() }
+    func setAllowanceActive(id: String, active: Bool) async throws { try await commands().setAllowanceActive(id: id, active: active); await refresh() }
+    func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws { try await commands().issueAllowance(id: id, issueDate: issueDate, expectedVersion: expectedVersion); await refresh() }
+    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] { try await commands().allowanceIssuances(id: id) }
 
     func householdInvitations() async throws -> [APIInvitationSummary] { try await commands().householdInvitations() }
     func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret { try await commands().createHouseholdInvitation(value) }
@@ -1798,9 +1823,11 @@ private struct LiveForecastView: View {
 }
 
 private struct LiveRequestDetailView: View {
+    @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let requestID: String
     @State private var amount = ""; @State private var sourceCategoryID = ""; @State private var note = ""; @State private var isSaving = false; @State private var errorMessage: String?
+    @State private var showRevise = false; @State private var confirmCancel = false
     private var request: APIFinancialRequest? { store.requests.first(where: { $0.id == requestID }) }
     private var sources: [APICategoryMonth] { (store.summary?.categories ?? []).filter { $0.availableMinor > 0 && $0.categoryID != request?.destinationCategoryID } }
     var body: some View {
@@ -1811,6 +1838,8 @@ private struct LiveRequestDetailView: View {
                     LabeledContent("Amount", value: store.format(request.requestedAmountMinor))
                     LabeledContent("Category", value: store.categories.first(where: { $0.id == request.destinationCategoryID })?.name ?? "Category")
                     LabeledContent("Reason", value: request.reason.isEmpty ? "—" : request.reason)
+                    LabeledContent("Status", value: request.status.replacingOccurrences(of: "_", with: " ").capitalized)
+                    if let expiresAt = request.expiresAt, ["pending", "changes_requested"].contains(request.status) { LabeledContent("Expires", value: expiresAt) }
                 }
                 if store.budget.can("approve_request") && request.status == "pending" {
                     Section("Decision") {
@@ -1826,10 +1855,17 @@ private struct LiveRequestDetailView: View {
                         Button("Reject", role: .destructive) { Task { await decide("reject") } }.disabled(isSaving)
                     }
                 }
+                if request.requesterUserID == session.profile?.id && ["pending", "changes_requested"].contains(request.status) {
+                    Section("Your request") {
+                        if request.status == "changes_requested" { Button("Revise and Resubmit") { showRevise = true } }
+                        Button("Cancel Request", role: .destructive) { confirmCancel = true }
+                    }
+                }
                 Section("History") {
                     ForEach(request.actions) { action in
                         VStack(alignment: .leading) {
                             Text(action.action.replacingOccurrences(of: "_", with: " ").capitalized)
+                            Text(action.actorUserID.flatMap(requesterName) ?? "System").font(.caption).foregroundStyle(.secondary)
                             if !action.note.isEmpty { Text(action.note).font(.caption).foregroundStyle(.secondary) }
                         }
                     }
@@ -1846,9 +1882,12 @@ private struct LiveRequestDetailView: View {
         .alert("Unable to decide request", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(errorMessage ?? "Unknown error") }
+        .sheet(isPresented: $showRevise) { if let request { FundingRequestView(budget: store.budget, categories: store.categories, request: request, onSaved: store.refresh) } }
+        .confirmationDialog("Cancel this request?", isPresented: $confirmCancel, titleVisibility: .visible) { Button("Cancel Request", role: .destructive) { Task { await cancel() } } } message: { Text("The request and its decision history remain visible, but it can no longer be approved.") }
     }
     private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: store.budget.currencyCode), value > 0, value <= (request?.requestedAmountMinor ?? 0) else { return nil }; return value }
     private func requesterName(_ id: String) -> String { store.householdMembers.first(where: { $0.userID == id })?.displayName ?? id.capitalized }
+    private func cancel() async { guard let request else { return }; isSaving = true; defer { isSaving = false }; do { try await store.cancelRequest(id: request.id, version: request.version, note: note) } catch { errorMessage = error.localizedDescription } }
     private func decide(_ decision: String) async { guard let request else { return }; isSaving = true; defer { isSaving = false }; do { try await store.decideRequest(id: request.id, decision: decision, version: request.version, amount: decision == "approve" ? parsed : nil, sourceCategoryID: decision == "approve" ? sourceCategoryID : nil, note: note) } catch { errorMessage = error.localizedDescription } }
 }
 
@@ -3456,6 +3495,10 @@ struct LiveHouseholdView: View {
                 }
                 if store.budget.can("manage_allowances") {
                     Section("Delegated budgets") {
+                        NavigationLink { AllowanceManagementView(store: store) } label: {
+                            Label("Allowances", systemImage: "calendar.badge.clock")
+                        }
+                        .accessibilityIdentifier("allowance-management")
                         ForEach(store.householdMembers.filter { $0.role != "owner" && $0.isActive }) { member in
                             NavigationLink { LiveDelegatedPolicyView(session: session, store: store, member: member) } label: {
                                 VStack(alignment: .leading) {
@@ -3493,6 +3536,94 @@ struct LiveHouseholdView: View {
     private func delegatedPolicy(for userID: String) -> APIDelegatedBudget? {
         store.delegatedBudgets.first { $0.userID == userID }
     }
+}
+
+private struct AllowanceManagementView: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    @State private var showCreate = false
+    private var active: [APIAllowancePlan] { store.allowances.filter(\.isActive) }
+    private var paused: [APIAllowancePlan] { store.allowances.filter { !$0.isActive } }
+    var body: some View {
+        List {
+            Section("Active") {
+                ForEach(active) { plan in NavigationLink { AllowanceDetailView(store: store, planID: plan.id) } label: { row(plan) } }
+                if active.isEmpty { Text("No active allowances").foregroundStyle(.secondary) }
+            }
+            if !paused.isEmpty {
+                Section("Paused") {
+                    ForEach(paused) { plan in NavigationLink { AllowanceDetailView(store: store, planID: plan.id) } label: { row(plan) } }
+                    Text("Paused allowances do not move money and have no upcoming issuance.").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Allowances")
+        .toolbar { Button("New Allowance", systemImage: "plus") { showCreate = true } }
+        .sheet(isPresented: $showCreate) { AllowanceCreateView(store: store) }
+    }
+    private func row(_ plan: APIAllowancePlan) -> some View { VStack(alignment: .leading, spacing: 3) { Text(plan.name); Text("\(store.format(plan.amountMinor)) · \(plan.isActive ? "next \(plan.nextIssueDate)" : "paused")").font(.caption).foregroundStyle(.secondary) } }
+}
+
+private struct AllowanceDetailView: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    let planID: String
+    @State private var history: [APIAllowanceIssuance] = []
+    @State private var errorMessage: String?
+    @State private var isSaving = false
+    private var plan: APIAllowancePlan? { store.allowances.first { $0.id == planID } }
+    var body: some View {
+        List {
+            if let plan {
+                Section("Funding rule") {
+                    LabeledContent("Amount", value: store.format(plan.amountMinor))
+                    LabeledContent("Recipient", value: store.householdMembers.first(where: { $0.userID == plan.delegatedUserID })?.displayName ?? "Household member")
+                    LabeledContent("Schedule", value: "Every \(plan.intervalCount) \(plan.recurrenceUnit)")
+                    LabeledContent("Unused money", value: plan.rolloverPolicy == "rollover" ? "Carries forward" : "Returns before next issue")
+                    LabeledContent("Status", value: plan.isActive ? "Active" : "Paused")
+                    if plan.isActive { LabeledContent("Next issue", value: plan.nextIssueDate) }
+                }
+                Section("Destinations") { ForEach(Array(plan.splits.enumerated()), id: \.offset) { _, split in LabeledContent(store.categories.first(where: { $0.id == split.destinationCategoryID })?.name ?? "Category", value: store.format(split.amountMinor)) } }
+                Section {
+                    if plan.isActive && plan.nextIssueDate <= BudgetWorkspaceStore.dateString(Date()) { Button("Issue Now") { Task { await issue(plan) } }.disabled(isSaving || store.summary == nil) }
+                    Button(plan.isActive ? "Pause Allowance" : "Reactivate Allowance", role: plan.isActive ? .destructive : nil) { Task { await setActive(plan, !plan.isActive) } }.disabled(isSaving)
+                    Text("Creating or pausing a plan is money-neutral. Issue Now transfers existing category funds atomically through the allocation service.").font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("History") {
+                    ForEach(history) { item in VStack(alignment: .leading) { Text(item.issuedOn); Text("Issued \(store.format(item.amountMinor))" + (item.reclaimedMinor > 0 ? " · returned \(store.format(item.reclaimedMinor))" : "")).font(.caption).foregroundStyle(.secondary) } }
+                    if history.isEmpty { Text("No allowance has been issued yet").foregroundStyle(.secondary) }
+                }
+            }
+        }
+        .navigationTitle(plan?.name ?? "Allowance")
+        .task { await loadHistory() }
+        .alert("Unable to update allowance", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
+    }
+    private func loadHistory() async { do { history = try await store.allowanceIssuances(id: planID) } catch { errorMessage = error.localizedDescription } }
+    private func issue(_ plan: APIAllowancePlan) async { guard let version = store.summary?.allocationVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.issueAllowance(id: plan.id, issueDate: plan.nextIssueDate, expectedVersion: version); await loadHistory() } catch { errorMessage = error.localizedDescription } }
+    private func setActive(_ plan: APIAllowancePlan, _ active: Bool) async { isSaving = true; defer { isSaving = false }; do { try await store.setAllowanceActive(id: plan.id, active: active) } catch { errorMessage = error.localizedDescription } }
+}
+
+private struct AllowanceCreateView: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var memberID = ""; @State private var sourceID = ""; @State private var destinationID = ""; @State private var name = ""; @State private var amount = ""; @State private var nextDate = Date(); @State private var recurrence = "week"; @State private var interval = 1; @State private var rollover = "rollover"; @State private var isSaving = false; @State private var errorMessage: String?
+    private var members: [APIHouseholdMember] { store.householdMembers.filter { $0.role != "owner" && $0.isActive } }
+    private var destinations: [APICategory] { store.categories.filter { $0.delegatedUserID == memberID && !$0.isArchived } }
+    private var sources: [APICategory] { store.categories.filter { !$0.isArchived && $0.id != destinationID && $0.delegatedUserID == nil } }
+    private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: store.budget.currencyCode), value > 0 else { return nil }; return value }
+    var body: some View { NavigationStack { Form {
+        Picker("Recipient", selection: $memberID) { Text("Select member").tag(""); ForEach(members) { Text($0.displayName).tag($0.userID) } }
+        TextField("Allowance name", text: $name)
+        CurrencyAmountField("Amount", text: $amount, currencyCode: store.budget.currencyCode)
+        Picker("Fund from", selection: $sourceID) { Text("Select category").tag(""); ForEach(sources) { Text($0.name).tag($0.id) } }
+        Picker("Deliver to", selection: $destinationID) { Text("Select delegated category").tag(""); ForEach(destinations) { Text($0.name).tag($0.id) } }
+        DatePicker("First issue", selection: $nextDate, displayedComponents: .date)
+        Picker("Repeats", selection: $recurrence) { Text("Weekly").tag("week"); Text("Monthly").tag("month") }
+        Stepper("Every \(interval) \(recurrence == "week" ? "week(s)" : "month(s)")", value: $interval, in: 1...52)
+        Picker("Unused money", selection: $rollover) { Text("Carry forward").tag("rollover"); Text("Return before next issue").tag("use_it_or_lose_it") }
+        Section { Text("Saving schedules the rule only. Money moves only when an authorized person issues a due allowance.").font(.footnote).foregroundStyle(.secondary) }
+    }.navigationTitle("New Allowance").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || memberID.isEmpty || sourceID.isEmpty || destinationID.isEmpty || parsed == nil || isSaving) } }.onAppear { memberID = members.first?.userID ?? ""; selectDefaults() }.onChange(of: memberID) { _, _ in destinationID = destinations.first?.id ?? ""; selectDefaults() }.alert("Unable to create allowance", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } } }
+    private func selectDefaults() { if destinationID.isEmpty { destinationID = destinations.first?.id ?? "" }; if sourceID.isEmpty || sourceID == destinationID { sourceID = sources.first?.id ?? "" } }
+    private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await store.createAllowance(.init(delegatedUserID: memberID, sourceCategoryID: sourceID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: parsed, nextIssueDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrence, intervalCount: interval, rolloverPolicy: rollover, splits: [.init(destinationCategoryID: destinationID, amountMinor: parsed)])); dismiss() } catch { errorMessage = error.localizedDescription } }
 }
 
 private struct HouseholdMemberLifecycleView: View {

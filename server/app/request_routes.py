@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -14,10 +14,12 @@ from .schemas import (
     FinancialRequestCreate,
     FinancialRequestDecision,
     FinancialRequestResponse,
+    FinancialRequestRevision,
 )
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/requests")
+REQUEST_LIFETIME = timedelta(days=30)
 
 
 def require_request_capability(
@@ -50,9 +52,25 @@ def serialize_request(db: Session, item: FinancialRequest, *, reveal_source: boo
         "source_category_id": item.source_category_id if reveal_source else None,
         "allocation_operation_id": item.allocation_operation_id,
         "created_at": item.created_at,
+        "expires_at": item.expires_at,
         "resolved_at": item.resolved_at,
         "actions": actions,
     }
+
+
+def expire_if_due(db: Session, item: FinancialRequest) -> bool:
+    if item.status not in ("pending", "changes_requested") or item.expires_at is None:
+        return False
+    expires_at = item.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at > datetime.now(timezone.utc):
+        return False
+    item.status = "expired"
+    item.version += 1
+    item.resolved_at = datetime.now(timezone.utc)
+    db.add(RequestAction(request_id=item.id, actor_user_id=None, action="expired", note="Request expired after 30 days"))
+    return True
 
 
 @router.post("", response_model=FinancialRequestResponse, status_code=status.HTTP_201_CREATED)
@@ -71,10 +89,12 @@ def create_request(
         or not can_access_resource(db, user, budget, "category", destination.id)
     ):
         raise HTTPException(status_code=422, detail="Invalid destination category")
+    now = datetime.now(timezone.utc)
     item = FinancialRequest(
         household_id=budget.household_id,
         budget_id=budget_id,
         requester_user_id=user.id,
+        expires_at=now + REQUEST_LIFETIME,
         **body.model_dump(),
     )
     db.add(item)
@@ -107,6 +127,8 @@ def list_requests(
             raise HTTPException(status_code=403, detail="Insufficient capability")
         query = query.where(FinancialRequest.requester_user_id == user.id)
     items = list(db.scalars(query.order_by(FinancialRequest.created_at.desc())))
+    if any(expire_if_due(db, item) for item in items):
+        db.commit()
     return [serialize_request(db, item, reveal_source=can_approve) for item in items]
 
 
@@ -125,6 +147,9 @@ def decide_request(
     ).with_for_update())
     if item is None:
         raise HTTPException(status_code=404, detail="Request not found")
+    if expire_if_due(db, item):
+        db.commit()
+        raise HTTPException(status_code=409, detail="Request has expired")
     if item.status != "pending" or item.version != body.expected_request_version:
         raise HTTPException(status_code=409, detail="Request has already changed")
 
@@ -200,6 +225,9 @@ def cancel_request(
     ).with_for_update())
     if item is None or item.requester_user_id != user.id:
         raise HTTPException(status_code=404, detail="Request not found")
+    if expire_if_due(db, item):
+        db.commit()
+        raise HTTPException(status_code=409, detail="Request has expired")
     if item.status not in ("pending", "changes_requested") or item.version != body.expected_request_version:
         raise HTTPException(status_code=409, detail="Request has already changed")
     item.status = "cancelled"
@@ -211,6 +239,44 @@ def cancel_request(
         action="cancelled",
         note=body.note,
     ))
+    db.commit()
+    db.refresh(item)
+    return serialize_request(db, item, reveal_source=False)
+
+
+@router.post("/{request_id}/revise", response_model=FinancialRequestResponse)
+def revise_request(
+    budget_id: str,
+    request_id: str,
+    body: FinancialRequestRevision,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    budget = require_request_capability(db, user, budget_id, "request_money")
+    item = db.scalar(select(FinancialRequest).where(
+        FinancialRequest.id == request_id,
+        FinancialRequest.budget_id == budget_id,
+    ).with_for_update())
+    if item is None or item.requester_user_id != user.id:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if expire_if_due(db, item):
+        db.commit()
+        raise HTTPException(status_code=409, detail="Request has expired")
+    if item.status != "changes_requested" or item.version != body.expected_request_version:
+        raise HTTPException(status_code=409, detail="Request has already changed")
+    destination = db.get(Category, body.destination_category_id)
+    if destination is None or destination.budget_id != budget_id or destination.is_archived or not can_access_resource(db, user, budget, "category", destination.id):
+        raise HTTPException(status_code=422, detail="Invalid destination category")
+    item.request_type = body.request_type
+    item.destination_category_id = body.destination_category_id
+    item.requested_amount_minor = body.requested_amount_minor
+    item.reason = body.reason
+    item.status = "pending"
+    item.resolved_at = None
+    item.expires_at = datetime.now(timezone.utc) + REQUEST_LIFETIME
+    item.version += 1
+    db.add(RequestAction(request_id=item.id, actor_user_id=user.id, action="revised",
+                         amount_minor=item.requested_amount_minor, note=item.reason))
     db.commit()
     db.refresh(item)
     return serialize_request(db, item, reveal_source=False)

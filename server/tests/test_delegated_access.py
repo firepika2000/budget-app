@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from app.models import (
     AllocationOperation,
     FinancialRequest,
@@ -293,6 +295,51 @@ def test_rejected_and_cancelled_requests_survive_member_deactivation(
         assert db.query(RequestAction).filter(
             RequestAction.request_id.in_([item.id for item in stored])
         ).count() == 4
+
+
+def test_changes_requested_can_be_revised_and_pending_request_expires(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, _ = create_budget_structure(client, owner_token, budget["id"])
+    destination = add_category(client, owner_token, budget["id"], "Delegated", "Child Requests")
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, checking["id"], destination["id"])
+    request = client.post(
+        f"/api/v1/budgets/{budget['id']}/requests", headers=auth(child_token),
+        json={"destination_category_id": destination["id"], "requested_amount_minor": 2500, "reason": "Original"},
+    ).json()
+    assert request["expires_at"] is not None
+    changed = client.post(
+        f"/api/v1/budgets/{budget['id']}/requests/{request['id']}/decision", headers=auth(owner_token),
+        json={"decision": "changes_requested", "expected_request_version": 0, "note": "Explain the purchase"},
+    )
+    assert changed.status_code == 200
+    revised = client.post(
+        f"/api/v1/budgets/{budget['id']}/requests/{request['id']}/revise", headers=auth(child_token),
+        json={"request_type": "purchase_approval", "destination_category_id": destination["id"],
+              "requested_amount_minor": 2000, "reason": "School supplies", "expected_request_version": 1},
+    )
+    assert revised.status_code == 200, revised.text
+    assert revised.json()["status"] == "pending"
+    assert revised.json()["version"] == 2
+    assert [action["action"] for action in revised.json()["actions"]] == ["submitted", "changes_requested", "revised"]
+
+    with session_factory() as db:
+        stored = db.get(FinancialRequest, request["id"])
+        stored.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db.commit()
+    expired = client.get(f"/api/v1/budgets/{budget['id']}/requests", headers=auth(child_token))
+    assert expired.status_code == 200
+    result = expired.json()[0]
+    assert result["status"] == "expired"
+    assert result["version"] == 3
+    assert result["actions"][-1]["action"] == "expired"
+    assert result["actions"][-1]["actor_user_id"] is None
+    assert client.post(
+        f"/api/v1/budgets/{budget['id']}/requests/{request['id']}/cancel", headers=auth(child_token),
+        json={"expected_request_version": 3},
+    ).status_code == 409
 
 
 def test_delegated_member_can_create_only_own_scoped_category(
