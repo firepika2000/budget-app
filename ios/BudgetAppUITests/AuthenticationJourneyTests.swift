@@ -1,6 +1,27 @@
 import XCTest
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testHomeQuickActionsOpenCanonicalProductionEditors() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=home"]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["home-add-transaction"].waitForExistence(timeout: 5))
+        app.buttons["home-add-transaction"].tap()
+        XCTAssertTrue(app.navigationBars["New Transaction"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].tap()
+
+        XCTAssertTrue(app.buttons["home-move-money"].waitForExistence(timeout: 5))
+        app.buttons["home-move-money"].tap()
+        XCTAssertTrue(app.navigationBars["Move Money"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].tap()
+
+        XCTAssertTrue(app.buttons["home-add-schedule"].waitForExistence(timeout: 5))
+        app.buttons["home-add-schedule"].tap()
+        XCTAssertTrue(app.navigationBars["New Schedule"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].tap()
+    }
+
     func testProductionInsightsRemainReachableInDarkModeAtAccessibilityTextSize() {
         let device = XCUIDevice.shared
         let originalAppearance = device.appearance

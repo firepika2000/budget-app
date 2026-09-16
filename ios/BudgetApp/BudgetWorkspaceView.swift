@@ -1481,6 +1481,16 @@ private extension View {
 
 private struct LiveHomeView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
+    @State private var showTransaction = false
+    @State private var showMoveMoney = false
+    @State private var showSchedule = false
+    @State private var showRequest = false
+    private var planRows: [APICategoryMonth] { store.summary?.categories ?? [] }
+    private var canMoveMoney: Bool { store.budget.can("move_money") && planRows.contains(where: { $0.availableMinor > 0 }) && planRows.count > 1 }
+    private var hasQuickActions: Bool {
+        (store.budget.can("create_transaction") && !store.accounts.filter({ !$0.isClosed }).isEmpty)
+            || canMoveMoney || store.budget.can("manage_planning") || store.budget.can("request_money")
+    }
     var body: some View {
         List {
             Section {
@@ -1489,6 +1499,25 @@ private struct LiveHomeView: View {
                     Text(store.format(store.delegatedBudget?.availableToAssignMinor ?? store.summary?.readyToAssignMinor ?? 0)).font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
                     Text(store.delegatedBudget == nil ? "Real money waiting for a purpose" : "Delegated money you control but have not categorized").foregroundStyle(.secondary)
                 }.padding(.vertical, 10)
+            }
+            if hasQuickActions {
+                Section("Quick actions") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 12)], spacing: 12) {
+                        if store.budget.can("create_transaction") && !store.accounts.filter({ !$0.isClosed }).isEmpty {
+                            HomeQuickAction(title: "Transaction", symbol: "plus.circle.fill", identifier: "home-add-transaction") { showTransaction = true }
+                        }
+                        if canMoveMoney {
+                            HomeQuickAction(title: "Move Money", symbol: "arrow.left.arrow.right.circle.fill", identifier: "home-move-money") { showMoveMoney = true }
+                        }
+                        if store.budget.can("manage_planning") {
+                            HomeQuickAction(title: "Schedule", symbol: "calendar.badge.plus", identifier: "home-add-schedule") { showSchedule = true }
+                        }
+                        if store.budget.can("request_money") {
+                            HomeQuickAction(title: "Request", symbol: "hand.raised.fill", identifier: "home-request-money") { showRequest = true }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
             }
             if let summary = store.summary {
                 Section("Needs attention") {
@@ -1504,7 +1533,34 @@ private struct LiveHomeView: View {
             }
             Section("Recent activity") { ForEach(store.transactions.prefix(5)) { LiveTransactionLink(transaction: $0) } }
             if let forecast = store.forecast { Section("90-day forecast") { LabeledContent("Projected total", value: store.format(forecast.projectedTotalOnBudgetMinor)); LabeledContent("Lowest projected", value: store.format(forecast.lowestProjectedTotalMinor)); NavigationLink("View forecast") { LiveForecastView() } } }
-        }.navigationTitle(store.budget.name)
+        }
+        .navigationTitle(store.budget.name)
+        .sheet(isPresented: $showTransaction) {
+            TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, onSaved: store.refresh)
+        }
+        .sheet(isPresented: $showMoveMoney) {
+            if let summary = store.summary {
+                AllocationTransferView(budget: store.budget, categories: summary.categories, expectedAllocationVersion: summary.allocationVersion, onSaved: store.refresh)
+            }
+        }
+        .sheet(isPresented: $showSchedule) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode) }
+        .sheet(isPresented: $showRequest) { FundingRequestView(budget: store.budget, categories: store.categories, onSaved: store.refresh) }
+    }
+}
+
+private struct HomeQuickAction: View {
+    let title: String
+    let symbol: String
+    let identifier: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 38)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier(identifier)
     }
 }
 

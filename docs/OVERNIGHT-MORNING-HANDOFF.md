@@ -585,3 +585,25 @@ The PostgreSQL cluster and all synthetic records live only under `/private/tmp`;
 remains untouched at its existing revision. Full backend PASS with 11 expected PostgreSQL/environment-
 gated skips when the disposable URL is absent; the explicitly configured PostgreSQL contention, plan,
 and migration run PASS (19 tests). Native code did not change in this checkpoint.
+## v0.7 checkpoint — actionable Home quick actions
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+The v0.7 plan is now explicit. Its first production checkpoint adds a compact adaptive Quick Actions
+section to Home. Available actions are derived from the active budget's capabilities and usable
+resources: Transaction requires transaction creation plus an open account; Move Money requires
+authority, a funded source, and a second category; Schedule requires planning authority; Request
+requires request authority. Unauthorized or impossible actions are absent rather than failing after a
+tap.
+
+Every action opens the existing shared production editor (`TransactionEntryView`,
+`AllocationTransferView`, `LiveScheduledTransactionEditor`, or `FundingRequestView`). No duplicate
+mutation path, Demo-only behavior, local accounting, or permission substitute was introduced. Editor
+saves continue through `BudgetApplicationServices`, and cancellation remains money-neutral.
+
+Focused production XCUITest PASS on Xcode 27 Beta / preserved iPhone 17 Pro Max iOS 27: Home opened
+the canonical transaction, Move Money, and schedule editors and canceled each cleanly. The full Swift
+package suite PASS and all 73 native `BudgetAppTests` PASS. After XCTest had reported the complete
+green result, Xcode 27 Beta remained blocked while saving/cleaning the test-session record; the hung
+tool process was interrupted without erasing or resetting the preserved Simulator. `git diff --check`
+also PASS. No backend code or schema changed in this checkpoint.
