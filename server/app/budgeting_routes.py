@@ -839,6 +839,27 @@ def _visible_transactions(db: Session, user: User, budget: Budget) -> list[Trans
     )]
 
 
+def _can_access_transaction_resources(
+    db: Session, user: User, budget: Budget, transaction: Transaction,
+) -> bool:
+    """Apply the same account/category boundary to every transaction surface.
+
+    A category-restricted member cannot see an uncategorized row. This matters
+    for mutation/detail endpoints as much as it does for lists: knowing an ID
+    must never turn a hidden row into an editable resource.
+    """
+    if not can_access_resource(db, user, budget, "account", transaction.account_id):
+        return False
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    if visible_categories is None:
+        return True
+    if transaction.category_id is not None:
+        return transaction.category_id in visible_categories
+    if transaction.splits:
+        return all(split.category_id in visible_categories for split in transaction.splits)
+    return False
+
+
 @router.get("/transactions/search", response_model=TransactionPageResponse)
 def search_transactions(
     budget_id: str,
@@ -1114,14 +1135,11 @@ def bulk_update_transactions(
     budget = require_budget_capability(db, user, budget_id, "edit_transaction")
     transactions = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.budget_id == budget_id, Transaction.id.in_(body.transaction_ids),
-    )))
+    ).with_for_update()))
     if len(transactions) != len(body.transaction_ids):
         raise HTTPException(status_code=404, detail="One or more transactions were not found")
-    visible_accounts = visible_resource_ids(db, user, budget, "account")
-    visible_categories = visible_resource_ids(db, user, budget, "category")
     for transaction in transactions:
-        category_ids = ([transaction.category_id] if transaction.category_id is not None else []) + [split.category_id for split in transaction.splits]
-        if (visible_accounts is not None and transaction.account_id not in visible_accounts) or (visible_categories is not None and any(category_id not in visible_categories for category_id in category_ids)):
+        if not _can_access_transaction_resources(db, user, budget, transaction):
             raise HTTPException(status_code=404, detail="One or more transactions were not found")
         if transaction.status != "posted":
             raise HTTPException(status_code=409, detail="Voided and reversal transactions are immutable")
@@ -1164,14 +1182,10 @@ def duplicate_transaction(
     original = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.id == transaction_id, Transaction.budget_id == budget_id,
     ))
-    if original is None or not can_access_resource(db, user, budget, "account", original.account_id):
+    if original is None or not _can_access_transaction_resources(db, user, budget, original):
         raise HTTPException(status_code=404, detail="Transaction not found")
     if original.status != "posted" or original.transfer_id is not None or original.scheduled_transaction_id is not None or original.payee_name in {"Starting Balance", "Reconciliation adjustment"}:
         raise HTTPException(status_code=409, detail="This system-linked transaction must be recreated through its specialized workflow")
-    visible_categories = visible_resource_ids(db, user, budget, "category")
-    category_ids = ([original.category_id] if original.category_id is not None else []) + [split.category_id for split in original.splits]
-    if visible_categories is not None and any(category_id not in visible_categories for category_id in category_ids):
-        raise HTTPException(status_code=404, detail="Transaction not found")
     duplicate = create_transaction(
         budget_id,
         TransactionCreate(
@@ -1209,7 +1223,7 @@ def void_transaction(
     original = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.id == transaction_id, Transaction.budget_id == budget_id,
     ).with_for_update())
-    if original is None or not can_access_resource(db, user, budget, "account", original.account_id):
+    if original is None or not _can_access_transaction_resources(db, user, budget, original):
         raise HTTPException(status_code=404, detail="Transaction not found")
     if original.status != "posted":
         raise HTTPException(status_code=409, detail="Only a posted transaction can be voided")
@@ -1220,9 +1234,6 @@ def void_transaction(
     if original.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
         raise HTTPException(status_code=403, detail="You may only void your own transactions")
     category_ids = ([original.category_id] if original.category_id else []) + [item.category_id for item in original.splits]
-    visible_categories = visible_resource_ids(db, user, budget, "category")
-    if visible_categories is not None and any(item not in visible_categories for item in category_ids):
-        raise HTTPException(status_code=404, detail="Transaction not found")
     account = db.scalar(select(Account).where(Account.id == original.account_id).with_for_update())
     categories = {item.id: item for item in db.scalars(select(Category).where(Category.id.in_(category_ids)).with_for_update())} if category_ids else {}
     before_snapshot = transaction_snapshot(original)
@@ -1262,14 +1273,12 @@ def create_schedule_from_transaction(
 ) -> ScheduledTransaction:
     budget = require_budget_capability(db, user, budget_id, "manage_planning")
     original = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(Transaction.id == transaction_id, Transaction.budget_id == budget_id))
-    if original is None or not can_access_resource(db, user, budget, "account", original.account_id):
+    if original is None or not _can_access_transaction_resources(db, user, budget, original):
         raise HTTPException(status_code=404, detail="Transaction not found")
     if original.status != "posted" or original.transfer_id is not None or original.payee_name in {"Starting Balance", "Reconciliation adjustment"}:
         raise HTTPException(status_code=409, detail="This transaction cannot be used as a recurring template")
     if original.splits:
         raise HTTPException(status_code=409, detail="Split schedules are not supported yet")
-    if original.category_id and not can_access_resource(db, user, budget, "category", original.category_id):
-        raise HTTPException(status_code=404, detail="Transaction not found")
     next_date = body.next_date or next_occurrence(original.occurred_on, body.recurrence_unit, body.interval_count)
     while next_date is not None and next_date <= date.today():
         next_date = next_occurrence(next_date, body.recurrence_unit, body.interval_count)
@@ -1293,11 +1302,7 @@ def _attachment_transaction(db: Session, user: User, budget: Budget, transaction
     transaction = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.id == transaction_id, Transaction.budget_id == budget.id,
     ))
-    if transaction is None or not can_access_resource(db, user, budget, "account", transaction.account_id):
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    visible_categories = visible_resource_ids(db, user, budget, "category")
-    category_ids = ([transaction.category_id] if transaction.category_id else []) + [item.category_id for item in transaction.splits]
-    if visible_categories is not None and any(item not in visible_categories for item in category_ids):
+    if transaction is None or not _can_access_transaction_resources(db, user, budget, transaction):
         raise HTTPException(status_code=404, detail="Transaction not found")
     return transaction
 
@@ -1442,7 +1447,7 @@ def update_transaction(
         Transaction.id == transaction_id,
         Transaction.budget_id == budget_id,
     ).with_for_update())
-    if transaction is None or transaction.transfer_id is not None:
+    if transaction is None or transaction.transfer_id is not None or not _can_access_transaction_resources(db, user, budget, transaction):
         raise HTTPException(status_code=404, detail="Transaction not found")
     if transaction.status != "posted":
         raise HTTPException(status_code=409, detail="Voided and reversal transactions are immutable")
@@ -1499,7 +1504,8 @@ def delete_transaction(
 ) -> None:
     budget = require_budget_capability(db, user, budget_id, "delete_transaction")
     transaction = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(Transaction.id == transaction_id))
-    if transaction is None or transaction.budget_id != budget_id or transaction.transfer_id is not None:
+    if (transaction is None or transaction.budget_id != budget_id or transaction.transfer_id is not None
+            or not _can_access_transaction_resources(db, user, budget, transaction)):
         raise HTTPException(status_code=404, detail="Transaction not found")
     if transaction.status != "posted":
         raise HTTPException(status_code=409, detail="Voided and reversal transactions cannot be deleted")
@@ -1507,8 +1513,6 @@ def delete_transaction(
         raise HTTPException(status_code=409, detail="Reconciled transactions cannot be deleted")
     if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
         raise HTTPException(status_code=403, detail="You may only delete your own transactions")
-    if not can_access_resource(db, user, budget, "account", transaction.account_id):
-        raise HTTPException(status_code=404, detail="Transaction not found")
     attachment_count = db.scalar(select(func.count()).select_from(TransactionAttachment).where(
         TransactionAttachment.transaction_id == transaction.id,
     )) or 0

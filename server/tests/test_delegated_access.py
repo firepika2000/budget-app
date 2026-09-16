@@ -661,22 +661,22 @@ def test_transaction_edit_and_delete_enforce_scope_and_ownership(
         "amount_minor": -1200, "occurred_on": "2026-09-04", "payee_name": "Snack",
     }
 
-    # Cannot edit a transaction the member did not create (even on an accessible account).
+    # A transaction in a hidden category is undiscoverable even when its account is visible.
     assert client.put(
         f"/api/v1/budgets/{budget['id']}/transactions/{owner_txn['id']}",
         headers=auth(child_token), json=valid_child_body,
-    ).status_code == 403
+    ).status_code == 404
     # Cannot move own transaction into a category outside scope.
     assert client.put(
         f"/api/v1/budgets/{budget['id']}/transactions/{own['id']}",
         headers=auth(child_token),
         json={**valid_child_body, "category_id": groceries["id"]},
     ).status_code == 422
-    # Cannot delete another member's transaction.
+    # Delete uses the same non-disclosing resource boundary.
     assert client.delete(
         f"/api/v1/budgets/{budget['id']}/transactions/{owner_txn['id']}",
         headers=auth(child_token),
-    ).status_code == 403
+    ).status_code == 404
     # Owner's transaction is untouched by the failed attempts.
     remaining = client.get(
         f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)

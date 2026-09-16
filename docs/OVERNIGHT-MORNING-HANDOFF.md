@@ -121,6 +121,33 @@ Verification:
 Human acceptance remains pending for the consolidated Activity search/filter/sort/load-more journey.
 No previously accepted workflow is invalidated.
 
+## v0.5 checkpoint — Restricted-resource mutation parity
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+The security audit found that list/search correctly hid uncategorized transactions from a
+category-restricted member, but several ID-addressed endpoints treated an empty category set as
+permitted. A member who knew the opaque transaction ID could therefore attempt bulk mutation, edit,
+delete, duplicate, void, Make Recurring, or attachment access against a row absent from their visible
+dataset. Scheduled-transaction list/mutation paths had the equivalent inconsistency.
+
+A canonical transaction-resource guard now applies the same account/category visibility rule to all
+of those surfaces and returns a non-disclosing 404. Schedule list, create, edit, delete, and realization
+now apply the equivalent live resource scope. Bulk mutation locks selected transaction rows so
+concurrent metadata additions serialize instead of losing an update.
+
+Verification:
+
+- focused delegated/bulk/scheduled/void/attachment authorization: PASS (45 tests);
+- full backend: PASS (195 passed, 10 PostgreSQL-only skipped);
+- a PostgreSQL-only race test now proves concurrent bulk tag additions retain both updates when the
+  disposable PostgreSQL concurrency environment is supplied;
+- no Swift, migration, or financial-semantic change; native evidence from `bdc7d5e` remains applicable;
+- `git diff --check`: pending final checkpoint.
+
+No human-accepted workflow is invalidated. Restricted-member privacy remains HUMAN PENDING as one
+consolidated production UI journey.
+
 ## Morning build and migration plan (current; final HEAD will supersede)
 
 - Xcode: `/Users/firepika/Downloads/Xcode-beta.app`

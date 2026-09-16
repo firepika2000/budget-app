@@ -417,7 +417,45 @@ def test_realization_rechecks_scope_after_permission_revoked(client, owner_token
                             "restrict_accounts": True, "account_ids": [account["id"]],
                             "restrict_categories": True, "category_ids": [other["id"]]}).status_code == 200
     # Realization must re-check scope now, not trust creation-time authority.
-    assert client.post(realize_url(budget["id"], sid), headers=auth(member_token)).status_code == 422
+    assert client.post(realize_url(budget["id"], sid), headers=auth(member_token)).status_code == 404
+
+
+def test_category_scope_hides_uncategorized_schedules_from_all_surfaces(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    hidden = create_schedule(
+        client, owner_token, budget["id"], account_id=account["id"],
+        name="Private income", amount_minor=5000, next_date=PAST, recurrence_unit="months",
+    ).json()
+    member_id, member_token = add_child(session_factory, client)
+    grant_planner(
+        client, owner_token, budget["id"], member_id, account["id"], [category["id"]],
+        ["view_budget", "view_accounts", "view_categories", "view_transactions", "create_transaction", "manage_planning"],
+    )
+
+    listed = client.get(
+        f"{sched_url(budget['id'])}?include_inactive=true", headers=auth(member_token),
+    )
+    assert listed.status_code == 200
+    assert hidden["id"] not in {row["id"] for row in listed.json()}
+    assert create_schedule(
+        client, member_token, budget["id"], account_id=account["id"],
+        name="Disallowed income", amount_minor=1000, next_date=future(), recurrence_unit="months",
+    ).status_code == 422
+
+    update = client.put(
+        item_url(budget["id"], hidden["id"]), headers=auth(member_token),
+        json={
+            "account_id": account["id"], "category_id": category["id"],
+            "name": "Attempted disclosure", "amount_minor": -1000,
+            "next_date": future(), "recurrence_unit": "months", "is_active": True,
+        },
+    )
+    assert update.status_code == 404
+    assert client.post(realize_url(budget["id"], hidden["id"]), headers=auth(member_token)).status_code == 404
+    assert client.delete(item_url(budget["id"], hidden["id"]), headers=auth(member_token)).status_code == 404
 
 
 def test_deactivated_member_and_cross_budget_are_denied(client, owner_token, session_factory):

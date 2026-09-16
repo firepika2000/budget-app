@@ -39,10 +39,10 @@ from app.models import (
     Transaction,
     User,
 )
-from app.schemas import AllocationTransferCreate, FinancialRequestDecision, ReconcileRequest
+from app.schemas import AllocationTransferCreate, FinancialRequestDecision, ReconcileRequest, TransactionBulkUpdateRequest
 from app.planning_routes import realize_scheduled_transaction
 from app.request_routes import decide_request
-from app.budgeting_routes import transfer_allocation, reconcile_account
+from app.budgeting_routes import bulk_update_transactions, transfer_allocation, reconcile_account
 
 from .conftest import auth
 from .test_advanced_ledger import add_category, record
@@ -168,6 +168,39 @@ def route_attempt(factory, user_id, call):
 
 def outcomes(results):
     return sorted(kind for kind, _ in results)
+
+
+# ---------------------------------------------------------------------------
+# 0. Metadata bulk serialization
+# ---------------------------------------------------------------------------
+
+def test_concurrent_bulk_tag_additions_serialize_without_lost_update(pg):
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    transaction = record(
+        pg.client, pg.token, budget["id"], account_id=account["id"],
+        category_id=category["id"], amount_minor=-100,
+    )
+
+    def add_tag(tag):
+        def call(db, user):
+            return bulk_update_transactions(
+                budget_id=budget["id"],
+                body=TransactionBulkUpdateRequest(
+                    transaction_ids=[transaction["id"]], action="add_tags", tags=[tag],
+                ),
+                user=user,
+                db=db,
+            )
+        return call
+
+    results = run_race([
+        route_attempt(pg.factory, pg.owner_id, add_tag("first")),
+        route_attempt(pg.factory, pg.owner_id, add_tag("second")),
+    ])
+    assert outcomes(results) == ["ok", "ok"]
+    with pg.factory() as db:
+        assert set(db.get(Transaction, transaction["id"]).tags) == {"first", "second"}
 
 
 # ---------------------------------------------------------------------------

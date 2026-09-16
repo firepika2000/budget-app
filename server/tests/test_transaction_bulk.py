@@ -1,4 +1,4 @@
-from app.models import Transaction, TransactionChange
+from app.models import Transaction, TransactionChange, User
 
 from .conftest import auth
 from .test_advanced_ledger import record
@@ -102,3 +102,85 @@ def test_single_transaction_clearing_persists_without_financial_mutation_or_perm
         db.commit()
     reconciled = _bulk(client, owner_token, budget["id"], [transaction["id"]], "set_cleared", cleared=False)
     assert reconciled.status_code == 409
+
+
+def test_category_restriction_hides_uncategorized_transaction_from_every_mutation_surface(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    contributor_token = add_member(session_factory, client, "contribute", budget["id"])
+    hidden = record(
+        client, contributor_token, budget["id"], account_id=account["id"],
+        amount_minor=5000, payee_name="Private uncategorized income",
+    )
+    with session_factory() as db:
+        contributor_id = db.query(User.id).filter(User.email == "contribute@example.com").scalar()
+
+    profile = client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{contributor_id}",
+        headers=auth(owner_token),
+        json={
+            "capabilities": [
+                "view_budget", "view_accounts", "view_categories", "view_transactions",
+                "create_transaction", "edit_transaction", "delete_transaction", "manage_planning",
+            ],
+            "restrict_accounts": True,
+            "account_ids": [account["id"]],
+            "restrict_categories": True,
+            "category_ids": [category["id"]],
+        },
+    )
+    assert profile.status_code == 200, profile.text
+
+    assert _search_ids(client, contributor_token, budget["id"]) == []
+    attempts = [
+        _bulk(client, contributor_token, budget["id"], [hidden["id"]], "set_flag", flag="red"),
+        client.post(
+            f"/api/v1/budgets/{budget['id']}/transactions/{hidden['id']}/duplicate",
+            headers=auth(contributor_token), json={"occurred_on": "2026-09-10"},
+        ),
+        client.post(
+            f"/api/v1/budgets/{budget['id']}/transactions/{hidden['id']}/void",
+            headers=auth(contributor_token), json={"reason": "must remain hidden"},
+        ),
+        client.post(
+            f"/api/v1/budgets/{budget['id']}/transactions/{hidden['id']}/schedule",
+            headers=auth(contributor_token),
+            json={"next_date": "2026-10-01", "recurrence_unit": "months", "interval_count": 1},
+        ),
+        client.get(
+            f"/api/v1/budgets/{budget['id']}/transactions/{hidden['id']}/attachments",
+            headers=auth(contributor_token),
+        ),
+        client.put(
+            f"/api/v1/budgets/{budget['id']}/transactions/{hidden['id']}",
+            headers=auth(contributor_token),
+            json={
+                "account_id": account["id"], "category_id": category["id"],
+                "amount_minor": -100, "occurred_on": "2026-09-10",
+                "payee_name": "Attempted disclosure", "memo": "", "is_cleared": False,
+                "splits": [], "tags": [],
+            },
+        ),
+        client.delete(
+            f"/api/v1/budgets/{budget['id']}/transactions/{hidden['id']}",
+            headers=auth(contributor_token),
+        ),
+    ]
+    assert [response.status_code for response in attempts] == [404] * len(attempts)
+
+    with session_factory() as db:
+        unchanged = db.get(Transaction, hidden["id"])
+        assert unchanged is not None
+        assert unchanged.payee_name == "Private uncategorized income"
+        assert unchanged.flag is None
+        assert unchanged.status == "posted"
+
+
+def _search_ids(client, token, budget_id):
+    response = client.get(
+        f"/api/v1/budgets/{budget_id}/transactions/search", headers=auth(token),
+    )
+    assert response.status_code == 200, response.text
+    return [row["id"] for row in response.json()["items"]]

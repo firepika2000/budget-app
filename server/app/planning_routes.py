@@ -129,13 +129,19 @@ def list_scheduled_transactions(
     if not include_inactive:
         query = query.where(ScheduledTransaction.is_active.is_(True))
     schedules = list(db.scalars(query.order_by(ScheduledTransaction.next_date, ScheduledTransaction.name)))
-    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    return [item for item in schedules if _can_access_schedule_resources(db, user, budget, item)]
+
+
+def _can_access_schedule_resources(db, user, budget, schedule) -> bool:
+    if not can_access_resource(db, user, budget, "account", schedule.account_id):
+        return False
+    if (schedule.destination_account_id is not None and
+            not can_access_resource(db, user, budget, "account", schedule.destination_account_id)):
+        return False
     visible_categories = visible_resource_ids(db, user, budget, "category")
-    return [item for item in schedules if (
-        (visible_accounts is None or item.account_id in visible_accounts)
-        and (item.destination_account_id is None or visible_accounts is None or item.destination_account_id in visible_accounts)
-        and (item.category_id is None or visible_categories is None or item.category_id in visible_categories)
-    )]
+    if visible_categories is None:
+        return True
+    return schedule.category_id is not None and schedule.category_id in visible_categories
 
 
 @router.post(
@@ -166,6 +172,8 @@ def create_scheduled_transaction(
         category is None or category.budget_id != budget_id or category.is_archived
         or not can_access_resource(db, user, budget, "category", category.id)
     ):
+        raise HTTPException(status_code=422, detail="Invalid scheduled category")
+    if body.category_id is None and visible_resource_ids(db, user, budget, "category") is not None:
         raise HTTPException(status_code=422, detail="Invalid scheduled category")
     if category is not None and not account.is_on_budget:
         raise HTTPException(status_code=422, detail="Tracking accounts cannot affect budget categories")
@@ -208,6 +216,8 @@ def _resolve_schedule_resources(db, user, budget, body):
             raise HTTPException(status_code=422, detail="Invalid scheduled category")
         if not account.is_on_budget:
             raise HTTPException(status_code=422, detail="Tracking accounts cannot affect budget categories")
+    elif visible_resource_ids(db, user, budget, "category") is not None:
+        raise HTTPException(status_code=422, detail="Invalid scheduled category")
     return account, destination, category
 
 
@@ -224,7 +234,7 @@ def update_scheduled_transaction(
         ScheduledTransaction.id == schedule_id,
         ScheduledTransaction.budget_id == budget_id,
     ).with_for_update())
-    if schedule is None or not can_access_resource(db, user, budget, "account", schedule.account_id):
+    if schedule is None or not _can_access_schedule_resources(db, user, budget, schedule):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduled transaction not found")
     # Editing a schedule is planning metadata only; it never touches actuals. Last-writer-wins.
     _resolve_schedule_resources(db, user, budget, body)
@@ -256,7 +266,7 @@ def delete_scheduled_transaction(
         ScheduledTransaction.id == schedule_id,
         ScheduledTransaction.budget_id == budget_id,
     ))
-    if schedule is None or not can_access_resource(db, user, budget, "account", schedule.account_id):
+    if schedule is None or not _can_access_schedule_resources(db, user, budget, schedule):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduled transaction not found")
     # Deleting a schedule removes only the future plan. Actual transactions already realized from it
     # are preserved; their `scheduled_transaction_id` lineage remains for audit.
@@ -278,7 +288,7 @@ def realize_scheduled_transaction(
         ScheduledTransaction.id == schedule_id,
         ScheduledTransaction.budget_id == budget_id,
     ).with_for_update())
-    if schedule is None or not can_access_resource(db, user, budget, "account", schedule.account_id):
+    if schedule is None or not _can_access_schedule_resources(db, user, budget, schedule):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduled transaction not found")
     if not schedule.is_active:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Scheduled transaction is inactive")
