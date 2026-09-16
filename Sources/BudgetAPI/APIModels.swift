@@ -763,6 +763,49 @@ public struct APIIncomeSpendingPeriod: Identifiable, Decodable, Equatable, Senda
     }
 }
 
+public struct APINetWorthPoint: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { asOf }
+    public let asOf: String
+    public let assetsMinor: Int64
+    public let liabilitiesMinor: Int64
+    public let netWorthMinor: Int64
+    public let transactionIDs: [String]
+    enum CodingKeys: String, CodingKey {
+        case asOf = "as_of", assetsMinor = "assets_minor", liabilitiesMinor = "liabilities_minor"
+        case netWorthMinor = "net_worth_minor", transactionIDs = "transaction_ids"
+    }
+}
+
+public struct APINetWorthAccount: Identifiable, Decodable, Equatable, Sendable {
+    public var id: String { accountID }
+    public let accountID: String
+    public let accountName: String
+    public let accountType: String
+    public let isOnBudget: Bool
+    public let balanceMinor: Int64
+    public let transactionIDs: [String]
+    enum CodingKeys: String, CodingKey {
+        case accountID = "account_id", accountName = "account_name", accountType = "account_type"
+        case isOnBudget = "is_on_budget", balanceMinor = "balance_minor", transactionIDs = "transaction_ids"
+    }
+}
+
+public struct APINetWorthReport: Decodable, Equatable, Sendable {
+    public let startDate: String
+    public let endDate: String
+    public let currencyCode: String
+    public let assetsMinor: Int64
+    public let liabilitiesMinor: Int64
+    public let netWorthMinor: Int64
+    public let points: [APINetWorthPoint]
+    public let accounts: [APINetWorthAccount]
+    enum CodingKeys: String, CodingKey {
+        case points, accounts
+        case startDate = "start_date", endDate = "end_date", currencyCode = "currency_code"
+        case assetsMinor = "assets_minor", liabilitiesMinor = "liabilities_minor", netWorthMinor = "net_worth_minor"
+    }
+}
+
 public struct APIForecastOccurrence: Identifiable, Decodable, Equatable, Sendable {
     public var id: String { "\(scheduledTransactionID)-\(occurredOn)" }
     public let scheduledTransactionID: String; public let name: String; public let occurredOn: String; public let accountID: String; public let destinationAccountID: String?; public let categoryID: String?; public let amountMinor: Int64

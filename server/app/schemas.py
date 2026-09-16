@@ -667,6 +667,34 @@ class IncomeSpendingReportResponse(BaseModel):
     periods: list[IncomeSpendingPeriod]
 
 
+class NetWorthPoint(BaseModel):
+    as_of: date
+    assets_minor: int
+    liabilities_minor: int
+    net_worth_minor: int
+    transaction_ids: list[str]
+
+
+class NetWorthAccount(BaseModel):
+    account_id: str
+    account_name: str
+    account_type: str
+    is_on_budget: bool
+    balance_minor: int
+    transaction_ids: list[str]
+
+
+class NetWorthReportResponse(BaseModel):
+    start_date: date
+    end_date: date
+    currency_code: str
+    assets_minor: int
+    liabilities_minor: int
+    net_worth_minor: int
+    points: list[NetWorthPoint]
+    accounts: list[NetWorthAccount]
+
+
 class TransferCreate(BaseModel):
     source_account_id: str
     destination_account_id: str

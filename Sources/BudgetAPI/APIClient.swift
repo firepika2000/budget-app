@@ -500,6 +500,23 @@ public struct APIClient {
         )
     }
 
+    public func netWorthReport(
+        budgetID: String,
+        startDate: String,
+        endDate: String,
+        accountIDs: [String] = [],
+        includeTracking: Bool = true,
+        token: String
+    ) async throws -> APINetWorthReport {
+        var query = [
+            URLQueryItem(name: "start_date", value: startDate),
+            URLQueryItem(name: "end_date", value: endDate),
+            URLQueryItem(name: "include_tracking", value: String(includeTracking)),
+        ]
+        query += accountIDs.map { URLQueryItem(name: "account_id", value: $0) }
+        return try await send(path: "api/v1/budgets/\(budgetID)/reports/net-worth", queryItems: query, token: token)
+    }
+
     public func delegatedBudget(budgetID: String, token: String) async throws -> APIDelegatedBudget? {
         try await send(path: "api/v1/budgets/\(budgetID)/delegated-budgets/me", token: token)
     }

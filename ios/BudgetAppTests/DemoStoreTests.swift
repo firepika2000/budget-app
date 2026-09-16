@@ -427,6 +427,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("SectorMark(angle:"))
         XCTAssertTrue(contents.contains("spending-breakdown-sector-chart"))
         XCTAssertTrue(contents.contains("income-spending-trends-chart"))
+        XCTAssertTrue(contents.contains("net-worth-history-chart"))
     }
 
     @MainActor
@@ -441,6 +442,9 @@ final class DemoStoreTests: XCTestCase {
         let transferIDs = Set(store.transactions.filter { $0.transferID != nil }.map(\.id))
         XCTAssertTrue(Set(report.incomeTransactionIDs).isDisjoint(with: transferIDs))
         XCTAssertTrue(Set(report.spendingTransactionIDs).isDisjoint(with: transferIDs))
+        let netWorth = try XCTUnwrap(store.netWorthReport)
+        XCTAssertEqual(netWorth.accounts.reduce(Int64(0)) { $0 + $1.balanceMinor }, netWorth.netWorthMinor)
+        XCTAssertEqual(netWorth.assetsMinor + netWorth.liabilitiesMinor, netWorth.netWorthMinor)
     }
 
     @MainActor

@@ -93,7 +93,7 @@ None at this checkpoint.
 
 ## v0.5 checkpoint — Activity browser scale and lifecycle filtering
 
-Status: **ENGINEERING VERIFIED — commit/push pending**
+Status: **ENGINEERING VERIFIED**
 
 The production transaction browser previously called `_visible_transactions`, hydrating every visible
 transaction and every split before applying filters, sorting, and pagination in Python. That made the
@@ -123,7 +123,7 @@ No previously accepted workflow is invalidated.
 
 ## v0.5 checkpoint — Restricted-resource mutation parity
 
-Status: **ENGINEERING VERIFIED — commit/push pending**
+Status: **ENGINEERING VERIFIED — pushed in `869a1db`**
 
 The security audit found that list/search correctly hid uncategorized transactions from a
 category-restricted member, but several ID-addressed endpoints treated an empty category set as
@@ -208,4 +208,30 @@ Verification:
   focused Demo/report parity test); the Xcode Beta runner
   again stalled only while finalizing the already-complete result bundle and was interrupted afterward;
 - full backend: PASS (200 passed, 10 PostgreSQL-only skipped); `git diff --check`: PASS;
+- no migration and no mutation of Live, attachment, or Simulator data.
+
+## v0.6 checkpoint — historical net worth
+
+Status: **ENGINEERING VERIFIED**
+
+The server now owns a historical net-worth report with exact monthly observations, assets,
+liabilities, total net worth, final account contributions, and contributing transaction IDs. The
+report requires both report and account-balance capabilities, applies account-resource restrictions,
+rejects hidden-account filters without disclosure, and supports explicit account/tracking scope.
+Transfers remain net-neutral because both authoritative legs participate in account balances.
+
+The production Insights hierarchy renders the same report contract for Demo and Live using an
+accessible native line chart and exact summary/account rows. Account rows drill into the existing
+production account register rather than creating a report-only transaction browser.
+
+Verification:
+
+- focused backend analytics: PASS (8 tests, including tracking, transfer neutrality, exact account
+  reconciliation, and restricted-account privacy);
+- Swift package: PASS (27 BudgetCore + 35 BudgetAPI);
+- Xcode 27 Beta Simulator build for iPhone 17 Pro Max / iOS 27: PASS;
+- full backend: PASS (202 passed, 10 PostgreSQL-only skipped);
+- native focused regression on Xcode 27 Beta, iPhone 17 Pro Max / iOS 27: PASS (2 tests), including
+  Demo exact report reconciliation and the production chart-path guard;
+- `git diff --check`: PASS;
 - no migration and no mutation of Live, attachment, or Simulator data.

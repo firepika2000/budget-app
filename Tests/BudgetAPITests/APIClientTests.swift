@@ -571,6 +571,25 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(report.differenceMinor, 188_500)
     }
 
+    func testNetWorthReportUsesExplicitTrackingAndAccountScope() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/reports/net-worth")
+            let query = try XCTUnwrap(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems)
+            XCTAssertTrue(query.contains(URLQueryItem(name: "include_tracking", value: "true")))
+            XCTAssertTrue(query.contains(URLQueryItem(name: "account_id", value: "a1")))
+            let response = Data(#"{"start_date":"2026-07-01","end_date":"2026-08-31","currency_code":"USD","assets_minor":125000,"liabilities_minor":-50000,"net_worth_minor":75000,"points":[{"as_of":"2026-07-31","assets_minor":125000,"liabilities_minor":-50000,"net_worth_minor":75000,"transaction_ids":["opening"]}],"accounts":[{"account_id":"a1","account_name":"Checking","account_type":"checking","is_on_budget":true,"balance_minor":75000,"transaction_ids":["opening"]}]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let report = try await client.netWorthReport(budgetID: "b1", startDate: "2026-07-01", endDate: "2026-08-31", accountIDs: ["a1"], token: "secret")
+        XCTAssertEqual(report.netWorthMinor, 75_000)
+        XCTAssertEqual(report.points.first?.transactionIDs, ["opening"])
+        XCTAssertEqual(report.accounts.first?.accountID, "a1")
+    }
+
     func testStructuredConflictDetailSurfacesActionableMessage() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

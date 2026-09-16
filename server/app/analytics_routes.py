@@ -13,7 +13,7 @@ from .budgeting_routes import require_budget_capability
 from .database import get_db
 from .dependencies import get_current_user
 from .models import Account, Category, CategoryGroup, Transaction, User
-from .schemas import IncomeSpendingReportResponse, SpendingReportResponse
+from .schemas import IncomeSpendingReportResponse, NetWorthReportResponse, SpendingReportResponse
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/reports")
@@ -203,4 +203,75 @@ def income_spending_report(
         "income_transaction_ids": income_ids,
         "spending_transaction_ids": spending_ids,
         "periods": periods,
+    }
+
+
+@router.get("/net-worth", response_model=NetWorthReportResponse)
+def net_worth_report(
+    budget_id: str,
+    start_date: date,
+    end_date: date,
+    account_id: list[str] = Query(default=[]),
+    include_tracking: bool = True,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if start_date > end_date:
+        raise HTTPException(status_code=422, detail="Report start date must not follow end date")
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
+    require_budget_capability(db, user, budget_id, "view_account_balances")
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    if visible_accounts is not None and any(value not in visible_accounts for value in account_id):
+        raise HTTPException(status_code=404, detail="Report resource not found")
+    accounts_query = select(Account).where(Account.budget_id == budget_id)
+    if account_id:
+        accounts_query = accounts_query.where(Account.id.in_(account_id))
+    if visible_accounts is not None:
+        accounts_query = accounts_query.where(Account.id.in_(visible_accounts))
+    if not include_tracking:
+        accounts_query = accounts_query.where(Account.is_on_budget.is_(True))
+    accounts = list(db.scalars(accounts_query.order_by(Account.name, Account.id)))
+    account_ids = [item.id for item in accounts]
+    transactions = list(db.scalars(
+        select(Transaction).where(
+            Transaction.account_id.in_(account_ids),
+            Transaction.occurred_on <= end_date,
+        ).order_by(Transaction.occurred_on, Transaction.created_at, Transaction.id)
+    )) if account_ids else []
+
+    def observation(as_of: date) -> tuple[int, int, int, list[str]]:
+        balances = {value: 0 for value in account_ids}
+        contributing_ids = []
+        for transaction in transactions:
+            if transaction.occurred_on <= as_of:
+                balances[transaction.account_id] += transaction.amount_minor
+                contributing_ids.append(transaction.id)
+        assets = sum(max(value, 0) for value in balances.values())
+        liabilities = sum(min(value, 0) for value in balances.values())
+        return assets, liabilities, assets + liabilities, contributing_ids
+
+    points = []
+    cursor = date(start_date.year, start_date.month, 1)
+    while cursor <= end_date:
+        as_of = min(_month_end(cursor), end_date)
+        assets, liabilities, total, transaction_ids = observation(as_of)
+        points.append({
+            "as_of": as_of, "assets_minor": assets, "liabilities_minor": liabilities,
+            "net_worth_minor": total, "transaction_ids": transaction_ids,
+        })
+        cursor = _month_end(cursor) + timedelta(days=1)
+    assets, liabilities, total, _ = observation(end_date)
+    account_rows = []
+    for account in accounts:
+        account_transactions = [item for item in transactions if item.account_id == account.id]
+        account_rows.append({
+            "account_id": account.id, "account_name": account.name, "account_type": account.account_type,
+            "is_on_budget": account.is_on_budget,
+            "balance_minor": sum(item.amount_minor for item in account_transactions),
+            "transaction_ids": [item.id for item in account_transactions],
+        })
+    return {
+        "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,
+        "assets_minor": assets, "liabilities_minor": liabilities, "net_worth_minor": total,
+        "points": points, "accounts": account_rows,
     }

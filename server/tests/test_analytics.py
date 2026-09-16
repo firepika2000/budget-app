@@ -208,3 +208,73 @@ def test_report_filters_and_inclusive_custom_range(client, owner_token, session_
     assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&category_group=Fun")[0] == {dining["id"]}
     # Combined filters intersect (Fun group + cleared true has no rows).
     assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-30&category_group=Fun&cleared=true")[0] == set()
+
+
+def test_net_worth_history_is_exact_transfer_neutral_and_account_explainable(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Checking", "account_type": "checking"},
+    ).json()
+    savings = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Savings", "account_type": "savings"},
+    ).json()
+    loan = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Loan", "account_type": "loan", "is_on_budget": False},
+    ).json()
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100000, occurred_on="2026-07-01")
+    record(client, owner_token, budget["id"], account_id=savings["id"], amount_minor=25000, occurred_on="2026-07-01")
+    record(client, owner_token, budget["id"], account_id=loan["id"], amount_minor=-50000, occurred_on="2026-07-01")
+    transfer = client.post(
+        f"/api/v1/budgets/{budget['id']}/transfers", headers=auth(owner_token),
+        json={"source_account_id": checking["id"], "destination_account_id": savings["id"], "amount_minor": 10000, "occurred_on": "2026-08-15"},
+    )
+    assert transfer.status_code == 201, transfer.text
+    url = f"/api/v1/budgets/{budget['id']}/reports/net-worth?start_date=2026-07-01&end_date=2026-08-31"
+    response = client.get(url, headers=auth(owner_token))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["assets_minor"] == 125000
+    assert body["liabilities_minor"] == -50000
+    assert body["net_worth_minor"] == 75000
+    assert [point["net_worth_minor"] for point in body["points"]] == [75000, 75000]
+    assert sum(row["balance_minor"] for row in body["accounts"]) == body["net_worth_minor"]
+    assert {row["account_id"] for row in body["accounts"]} == {checking["id"], savings["id"], loan["id"]}
+    without_tracking = client.get(f"{url}&include_tracking=false", headers=auth(owner_token)).json()
+    assert without_tracking["net_worth_minor"] == 125000
+    assert loan["id"] not in str(without_tracking)
+
+
+def test_net_worth_rejects_hidden_account_filter_and_never_aggregates_it(
+    client, owner_token, session_factory
+):
+    from .test_delegated_access import add_child, configure_child
+
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    hidden = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Private", "account_type": "tracking", "is_on_budget": False, "starting_balance_minor": 900000},
+    ).json()
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, checking["id"], groceries["id"])
+    expanded = client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token),
+        json={
+            "capabilities": ["view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports"],
+            "restrict_accounts": True, "account_ids": [checking["id"]],
+            "restrict_categories": True, "category_ids": [groceries["id"]],
+        },
+    )
+    assert expanded.status_code == 200, expanded.text
+    url = f"/api/v1/budgets/{budget['id']}/reports/net-worth?start_date=2026-09-01&end_date=2026-09-30"
+    response = client.get(url, headers=auth(child_token))
+    assert response.status_code == 200, response.text
+    assert hidden["id"] not in response.text
+    assert response.json()["net_worth_minor"] == 0
+    forbidden = client.get(f"{url}&account_id={hidden['id']}", headers=auth(child_token))
+    assert forbidden.status_code == 404
