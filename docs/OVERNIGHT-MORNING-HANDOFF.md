@@ -787,3 +787,21 @@ and VoiceOver accessibility remain available. A production-composition XCUITest 
 fix for an initial Continue-versus-Restart wiring error, then passed the complete automatic-present →
 advance → skip → Profile resume → production Plan route on Xcode 27 Beta and the preserved iPhone 17
 Pro Max / iOS 27 simulator. A native XCTest proves persistence and financial-state neutrality.
+
+## v0.7 engineering closure
+
+Status: **ENGINEERING COMPLETE — human acceptance remains separate**
+
+The final closure audit found no additional application defect. The complete backend suite collected
+267 tests and passed 256 with the 11 intentionally PostgreSQL-gated cases skipped. Those 11 cases then
+passed against a new isolated PostgreSQL 17 cluster whose schema was built through the complete Alembic
+graph. Migration/invariant/golden coverage passed (28 tests), Swift passed (27 BudgetCore + 43
+BudgetAPI), native XCTest passed (77/77), and production XCUITest passed (32/32). The latter covered
+real workspace/tab composition, dark accessibility text, onboarding, household policy editing,
+attachments, browser/bulk operations, schedules, transaction lifecycle, charts, and canonical editors.
+
+The restricted-resource privacy matrix also passed across discovery, selectors, transaction counts,
+aggregates/filters, payees, attachments, targets, allowances, delegated actions, and ID-addressed
+operations. `V0.7-CLOSURE-AUDIT.md` records the exact evidence and consolidates the remaining human work
+into five end-to-end flows. Migrations `0023`–`0025` remain unapplied to the human Live database. No
+merge, tag, release claim, Simulator reset, or human-data mutation occurred.
