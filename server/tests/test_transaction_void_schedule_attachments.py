@@ -115,6 +115,7 @@ def test_make_recurring_preserves_posting_and_uses_robust_future_calendar(client
     assert date.fromisoformat(schedule["next_date"]) > date.today()
     assert schedule["next_date"].endswith("-02-28")
     assert schedule["amount_minor"] == -2500 and schedule["category_id"] == category["id"]
+    assert schedule["payee_id"] == original["payee_id"]
     assert schedule["memo"] == "template"
     after = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()
     assert after == before

@@ -91,6 +91,7 @@ struct ScheduleOperation: Equatable, Sendable {
     let accountID: String
     let destinationAccountID: String?
     let categoryID: String?
+    let payeeID: String?
     let name: String
     let amountMinor: Int64
     let nextDate: String
@@ -99,10 +100,10 @@ struct ScheduleOperation: Equatable, Sendable {
     let memo: String
     let isActive: Bool
 
-    init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, name: String,
+    init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, payeeID: String? = nil, name: String,
          amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1,
          memo: String = "", isActive: Bool = true) {
-        self.accountID = accountID; self.destinationAccountID = destinationAccountID; self.categoryID = categoryID
+        self.accountID = accountID; self.destinationAccountID = destinationAccountID; self.categoryID = categoryID; self.payeeID = payeeID
         self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate; self.recurrenceUnit = recurrenceUnit
         self.intervalCount = intervalCount; self.memo = memo; self.isActive = isActive
     }
@@ -509,6 +510,6 @@ extension TransferMoneyOperation {
 
 extension ScheduleOperation {
     var apiValue: APIScheduledTransactionCreate {
-        APIScheduledTransactionCreate(accountID: accountID, destinationAccountID: destinationAccountID, categoryID: categoryID, name: name, amountMinor: amountMinor, nextDate: nextDate, recurrenceUnit: recurrenceUnit, intervalCount: intervalCount, memo: memo, isActive: isActive)
+        APIScheduledTransactionCreate(accountID: accountID, destinationAccountID: destinationAccountID, categoryID: categoryID, payeeID: payeeID, name: name, amountMinor: amountMinor, nextDate: nextDate, recurrenceUnit: recurrenceUnit, intervalCount: intervalCount, memo: memo, isActive: isActive)
     }
 }

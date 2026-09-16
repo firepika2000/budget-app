@@ -325,6 +325,9 @@ class ScheduledTransaction(Base):
     category_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("categories.id", ondelete="RESTRICT"), index=True, nullable=True
     )
+    payee_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("payees.id", ondelete="SET NULL"), index=True, nullable=True
+    )
     name: Mapped[str] = mapped_column(String(150))
     amount_minor: Mapped[int] = mapped_column(BigInteger)
     next_date: Mapped[date] = mapped_column(Date, index=True)

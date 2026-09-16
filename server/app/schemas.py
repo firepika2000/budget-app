@@ -280,6 +280,7 @@ class ScheduledTransactionCreate(BaseModel):
     account_id: str
     destination_account_id: Optional[str] = None
     category_id: Optional[str] = None
+    payee_id: Optional[str] = None
     name: str = Field(min_length=1, max_length=150)
     amount_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
     next_date: date
@@ -294,8 +295,8 @@ class ScheduledTransactionCreate(BaseModel):
         if self.destination_account_id is not None:
             if self.destination_account_id == self.account_id:
                 raise ValueError("scheduled transfer accounts must be different")
-            if self.category_id is not None or self.amount_minor < 0:
-                raise ValueError("scheduled transfers use a positive amount and no category")
+            if self.category_id is not None or self.payee_id is not None or self.amount_minor < 0:
+                raise ValueError("scheduled transfers use a positive amount and no category or payee")
         return self
 
 
@@ -311,6 +312,7 @@ class ScheduledTransactionResponse(BaseModel):
     account_id: str
     destination_account_id: Optional[str]
     category_id: Optional[str]
+    payee_id: Optional[str]
     name: str
     amount_minor: int
     next_date: date

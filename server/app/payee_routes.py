@@ -14,7 +14,7 @@ from .access import can_access_resource, visible_resource_ids
 from .budgeting_routes import require_budget_capability
 from .database import get_db
 from .dependencies import get_current_user
-from .models import Budget, Category, Payee, PayeeAlias, PayeeBudgetPreference, Transaction, TransactionChange, TransactionSplit, User
+from .models import Budget, Category, Payee, PayeeAlias, PayeeBudgetPreference, ScheduledTransaction, Transaction, TransactionChange, TransactionSplit, User
 from .payee_names import display_payee_name, normalized_payee_name
 from .schemas import PayeeAliasCreate, PayeeAliasResponse, PayeeCreate, PayeeMerge, PayeePageResponse, PayeeResponse, PayeeUpdate
 
@@ -47,7 +47,14 @@ def _visible_transactions(db: Session, user: User, budget: Budget) -> list[Trans
              (bool(row.splits) and all(split.category_id in categories for split in row.splits)))]
 
 
-def _response(db: Session, budget: Budget, payee: Payee, visible: list[Transaction]) -> dict:
+def _response(
+    db: Session,
+    budget: Budget,
+    payee: Payee,
+    visible: list[Transaction],
+    *,
+    include_aliases: bool = True,
+) -> dict:
     rows = [row for row in visible if row.payee_id == payee.id]
     preference = _preference(db, budget.id, payee.id)
     return {
@@ -55,8 +62,26 @@ def _response(db: Session, budget: Budget, payee: Payee, visible: list[Transacti
         "is_archived": payee.is_archived, "merged_into_payee_id": payee.merged_into_payee_id,
         "default_category_id": preference.default_category_id if preference else None,
         "transaction_count": len(rows), "net_amount_minor": sum(row.amount_minor for row in rows),
-        "aliases": list(db.scalars(select(PayeeAlias).where(PayeeAlias.payee_id == payee.id).order_by(PayeeAlias.display_name))),
+        "aliases": list(db.scalars(select(PayeeAlias).where(PayeeAlias.payee_id == payee.id).order_by(PayeeAlias.display_name)))
+        if include_aliases else [],
     }
+
+
+def _name_collision(
+    db: Session,
+    household_id: str,
+    key: str,
+    *,
+    excluding_payee_id: str | None = None,
+) -> bool:
+    payee_query = select(Payee.id).where(Payee.household_id == household_id, Payee.name_key == key)
+    alias_query = select(PayeeAlias.id).join(Payee, Payee.id == PayeeAlias.payee_id).where(
+        Payee.household_id == household_id,
+        PayeeAlias.name_key == key,
+    )
+    if excluding_payee_id is not None:
+        payee_query = payee_query.where(Payee.id != excluding_payee_id)
+    return db.scalar(payee_query.limit(1)) is not None or db.scalar(alias_query.limit(1)) is not None
 
 
 def _visible_transaction_conditions(user: User, budget: Budget, db: Session) -> list:
@@ -107,11 +132,17 @@ def search_payees(
         query = query.where(visible_count > 0)
     key = normalized_payee_name(q)
     if key:
-        alias_match = exists(select(PayeeAlias.id).where(
-            PayeeAlias.payee_id == Payee.id,
-            PayeeAlias.name_key.contains(key),
-        ))
-        query = query.where(or_(Payee.name_key.contains(key), alias_match))
+        if scoped:
+            # Aliases are household matching metadata. A scoped member may use
+            # canonical identities already visible through authorized
+            # transactions, but must not infer private aliases by guessing.
+            query = query.where(Payee.name_key.contains(key))
+        else:
+            alias_match = exists(select(PayeeAlias.id).where(
+                PayeeAlias.payee_id == Payee.id,
+                PayeeAlias.name_key.contains(key),
+            ))
+            query = query.where(or_(Payee.name_key.contains(key), alias_match))
     query = query.order_by(visible_count.desc(), func.lower(Payee.display_name), Payee.id).offset(offset).limit(limit + 1)
     rows = list(db.scalars(query))
     page, has_more = rows[:limit], len(rows) > limit
@@ -122,7 +153,10 @@ def search_payees(
     next_cursor = None
     if has_more:
         next_cursor = base64.urlsafe_b64encode(str(offset + limit).encode("ascii")).decode("ascii")
-    return PayeePageResponse(items=[_response(db, budget, item, visible) for item in page], next_cursor=next_cursor)
+    return PayeePageResponse(
+        items=[_response(db, budget, item, visible, include_aliases=not scoped) for item in page],
+        next_cursor=next_cursor,
+    )
 
 
 @router.get("/payees", response_model=list[PayeeResponse])
@@ -134,10 +168,11 @@ def list_payees(budget_id: str, include_archived: bool = False, user: User = Dep
         query = query.where(Payee.is_archived.is_(False), Payee.merged_into_payee_id.is_(None))
     payees = list(db.scalars(query.order_by(Payee.display_name, Payee.id)))
     # A scoped member may discover a payee only through a transaction they can already see.
-    if visible_resource_ids(db, user, budget, "account") is not None or visible_resource_ids(db, user, budget, "category") is not None:
+    scoped = visible_resource_ids(db, user, budget, "account") is not None or visible_resource_ids(db, user, budget, "category") is not None
+    if scoped:
         visible_ids = {row.payee_id for row in visible if row.payee_id is not None}
         payees = [item for item in payees if item.id in visible_ids]
-    return [_response(db, budget, item, visible) for item in payees]
+    return [_response(db, budget, item, visible, include_aliases=not scoped) for item in payees]
 
 
 def _set_preference(db: Session, budget: Budget, payee: Payee, category_id: str | None, user: User) -> None:
@@ -162,7 +197,10 @@ def create_payee(budget_id: str, body: PayeeCreate, user: User = Depends(get_cur
     name = display_payee_name(body.display_name)
     if not name:
         raise HTTPException(status_code=422, detail="Enter a payee name")
-    payee = Payee(household_id=budget.household_id, display_name=name, name_key=normalized_payee_name(name), created_by_user_id=user.id)
+    key = normalized_payee_name(name)
+    if _name_collision(db, budget.household_id, key):
+        raise HTTPException(status_code=409, detail="A payee or alias with this name already exists")
+    payee = Payee(household_id=budget.household_id, display_name=name, name_key=key, created_by_user_id=user.id)
     db.add(payee)
     try:
         db.flush()
@@ -184,8 +222,11 @@ def update_payee(budget_id: str, payee_id: str, body: PayeeUpdate, user: User = 
     name = display_payee_name(body.display_name)
     if not name:
         raise HTTPException(status_code=422, detail="Enter a payee name")
+    key = normalized_payee_name(name)
+    if _name_collision(db, budget.household_id, key, excluding_payee_id=payee.id):
+        raise HTTPException(status_code=409, detail="A payee or alias with this name already exists")
     old_name = payee.display_name
-    payee.display_name, payee.name_key, payee.is_archived = name, normalized_payee_name(name), body.is_archived
+    payee.display_name, payee.name_key, payee.is_archived = name, key, body.is_archived
     if name != old_name:
         for transaction in db.scalars(select(Transaction).where(Transaction.payee_id == payee.id)):
             transaction.payee_name = name
@@ -197,6 +238,8 @@ def update_payee(budget_id: str, payee_id: str, body: PayeeUpdate, user: User = 
                 before_json=json.dumps({"payee_id": payee.id, "payee_name": old_name}),
                 after_json=json.dumps({"payee_id": payee.id, "payee_name": name}),
             ))
+        for schedule in db.scalars(select(ScheduledTransaction).where(ScheduledTransaction.payee_id == payee.id)):
+            schedule.name = name
     _set_preference(db, budget, payee, body.default_category_id, user)
     try:
         db.commit()
@@ -210,13 +253,14 @@ def update_payee(budget_id: str, payee_id: str, body: PayeeUpdate, user: User = 
 def create_alias(budget_id: str, payee_id: str, body: PayeeAliasCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> PayeeAlias:
     budget = require_budget_capability(db, user, budget_id, "manage_payees")
     payee = _payee(db, budget, payee_id)
+    if payee.is_archived or payee.merged_into_payee_id is not None:
+        raise HTTPException(status_code=409, detail="Aliases require an active payee")
     name = display_payee_name(body.display_name)
     if not name:
         raise HTTPException(status_code=422, detail="Enter an alias")
     key = normalized_payee_name(name)
-    collision = db.scalar(select(PayeeAlias).join(Payee, Payee.id == PayeeAlias.payee_id).where(Payee.household_id == budget.household_id, PayeeAlias.name_key == key))
-    if collision is not None:
-        raise HTTPException(status_code=409, detail="This alias is already in use")
+    if _name_collision(db, budget.household_id, key):
+        raise HTTPException(status_code=409, detail="This payee name or alias is already in use")
     alias = PayeeAlias(payee_id=payee.id, display_name=name, name_key=key, created_by_user_id=user.id)
     db.add(alias); db.commit(); db.refresh(alias)
     return alias
@@ -236,7 +280,8 @@ def delete_alias(budget_id: str, payee_id: str, alias_id: str, user: User = Depe
 def merge_payee(budget_id: str, payee_id: str, body: PayeeMerge, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
     budget = require_budget_capability(db, user, budget_id, "manage_payees")
     source, destination = _payee(db, budget, payee_id), _payee(db, budget, body.destination_payee_id)
-    if source.id == destination.id or source.merged_into_payee_id is not None or destination.merged_into_payee_id is not None:
+    if (source.id == destination.id or source.is_archived or destination.is_archived or
+            source.merged_into_payee_id is not None or destination.merged_into_payee_id is not None):
         raise HTTPException(status_code=409, detail="Choose two active payees")
     for transaction in db.scalars(select(Transaction).where(Transaction.payee_id == source.id)):
         before = transaction.payee_id
@@ -244,8 +289,24 @@ def merge_payee(budget_id: str, payee_id: str, body: PayeeMerge, user: User = De
         transaction.payee_name = destination.display_name
         db.add(TransactionChange(budget_id=transaction.budget_id, transaction_id=transaction.id, actor_user_id=user.id,
                                  action="payee_merged", before_json=f'{{"payee_id":"{before}"}}', after_json=f'{{"payee_id":"{destination.id}"}}'))
-    for alias in db.scalars(select(PayeeAlias).where(PayeeAlias.payee_id == source.id)):
-        alias.payee_id = destination.id
+    for schedule in db.scalars(select(ScheduledTransaction).where(ScheduledTransaction.payee_id == source.id)):
+        schedule.payee_id = destination.id
+        schedule.name = destination.display_name
+    destination_alias_keys = set(db.scalars(select(PayeeAlias.name_key).where(PayeeAlias.payee_id == destination.id)))
+    for alias in list(db.scalars(select(PayeeAlias).where(PayeeAlias.payee_id == source.id))):
+        if alias.name_key == destination.name_key or alias.name_key in destination_alias_keys:
+            db.delete(alias)
+        else:
+            alias.payee_id = destination.id
+            destination_alias_keys.add(alias.name_key)
+    source_key = normalized_payee_name(source.display_name)
+    if source_key != destination.name_key and source_key not in destination_alias_keys:
+        db.add(PayeeAlias(
+            payee_id=destination.id,
+            display_name=source.display_name,
+            name_key=source_key,
+            created_by_user_id=user.id,
+        ))
     db.execute(delete(PayeeBudgetPreference).where(PayeeBudgetPreference.payee_id == source.id))
     source.merged_into_payee_id = destination.id
     source.is_archived = True

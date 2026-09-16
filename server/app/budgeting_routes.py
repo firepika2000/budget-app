@@ -1185,7 +1185,7 @@ def create_schedule_from_transaction(
         raise HTTPException(status_code=422, detail="Next occurrence must be in the future")
     schedule = ScheduledTransaction(
         budget_id=budget_id, account_id=original.account_id, category_id=original.category_id,
-        name=original.payee_name or "Recurring transaction", amount_minor=original.amount_minor,
+        payee_id=original.payee_id, name=original.payee_name or "Recurring transaction", amount_minor=original.amount_minor,
         next_date=next_date, recurrence_unit=body.recurrence_unit, interval_count=body.interval_count,
         memo=original.memo, is_active=True, created_by_user_id=user.id,
     )

@@ -55,7 +55,7 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
         attachment_count = connection.execute(
             text("SELECT COUNT(*) FROM transaction_attachments")
         ).scalar_one()
-        assert version == "0020_payee_identity_repair"
+        assert version == "0021_scheduled_payee_id"
         assert attachment_count == 0
 
 
@@ -84,6 +84,41 @@ def test_0020_repairs_text_only_transaction_payee_identity(tmp_path, monkeypatch
         assert {"payee_name": row["payee_name"], "amount_minor": row["amount_minor"], "flag": row["flag"]} == {"payee_name": "Metadata test", "amount_minor": -200, "flag": "orange"}
         payee = connection.execute(text("SELECT display_name, name_key FROM payees WHERE id = :id"), {"id": row["payee_id"]}).mappings().one()
         assert payee == {"display_name": "Metadata test", "name_key": "metadata test"}
+
+
+def test_0021_links_existing_schedules_without_creating_or_merging_payees(tmp_path, monkeypatch):
+    database_path = tmp_path / "scheduled-payee.db"
+    database_url = f"sqlite:///{database_path}"
+    monkeypatch.setenv("BUDGET_APP_DATABASE_URL", database_url)
+    monkeypatch.setenv("BUDGET_APP_JWT_SECRET", "migration-test-secret-that-is-longer-than-32-characters")
+    config = migration_config()
+    command.upgrade(config, "0020_payee_identity_repair")
+    engine = create_engine(database_url)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.com', 'Owner', 'hash', :now)"), {"now": now})
+        connection.execute(text("INSERT INTO households (id, name, owner_user_id, created_at) VALUES ('h1', 'Home', 'u1', :now)"), {"now": now})
+        connection.execute(text("INSERT INTO budgets (id, household_id, name, currency_code, allocation_version, created_at) VALUES ('b1', 'h1', 'Budget', 'USD', 0, :now)"), {"now": now})
+        connection.execute(text("INSERT INTO accounts (id, budget_id, name, account_type, is_on_budget, is_closed, created_at) VALUES ('a1', 'b1', 'Checking', 'checking', 1, 0, :now)"), {"now": now})
+        connection.execute(text(
+            "INSERT INTO payees (id, household_id, display_name, name_key, is_archived, merged_into_payee_id, created_by_user_id, created_at, updated_at) "
+            "VALUES ('p1', 'h1', 'Corner Market', 'corner market', 0, NULL, 'u1', :now, :now)"
+        ), {"now": now})
+        connection.execute(text(
+            "INSERT INTO scheduled_transactions (id, budget_id, account_id, destination_account_id, category_id, name, amount_minor, next_date, recurrence_unit, interval_count, memo, is_active, last_realized_on, created_by_user_id, created_at, updated_at) "
+            "VALUES ('s1', 'b1', 'a1', NULL, NULL, '  CORNER   MARKET ', -500, '2026-10-01', 'months', 1, '', 1, NULL, 'u1', :now, :now), "
+            "('s2', 'b1', 'a1', NULL, NULL, 'Unknown Merchant', -600, '2026-10-01', 'months', 1, '', 1, NULL, 'u1', :now, :now)"
+        ), {"now": now})
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        rows = connection.execute(text(
+            "SELECT id, payee_id, name, amount_minor FROM scheduled_transactions ORDER BY id"
+        )).mappings().all()
+        assert rows == [
+            {"id": "s1", "payee_id": "p1", "name": "  CORNER   MARKET ", "amount_minor": -500},
+            {"id": "s2", "payee_id": None, "name": "Unknown Merchant", "amount_minor": -600},
+        ]
+        assert connection.execute(text("SELECT COUNT(*) FROM payees")).scalar_one() == 1
 
 
 def test_existing_monthly_assignment_is_backfilled_into_balanced_ledger(

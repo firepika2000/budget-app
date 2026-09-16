@@ -177,6 +177,7 @@ public struct APIScheduledTransaction: Identifiable, Decodable, Equatable, Senda
     public let accountID: String
     public let destinationAccountID: String?
     public let categoryID: String?
+    public let payeeID: String?
     public let name: String
     public let amountMinor: Int64
     public let nextDate: String
@@ -192,6 +193,7 @@ public struct APIScheduledTransaction: Identifiable, Decodable, Equatable, Senda
         case accountID = "account_id"
         case destinationAccountID = "destination_account_id"
         case categoryID = "category_id"
+        case payeeID = "payee_id"
         case amountMinor = "amount_minor"
         case nextDate = "next_date"
         case recurrenceUnit = "recurrence_unit"
@@ -205,6 +207,7 @@ public struct APIScheduledTransactionCreate: Encodable, Sendable {
     public let accountID: String
     public let destinationAccountID: String?
     public let categoryID: String?
+    public let payeeID: String?
     public let name: String
     public let amountMinor: Int64
     public let nextDate: String
@@ -213,8 +216,9 @@ public struct APIScheduledTransactionCreate: Encodable, Sendable {
     public let memo: String
     public let isActive: Bool
 
-    public init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, name: String, amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1, memo: String = "", isActive: Bool = true) {
+    public init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, payeeID: String? = nil, name: String, amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1, memo: String = "", isActive: Bool = true) {
         self.accountID = accountID; self.destinationAccountID = destinationAccountID; self.categoryID = categoryID
+        self.payeeID = payeeID
         self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate
         self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.memo = memo; self.isActive = isActive
     }
@@ -224,6 +228,7 @@ public struct APIScheduledTransactionCreate: Encodable, Sendable {
         case accountID = "account_id"
         case destinationAccountID = "destination_account_id"
         case categoryID = "category_id"
+        case payeeID = "payee_id"
         case amountMinor = "amount_minor"
         case nextDate = "next_date"
         case recurrenceUnit = "recurrence_unit"

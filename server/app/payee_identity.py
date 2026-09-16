@@ -8,15 +8,16 @@ from .models import Budget, Payee, PayeeAlias, User
 from .payee_names import display_payee_name, normalized_payee_name
 
 
-def resolve_or_create_payee(
+def resolve_payee(
     db: Session,
     *,
     budget: Budget,
     user: User,
     payee_id: str | None,
     payee_name: str,
+    create: bool,
 ) -> tuple[str | None, str]:
-    """Resolve transaction text to one active household payee, creating it when necessary."""
+    """Resolve text to one active household payee, optionally creating it."""
     name = display_payee_name(payee_name)
     if payee_id is not None:
         payee = db.scalar(select(Payee).where(
@@ -54,8 +55,17 @@ def resolve_or_create_payee(
         Payee.household_id == budget.household_id,
         Payee.name_key == key,
     ))
-    if unavailable is not None:
+    unavailable_alias = db.scalar(select(PayeeAlias.id).join(
+        Payee, Payee.id == PayeeAlias.payee_id,
+    ).where(
+        Payee.household_id == budget.household_id,
+        PayeeAlias.name_key == key,
+    ))
+    if unavailable is not None or unavailable_alias is not None:
         raise ValueError("Payee is archived or merged")
+
+    if not create:
+        return None, name
 
     try:
         with db.begin_nested():
@@ -77,3 +87,22 @@ def resolve_or_create_payee(
         if payee is None:
             raise
     return payee.id, payee.display_name
+
+
+def resolve_or_create_payee(
+    db: Session,
+    *,
+    budget: Budget,
+    user: User,
+    payee_id: str | None,
+    payee_name: str,
+) -> tuple[str | None, str]:
+    """Resolve transaction text to one active household payee, creating it when necessary."""
+    return resolve_payee(
+        db,
+        budget=budget,
+        user=user,
+        payee_id=payee_id,
+        payee_name=payee_name,
+        create=True,
+    )

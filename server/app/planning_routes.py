@@ -19,7 +19,7 @@ from .models import (
     Transaction,
     User,
 )
-from .payee_identity import resolve_or_create_payee
+from .payee_identity import resolve_or_create_payee, resolve_payee
 from .planning import next_occurrence, occurrences_between
 from .schemas import (
     CategoryTargetResponse,
@@ -169,10 +169,19 @@ def create_scheduled_transaction(
         raise HTTPException(status_code=422, detail="Invalid scheduled category")
     if category is not None and not account.is_on_budget:
         raise HTTPException(status_code=422, detail="Tracking accounts cannot affect budget categories")
+    values = body.model_dump()
+    if destination is None:
+        try:
+            values["payee_id"], values["name"] = resolve_payee(
+                db, budget=budget, user=user, payee_id=body.payee_id,
+                payee_name=body.name, create=False,
+            )
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid scheduled payee") from None
     schedule = ScheduledTransaction(
         budget_id=budget_id,
         created_by_user_id=user.id,
-        **body.model_dump(),
+        **values,
     )
     db.add(schedule)
     db.commit()
@@ -219,7 +228,16 @@ def update_scheduled_transaction(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduled transaction not found")
     # Editing a schedule is planning metadata only; it never touches actuals. Last-writer-wins.
     _resolve_schedule_resources(db, user, budget, body)
-    for field, value in body.model_dump().items():
+    values = body.model_dump()
+    if body.destination_account_id is None:
+        try:
+            values["payee_id"], values["name"] = resolve_payee(
+                db, budget=budget, user=user, payee_id=body.payee_id,
+                payee_name=body.name, create=False,
+            )
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid scheduled payee") from None
+    for field, value in values.items():
         setattr(schedule, field, value)
     db.commit()
     db.refresh(schedule)
@@ -296,7 +314,7 @@ def realize_scheduled_transaction(
     else:
         try:
             payee_id, payee_name = resolve_or_create_payee(
-                db, budget=budget, user=user, payee_id=None, payee_name=schedule.name,
+                db, budget=budget, user=user, payee_id=schedule.payee_id, payee_name=schedule.name,
             )
         except ValueError:
             raise HTTPException(status_code=422, detail="Scheduled payee is archived or merged; edit the schedule before entering it") from None

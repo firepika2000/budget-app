@@ -224,6 +224,38 @@ def test_realization_creates_exactly_one_transaction_and_advances(client, owner_
     assert txn_count(client, owner_token, budget["id"]) == before_count + 1
 
 
+def test_schedule_keeps_canonical_payee_identity_through_rename_and_realization(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    payee = client.post(f"/api/v1/budgets/{budget['id']}/payees", headers=auth(owner_token), json={
+        "display_name": "Original Merchant",
+    }).json()
+    created = create_schedule(
+        client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"],
+        payee_id=payee["id"], name="spoofed client text", amount_minor=-500,
+        next_date=PAST, recurrence_unit="months",
+    )
+    assert created.status_code == 201, created.text
+    schedule = created.json()
+    assert schedule["payee_id"] == payee["id"]
+    assert schedule["name"] == "Original Merchant"
+
+    renamed = client.put(f"/api/v1/budgets/{budget['id']}/payees/{payee['id']}", headers=auth(owner_token), json={
+        "display_name": "Renamed Merchant", "is_archived": False,
+    })
+    assert renamed.status_code == 200, renamed.text
+    listed = client.get(sched_url(budget["id"]), headers=auth(owner_token)).json()
+    assert listed[0]["payee_id"] == payee["id"]
+    assert listed[0]["name"] == "Renamed Merchant"
+
+    realized = client.post(realize_url(budget["id"], schedule["id"]), headers=auth(owner_token))
+    assert realized.status_code == 200, realized.text
+    with session_factory() as db:
+        transaction = db.get(Transaction, realized.json()["transaction_ids"][0])
+        assert transaction.payee_id == payee["id"]
+        assert transaction.payee_name == "Renamed Merchant"
+
+
 def test_once_schedule_deactivates_after_realization_and_cannot_repeat(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])

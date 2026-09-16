@@ -660,14 +660,16 @@ final class APIClientTests: XCTestCase {
                 let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
                 XCTAssertEqual(json["amount_minor"] as? Int, -1599)
                 XCTAssertEqual(json["recurrence_unit"] as? String, "months")
+                XCTAssertEqual(json["payee_id"] as? String, "p1")
             }
-            let body = Data(#"{"id":"s1","budget_id":"b1","account_id":"a1","destination_account_id":null,"category_id":"c1","name":"Netflix","amount_minor":-1599,"next_date":"2026-10-01","recurrence_unit":"months","interval_count":1,"memo":"","is_active":true,"last_realized_on":null}"#.utf8)
+            let body = Data(#"{"id":"s1","budget_id":"b1","account_id":"a1","destination_account_id":null,"category_id":"c1","payee_id":"p1","name":"Netflix","amount_minor":-1599,"next_date":"2026-10-01","recurrence_unit":"months","interval_count":1,"memo":"","is_active":true,"last_realized_on":null}"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: request.httpMethod == "POST" ? 201 : 200, httpVersion: nil, headerFields: nil)!, body)
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
 
-        let created = try await client.createScheduledTransaction(budgetID: "b1", schedule: APIScheduledTransactionCreate(accountID: "a1", categoryID: "c1", name: "Netflix", amountMinor: -1599, nextDate: "2026-10-01", recurrenceUnit: "months"), token: "secret")
+        let created = try await client.createScheduledTransaction(budgetID: "b1", schedule: APIScheduledTransactionCreate(accountID: "a1", categoryID: "c1", payeeID: "p1", name: "Netflix", amountMinor: -1599, nextDate: "2026-10-01", recurrenceUnit: "months"), token: "secret")
         XCTAssertEqual(created.id, "s1")
+        XCTAssertEqual(created.payeeID, "p1")
         XCTAssertEqual(created.recurrenceUnit, "months")
 
         let realized = try await client.realizeScheduledTransaction(budgetID: "b1", scheduleID: "s1", token: "secret")
