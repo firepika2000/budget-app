@@ -805,3 +805,20 @@ aggregates/filters, payees, attachments, targets, allowances, delegated actions,
 operations. `V0.7-CLOSURE-AUDIT.md` records the exact evidence and consolidates the remaining human work
 into five end-to-end flows. Migrations `0023`–`0025` remain unapplied to the human Live database. No
 merge, tag, release claim, Simulator reset, or human-data mutation occurred.
+
+## v0.8 checkpoint — type-appropriate debt-terms contract
+
+Status: **BACKEND ENGINEERING VERIFIED — application UI remains next**
+
+Optional debt planning terms now have a first-class one-to-one account record rather than being
+embedded in balances or inferred from account names. Credit cards support exact basis-point APR,
+fixed/variable rate, monthly due/cycle data, fixed/percentage/greater-of minimum-payment rules, and an
+optional promotional rate/end date. Installment loans support exact basis-point APR, fixed/variable
+rate, weekly/biweekly/monthly scheduled payment, due day, original principal, and original/remaining
+term. Type validation prevents either product from accepting the other product's fields.
+
+Incomplete terms are valid and return explicit `projection_ready` plus named missing inputs; no APR,
+payment, term, or projection is guessed. CRUD uses the existing account capability/resource scope,
+hidden accounts remain non-disclosing, and terms are included in structured backup export. Editing or
+removing terms does not touch transactions, balances, reconciliation, allocations, card reserves, or
+Ready to Assign. Migration `0026_debt_terms` is source-only and was not applied to human Live data.

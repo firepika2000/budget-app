@@ -57,10 +57,43 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
         ).scalar_one()
         report_indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('transactions')"))}
         favorite_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('category_favorites')"))}
-        assert version == "0025_request_lifecycle"
+        debt_term_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('account_debt_terms')"))}
+        assert version == "0026_debt_terms"
         assert attachment_count == 0
         assert "ix_transaction_budget_date_id" in report_indexes
         assert {"budget_id", "user_id", "category_id", "sort_order"} <= favorite_columns
+        assert {"account_id", "budget_id", "terms_type", "annual_rate_basis_points"} <= debt_term_columns
+
+
+def test_0026_debt_terms_populated_upgrade_and_downgrade_preserve_accounts(tmp_path, monkeypatch):
+    database_path = tmp_path / "debt-terms.db"
+    database_url = f"sqlite:///{database_path}"
+    monkeypatch.setenv("BUDGET_APP_DATABASE_URL", database_url)
+    monkeypatch.setenv("BUDGET_APP_JWT_SECRET", "migration-test-secret-that-is-longer-than-32-characters")
+    config = migration_config()
+    command.upgrade(config, "0025_request_lifecycle")
+    engine = create_engine(database_url)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.com', 'Owner', 'hash', :now)"), {"now": now})
+        connection.execute(text("INSERT INTO households (id, name, owner_user_id, created_at) VALUES ('h1', 'Home', 'u1', :now)"), {"now": now})
+        connection.execute(text("INSERT INTO budgets (id, household_id, name, currency_code, allocation_version, created_at) VALUES ('b1', 'h1', 'Budget', 'USD', 0, :now)"), {"now": now})
+        connection.execute(text("INSERT INTO accounts (id, budget_id, name, account_type, is_on_budget, is_closed, created_at) VALUES ('a1', 'b1', 'Loan', 'loan', 0, 0, :now)"), {"now": now})
+
+    command.upgrade(config, "head")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO account_debt_terms (account_id, budget_id, terms_type, annual_rate_basis_points, updated_at) "
+            "VALUES ('a1', 'b1', 'installment_loan', 625, :now)"
+        ), {"now": now})
+        assert connection.execute(text("SELECT annual_rate_basis_points FROM account_debt_terms WHERE account_id = 'a1'")).scalar_one() == 625
+
+    command.downgrade(config, "0025_request_lifecycle")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT name FROM accounts WHERE id = 'a1'")).scalar_one() == "Loan"
+        assert "account_debt_terms" not in {
+            row[0] for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type = 'table'"))
+        }
 
 
 def test_0020_repairs_text_only_transaction_payee_identity(tmp_path, monkeypatch):

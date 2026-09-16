@@ -10,6 +10,7 @@ from .database import get_db
 from .dependencies import get_current_user
 from .models import (
     Account,
+    AccountDebtTerms,
     AllocationOperation,
     AllocationPosting,
     AllowanceIssuance,
@@ -90,6 +91,7 @@ def export_budget_json(
             Membership.household_id == budget.household_id
         ))))],
         "accounts": [row_data(item) for item in db.scalars(select(Account).where(Account.budget_id == budget_id))],
+        "account_debt_terms": [row_data(item) for item in db.scalars(select(AccountDebtTerms).where(AccountDebtTerms.budget_id == budget_id))],
         "category_groups": [row_data(item) for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))],
         "categories": [row_data(item) for item in db.scalars(select(Category).where(Category.budget_id == budget_id))],
         "targets": [row_data(item) for item in db.scalars(select(CategoryTarget).where(CategoryTarget.budget_id == budget_id))],

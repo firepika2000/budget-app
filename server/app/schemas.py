@@ -157,6 +157,58 @@ class AccountBalanceResponse(BaseModel):
     reconciled_balance_minor: Optional[int]
 
 
+class AccountDebtTermsUpsert(BaseModel):
+    terms_type: Literal["credit_card", "installment_loan"]
+    annual_rate_basis_points: Optional[int] = Field(default=None, ge=0, le=100_000)
+    rate_type: Optional[Literal["fixed", "variable"]] = None
+    payment_frequency: Optional[Literal["weekly", "biweekly", "monthly"]] = None
+    scheduled_payment_minor: Optional[int] = Field(default=None, ge=0, le=MAX_INT64)
+    minimum_payment_rule: Optional[Literal["fixed", "percentage", "greater_of"]] = None
+    minimum_payment_minor: Optional[int] = Field(default=None, ge=0, le=MAX_INT64)
+    minimum_payment_rate_basis_points: Optional[int] = Field(default=None, ge=0, le=10_000)
+    due_day: Optional[int] = Field(default=None, ge=1, le=31)
+    statement_day: Optional[int] = Field(default=None, ge=1, le=31)
+    original_principal_minor: Optional[int] = Field(default=None, ge=0, le=MAX_INT64)
+    original_term_months: Optional[int] = Field(default=None, ge=1, le=1_200)
+    remaining_term_months: Optional[int] = Field(default=None, ge=0, le=1_200)
+    promotional_rate_basis_points: Optional[int] = Field(default=None, ge=0, le=100_000)
+    promotional_ends_on: Optional[date] = None
+
+    @model_validator(mode="after")
+    def validate_type_specific_terms(self):
+        if self.terms_type == "credit_card":
+            if any(value is not None for value in (
+                self.scheduled_payment_minor, self.original_principal_minor,
+                self.original_term_months, self.remaining_term_months,
+            )):
+                raise ValueError("credit-card terms cannot contain installment-loan fields")
+            if self.payment_frequency not in (None, "monthly"):
+                raise ValueError("credit-card payment frequency must be monthly")
+            if self.minimum_payment_rule == "fixed" and self.minimum_payment_minor is None:
+                raise ValueError("fixed minimum payment requires minimum_payment_minor")
+            if self.minimum_payment_rule == "percentage" and self.minimum_payment_rate_basis_points is None:
+                raise ValueError("percentage minimum payment requires minimum_payment_rate_basis_points")
+            if self.minimum_payment_rule == "greater_of" and (
+                self.minimum_payment_minor is None or self.minimum_payment_rate_basis_points is None
+            ):
+                raise ValueError("greater_of requires both minimum payment inputs")
+        elif any(value is not None for value in (
+            self.minimum_payment_rule, self.minimum_payment_minor,
+            self.minimum_payment_rate_basis_points, self.statement_day,
+            self.promotional_rate_basis_points, self.promotional_ends_on,
+        )):
+            raise ValueError("installment-loan terms cannot contain credit-card fields")
+        return self
+
+
+class AccountDebtTermsResponse(AccountDebtTermsUpsert):
+    account_id: str
+    budget_id: str
+    projection_ready: bool
+    missing_projection_fields: list[str]
+    updated_at: datetime
+
+
 class CategoryGroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     sort_order: int = 0

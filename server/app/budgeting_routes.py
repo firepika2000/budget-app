@@ -36,6 +36,7 @@ from .credit import add_payment_reserve_event, add_purchase_reserve_events, ensu
 from .category_names import normalized_category_name
 from .models import (
     Account,
+    AccountDebtTerms,
     AllowancePlan,
     AllowanceSplit,
     AllocationOperation,
@@ -64,6 +65,8 @@ from .schemas import (
     AccountCreate,
     AccountUpdate,
     AccountBalanceResponse,
+    AccountDebtTermsResponse,
+    AccountDebtTermsUpsert,
     AccountResponse,
     AllocationOperationResponse,
     AllocationTransferCreate,
@@ -102,6 +105,28 @@ from .attachment_storage import AttachmentStorage, safe_filename, validate_conte
 
 ON_BUDGET_CASH_TYPES = {"checking", "savings", "cash"}
 TRACKING_TYPES = {"loan", "tracking"}
+
+
+def debt_terms_readiness(terms: AccountDebtTerms) -> tuple[bool, list[str]]:
+    common = ["annual_rate_basis_points", "rate_type", "payment_frequency", "due_day"]
+    if terms.terms_type == "credit_card":
+        required = common + ["minimum_payment_rule"]
+        if terms.minimum_payment_rule in ("fixed", "greater_of"):
+            required.append("minimum_payment_minor")
+        if terms.minimum_payment_rule in ("percentage", "greater_of"):
+            required.append("minimum_payment_rate_basis_points")
+    else:
+        required = common + ["scheduled_payment_minor"]
+    missing = [name for name in required if getattr(terms, name) is None]
+    return not missing, missing
+
+
+def debt_terms_response(terms: AccountDebtTerms) -> dict:
+    ready, missing = debt_terms_readiness(terms)
+    return {
+        column.key: getattr(terms, column.key)
+        for column in AccountDebtTerms.__table__.columns
+    } | {"projection_ready": ready, "missing_projection_fields": missing}
 
 
 def validate_account_treatment(account_type: str, is_on_budget: bool) -> None:
@@ -355,6 +380,82 @@ def update_account(
         raise HTTPException(status_code=409, detail="A category with this name already exists in the group")
     db.refresh(account)
     return account
+
+
+@router.get("/accounts/{account_id}/debt-terms", response_model=AccountDebtTermsResponse)
+def get_account_debt_terms(
+    budget_id: str,
+    account_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    budget = require_budget_capability(db, user, budget_id, "view_account_balances")
+    account = db.get(Account, account_id)
+    if account is None or account.budget_id != budget_id or account.account_type not in {"credit", "loan"} or not can_access_resource(
+        db, user, budget, "account", account_id
+    ):
+        raise HTTPException(status_code=404, detail="Account not found")
+    terms = db.get(AccountDebtTerms, account_id)
+    if terms is None:
+        raise HTTPException(status_code=404, detail="Debt terms not found")
+    return debt_terms_response(terms)
+
+
+@router.put("/accounts/{account_id}/debt-terms", response_model=AccountDebtTermsResponse)
+def upsert_account_debt_terms(
+    budget_id: str,
+    account_id: str,
+    body: AccountDebtTermsUpsert,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    budget = require_budget_capability(db, user, budget_id, "manage_budget_structure")
+    account = db.get(Account, account_id)
+    if account is None or account.budget_id != budget_id or not can_access_resource(
+        db, user, budget, "account", account_id
+    ):
+        raise HTTPException(status_code=404, detail="Account not found")
+    expected_type = (
+        "credit_card" if account.account_type == "credit"
+        else "installment_loan" if account.account_type == "loan"
+        else None
+    )
+    if expected_type is None:
+        raise HTTPException(status_code=422, detail="Debt terms are available only for credit cards and loans")
+    if body.terms_type != expected_type:
+        raise HTTPException(status_code=422, detail=f"Use {expected_type} terms for this account")
+    values = body.model_dump()
+    terms = db.get(AccountDebtTerms, account_id)
+    if terms is None:
+        terms = AccountDebtTerms(account_id=account_id, budget_id=budget_id, **values)
+        db.add(terms)
+    else:
+        for name, value in values.items():
+            setattr(terms, name, value)
+        terms.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(terms)
+    return debt_terms_response(terms)
+
+
+@router.delete("/accounts/{account_id}/debt-terms", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account_debt_terms(
+    budget_id: str,
+    account_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    budget = require_budget_capability(db, user, budget_id, "manage_budget_structure")
+    account = db.get(Account, account_id)
+    if account is None or account.budget_id != budget_id or account.account_type not in {"credit", "loan"} or not can_access_resource(
+        db, user, budget, "account", account_id
+    ):
+        raise HTTPException(status_code=404, detail="Account not found")
+    terms = db.get(AccountDebtTerms, account_id)
+    if terms is not None:
+        db.delete(terms)
+        db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/accounts/{account_id}/balance", response_model=AccountBalanceResponse)

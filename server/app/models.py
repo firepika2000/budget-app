@@ -227,6 +227,37 @@ class Account(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class AccountDebtTerms(Base):
+    """Optional planning metadata for a debt account; never a ledger balance."""
+
+    __tablename__ = "account_debt_terms"
+
+    account_id: Mapped[str] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True
+    )
+    budget_id: Mapped[str] = mapped_column(
+        ForeignKey("budgets.id", ondelete="CASCADE"), index=True
+    )
+    terms_type: Mapped[str] = mapped_column(String(30))
+    annual_rate_basis_points: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rate_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    payment_frequency: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    scheduled_payment_minor: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    minimum_payment_rule: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    minimum_payment_minor: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    minimum_payment_rate_basis_points: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    due_day: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    statement_day: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    original_principal_minor: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    original_term_months: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    remaining_term_months: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    promotional_rate_basis_points: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    promotional_ends_on: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+
 class CategoryGroup(Base):
     __tablename__ = "category_groups"
 
