@@ -429,6 +429,9 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("income-spending-trends-chart"))
         XCTAssertTrue(contents.contains("net-worth-history-chart"))
         XCTAssertTrue(contents.contains("plan-performance-category-"))
+        XCTAssertTrue(contents.contains(".chartXSelection(value: $selectedDate)"))
+        XCTAssertTrue(contents.contains("income-spending-selected-period"))
+        XCTAssertTrue(contents.contains("net-worth-selected-point"))
     }
 
     @MainActor

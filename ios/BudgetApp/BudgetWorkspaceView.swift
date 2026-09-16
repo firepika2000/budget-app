@@ -2617,6 +2617,7 @@ private struct BudgetPerformanceInsightsView: View {
 private struct NetWorthReportView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let report: APINetWorthReport
+    @State private var selectedDate: Date?
     private let dateFormatter: DateFormatter = { let value = DateFormatter(); value.locale = Locale(identifier: "en_US_POSIX"); value.dateFormat = "yyyy-MM-dd"; return value }()
 
     var body: some View {
@@ -2636,6 +2637,7 @@ private struct NetWorthReportView: View {
                     }
                 }
                 .chartXAxis { AxisMarks(values: .automatic(desiredCount: min(report.points.count, 6))) { _ in AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
+                .chartXSelection(value: $selectedDate)
                 .frame(minHeight: 240)
                 .accessibilityIdentifier("net-worth-history-chart")
                 .accessibilityLabel("Net worth history from \(report.startDate) through \(report.endDate)")
@@ -2644,6 +2646,14 @@ private struct NetWorthReportView: View {
             LabeledContent("Assets", value: store.format(report.assetsMinor))
             LabeledContent("Liabilities", value: store.format(report.liabilitiesMinor))
             LabeledContent("Net worth", value: store.format(report.netWorthMinor)).fontWeight(.semibold)
+            if let point = selectedPoint {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Selected \(point.asOf)").font(.headline)
+                    LabeledContent("Assets", value: store.format(point.assetsMinor))
+                    LabeledContent("Liabilities", value: store.format(point.liabilitiesMinor))
+                    LabeledContent("Net worth", value: store.format(point.netWorthMinor))
+                }.accessibilityIdentifier("net-worth-selected-point")
+            }
             ForEach(report.accounts) { row in
                 if let account = store.accounts.first(where: { $0.id == row.accountID }) {
                     NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: { LabeledContent(row.accountName, value: store.format(row.balanceMinor)) }
@@ -2652,11 +2662,19 @@ private struct NetWorthReportView: View {
             }
         }
     }
+
+    private var selectedPoint: APINetWorthPoint? {
+        guard let selectedDate else { return nil }
+        return report.points.min { lhs, rhs in
+            abs((dateFormatter.date(from: lhs.asOf) ?? .distantPast).timeIntervalSince(selectedDate)) < abs((dateFormatter.date(from: rhs.asOf) ?? .distantPast).timeIntervalSince(selectedDate))
+        }
+    }
 }
 
 private struct IncomeSpendingTrendsView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let report: APIIncomeSpendingReport
+    @State private var selectedDate: Date?
     private let dateFormatter: DateFormatter = { let value = DateFormatter(); value.locale = Locale(identifier: "en_US_POSIX"); value.dateFormat = "yyyy-MM-dd"; return value }()
 
     var body: some View {
@@ -2672,6 +2690,7 @@ private struct IncomeSpendingTrendsView: View {
                 }
                 .chartXAxis { AxisMarks(values: .automatic(desiredCount: min(report.periods.count, 6))) { _ in AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
                 .chartYAxis { AxisMarks { value in AxisGridLine(); AxisValueLabel { if let amount = value.as(Int64.self) { Text(store.format(amount)).font(.caption2) } } } }
+                .chartXSelection(value: $selectedDate)
                 .frame(minHeight: 220)
                 .accessibilityIdentifier("income-spending-trends-chart")
                 .accessibilityLabel("Income and spending history from \(report.startDate) through \(report.endDate)")
@@ -2681,6 +2700,23 @@ private struct IncomeSpendingTrendsView: View {
             LabeledContent("Spending", value: store.format(report.spendingMinor))
             LabeledContent("Net cash flow", value: store.format(report.differenceMinor))
             if let rate = report.savingsRate { LabeledContent("Savings rate", value: rate.formatted(.percent.precision(.fractionLength(0)))) }
+            if let period = selectedPeriod {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Selected \(period.periodStart) – \(period.periodEnd)").font(.headline)
+                    LabeledContent("Income", value: store.format(period.incomeMinor))
+                    LabeledContent("Spending", value: store.format(period.spendingMinor))
+                    LabeledContent("Net cash flow", value: store.format(period.differenceMinor))
+                    let ids = Array(Set(period.incomeTransactionIDs + period.spendingTransactionIDs)).sorted()
+                    if !ids.isEmpty { NavigationLink("View contributing transactions") { LiveReportTransactionsView(title: "Cash Flow", transactionIDs: ids) } }
+                }.accessibilityIdentifier("income-spending-selected-period")
+            }
+        }
+    }
+
+    private var selectedPeriod: APIIncomeSpendingPeriod? {
+        guard let selectedDate else { return nil }
+        return report.periods.min { lhs, rhs in
+            abs((dateFormatter.date(from: lhs.periodStart) ?? .distantPast).timeIntervalSince(selectedDate)) < abs((dateFormatter.date(from: rhs.periodStart) ?? .distantPast).timeIntervalSince(selectedDate))
         }
     }
 }
@@ -2751,6 +2787,19 @@ private struct LiveReportGroupView: View {
     let group: String
     private var categories: [APISpendingCategoryReport] { store.spendingReport?.categories.filter { $0.categoryGroup == group && $0.spendingMinor > 0 }.sorted { $0.spendingMinor > $1.spendingMinor } ?? [] }
     var body: some View { List { Section { LabeledContent("Total", value: store.format(categories.reduce(Int64(0)) { $0 + $1.spendingMinor })) }; Section("Categories") { ForEach(categories) { category in NavigationLink { LiveReportCategoryView(category: category) } label: { LabeledContent(category.categoryName, value: store.format(category.spendingMinor)) } } } }.navigationTitle(group) }
+}
+
+private struct LiveReportTransactionsView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let title: String
+    let transactionIDs: [String]
+    private var transactions: [APITransaction] { store.transactions.filter { transactionIDs.contains($0.id) } }
+    var body: some View {
+        List {
+            if transactions.isEmpty { ContentUnavailableView("No visible transactions", systemImage: "tray", description: Text("The contributing records are outside the currently hydrated authorized activity page.")) }
+            else { ForEach(transactions) { LiveTransactionLink(transaction: $0) } }
+        }.navigationTitle(title)
+    }
 }
 
 private struct LiveReportCategoryView: View {

@@ -311,3 +311,20 @@ Verification:
 The same production Insights composition also passes an automated dark-appearance run at the largest
 accessibility content-size category. The test restores the Simulator's prior appearance and verifies
 that the chart summary and final Plan Performance rows remain reachable through native scrolling.
+
+## v0.6 checkpoint — interactive trend selection
+
+Status: **ENGINEERING VERIFIED**
+
+Income/spending and net-worth charts now use native horizontal chart selection. A selected period or
+point exposes its exact dates, assets/liabilities/net worth, or income/spending/net cash-flow values.
+Cash-flow selections can open their contributing records through the shared production transaction
+rows/editor; net-worth account contributions retain the canonical paginated register drill-through.
+
+Verification:
+
+- Xcode 27 Beta native source/composition guard: PASS;
+- production Insights XCUITest navigation journey: PASS;
+- direct synthetic XCUITest taps on Swift Charts' accessibility proxy do not forward to
+  `chartXSelection`, so gesture-level chart selection remains a small human acceptance item;
+- no backend, migration, or persisted-data mutation.

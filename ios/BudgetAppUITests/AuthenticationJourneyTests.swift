@@ -34,6 +34,10 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(spending.waitForExistence(timeout: 5))
         XCTAssertFalse(spending.label.isEmpty)
 
+        let cashFlow = app.otherElements.matching(identifier: "income-spending-trends-chart").firstMatch
+        for _ in 0..<5 where !cashFlow.exists { app.swipeUp() }
+        XCTAssertTrue(cashFlow.waitForExistence(timeout: 5))
+
         let netWorth = app.otherElements.matching(identifier: "net-worth-history-chart").firstMatch
         for _ in 0..<5 where !netWorth.exists { app.swipeUp() }
         XCTAssertTrue(netWorth.waitForExistence(timeout: 5))
