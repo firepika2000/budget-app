@@ -1,7 +1,7 @@
 import hashlib
 import json
 import shutil
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from app.models import CreditCardReserveEvent, Transaction, TransactionAttachment, TransactionChange
 from app.attachment_storage import AttachmentStorage
@@ -25,12 +25,14 @@ def test_void_cash_split_is_one_way_current_dated_and_exact(client, owner_token,
     original = record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=-1500,
                       payee_name="Market", splits=[{"category_id": groceries["id"], "amount_minor": -1000},
                                                     {"category_id": dining["id"], "amount_minor": -500}])
+    utc_date_before = datetime.now(timezone.utc).date().isoformat()
     response = client.post(endpoint(budget["id"], original["id"], "void"), headers=auth(owner_token), json={"reason": "Duplicate charge"})
+    utc_date_after = datetime.now(timezone.utc).date().isoformat()
     assert response.status_code == 201, response.text
     reversal = response.json()
     assert reversal["status"] == "reversal"
     assert reversal["amount_minor"] == 1500
-    assert reversal["occurred_on"] == date.today().isoformat()
+    assert reversal["occurred_on"] in {utc_date_before, utc_date_after}
     assert reversal["reversal_of_transaction_id"] == original["id"]
     assert sum(item["amount_minor"] for item in reversal["splits"]) == 1500
     rows = {item["id"]: item for item in client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()}
