@@ -5,6 +5,21 @@ import BudgetAPI
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testDemoHouseholdAccessPersistsPresetAndScopeWithoutChangingWorkspaceMoney() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let before = (store.summary?.readyToAssignMinor, store.accounts.map(\.id), store.transactions.map(\.id))
+        let initial = try await store.accessProfile(userID: "demo-member")
+        let capabilities = ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"]
+        _ = try await store.updateAccessProfile(userID: "demo-member", value: .init(capabilities: capabilities, restrictAccounts: true, accountIDs: ["checking"], restrictCategories: false, categoryIDs: [], expectedVersion: initial.version))
+        let reloaded = try await store.accessProfile(userID: "demo-member")
+        XCTAssertTrue(reloaded.restrictAccounts)
+        XCTAssertEqual(reloaded.accountIDs, ["checking"])
+        XCTAssertEqual((store.summary?.readyToAssignMinor, store.accounts.map(\.id), store.transactions.map(\.id)).0, before.0)
+        XCTAssertEqual(store.accounts.map(\.id), before.1)
+        XCTAssertEqual(store.transactions.map(\.id), before.2)
+    }
     override func tearDown() {
         ConnectionURLProtocol.handler = nil
         super.tearDown()

@@ -655,6 +655,40 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(app.textFields["Payee"].value as? String, "Neighborhood Market")
     }
 
+    func testOwnerCanPersistHumanReadableMemberAccessThroughProductionHouseholdFlow() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo"]
+        app.launch()
+
+        app.buttons["profile-settings-button"].tap()
+        app.buttons["Household and access"].tap()
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
+        app.buttons["member-access-demo-member"].tap()
+        XCTAssertTrue(app.navigationBars["Sam Rivera"].waitForExistence(timeout: 5))
+
+        let preset = app.buttons["member-access-preset"]
+        XCTAssertTrue(preset.waitForExistence(timeout: 5))
+        preset.tap()
+        app.buttons["Full Access"].tap()
+        let accountScope = app.switches["member-access-restrict-accounts"]
+        for _ in 0..<6 where !accountScope.exists { app.swipeUp() }
+        XCTAssertTrue(accountScope.waitForExistence(timeout: 5))
+        accountScope.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertTrue(app.switches["Household Checking"].waitForExistence(timeout: 5))
+        let checkingScope = app.switches["Household Checking"]
+        checkingScope.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(checkingScope.value as? String, "1")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.buttons["Saved"].waitForExistence(timeout: 5))
+
+        app.navigationBars.buttons["Household"].tap()
+        app.buttons["member-access-demo-member"].tap()
+        XCTAssertTrue(app.navigationBars["Sam Rivera"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["member-access-preset"].label.contains("Full Access"))
+        for _ in 0..<6 where !app.switches["member-access-restrict-accounts"].exists { app.swipeUp() }
+        XCTAssertEqual(app.switches["member-access-restrict-accounts"].value as? String, "1")
+    }
+
     func testProductionPayeeManagementAddsAliasWithoutRewritingHistory() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo"]

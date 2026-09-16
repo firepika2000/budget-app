@@ -259,6 +259,8 @@ protocol WorkspaceDataSource: AnyObject {
 
 @MainActor
 protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRepository, TransactionCommandRepository, TransactionBrowserRepository, ScheduleCommandRepository, PayeeCommandRepository {
+    func accessProfile(userID: String) async throws -> APIAccessProfile
+    func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws
     func createGroup(name: String) async throws
     func createRequest(_ value: APIFinancialRequestCreate) async throws
@@ -279,6 +281,7 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
 final class DemoWorkspaceDataSource: WorkspaceDataSource {
     let demo: DemoStore
     private var attachmentData: [String: Data] = [:]
+    private var accessProfiles: [String: APIAccessProfile] = [:]
     let budget: APIBudget
 
     init(fresh: Bool = false) {
@@ -510,7 +513,11 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let scheduledOutflows = demoForecast.occurrences.filter { $0.destinationAccountID == nil && $0.amountMinor < 0 }.reduce(Int64(0)) { $0 - $1.amountMinor }
         let cashIDs = Set(visibleAccounts.filter { $0.isOnBudget && ["checking", "savings", "cash"].contains($0.kind.rawValue) }.map(\.id))
         let resilience: APIResilienceReport = try decode(["as_of": demoForecast.asOf, "through": demoForecast.through, "currency_code": budget.currencyCode, "cash_buffer_minor": demoForecast.accounts.filter { cashIDs.contains($0.accountID) }.reduce(Int64(0)) { $0 + $1.actualBalanceMinor }, "current_on_budget_minor": demoForecast.actualTotalOnBudgetMinor, "projected_on_budget_minor": demoForecast.projectedTotalOnBudgetMinor, "lowest_projected_on_budget_minor": demoForecast.lowestProjectedTotalMinor, "scheduled_income_minor": scheduledIncome, "scheduled_outflows_minor": scheduledOutflows, "expected_margin_minor": scheduledIncome - scheduledOutflows, "essential_expense_coverage_days": NSNull(), "emergency_fund_coverage_days": NSNull(), "unavailable_metrics": ["essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.", "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification."]])
-        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: [], spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: demoForecast, members: [], delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
+        let members: [APIHouseholdMember] = try decode([
+            ["user_id": "demo-owner", "email": "alex@example.test", "display_name": "Alex Rivera", "role": "owner", "is_active": true],
+            ["user_id": "demo-member", "email": "sam@example.test", "display_name": "Sam Rivera", "role": "adult", "is_active": true]
+        ])
+        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: [], spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: demoForecast, members: members, delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
     }
 
     func exportReports(report: WorkspaceReportQuery) async throws -> Data {
@@ -540,6 +547,18 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 }
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
+    func accessProfile(userID: String) async throws -> APIAccessProfile {
+        if let profile = accessProfiles[userID] { return profile }
+        return try decode(["budget_id": budget.id, "user_id": userID, "capabilities": ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"], "restrict_accounts": false, "account_ids": [], "restrict_categories": false, "category_ids": [], "grant_permission": "view", "is_custom": false, "version": 0, "updated_by_user_id": NSNull(), "updated_by_display_name": NSNull(), "updated_at": NSNull()])
+    }
+
+    func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile {
+        let current = try await accessProfile(userID: userID)
+        guard value.expectedVersion == nil || value.expectedVersion == current.version else { throw APIClientError.server(status: 409, message: "Access changed elsewhere. Reload and try again.") }
+        let profile: APIAccessProfile = try decode(["budget_id": budget.id, "user_id": userID, "capabilities": value.capabilities, "restrict_accounts": value.restrictAccounts, "account_ids": value.accountIDs, "restrict_categories": value.restrictCategories, "category_ids": value.categoryIDs, "grant_permission": "custom", "is_custom": true, "version": current.version + 1, "updated_by_user_id": "demo-owner", "updated_by_display_name": "Alex Rivera", "updated_at": "2026-09-16T12:00:00Z"])
+        accessProfiles[userID] = profile
+        return profile
+    }
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage {
         let calendar = Calendar.current
         let report = WorkspaceReportQuery(start: calendar.date(byAdding: .year, value: -100, to: Date())!, end: calendar.date(byAdding: .year, value: 100, to: Date())!, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
@@ -812,6 +831,9 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     private var token: String { credentials.token }
     private var client: APIClient { get throws { try credentials.client() } }
     init(budget: APIBudget, credentials: LiveWorkspaceCredentials) { self.budget = budget; self.credentials = credentials }
+
+    func accessProfile(userID: String) async throws -> APIAccessProfile { try await credentials.prepare(); return try await client.accessProfile(budgetID: budget.id, userID: userID, token: token) }
+    func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile { try await credentials.prepare(); return try await client.updateAccessProfile(budgetID: budget.id, userID: userID, profile: value, token: token) }
 
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try await credentials.prepare(); return try await client.searchTransactions(budgetID: budget.id, query: query, token: token) }
     func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage { try await credentials.prepare(); return try await client.searchPayees(budgetID: budget.id, query: query, includeArchived: includeArchived, limit: limit, cursor: cursor, token: token) }
@@ -1291,6 +1313,12 @@ final class BudgetWorkspaceStore: ObservableObject {
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws {
         try await commands().updateDelegatedPolicy(userID: userID, value: value)
         await refresh()
+    }
+
+    func accessProfile(userID: String) async throws -> APIAccessProfile { try await commands().accessProfile(userID: userID) }
+
+    func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile {
+        try await commands().updateAccessProfile(userID: userID, value: value)
     }
 
     private func commands() throws -> WorkspaceCommandRepository {
@@ -3379,6 +3407,23 @@ struct LiveHouseholdView: View {
                     LabeledContent("Member", value: session.profile?.displayName ?? "Demo household")
                     LabeledContent("Role", value: store.budget.effectivePermission.rawValue.capitalized)
                 }
+                if store.budget.effectivePermission == .owner {
+                    Section("Household access") {
+                        ForEach(store.householdMembers.filter { $0.role != "owner" && $0.isActive }) { member in
+                            NavigationLink { LiveMemberAccessView(store: store, member: member) } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(member.displayName)
+                                    Text("Review what this member can see and change")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .accessibilityIdentifier("member-access-\(member.userID)")
+                        }
+                        if store.householdMembers.allSatisfy({ $0.role == "owner" || !$0.isActive }) {
+                            Text("No active household members to manage").foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 if store.budget.can("manage_allowances") {
                     Section("Delegated budgets") {
                         ForEach(store.householdMembers.filter { $0.role != "owner" && $0.isActive }) { member in
@@ -3417,6 +3462,143 @@ struct LiveHouseholdView: View {
 
     private func delegatedPolicy(for userID: String) -> APIDelegatedBudget? {
         store.delegatedBudgets.first { $0.userID == userID }
+    }
+}
+
+private enum MemberAccessPreset: String, CaseIterable, Identifiable {
+    case view = "View Only"
+    case limited = "Limited Access"
+    case full = "Full Access"
+    case custom = "Custom"
+    var id: String { rawValue }
+
+    var capabilities: Set<String> {
+        switch self {
+        case .view: return ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"]
+        case .limited: return ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances", "create_transaction", "edit_transaction", "request_money"]
+        case .full: return ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances", "view_allocation_history", "create_transaction", "edit_transaction", "delete_transaction", "assign_money", "move_money", "reconcile_account", "manage_budget_structure", "manage_payees", "manage_planning", "manage_allowances", "approve_request", "request_money", "export_data"]
+        case .custom: return []
+        }
+    }
+}
+
+private struct MemberCapability: Identifiable {
+    let id: String
+    let title: String
+    let explanation: String
+}
+
+private struct LiveMemberAccessView: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    let member: APIHouseholdMember
+    @State private var profile: APIAccessProfile?
+    @State private var preset: MemberAccessPreset = .view
+    @State private var capabilities: Set<String> = []
+    @State private var restrictAccounts = false
+    @State private var accountIDs: Set<String> = []
+    @State private var restrictCategories = false
+    @State private var categoryIDs: Set<String> = []
+    @State private var isLoading = true
+    @State private var isSaving = false
+    @State private var didSave = false
+    @State private var errorMessage: String?
+
+    private let visibility = [
+        MemberCapability(id: "view_budget", title: "Open this budget", explanation: "Access the budget workspace"),
+        MemberCapability(id: "view_accounts", title: "Account list", explanation: "See permitted account names"),
+        MemberCapability(id: "view_account_balances", title: "Account balances", explanation: "See balances for permitted accounts"),
+        MemberCapability(id: "view_categories", title: "Plan and categories", explanation: "See permitted categories and their plan"),
+        MemberCapability(id: "view_transactions", title: "Activity", explanation: "See transactions within permitted accounts and categories"),
+        MemberCapability(id: "view_reports", title: "Insights", explanation: "See privacy-filtered reports"),
+        MemberCapability(id: "view_allocation_history", title: "Allocation history", explanation: "See money assignment history")
+    ]
+    private let transactions = [
+        MemberCapability(id: "create_transaction", title: "Create transactions", explanation: "Add activity in permitted accounts and categories"),
+        MemberCapability(id: "edit_transaction", title: "Edit transactions", explanation: "Edit activity and manage its attachments"),
+        MemberCapability(id: "delete_transaction", title: "Delete transactions", explanation: "Remove eligible activity")
+    ]
+    private let planning = [
+        MemberCapability(id: "assign_money", title: "Assign money", explanation: "Change category assignments"),
+        MemberCapability(id: "move_money", title: "Move money", explanation: "Move available funds between permitted categories"),
+        MemberCapability(id: "manage_planning", title: "Manage planning tools", explanation: "Manage targets, funding, and scheduled transactions"),
+        MemberCapability(id: "manage_own_categories", title: "Manage own categories", explanation: "Organize categories delegated to this member")
+    ]
+    private let administration = [
+        MemberCapability(id: "manage_budget_structure", title: "Manage budget structure", explanation: "Create and edit accounts, groups, and categories"),
+        MemberCapability(id: "reconcile_account", title: "Reconcile accounts", explanation: "Finalize cleared balances"),
+        MemberCapability(id: "manage_payees", title: "Manage payees", explanation: "Rename, merge, and archive payees"),
+        MemberCapability(id: "manage_allowances", title: "Manage delegated budgets", explanation: "Set household funding authority"),
+        MemberCapability(id: "approve_request", title: "Approve requests", explanation: "Approve or deny money requests"),
+        MemberCapability(id: "request_money", title: "Request money", explanation: "Submit funding requests"),
+        MemberCapability(id: "export_data", title: "Export reports", explanation: "Export authorized reporting data")
+    ]
+
+    var body: some View {
+        Group {
+            if isLoading { ProgressView("Loading access…") }
+            else if profile == nil { ContentUnavailableView("Access unavailable", systemImage: "exclamationmark.triangle", description: Text(errorMessage ?? "Unable to load this member's access.")) }
+            else { form }
+        }
+        .navigationTitle(member.displayName)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .toolbar { if profile != nil { Button(didSave ? "Saved" : "Save") { Task { await save() } }.disabled(isSaving || (restrictAccounts && accountIDs.isEmpty) || (restrictCategories && categoryIDs.isEmpty)) } }
+        .alert("Unable to update access", isPresented: Binding(get: { errorMessage != nil && profile != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
+        .accessibilityIdentifier("member-access-screen")
+    }
+
+    private var form: some View {
+        Form {
+            if didSave { Section { Label("Access saved", systemImage: "checkmark.circle.fill").foregroundStyle(.green).accessibilityIdentifier("member-access-saved") } }
+            Section("Access level") {
+                Picker("Preset", selection: $preset) { ForEach(MemberAccessPreset.allCases) { Text($0.rawValue).tag($0) } }
+                    .onChange(of: preset) { _, value in if value != .custom { capabilities = value.capabilities } }
+                    .accessibilityIdentifier("member-access-preset")
+                if preset == .full { Text("Full budget access does not transfer household ownership.").font(.footnote).foregroundStyle(.secondary) }
+            }
+            Section("Account visibility") {
+                Toggle("Only selected accounts", isOn: $restrictAccounts).accessibilityIdentifier("member-access-restrict-accounts")
+                if restrictAccounts { ForEach(store.accounts.filter { !$0.isClosed }) { account in selectionToggle(account.name, id: account.id, values: $accountIDs) } }
+                if restrictAccounts && accountIDs.isEmpty { Text("Select at least one account.").font(.footnote).foregroundStyle(.red) }
+                Text("Transfers require transaction permission and access to both accounts.").font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("Category visibility") {
+                Toggle("Only selected categories", isOn: $restrictCategories)
+                if restrictCategories { ForEach(store.categories.filter { !$0.isArchived }) { category in selectionToggle(category.name, id: category.id, values: $categoryIDs) } }
+                if restrictCategories && categoryIDs.isEmpty { Text("Select at least one category.").font(.footnote).foregroundStyle(.red) }
+            }
+            capabilitySection("Visibility", visibility)
+            capabilitySection("Transactions", transactions)
+            capabilitySection("Planning", planning)
+            capabilitySection("Accounts, requests, and organization", administration)
+            if let profile, let actor = profile.updatedByDisplayName, let date = profile.updatedAt {
+                Section("Last change") { LabeledContent("Changed by", value: actor); LabeledContent("Date", value: date) }
+            }
+        }
+    }
+
+    private func capabilitySection(_ title: String, _ items: [MemberCapability]) -> some View {
+        Section(title) { ForEach(items) { item in Toggle(isOn: capabilityBinding(item.id)) { VStack(alignment: .leading) { Text(item.title); Text(item.explanation).font(.caption).foregroundStyle(.secondary) } } } }
+    }
+    private func capabilityBinding(_ name: String) -> Binding<Bool> { Binding(get: { capabilities.contains(name) }, set: { enabled in if enabled { capabilities.insert(name) } else { capabilities.remove(name) }; preset = matchingPreset() }) }
+    private func selectionToggle(_ title: String, id: String, values: Binding<Set<String>>) -> some View { Toggle(title, isOn: Binding(get: { values.wrappedValue.contains(id) }, set: { if $0 { values.wrappedValue.insert(id) } else { values.wrappedValue.remove(id) } })) }
+    private func matchingPreset() -> MemberAccessPreset { MemberAccessPreset.allCases.first(where: { $0 != .custom && $0.capabilities == capabilities }) ?? .custom }
+    private func load() async {
+        isLoading = true; defer { isLoading = false }
+        do { let value = try await store.accessProfile(userID: member.userID); apply(value); errorMessage = nil }
+        catch { errorMessage = error.localizedDescription }
+    }
+    private func apply(_ value: APIAccessProfile) {
+        profile = value; capabilities = Set(value.capabilities); preset = matchingPreset()
+        restrictAccounts = value.restrictAccounts; accountIDs = Set(value.accountIDs)
+        restrictCategories = value.restrictCategories; categoryIDs = Set(value.categoryIDs)
+    }
+    private func save() async {
+        guard let profile else { return }; isSaving = true; defer { isSaving = false }
+        do {
+            let value = APIAccessProfileUpsert(capabilities: capabilities.sorted(), restrictAccounts: restrictAccounts, accountIDs: accountIDs.sorted(), restrictCategories: restrictCategories, categoryIDs: categoryIDs.sorted(), expectedVersion: profile.version)
+            apply(try await store.updateAccessProfile(userID: member.userID, value: value)); errorMessage = nil; didSave = true
+        } catch { errorMessage = error.localizedDescription }
     }
 }
 

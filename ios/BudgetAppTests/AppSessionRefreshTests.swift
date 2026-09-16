@@ -99,6 +99,9 @@ final class AppSessionRefreshTests: XCTestCase {
             if request.url?.path.hasSuffix("/schedule") == true {
                 return Self.json(201, #"{"id":"s1","budget_id":"b1","account_id":"a1","destination_account_id":null,"category_id":"c1","name":"Market","amount_minor":-1200,"next_date":"2026-10-15","recurrence_unit":"months","interval_count":1,"memo":"","is_active":true,"last_realized_on":null}"#)
             }
+            if request.url?.path.hasSuffix("/access/u2") == true {
+                return Self.json(200, #"{"budget_id":"b1","user_id":"u2","capabilities":["view_budget"],"restrict_accounts":false,"account_ids":[],"restrict_categories":false,"category_ids":[],"grant_permission":"view","is_custom":false,"version":0,"updated_by_user_id":null,"updated_by_display_name":null,"updated_at":null}"#)
+            }
             return Self.json(404, "{}")
         }
         let configuration = URLSessionConfiguration.ephemeral
@@ -117,15 +120,18 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertEqual(store.liveCredentialRevision, 1)
         let afterRotation = try await store.transactionAttachments(id: "t1")
         XCTAssertEqual(afterRotation, [])
+        let accessProfile = try await store.accessProfile(userID: "u2")
+        XCTAssertEqual(accessProfile.version, 0)
         try await store.createScheduleFromTransaction(
             id: "t1",
             operation: .init(recurrenceUnit: "months", intervalCount: 1, nextDate: "2026-10-15")
         )
 
-        XCTAssertEqual(Array(requests.authorizations.prefix(3)), ["Bearer A1", "Bearer A2", "Bearer A2"])
-        XCTAssertEqual(Array(requests.paths.prefix(3)), [
+        XCTAssertEqual(Array(requests.authorizations.prefix(4)), ["Bearer A1", "Bearer A2", "Bearer A2", "Bearer A2"])
+        XCTAssertEqual(Array(requests.paths.prefix(4)), [
             "/api/v1/budgets/b1/transactions/t1/attachments",
             "/api/v1/budgets/b1/transactions/t1/attachments",
+            "/api/v1/budgets/b1/access/u2",
             "/api/v1/budgets/b1/transactions/t1/schedule",
         ])
         XCTAssertTrue(requests.authorizations.dropFirst().allSatisfy { $0 == "Bearer A2" })
