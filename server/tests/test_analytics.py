@@ -256,6 +256,112 @@ def test_net_worth_history_is_exact_transfer_neutral_and_account_explainable(
     assert loan["id"] not in str(without_tracking)
 
 
+def test_net_worth_preserves_ledger_semantics_across_liabilities_payments_and_boundaries(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Checking", "account_type": "checking"},
+    ).json()
+    card = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Card", "account_type": "credit"},
+    ).json()
+
+    # Transactions before the requested range are the opening observation balance, while a
+    # transaction after the inclusive end boundary must not affect any point or account total.
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100000,
+           occurred_on="2026-06-30", is_cleared=True)
+    record(client, owner_token, budget["id"], account_id=card["id"], amount_minor=-20000,
+           occurred_on="2026-06-30", is_cleared=True)
+    record(client, owner_token, budget["id"], account_id=card["id"], amount_minor=-5000,
+           occurred_on="2026-07-01")
+    reserved = client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{card['payment_category_id']}/assignment",
+        headers=auth(owner_token),
+        json={"month": "2026-07-01", "assigned_minor": 5000},
+    )
+    assert reserved.status_code == 200, reserved.text
+    payment = client.post(
+        f"/api/v1/budgets/{budget['id']}/transfers", headers=auth(owner_token),
+        json={
+            "source_account_id": checking["id"], "destination_account_id": card["id"],
+            "amount_minor": 5000, "occurred_on": "2026-07-31",
+        },
+    )
+    assert payment.status_code == 201, payment.text
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=999999,
+           occurred_on="2026-08-01")
+
+    report = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/net-worth"
+        "?start_date=2026-07-01&end_date=2026-07-31",
+        headers=auth(owner_token),
+    )
+    assert report.status_code == 200, report.text
+    body = report.json()
+    assert body["points"] == [{
+        "as_of": "2026-07-31", "assets_minor": 95000, "liabilities_minor": -20000,
+        "net_worth_minor": 75000, "transaction_ids": [],
+    }]
+    assert body["assets_minor"] == 95000
+    assert body["liabilities_minor"] == -20000
+    assert body["net_worth_minor"] == 75000
+    assert {row["account_name"]: row["balance_minor"] for row in body["accounts"]} == {
+        "Card": -20000, "Checking": 95000,
+    }
+
+
+def test_net_worth_counts_reconciliation_adjustments_and_void_reversals_once(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Checking", "account_type": "checking"},
+    ).json()
+    opening = record(
+        client, owner_token, budget["id"], account_id=checking["id"], amount_minor=10000,
+        occurred_on="2026-09-01", is_cleared=True,
+    )
+    mistaken = record(
+        client, owner_token, budget["id"], account_id=checking["id"], amount_minor=-1250,
+        occurred_on="2026-09-02", payee_name="Duplicate",
+    )
+    voided = client.post(
+        f"/api/v1/budgets/{budget['id']}/transactions/{mistaken['id']}/void",
+        headers=auth(owner_token), json={"reason": "Duplicate"},
+    )
+    assert voided.status_code == 201, voided.text
+    reconciled = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{checking['id']}/reconcile",
+        headers=auth(owner_token),
+        json={
+            "statement_balance_minor": 10500, "through_date": "2026-09-30",
+            "create_adjustment": True, "expected_cleared_balance_minor": 10000,
+        },
+    )
+    assert reconciled.status_code == 200, reconciled.text
+    assert reconciled.json()["adjustment_amount_minor"] == 500
+
+    report = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/net-worth"
+        "?start_date=2026-09-01&end_date=2026-09-30&include_transaction_ids=true",
+        headers=auth(owner_token),
+    )
+    assert report.status_code == 200, report.text
+    body = report.json()
+    assert body["net_worth_minor"] == 10500
+    assert body["assets_minor"] == 10500
+    assert body["liabilities_minor"] == 0
+    ids = set(body["accounts"][0]["transaction_ids"])
+    assert opening["id"] in ids
+    assert mistaken["id"] in ids
+    assert voided.json()["id"] in ids
+    assert reconciled.json()["adjustment_transaction_id"] in ids
+
+
 def test_net_worth_rejects_hidden_account_filter_and_never_aggregates_it(
     client, owner_token, session_factory
 ):

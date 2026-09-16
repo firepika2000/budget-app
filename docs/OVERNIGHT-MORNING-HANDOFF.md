@@ -8,8 +8,9 @@ tag, or release.
 
 - Current branch: `codex/v0.4.0-stabilization`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
-- Current/remote HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836` before the first overnight commit
-- Push status: first overnight checkpoint verified locally; commit/push pending
+- Current/remote HEAD: `fd1cee46a0a88dd624cf0f0c1dbae33767ff0a62` before the next checkpoint
+- Push status: all checkpoints through interactive trend selection are pushed; the current
+  report-correctness checkpoint is pending commit/push
 - Human Live database at start: `0020_payee_identity_repair`
 - Human Simulator: preserved iPhone 17 Pro Max / iOS 27.0; no erase/reset/uninstall
 
@@ -328,3 +329,22 @@ Verification:
 - direct synthetic XCUITest taps on Swift Charts' accessibility proxy do not forward to
   `chartXSelection`, so gesture-level chart selection remains a small human acceptance item;
 - no backend, migration, or persisted-data mutation.
+
+## v0.6 checkpoint — net-worth ledger correctness
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+The historical net-worth contract now has explicit end-to-end regression fixtures for opening
+history before the requested range, inclusive end boundaries, liabilities, credit-card purchases and
+payments, reconciliation adjustments, and void/reversal pairs. The fixtures prove that card payments
+move value between accounts without changing household net worth, post-range records are excluded,
+reconciliation adjustments appear exactly once, and a void plus its explicit reversal nets exactly
+without special client accounting.
+
+Verification:
+
+- focused analytics: PASS (15 tests);
+- full backend: PASS (208 passed, 10 PostgreSQL-only skipped); the unrestricted run was required only
+  for the launcher's intentional loopback-bind test;
+- no production-code, schema, Swift, migration, Live-data, attachment, or Simulator-data mutation;
+- `git diff --check`: pending final checkpoint.
