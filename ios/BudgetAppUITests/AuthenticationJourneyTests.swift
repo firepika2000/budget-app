@@ -35,6 +35,37 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["Move money"].exists)
     }
 
+    func testFreshHomeHasIntentionalUpcomingAndActivityEmptyStates() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-fresh-budget", "--demo-screen=home"]
+        app.launch()
+
+        XCTAssertTrue(app.descendants(matching: .any)["home-upcoming-empty"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["home-recent-empty"].exists)
+        XCTAssertFalse(app.staticTexts["Needs attention"].exists)
+    }
+
+    func testHomeActionsAndAttentionRemainReachableInDarkAccessibilityText() {
+        let device = XCUIDevice.shared
+        let originalAppearance = device.appearance
+        device.appearance = .dark
+        defer { device.appearance = originalAppearance }
+
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--demo", "--demo-screen=home",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["home-add-transaction"].waitForExistence(timeout: 5))
+        let attention = app.buttons["home-attention-category-dining"]
+        if !attention.exists { app.swipeUp() }
+        XCTAssertTrue(attention.waitForExistence(timeout: 5))
+        attention.tap()
+        XCTAssertTrue(app.navigationBars["Dining Out"].waitForExistence(timeout: 5))
+    }
+
     func testProductionInsightsRemainReachableInDarkModeAtAccessibilityTextSize() {
         let device = XCUIDevice.shared
         let originalAppearance = device.appearance

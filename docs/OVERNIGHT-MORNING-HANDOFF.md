@@ -623,3 +623,18 @@ Focused production-composition XCUITest PASS on Xcode 27 Beta / preserved iPhone
 the deterministic Home opened the real Dining Out category detail and exposed the existing Assign
 Money and Move Money resolution actions. The native app compiled as part of this test, and
 `git diff --check` PASS. No backend, migration, or API contract changed.
+
+## v0.7 checkpoint — complete Home context and accessibility
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Home now distinguishes active schedules from paused records before presentation. When there are no
+active schedules, it explains that paused schedules remain outside forecasts; when there are no
+posted transactions, it presents an intentional Recent Activity empty state. Empty Needs Attention
+sections are omitted. These are presentation-only decisions over authoritative workspace data.
+
+Two focused production XCUITests PASS on Xcode 27 Beta / preserved iPhone 17 Pro Max iOS 27. A fresh
+budget renders both explicit zero states without a spurious Needs Attention section. The populated
+Home keeps its transaction quick action and category resolution path reachable in dark appearance at
+an accessibility text size. This completes the Actionable Home engineering checkpoint; human visual
+and VoiceOver acceptance remain separate.

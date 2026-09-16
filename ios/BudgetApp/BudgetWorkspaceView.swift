@@ -1490,6 +1490,9 @@ private struct LiveHomeView: View {
     @State private var managingCategory: APICategory?
     private var planRows: [APICategoryMonth] { store.summary?.categories ?? [] }
     private var pendingRequests: [APIFinancialRequest] { store.requests.filter { $0.status == "pending" } }
+    private var activeSchedules: [APIScheduledTransaction] {
+        store.scheduledTransactions.filter(\.isActive).sorted { $0.nextDate < $1.nextDate }
+    }
     private var attentionRows: [APICategoryMonth] {
         planRows
             .filter { $0.isOverspent || ($0.underfundedMinor ?? 0) > 0 }
@@ -1557,13 +1560,27 @@ private struct LiveHomeView: View {
                     ForEach(pendingRequests) { request in NavigationLink { LiveRequestDetailView(requestID: request.id) } label: { Label("Request pending · \(store.format(request.requestedAmountMinor))", systemImage: "hand.raised.fill") } }
                 }
             }
-            if !store.scheduledTransactions.isEmpty {
+            if !store.isLoading {
                 Section("Upcoming") {
-                    ForEach(Array(store.scheduledTransactions.filter(\.isActive).sorted { $0.nextDate < $1.nextDate }.prefix(3))) { item in NavigationLink { LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode) } label: { ScheduledTransactionRow(item: item) } }
-                    NavigationLink("View all scheduled transactions") { LiveScheduledTransactionsView() }
+                    if activeSchedules.isEmpty {
+                        ContentUnavailableView("No upcoming schedules", systemImage: "calendar", description: Text("Paused schedules stay out of forecasts until reactivated."))
+                            .accessibilityIdentifier("home-upcoming-empty")
+                    } else {
+                        ForEach(Array(activeSchedules.prefix(3))) { item in NavigationLink { LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode) } label: { ScheduledTransactionRow(item: item) } }
+                        NavigationLink("View all scheduled transactions") { LiveScheduledTransactionsView() }
+                    }
                 }
             }
-            Section("Recent activity") { ForEach(store.transactions.prefix(5)) { LiveTransactionLink(transaction: $0) } }
+            if !store.isLoading {
+                Section("Recent activity") {
+                    if store.transactions.isEmpty {
+                        ContentUnavailableView("No posted activity yet", systemImage: "clock", description: Text("Posted transactions will appear here."))
+                            .accessibilityIdentifier("home-recent-empty")
+                    } else {
+                        ForEach(store.transactions.prefix(5)) { LiveTransactionLink(transaction: $0) }
+                    }
+                }
+            }
             if let forecast = store.forecast { Section("90-day forecast") { LabeledContent("Projected total", value: store.format(forecast.projectedTotalOnBudgetMinor)); LabeledContent("Lowest projected", value: store.format(forecast.lowestProjectedTotalMinor)); NavigationLink("View forecast") { LiveForecastView() } } }
         }
         .navigationTitle(store.budget.name)
