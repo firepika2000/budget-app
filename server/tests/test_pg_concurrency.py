@@ -171,6 +171,53 @@ def outcomes(results):
 
 
 # ---------------------------------------------------------------------------
+# Production report query plans
+# ---------------------------------------------------------------------------
+
+def _plan_indexes(node: dict) -> set[str]:
+    indexes = {node["Index Name"]} if node.get("Index Name") else set()
+    for child in node.get("Plans", []):
+        indexes.update(_plan_indexes(child))
+    return indexes
+
+
+def test_postgres_report_query_plans_use_composite_indexes(pg):
+    """Characterize production PostgreSQL plans rather than inferring them from SQLite."""
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    other_account = pg.client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(pg.token),
+        json={"name": "Historical archive", "account_type": "checking"},
+    ).json()
+    with pg.factory() as db:
+        rows = [Transaction(
+            id=f"report-{index:029d}", budget_id=budget["id"],
+            account_id=account["id"] if index % 10 == 0 else other_account["id"],
+            category_id=category["id"], amount_minor=-100,
+            occurred_on=date(2016 + (index % 132) // 12, (index % 12) + 1, (index % 27) + 1),
+            created_by_user_id=pg.owner_id,
+        ) for index in range(50_000)]
+        db.bulk_save_objects(rows)
+        db.commit()
+        db.execute(text("ANALYZE transactions"))
+        db.commit()
+        budget_plan = db.execute(text(
+            "EXPLAIN (FORMAT JSON) SELECT * FROM transactions "
+            "WHERE budget_id = :budget_id AND occurred_on BETWEEN :start AND :end "
+            "ORDER BY occurred_on DESC, created_at DESC, id DESC"
+        ), {"budget_id": budget["id"], "start": date(2025, 1, 1), "end": date(2026, 12, 31)}).scalar_one()
+        available = set(db.scalars(text(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = 'public'"
+        )))
+
+    assert "ix_transaction_budget_date_id" in _plan_indexes(budget_plan[0]["Plan"])
+    assert {
+        "ix_allocation_operation_budget_date", "ix_allocation_posting_budget_operation",
+        "ix_reserve_event_budget_date", "ix_scheduled_budget_active_date",
+    } <= available
+
+
+# ---------------------------------------------------------------------------
 # 0. Metadata bulk serialization
 # ---------------------------------------------------------------------------
 

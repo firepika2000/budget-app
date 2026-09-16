@@ -55,8 +55,10 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
         attachment_count = connection.execute(
             text("SELECT COUNT(*) FROM transaction_attachments")
         ).scalar_one()
-        assert version == "0021_scheduled_payee_id"
+        report_indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('transactions')"))}
+        assert version == "0022_report_query_indexes"
         assert attachment_count == 0
+        assert "ix_transaction_budget_date_id" in report_indexes
 
 
 def test_0020_repairs_text_only_transaction_payee_identity(tmp_path, monkeypatch):

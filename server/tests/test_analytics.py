@@ -1127,6 +1127,61 @@ def test_report_provenance_is_bounded_without_changing_exact_totals(
     assert worth["points"][0]["transaction_ids_truncated"] is True
 
 
+@pytest.mark.parametrize("month_count", [12, 60, 132])
+def test_spending_cash_flow_trends_and_export_scale_remain_bounded(
+    client, owner_token, session_factory, month_count
+):
+    from datetime import date
+    import json
+    from sqlalchemy import event, select
+    from app.models import Transaction, User
+
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    with session_factory() as db:
+        owner_id = db.scalar(select(User.id).where(User.email == "owner@example.com"))
+        rows = []
+        for month_index in range(month_count):
+            year = 2016 + month_index // 12
+            month = month_index % 12 + 1
+            rows.extend(Transaction(
+                budget_id=budget["id"], account_id=account["id"], category_id=category["id"],
+                amount_minor=-100, occurred_on=date(year, month, day), created_by_user_id=owner_id,
+            ) for day in range(1, 11))
+        db.add_all(rows)
+        db.commit()
+    end_year = 2016 + (month_count - 1) // 12
+    end_month = (month_count - 1) % 12 + 1
+    base = f"/api/v1/budgets/{budget['id']}/reports"
+    dates = f"?start_date=2016-01-01&end_date={end_year:04d}-{end_month:02d}-28"
+    statements = []
+    engine = session_factory.kw["bind"]
+    def capture(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        spending = client.get(f"{base}/spending{dates}", headers=auth(owner_token))
+        cash_flow = client.get(f"{base}/income-spending{dates}", headers=auth(owner_token))
+        trends = client.get(f"{base}/spending-trends{dates}", headers=auth(owner_token))
+        export = client.get(f"{base}/export.csv{dates}", headers=auth(owner_token))
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert all(response.status_code == 200 for response in (spending, cash_flow, trends, export))
+    expected = month_count * 1000
+    assert spending.json()["total_spending_minor"] == expected
+    assert cash_flow.json()["spending_minor"] == expected
+    assert trends.json()["total_spending_minor"] == expected
+    assert len(cash_flow.json()["periods"]) == month_count
+    assert len(trends.json()["series"][0]["points"]) == month_count
+    assert len(json.dumps(spending.json())) < 25_000
+    assert len(json.dumps(cash_flow.json())) < 100_000
+    assert len(json.dumps(trends.json())) < 100_000
+    assert len(export.content) < 100_000
+    # Four complete requests remain bounded. SQLAlchemy's split select-in loader intentionally adds
+    # one statement per 500 parent rows; the guard catches per-month/per-transaction N+1 behavior.
+    assert len(statements) <= 120
+
+
 @pytest.mark.parametrize("path", [
     "spending?start_date=2026-09-01&end_date=2026-09-30",
     "income-spending?start_date=2026-09-01&end_date=2026-09-30",

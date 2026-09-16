@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -314,6 +314,7 @@ class ScheduledTransaction(Base):
     __tablename__ = "scheduled_transactions"
     __table_args__ = (
         CheckConstraint("interval_count > 0", name="ck_scheduled_interval_positive"),
+        Index("ix_scheduled_budget_active_date", "budget_id", "is_active", "next_date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -354,6 +355,9 @@ class MonthlyAssignment(Base):
 
 class AllocationOperation(Base):
     __tablename__ = "allocation_operations"
+    __table_args__ = (
+        Index("ix_allocation_operation_budget_date", "budget_id", "occurred_on", "id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
@@ -382,6 +386,7 @@ class AllocationPosting(Base):
             name="ck_allocation_posting_bucket_category",
         ),
         CheckConstraint("amount_minor <> 0", name="ck_allocation_posting_nonzero"),
+        Index("ix_allocation_posting_budget_operation", "budget_id", "operation_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -399,6 +404,9 @@ class AllocationPosting(Base):
 
 class Transaction(Base):
     __tablename__ = "transactions"
+    __table_args__ = (
+        Index("ix_transaction_budget_date_id", "budget_id", "occurred_on", "id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
@@ -484,6 +492,7 @@ class CreditCardReserveEvent(Base):
             "(source_transaction_id IS NULL AND transfer_id IS NOT NULL)",
             name="ck_credit_reserve_event_source",
         ),
+        Index("ix_reserve_event_budget_date", "budget_id", "occurred_on", "id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

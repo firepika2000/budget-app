@@ -8,8 +8,8 @@ tag, or release.
 
 - Current branch: `codex/development`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
-- Current/remote HEAD: `d048b5fa0f427d0e4c21901d162cff9e07d169e8` before the Git-hygiene checkpoint
-- Push status: all v0.6 checkpoints through report calendar boundaries are pushed
+- Latest independently pushed HEAD: `210fba0` (PostgreSQL allocation-version race correction)
+- Push status: all prior v0.6 checkpoints are pushed; the report scale/index checkpoint below is pending
 - Human Live database at start: `0020_payee_identity_repair`
 - Human Simulator: preserved iPhone 17 Pro Max / iOS 27.0; no erase/reset/uninstall
 
@@ -557,3 +557,31 @@ Focused analytics PASS (all tests in `test_analytics.py`); full backend PASS wit
 environment-gated skips; Swift package PASS (27 BudgetCore + 40 BudgetAPI); Xcode 27 Beta production
 simulator build PASS; and the full native XCTest suite PASS (73 tests) on the preserved iPhone 17 Pro
 Max / iOS 27 simulator. No migration or persisted data was changed.
+## v0.6 checkpoint — long-history and PostgreSQL report scale
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Spending, Income vs Spending, Spending Trends, and CSV export now join the existing Net Worth, Debt,
+and Plan Performance one-, five-, and eleven-year scale matrix. Ten categorized ledger entries per
+month preserve exact totals and monthly observations; response-size guards cover every family, and
+query-count guards permit SQLAlchemy's intentional 500-parent split-loading batches while rejecting
+per-month or per-transaction N+1 behavior.
+
+Migration `0022_report_query_indexes` adds composite production indexes for transaction budget/date,
+allocation operation budget/date, allocation posting budget/operation, reserve event budget/date, and
+active scheduled forecast lookup. A disposable local PostgreSQL 17 database was migrated from empty to
+head and loaded with 50,000 synthetic transactions. `EXPLAIN (FORMAT JSON)` selected
+`ix_transaction_budget_date_id` for the representative authorized date-range ledger scan. The optional
+PostgreSQL regression also verifies the remaining report/planning indexes exist. The complete genuine-
+contention PostgreSQL suite and migration graph tests pass.
+
+That broader PostgreSQL run exposed an existing money-safety defect unrelated to reporting: after a
+competing transaction released a Budget row lock, SQLAlchemy could reuse the stale Budget already in
+the session identity map, letting two Move Money calls accept the same allocation version. Commit
+`210fba0` makes the locked read populate the existing identity with the newly committed row; the race
+now has exactly one winner. This focused correction was committed and pushed independently.
+
+The PostgreSQL cluster and all synthetic records live only under `/private/tmp`; the human Live database
+remains untouched at its existing revision. Full backend PASS with 11 expected PostgreSQL/environment-
+gated skips when the disposable URL is absent; the explicitly configured PostgreSQL contention, plan,
+and migration run PASS (19 tests). Native code did not change in this checkpoint.
