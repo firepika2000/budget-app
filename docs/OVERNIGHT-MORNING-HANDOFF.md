@@ -534,3 +534,26 @@ on the preserved iPhone 17 Pro Max / iOS 27 simulator. The sandboxed backend run
 launcher test socket; rerunning the identical suite outside that socket restriction passed. No XCUITest
 was added for the system share sheet because the native store/composition and API boundary tests cover
 the application-owned behavior without automating Apple-owned sharing UI.
+
+## v0.6 checkpoint — report operational hardening
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+All historical report families now reject inverted dates and ranges longer than 600 calendar months,
+preserving ten-plus-year analysis while placing a clear upper bound on monthly response growth.
+Contributing transaction provenance is deduplicated and capped at 500 IDs per aggregate/period/account;
+exact monetary totals still include every authorized transaction. New explicit truncation flags flow
+through the API and Swift models, and production drill-through UI explains when its contributor list is
+partial instead of implying that the report total is partial.
+
+Transaction ordering now has an ID tie-breaker for deterministic provenance. Regression matrices cover
+the 501-transaction boundary across Spending, Income vs Spending, Spending Trends, and opt-in Net Worth
+provenance; all report routes reject missing authentication and unknown budgets; every historical route
+rejects a 601-month request; and every report/export has a stable zero-data response. Existing cross-
+budget resource, hidden member/group, restricted aggregate, archived-history, and filter manipulation
+coverage remains in force.
+
+Focused analytics PASS (all tests in `test_analytics.py`); full backend PASS with 10 expected
+environment-gated skips; Swift package PASS (27 BudgetCore + 40 BudgetAPI); Xcode 27 Beta production
+simulator build PASS; and the full native XCTest suite PASS (73 tests) on the preserved iPhone 17 Pro
+Max / iOS 27 simulator. No migration or persisted data was changed.

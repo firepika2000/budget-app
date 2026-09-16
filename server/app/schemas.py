@@ -634,6 +634,7 @@ class SpendingCategoryReport(BaseModel):
     category_group: str
     spending_minor: int
     transaction_ids: list[str]
+    transaction_ids_truncated: bool = False
 
 
 class SpendingReportResponse(BaseModel):
@@ -649,6 +650,7 @@ class SpendingTrendPoint(BaseModel):
     period_end: date
     spending_minor: int
     transaction_ids: list[str]
+    transaction_ids_truncated: bool = False
 
 
 class SpendingTrendSeries(BaseModel):
@@ -657,6 +659,7 @@ class SpendingTrendSeries(BaseModel):
     category_group: Optional[str] = None
     spending_minor: int
     transaction_ids: list[str]
+    transaction_ids_truncated: bool = False
     points: list[SpendingTrendPoint]
 
 
@@ -677,6 +680,8 @@ class IncomeSpendingPeriod(BaseModel):
     difference_minor: int
     income_transaction_ids: list[str]
     spending_transaction_ids: list[str]
+    income_transaction_ids_truncated: bool = False
+    spending_transaction_ids_truncated: bool = False
 
 
 class IncomeSpendingReportResponse(BaseModel):
@@ -689,6 +694,8 @@ class IncomeSpendingReportResponse(BaseModel):
     savings_rate: Optional[float]
     income_transaction_ids: list[str]
     spending_transaction_ids: list[str]
+    income_transaction_ids_truncated: bool = False
+    spending_transaction_ids_truncated: bool = False
     periods: list[IncomeSpendingPeriod]
 
 
@@ -698,6 +705,7 @@ class NetWorthPoint(BaseModel):
     liabilities_minor: int
     net_worth_minor: int
     transaction_ids: list[str]
+    transaction_ids_truncated: bool = False
 
 
 class NetWorthAccount(BaseModel):
@@ -707,6 +715,7 @@ class NetWorthAccount(BaseModel):
     is_on_budget: bool
     balance_minor: int
     transaction_ids: list[str]
+    transaction_ids_truncated: bool = False
 
 
 class NetWorthReportResponse(BaseModel):

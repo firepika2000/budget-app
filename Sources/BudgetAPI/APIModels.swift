@@ -705,10 +705,12 @@ public struct APISpendingCategoryReport: Identifiable, Decodable, Equatable, Sen
     public let categoryGroup: String
     public let spendingMinor: Int64
     public let transactionIDs: [String]
+    public let transactionIDsTruncated: Bool?
 
     enum CodingKeys: String, CodingKey {
         case categoryID = "category_id", categoryName = "category_name", categoryGroup = "category_group"
         case spendingMinor = "spending_minor", transactionIDs = "transaction_ids"
+        case transactionIDsTruncated = "transaction_ids_truncated"
     }
 }
 
@@ -732,9 +734,11 @@ public struct APISpendingTrendPoint: Identifiable, Decodable, Equatable, Sendabl
     public let periodEnd: String
     public let spendingMinor: Int64
     public let transactionIDs: [String]
+    public let transactionIDsTruncated: Bool?
     enum CodingKeys: String, CodingKey {
         case periodStart = "period_start", periodEnd = "period_end"
         case spendingMinor = "spending_minor", transactionIDs = "transaction_ids"
+        case transactionIDsTruncated = "transaction_ids_truncated"
     }
 }
 
@@ -745,12 +749,13 @@ public struct APISpendingTrendSeries: Identifiable, Decodable, Equatable, Sendab
     public let categoryGroup: String?
     public let spendingMinor: Int64
     public let transactionIDs: [String]
+    public let transactionIDsTruncated: Bool?
     public let points: [APISpendingTrendPoint]
     enum CodingKeys: String, CodingKey {
         case points
         case dimensionID = "dimension_id", dimensionName = "dimension_name"
         case categoryGroup = "category_group", spendingMinor = "spending_minor"
-        case transactionIDs = "transaction_ids"
+        case transactionIDs = "transaction_ids", transactionIDsTruncated = "transaction_ids_truncated"
     }
 }
 
@@ -778,6 +783,8 @@ public struct APIIncomeSpendingReport: Decodable, Equatable, Sendable {
     public let savingsRate: Double?
     public let incomeTransactionIDs: [String]
     public let spendingTransactionIDs: [String]
+    public let incomeTransactionIDsTruncated: Bool?
+    public let spendingTransactionIDsTruncated: Bool?
     public let periods: [APIIncomeSpendingPeriod]
 
     enum CodingKeys: String, CodingKey {
@@ -785,6 +792,7 @@ public struct APIIncomeSpendingReport: Decodable, Equatable, Sendable {
         case incomeMinor = "income_minor", spendingMinor = "spending_minor", differenceMinor = "difference_minor"
         case periods
         case savingsRate = "savings_rate", incomeTransactionIDs = "income_transaction_ids", spendingTransactionIDs = "spending_transaction_ids"
+        case incomeTransactionIDsTruncated = "income_transaction_ids_truncated", spendingTransactionIDsTruncated = "spending_transaction_ids_truncated"
     }
 }
 
@@ -797,11 +805,14 @@ public struct APIIncomeSpendingPeriod: Identifiable, Decodable, Equatable, Senda
     public let differenceMinor: Int64
     public let incomeTransactionIDs: [String]
     public let spendingTransactionIDs: [String]
+    public let incomeTransactionIDsTruncated: Bool?
+    public let spendingTransactionIDsTruncated: Bool?
 
     enum CodingKeys: String, CodingKey {
         case periodStart = "period_start", periodEnd = "period_end"
         case incomeMinor = "income_minor", spendingMinor = "spending_minor", differenceMinor = "difference_minor"
         case incomeTransactionIDs = "income_transaction_ids", spendingTransactionIDs = "spending_transaction_ids"
+        case incomeTransactionIDsTruncated = "income_transaction_ids_truncated", spendingTransactionIDsTruncated = "spending_transaction_ids_truncated"
     }
 }
 
@@ -812,9 +823,11 @@ public struct APINetWorthPoint: Identifiable, Decodable, Equatable, Sendable {
     public let liabilitiesMinor: Int64
     public let netWorthMinor: Int64
     public let transactionIDs: [String]
+    public let transactionIDsTruncated: Bool?
     enum CodingKeys: String, CodingKey {
         case asOf = "as_of", assetsMinor = "assets_minor", liabilitiesMinor = "liabilities_minor"
         case netWorthMinor = "net_worth_minor", transactionIDs = "transaction_ids"
+        case transactionIDsTruncated = "transaction_ids_truncated"
     }
 }
 
@@ -826,9 +839,11 @@ public struct APINetWorthAccount: Identifiable, Decodable, Equatable, Sendable {
     public let isOnBudget: Bool
     public let balanceMinor: Int64
     public let transactionIDs: [String]
+    public let transactionIDsTruncated: Bool?
     enum CodingKeys: String, CodingKey {
         case accountID = "account_id", accountName = "account_name", accountType = "account_type"
         case isOnBudget = "is_on_budget", balanceMinor = "balance_minor", transactionIDs = "transaction_ids"
+        case transactionIDsTruncated = "transaction_ids_truncated"
     }
 }
 

@@ -21,6 +21,21 @@ from .schemas import DebtReportResponse, IncomeSpendingReportResponse, NetWorthR
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/reports")
+MAX_REPORT_TRANSACTION_IDS = 500
+MAX_REPORT_MONTHS = 600
+
+
+def _bounded_ids(values: list[str]) -> tuple[list[str], bool]:
+    unique = list(dict.fromkeys(values))
+    return unique[:MAX_REPORT_TRANSACTION_IDS], len(unique) > MAX_REPORT_TRANSACTION_IDS
+
+
+def _validate_report_range(start_date: date, end_date: date) -> None:
+    if start_date > end_date:
+        raise HTTPException(status_code=422, detail="Report start date must not follow end date")
+    month_count = (end_date.year - start_date.year) * 12 + end_date.month - start_date.month + 1
+    if month_count > MAX_REPORT_MONTHS:
+        raise HTTPException(status_code=422, detail=f"Report range cannot exceed {MAX_REPORT_MONTHS} calendar months")
 
 
 def _csv_text(value: object) -> object:
@@ -65,8 +80,7 @@ def report_transactions(
     tags: list[str],
     include_tracking: bool,
 ) -> tuple[object, list[Transaction]]:
-    if start_date > end_date:
-        raise HTTPException(status_code=422, detail="Report start date must not follow end date")
+    _validate_report_range(start_date, end_date)
     budget = require_budget_capability(db, user, budget_id, "view_reports")
     visible_accounts = visible_resource_ids(db, user, budget, "account")
     visible_categories = visible_resource_ids(db, user, budget, "category")
@@ -101,7 +115,9 @@ def report_transactions(
         query = query.where(Transaction.is_cleared.is_(cleared))
     if reconciled is not None:
         query = query.where(Transaction.is_reconciled.is_(reconciled))
-    transactions = list(db.scalars(query.order_by(Transaction.occurred_on.desc(), Transaction.created_at.desc())))
+    transactions = list(db.scalars(query.order_by(
+        Transaction.occurred_on.desc(), Transaction.created_at.desc(), Transaction.id.desc()
+    )))
     group_category_ids = set(db.scalars(select(Category.id).join(CategoryGroup, CategoryGroup.id == Category.group_id).where(
         Category.budget_id == budget_id, CategoryGroup.name.in_(category_groups)
     ))) if category_groups else set()
@@ -144,7 +160,7 @@ def report_transactions(
     return budget, transactions
 
 
-@router.get("/spending", response_model=SpendingReportResponse)
+@router.get("/spending", response_model=SpendingReportResponse, response_model_exclude_defaults=True)
 def spending_report(
     budget_id: str,
     start_date: date,
@@ -192,12 +208,14 @@ def spending_report(
             # Net non-spending (fully refunded or net-inflow) categories are omitted from the ranking.
             continue
         model = categories[category]
+        bounded_ids, truncated = _bounded_ids(transaction_ids[category])
         rows.append({
             "category_id": category,
             "category_name": model.name,
             "category_group": groups.get(model.group_id, "Uncategorized"),
             "spending_minor": amount,
-            "transaction_ids": transaction_ids[category],
+            "transaction_ids": bounded_ids,
+            "transaction_ids_truncated": truncated,
         })
     rows.sort(key=lambda item: (-item["spending_minor"], item["category_name"]))
     return {
@@ -206,7 +224,7 @@ def spending_report(
     }
 
 
-@router.get("/income-spending", response_model=IncomeSpendingReportResponse)
+@router.get("/income-spending", response_model=IncomeSpendingReportResponse, response_model_exclude_defaults=True)
 def income_spending_report(
     budget_id: str,
     start_date: date,
@@ -235,25 +253,33 @@ def income_spending_report(
         period_start, period_end = max(cursor, start_date), min(_month_end(cursor), end_date)
         period_transactions = [item for item in included if period_start <= item.occurred_on <= period_end]
         period_income, period_spending, period_income_ids, period_spending_ids = _income_spending_values(period_transactions)
+        bounded_income_ids, income_truncated = _bounded_ids(period_income_ids)
+        bounded_spending_ids, spending_truncated = _bounded_ids(period_spending_ids)
         periods.append({
             "period_start": period_start, "period_end": period_end,
             "income_minor": period_income, "spending_minor": period_spending,
             "difference_minor": period_income - period_spending,
-            "income_transaction_ids": period_income_ids,
-            "spending_transaction_ids": period_spending_ids,
+            "income_transaction_ids": bounded_income_ids,
+            "spending_transaction_ids": bounded_spending_ids,
+            "income_transaction_ids_truncated": income_truncated,
+            "spending_transaction_ids_truncated": spending_truncated,
         })
         cursor = _month_end(cursor) + timedelta(days=1)
+    bounded_income_ids, income_truncated = _bounded_ids(income_ids)
+    bounded_spending_ids, spending_truncated = _bounded_ids(spending_ids)
     return {
         "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,
         "income_minor": income_minor, "spending_minor": spending_minor, "difference_minor": difference,
         "savings_rate": difference / income_minor if income_minor > 0 else None,
-        "income_transaction_ids": income_ids,
-        "spending_transaction_ids": spending_ids,
+        "income_transaction_ids": bounded_income_ids,
+        "spending_transaction_ids": bounded_spending_ids,
+        "income_transaction_ids_truncated": income_truncated,
+        "spending_transaction_ids_truncated": spending_truncated,
         "periods": periods,
     }
 
 
-@router.get("/spending-trends", response_model=SpendingTrendsReportResponse)
+@router.get("/spending-trends", response_model=SpendingTrendsReportResponse, response_model_exclude_defaults=True)
 def spending_trends_report(
     budget_id: str,
     start_date: date,
@@ -324,14 +350,21 @@ def spending_trends_report(
     rows = []
     for key in ranked[:limit]:
         name, group = names[key]
-        rows.append({
-            "dimension_id": key, "dimension_name": name, "category_group": group,
-            "spending_minor": totals[key], "transaction_ids": list(dict.fromkeys(series_ids[key])),
-            "points": [{
+        bounded_series_ids, series_truncated = _bounded_ids(series_ids[key])
+        trend_points = []
+        for period_start, period_end in periods:
+            bounded_point_ids, point_truncated = _bounded_ids(point_ids[(key, period_start)])
+            trend_points.append({
                 "period_start": period_start, "period_end": period_end,
                 "spending_minor": point_totals[(key, period_start)],
-                "transaction_ids": list(dict.fromkeys(point_ids[(key, period_start)])),
-            } for period_start, period_end in periods],
+                "transaction_ids": bounded_point_ids,
+                "transaction_ids_truncated": point_truncated,
+            })
+        rows.append({
+            "dimension_id": key, "dimension_name": name, "category_group": group,
+            "spending_minor": totals[key], "transaction_ids": bounded_series_ids,
+            "transaction_ids_truncated": series_truncated,
+            "points": trend_points,
         })
     return {
         "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,
@@ -340,7 +373,7 @@ def spending_trends_report(
     }
 
 
-@router.get("/net-worth", response_model=NetWorthReportResponse)
+@router.get("/net-worth", response_model=NetWorthReportResponse, response_model_exclude_defaults=True)
 def net_worth_report(
     budget_id: str,
     start_date: date,
@@ -351,8 +384,7 @@ def net_worth_report(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    if start_date > end_date:
-        raise HTTPException(status_code=422, detail="Report start date must not follow end date")
+    _validate_report_range(start_date, end_date)
     budget = require_budget_capability(db, user, budget_id, "view_reports")
     require_budget_capability(db, user, budget_id, "view_account_balances")
     visible_accounts = visible_resource_ids(db, user, budget, "account")
@@ -402,7 +434,8 @@ def net_worth_report(
         points.append({
             "as_of": as_of, "assets_minor": assets, "liabilities_minor": liabilities,
             "net_worth_minor": total,
-            "transaction_ids": list(contributing_ids) if include_transaction_ids else [],
+            "transaction_ids": _bounded_ids(contributing_ids)[0] if include_transaction_ids else [],
+            "transaction_ids_truncated": _bounded_ids(contributing_ids)[1] if include_transaction_ids else False,
         })
     assets = sum(max(value, 0) for value in balances.values())
     liabilities = sum(min(value, 0) for value in balances.values())
@@ -414,7 +447,8 @@ def net_worth_report(
             "account_id": account.id, "account_name": account.name, "account_type": account.account_type,
             "is_on_budget": account.is_on_budget,
             "balance_minor": sum(item.amount_minor for item in account_transactions),
-            "transaction_ids": [item.id for item in account_transactions] if include_transaction_ids else [],
+            "transaction_ids": _bounded_ids([item.id for item in account_transactions])[0] if include_transaction_ids else [],
+            "transaction_ids_truncated": _bounded_ids([item.id for item in account_transactions])[1] if include_transaction_ids else False,
         })
     return {
         "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,
@@ -433,8 +467,7 @@ def debt_report(
     db: Session = Depends(get_db),
 ) -> dict:
     """Return exact debt observations without inventing interest or payoff assumptions."""
-    if start_date > end_date:
-        raise HTTPException(status_code=422, detail="Report start date must not follow end date")
+    _validate_report_range(start_date, end_date)
     budget = require_budget_capability(db, user, budget_id, "view_reports")
     require_budget_capability(db, user, budget_id, "view_account_balances")
     visible_accounts = visible_resource_ids(db, user, budget, "account")
@@ -509,8 +542,7 @@ def plan_performance_report(
     db: Session = Depends(get_db),
 ) -> dict:
     """Return historical planning observations from allocation, activity, and reserve ledgers."""
-    if start_date > end_date:
-        raise HTTPException(status_code=422, detail="Report start date must not follow end date")
+    _validate_report_range(start_date, end_date)
     budget = require_budget_capability(db, user, budget_id, "view_reports")
     visible_accounts = visible_resource_ids(db, user, budget, "account")
     visible_categories = visible_resource_ids(db, user, budget, "category")

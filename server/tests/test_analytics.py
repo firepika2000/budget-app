@@ -1078,3 +1078,106 @@ def test_net_worth_long_history_is_monthly_and_default_payload_is_bounded(
     assert body["net_worth_minor"] == month_count * 1000
     assert all(point["transaction_ids"] == [] for point in body["points"])
     assert len(json.dumps(body)) < 100_000
+
+
+def test_report_provenance_is_bounded_without_changing_exact_totals(
+    client, owner_token, session_factory
+):
+    from datetime import date
+    from sqlalchemy import select
+    from app.models import Transaction, User
+
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    with session_factory() as db:
+        owner_id = db.scalar(select(User.id).where(User.email == "owner@example.com"))
+        db.add_all([
+            Transaction(
+                budget_id=budget["id"], account_id=account["id"], category_id=category["id"],
+                amount_minor=-100, occurred_on=date(2026, 9, 15), created_by_user_id=owner_id,
+            )
+            for _ in range(501)
+        ])
+        db.commit()
+
+    base = f"/api/v1/budgets/{budget['id']}/reports"
+    dates = "?start_date=2026-09-01&end_date=2026-09-30"
+    spending = client.get(f"{base}/spending{dates}", headers=auth(owner_token)).json()
+    category_row = spending["categories"][0]
+    assert spending["total_spending_minor"] == 50_100
+    assert len(category_row["transaction_ids"]) == 500
+    assert category_row["transaction_ids_truncated"] is True
+
+    cash_flow = client.get(f"{base}/income-spending{dates}", headers=auth(owner_token)).json()
+    assert cash_flow["spending_minor"] == 50_100
+    assert len(cash_flow["spending_transaction_ids"]) == 500
+    assert cash_flow["spending_transaction_ids_truncated"] is True
+    assert len(cash_flow["periods"][0]["spending_transaction_ids"]) == 500
+    assert cash_flow["periods"][0]["spending_transaction_ids_truncated"] is True
+
+    trends = client.get(f"{base}/spending-trends{dates}", headers=auth(owner_token)).json()
+    assert trends["series"][0]["spending_minor"] == 50_100
+    assert len(trends["series"][0]["transaction_ids"]) == 500
+    assert trends["series"][0]["transaction_ids_truncated"] is True
+    assert trends["series"][0]["points"][0]["transaction_ids_truncated"] is True
+
+    worth = client.get(f"{base}/net-worth{dates}&include_transaction_ids=true", headers=auth(owner_token)).json()
+    assert worth["net_worth_minor"] == -50_100
+    assert len(worth["points"][0]["transaction_ids"]) == 500
+    assert worth["points"][0]["transaction_ids_truncated"] is True
+
+
+@pytest.mark.parametrize("path", [
+    "spending?start_date=2026-09-01&end_date=2026-09-30",
+    "income-spending?start_date=2026-09-01&end_date=2026-09-30",
+    "spending-trends?start_date=2026-09-01&end_date=2026-09-30",
+    "net-worth?start_date=2026-09-01&end_date=2026-09-30",
+    "debt?start_date=2026-09-01&end_date=2026-09-30",
+    "plan-performance?start_date=2026-09-01&end_date=2026-09-30",
+    "resilience?horizon_days=30",
+    "export.csv?start_date=2026-09-01&end_date=2026-09-30",
+])
+def test_every_report_rejects_missing_auth_and_unknown_budget(client, owner_token, path):
+    url = f"/api/v1/budgets/00000000-0000-0000-0000-000000000000/reports/{path}"
+    assert client.get(url).status_code == 401
+    assert client.get(url, headers=auth(owner_token)).status_code in (403, 404)
+
+
+@pytest.mark.parametrize("report", [
+    "spending", "income-spending", "spending-trends", "net-worth", "debt",
+    "plan-performance", "export.csv",
+])
+def test_historical_reports_reject_more_than_fifty_years(
+    client, owner_token, session_factory, report
+):
+    budget = create_budget(client, owner_token, session_factory)
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/{report}"
+        "?start_date=1976-01-01&end_date=2026-01-31",
+        headers=auth(owner_token),
+    )
+    assert response.status_code == 422
+    assert "600 calendar months" in response.text
+
+
+def test_every_report_has_a_stable_empty_budget_response(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    base = f"/api/v1/budgets/{budget['id']}/reports"
+    dates = "?start_date=2026-09-01&end_date=2026-09-30"
+    spending = client.get(f"{base}/spending{dates}", headers=auth(owner_token))
+    income = client.get(f"{base}/income-spending{dates}", headers=auth(owner_token))
+    trends = client.get(f"{base}/spending-trends{dates}", headers=auth(owner_token))
+    worth = client.get(f"{base}/net-worth{dates}", headers=auth(owner_token))
+    debt = client.get(f"{base}/debt{dates}", headers=auth(owner_token))
+    plan = client.get(f"{base}/plan-performance{dates}", headers=auth(owner_token))
+    resilience = client.get(f"{base}/resilience?horizon_days=30", headers=auth(owner_token))
+    export = client.get(f"{base}/export.csv{dates}", headers=auth(owner_token))
+    assert all(response.status_code == 200 for response in (spending, income, trends, worth, debt, plan, resilience, export))
+    assert spending.json()["categories"] == []
+    assert trends.json()["series"] == []
+    assert income.json()["income_minor"] == income.json()["spending_minor"] == 0
+    assert worth.json()["accounts"] == [] and worth.json()["net_worth_minor"] == 0
+    assert debt.json()["accounts"] == [] and debt.json()["debt_minor"] == 0
+    assert plan.json()["points"][0]["available_minor"] == 0
+    assert resilience.json()["cash_buffer_minor"] == 0
+    assert export.text.startswith("report,period_start,period_end,dimension,name,amount_minor,currency_code\n")

@@ -2751,7 +2751,7 @@ private struct SpendingTrendsView: View {
             NavigationLink { LiveReportGroupView(group: series.dimensionName) } label: { trendLabel(series, months: months) }
                 .accessibilityIdentifier("spending-trend-group-\(series.dimensionID)")
         } else {
-            NavigationLink { LiveReportTransactionsView(title: series.dimensionName, transactionIDs: series.transactionIDs) } label: { trendLabel(series, months: months) }
+            NavigationLink { LiveReportTransactionsView(title: series.dimensionName, transactionIDs: series.transactionIDs, isTruncated: series.transactionIDsTruncated == true) } label: { trendLabel(series, months: months) }
                 .accessibilityIdentifier("spending-trend-payee-\(series.dimensionID)")
         }
     }
@@ -2993,7 +2993,7 @@ private struct IncomeSpendingTrendsView: View {
                     LabeledContent("Spending", value: store.format(period.spendingMinor))
                     LabeledContent("Net cash flow", value: store.format(period.differenceMinor))
                     let ids = Array(Set(period.incomeTransactionIDs + period.spendingTransactionIDs)).sorted()
-                    if !ids.isEmpty { NavigationLink("View contributing transactions") { LiveReportTransactionsView(title: "Cash Flow", transactionIDs: ids) } }
+                    if !ids.isEmpty { NavigationLink("View contributing transactions") { LiveReportTransactionsView(title: "Cash Flow", transactionIDs: ids, isTruncated: period.incomeTransactionIDsTruncated == true || period.spendingTransactionIDsTruncated == true) } }
                 }.accessibilityIdentifier("income-spending-selected-period")
             }
         }
@@ -3079,9 +3079,11 @@ private struct LiveReportTransactionsView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let title: String
     let transactionIDs: [String]
+    var isTruncated = false
     private var transactions: [APITransaction] { store.transactions.filter { transactionIDs.contains($0.id) } }
     var body: some View {
         List {
+            if isTruncated { Section { Label("Showing the first 500 contributing transactions. Report totals include all authorized activity.", systemImage: "info.circle") } }
             if transactions.isEmpty { ContentUnavailableView("No visible transactions", systemImage: "tray", description: Text("The contributing records are outside the currently hydrated authorized activity page.")) }
             else { ForEach(transactions) { LiveTransactionLink(transaction: $0) } }
         }.navigationTitle(title)
@@ -3098,6 +3100,7 @@ private struct LiveReportCategoryView: View {
     private var displayName: String { liveRow?.categoryName ?? category.categoryName }
     private var spendingMinor: Int64 { reportLoaded ? (liveRow?.spendingMinor ?? 0) : category.spendingMinor }
     private var contributingIDs: [String] { reportLoaded ? (liveRow?.transactionIDs ?? []) : category.transactionIDs }
+    private var contributingIDsTruncated: Bool { reportLoaded ? (liveRow?.transactionIDsTruncated == true) : (category.transactionIDsTruncated == true) }
     var transactions: [APITransaction] { store.transactions.filter { contributingIDs.contains($0.id) } }
     var body: some View {
         List {
@@ -3105,6 +3108,7 @@ private struct LiveReportCategoryView: View {
                 LabeledContent("Total", value: store.format(spendingMinor))
                 LabeledContent("Transactions", value: "\(transactions.count)")
                 LabeledContent("Average", value: store.format(transactions.isEmpty ? 0 : spendingMinor / Int64(transactions.count)))
+                if contributingIDsTruncated { Label("Showing the first 500 contributors; the exact total includes all authorized activity.", systemImage: "info.circle").font(.caption).foregroundStyle(.secondary) }
             }
             if transactions.isEmpty {
                 Section { ContentUnavailableView("No spending in this range", systemImage: "tray") }
