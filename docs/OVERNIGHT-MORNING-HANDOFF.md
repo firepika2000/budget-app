@@ -287,3 +287,23 @@ Verification:
 - focused analytics: PASS (13 tests);
 - full backend: PASS (206 passed, 10 PostgreSQL-only skipped);
 - no migration and no mutation of Live, attachment, or Simulator data.
+
+## v0.6 checkpoint — accessible Insights composition
+
+Status: **ENGINEERING VERIFIED**
+
+Spending, income/spending, and net-worth charts now expose explicit date/total/series summaries instead
+of relying on geometry or color. Net-worth account contributions and Plan Performance attention rows
+have stable accessibility identifiers and preserve the shared production drill paths.
+
+A production-composition XCUITest launches the deterministic provider through the real active-budget
+shell, opens Insights, verifies semantic chart content, drills Net Worth into the canonical account
+register, returns, drills an overspent Plan Performance category into its contributing transactions,
+and returns with navigation intact.
+
+Verification:
+
+- Xcode 27 Beta / iPhone 17 Pro Max / iOS 27 production XCUITest: PASS (1 journey);
+- Xcode build is included in that successful test operation;
+- dark-mode contrast and VoiceOver gesture-level human acceptance remain pending and are not claimed;
+- no server, migration, Live-data, attachment, or Simulator-data mutation.

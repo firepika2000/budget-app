@@ -1,6 +1,39 @@
 import XCTest
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testProductionInsightsChartsAndDrillThroughRemainNavigable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
+        let spending = app.otherElements.matching(identifier: "spending-breakdown-sector-chart").firstMatch
+        XCTAssertTrue(spending.waitForExistence(timeout: 5))
+        XCTAssertFalse(spending.label.isEmpty)
+
+        let netWorth = app.otherElements.matching(identifier: "net-worth-history-chart").firstMatch
+        for _ in 0..<5 where !netWorth.exists { app.swipeUp() }
+        XCTAssertTrue(netWorth.waitForExistence(timeout: 5))
+        XCTAssertTrue(netWorth.value as? String != nil)
+
+        let account = app.buttons["net-worth-account-checking"]
+        for _ in 0..<3 where !account.exists { app.swipeUp() }
+        XCTAssertTrue(account.waitForExistence(timeout: 5))
+        account.tap()
+        XCTAssertTrue(app.navigationBars["Household Checking"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons["Insights"].tap()
+        XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
+
+        let category = app.buttons["plan-performance-category-dining"]
+        for _ in 0..<8 where !category.exists { app.swipeUp() }
+        XCTAssertTrue(category.waitForExistence(timeout: 5))
+        category.tap()
+        XCTAssertTrue(app.navigationBars["Dining Out"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'transaction-row-'")).firstMatch.waitForExistence(timeout: 5))
+        app.navigationBars.buttons["Insights"].tap()
+        XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
+    }
+
     func testProductionAuthenticationFieldsAcceptContinuousKeyboardInput() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-test-authentication"]

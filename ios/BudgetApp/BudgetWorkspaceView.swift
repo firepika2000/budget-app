@@ -2594,12 +2594,12 @@ private struct BudgetPerformanceInsightsView: View {
                 ForEach(Array((overspent + underfunded.filter { !$0.isOverspent }).prefix(8))) { row in
                     if let reportRow = store.spendingReport?.categories.first(where: { $0.categoryID == row.categoryID }) {
                         NavigationLink { LiveReportCategoryView(category: reportRow) } label: { performanceRow(row) }
-                    } else { performanceRow(row) }
+                            .accessibilityIdentifier("plan-performance-category-\(row.categoryID)")
+                    } else { performanceRow(row).accessibilityIdentifier("plan-performance-category-\(row.categoryID)") }
                 }
                 Text("Targets are planning guidance only. They do not create or move money.").font(.caption).foregroundStyle(.secondary)
             }
         }
-        .accessibilityIdentifier("budget-performance-insights")
     }
 
     private func performanceRow(_ row: APICategoryMonth) -> some View {
@@ -2638,6 +2638,8 @@ private struct NetWorthReportView: View {
                 .chartXAxis { AxisMarks(values: .automatic(desiredCount: min(report.points.count, 6))) { _ in AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
                 .frame(minHeight: 240)
                 .accessibilityIdentifier("net-worth-history-chart")
+                .accessibilityLabel("Net worth history from \(report.startDate) through \(report.endDate)")
+                .accessibilityValue("Assets \(store.format(report.assetsMinor)), liabilities \(store.format(report.liabilitiesMinor)), net worth \(store.format(report.netWorthMinor))")
             }
             LabeledContent("Assets", value: store.format(report.assetsMinor))
             LabeledContent("Liabilities", value: store.format(report.liabilitiesMinor))
@@ -2645,6 +2647,7 @@ private struct NetWorthReportView: View {
             ForEach(report.accounts) { row in
                 if let account = store.accounts.first(where: { $0.id == row.accountID }) {
                     NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: { LabeledContent(row.accountName, value: store.format(row.balanceMinor)) }
+                        .accessibilityIdentifier("net-worth-account-\(account.id)")
                 }
             }
         }
@@ -2671,6 +2674,8 @@ private struct IncomeSpendingTrendsView: View {
                 .chartYAxis { AxisMarks { value in AxisGridLine(); AxisValueLabel { if let amount = value.as(Int64.self) { Text(store.format(amount)).font(.caption2) } } } }
                 .frame(minHeight: 220)
                 .accessibilityIdentifier("income-spending-trends-chart")
+                .accessibilityLabel("Income and spending history from \(report.startDate) through \(report.endDate)")
+                .accessibilityValue("Income \(store.format(report.incomeMinor)), spending \(store.format(report.spendingMinor)), net cash flow \(store.format(report.differenceMinor))")
             }
             LabeledContent("Income", value: store.format(report.incomeMinor))
             LabeledContent("Spending", value: store.format(report.spendingMinor))
@@ -2727,6 +2732,8 @@ private struct SpendingBreakdownView: View {
                 }
                 .frame(minHeight: 260)
                 .accessibilityIdentifier("spending-breakdown-sector-chart")
+                .accessibilityLabel("Spending breakdown by \(mode.rawValue.lowercased())")
+                .accessibilityValue("Total spending \(store.format(report.totalSpendingMinor)); \(slices.count) segments. Ranked values follow the chart.")
                 .onChange(of: selectedAngle) { _, value in if let value { selectedSlice = slice(at: value) } }
             }
         }
