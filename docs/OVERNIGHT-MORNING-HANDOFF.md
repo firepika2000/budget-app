@@ -307,3 +307,7 @@ Verification:
 - Xcode build is included in that successful test operation;
 - dark-mode contrast and VoiceOver gesture-level human acceptance remain pending and are not claimed;
 - no server, migration, Live-data, attachment, or Simulator-data mutation.
+
+The same production Insights composition also passes an automated dark-appearance run at the largest
+accessibility content-size category. The test restores the Simulator's prior appearance and verifies
+that the chart summary and final Plan Performance rows remain reachable through native scrolling.

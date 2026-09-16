@@ -1,6 +1,29 @@
 import XCTest
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testProductionInsightsRemainReachableInDarkModeAtAccessibilityTextSize() {
+        let device = XCUIDevice.shared
+        let originalAppearance = device.appearance
+        device.appearance = .dark
+        defer { device.appearance = originalAppearance }
+
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--demo", "--demo-screen=insights",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
+        let spending = app.otherElements.matching(identifier: "spending-breakdown-sector-chart").firstMatch
+        XCTAssertTrue(spending.waitForExistence(timeout: 5))
+        XCTAssertTrue(spending.label.contains("Spending breakdown"))
+
+        let planRow = app.buttons["plan-performance-category-dining"]
+        for _ in 0..<20 where !planRow.exists { app.swipeUp() }
+        XCTAssertTrue(planRow.waitForExistence(timeout: 5), "large accessibility text must not make the final Insights sections unreachable")
+    }
+
     func testProductionInsightsChartsAndDrillThroughRemainNavigable() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=insights"]
