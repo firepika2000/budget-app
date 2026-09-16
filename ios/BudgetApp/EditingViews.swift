@@ -229,7 +229,7 @@ struct AllocationTransferView: View {
             Form {
                 Picker("From", selection: $sourceCategoryID) {
                     ForEach(categories.filter { $0.availableMinor > 0 }) { category in
-                        Text("\(category.name) · \(CurrencyText.editable(category.availableMinor, currencyCode: budget.currencyCode))")
+                        Text("\(category.name) · \(workspace.format(category.availableMinor))")
                             .tag(category.categoryID)
                     }
                 }

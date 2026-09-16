@@ -809,4 +809,36 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertTrue(status.label.contains("Cleared"))
     }
+
+    func testHideAmountsMasksProductionWorkspaceAndPersistsAcrossRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=home"]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["profile-settings-button"].waitForExistence(timeout: 5))
+        app.buttons["profile-settings-button"].tap()
+        let toggle = app.switches["hide-amounts-toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        if toggle.value as? String != "1" {
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(expectValue("1", for: toggle, timeout: 2))
+        app.buttons["Done"].tap()
+        app.buttons["profile-settings-button"].tap()
+        XCTAssertEqual(app.switches["hide-amounts-toggle"].value as? String, "1", "the production workspace must retain the active privacy state")
+        app.buttons["Done"].tap()
+
+        app.terminate()
+        app.launch()
+        app.buttons["profile-settings-button"].tap()
+        let persistedToggle = app.switches["hide-amounts-toggle"]
+        XCTAssertTrue(persistedToggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(persistedToggle.value as? String, "1")
+        persistedToggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+    }
+
+    private func expectValue(_ value: String, for element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: element)
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
 }

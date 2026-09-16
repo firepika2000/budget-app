@@ -671,3 +671,26 @@ Focused backend favorite and migration coverage PASS (9 tests), the full Swift p
 BudgetCore + 41 BudgetAPI), focused native persistence XCTest PASS, production-composition XCUITest
 PASS, and the Xcode 27 Beta simulator build PASS on the preserved iPhone 17 Pro Max / iOS 27
 simulator. Human interaction and visual acceptance remain separate.
+
+## v0.7 checkpoint — persistent Hide Amounts privacy
+
+Status: **ENGINEERING VERIFIED — commit/push pending**
+
+Profile & Settings now owns a Hide Amounts preference scoped to the authenticated user and active
+budget. Every read-only monetary surface in the unified workspace routes through the shared formatter,
+including Home, Plan, Activity, Accounts, Forecast, Requests, Smart Funding, schedules, household
+authority, and Insights. Masked strings therefore replace the monetary accessibility output as well as
+visible text; editable money fields retain their explicit values only while the user is intentionally
+editing a financial operation.
+
+The preference survives workspace reconstruction and app relaunch, does not cross household-member
+identities, and is marked privacy-sensitive for supported system capture behavior. When a protected
+workspace resigns active state, a full app-switcher shield replaces its content. This repository has no
+widget or notification monetary-content target to redact. The preference changes presentation only:
+focused native coverage proves Ready to Assign, category activity, account observations, and posted
+transactions remain unchanged.
+
+Focused native XCTest and the production-composition relaunch XCUITest PASS using Xcode 27 Beta on
+the preserved iPhone 17 Pro Max / iOS 27 simulator. The Xcode Beta result recorder hung during one
+superseded run after XCTest had finished; the final rebuilt test-without-building run completed and
+saved normally. No backend, schema, migration, Simulator data, or Live data changed.

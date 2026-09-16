@@ -11,6 +11,38 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testHideAmountsPersistsPerUserAndDoesNotMutateFinancialState() async {
+        let firstUser = "privacy-\(UUID().uuidString)"
+        let secondUser = "privacy-\(UUID().uuidString)"
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let readyToAssign = store.summary?.readyToAssignMinor
+        let balances = store.accountBalances
+        let activity = store.summary?.categories.map(\.activityMinor)
+        let transactions = store.transactions
+
+        store.configurePrivacy(userID: firstUser)
+        XCTAssertFalse(store.hideAmounts)
+        XCTAssertNotEqual(store.format(12_345), "••••")
+        store.setHideAmounts(true)
+        XCTAssertEqual(store.format(12_345), "••••")
+
+        let relaunched = BudgetWorkspaceStore.demo()
+        relaunched.configurePrivacy(userID: firstUser)
+        XCTAssertTrue(relaunched.hideAmounts, "the user's privacy preference must survive workspace reconstruction")
+        let otherMember = BudgetWorkspaceStore.demo()
+        otherMember.configurePrivacy(userID: secondUser)
+        XCTAssertFalse(otherMember.hideAmounts, "one household member's preference must not alter another member's presentation")
+
+        XCTAssertEqual(store.summary?.readyToAssignMinor, readyToAssign)
+        XCTAssertEqual(store.accountBalances, balances)
+        XCTAssertEqual(store.summary?.categories.map(\.activityMinor), activity)
+        XCTAssertEqual(store.transactions, transactions)
+
+        store.setHideAmounts(false)
+    }
+
+    @MainActor
     func testActivityLifecycleFilterKeepsDemoAndLiveContractParity() async throws {
         let source = DemoWorkspaceDataSource(fresh: false)
         try await source.voidTransaction(id: "t1", reason: "Lifecycle filter regression")

@@ -968,15 +968,31 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date()))!
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var hideAmounts = false {
+        didSet {
+            guard hideAmounts != oldValue, let privacyPreferenceKey else { return }
+            UserDefaults.standard.set(hideAmounts, forKey: privacyPreferenceKey)
+            // Privacy changes must be durable before the app can enter the background or be
+            // terminated from the switcher immediately after the toggle changes.
+            UserDefaults.standard.synchronize()
+        }
+    }
     private var dataSource: WorkspaceDataSource?
     private var commandRepository: WorkspaceCommandRepository?
     private var applicationServices: BudgetApplicationServices?
     private var transactionBrowseTask: Task<APITransactionPage, Error>?
     private var transactionBrowseQuery: APITransactionQuery?
     private var transactionBrowseOperationID: UUID?
+    private var privacyPreferenceKey: String?
 
     init(budget: APIBudget) { self.budget = budget; dataSource = nil; commandRepository = nil; applicationServices = nil }
-    private init(dataSource: DemoWorkspaceDataSource) { self.budget = dataSource.budget; self.dataSource = dataSource; commandRepository = dataSource; applicationServices = BudgetApplicationServices(repository: dataSource) }
+    private init(dataSource: DemoWorkspaceDataSource) {
+        self.budget = dataSource.budget
+        self.dataSource = dataSource
+        commandRepository = dataSource
+        applicationServices = BudgetApplicationServices(repository: dataSource)
+        configurePrivacy(userID: "deterministic-demo-user")
+    }
     static func demo(fresh: Bool = false) -> BudgetWorkspaceStore { BudgetWorkspaceStore(dataSource: DemoWorkspaceDataSource(fresh: fresh)) }
     static func production(context: WorkspaceRouteContext, clientFactory: @escaping (URL) throws -> APIClient = { try APIClient(baseURL: $0) }) -> BudgetWorkspaceStore {
         guard case let .live(budget, serverURL, token) = context else { return .demo() }
@@ -1216,6 +1232,18 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
 
+    func configurePrivacy(userID: String?) {
+        let identity = userID ?? "deterministic-demo-user"
+        let key = "budget.privacy.hide-amounts.\(identity).\(budget.id)"
+        guard privacyPreferenceKey != key else { return }
+        privacyPreferenceKey = key
+        hideAmounts = UserDefaults.standard.bool(forKey: key)
+    }
+
+    func setHideAmounts(_ hidden: Bool) {
+        hideAmounts = hidden
+    }
+
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws {
         try await commands().saveTarget(categoryID: categoryID, value: value)
         await refresh()
@@ -1276,6 +1304,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func format(_ minor: Int64) -> String {
+        guard !hideAmounts else { return "••••" }
         let formatter = NumberFormatter(); formatter.numberStyle = .currency; formatter.currencyCode = budget.currencyCode
         let divisor = pow(10.0, Double(formatter.maximumFractionDigits))
         return formatter.string(from: NSNumber(value: Double(minor) / divisor)) ?? "\(minor)"
@@ -1363,6 +1392,7 @@ final class BudgetWorkspaceStore: ObservableObject {
 
 struct BudgetWorkspaceView: View {
     @EnvironmentObject private var session: AppSession
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store: BudgetWorkspaceStore
     @State private var showingSettings = false
     @State private var selectedTab: Int
@@ -1394,7 +1424,28 @@ struct BudgetWorkspaceView: View {
         .id(activeTab)
         .tint(Theme.accent)
         .overlay { if store.isLoading { ProgressView().padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
+        .overlay {
+            if store.hideAmounts && scenePhase != .active {
+                PrivacyShieldView()
+                    .transition(.opacity)
+                    .zIndex(100)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if store.hideAmounts && scenePhase == .active {
+                Label("Amounts hidden", systemImage: "eye.slash.fill")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.trailing, 12)
+                    .accessibilityIdentifier("amounts-hidden-indicator")
+                    .allowsHitTesting(false)
+            }
+        }
+        .privacySensitive(store.hideAmounts)
         .task(id: session.token) { [session] in
+            store.configurePrivacy(userID: session.profile?.id)
             store.bindLiveCredentialAuthority { forceRefresh in
                 return try await session.currentLiveCredentials(forceRefresh: forceRefresh, caller: "workspace.request")
             }
@@ -1439,6 +1490,13 @@ private struct WorkspaceProfileView: View {
                     LabeledContent("User", value: session.profile?.displayName ?? "Demo household owner")
                     LabeledContent("Active budget", value: store.budget.name)
                 }
+                Section("Privacy") {
+                    Toggle("Hide Amounts", isOn: $store.hideAmounts)
+                    .accessibilityIdentifier("hide-amounts-toggle")
+                    Text("Masks monetary values throughout this budget and conceals the workspace in the app switcher.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
                 if session.sourceMode == .liveServer {
                     Section("Budgets") {
                         ForEach(session.budgets) { budget in
@@ -1469,6 +1527,22 @@ private struct WorkspaceProfileView: View {
                 BudgetCreationView(households: session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? [])
             }
         }
+    }
+}
+
+private struct PrivacyShieldView: View {
+    var body: some View {
+        ZStack {
+            Color(uiColor: .systemBackground).ignoresSafeArea()
+            VStack(spacing: 12) {
+                Image(systemName: "eye.slash.fill").font(.largeTitle)
+                Text("Amounts Hidden").font(.headline)
+                Text("Return to Budget App to continue.").font(.subheadline).foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+        }
+        .accessibilityIdentifier("privacy-app-switcher-shield")
+        .allowsHitTesting(false)
     }
 }
 
@@ -2003,11 +2077,11 @@ private struct LiveSmartFundingView: View {
             List {
                 if let preview {
                     Section("Preview — nothing moves yet") {
-                        LabeledContent("Before", value: currency(preview.beforeReadyToAssignMinor))
-                        LabeledContent("Proposed", value: currency(-preview.proposedMinor))
-                        LabeledContent("After", value: currency(preview.afterReadyToAssignMinor))
+                        LabeledContent("Before", value: workspace.format(preview.beforeReadyToAssignMinor))
+                        LabeledContent("Proposed", value: workspace.format(-preview.proposedMinor))
+                        LabeledContent("After", value: workspace.format(preview.afterReadyToAssignMinor))
                     }
-                    Section("Target recommendations") { ForEach(preview.proposals) { proposal in LabeledContent(proposal.categoryName, value: currency(proposal.amountMinor)) } }
+                    Section("Target recommendations") { ForEach(preview.proposals) { proposal in LabeledContent(proposal.categoryName, value: workspace.format(proposal.amountMinor)) } }
                 } else if !isLoading { ContentUnavailableView("No funding preview", systemImage: "sparkles") }
             }.navigationTitle("Smart Funding").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Confirm"){Task{await commit()}}.disabled(preview?.proposals.isEmpty != false || isLoading)} }
@@ -2015,7 +2089,6 @@ private struct LiveSmartFundingView: View {
                 .alert("Unable to fund plan",isPresented:Binding(get:{errorMessage != nil},set:{if !$0{errorMessage=nil}})){Button("OK",role:.cancel){}}message:{Text(errorMessage ?? "Unknown error")}
         }
     }
-    private func currency(_ minor:Int64)->String{let f=NumberFormatter();f.numberStyle = .currency;f.currencyCode=budget.currencyCode;return f.string(from:NSNumber(value:Double(minor)/pow(10,Double(f.maximumFractionDigits)))) ?? "\(minor)"}
     private func load() async { isLoading=true;defer{isLoading=false};do{preview=try await workspace.smartFundingPreview(month:month)}catch{errorMessage=error.localizedDescription} }
     private func commit() async { guard let preview else{return};isLoading=true;defer{isLoading=false};do{try await workspace.commitSmartFunding(preview);dismiss()}catch{errorMessage=error.localizedDescription} }
 }
