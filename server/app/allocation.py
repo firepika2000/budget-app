@@ -32,7 +32,15 @@ class PostingInput:
 
 
 def lock_budget(db: Session, budget_id: str) -> Budget:
-    budget = db.scalar(select(Budget).where(Budget.id == budget_id).with_for_update())
+    # Authorization commonly loads this Budget into the Session before the lock. After a competing
+    # transaction commits, SQLAlchemy would otherwise return that stale identity-map instance even
+    # though SELECT FOR UPDATE waited correctly, defeating the optimistic-version check.
+    budget = db.scalar(
+        select(Budget)
+        .where(Budget.id == budget_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if budget is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
     return budget
