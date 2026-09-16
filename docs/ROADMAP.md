@@ -195,6 +195,21 @@ v0.7 hosts the polished guided experience that teaches new users both **how** to
 
 Scope includes mortgages, auto loans, student loans, personal loans, credit-card debt planning, amortization, principal/interest, payoff projections, extra-payment scenarios, and debt targets. Forecasting grows to deliberate 30/60/90-day, six-month, and one-year views plus what-if scenarios for temporary income loss, major purchases, and changed recurring costs.
 
+Debt cost and payoff work must preserve three separately labelled evidence classes: **Actual interest**
+from explicitly classified posted history, **Estimated current interest** from persisted account terms
+and current principal/balance, and **Projected future interest** from visible scenario assumptions.
+v0.8 adds optional type-appropriate debt terms rather than forcing loans and credit cards into one
+model. Missing terms keep an account valid and produce an explicit incomplete/unavailable projection.
+
+The provider-neutral projection engine uses exact minor-unit accumulation with documented periodic
+rate conversion and rounding. It must detect zero-rate payoff, insufficient payment and negative
+amortization, and must not emit a fictional payoff date. Household simulations compare avalanche,
+snowball, and user-controlled ordering by objective outcomes without prescribing a strategy. Extra
+payment and payment-rollover assumptions remain visible scenario inputs and do not mutate the Plan.
+Privacy filtering occurs before account or household projection, so hidden debt terms and derived
+outcomes cannot contribute to restricted totals or suggestions. Detailed sequencing and financial
+vectors are maintained in `V0.8-IMPLEMENTATION-PLAN.md`.
+
 Forecast and scenario state must never mutate or inflate current spendable reality. A scenario changes authoritative state only when the user explicitly commits a valid financial action through the normal engine.
 
 ### v0.9 — Distribution, Installation & Server Manager

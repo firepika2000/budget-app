@@ -638,3 +638,14 @@ budget renders both explicit zero states without a spurious Needs Attention sect
 Home keeps its transaction quick action and category resolution path reachable in dark appearance at
 an accessibility text size. This completes the Actionable Home engineering checkpoint; human visual
 and VoiceOver acceptance remain separate.
+
+## Product decision integrated — Debt Cost & Payoff Insights
+
+The new requirement is assigned to v0.8, where the authoritative roadmap already places debt/loan
+modeling, amortization, and scenarios. Reopening v0.6 would destabilize an engineering-complete
+historical-debt baseline, while inserting the full engine into v0.7 would displace its daily and
+household experience objective. `V0.8-IMPLEMENTATION-PLAN.md` now defines persisted type-specific
+terms, explicit posted-interest classification, exact provider-neutral projections, non-amortizing
+outcomes, avalanche/snowball/custom comparison, visible rollover assumptions, privacy-before-
+projection, and progressive native UI. No financial assumptions, application code, schema, or Live
+database were changed by this planning checkpoint.
