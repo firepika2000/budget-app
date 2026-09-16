@@ -38,7 +38,7 @@ Open `https://your-host/admin` and choose **First setup**. Bootstrap is atomical
 Create an encrypted backup first, pull the desired revision, and rebuild:
 
 ```sh
-./scripts/backup.sh
+./scripts/backup.sh --project-name budget-server
 git pull --ff-only
 docker compose up -d --build
 ```
@@ -47,7 +47,7 @@ The API container applies forward-only database migrations before accepting traf
 
 ## Routine operations
 
-- Run `./scripts/backup.sh` on a schedule and copy encrypted files off-host.
+- Run `./scripts/backup.sh --project-name budget-server` on a schedule and copy encrypted files off-host.
 - Perform a test restore on a separate instance periodically.
 - Monitor `docker compose ps` and the `/api/v1/health` endpoint.
 - Renew the JWT secret only as a deliberate sign-out-all-users operation.

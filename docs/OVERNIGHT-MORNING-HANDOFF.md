@@ -148,6 +148,27 @@ Verification:
 No human-accepted workflow is invalidated. Restricted-member privacy remains HUMAN PENDING as one
 consolidated production UI journey.
 
+## v0.5 checkpoint — Backup/restore target and archive validation
+
+Status: **SCRIPT-LEVEL ENGINEERING VERIFIED — real-container drill blocked on host tooling**
+
+The destructive restore script previously relied on Docker Compose's implicit project selection. It
+now requires `--project-name NAME`, making the target explicit. Backups include versioned metadata with
+the source Alembic revision. Restore verifies required components, all SHA-256 manifest entries, and
+the supported archive format before issuing its first Docker mutation. Corrupt, incomplete, future-
+format, and missing-target inputs are rejected before the target is touched.
+
+Verification:
+
+- shell syntax: PASS;
+- script integration with disposable fake `docker`/`age`: PASS (4 tests), including archive contents,
+  explicit source/target selection, integrity failure, completeness failure, and incompatible format;
+- real Docker/`age` encrypted restore: BLOCKED because neither executable is installed on this Mac;
+- the human Live database, attachment store, and Simulator were not addressed.
+
+This improves operator safety but does not claim the v0.9 consumer backup UI, automatic retention, or
+a real-container human restore pass.
+
 ## Morning build and migration plan (current; final HEAD will supersede)
 
 - Xcode: `/Users/firepika/Downloads/Xcode-beta.app`

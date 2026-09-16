@@ -76,15 +76,25 @@ Members with report visibility can download their scoped ledger from `GET /api/v
 For a full disaster-recovery backup, install [age](https://age-encryption.org) on the Docker host and run:
 
 ```sh
-./scripts/backup.sh
+./scripts/backup.sh --project-name budget-server
 ```
 
-The script packages the database, encrypted attachment objects, integrity manifest, and attachment-key recovery material, then passphrase-encrypts the complete archive with `age`. Its restrictive temporary directory is removed on exit. Backups default to `server/backups/`, which is ignored by Git. Store copies away from the server and keep the passphrase separately.
+The script packages the database, encrypted attachment objects, integrity manifest, versioned backup
+metadata (including the Alembic revision), and attachment-key recovery material, then
+passphrase-encrypts the complete archive with `age`. Its restrictive temporary directory is removed on
+exit. Backups default to `server/backups/`, which is ignored by Git. Store copies away from the server
+and keep the passphrase separately.
 
 Restore is intentionally explicit because it replaces current database contents:
 
 ```sh
-./scripts/restore.sh --yes /path/to/budget-YYYYMMDDTHHMMSSZ.tar.gz.age
+./scripts/restore.sh --yes --project-name budget-server /path/to/budget-YYYYMMDDTHHMMSSZ.tar.gz.age
 ```
 
-Test recovery periodically on a non-production instance. The complete archive contains the attachment-key recovery material inside its encrypted envelope. Preserve the deployment `.env` separately in a secure password manager as well; JWT and database secrets are still required to operate the restored server.
+Before changing the target, restore verifies archive completeness, every manifest digest, and the
+supported archive format version. The restore command requires the exact Docker Compose project name so it cannot silently select an
+implicit target. For a recovery drill, create a separate Compose project (for example,
+`budget-server-recovery`) and name that project explicitly. Test recovery periodically on a
+non-production instance. The complete archive contains the attachment-key recovery material inside its
+encrypted envelope. Preserve the deployment `.env` separately in a secure password manager as well;
+JWT and database secrets are still required to operate the restored server.

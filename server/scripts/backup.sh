@@ -4,7 +4,19 @@ set -euo pipefail
 umask 077
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 server_dir="$(cd "$script_dir/.." && pwd)"
+project_name=""
+if [[ "${1:-}" == "--project-name" ]]; then
+  [[ -n "${2:-}" ]] || { echo "--project-name requires a value" >&2; exit 2; }
+  project_name="$2"
+  shift 2
+fi
 backup_dir="${1:-$server_dir/backups}"
+[[ $# -le 1 ]] || { echo "Usage: $0 [--project-name NAME] [backup-directory]" >&2; exit 2; }
+compose=(docker compose --project-directory "$server_dir")
+if [[ -n "$project_name" ]]; then
+  [[ "$project_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo "Invalid Docker Compose project name" >&2; exit 2; }
+  compose+=(--project-name "$project_name")
+fi
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 output_file="$backup_dir/budget-$timestamp.tar.gz.age"
 
@@ -16,16 +28,20 @@ trap 'rm -rf "$work_dir"' EXIT
 
 echo "Creating an encrypted backup at $output_file"
 echo "You will be prompted for a backup passphrase by age."
-docker compose --project-directory "$server_dir" exec -T database \
+"${compose[@]}" exec -T database \
   pg_dump --clean --if-exists --no-owner --no-privileges -U budget -d budget \
   > "$work_dir/database.sql"
+database_revision="$("${compose[@]}" exec -T database psql -At -U budget -d budget -c 'SELECT version_num FROM alembic_version')"
+[[ -n "$database_revision" ]] || { echo "Unable to determine database migration revision" >&2; exit 1; }
+printf 'format_version=1\ncreated_at=%s\ndatabase_revision=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$database_revision" > "$work_dir/BACKUP-METADATA"
 mkdir -p "$work_dir/attachments"
-docker compose --project-directory "$server_dir" cp api:/var/lib/budget-app/attachments/. "$work_dir/attachments/"
-docker compose --project-directory "$server_dir" exec -T api sh -c \
+"${compose[@]}" cp api:/var/lib/budget-app/attachments/. "$work_dir/attachments/"
+"${compose[@]}" exec -T api sh -c \
   'if [ -n "${BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY:-}" ]; then printf "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=%s\\n" "$BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY"; else printf "BUDGET_APP_JWT_SECRET=%s\\n" "$BUDGET_APP_JWT_SECRET"; fi' \
   > "$work_dir/attachment-key-recovery.env"
-(cd "$work_dir" && shasum -a 256 database.sql attachment-key-recovery.env attachments/* 2>/dev/null > MANIFEST.sha256 || shasum -a 256 database.sql attachment-key-recovery.env > MANIFEST.sha256)
-tar -C "$work_dir" -czf - database.sql attachments attachment-key-recovery.env MANIFEST.sha256 \
+(cd "$work_dir" && shasum -a 256 BACKUP-METADATA database.sql attachment-key-recovery.env attachments/* 2>/dev/null > MANIFEST.sha256 || shasum -a 256 BACKUP-METADATA database.sql attachment-key-recovery.env > MANIFEST.sha256)
+tar -C "$work_dir" -czf - BACKUP-METADATA database.sql attachments attachment-key-recovery.env MANIFEST.sha256 \
   | age --passphrase --output "$output_file"
 
 echo "Backup complete: $output_file"
