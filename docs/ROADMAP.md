@@ -4,6 +4,8 @@
 
 Budget App is a self-hosted household financial operating system built around a money-allocation engine. It is not merely an expense tracker. The project may meet or exceed the practical budgeting capabilities people expect from products such as YNAB, but it must use original branding, terminology, wording, layouts, and interaction design. Capability comparison is not permission to copy protected product expression.
 
+Product ownership, pricing hypotheses, core-versus-service entitlements, household licensing, and App Store launch principles are governed by [Product, Commercial, Pricing, and App Store Strategy](PRODUCT-COMMERCIAL-STRATEGY.md). Core budgeting follows a buy-once, perpetual-use promise; payment implementation and final pricing require a separately approved roadmap checkpoint.
+
 This document distinguishes the implemented baseline from future milestone scope. Detailed capability and acceptance evidence remains in the linked documents rather than being duplicated here:
 
 - [Core behavioral parity review](ynab-core-parity-2026.md)
@@ -34,6 +36,7 @@ These constraints apply to every milestone:
 - **Household privacy is server-enforced.** Requests, approvals, capabilities, resource scopes, revocation, and auditability are core architecture. Client-side hiding is never the security boundary.
 - **Recommendations do not mutate truth.** Smart Funding, targets, forecasts, scenarios, and later intelligence explain or propose changes; only an explicit valid financial operation changes authoritative state.
 - **Self-hosting and ownership are durable requirements.** Core use cannot require a vendor SaaS account, ongoing subscription, or vendor-operated cloud service. Data must remain exportable, recoverable, and under the household's control.
+- **Purchased core software remains perpetual.** Ordinary budgeting cannot be converted into a mandatory recurring subscription. Optional services with real ongoing vendor costs remain explicitly separate from purchased core functionality.
 - **Bank connectivity stays deferred.** The manual financial system must become mature, trustworthy, and releasable before imported financial data is introduced.
 - **Empty states are part of the product, not edge cases.** A fresh household must always have an obvious next action. A new installation, a new Budget, and an empty Plan must each present a discoverable path forward and must never dead-end into a state the user cannot leave without an API or developer workaround.
 - **Teach the financial model, not just the interface.** Onboarding and education explain both how to operate Budget App and why the allocation model works the way it does — money location versus purpose, and that future income helps you plan but is not spendable until it is actually received. Education never bypasses an invariant and never quietly mutates authoritative household data.

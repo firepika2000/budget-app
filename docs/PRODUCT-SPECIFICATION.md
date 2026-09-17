@@ -34,6 +34,13 @@ The product has two complementary authorities:
     feature, or synchronization mechanism may not invent alternate
     accounting semantics.
 
+Commercial ownership, pricing hypotheses, core-versus-service
+entitlements, household licensing, and App Store launch policy are
+defined separately in
+[`PRODUCT-COMMERCIAL-STRATEGY.md`](PRODUCT-COMMERCIAL-STRATEGY.md).
+That document does not override this specification's product or
+financial behavior.
+
 The Deterministic Demo is the reference product experience and sample
 dataset, but known Demo accounting defects are not canonical behavior.
 The Demo must converge on this specification rather than preserve
