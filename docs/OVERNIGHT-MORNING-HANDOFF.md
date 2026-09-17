@@ -20,8 +20,11 @@ tag, or release.
 
 - Current branch: `codex/development`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
-- Latest independently pushed HEAD: `210fba0` (PostgreSQL allocation-version race correction)
-- Push status: all prior v0.6 checkpoints are pushed; the report scale/index checkpoint below is pending
+- Latest independently verified pushed checkpoint: `e3f2922` (v0.8 strategy parity and hydration baseline)
+- Push status: checkpoints through `e3f2922` are pushed. Later dated entries supersede historical pending notes below.
+- Active mission: [Production readiness ledger](PRODUCTION-READINESS.md); finish v0.8 and continue independent engineering toward an App Store release candidate.
+- Next task: demand-loaded Insights reports, authoritative invalidation, loading/error states and request-count evidence.
+- Human acceptance: **PENDING — DO NOT RETEST** during the autonomous run.
 - Human Live database at start: `0020_payee_identity_repair`
 - Human Simulator: preserved iPhone 17 Pro Max / iOS 27.0; no erase/reset/uninstall
 
