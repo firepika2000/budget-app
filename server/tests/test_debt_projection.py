@@ -5,6 +5,7 @@ import pytest
 from app.debt_projection import ProjectionTerms, StrategyDebt, project_debt, project_debt_strategy
 from .conftest import auth
 from .test_budgeting_api import create_budget
+from .test_delegated_access import add_child
 
 
 def loan(*, rate=0, payment=1000, frequency="monthly", **values):
@@ -19,6 +20,25 @@ def card(*, rate=0, fixed=1000, **values):
         annual_rate_basis_points=rate, payment_frequency="monthly",
         minimum_payment_rule="fixed", minimum_payment_minor=fixed, **values,
     )
+
+
+def create_strategy_card(client, token, budget_id, name, balance, rate, payment):
+    account = client.post(
+        f"/api/v1/budgets/{budget_id}/accounts", headers=auth(token),
+        json={"name": name, "account_type": "credit", "starting_balance_minor": -balance},
+    )
+    assert account.status_code == 201, account.text
+    account = account.json()
+    terms = client.put(
+        f"/api/v1/budgets/{budget_id}/accounts/{account['id']}/debt-terms",
+        headers=auth(token), json={
+            "terms_type": "credit_card", "annual_rate_basis_points": rate,
+            "rate_type": "fixed", "payment_frequency": "monthly", "due_day": 15,
+            "minimum_payment_rule": "fixed", "minimum_payment_minor": payment,
+        },
+    )
+    assert terms.status_code == 200, terms.text
+    return account
 
 
 def test_zero_apr_and_final_partial_payment_are_exact():
@@ -196,3 +216,75 @@ def test_custom_strategy_requires_complete_order_and_detects_non_amortizing():
     assert result.status == "non_amortizing"
     assert result.debt_free_date is None
     assert result.payment_count == 1
+
+
+def test_budget_strategy_endpoint_is_exact_read_only_and_supports_custom_order(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    high = create_strategy_card(client, owner_token, budget["id"], "High", 10_000, 2_400, 500)
+    small = create_strategy_card(client, owner_token, budget["id"], "Small", 3_000, 0, 500)
+    path = f"/api/v1/budgets/{budget['id']}/debt-strategy-projection"
+    body = {
+        "first_payment_on": "2026-01-15", "strategy": "avalanche",
+        "rollover": True, "extra_payment_minor": 500,
+    }
+    before = {
+        item["id"]: client.get(
+            f"/api/v1/budgets/{budget['id']}/accounts/{item['id']}/balance",
+            headers=auth(owner_token),
+        ).json()["working_balance_minor"]
+        for item in (high, small)
+    }
+    response = client.post(path, headers=auth(owner_token), json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "paid_off"
+    assert response.json()["projected_interest_minor"] == 1_179
+    assert {item["account_id"] for item in response.json()["accounts"]} == {high["id"], small["id"]}
+
+    custom = client.post(path, headers=auth(owner_token), json=body | {
+        "strategy": "custom", "custom_order": [small["id"], high["id"]],
+    })
+    assert custom.status_code == 200, custom.text
+    assert custom.json()["projected_interest_minor"] == 1_280
+    after = {
+        item["id"]: client.get(
+            f"/api/v1/budgets/{budget['id']}/accounts/{item['id']}/balance",
+            headers=auth(owner_token),
+        ).json()["working_balance_minor"]
+        for item in (high, small)
+    }
+    assert after == before
+
+
+def test_strategy_filters_hidden_debt_before_projection_and_rejects_hidden_ids(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    visible = create_strategy_card(client, owner_token, budget["id"], "Visible", 5_000, 1_200, 500)
+    hidden = create_strategy_card(client, owner_token, budget["id"], "Hidden", 50_000, 2_999, 100)
+    child_id, child_token = add_child(session_factory, client)
+    base = f"/api/v1/budgets/{budget['id']}"
+    assert client.put(f"{base}/grants", headers=auth(owner_token), json={
+        "user_id": child_id, "permission": "view",
+    }).status_code == 200
+    assert client.put(f"{base}/access/{child_id}", headers=auth(owner_token), json={
+        "capabilities": ["view_budget", "view_accounts", "view_account_balances", "view_reports"],
+        "restrict_accounts": True, "account_ids": [visible["id"]],
+        "restrict_categories": False, "category_ids": [],
+    }).status_code == 200
+    path = f"{base}/debt-strategy-projection"
+    body = {
+        "first_payment_on": "2026-01-15", "strategy": "avalanche",
+        "rollover": True, "extra_payment_minor": 0,
+    }
+    scoped = client.post(path, headers=auth(child_token), json=body)
+    assert scoped.status_code == 200, scoped.text
+    assert [item["account_id"] for item in scoped.json()["accounts"]] == [visible["id"]]
+    assert hidden["id"] not in scoped.text
+
+    direct = client.post(path, headers=auth(child_token), json=body | {
+        "account_ids": [visible["id"], hidden["id"]],
+    })
+    assert direct.status_code == 404
+    assert hidden["id"] not in direct.text

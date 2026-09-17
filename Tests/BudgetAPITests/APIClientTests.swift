@@ -759,6 +759,35 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(report.accounts.first?.accountID, "card")
     }
 
+    func testDebtStrategyProjectionUsesExactReadOnlyScenarioContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/debt-strategy-projection")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current-token")
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: Any])
+            XCTAssertEqual(json["strategy"] as? String, "custom")
+            XCTAssertEqual(json["rollover"] as? Bool, true)
+            XCTAssertEqual(json["extra_payment_minor"] as? Int, 10_000)
+            XCTAssertEqual(json["account_ids"] as? [String], ["card", "loan"])
+            XCTAssertEqual(json["custom_order"] as? [String], ["loan", "card"])
+            let response = Data(#"{"currency_code":"USD","status":"paid_off","strategy":"custom","rollover":true,"extra_payment_minor":10000,"payoff_order":["loan","card"],"debt_free_date":"2027-04-15","payment_count":16,"projected_interest_minor":12345,"projected_total_paid_minor":212345,"projected_total_cost_minor":212345,"accounts":[{"account_id":"card","payoff_date":"2027-04-15","payoff_month":16,"projected_interest_minor":10000,"projected_total_paid_minor":110000},{"account_id":"loan","payoff_date":"2026-12-15","payoff_month":12,"projected_interest_minor":2345,"projected_total_paid_minor":102345}],"incomplete_accounts":[]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let result = try await client.debtStrategyProjection(
+            budgetID: "b1",
+            request: .init(firstPaymentOn: "2026-01-15", strategy: "custom", rollover: true, extraPaymentMinor: 10_000, accountIDs: ["card", "loan"], customOrder: ["loan", "card"]),
+            token: "current-token"
+        )
+        XCTAssertEqual(result.status, "paid_off")
+        XCTAssertEqual(result.payoffOrder, ["loan", "card"])
+        XCTAssertEqual(result.projectedInterestMinor, 12_345)
+        XCTAssertEqual(result.accounts.first?.accountID, "card")
+    }
+
     func testPlanPerformanceReportDecodesExactHistoricalObservations() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

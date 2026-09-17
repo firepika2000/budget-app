@@ -127,6 +127,23 @@ def _planned_payment(terms: ProjectionTerms, statement_minor: int) -> int:
     raise ValueError("terms do not define a payment rule")
 
 
+def monthly_strategy_payment(
+    terms: ProjectionTerms, principal_minor: int, first_payment_on: date
+) -> int:
+    """Normalize an existing payment rule to an explicit monthly scenario budget."""
+    periods = _PERIODS_PER_YEAR[terms.payment_frequency]
+    rate = terms.annual_rate_basis_points
+    if (
+        terms.promotional_rate_basis_points is not None
+        and terms.promotional_ends_on is not None
+        and first_payment_on <= terms.promotional_ends_on
+    ):
+        rate = terms.promotional_rate_basis_points
+    interest = _round_ratio_half_up(principal_minor * rate, 10_000 * periods)
+    periodic = _planned_payment(terms, principal_minor + interest)
+    return _round_ratio_half_up(periodic * periods, 12)
+
+
 def project_debt(
     principal_minor: int,
     first_payment_on: date,

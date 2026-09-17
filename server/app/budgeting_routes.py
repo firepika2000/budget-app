@@ -31,7 +31,13 @@ from .allocation import (
     require_version,
 )
 from .database import get_db
-from .debt_projection import ProjectionTerms, project_debt
+from .debt_projection import (
+    ProjectionTerms,
+    StrategyDebt,
+    monthly_strategy_payment,
+    project_debt,
+    project_debt_strategy,
+)
 from .dependencies import get_current_user
 from .credit import add_payment_reserve_event, add_purchase_reserve_events, ensure_credit_payment_category
 from .category_names import normalized_category_name
@@ -70,6 +76,8 @@ from .schemas import (
     AccountDebtTermsUpsert,
     DebtProjectionRequest,
     DebtProjectionResponse,
+    DebtStrategyProjectionRequest,
+    DebtStrategyProjectionResponse,
     AccountResponse,
     AllocationOperationResponse,
     AllocationTransferCreate,
@@ -130,6 +138,19 @@ def debt_terms_response(terms: AccountDebtTerms) -> dict:
         column.key: getattr(terms, column.key)
         for column in AccountDebtTerms.__table__.columns
     } | {"projection_ready": ready, "missing_projection_fields": missing}
+
+
+def projection_terms(terms: AccountDebtTerms) -> ProjectionTerms:
+    return ProjectionTerms(
+        annual_rate_basis_points=terms.annual_rate_basis_points,
+        payment_frequency=terms.payment_frequency,
+        scheduled_payment_minor=terms.scheduled_payment_minor,
+        minimum_payment_rule=terms.minimum_payment_rule,
+        minimum_payment_minor=terms.minimum_payment_minor,
+        minimum_payment_rate_basis_points=terms.minimum_payment_rate_basis_points,
+        promotional_rate_basis_points=terms.promotional_rate_basis_points,
+        promotional_ends_on=terms.promotional_ends_on,
+    )
 
 
 def account_working_balance(db: Session, account_id: str) -> int:
@@ -494,16 +515,7 @@ def debt_projection(
         return base | {"status": "incomplete", "missing_projection_fields": missing}
     result = project_debt(
         principal, body.first_payment_on,
-        ProjectionTerms(
-            annual_rate_basis_points=terms.annual_rate_basis_points,
-            payment_frequency=terms.payment_frequency,
-            scheduled_payment_minor=terms.scheduled_payment_minor,
-            minimum_payment_rule=terms.minimum_payment_rule,
-            minimum_payment_minor=terms.minimum_payment_minor,
-            minimum_payment_rate_basis_points=terms.minimum_payment_rate_basis_points,
-            promotional_rate_basis_points=terms.promotional_rate_basis_points,
-            promotional_ends_on=terms.promotional_ends_on,
-        ),
+        projection_terms(terms),
         extra_payment_minor=body.extra_payment_minor,
     )
     return base | {
@@ -511,6 +523,93 @@ def debt_projection(
         "payment_count": result.payment_count, "projected_interest_minor": result.projected_interest_minor,
         "projected_total_cost_minor": result.projected_total_cost_minor,
         "points": [point.__dict__ for point in result.points],
+    }
+
+
+@router.post("/debt-strategy-projection", response_model=DebtStrategyProjectionResponse)
+def debt_strategy_projection(
+    budget_id: str,
+    body: DebtStrategyProjectionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Compare an explicit read-only strategy after applying resource visibility."""
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
+    require_budget_capability(db, user, budget_id, "view_account_balances")
+    visible = visible_resource_ids(db, user, budget, "account")
+    budget_debt_ids = set(db.scalars(select(Account.id).where(
+        Account.budget_id == budget_id,
+        Account.account_type.in_(("credit", "loan")),
+    )))
+    requested_ids = set(body.account_ids) | set(body.custom_order)
+    if any(value not in budget_debt_ids for value in requested_ids):
+        raise HTTPException(status_code=404, detail="Projection resource not found")
+    if visible is not None and any(value not in visible for value in requested_ids):
+        raise HTTPException(status_code=404, detail="Projection resource not found")
+
+    selected_ids = set(body.account_ids) if body.account_ids else budget_debt_ids
+    if visible is not None:
+        selected_ids &= visible
+    accounts = list(db.scalars(select(Account).where(
+        Account.id.in_(selected_ids)
+    ).order_by(Account.name, Account.id))) if selected_ids else []
+    if not accounts:
+        raise HTTPException(status_code=422, detail="No visible debt accounts are available for projection")
+    if body.strategy == "custom" and set(body.custom_order) != {item.id for item in accounts}:
+        raise HTTPException(status_code=422, detail="Custom order must contain every selected account exactly once")
+
+    strategy_debts: list[StrategyDebt] = []
+    incomplete = []
+    for account in accounts:
+        principal = max(-account_working_balance(db, account.id), 0)
+        terms = db.get(AccountDebtTerms, account.id)
+        missing = ["debt_terms"] if terms is None else debt_terms_readiness(terms)[1]
+        if missing:
+            incomplete.append({"account_id": account.id, "missing_projection_fields": missing})
+            continue
+        resolved_terms = projection_terms(terms)
+        strategy_debts.append(StrategyDebt(
+            debt_id=account.id,
+            principal_minor=principal,
+            annual_rate_basis_points=terms.annual_rate_basis_points,
+            planned_payment_minor=monthly_strategy_payment(
+                resolved_terms, principal, body.first_payment_on
+            ),
+        ))
+    base = {
+        "currency_code": budget.currency_code,
+        "strategy": body.strategy,
+        "rollover": body.rollover,
+        "extra_payment_minor": body.extra_payment_minor,
+    }
+    if incomplete:
+        return base | {"status": "incomplete", "incomplete_accounts": incomplete}
+    result = project_debt_strategy(
+        strategy_debts,
+        body.first_payment_on,
+        strategy=body.strategy,
+        rollover=body.rollover,
+        extra_payment_minor=body.extra_payment_minor,
+        custom_order=body.custom_order,
+    )
+    return base | {
+        "status": result.status,
+        "payoff_order": list(result.payoff_order),
+        "debt_free_date": result.debt_free_date,
+        "payment_count": result.payment_count,
+        "projected_interest_minor": result.projected_interest_minor,
+        "projected_total_paid_minor": result.projected_total_paid_minor,
+        "projected_total_cost_minor": result.projected_total_cost_minor,
+        "accounts": [
+            {
+                "account_id": item.debt_id,
+                "payoff_date": item.payoff_date,
+                "payoff_month": item.payoff_month,
+                "projected_interest_minor": item.projected_interest_minor,
+                "projected_total_paid_minor": item.projected_total_paid_minor,
+            }
+            for item in result.debts
+        ],
     }
 
 

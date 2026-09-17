@@ -237,6 +237,44 @@ class DebtProjectionResponse(BaseModel):
     points: list[DebtProjectionPointResponse] = Field(default_factory=list)
 
 
+class DebtStrategyProjectionRequest(BaseModel):
+    first_payment_on: date
+    strategy: Literal["avalanche", "snowball", "custom"]
+    rollover: bool
+    extra_payment_minor: int = Field(default=0, ge=0, le=MAX_INT64)
+    account_ids: list[str] = Field(default_factory=list, max_length=100)
+    custom_order: list[str] = Field(default_factory=list, max_length=100)
+
+
+class DebtStrategyIncompleteAccount(BaseModel):
+    account_id: str
+    missing_projection_fields: list[str]
+
+
+class DebtStrategyAccountResponse(BaseModel):
+    account_id: str
+    payoff_date: Optional[date] = None
+    payoff_month: Optional[int] = None
+    projected_interest_minor: int
+    projected_total_paid_minor: int
+
+
+class DebtStrategyProjectionResponse(BaseModel):
+    currency_code: str
+    status: Literal["incomplete", "paid_off", "non_amortizing", "iteration_limit"]
+    strategy: Literal["avalanche", "snowball", "custom"]
+    rollover: bool
+    extra_payment_minor: int
+    payoff_order: list[str] = Field(default_factory=list)
+    debt_free_date: Optional[date] = None
+    payment_count: int = 0
+    projected_interest_minor: int = 0
+    projected_total_paid_minor: int = 0
+    projected_total_cost_minor: int = 0
+    accounts: list[DebtStrategyAccountResponse] = Field(default_factory=list)
+    incomplete_accounts: list[DebtStrategyIncompleteAccount] = Field(default_factory=list)
+
+
 class CategoryGroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     sort_order: int = 0

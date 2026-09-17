@@ -568,6 +568,71 @@ public struct APIAccountDebtTerms: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIDebtStrategyProjectionRequest: Encodable, Sendable {
+    public let firstPaymentOn: String
+    public let strategy: String
+    public let rollover: Bool
+    public let extraPaymentMinor: Int64
+    public let accountIDs: [String]
+    public let customOrder: [String]
+
+    public init(firstPaymentOn: String, strategy: String, rollover: Bool, extraPaymentMinor: Int64 = 0, accountIDs: [String] = [], customOrder: [String] = []) {
+        self.firstPaymentOn = firstPaymentOn; self.strategy = strategy; self.rollover = rollover
+        self.extraPaymentMinor = extraPaymentMinor; self.accountIDs = accountIDs; self.customOrder = customOrder
+    }
+    enum CodingKeys: String, CodingKey {
+        case strategy, rollover
+        case firstPaymentOn = "first_payment_on", extraPaymentMinor = "extra_payment_minor"
+        case accountIDs = "account_ids", customOrder = "custom_order"
+    }
+}
+
+public struct APIDebtStrategyIncompleteAccount: Decodable, Equatable, Sendable {
+    public let accountID: String
+    public let missingProjectionFields: [String]
+    enum CodingKeys: String, CodingKey {
+        case accountID = "account_id", missingProjectionFields = "missing_projection_fields"
+    }
+}
+
+public struct APIDebtStrategyAccount: Decodable, Equatable, Sendable {
+    public let accountID: String
+    public let payoffDate: String?
+    public let payoffMonth: Int?
+    public let projectedInterestMinor: Int64
+    public let projectedTotalPaidMinor: Int64
+    enum CodingKeys: String, CodingKey {
+        case accountID = "account_id", payoffDate = "payoff_date", payoffMonth = "payoff_month"
+        case projectedInterestMinor = "projected_interest_minor"
+        case projectedTotalPaidMinor = "projected_total_paid_minor"
+    }
+}
+
+public struct APIDebtStrategyProjection: Decodable, Equatable, Sendable {
+    public let currencyCode: String
+    public let status: String
+    public let strategy: String
+    public let rollover: Bool
+    public let extraPaymentMinor: Int64
+    public let payoffOrder: [String]
+    public let debtFreeDate: String?
+    public let paymentCount: Int
+    public let projectedInterestMinor: Int64
+    public let projectedTotalPaidMinor: Int64
+    public let projectedTotalCostMinor: Int64
+    public let accounts: [APIDebtStrategyAccount]
+    public let incompleteAccounts: [APIDebtStrategyIncompleteAccount]
+    enum CodingKeys: String, CodingKey {
+        case status, strategy, rollover, accounts
+        case currencyCode = "currency_code", extraPaymentMinor = "extra_payment_minor"
+        case payoffOrder = "payoff_order", debtFreeDate = "debt_free_date", paymentCount = "payment_count"
+        case projectedInterestMinor = "projected_interest_minor"
+        case projectedTotalPaidMinor = "projected_total_paid_minor"
+        case projectedTotalCostMinor = "projected_total_cost_minor"
+        case incompleteAccounts = "incomplete_accounts"
+    }
+}
+
 public struct APICategoryGroup: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
