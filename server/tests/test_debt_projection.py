@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from app.debt_projection import ProjectionTerms, project_debt
+from app.debt_projection import ProjectionTerms, StrategyDebt, project_debt, project_debt_strategy
 from .conftest import auth
 from .test_budgeting_api import create_budget
 
@@ -132,3 +132,67 @@ def test_account_projection_endpoint_uses_authoritative_balance_terms_and_scenar
         headers=auth(owner_token),
     ).json()
     assert persisted["minimum_payment_minor"] == 900
+
+
+def test_multi_debt_snowball_rollover_is_explicit_and_exact_at_zero_apr():
+    debts = [
+        StrategyDebt("large", 10_000, 0, 1_000),
+        StrategyDebt("small", 2_000, 0, 500),
+    ]
+    without_rollover = project_debt_strategy(
+        debts, date(2026, 1, 31), strategy="snowball", rollover=False
+    )
+    with_rollover = project_debt_strategy(
+        debts, date(2026, 1, 31), strategy="snowball", rollover=True
+    )
+
+    assert without_rollover.status == with_rollover.status == "paid_off"
+    assert without_rollover.payoff_order == with_rollover.payoff_order == ("small", "large")
+    assert without_rollover.payment_count == 10
+    assert with_rollover.payment_count == 8
+    assert with_rollover.debt_free_date == date(2026, 8, 28)
+    assert with_rollover.projected_interest_minor == 0
+    assert with_rollover.projected_total_paid_minor == 12_000
+    assert sum(item.projected_total_paid_minor for item in with_rollover.debts) == 12_000
+
+
+def test_avalanche_and_snowball_report_objective_differences_without_mutation():
+    debts = (
+        StrategyDebt("high-rate", 10_000, 2_400, 500),
+        StrategyDebt("small", 3_000, 0, 500),
+    )
+    avalanche = project_debt_strategy(
+        debts, date(2026, 1, 15), strategy="avalanche", rollover=True,
+        extra_payment_minor=500,
+    )
+    snowball = project_debt_strategy(
+        debts, date(2026, 1, 15), strategy="snowball", rollover=True,
+        extra_payment_minor=500,
+    )
+
+    assert avalanche.status == snowball.status == "paid_off"
+    assert (avalanche.payment_count, avalanche.projected_interest_minor, avalanche.projected_total_paid_minor) == (10, 1_179, 14_179)
+    assert (snowball.payment_count, snowball.projected_interest_minor, snowball.projected_total_paid_minor) == (10, 1_280, 14_280)
+    assert avalanche.projected_interest_minor < snowball.projected_interest_minor
+    assert avalanche.projected_total_paid_minor < snowball.projected_total_paid_minor
+    assert debts[0].principal_minor == 10_000 and debts[1].principal_minor == 3_000
+
+
+def test_custom_strategy_requires_complete_order_and_detects_non_amortizing():
+    debts = [
+        StrategyDebt("first", 10_000, 1_200, 50),
+        StrategyDebt("second", 5_000, 0, 0),
+    ]
+    with pytest.raises(ValueError, match="every debt exactly once"):
+        project_debt_strategy(
+            debts, date(2026, 1, 1), strategy="custom", rollover=True,
+            custom_order=["first"],
+        )
+
+    result = project_debt_strategy(
+        debts, date(2026, 1, 1), strategy="custom", rollover=False,
+        custom_order=["second", "first"],
+    )
+    assert result.status == "non_amortizing"
+    assert result.debt_free_date is None
+    assert result.payment_count == 1
