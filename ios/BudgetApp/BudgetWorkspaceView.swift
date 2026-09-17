@@ -476,7 +476,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let netWorthAccounts = visibleAccounts.filter { (report.accountID.isEmpty || $0.id == report.accountID) && (report.includeTracking || $0.isOnBudget) }
         let netWorthAccountIDs = Set(netWorthAccounts.map(\.id))
         let netWorthTransactions = demo.visibleTransactions.filter { netWorthAccountIDs.contains($0.accountID) }
-        func balance(_ account: DemoAccount, _ asOf: Date) -> Int64 { account.balance - netWorthTransactions.filter { $0.accountID == account.id && $0.date > asOf }.reduce(Int64(0)) { $0 + $1.amount } }
+        func balance(_ account: DemoAccount, _ asOf: Date) -> Int64 { account.balance - demo.visibleTransactions.filter { $0.accountID == account.id && $0.date > asOf }.reduce(Int64(0)) { $0 + $1.amount } }
         var netWorthPoints: [[String: Any]] = []
         var netWorthMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: start))!
         while netWorthMonth <= report.end {
@@ -491,7 +491,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let endBalances = netWorthAccounts.map { balance($0, report.end) }
         let netWorthAssets = endBalances.reduce(Int64(0)) { $0 + max($1, 0) }, netWorthLiabilities = endBalances.reduce(Int64(0)) { $0 + min($1, 0) }
         let netWorth: APINetWorthReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "assets_minor": netWorthAssets, "liabilities_minor": netWorthLiabilities, "net_worth_minor": netWorthAssets + netWorthLiabilities, "points": netWorthPoints, "accounts": netWorthRows])
-        let debtAccounts = netWorthAccounts.filter { ["credit", "loan"].contains($0.kind.rawValue) }
+        // Debt reporting includes visible loans regardless of the Net Worth
+        // tracking toggle, matching the production server debt-report contract.
+        let debtAccounts = visibleAccounts.filter {
+            ["credit", "loan"].contains($0.kind.rawValue)
+                && (report.accountID.isEmpty || $0.id == report.accountID)
+        }
         let openingDate = Calendar.current.date(byAdding: .day, value: -1, to: start)!
         let openingDebt = debtAccounts.reduce(Int64(0)) { $0 + max(-balance($1, openingDate), 0) }
         let debtAccountIDs = Set(debtAccounts.map(\.id))
@@ -3375,10 +3380,16 @@ private struct DebtInterestDestinationView: View {
     enum SectionChoice:String,CaseIterable {case overview="Overview",interest="Interest",payoff="Payoff"}
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var choice=SectionChoice.overview
+    @State private var editingTermsAccount: APIAccount?
+    @State private var termsRevision = 0
     var body: some View { List { Section { Picker("Debt section",selection:$choice){ForEach(SectionChoice.allCases,id:\.self){Text($0.rawValue).tag($0)}}.pickerStyle(.segmented).accessibilityIdentifier("debt-insights-sections") }
-        if let report=store.debtReport { switch choice { case .overview: DebtOverviewContent(report:report); case .interest: DebtInterestContent(report:report); case .payoff: DebtPayoffContent(report: report) } }
+        if let report=store.debtReport { switch choice { case .overview: DebtOverviewContent(report:report); case .interest: DebtInterestContent(report:report); case .payoff: DebtPayoffContent(report: report, editingTermsAccount: $editingTermsAccount, termsRevision: termsRevision) } }
         else { ContentUnavailableView("No debt",systemImage:"checkmark.circle",description:Text("Credit cards and loans will appear here when visible.")) }
-    }.navigationTitle("Debt & Interest") }
+    }.navigationTitle("Debt & Interest")
+        .sheet(item: $editingTermsAccount, onDismiss: { termsRevision += 1 }) { account in
+            DebtTermsEditorView(account: account).environmentObject(store)
+        }
+    }
 }
 
 private struct DebtOverviewContent: View { @EnvironmentObject private var store:BudgetWorkspaceStore;let report:APIDebtReport;var body:some View{Section("Overview"){LabeledContent("Opening debt",value:store.format(report.openingDebtMinor));LabeledContent("Current debt",value:store.format(report.debtMinor));LabeledContent(report.principalReductionMinor>=0 ? "Principal reduced":"Debt increased",value:store.format(abs(report.principalReductionMinor)));Text("Debt is the visible balance owed on credit cards and loans.").font(.caption).foregroundStyle(.secondary)};Section("Debt Accounts"){ForEach(report.accounts){row in if let account=store.accounts.first(where:{$0.id==row.accountID}){NavigationLink{LiveAccountRegisterView(initialAccount:account)}label:{LabeledContent(row.accountName,value:store.format(row.debtMinor))}}}}} }
@@ -3400,6 +3411,8 @@ private struct DebtInterestContent: View {
 private struct DebtPayoffContent: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let report: APIDebtReport
+    @Binding var editingTermsAccount: APIAccount?
+    let termsRevision: Int
     @State private var strategy = "avalanche"
     @State private var rollover = true
     @State private var extraPreset: Int64 = 0
@@ -3416,7 +3429,7 @@ private struct DebtPayoffContent: View {
         return value
     }
     private var selectedAccountIDs: [String] { store.reportAccountID.isEmpty ? [] : [store.reportAccountID] }
-    private var scenarioKey: String { "\(strategy)|\(rollover)|\(extraPayment.map(String.init) ?? "invalid")|\(customOrder.joined(separator: ","))|\(selectedAccountIDs.joined(separator: ","))" }
+    private var scenarioKey: String { "\(strategy)|\(rollover)|\(extraPayment.map(String.init) ?? "invalid")|\(customOrder.joined(separator: ","))|\(selectedAccountIDs.joined(separator: ","))|\(termsRevision)" }
 
     var body: some View {
         Section("Scenario") {
@@ -3443,6 +3456,18 @@ private struct DebtPayoffContent: View {
         if strategy == "custom" { customOrderSection }
         if isLoading { Section { HStack { Spacer(); ProgressView("Calculating projected payoff…"); Spacer() } } }
         if let result { resultSections(result) }
+        if store.budget.can("manage_budget_structure") {
+            Section("Debt Terms") {
+                ForEach(report.accounts) { row in
+                    if let account = store.accounts.first(where: { $0.id == row.accountID }) {
+                        Button { editingTermsAccount = account } label: {
+                            Label("\(row.accountName) Debt Terms", systemImage: "percent")
+                        }
+                        .accessibilityIdentifier("payoff-debt-terms-\(row.accountID)")
+                    }
+                }
+            }
+        }
         Section {
             Label("Read-only scenario", systemImage: "lock.shield")
                 .accessibilityIdentifier("debt-payoff-read-only")
@@ -3481,6 +3506,14 @@ private struct DebtPayoffContent: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(accountName(item.accountID)).font(.headline)
                         Text("Add \(item.missingProjectionFields.map(friendlyMissingField).joined(separator: ", ")) in Debt Terms.").font(.caption).foregroundStyle(.secondary)
+                        if store.budget.can("manage_budget_structure"),
+                           let account = store.accounts.first(where: { $0.id == item.accountID }) {
+                            Button("Add Debt Terms") { editingTermsAccount = account }
+                                .accessibilityIdentifier("payoff-missing-terms-\(item.accountID)")
+                        } else {
+                            Text("Ask a household member with account-management access to complete these terms.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
             }

@@ -25,6 +25,13 @@ The next correction closes a demonstrated category-privacy leak in recorded-inte
 No human database or Simulator data was changed; no migration was added. Human acceptance remains
 pending / DO NOT RETEST. Demand-loaded Insights remains the next performance workstream.
 
+The next native checkpoint adds an actionable missing-Debt-Terms route and re-evaluates payoff after
+editor dismissal using the shared store. Runtime tests caught a lazy-section sheet placement issue;
+presentation now belongs to the stable Debt & Interest root. Demo debt history also no longer inherits
+Net Worth's tracking-account toggle, aligning loan visibility with Live. Native XCTest 82/82 and the
+production terms-recovery XCUITest pass, as do 33 BudgetCore and 45 BudgetAPI tests. Xcode 27 Beta
+`27A5252f`, existing Simulator `3ABD861E-D38D-4AFD-A356-959266051564`; no reset or Live data changes.
+
 - Current branch: `codex/development`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
 - Latest independently verified pushed checkpoint: `e3f2922` (v0.8 strategy parity and hydration baseline)

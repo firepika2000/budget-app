@@ -65,3 +65,12 @@ report now applies transaction category visibility before every interest aggrega
 while preserving independently authorized account balances. Analytics/delegation tests: 68 passed.
 Full backend regression passed; 11 PostgreSQL-only concurrency tests remain explicitly skipped in
 this run and require the disposable PostgreSQL closure gate. No Swift or migration changes.
+
+Payoff recovery checkpoint: the production screen now opens the shared Debt Terms editor from
+missing inputs and account actions, then recalculates after dismissal. Native UI verification
+exposed and corrected a lazy-section sheet presenter and Demo's accidental inheritance of Net
+Worth's tracking filter. Debt reporting now includes authorized tracking loans and stable history
+regardless of that toggle, matching Live. Native XCTest: 82 passed, including money-neutral terms
+recovery and tracking parity; production recovery XCUITest: 1 passed; Swift package: 33 BudgetCore
+and 45 BudgetAPI passed. Simulator test builds succeeded with Xcode 27.0 (`27A5252f`) on the preserved
+iOS 27 iPhone 17 Pro Max. Human acceptance remains pending. No migration required.

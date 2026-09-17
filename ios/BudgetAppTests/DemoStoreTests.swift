@@ -21,6 +21,48 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testMissingDebtTermsRecoverThroughSharedStoreWithoutChangingMoney() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let balances = store.accountBalances
+        let summary = store.summary
+        let transactions = store.transactions
+        XCTAssertFalse(store.includeTrackingAccounts)
+        XCTAssertTrue(store.debtReport?.accounts.contains(where: { $0.accountID == "auto" }) == true,
+                      "Debt reporting must include visible loans independently of Net Worth's tracking toggle, as Live does")
+        let query = APIDebtStrategyProjectionRequest(firstPaymentOn: "2026-09-17", strategy: "avalanche", rollover: false)
+        try await store.deleteAccountDebtTerms(accountID: "auto")
+        let incomplete = try await store.debtStrategyProjection(query)
+        XCTAssertEqual(incomplete.status, "incomplete")
+        XCTAssertEqual(incomplete.incompleteAccounts.map(\.accountID), ["auto"])
+        _ = try await store.updateAccountDebtTerms(accountID: "auto", value: .init(
+            termsType: "installment_loan", annualRateBasisPoints: 625, rateType: "fixed",
+            paymentFrequency: "monthly", scheduledPaymentMinor: 41_200, dueDay: 1
+        ))
+        let recovered = try await store.debtStrategyProjection(query)
+        XCTAssertEqual(recovered.status, "paid_off")
+        await store.refresh()
+        XCTAssertEqual(store.accountBalances, balances)
+        XCTAssertEqual(store.summary, summary)
+        XCTAssertEqual(store.transactions, transactions)
+    }
+
+    @MainActor
+    func testDebtHistoryIsIndependentOfNetWorthTrackingFilter() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        store.reportPeriod = "custom"
+        store.customReportStart = BudgetWorkspaceStore.parseDate("2026-08-01")
+        store.customReportEnd = BudgetWorkspaceStore.parseDate("2026-09-01")
+        await store.refresh()
+        let withoutTracking = try XCTUnwrap(store.debtReport)
+        XCTAssertTrue(withoutTracking.accounts.contains(where: { $0.accountID == "auto" }))
+        store.includeTrackingAccounts = true
+        await store.refresh()
+        XCTAssertEqual(store.debtReport, withoutTracking,
+                       "Debt balances, historical points and interest must not inherit Net Worth's tracking filter")
+    }
+
+    @MainActor
     func testGuidedOnboardingProgressPersistsWithoutMutatingFinancialState() async {
         let store = BudgetWorkspaceStore.demo(fresh: true)
         await store.refresh()

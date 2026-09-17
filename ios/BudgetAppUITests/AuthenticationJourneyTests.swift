@@ -152,6 +152,44 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(readOnly.waitForExistence(timeout: 5))
     }
 
+    func testPayoffMissingTermsOpensSharedEditorAndRecalculatesAfterSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+        let debt = app.buttons["insights-debt-interest"]
+        XCTAssertTrue(debt.waitForExistence(timeout: 5))
+        debt.tap()
+        app.segmentedControls.buttons["Payoff"].tap()
+        let terms = app.buttons["payoff-debt-terms-auto"]
+        for _ in 0..<10 where !terms.isHittable { app.swipeUp() }
+        XCTAssertTrue(terms.isHittable)
+        terms.tap()
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForExistence(timeout: 5))
+        let remove = app.buttons["Remove Debt Terms"]
+        for _ in 0..<8 where !remove.isHittable { app.swipeUp() }
+        XCTAssertTrue(remove.isHittable)
+        remove.tap()
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForNonExistence(timeout: 5))
+        let add = app.buttons["payoff-missing-terms-auto"]
+        for _ in 0..<10 where !add.isHittable { app.swipeDown() }
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        add.tap()
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForExistence(timeout: 5))
+        let apr = app.textFields["debt-apr"]
+        XCTAssertTrue(apr.waitForExistence(timeout: 5))
+        apr.tap(); apr.typeText("6.25")
+        let payment = app.textFields["debt-payment"]
+        payment.tap(); payment.typeText("412.00")
+        let due = app.textFields["debt-due-day"]
+        due.tap(); due.typeText("1")
+        app.buttons["save-debt-terms"].tap()
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForNonExistence(timeout: 5))
+        let outcome = app.descendants(matching: .any)["debt-payoff-outcome"]
+        XCTAssertTrue(outcome.waitForExistence(timeout: 8))
+        XCTAssertFalse(add.exists)
+    }
+
     func legacyProductionInsightsChartsAndDrillThroughRemainNavigable() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=insights"]
