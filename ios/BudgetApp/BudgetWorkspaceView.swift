@@ -86,8 +86,14 @@ private struct PayeeManagementView: View {
     @State private var rows: [APIPayee] = []
     @State private var nextCursor: String?
     @State private var loading = false
+    @State private var creationConfirmation: String?
     var body: some View {
         List {
+            if let creationConfirmation {
+                Label("Created \(creationConfirmation)", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .accessibilityIdentifier("payee-created-confirmation")
+            }
             if rows.isEmpty && !loading {
                 ContentUnavailableView("No saved payees", systemImage: "person.text.rectangle", description: Text("Save payees for consistent transaction history and category suggestions."))
             } else {
@@ -108,7 +114,12 @@ private struct PayeeManagementView: View {
         .task(id: query) { try? await Task.sleep(for: .milliseconds(250)); guard !Task.isCancelled else { return }; await load(reset: true) }
         .onAppear { Task { await load(reset: true) } }
         .toolbar { Button("Add Payee", systemImage: "plus") { showCreate = true }.accessibilityIdentifier("add-payee-action") }
-        .sheet(isPresented: $showCreate, onDismiss: { Task { await load(reset: true) } }) { PayeeEditorView(payee: nil) }
+        .sheet(isPresented: $showCreate, onDismiss: { Task { await load(reset: true) } }) {
+            PayeeEditorView(payee: nil) { createdName in
+                creationConfirmation = createdName
+                query = createdName
+            }
+        }
         .overlay { if loading && rows.isEmpty { ProgressView() } }
     }
     private func load(reset: Bool) async { if !reset && loading { return }; let requestedQuery = query; loading = true; defer { if requestedQuery == query { loading = false } }; do { let page = try await store.searchPayees(query: requestedQuery, includeArchived: true, limit: 20, cursor: reset ? nil : nextCursor); guard requestedQuery == query else { return }; rows = reset ? page.items : rows + page.items; nextCursor = page.nextCursor } catch {} }
@@ -118,6 +129,7 @@ private struct PayeeEditorView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @Environment(\.dismiss) private var dismiss
     let payee: APIPayee?
+    let onCreated: (String) -> Void
     @State private var name: String
     @State private var categoryID: String
     @State private var isArchived: Bool
@@ -129,8 +141,9 @@ private struct PayeeEditorView: View {
     @State private var errorMessage: String?
     @State private var isSaving = false
 
-    init(payee: APIPayee?) {
+    init(payee: APIPayee?, onCreated: @escaping (String) -> Void = { _ in }) {
         self.payee = payee
+        self.onCreated = onCreated
         _name = State(initialValue: payee?.displayName ?? "")
         _categoryID = State(initialValue: payee?.defaultCategoryID ?? "")
         _isArchived = State(initialValue: payee?.isArchived ?? false)
@@ -192,7 +205,11 @@ private struct PayeeEditorView: View {
         isSaving = true; defer { isSaving = false }
         do {
             if let payee { try await store.updatePayee(.init(payeeID: payee.id, displayName: name, isArchived: isArchived, defaultCategoryID: categoryID.isEmpty ? nil : categoryID)) }
-            else { try await store.createPayee(.init(displayName: name, defaultCategoryID: categoryID.isEmpty ? nil : categoryID)) }
+            else {
+                let createdName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                try await store.createPayee(.init(displayName: createdName, defaultCategoryID: categoryID.isEmpty ? nil : categoryID))
+                onCreated(createdName)
+            }
             dismiss()
         } catch is CancellationError {
             // A credential-generation change supersedes this snapshot with an immediate current-token load.
@@ -312,6 +329,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         if let value = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--demo-persona=") })?.split(separator: "=").last,
            let persona = DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == value.lowercased() }) { store.persona = persona }
         demo = store
+        attachmentData["t1"] = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
         let restricted = store.persona.isChild
         budget = APIBudget(
             id: "demo-budget", householdID: "demo-household", name: "Rivera Household", currencyCode: "USD",
@@ -724,7 +742,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard let transaction = demo.transactions.first(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found") }
         guard let name = transaction.attachmentName else { return [] }
         let data = attachmentData[id] ?? Data()
-        return [try JSONDecoder().decode(APITransactionAttachment.self, from: JSONSerialization.data(withJSONObject: ["id": "demo-attachment-\(id)", "transaction_id": id, "filename": name, "content_type": "application/pdf", "byte_count": data.count, "sha256": "demo", "created_at": "2026-09-14T00:00:00Z", "detached_at": NSNull()]))]
+        let contentType = name.lowercased().hasSuffix(".png") ? "image/png" : "application/pdf"
+        return [try JSONDecoder().decode(APITransactionAttachment.self, from: JSONSerialization.data(withJSONObject: ["id": "demo-attachment-\(id)", "transaction_id": id, "filename": name, "content_type": contentType, "byte_count": data.count, "sha256": "demo", "created_at": "2026-09-14T00:00:00Z", "detached_at": NSNull()]))]
     }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws {
         guard let index = demo.transactions.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found") }
@@ -2831,11 +2850,17 @@ private struct TransactionAttachmentsView: View {
         .onChange(of: selectedPhoto) { _, item in guard let item else { return }; Task { await importPhoto(item) } }
         .fileImporter(isPresented: $importingFile, allowedContentTypes: [.pdf, .jpeg, .png, .heic]) { result in Task { await importFile(result) } }
         .sheet(isPresented: $showingCamera) { AttachmentCameraPicker { image in Task { await importCameraImage(image) } } }
-        .navigationDestination(item: $previewURL) { url in AttachmentPreviewController(url: url).navigationTitle(url.lastPathComponent).navigationBarTitleDisplayMode(.inline) }
+        .navigationDestination(item: $previewURL) { url in
+            AttachmentPreviewScreen(url: url) {
+                var dismissal = Transaction(animation: nil)
+                dismissal.disablesAnimations = true
+                withTransaction(dismissal) { previewURL = nil }
+            }
+        }
         .confirmationDialog("Remove Attachment?", isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }), titleVisibility: .visible, presenting: pendingRemoval) { attachment in
             Button("Remove Attachment", role: .destructive) { pendingRemoval = nil; Task { await detach(attachment) } }
             Button("Cancel", role: .cancel) { pendingRemoval = nil }
-        } message: { attachment in Text("\(attachment.filename) will be detached and retained for 30 days before permanent deletion.") }
+        } message: { attachment in Text(removalMessage(for: attachment)) }
         .alert("Attachment error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
     }
     private func load() async {
@@ -2901,7 +2926,28 @@ private struct TransactionAttachmentsView: View {
         }
     }
     private func open(_ attachment: APITransactionAttachment) async { do { let data = try await store.downloadTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); let directory = FileManager.default.temporaryDirectory.appending(path: "BudgetAttachmentPreview", directoryHint: .isDirectory); try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true); let url = directory.appending(path: attachment.filename); try data.write(to: url, options: .atomic); previewURL = url } catch { self.error = error.localizedDescription } }
+    private func removalMessage(for attachment: APITransactionAttachment) -> String {
+        attachment.filename + " will be detached and retained for 30 days before permanent deletion."
+    }
     private func detach(_ attachment: APITransactionAttachment) async { do { try await store.detachTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); await load() } catch { self.error = error.localizedDescription } }
+}
+
+private struct AttachmentPreviewScreen: View {
+    let url: URL
+    let onDismiss: () -> Void
+
+    var body: some View {
+        AttachmentPreviewController(url: url)
+            .navigationTitle(url.lastPathComponent)
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Back", systemImage: "chevron.backward") { onDismiss() }
+                        .accessibilityIdentifier("attachment-preview-back")
+                }
+            }
+    }
 }
 
 private struct AttachmentPreviewController: UIViewControllerRepresentable {
@@ -2913,6 +2959,10 @@ private struct AttachmentPreviewController: UIViewControllerRepresentable {
         return controller
     }
     func updateUIViewController(_ uiViewController: QLPreviewController, context: Context) {}
+    static func dismantleUIViewController(_ uiViewController: QLPreviewController, coordinator: Coordinator) {
+        uiViewController.dataSource = nil
+        try? FileManager.default.removeItem(at: coordinator.url)
+    }
     final class Coordinator: NSObject, QLPreviewControllerDataSource {
         let url: URL
         init(url: URL) { self.url = url }

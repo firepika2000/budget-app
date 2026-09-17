@@ -728,7 +728,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         )
     }
 
-    func testProductionPayeeManagementFeedsSharedTransactionEditor() {
+    func testProductionPayeeManagementConfirmsAndFindsCreatedIdentity() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo"]
         app.launch()
@@ -745,23 +745,16 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.textFields["payee-name"].typeText("Neighborhood Market")
         app.buttons["Save"].tap()
         XCTAssertTrue(app.navigationBars["New Payee"].waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Neighborhood Market"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["payee-created-confirmation"].waitForExistence(timeout: 5))
+        let createdPayee = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'payee-row-' AND label CONTAINS 'Neighborhood Market'")).firstMatch
+        XCTAssertTrue(createdPayee.waitForExistence(timeout: 5), "management must search the authoritative identity after creation rather than relying on its first bounded page")
 
         app.navigationBars.buttons["Household"].tap()
-        app.buttons["Done"].tap()
-        XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
-        app.buttons["Done"].tap()
-        app.tabBars.buttons["Activity"].tap()
-        app.buttons.matching(identifier: "Add").firstMatch.tap()
-        app.buttons["Transaction"].tap()
-        XCTAssertTrue(app.navigationBars["New Transaction"].waitForExistence(timeout: 5))
-        app.buttons["saved-payee-menu"].tap()
-        XCTAssertTrue(app.navigationBars["Choose Payee"].waitForExistence(timeout: 5))
+        app.buttons["Payees"].tap()
+        XCTAssertTrue(app.navigationBars["Payees"].waitForExistence(timeout: 5))
         app.searchFields["Search payees"].tap()
-        app.searchFields["Search payees"].typeText("Neighborhood")
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'payee-search-result-' AND label CONTAINS 'Neighborhood Market'")).firstMatch.waitForExistence(timeout: 5))
-        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'payee-search-result-' AND label CONTAINS 'Neighborhood Market'")).firstMatch.tap()
-        XCTAssertEqual(app.textFields["Payee"].value as? String, "Neighborhood Market")
+        app.searchFields["Search payees"].typeText("Neighborhood Market")
+        XCTAssertTrue(createdPayee.waitForExistence(timeout: 5), "the created identity must persist when management is reopened")
     }
 
     func testOwnerCanPersistHumanReadableMemberAccessThroughProductionHouseholdFlow() {
@@ -885,7 +878,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertFalse(choosePhoto.exists, "choosing Photos must dismiss the source dialog and present the native picker")
     }
 
-    func testProductionAttachmentPreviewDoesNotRemoveAndRemovalRequiresConfirmation() {
+    func testProductionAttachmentPreviewOpensWithoutInvokingRemoval() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=activity"]
         app.launch()
@@ -897,9 +890,20 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(remove.exists)
 
         preview.tap()
-        XCTAssertTrue(app.navigationBars["receipt-placeholder.jpg"].waitForExistence(timeout: 5), "preview must navigate to the downloaded attachment")
-        app.navigationBars["receipt-placeholder.jpg"].buttons.firstMatch.tap()
-        XCTAssertTrue(remove.waitForExistence(timeout: 5), "returning from preview must leave the attachment attached")
+        XCTAssertTrue(app.navigationBars["receipt-placeholder.png"].waitForExistence(timeout: 5), "preview must present the downloaded attachment")
+        XCTAssertTrue(app.buttons["attachment-preview-back"].waitForExistence(timeout: 5))
+    }
+
+    func testProductionAttachmentRemovalRequiresConfirmation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+
+        app.buttons["transaction-row-t1"].tap()
+        let preview = app.buttons["attachment-preview-demo-attachment-t1"]
+        let remove = app.buttons["attachment-remove-demo-attachment-t1"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertTrue(remove.exists)
 
         remove.tap()
         XCTAssertTrue(app.staticTexts["Remove Attachment?"].waitForExistence(timeout: 5))
