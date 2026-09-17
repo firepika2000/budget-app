@@ -524,7 +524,15 @@ def debt_report(
             return sum(-split.amount_minor for split in item.splits if split.financial_classification == "interest_charge")
         return -item.amount_minor if item.financial_classification == "interest_charge" else 0
 
-    classified = [item for item in transactions if recorded_interest(item) != 0]
+    # Balance visibility does not grant access to the classification/history of
+    # category-restricted transactions. Apply the same whole-transaction rule
+    # as the browser before interest totals, account contributions or dates.
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    classified = [item for item in transactions if (
+        visible_categories is None
+        or item.category_id in visible_categories
+        or (bool(item.splits) and all(split.category_id in visible_categories for split in item.splits))
+    ) and recorded_interest(item) != 0]
     range_interest = sum(recorded_interest(item) for item in classified if item.occurred_on >= start_date)
     month_start = date(end_date.year, end_date.month, 1)
     year_start = date(end_date.year, 1, 1)

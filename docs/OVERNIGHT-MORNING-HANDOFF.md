@@ -18,6 +18,13 @@ tag, or release.
 
 ## Repository checkpoint
 
+2026-09-17 production-readiness continuation: `c7b84c5` establishes the master readiness ledger;
+`30eb76f` fixes zero-principal strategy provider parity with a shared failing-then-passing vector.
+The next correction closes a demonstrated category-privacy leak in recorded-interest reporting:
+68 focused analytics/delegation tests and the full backend suite pass (11 PostgreSQL-gated skips).
+No human database or Simulator data was changed; no migration was added. Human acceptance remains
+pending / DO NOT RETEST. Demand-loaded Insights remains the next performance workstream.
+
 - Current branch: `codex/development`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
 - Latest independently verified pushed checkpoint: `e3f2922` (v0.8 strategy parity and hydration baseline)

@@ -58,3 +58,10 @@ Preserved Simulator UDID: `3ABD861E-D38D-4AFD-A356-959266051564` (reverify runti
   suite passed with the 11 explicitly PostgreSQL-gated cases skipped. No migration required.
 
 Engineering-controlled gates are not all PASS. This is not yet an App Store release candidate.
+
+Recorded-interest privacy checkpoint: the HTTP regression reproduced hidden-category and mixed-split
+interest contributing to a restricted member's totals (13,000 instead of 1,000 minor units). The
+report now applies transaction category visibility before every interest aggregate and coverage date,
+while preserving independently authorized account balances. Analytics/delegation tests: 68 passed.
+Full backend regression passed; 11 PostgreSQL-only concurrency tests remain explicitly skipped in
+this run and require the disposable PostgreSQL closure gate. No Swift or migration changes.

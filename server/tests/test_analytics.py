@@ -592,6 +592,54 @@ def test_recorded_interest_is_explicit_split_aware_filterable_and_netted(client,
     assert loan_only["recorded_interest_range_minor"] == 2500
 
 
+def test_recorded_interest_respects_category_scope_on_visible_debt_account(client, owner_token, session_factory):
+    from .test_delegated_access import add_child, configure_child
+
+    budget = create_budget(client, owner_token, session_factory)
+    _, hidden_category = create_budget_structure(client, owner_token, budget["id"])
+    visible_category = add_category(client, owner_token, budget["id"], "Shared", "Visible interest")
+    card_response = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Shared card", "account_type": "credit"},
+    )
+    assert card_response.status_code == 201
+    card = card_response.json()
+    for category_id, amount, day in [
+        (hidden_category["id"], -9000, "2026-09-01"),
+        (visible_category["id"], -1000, "2026-09-10"),
+    ]:
+        record(client, owner_token, budget["id"], account_id=card["id"], category_id=category_id,
+               amount_minor=amount, occurred_on=day, financial_classification="interest_charge")
+    # A partially hidden split is not a visible transaction in the canonical browser contract.
+    record(client, owner_token, budget["id"], account_id=card["id"], amount_minor=-3000,
+           occurred_on="2026-09-02", splits=[
+               {"category_id": visible_category["id"], "amount_minor": -1000, "financial_classification": "interest_charge"},
+               {"category_id": hidden_category["id"], "amount_minor": -2000, "financial_classification": "interest_charge"},
+           ])
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, card["id"], visible_category["id"])
+    profile = client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token),
+        json={"capabilities": ["view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports"],
+              "restrict_accounts": True, "account_ids": [card["id"]],
+              "restrict_categories": True, "category_ids": [visible_category["id"]]},
+    )
+    assert profile.status_code == 200, profile.text
+    url = f"/api/v1/budgets/{budget['id']}/reports/debt?start_date=2026-09-01&end_date=2026-09-30"
+    owner = client.get(url, headers=auth(owner_token))
+    assert owner.status_code == 200
+    assert owner.json()["recorded_interest_range_minor"] == 13000
+    restricted = client.get(url, headers=auth(child_token))
+    assert restricted.status_code == 200, restricted.text
+    body = restricted.json()
+    for field in ("recorded_interest_range_minor", "recorded_interest_month_minor", "recorded_interest_ytd_minor", "recorded_interest_trailing_12_minor"):
+        assert body[field] == 1000, field
+    assert body["accounts"][0]["recorded_interest_minor"] == 1000
+    assert body["interest_tracking_started_on"] == "2026-09-10"
+    # Balance access is independently authorized: filtering interest must not redefine card debt.
+    assert body["debt_minor"] == owner.json()["debt_minor"] == 13000
+
+
 def test_interest_classification_requires_debt_account(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     checking, category = create_budget_structure(client, owner_token, budget["id"])
