@@ -3,6 +3,12 @@
   "first_payment_on": "2026-01-31",
   "cases": [
     {
+      "id": "all_debts_already_paid",
+      "strategy": "avalanche", "rollover": false, "extra_payment_minor": 0,
+      "debts": [{"id": "solo", "principal_minor": 0, "annual_rate_basis_points": 1200, "planned_payment_minor": 1000}],
+      "expected": {"status": "paid_off", "payoff_order": ["solo"], "debt_free_date": "2026-01-31", "payment_count": 0, "projected_interest_minor": 0, "projected_total_paid_minor": 0}
+    },
+    {
       "id": "single_zero_apr_final_partial",
       "strategy": "avalanche", "rollover": false, "extra_payment_minor": 0,
       "debts": [{"id": "solo", "principal_minor": 2501, "annual_rate_basis_points": 0, "planned_payment_minor": 1000}],

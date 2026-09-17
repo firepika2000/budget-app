@@ -243,6 +243,12 @@ def project_debt_strategy(
         payoff_dates[item] = first_payment_on
         payoff_months[item] = 0
 
+    if len(initially_paid) == len(ids):
+        results = tuple(StrategyDebtResult(item, first_payment_on, 0, 0, 0) for item in ids)
+        return StrategyProjectionResult(
+            "paid_off", strategy, rollover, tuple(payoff_order), first_payment_on, 0, 0, 0, 0, results
+        )
+
     for number in range(1, max_periods + 1):
         active = [item for item in ids if balances[item] > 0]
         if not active:

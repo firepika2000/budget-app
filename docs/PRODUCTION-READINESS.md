@@ -51,5 +51,10 @@ Preserved Simulator UDID: `3ABD861E-D38D-4AFD-A356-959266051564` (reverify runti
   it is not a fresh release-wide result.
 - `d7a702d`: shared strategy vectors; focused Python 18 passed, Swift projection 6 passed.
 - `e3f2922`: strategy evidence and static Insights hydration baseline documented.
+- Paid-off strategy boundary correction: the new shared `all_debts_already_paid` fixture first
+  reproduced Python returning `non_amortizing`/1,200 payments while Swift returned paid off.
+  Python now returns paid off, zero payments, zero cost and the scenario start date. Eleven shared
+  vectors pass; focused Python 18 passed, Swift projection 6 passed on Xcode Beta; full backend
+  suite passed with the 11 explicitly PostgreSQL-gated cases skipped. No migration required.
 
 Engineering-controlled gates are not all PASS. This is not yet an App Store release candidate.
