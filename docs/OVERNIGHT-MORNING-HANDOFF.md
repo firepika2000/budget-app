@@ -4,6 +4,18 @@ This is a durable, incrementally updated handoff for the autonomous run beginnin
 It records engineering evidence separately from human acceptance and does not authorize a merge,
 tag, or release.
 
+## 2026-09-17 — v0.8 exact strategy parity checkpoint
+
+- `d7a702d` adds one versioned debt-strategy fixture consumed directly by Python and BudgetCore.
+  Ten cases lock exact cents, dates, payoff order, payment count, rollover, extra payments, final
+  partial payments, and typed non-amortizing output across providers.
+- Focused verification passed: 18 Python projection/vector tests and all 6 BudgetCore
+  `DebtProjectionTests` under Xcode 27 Beta.
+- Insights hydration was measured before refactoring: each ordinary Live snapshot currently issues
+  seven detailed report requests before a focused report is opened, followed by category-target and
+  account-balance fan-out. The v0.8 plan records lazy-loading request-count acceptance criteria.
+- Human Live database, Simulator, attachments, and reconciliation history were not modified.
+
 ## Repository checkpoint
 
 - Current branch: `codex/development`
