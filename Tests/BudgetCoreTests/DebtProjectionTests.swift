@@ -2,6 +2,35 @@ import XCTest
 @testable import BudgetCore
 
 final class DebtProjectionTests: XCTestCase {
+    private struct StrategyVectorFile: Decodable {
+        let formatVersion: Int
+        let firstPaymentOn: String
+        let cases: [StrategyVector]
+    }
+    private struct StrategyVector: Decodable {
+        let id: String
+        let strategy: String
+        let rollover: Bool
+        let extraPaymentMinor: Int64
+        let customOrder: [String]?
+        let debts: [StrategyVectorDebt]
+        let expected: StrategyVectorExpected
+    }
+    private struct StrategyVectorDebt: Decodable {
+        let id: String
+        let principalMinor: Int64
+        let annualRateBasisPoints: Int64
+        let plannedPaymentMinor: Int64
+    }
+    private struct StrategyVectorExpected: Decodable {
+        let status: String
+        let payoffOrder: [String]
+        let debtFreeDate: String?
+        let paymentCount: Int
+        let projectedInterestMinor: Int64
+        let projectedTotalPaidMinor: Int64
+    }
+
     private let calendar: Calendar = { var value = Calendar(identifier: .gregorian); value.timeZone = TimeZone(secondsFromGMT: 0)!; return value }()
     private func date(_ value: String) -> Date { ISO8601DateFormatter().date(from: value + "T00:00:00Z")! }
 
@@ -63,5 +92,46 @@ final class DebtProjectionTests: XCTestCase {
         XCTAssertEqual(result.status, .nonAmortizing)
         XCTAssertNil(result.debtFreeDate)
         XCTAssertEqual(result.paymentCount, 1)
+    }
+
+    func testSharedDebtStrategyGoldenVectorsMatchExactly() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let url = repositoryRoot.appendingPathComponent("server/tests/debt_strategy_vectors/v1.json")
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let vectors = try decoder.decode(StrategyVectorFile.self, from: Data(contentsOf: url))
+        XCTAssertEqual(vectors.formatVersion, 1)
+
+        for vector in vectors.cases {
+            let strategy = try XCTUnwrap(DebtPayoffStrategy(rawValue: vector.strategy), vector.id)
+            let expectedStatus = try XCTUnwrap([
+                "paid_off": DebtProjectionStatus.paidOff,
+                "non_amortizing": .nonAmortizing,
+                "iteration_limit": .iterationLimit,
+            ][vector.expected.status], "Unknown status in \(vector.id): \(vector.expected.status)")
+            let result = try DebtProjectionEngine.projectStrategy(
+                debts: vector.debts.map {
+                    DebtStrategyInput(
+                        debtID: $0.id,
+                        principalMinor: $0.principalMinor,
+                        annualRateBasisPoints: $0.annualRateBasisPoints,
+                        plannedPaymentMinor: $0.plannedPaymentMinor
+                    )
+                },
+                firstPaymentOn: date(vectors.firstPaymentOn),
+                strategy: strategy,
+                rollover: vector.rollover,
+                extraPaymentMinor: vector.extraPaymentMinor,
+                customOrder: vector.customOrder ?? [],
+                calendar: calendar
+            )
+            XCTAssertEqual(result.status, expectedStatus, vector.id)
+            XCTAssertEqual(result.payoffOrder, vector.expected.payoffOrder, vector.id)
+            XCTAssertEqual(result.debtFreeDate.map { ISO8601DateFormatter().string(from: $0).prefix(10).description }, vector.expected.debtFreeDate, vector.id)
+            XCTAssertEqual(result.paymentCount, vector.expected.paymentCount, vector.id)
+            XCTAssertEqual(result.projectedInterestMinor, vector.expected.projectedInterestMinor, vector.id)
+            XCTAssertEqual(result.projectedTotalPaidMinor, vector.expected.projectedTotalPaidMinor, vector.id)
+        }
     }
 }

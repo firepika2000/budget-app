@@ -1,0 +1,66 @@
+{
+  "format_version": 1,
+  "first_payment_on": "2026-01-31",
+  "cases": [
+    {
+      "id": "single_zero_apr_final_partial",
+      "strategy": "avalanche", "rollover": false, "extra_payment_minor": 0,
+      "debts": [{"id": "solo", "principal_minor": 2501, "annual_rate_basis_points": 0, "planned_payment_minor": 1000}],
+      "expected": {"status": "paid_off", "payoff_order": ["solo"], "debt_free_date": "2026-03-28", "payment_count": 3, "projected_interest_minor": 0, "projected_total_paid_minor": 2501}
+    },
+    {
+      "id": "snowball_rollover_off",
+      "strategy": "snowball", "rollover": false, "extra_payment_minor": 0,
+      "debts": [{"id": "large", "principal_minor": 10000, "annual_rate_basis_points": 0, "planned_payment_minor": 1000}, {"id": "small", "principal_minor": 2000, "annual_rate_basis_points": 0, "planned_payment_minor": 500}],
+      "expected": {"status": "paid_off", "payoff_order": ["small", "large"], "debt_free_date": "2026-10-28", "payment_count": 10, "projected_interest_minor": 0, "projected_total_paid_minor": 12000}
+    },
+    {
+      "id": "snowball_rollover_on",
+      "strategy": "snowball", "rollover": true, "extra_payment_minor": 0,
+      "debts": [{"id": "large", "principal_minor": 10000, "annual_rate_basis_points": 0, "planned_payment_minor": 1000}, {"id": "small", "principal_minor": 2000, "annual_rate_basis_points": 0, "planned_payment_minor": 500}],
+      "expected": {"status": "paid_off", "payoff_order": ["small", "large"], "debt_free_date": "2026-08-28", "payment_count": 8, "projected_interest_minor": 0, "projected_total_paid_minor": 12000}
+    },
+    {
+      "id": "avalanche_high_apr_first",
+      "strategy": "avalanche", "rollover": true, "extra_payment_minor": 500,
+      "debts": [{"id": "high", "principal_minor": 10000, "annual_rate_basis_points": 2400, "planned_payment_minor": 500}, {"id": "small", "principal_minor": 3000, "annual_rate_basis_points": 0, "planned_payment_minor": 500}],
+      "expected": {"status": "paid_off", "payoff_order": ["small", "high"], "debt_free_date": "2026-10-28", "payment_count": 10, "projected_interest_minor": 1179, "projected_total_paid_minor": 14179}
+    },
+    {
+      "id": "snowball_low_balance_first",
+      "strategy": "snowball", "rollover": true, "extra_payment_minor": 500,
+      "debts": [{"id": "high", "principal_minor": 10000, "annual_rate_basis_points": 2400, "planned_payment_minor": 500}, {"id": "small", "principal_minor": 3000, "annual_rate_basis_points": 0, "planned_payment_minor": 500}],
+      "expected": {"status": "paid_off", "payoff_order": ["small", "high"], "debt_free_date": "2026-10-28", "payment_count": 10, "projected_interest_minor": 1280, "projected_total_paid_minor": 14280}
+    },
+    {
+      "id": "custom_explicit_order",
+      "strategy": "custom", "rollover": true, "extra_payment_minor": 500, "custom_order": ["small", "high"],
+      "debts": [{"id": "high", "principal_minor": 10000, "annual_rate_basis_points": 2400, "planned_payment_minor": 500}, {"id": "small", "principal_minor": 3000, "annual_rate_basis_points": 0, "planned_payment_minor": 500}],
+      "expected": {"status": "paid_off", "payoff_order": ["small", "high"], "debt_free_date": "2026-10-28", "payment_count": 10, "projected_interest_minor": 1280, "projected_total_paid_minor": 14280}
+    },
+    {
+      "id": "non_amortizing_household",
+      "strategy": "custom", "rollover": false, "extra_payment_minor": 0, "custom_order": ["second", "first"],
+      "debts": [{"id": "first", "principal_minor": 10000, "annual_rate_basis_points": 1200, "planned_payment_minor": 50}, {"id": "second", "principal_minor": 5000, "annual_rate_basis_points": 0, "planned_payment_minor": 0}],
+      "expected": {"status": "non_amortizing", "payoff_order": [], "debt_free_date": null, "payment_count": 1, "projected_interest_minor": 100, "projected_total_paid_minor": 50}
+    },
+    {
+      "id": "extra_fifty_monthly",
+      "strategy": "avalanche", "rollover": false, "extra_payment_minor": 5000,
+      "debts": [{"id": "solo", "principal_minor": 10000, "annual_rate_basis_points": 1200, "planned_payment_minor": 900}],
+      "expected": {"status": "paid_off", "payoff_order": ["solo"], "debt_free_date": "2026-02-28", "payment_count": 2, "projected_interest_minor": 142, "projected_total_paid_minor": 10142}
+    },
+    {
+      "id": "extra_one_hundred_monthly",
+      "strategy": "avalanche", "rollover": false, "extra_payment_minor": 10000,
+      "debts": [{"id": "solo", "principal_minor": 10000, "annual_rate_basis_points": 1200, "planned_payment_minor": 900}],
+      "expected": {"status": "paid_off", "payoff_order": ["solo"], "debt_free_date": "2026-01-31", "payment_count": 1, "projected_interest_minor": 100, "projected_total_paid_minor": 10100}
+    },
+    {
+      "id": "cent_rounding",
+      "strategy": "avalanche", "rollover": false, "extra_payment_minor": 0,
+      "debts": [{"id": "solo", "principal_minor": 101, "annual_rate_basis_points": 1200, "planned_payment_minor": 50}],
+      "expected": {"status": "paid_off", "payoff_order": ["solo"], "debt_free_date": "2026-03-28", "payment_count": 3, "projected_interest_minor": 2, "projected_total_paid_minor": 103}
+    }
+  ]
+}
