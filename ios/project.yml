@@ -17,6 +17,8 @@ targets:
     dependencies:
       - package: BudgetCore
         product: BudgetAPI
+      - package: BudgetCore
+        product: BudgetCore
     postBuildScripts:
       - name: Inject Runtime Identity
         outputFiles:

@@ -131,6 +131,27 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(debt.waitForExistence(timeout: 5), "large accessibility text must keep every focused report reachable")
     }
 
+    func testProductionDebtPayoffScenarioIsReadOnlyAndExposesExplicitAssumptions() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+
+        let debt = app.buttons["insights-debt-interest"]
+        for _ in 0..<8 where !debt.exists { app.swipeUp() }
+        XCTAssertTrue(debt.waitForExistence(timeout: 5))
+        debt.tap()
+        XCTAssertTrue(app.navigationBars["Debt & Interest"].waitForExistence(timeout: 5))
+        app.segmentedControls.buttons["Payoff"].tap()
+        XCTAssertTrue(app.segmentedControls["debt-payoff-strategy"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.switches["debt-payoff-rollover"].exists)
+        let outcome = app.descendants(matching: .any)["debt-payoff-outcome"]
+        for _ in 0..<8 where !outcome.exists { app.swipeUp() }
+        XCTAssertTrue(outcome.waitForExistence(timeout: 8))
+        let readOnly = app.descendants(matching: .any)["debt-payoff-read-only"]
+        for _ in 0..<5 where !readOnly.exists { app.swipeUp() }
+        XCTAssertTrue(readOnly.waitForExistence(timeout: 5))
+    }
+
     func legacyProductionInsightsChartsAndDrillThroughRemainNavigable() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=insights"]

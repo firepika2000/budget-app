@@ -6,6 +6,21 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testDemoDebtStrategyUsesSharedExactEngineWithoutMutation() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let before = store.accountBalances
+        let result = try await store.debtStrategyProjection(.init(
+            firstPaymentOn: "2026-09-17", strategy: "avalanche", rollover: true,
+            extraPaymentMinor: 10_000
+        ))
+        XCTAssertEqual(result.status, "paid_off")
+        XCTAssertFalse(result.payoffOrder.isEmpty)
+        XCTAssertGreaterThan(result.projectedInterestMinor, 0)
+        XCTAssertEqual(store.accountBalances, before)
+    }
+
+    @MainActor
     func testGuidedOnboardingProgressPersistsWithoutMutatingFinancialState() async {
         let store = BudgetWorkspaceStore.demo(fresh: true)
         await store.refresh()

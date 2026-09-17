@@ -1,4 +1,5 @@
 import BudgetAPI
+import BudgetCore
 import SwiftUI
 import Charts
 import UniformTypeIdentifiers
@@ -272,6 +273,7 @@ protocol WorkspaceDataSource: AnyObject {
     var budget: APIBudget { get }
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot
     func exportReports(report: WorkspaceReportQuery) async throws -> Data
+    func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection
 }
 
 @MainActor
@@ -336,6 +338,9 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             effectivePermission: restricted ? .contribute : .owner,
             capabilities: restricted ? ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances", "create_transaction", "edit_transaction", "delete_transaction", "request_money", "move_money", "manage_own_categories"] : nil
         )
+        debtTermsValues["visa"] = .init(termsType: "credit_card", annualRateBasisPoints: 2049, rateType: "variable", paymentFrequency: "monthly", minimumPaymentRule: "fixed", minimumPaymentMinor: 4500, dueDay: 18)
+        debtTermsValues["mastercard"] = .init(termsType: "credit_card", annualRateBasisPoints: 1899, rateType: "variable", paymentFrequency: "monthly", minimumPaymentRule: "fixed", minimumPaymentMinor: 3500, dueDay: 24)
+        debtTermsValues["auto"] = .init(termsType: "installment_loan", annualRateBasisPoints: 625, rateType: "fixed", paymentFrequency: "monthly", scheduledPaymentMinor: 41200, dueDay: 1)
     }
 
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
@@ -584,6 +589,29 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             rows.append("plan,\(point.periodStart),\(point.periodEnd),metric,unassigned,\(point.readyToAssignMinor),\(budget.currencyCode)")
         }
         return Data((rows.joined(separator: "\n") + "\n").utf8)
+    }
+
+    func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection {
+        let selected = demo.visibleAccounts.filter {
+            ["credit", "loan"].contains($0.kind.rawValue)
+                && (request.accountIDs.isEmpty || request.accountIDs.contains($0.id))
+        }
+        let missing = selected.filter { debtTermsValues[$0.id] == nil }.map {
+            ["account_id": $0.id, "missing_projection_fields": ["debt_terms"]] as [String: Any]
+        }
+        if !missing.isEmpty {
+            return try decode(["currency_code": budget.currencyCode, "status": "incomplete", "strategy": request.strategy, "rollover": request.rollover, "extra_payment_minor": request.extraPaymentMinor, "payoff_order": [], "payment_count": 0, "projected_interest_minor": 0, "projected_total_paid_minor": 0, "projected_total_cost_minor": 0, "accounts": [], "incomplete_accounts": missing])
+        }
+        let inputs = selected.compactMap { account -> DebtStrategyInput? in
+            guard let terms = debtTermsValues[account.id], let rate = terms.annualRateBasisPoints else { return nil }
+            return .init(debtID: account.id, principalMinor: max(-account.balance, 0), annualRateBasisPoints: Int64(rate), plannedPaymentMinor: terms.scheduledPaymentMinor ?? terms.minimumPaymentMinor ?? 0)
+        }
+        let result = try DebtProjectionEngine.projectStrategy(debts: inputs, firstPaymentOn: BudgetWorkspaceStore.parseDate(request.firstPaymentOn), strategy: DebtPayoffStrategy(rawValue: request.strategy) ?? .avalanche, rollover: request.rollover, extraPaymentMinor: request.extraPaymentMinor, customOrder: request.customOrder)
+        let rows = result.debts.map { item in
+            ["account_id": item.debtID, "payoff_date": item.payoffDate.map(BudgetWorkspaceStore.dateString) ?? NSNull(), "payoff_month": item.payoffMonth ?? NSNull(), "projected_interest_minor": item.projectedInterestMinor, "projected_total_paid_minor": item.projectedTotalPaidMinor] as [String: Any]
+        }
+        let status = result.status == .paidOff ? "paid_off" : result.status == .nonAmortizing ? "non_amortizing" : "iteration_limit"
+        return try decode(["currency_code": budget.currencyCode, "status": status, "strategy": request.strategy, "rollover": request.rollover, "extra_payment_minor": request.extraPaymentMinor, "payoff_order": result.payoffOrder, "debt_free_date": result.debtFreeDate.map(BudgetWorkspaceStore.dateString) ?? NSNull(), "payment_count": result.paymentCount, "projected_interest_minor": result.projectedInterestMinor, "projected_total_paid_minor": result.projectedTotalPaidMinor, "projected_total_cost_minor": result.projectedTotalCostMinor, "accounts": rows, "incomplete_accounts": []])
     }
 
     private func decode<T: Decodable>(_ value: Any) throws -> T { try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value)) }
@@ -1039,6 +1067,11 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
             endDate: BudgetWorkspaceStore.dateString(report.end), token: token
         )
     }
+
+    func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection {
+        try await credentials.prepare()
+        return try await credentials.client().debtStrategyProjection(budgetID: budget.id, request: request, token: token)
+    }
 }
 
 @MainActor
@@ -1180,6 +1213,11 @@ final class BudgetWorkspaceStore: ObservableObject {
         let url = FileManager.default.temporaryDirectory.appending(path: name)
         try data.write(to: url, options: .atomic)
         return url
+    }
+
+    func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection {
+        guard let dataSource else { throw workspaceRepositoryError("Debt payoff scenarios are unavailable.") }
+        return try await dataSource.debtStrategyProjection(request)
     }
 
     func createTransaction(_ operation: RecordTransactionOperation) async throws {
@@ -3338,7 +3376,7 @@ private struct DebtInterestDestinationView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var choice=SectionChoice.overview
     var body: some View { List { Section { Picker("Debt section",selection:$choice){ForEach(SectionChoice.allCases,id:\.self){Text($0.rawValue).tag($0)}}.pickerStyle(.segmented).accessibilityIdentifier("debt-insights-sections") }
-        if let report=store.debtReport { switch choice { case .overview: DebtOverviewContent(report:report); case .interest: DebtInterestContent(report:report); case .payoff: ContentUnavailableView("Payoff scenarios",systemImage:"calendar.badge.clock",description:Text("Add complete Debt Terms to compare projected payoff outcomes. Projections never change your budget.")) } }
+        if let report=store.debtReport { switch choice { case .overview: DebtOverviewContent(report:report); case .interest: DebtInterestContent(report:report); case .payoff: DebtPayoffContent(report: report) } }
         else { ContentUnavailableView("No debt",systemImage:"checkmark.circle",description:Text("Credit cards and loans will appear here when visible.")) }
     }.navigationTitle("Debt & Interest") }
 }
@@ -3356,6 +3394,145 @@ private struct DebtInterestContent: View {
             Text(report.interestTrackingStartedOn.map { "Recorded since \($0). Earlier interest may not be classified." } ?? "No explicitly classified interest is recorded for this period.").font(.caption).foregroundStyle(.secondary)
         }
         Section("By Account") { ForEach(report.accounts.filter { $0.recordedInterestMinor != 0 }) { row in LabeledContent(row.accountName, value: store.format(row.recordedInterestMinor)) } }
+    }
+}
+
+private struct DebtPayoffContent: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let report: APIDebtReport
+    @State private var strategy = "avalanche"
+    @State private var rollover = true
+    @State private var extraPreset: Int64 = 0
+    @State private var customExtra = ""
+    @State private var customOrder: [String] = []
+    @State private var result: APIDebtStrategyProjection?
+    @State private var baseline: APIDebtStrategyProjection?
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    private var extraPayment: Int64? {
+        if extraPreset >= 0 { return extraPreset }
+        guard let value = CurrencyText.parseMinorUnits(customExtra, currencyCode: store.budget.currencyCode), value >= 0 else { return nil }
+        return value
+    }
+    private var selectedAccountIDs: [String] { store.reportAccountID.isEmpty ? [] : [store.reportAccountID] }
+    private var scenarioKey: String { "\(strategy)|\(rollover)|\(extraPayment.map(String.init) ?? "invalid")|\(customOrder.joined(separator: ","))|\(selectedAccountIDs.joined(separator: ","))" }
+
+    var body: some View {
+        Section("Scenario") {
+            Picker("Payoff strategy", selection: $strategy) {
+                Text("Avalanche").tag("avalanche")
+                Text("Snowball").tag("snowball")
+                Text("Custom").tag("custom")
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("debt-payoff-strategy")
+            Text(strategyExplanation).font(.caption).foregroundStyle(.secondary)
+            Toggle("Roll payments into the next debt", isOn: $rollover)
+                .accessibilityIdentifier("debt-payoff-rollover")
+            Text(rollover ? "Projected payments freed by a paid debt are applied to the next debt." : "Each debt keeps only its existing planned payment after another debt is paid.")
+                .font(.caption).foregroundStyle(.secondary)
+            Picker("Pay more each month", selection: $extraPreset) {
+                Text("Current plan").tag(Int64(0)); Text("+$50").tag(Int64(5_000)); Text("+$100").tag(Int64(10_000)); Text("+$250").tag(Int64(25_000)); Text("Custom").tag(Int64(-1))
+            }
+            if extraPreset == -1 {
+                CurrencyAmountField("Extra each month", text: $customExtra, currencyCode: store.budget.currencyCode, allowsZero: true)
+                    .accessibilityIdentifier("debt-payoff-custom-extra")
+            }
+        }
+        if strategy == "custom" { customOrderSection }
+        if isLoading { Section { HStack { Spacer(); ProgressView("Calculating projected payoff…"); Spacer() } } }
+        if let result { resultSections(result) }
+        Section {
+            Label("Read-only scenario", systemImage: "lock.shield")
+                .accessibilityIdentifier("debt-payoff-read-only")
+            Text("Projected results use current visible balances and saved Debt Terms. Changing this scenario does not alter transactions, balances, Plan assignments, schedules, or debt terms.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .task(id: scenarioKey) {
+            guard extraPayment != nil, !report.accounts.isEmpty else { result = nil; return }
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            await calculate()
+        }
+        .onAppear { if customOrder.isEmpty { customOrder = report.accounts.map(\.accountID) } }
+        .alert("Unable to calculate payoff", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
+    }
+
+    @ViewBuilder private var customOrderSection: some View {
+        Section("Custom priority") {
+            ForEach(Array(customOrder.enumerated()), id: \.element) { index, id in
+                HStack {
+                    Text("\(index + 1). \(accountName(id))")
+                    Spacer()
+                    Button("Move up", systemImage: "chevron.up") { move(id, by: -1) }.labelStyle(.iconOnly).disabled(index == 0)
+                    Button("Move down", systemImage: "chevron.down") { move(id, by: 1) }.labelStyle(.iconOnly).disabled(index == customOrder.count - 1)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Priority \(index + 1), \(accountName(id))")
+            }
+        }
+    }
+
+    @ViewBuilder private func resultSections(_ value: APIDebtStrategyProjection) -> some View {
+        if value.status == "incomplete" {
+            Section("Projection unavailable") {
+                ForEach(value.incompleteAccounts, id: \.accountID) { item in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(accountName(item.accountID)).font(.headline)
+                        Text("Add \(item.missingProjectionFields.map(friendlyMissingField).joined(separator: ", ")) in Debt Terms.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } else if value.status == "non_amortizing" {
+            Section("Projection unavailable") {
+                Label("Current planned payments do not reduce total principal under these assumptions.", systemImage: "exclamationmark.triangle")
+                Text("Increase the projected payment or review saved APR and payment terms. No fictional debt-free date is shown.").font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            Section("Projected outcome") {
+                LabeledContent("Debt-free date", value: value.debtFreeDate ?? "Beyond projection range")
+                LabeledContent("Remaining interest", value: store.format(value.projectedInterestMinor))
+                LabeledContent("Total projected cost", value: store.format(value.projectedTotalCostMinor))
+                LabeledContent("Projected payments", value: "\(value.paymentCount)")
+                if let baseline, baseline.status == "paid_off" {
+                    let interestDifference = baseline.projectedInterestMinor - value.projectedInterestMinor
+                    let monthDifference = baseline.paymentCount - value.paymentCount
+                    LabeledContent(interestDifference >= 0 ? "Projected interest avoided" : "Additional projected interest", value: store.format(abs(interestDifference)))
+                    LabeledContent(monthDifference >= 0 ? "Projected time saved" : "Additional projected months", value: "\(abs(monthDifference)) month\(abs(monthDifference) == 1 ? "" : "s")")
+                }
+            }
+            .accessibilityIdentifier("debt-payoff-outcome")
+            Section("Projected payoff order") {
+                ForEach(Array(value.payoffOrder.enumerated()), id: \.element) { index, id in
+                    LabeledContent(accountName(id), value: "\(index + 1)")
+                }
+            }
+        }
+    }
+
+    private var strategyExplanation: String {
+        switch strategy {
+        case "snowball": "Snowball directs scenario money to the lowest visible balance first."
+        case "custom": "Custom follows the priority you set below."
+        default: "Avalanche directs scenario money to the highest visible APR first."
+        }
+    }
+    private func accountName(_ id: String) -> String { report.accounts.first(where: { $0.accountID == id })?.accountName ?? "Debt account" }
+    private func friendlyMissingField(_ field: String) -> String { field == "debt_terms" ? "Debt Terms" : field.replacingOccurrences(of: "_", with: " ") }
+    private func move(_ id: String, by offset: Int) { guard let index = customOrder.firstIndex(of: id) else { return }; let destination = index + offset; guard customOrder.indices.contains(destination) else { return }; customOrder.swapAt(index, destination) }
+    private func calculate() async {
+        guard let extraPayment else { return }
+        isLoading = true; defer { isLoading = false }
+        do {
+            let firstPayment = BudgetWorkspaceStore.dateString(Date())
+            async let loaded = store.debtStrategyProjection(.init(firstPaymentOn: firstPayment, strategy: strategy, rollover: rollover, extraPaymentMinor: extraPayment, accountIDs: selectedAccountIDs, customOrder: strategy == "custom" ? customOrder : []))
+            async let loadedBaseline = store.debtStrategyProjection(.init(firstPaymentOn: firstPayment, strategy: "avalanche", rollover: false, extraPaymentMinor: 0, accountIDs: selectedAccountIDs))
+            let values = try await (loaded, loadedBaseline)
+            guard !Task.isCancelled else { return }
+            result = values.0; baseline = values.1; errorMessage = nil
+        } catch is CancellationError {
+        } catch { errorMessage = error.localizedDescription }
     }
 }
 
