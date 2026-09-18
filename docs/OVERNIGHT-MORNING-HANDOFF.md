@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `9701ab2`, hardened Demo attachment repository authorization, current profile scopes,
+creator-or-manager mutation authority and exact attachment identity. Hidden/foreign/detached
+attachment access refuses before bytes/mutation. Live encrypted storage unchanged. Demo multi-file
+metadata/validation/tombstones and broader dynamic authorization remain explicit follow-up work.
+Verified 132 native + 2 production attachment UI tests, Beta simulator build, 11 backend
+attachment/lifecycle reference tests and diff check PASS. No Live migration/data changes.
+
 After `2f65812`, fixed the proven legacy Core manager-sharing admission mismatch with the
 owner-only server contract. No existing UI caller/server bypass was found. Regression preserves
 manager editing, owner sharing and hidden-budget behavior. 49 Core + 54 API tests and diff check

@@ -4,6 +4,47 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoAttachmentAuthorizationAndIdentityAreCheckedBeforeDataAccess() async throws {
+        let source = DemoWorkspaceDataSource()
+        let original = try await source.downloadTransactionAttachment(transactionID: "t1", attachmentID: "demo-attachment-t1")
+        let transactions = source.demo.transactions, accounts = source.demo.accounts
+        for persona in [DemoPersona.alex, .mia] {
+            source.demo.persona = persona
+            do { _ = try await source.transactionAttachments(id: "t1"); XCTFail("Hidden attachment list") } catch {}
+            do { _ = try await source.downloadTransactionAttachment(transactionID: "t1", attachmentID: "demo-attachment-t1"); XCTFail("Hidden bytes") } catch {}
+            do { try await source.uploadTransactionAttachment(id: "t1", filename: "overwrite.png", contentType: "image/png", data: original); XCTFail("Hidden upload") } catch {}
+            do { try await source.detachTransactionAttachment(transactionID: "t1", attachmentID: "demo-attachment-t1"); XCTFail("Hidden detach") } catch {}
+        }
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_transactions"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 0))
+        source.demo.persona = .partner
+        let readable = try await source.downloadTransactionAttachment(transactionID: "t1", attachmentID: "demo-attachment-t1")
+        XCTAssertEqual(readable, original)
+        do { try await source.detachTransactionAttachment(transactionID: "t1", attachmentID: "demo-attachment-t1"); XCTFail("View-only detach") } catch {}
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_transactions", "edit_transaction"], restrictAccounts: true, accountIDs: ["checking"], restrictCategories: false, categoryIDs: [], expectedVersion: 1))
+        source.demo.persona = .partner
+        do { _ = try await source.transactionAttachments(id: "t1"); XCTFail("Custom hidden account") } catch {}
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_transactions", "edit_transaction"], restrictAccounts: false, accountIDs: [], restrictCategories: true, categoryIDs: ["dining"], expectedVersion: 2))
+        source.demo.persona = .partner
+        do { _ = try await source.transactionAttachments(id: "t1"); XCTFail("Custom hidden category") } catch {}
+        source.demo.persona = .rey
+        for id in ["foreign", "demo-attachment-t2"] {
+            do { _ = try await source.downloadTransactionAttachment(transactionID: "t1", attachmentID: id); XCTFail("Foreign attachment download") } catch {}
+            do { try await source.detachTransactionAttachment(transactionID: "t1", attachmentID: id); XCTFail("Foreign attachment detach") } catch {}
+        }
+        XCTAssertEqual(source.demo.transactions, transactions)
+        XCTAssertEqual(source.demo.accounts, accounts)
+        let preserved = try await source.downloadTransactionAttachment(transactionID: "t1", attachmentID: "demo-attachment-t1")
+        XCTAssertEqual(preserved, original)
+        try await source.detachTransactionAttachment(transactionID: "t1", attachmentID: "demo-attachment-t1")
+        let empty = try await source.transactionAttachments(id: "t1")
+        XCTAssertTrue(empty.isEmpty)
+        do { _ = try await source.downloadTransactionAttachment(transactionID: "t1", attachmentID: "demo-attachment-t1"); XCTFail("Detached bytes") } catch {}
+    }
+
+    @MainActor
     func testDemoAccessProfileValidatesScopeAndRecordsRealOwnerTimeAndGrant() async throws {
         let timestamp = BudgetWorkspaceStore.parseDate("2026-09-18")
         let source = DemoWorkspaceDataSource(now: { timestamp })

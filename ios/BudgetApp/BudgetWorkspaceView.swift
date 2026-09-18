@@ -1197,20 +1197,61 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard let source = demo.transactions.first(where: { $0.id == id }), source.status == "posted", source.transferID == nil, source.categoryIDs.count <= 1 else { throw workspaceRepositoryError("This transaction cannot be used as a recurring template") }
         demo.schedules.append(.init(id: UUID().uuidString, accountID: source.accountID, destinationAccountID: nil, categoryID: source.categoryIDs.first, name: source.payee, amount: source.amount, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: source.memo, financialClassification: source.financialClassification, isActive: true))
     }
+    private func attachmentTransaction(id: String, editing: Bool = false) throws -> DemoTransaction {
+        let capability = editing ? "edit_transaction" : "view_transactions"
+        let capabilities = demo.persona == .rey ? APIBudget.supportedCapabilities :
+            Set(accessProfiles[requestActorID]?.capabilities ?? (demo.isRestricted ? Self.delegatedCapabilities : Array(APIBudgetPermission.manage.legacyCapabilities)))
+        guard capabilities.contains(capability) else {
+            throw APIClientError.server(status: 403, message: "Insufficient permission")
+        }
+        guard let transaction = demo.visibleTransactions.first(where: { $0.id == id }),
+              demo.visibleAccounts.contains(where: { $0.id == transaction.accountID }) else {
+            throw APIClientError.server(status: 404, message: "Transaction not found")
+        }
+        if demo.isRestricted {
+            guard !transaction.categoryIDs.isEmpty,
+                  Set(transaction.categoryIDs).isSubset(of: Set(demo.visibleCategories.map(\.id))) else {
+                throw APIClientError.server(status: 404, message: "Transaction not found")
+            }
+        }
+        if demo.persona != .rey, let profile = accessProfiles[requestActorID] {
+            guard (!profile.restrictAccounts || profile.accountIDs.contains(transaction.accountID)),
+                  (!profile.restrictCategories || (!transaction.categoryIDs.isEmpty && Set(transaction.categoryIDs).isSubset(of: Set(profile.categoryIDs)))) else {
+                throw APIClientError.server(status: 404, message: "Transaction not found")
+            }
+        }
+        guard !editing || transaction.member == demo.persona || capabilities.contains("manage_budget_structure") else {
+            throw APIClientError.server(status: 403, message: "You may only change attachments on your own transactions")
+        }
+        return transaction
+    }
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try requireActiveMembership();
-        guard let transaction = demo.transactions.first(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found") }
+        let transaction = try attachmentTransaction(id: id)
         guard let name = transaction.attachmentName else { return [] }
         let data = attachmentData[id] ?? Data()
         let contentType = name.lowercased().hasSuffix(".png") ? "image/png" : "application/pdf"
         return [try JSONDecoder().decode(APITransactionAttachment.self, from: JSONSerialization.data(withJSONObject: ["id": "demo-attachment-\(id)", "transaction_id": id, "filename": name, "content_type": contentType, "byte_count": data.count, "sha256": "demo", "created_at": "2026-09-14T00:00:00Z", "detached_at": NSNull()]))]
     }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try requireActiveMembership();
+        let transaction = try attachmentTransaction(id: id, editing: true)
+        guard transaction.status != "reversal" else { throw APIClientError.server(status: 409, message: "Attach supporting documents to the original transaction") }
         guard let index = demo.transactions.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found") }
         demo.transactions[index].attachmentName = filename
         attachmentData[id] = data
     }
-    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try requireActiveMembership(); return attachmentData[transactionID] ?? Data() }
+    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try requireActiveMembership();
+        let transaction = try attachmentTransaction(id: transactionID)
+        guard transaction.attachmentName != nil, attachmentID == "demo-attachment-\(transactionID)" else {
+            throw APIClientError.server(status: 404, message: "Attachment not found")
+        }
+        guard let data = attachmentData[transactionID] else { throw APIClientError.server(status: 500, message: "Attachment storage is unavailable") }
+        return data
+    }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try requireActiveMembership();
+        let transaction = try attachmentTransaction(id: transactionID, editing: true)
+        guard transaction.attachmentName != nil, attachmentID == "demo-attachment-\(transactionID)" else {
+            throw APIClientError.server(status: 404, message: "Attachment not found")
+        }
         guard let index = demo.transactions.firstIndex(where: { $0.id == transactionID }) else { throw workspaceRepositoryError("Transaction not found") }
         demo.transactions[index].attachmentName = nil
         attachmentData.removeValue(forKey: transactionID)

@@ -4,6 +4,23 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo attachment authorization after `9701ab2`: direct repository methods previously checked only
+active membership, returned bytes by transaction ID without validating attachment identity, and
+could detach a hidden transaction's receipt. A shared attachment admission check now applies
+current read/edit capability, visible account/transaction, all split-category scopes, custom
+account/category restrictions and creator-or-manager mutation authority. Hidden/mismatched/detached
+IDs refuse before accessing bytes; unavailable storage errors instead of returning empty success.
+Reversal uploads refuse as in Live. No Live server/storage or financial behavior changed.
+This is scoped authorization hardening, not complete Demo attachment lifecycle parity: the Demo
+adapter still has a single in-memory attachment slot per transaction; multi-file metadata,
+content validation and tombstone parity remain open. Full dynamic Demo authorization elsewhere
+also remains open.
+Verification: 132 native + 2 production attachment UI tests PASS; Xcode 27 Beta simulator build
+PASS on existing iPhone 17 Pro Max. Eleven backend attachment/lifecycle reference tests PASS;
+diff check PASS. Logs: `/tmp/budget-demo-attachment-scope-final.log` and
+`/tmp/budget-demo-attachment-server-reference.log`. The initial test build caught a test-only
+persona enum typo, corrected before this successful run. No data reset or human acceptance claim.
+
 Core sharing admission after `2f65812`: a focused test reproduced the legacy standalone
 `BudgetAuthorizer` incorrectly allowing non-owner managers to change sharing. Server grant
 upsert/revoke already require household ownership, and no production UI call currently uses this
