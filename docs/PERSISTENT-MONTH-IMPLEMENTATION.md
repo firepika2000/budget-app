@@ -92,8 +92,6 @@ vectors, package, native XCTest and focused XCUITest using the approved Beta/Sim
 Checkpoint each coherent green change; commit/push and continue. No merge/tag. Human acceptance is
 consolidated later, not a reason to stop independent engineering or request repeated QA now.
 
-## Independent work remains available
-
 ## Characterization checkpoint — server adapter
 
 `server/tests/financial_vectors/planning-periods-v1.json` now contains six fixed-clock operation
@@ -110,6 +108,32 @@ Evidence `/tmp/budget-period-vectors-full.log`. These are characterization fixtu
 that Demo supports them yet, and they do not bless missing prospective rollover or the classification
 of carried credit deficits. Next implement the exact dated domain projection needed by the
 deterministic/local repository migration; do not weaken fixture expectations to fit global totals.
+
+## Dated projection foundation — not yet a production provider
+
+BudgetCore `PlanningPeriodProjection` now consumes validated balanced allocations and canonical
+posted category/inflow activity. It separates dated RTA from all-date cash, derives month-specific
+Assigned/Activity/carry/Available, and returns a replacement assignment bound to that snapshot's
+month. Explicit opening observations have a supported boundary; earlier queries fail rather than
+manufacturing history. Gregorian date-only parsing supports years 0001–9999 without timezone drift.
+Checked two-word integer accumulation permits exact cancellation beyond intermediate Int64 range,
+while every published monetary field and aggregate must still fit Int64.
+
+Package tests consume the period fields of all six server operation scenarios. This is not a claim
+that the package posts accounts, computes credit reserves, authorizes commands, persists state, or
+that Demo passes the full scenarios. Those responsibilities remain at the canonical service/provider
+boundary. Do not route production through this component until the input ledger and opening fixture
+are complete and the full observation contract passes. In particular, do not adapt global Demo totals
+into fictitious month records merely to use the component.
+
+Verification: **44 Core + 49 API tests pass; 94 native XCTest pass**, Xcode 27 Beta 27A5252f build/test
+on preserved iPhone 17 Pro Max/iOS 27 `3ABD861E-D38D-4AFD-A356-959266051564`.
+Logs `/tmp/budget-dated-projection-package-verified.log`, `/tmp/budget-dated-projection-native-verified.log`.
+Backend unchanged since **392 pass**. Next related correctness investigation: Demo refund attribution
+currently sums positive events across all cards and ignores earlier releases; reproduce with shared
+server/native command vectors before migrating that data into dated observations.
+
+## Independent work remains available
 
 Full structured export fidelity, bounded hydration in other reports, actual Docker/Compose recovery,
 Local Device/import dependencies and the remaining roadmap are not closed by the current checkpoints.

@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`c47b709` is pushed (six dated server operation vectors, backend 392 pass). Next verified foundation
+adds exact BudgetCore dated projection, snapshot-bound replacement assignment intent and explicit
+opening boundaries. **44 Core + 49 API; 94 native XCTest pass**, final Beta build/test succeeds.
+`/tmp/budget-dated-projection-{package,native}-verified.log`. Not yet a production Demo integration:
+no account posting, credit-reserve generation or authorization is delegated to this read projection.
+Next reproduce Demo's suspected cross-card/repeated-refund attribution mismatch with shared command
+vectors, then continue complete dated ledger/fixture integration. **DO NOT RETEST**.
+
 `4ace09b` is the starting checkpoint for this continuation. Six fixed-clock monthly operation
 vectors now pass through the server adapter, alongside the original twelve. Full backend **392 pass,
 zero skips**, `/tmp/budget-period-vectors-full.log`. Fixture vocabulary includes selected months,

@@ -16,6 +16,12 @@ pass, zero skips**, `/tmp/budget-period-vectors-full.log`. Original twelve share
 Demo parity and prospective rollover are still incomplete; this checkpoint establishes the contract
 for the next dated-domain implementation, not release acceptance.
 
+Exact dated projection foundation is verified by **44 Core + 49 API** and **94 native XCTest** on
+the approved Beta toolchain. It consumes canonical posted activity/balanced allocations and keeps
+dated versus spendable cash separate; it does not post accounts or calculate card reserves. This
+component is not yet wired into Demo, whose incomplete seed/global state still requires migration.
+No claim of provider parity from package-only projection tests. See PERSISTENT-MONTH-IMPLEMENTATION.md.
+
 | Gate | Status | Evidence and remaining work |
 |---|---|---|
 | PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 cadence, monthly snooze, exact cost presentation and incremental/priority funding checkpoints are verified. Future-month provider parity, rollover policy history, import/local-provider and later mission scope remain open. |
