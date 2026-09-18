@@ -6,6 +6,21 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`53ecc7f` is pushed. Next verified performance checkpoint streams monthly Plan history in 500-row
+batches and uses scalar allocation rows. Disposable 10k transactions + 10k splits: peak ORM objects
+**20,011 → 1,506** with identical exact financial observations. Adding 10k allocation operations /
+20k postings retains the 1,506 bound. **386 backend pass, zero skips**, including real disposable
+PostgreSQL gates; `/tmp/budget-month-scale-full.log`. No Swift or migration changes. Latest native
+evidence remains **94 XCTest + one production Smart Funding UI**, Beta build/test; **39 Core + 49 API**.
+Human Live stays at 0020, source migration head 0028; no autonomous human migration/retest.
+
+Continue with persistent monthly provider parity and effective-history cash-overspending rollover
+(product specification §§7.1–7.4). Demo still ignores assignment month; Live future assignments are
+now supported but dated RTA versus globally spendable cash must remain explicit. Do not wire the
+quarantined legacy calculator into production or claim full planning closure. Master ledger records
+remaining export fidelity, report scale, Docker, Local Device/import, roadmap and external gates.
+No merge/tag; main remains c5494dd. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 `a83a9b2` is pushed. Next verified reliability checkpoint removes calendar overflow/underflow in
 monthly planning and all five monthly report families. Shared inclusive periods preserve partial
 months, Gregorian leap rules and exact money; final-month funding still requires its version.

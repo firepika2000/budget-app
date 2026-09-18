@@ -2157,23 +2157,26 @@ def month_summary(
     ).where(
         CategoryTargetSnooze.budget_id == budget_id, CategoryTargetSnooze.month == month,
     )))
+    # History may span decades. Stream bounded batches and keep only category accumulators;
+    # do not hydrate operation objects (and their complete posting relationships) for every row.
     allocation_rows = db.execute(
-        select(AllocationPosting, AllocationOperation)
+        select(AllocationPosting.category_id, AllocationPosting.amount_minor, AllocationOperation.occurred_on)
         .join(AllocationOperation, AllocationOperation.id == AllocationPosting.operation_id)
         .where(
             AllocationPosting.budget_id == budget_id,
             AllocationOperation.occurred_on <= through,
-        )
-    ).all()
-    transactions = list(db.scalars(select(Transaction).options(
+        ).execution_options(yield_per=500)
+    )
+    transaction_query = select(Transaction).options(
         selectinload(Transaction.splits)
     ).where(
         Transaction.budget_id == budget_id,
         Transaction.occurred_on <= through,
-    )))
+    )
     visible_accounts = visible_resource_ids(db, user, budget, "account")
     if visible_accounts is not None:
-        transactions = [transaction for transaction in transactions if transaction.account_id in visible_accounts]
+        transaction_query = transaction_query.where(Transaction.account_id.in_(visible_accounts))
+    transactions = db.scalars(transaction_query.execution_options(yield_per=500))
     on_budget_account_ids = set(db.scalars(select(Account.id).where(
         Account.budget_id == budget_id,
         Account.is_on_budget.is_(True),
@@ -2192,12 +2195,12 @@ def month_summary(
     assigned_before: dict[str, int] = {}
     assigned_current: dict[str, int] = {}
     ready_to_assign_postings = 0
-    for posting, operation in allocation_rows:
-        if posting.category_id is None:
-            ready_to_assign_postings += posting.amount_minor
+    for category_id, amount_minor, occurred_on in allocation_rows:
+        if category_id is None:
+            ready_to_assign_postings += amount_minor
             continue
-        target = assigned_current if operation.occurred_on >= month else assigned_before
-        target[posting.category_id] = target.get(posting.category_id, 0) + posting.amount_minor
+        target = assigned_current if occurred_on >= month else assigned_before
+        target[category_id] = target.get(category_id, 0) + amount_minor
 
     activity_before: dict[str, int] = {}
     activity_current: dict[str, int] = {}
@@ -2226,10 +2229,10 @@ def month_summary(
             if on_credit and transaction.occurred_on >= month:
                 credit_activity_current[split.category_id] = credit_activity_current.get(split.category_id, 0) + split.amount_minor
 
-    reserve_events = list(db.scalars(select(CreditCardReserveEvent).where(
+    reserve_events = db.scalars(select(CreditCardReserveEvent).where(
         CreditCardReserveEvent.budget_id == budget_id,
         CreditCardReserveEvent.occurred_on <= through,
-    )))
+    ).execution_options(yield_per=500))
     funded_credit_current: dict[str, int] = {}
     for event in reserve_events:
         target = activity_current if event.occurred_on >= month else activity_before

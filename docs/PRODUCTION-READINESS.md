@@ -15,7 +15,7 @@ Checkpoint completion is followed by the next unblocked engineering task.
 | SECURITY | IN PROGRESS | Proven allocation-history category leakage and structured-export scope bypass corrected in the current checkpoint. Capability plus resource authority is required; full-operation filtering preserves balanced history. Extend adversarial matrix across reports, projections, imports and future providers; no release-wide security PASS yet. |
 | DATA | IN PROGRESS | Source head is `0028_target_snoozes`; human Live remains at `0020_payee_identity_repair`. Populated migration/concurrency and real age-encrypted new-destination restore prove canonical equality, snooze metadata and encrypted attachment integrity/wrong-key/tamper handling. Complete manifest preflight passes. Real Docker/Compose recovery and production Local Device storage remain open. |
 | RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Existing native/backend suites provide regression evidence; concurrency, offline failures, cancellation and release-wide regression remain open. |
-| PERFORMANCE | IN PROGRESS | Live core hydration now makes zero detailed-report requests instead of seven; native HTTP tests cover caching/invalidation/retry. Hub uses one bounded scalar summary. Server/Demo computation, category/account fan-out and representative wall-clock measures remain open. |
+| PERFORMANCE | IN PROGRESS | Live core hydration makes zero detailed-report requests instead of seven; native tests cover caching/invalidation/retry. Hub has a bounded scalar response. Monthly summary now streams historical rows in batches; disposable 10k-transaction/split and 10k-allocation fixtures prove bounded ORM hydration and exact observations. Other report/Demo computation, category/account fan-out and release-scale closure remain open. |
 | UX | IN PROGRESS | Shared shell, onboarding, scalable payee selection and focused Insights exist. Report filters are reachable again; missing debt terms open the shared editor. Demand-loaded reports have independent loading/error/retry. Full workflow/accessibility closure remains open. |
 | ACCESSIBILITY | IN PROGRESS | Historical large-text launch strings were invalid and did not prove the claimed size; corrected tests use UIKit's actual raw value and require the adaptive debt menu. Description/trait audits pass for Cost and debt observations. Full VoiceOver, chart and release-wide accessibility closure remain open. |
 | PLATFORM | IN PROGRESS | Xcode 27 Beta and existing iPhone 17 Pro Max/iOS 27 are required. Preserve Simulator data. Release configuration, lifecycle, platform scope and Apple integrations need closure. |
@@ -80,6 +80,33 @@ migration/recovery and privacy cases. Focused calendar/report/allocation rerun p
 passes. `/tmp/budget-calendar-boundary-{focused-final,full}.log`. No Swift or migration changes.
 Next performance audit: monthly summary currently materializes all historical transactions and
 allocation rows. Measure a disposable large history and bound hydration without changing exact sums.
+
+Monthly-summary scale reproduction measured **20,011 live ORM objects** for 10,000 transactions
+plus 10,000 split rows. Bounded 500-row streaming now peaks at **1,506** with identical RTA,
+Assigned/Activity/Available/carry and a 1,081-byte response. A second fixture adds 10,000 balanced
+allocation operations / 20,000 postings; peak remains **1,506**, response 1,085 bytes. Allocation
+reads select only scalar columns, not operation objects with auto-loaded posting relationships.
+Account scope is applied in SQL before transaction hydration. Exact Python integer accumulation,
+credit reserve handling and authorized category output semantics are retained; no floating-point
+SQL aggregation or financial approximation was introduced.
+
+Measured SQLite times are evidence, not machine-dependent gates: original 0.4582 seconds, final
+0.4055 seconds without large allocations and 0.4852 with them. These are disposable read-path scale
+fixtures, not a new import/mutation path or a claim of production PostgreSQL scale performance.
+Logs: `/tmp/budget-month-scale-reproduction.log`, `/tmp/budget-month-scale-focused-final.log`.
+Full backend **386 passed, zero skips**, including PostgreSQL concurrency, populated migrations,
+plain/encrypted recovery, privacy and golden vectors: `/tmp/budget-month-scale-full.log`.
+`git diff --check` passes. Swift/native sources unchanged since the verified funding-limit sheet.
+
+Highest-priority continuation: persistent monthly Demo/provider parity and prospective cash
+overspending policy history remain genuine financial/product gaps. Re-read specification §§7.1–7.4
+and APPLICATION-ARCHITECTURE.md before changing them. Do not invent a second ad-hoc Demo money
+engine or treat the old quarantined MonthlyBudget calculator as authoritative. Current/future
+spendable RTA presentation must also distinguish dated observations from cash reserved in later
+months. Other open gates include report-scale hydration beyond monthly Plan, full structured export
+fidelity, real Docker/Compose recovery, production Local Device storage/import and later roadmap
+scope. Commercial choice and final Apple release credentials remain external, but independent
+engineering is not blocked. Mission remains active; **HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
 1. v0.8 automated checkpoint is recorded in V0.8-CLOSURE-AUDIT.md; human acceptance remains pending.
 2. Recovery hardening now includes complete archive validation, real encrypted PostgreSQL recovery,
