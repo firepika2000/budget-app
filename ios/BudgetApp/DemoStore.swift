@@ -24,6 +24,7 @@ final class DemoStore: ObservableObject {
 
     struct AllocationEvent {
         let id: String
+        let operationID: String
         let occurredOn: String
         let kind: String
         let actor: String
@@ -34,15 +35,51 @@ final class DemoStore: ObservableObject {
     }
     // Command history only. Seed opening observations are not invented historical operations.
     private(set) var allocationEvents: [AllocationEvent] = []
+    private(set) var allocationVersion = 0
+
+    func requireAllocationVersion(_ expected: Int) throws {
+        guard expected == allocationVersion else {
+            throw NSError(domain: "BudgetWorkspace", code: 409, userInfo: [NSLocalizedDescriptionKey: "Allocations changed. Refresh before trying again."])
+        }
+    }
 
     func recordAllocation(amount: Int64, from source: String? = nil, to destination: String,
                           occurredOn: String = BudgetWorkspaceStore.dateString(Date()),
                           kind: String = "assignment", note: String = "", id: String = UUID().uuidString) {
         guard amount != 0 else { return }
-        allocationEvents.append(.init(id: id, occurredOn: occurredOn, kind: kind,
+        allocationEvents.append(.init(id: id, operationID: id, occurredOn: occurredOn, kind: kind,
                                      actor: persona.rawValue.lowercased(), note: note,
                                      sourceCategoryID: source, destinationCategoryID: destination,
                                      amountMinor: amount))
+        allocationVersion += 1
+    }
+
+    // Validate the whole operation before publishing any state. All legs share one identity
+    // and consume one optimistic concurrency token, like Live append_operation.
+    func fundTargets(_ amounts: [(categoryID: String, amount: Int64)], month: String, expectedVersion: Int) throws {
+        guard !isRestricted else { throw DemoMutationError.restrictedCategory }
+        try requireAllocationVersion(expectedVersion)
+        guard !amounts.isEmpty, Set(amounts.map(\.categoryID)).count == amounts.count else { throw DemoMutationError.invalidAmount }
+        for item in amounts {
+            guard item.amount > 0 else { throw DemoMutationError.invalidAmount }
+            guard categories.contains(where: { $0.id == item.categoryID && !$0.isHidden && !archivedGroups.contains($0.group) }) else { throw DemoMutationError.categoryNotFound }
+        }
+        let total = try Money.sumMinorUnits(amounts.map(\.amount))
+        let selected = try planningSnapshot(month: month)
+        guard total <= selected.fundingLimitMinor else { throw DemoMutationError.insufficientFunds(available: selected.fundingLimitMinor) }
+        let allocation = try PlanningPeriodProjection.Allocation(occurredOn: month, postings:
+            [.init(categoryID: nil, amountMinor: -total)] + amounts.map { .init(categoryID: $0.categoryID, amountMinor: $0.amount) })
+        _ = try planningSnapshot(month: month, additionalAllocations: [allocation])
+        let current = try planningSnapshot(month: currentPlanningMonth, additionalAllocations: [allocation])
+        let operationID = UUID().uuidString
+        let events = amounts.map { item in
+            AllocationEvent(id: UUID().uuidString, operationID: operationID, occurredOn: month,
+                            kind: "smart_funding", actor: persona.rawValue.lowercased(), note: "",
+                            sourceCategoryID: nil, destinationCategoryID: item.categoryID, amountMinor: item.amount)
+        }
+        allocationEvents.append(contentsOf: events)
+        allocationVersion += 1
+        publishPlanning(current)
     }
 
     let incomeHistory: [Int64] = [725000, 738000, 725000, 760000, 742000, 750000]
@@ -123,6 +160,7 @@ final class DemoStore: ObservableObject {
         groupOrder = Array(Set(Self.seedCategories.map(\.group))).sorted()
         reserveAttribution = [:]
         allocationEvents = []
+        allocationVersion = 0
         fixtureAccountOpening = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0.balance) })
         let openingAvailable: [String: Int64] = [
             "emergency": 800_000, "newcar": 300_000, "vacation": 200_000, "repair": 100_000,

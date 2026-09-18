@@ -221,15 +221,15 @@ Final checkpoint verification: **396 backend tests pass, zero skips; 44 BudgetCo
 
 ## Independent work remains available
 
-### Next required planning closure: versioned allocation commands
+### Versioned allocation commands — implementation checkpoint
 
-Source audit after `f686a20` confirms Demo summary/history/Smart Funding still serialize version 1;
-assignment and Move Money ignore their supplied expected version. Live checks the locked budget
+Source audit after `f686a20` found Demo summary/history/Smart Funding serialized version 1;
+assignment and Move Money ignored their supplied expected version. Live checks the locked budget
 version before assignment delta/no-op evaluation and increments once per appended operation.
 Live Smart Funding creates ONE operation with one Unassigned debit and all category credits.
 Do not implement Demo parity by incrementing a counter once per target in the existing loop.
 
-Required implementation boundary:
+The following boundary is now implemented (verification recorded in the mission ledger):
 
 - Preserve dated projection and existing fixture provenance. Fresh provider version starts at zero;
   deterministic fixture operations establish their explicit baseline. Reads never advance a version.
@@ -253,7 +253,7 @@ Required implementation boundary:
 Reconciliation input/date/consent parity was corrected in `5be09de`; a bounded authoritative cutoff
 observation for partially visible histories remains separate follow-up. Forecast scope (`bed7c93`)
 and chronological lows (`f686a20`) are now verified. These corrections do not complete prospective
-cash rollover, later-reservation explanation, version parity, clocks or the Local Device provider.
+cash rollover, later-reservation explanation, clocks or the Local Device provider.
 
 Full structured export fidelity, bounded hydration in other reports, actual Docker/Compose recovery,
 Local Device/import dependencies and the remaining roadmap are not closed by the current checkpoints.

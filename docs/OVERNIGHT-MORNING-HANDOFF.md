@@ -6,14 +6,24 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
-`f686a20` is pushed, clean and remote-matched. Re-reading the v0.9 required contract identifies
-allocation-version parity as the next planning-completion task, rather than declaring hardening
-checkpoints to be milestone closure. `PERSISTENT-MONTH-IMPLEMENTATION.md` now records the concrete
-boundary: observed-token guards, stale/no-op semantics, atomic compound Smart Funding, one version
-increment per logical operation and whole-operation history privacy. Current Demo hardcodes version
-1 and ignores assignment/move tokens; its target-by-target funding loop must not be given partial
-version semantics. Implement the complete bounded contract and test production paths.
-Report arithmetic, uniform clocks, rollover history and the remaining roadmap remain open too.
+Allocation version parity after `1b91b7c`: Demo now starts at zero for a fresh budget, builds its
+fixture version from dated operations, and checks assignment/move tokens before mutation (including
+stale no-ops). Current no-ops do not add history. Smart Funding validates all targets and both
+selected/current prospective projections before one atomic commit, one version increment, and one
+balanced logical history operation. Reads retain operation identity and return the current budget
+token; restricted history hides the whole compound operation. Golden adapters now use actual
+observed versions instead of hardcoded 1. No schema/server change or human data touched.
+Verification: **398 backend zero skips, 113 native, 45 Core + 49 API, 3 production UI PASS**;
+Beta build/test and diff check PASS. Logs `/tmp/budget-allocation-version-{backend,package,final,native-final}.log`.
+Production UI covers month independence, Move Money and Smart Funding cancel/confirm/refresh.
+
+Next highest-priority planning closure: expose authoritative selected-month versus currently
+spendable Unassigned in the summary contract/shared Plan UI, explaining later reservations rather
+than letting a historical RTA imply permission to spend cash twice. Live assignment already guards
+all-date cash and Smart Funding exposes its funding limit; MonthSummary currently does not. Scope
+new observations before disclosure, preserve date semantics, and prove future-assignment/release
+flows through both providers and shared UI. Report arithmetic, uniform clocks, prospective rollover
+history and the remaining roadmap remain open too. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
 
 `bed7c93` pushed forecast privacy. Current chronological projection correction is reproduced against
 the server: 10,000 start, -8,000 bill, neutral transfer, +9,000 income ends 11,000 but reaches 2,000

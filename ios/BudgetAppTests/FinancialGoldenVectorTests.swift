@@ -43,7 +43,7 @@ final class FinancialGoldenVectorTests: XCTestCase {
                     categoryRefs[string(operation, "ref")] = try XCTUnwrap(source.demo.categories.last?.id)
                 case "assign":
                     let id = try XCTUnwrap(categoryRefs[string(operation, "category")])
-                    let intent = AssignMoneyOperation(categoryID: id, month: operation["month"] as? String ?? "2026-09-01", assignedMinor: integer(operation, "amount_minor"), expectedVersion: 1)
+                    let intent = AssignMoneyOperation(categoryID: id, month: operation["month"] as? String ?? "2026-09-01", assignedMinor: integer(operation, "amount_minor"), expectedVersion: source.demo.allocationVersion)
                     if operation["expected_error"] != nil {
                         let before = source.demo.financialObservation(accountReferences: accountRefs, categoryReferences: categoryRefs)
                         let events = source.demo.allocationEvents.map(\.id)
@@ -52,7 +52,7 @@ final class FinancialGoldenVectorTests: XCTestCase {
                         XCTAssertEqual(source.demo.allocationEvents.map(\.id), events)
                     } else { try await services.planning.assign(intent) }
                 case "move":
-                    try await services.planning.move(.init(sourceCategoryID: try XCTUnwrap(categoryRefs[string(operation, "source")]), destinationCategoryID: try XCTUnwrap(categoryRefs[string(operation, "destination")]), amountMinor: integer(operation, "amount_minor"), occurredOn: occurredOn, note: "vector", expectedVersion: 1))
+                    try await services.planning.move(.init(sourceCategoryID: try XCTUnwrap(categoryRefs[string(operation, "source")]), destinationCategoryID: try XCTUnwrap(categoryRefs[string(operation, "destination")]), amountMinor: integer(operation, "amount_minor"), occurredOn: occurredOn, note: "vector", expectedVersion: source.demo.allocationVersion))
                 case "transaction", "edit_transaction":
                     let splits = (operation["splits"] as? [String: Any] ?? [:]).map {
                         TransactionSplitOperation(categoryID: categoryRefs[$0.key]!, amountMinor: ($0.value as! NSNumber).int64Value, memo: "")
@@ -130,16 +130,16 @@ final class FinancialGoldenVectorTests: XCTestCase {
         XCTAssertTrue(source.demo.createCategory(name: "Needs", group: "Needs"))
         let card = try XCTUnwrap(source.demo.accounts.last?.id)
         let category = try XCTUnwrap(source.demo.categories.last?.id)
-        try await services.planning.assign(.init(categoryID: category, month: "2026-10-01", assignedMinor: 10_000, expectedVersion: 1))
+        try await services.planning.assign(.init(categoryID: category, month: "2026-10-01", assignedMinor: 10_000, expectedVersion: source.demo.allocationVersion))
         try await services.transactions.record(.init(accountID: card, categoryID: category, amountMinor: -5_000, occurredOn: "2026-09-01", payeeName: "Earlier purchase", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: []))
         XCTAssertEqual(source.demo.accounts.last?.paymentReserved, 0, "Future allocation is not category funding on the earlier purchase date")
         XCTAssertEqual(try source.demo.planningSnapshot(month: "2026-09-01").categories[category]?.availableMinor, -5_000)
         XCTAssertEqual(try source.demo.planningSnapshot(month: "2026-10-01").categories[category]?.availableMinor, 5_000)
-        try await services.planning.assign(.init(categoryID: category, month: "2026-09-01", assignedMinor: 10_000, expectedVersion: 1))
+        try await services.planning.assign(.init(categoryID: category, month: "2026-09-01", assignedMinor: 10_000, expectedVersion: source.demo.allocationVersion))
         try await services.transactions.record(.init(accountID: card, categoryID: category, amountMinor: -5_000, occurredOn: "2026-09-02", payeeName: "Funded purchase", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: []))
         let fundedID = try XCTUnwrap(source.demo.transactions.first?.id)
         XCTAssertEqual(source.demo.accounts.last?.paymentReserved, 5_000)
-        try await services.planning.assign(.init(categoryID: category, month: "2026-09-01", assignedMinor: 0, expectedVersion: 1))
+        try await services.planning.assign(.init(categoryID: category, month: "2026-09-01", assignedMinor: 0, expectedVersion: source.demo.allocationVersion))
         let accounts = source.demo.accounts, categories = source.demo.categories, transactions = source.demo.transactions
         let ready = source.demo.readyToAssign
         do {
@@ -167,7 +167,7 @@ final class FinancialGoldenVectorTests: XCTestCase {
             let account = try XCTUnwrap(source.demo.accounts.last?.id)
             XCTAssertTrue(source.demo.createCategory(name: "Needs", group: "Needs"))
             let category = try XCTUnwrap(source.demo.categories.first?.id)
-            try await services.planning.assign(.init(categoryID: category, month: earlierMonth, assignedMinor: 10_000, expectedVersion: 1))
+            try await services.planning.assign(.init(categoryID: category, month: earlierMonth, assignedMinor: 10_000, expectedVersion: source.demo.allocationVersion))
             func transaction(_ amount: Int64, _ date: String) -> RecordTransactionOperation {
                 .init(accountID: account, categoryID: category, amountMinor: amount, occurredOn: date, payeeName: "Lifecycle", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])
             }
@@ -235,7 +235,7 @@ final class FinancialGoldenVectorTests: XCTestCase {
         let cash = source.demo.accounts.first(where: { $0.name == "Cash" })!.id
         let card = source.demo.accounts.first(where: { $0.name == "Card" })!.id
         let category = source.demo.categories.last!.id
-        try await services.planning.assign(.init(categoryID: category, month: "2026-09-01", assignedMinor: 10_000, expectedVersion: 1))
+        try await services.planning.assign(.init(categoryID: category, month: "2026-09-01", assignedMinor: 10_000, expectedVersion: source.demo.allocationVersion))
 
         let cardPurchase = RecordTransactionOperation(accountID: card, categoryID: category, amountMinor: -8_000, occurredOn: "2026-09-01", payeeName: "Purchase", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])
         try await services.transactions.record(cardPurchase)

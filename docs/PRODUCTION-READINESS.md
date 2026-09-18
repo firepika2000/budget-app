@@ -4,6 +4,20 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Allocation command parity after `1b91b7c` (verified): Demo no longer hardcodes allocation version 1
+or ignores expected versions. Same-token commands have one winner; stale no-ops conflict, current
+no-ops do not add operations, and moving money away/back cannot revive an old token. Smart Funding
+preflights the complete compound operation/projections before any mutation, advances one version,
+and presents one balanced history identity with all category legs. Restricted history excludes the
+whole operation. Fresh/fixture version provenance and shared-vector adapters are corrected.
+**398 backend zero skips, 113 native XCTest, 45 Core + 49 API, 3 production XCUITests PASS**;
+Beta simulator build/test and `git diff --check` PASS. UI covers independent month assignment,
+Move Money source context, and Smart Funding cancel/confirm/refresh. Backend retains actual
+disposable PostgreSQL same-token and cross-month race coverage. Logs:
+`/tmp/budget-allocation-version-{backend,package,final,native-final}.log`.
+No server/schema changes. Subsequent Plan cash-reservation explanation, prospective rollover,
+uniform clocks and remaining roadmap work are still required; this does not close v0.9.
+
 Chronological forecast correction after pushed `bed7c93` (verified): the same
 outflow/transfer/later-income scenario reproduced a Demo low of 10,000 versus the server's correct
 2,000 minor units. Demo now expands permitted active schedules, sorts occurrences by date/ID like

@@ -450,7 +450,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let creditOverspent = min(overspent, creditSpent)
             return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": plan.categories[item.id]?.carriedAvailableMinor ?? 0, "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": max(creditSpent - creditOverspent, 0), "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "is_target_snoozed": item.targetSnoozedMonths.contains(month), "target_date": effectiveTargetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
         }
-        let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.isRestricted ? 0 : plan.readyToAssignMinor, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": 1, "categories": summaryRows])
+        let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.isRestricted ? 0 : plan.readyToAssignMinor, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": demo.allocationVersion, "categories": summaryRows])
         let start = report.start
         let included = demo.visibleTransactions.filter { item in
             item.date >= start && item.date <= report.end
@@ -574,16 +574,27 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let requestRows: [APIFinancialRequest] = try decode(demo.requests.filter { !demo.isRestricted || $0.member == demo.persona }.map { item -> [String: Any] in ["id": item.id, "requester_user_id": item.member.rawValue.lowercased(), "request_type": "additional_allocation", "destination_category_id": item.categoryID, "requested_amount_minor": item.amount, "reason": item.reason, "status": item.status.lowercased().replacingOccurrences(of: " ", with: "_"), "version": item.status == "Pending" ? 0 : 1, "approved_amount_minor": item.approvedAmount.map { $0 as Any } ?? NSNull(), "source_category_id": NSNull(), "allocation_operation_id": NSNull(), "actions": []] })
         // Preserve actual command identity/date/actor across reads. Never manufacture movements
         // from opening fixture totals, and never expose half of a restricted operation.
-        let allocationRows: [[String: Any]] = demo.allocationEvents.filter { event in
-            categoryIDs.contains(event.destinationCategoryID)
-                && (event.sourceCategoryID.map(categoryIDs.contains) ?? !demo.isRestricted)
-        }.map { event in
-            ["id": event.id, "budget_id": budget.id, "occurred_on": event.occurredOn,
+        let operations = Dictionary(grouping: demo.allocationEvents, by: \.operationID)
+        let allocationRows: [[String: Any]] = try demo.allocationEvents.filter { event in
+            operations[event.operationID]?.first?.id == event.id
+        }.compactMap { event in
+            let legs = operations[event.operationID]!
+            guard legs.allSatisfy({ categoryIDs.contains($0.destinationCategoryID)
+                && ($0.sourceCategoryID.map(categoryIDs.contains) ?? !demo.isRestricted) }) else { return nil }
+            let postings: [[String: Any]]
+            if event.kind == "smart_funding" {
+                postings = [["bucket": "ready_to_assign", "category_id": NSNull(),
+                             "amount_minor": -(try Money.sumMinorUnits(legs.map(\.amountMinor)))]]
+                    + legs.map { ["bucket": "category", "category_id": $0.destinationCategoryID, "amount_minor": $0.amountMinor] }
+            } else {
+                postings = [["bucket": event.sourceCategoryID == nil ? "ready_to_assign" : "category",
+                             "category_id": event.sourceCategoryID as Any? ?? NSNull(), "amount_minor": -event.amountMinor],
+                            ["bucket": "category", "category_id": event.destinationCategoryID, "amount_minor": event.amountMinor]]
+            }
+            return ["id": event.operationID, "budget_id": budget.id, "occurred_on": event.occurredOn,
              "kind": event.kind, "actor_user_id": event.actor, "note": event.note,
-             "source": event.kind == "request_approval" ? "approval" : "manual", "allocation_version": 1,
-             "postings": [["bucket": event.sourceCategoryID == nil ? "ready_to_assign" : "category",
-                           "category_id": event.sourceCategoryID as Any? ?? NSNull(), "amount_minor": -event.amountMinor],
-                          ["bucket": "category", "category_id": event.destinationCategoryID, "amount_minor": event.amountMinor]]]
+             "source": event.kind == "smart_funding" ? "smart_funding" : event.kind == "request_approval" ? "approval" : "manual",
+             "allocation_version": demo.allocationVersion, "postings": postings]
         }
         let allocationOperations: [APIAllocationOperation] = try decode(allocationRows)
         let targetRows = visibleCategories.compactMap { item -> APICategoryTarget? in
@@ -942,9 +953,15 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard demo.reconcile(accountID: operation.accountID, statementBalance: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, reason: operation.reason, expectedClearedBalance: operation.expectedClearedBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
     func assignMoney(_ operation: AssignMoneyOperation) async throws {
+        guard budget.can("assign_money") else { throw workspaceRepositoryError("You do not have permission to assign money.") }
+        try demo.requireAllocationVersion(operation.expectedVersion)
         try demo.replaceAssignment(categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor)
     }
-    func moveMoney(_ operation: MoveMoneyOperation) async throws { guard demo.move(amount: operation.amountMinor, from: operation.sourceCategoryID, to: operation.destinationCategoryID, occurredOn: operation.occurredOn, note: operation.note) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func moveMoney(_ operation: MoveMoneyOperation) async throws {
+        guard budget.can("move_money") else { throw workspaceRepositoryError("You do not have permission to move money.") }
+        try demo.requireAllocationVersion(operation.expectedVersion)
+        guard demo.move(amount: operation.amountMinor, from: operation.sourceCategoryID, to: operation.destinationCategoryID, occurredOn: operation.occurredOn, note: operation.note) else { throw workspaceRepositoryError(demo.errorMessage) }
+    }
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { guard demo.createCategory(name: name, group: groupName.isEmpty ? newGroupName : groupName) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func createGroup(name: String) async throws { if !demo.groupOrder.contains(name) { demo.groupOrder.append(name) } }
     func createAccount(_ operation: CreateAccountOperation) async throws {
@@ -1093,7 +1110,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         }
         let proposed = fundingLimit - remaining
         let unfundedCount = guidance.filter { $0.1.underfundedMinor > (fundedAmounts[$0.0.id] ?? 0) }.count
-        return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": ready, "proposed_minor": proposed, "after_ready_to_assign_minor": ready - proposed, "allocation_version": 1, "proposals": rows, "remaining_need_minor": totalNeed - proposed, "unfunded_category_count": unfundedCount, "funding_limit_minor": fundingLimit]))
+        return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": ready, "proposed_minor": proposed, "after_ready_to_assign_minor": ready - proposed, "allocation_version": demo.allocationVersion, "proposals": rows, "remaining_need_minor": totalNeed - proposed, "unfunded_category_count": unfundedCount, "funding_limit_minor": fundingLimit]))
     }
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws {
         guard !demo.isRestricted, budget.can("assign_money") else {
@@ -1103,16 +1120,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard !current.proposals.isEmpty, current == preview else {
             throw workspaceRepositoryError("Funding recommendations changed. Refresh the preview before confirming.")
         }
-        let projected = try demo.projectedCategories(month: current.month)
-        for proposal in current.proposals {
-            guard let category = projected.first(where: { $0.id == proposal.categoryID }),
-                  !category.assigned.addingReportingOverflow(proposal.amountMinor).overflow else {
-                throw workspaceRepositoryError("Target funding exceeds the supported amount range.")
-            }
-        }
-        for proposal in current.proposals {
-            guard demo.assign(amount: proposal.amountMinor, to: proposal.categoryID, occurredOn: current.month) else { throw workspaceRepositoryError(demo.errorMessage) }
-        }
+        try demo.fundTargets(current.proposals.map { ($0.categoryID, $0.amountMinor) }, month: current.month, expectedVersion: preview.allocationVersion)
     }
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { throw workspaceRepositoryError("Owner policy editing is demonstrated in live mode; use a delegated demo persona to verify the member experience.") }
 }

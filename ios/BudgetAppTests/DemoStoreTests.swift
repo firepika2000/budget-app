@@ -7,6 +7,85 @@ import BudgetCore
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testAllocationVersionsRejectStaleNoOpsAndMoneyRoundTrips() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        XCTAssertEqual(source.demo.allocationVersion, 0)
+        XCTAssertTrue(source.demo.createAccount(name: "Cash", type: "checking", isOnBudget: true, startingBalance: 10000))
+        XCTAssertTrue(source.demo.createCategory(name: "One", group: "Needs"))
+        XCTAssertTrue(source.demo.createCategory(name: "Two", group: "Needs"))
+        let one = source.demo.categories[0].id, two = source.demo.categories[1].id
+        let intent = AssignMoneyOperation(categoryID: one, month: "2026-09-01", assignedMinor: 1000, expectedVersion: 0)
+        try await source.assignMoney(intent)
+        XCTAssertEqual(source.demo.allocationVersion, 1)
+        do { try await source.assignMoney(intent); XCTFail("Same-token second command must lose, even when its amount is now a no-op") } catch { }
+        XCTAssertEqual(source.demo.allocationEvents.count, 1)
+        try await source.assignMoney(.init(categoryID: one, month: "2026-09-01", assignedMinor: 1000, expectedVersion: 1))
+        XCTAssertEqual(source.demo.allocationVersion, 1, "A current no-op creates no operation")
+        try await source.moveMoney(.init(sourceCategoryID: one, destinationCategoryID: two, amountMinor: 100, occurredOn: "2026-09-02", note: "Out", expectedVersion: 1))
+        try await source.moveMoney(.init(sourceCategoryID: two, destinationCategoryID: one, amountMinor: 100, occurredOn: "2026-09-02", note: "Back", expectedVersion: 2))
+        XCTAssertEqual(source.demo.allocationVersion, 3)
+        do {
+            try await source.assignMoney(.init(categoryID: one, month: "2026-09-01", assignedMinor: 1000, expectedVersion: 1))
+            XCTFail("Returning to the same amounts must not revive a stale token")
+        } catch { }
+        XCTAssertEqual(source.demo.allocationEvents.count, 3)
+        XCTAssertEqual(source.demo.accounts[0].balance, 10000)
+        XCTAssertEqual(source.demo.accounts[0].cleared, 10000)
+        XCTAssertNil(source.demo.accounts[0].reconciledBalance)
+    }
+
+    @MainActor
+    func testCompoundFundingIsAtomicVersionedAndWholeOperationPrivate() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        XCTAssertTrue(source.demo.createAccount(name: "Cash", type: "checking", isOnBudget: true, startingBalance: 10000))
+        XCTAssertTrue(source.demo.createCategory(name: "One", group: "Needs"))
+        XCTAssertTrue(source.demo.createCategory(name: "Two", group: "Needs"))
+        let one = source.demo.categories[0].id, two = source.demo.categories[1].id
+        source.demo.categories[0].target = 1000
+        source.demo.categories[1].target = 2000
+        let before = source.demo.financialObservation(accountReferences: ["cash": source.demo.accounts[0].id], categoryReferences: ["one": one, "two": two])
+        XCTAssertThrowsError(try source.demo.fundTargets([(one, 1000), ("missing", 2000)], month: "2026-09-01", expectedVersion: 0))
+        XCTAssertThrowsError(try source.demo.fundTargets([(one, 1000), (two, 10000)], month: "2026-09-01", expectedVersion: 0))
+        XCTAssertEqual(source.demo.allocationVersion, 0)
+        XCTAssertTrue(source.demo.allocationEvents.isEmpty)
+        XCTAssertEqual(source.demo.financialObservation(accountReferences: ["cash": source.demo.accounts[0].id], categoryReferences: ["one": one, "two": two]), before)
+        let preview = try await source.smartFundingPreview(month: "2026-09-01")
+        XCTAssertEqual(preview.allocationVersion, 0)
+        XCTAssertEqual(preview.proposals.count, 2)
+        try await source.commitSmartFunding(preview)
+        XCTAssertEqual(source.demo.allocationVersion, 1)
+        XCTAssertEqual(Set(source.demo.allocationEvents.map(\.operationID)).count, 1)
+        XCTAssertEqual(source.demo.readyToAssign, 7000)
+        XCTAssertEqual(source.demo.accounts[0].balance, 10000)
+        XCTAssertEqual(source.demo.accounts[0].cleared, 10000)
+        XCTAssertEqual(source.demo.transactions.count, 1, "Funding never posts account transactions")
+        do { try await source.commitSmartFunding(preview); XCTFail("Confirmation cannot be reused") } catch { }
+        let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        func history() async throws -> [APIAllocationOperation] {
+            try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query).allocationOperations
+        }
+        let rows = try await history()
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].kind, "smart_funding")
+        XCTAssertEqual(rows[0].postings.count, 3)
+        XCTAssertEqual(rows[0].postings.map(\.amountMinor).sorted(), [-3000, 1000, 2000])
+        XCTAssertEqual(rows[0].allocationVersion, 1)
+        let reloaded = try await history()
+        XCTAssertEqual(reloaded.map(\.id), rows.map(\.id))
+        try await source.moveMoney(.init(sourceCategoryID: one, destinationCategoryID: two, amountMinor: 100, occurredOn: "2026-09-02", note: "Out", expectedVersion: 1))
+        try await source.moveMoney(.init(sourceCategoryID: two, destinationCategoryID: one, amountMinor: 100, occurredOn: "2026-09-02", note: "Back", expectedVersion: 2))
+        let changed = try await history()
+        XCTAssertEqual(changed.first?.id, rows[0].id)
+        XCTAssertTrue(changed.allSatisfy { $0.allocationVersion == 3 }, "History returns the current budget token, not an invented historical token")
+        source.demo.categories[0].delegatedTo = .alex
+        source.demo.persona = .alex
+        let restricted = try await history()
+        XCTAssertTrue(restricted.isEmpty, "Never expose a partial compound operation")
+        XCTAssertThrowsError(try source.demo.fundTargets([(one, 1)], month: "2026-09-01", expectedVersion: 3))
+        XCTAssertEqual(source.demo.allocationVersion, 3)
+    }
+
+    @MainActor
     func testForecastRejectsOverflowAndExpandsOldRecurrencesWithoutSilentTruncation() async throws {
         let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-12-04"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
         let overflow = DemoWorkspaceDataSource(fresh: true)
@@ -1047,7 +1126,7 @@ final class DemoStoreTests: XCTestCase {
         source.demo.categories[1].targetRecurrenceMonths = 12
         source.demo.categories[2].targetIsActive = false
         source.demo.createAccount(name: "Actual cash", type: "checking", isOnBudget: true, startingBalance: 105000)
-        try await source.assignMoney(.init(categoryID: "monthly", month: "2027-02-01", assignedMinor: 5000, expectedVersion: 1))
+        try await source.assignMoney(.init(categoryID: "monthly", month: "2027-02-01", assignedMinor: 5000, expectedVersion: source.demo.allocationVersion))
         XCTAssertTrue(source.demo.recordCanonicalTransaction(.init(accountID: source.demo.accounts[0].id, categoryID: "monthly", amountMinor: -3000, occurredOn: "2026-09-01", payeeName: "Actual expense", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])))
         let before = source.demo.categories
         let preview = try await source.smartFundingPreview(month: "2027-02-01")
@@ -1320,8 +1399,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertFalse(fixtureOperations.isEmpty, "the fixture now executes real dated assignment commands")
         XCTAssertTrue(fixtureOperations.allSatisfy { $0.id.hasPrefix("fixture-") && $0.kind == "assignment" })
         let groceries = try XCTUnwrap(store.categories.first { $0.id == "groceries" })
-        try await store.updateAssignment(categoryID: groceries.id, month: "2026-09-01", assignedMinor: 73_000, expectedVersion: 1)
-        try await store.moveAllocation(.init(sourceCategoryID: groceries.id, destinationCategoryID: "dining", amountMinor: 123, occurredOn: "2026-09-03", note: "Actual move", expectedVersion: 1))
+        try await store.updateAssignment(categoryID: groceries.id, month: "2026-09-01", assignedMinor: 73_000, expectedVersion: try XCTUnwrap(store.summary).allocationVersion)
+        try await store.moveAllocation(.init(sourceCategoryID: groceries.id, destinationCategoryID: "dining", amountMinor: 123, occurredOn: "2026-09-03", note: "Actual move", expectedVersion: try XCTUnwrap(store.summary).allocationVersion))
         XCTAssertEqual(store.allocationOperations.count, fixtureOperations.count + 2)
         let commands = Array(store.allocationOperations.suffix(2))
         XCTAssertEqual(commands[0].postings.last?.amountMinor, 1_000)
@@ -1353,7 +1432,7 @@ final class DemoStoreTests: XCTestCase {
         }
         let initial = try await history("2026-09-01")
         XCTAssertTrue(initial.allSatisfy { $0.id.hasPrefix("fixture-") })
-        try await source.assignMoney(.init(categoryID: "groceries", month: "2026-09-01", assignedMinor: 73_000, expectedVersion: 1))
+        try await source.assignMoney(.init(categoryID: "groceries", month: "2026-09-01", assignedMinor: 73_000, expectedVersion: source.demo.allocationVersion))
         XCTAssertTrue(source.demo.move(amount: 100, from: "buffer", to: "alexallow", occurredOn: "2026-09-02", note: "Private source"))
         source.demo.persona = .alex
         XCTAssertTrue(source.demo.move(amount: 123, from: "alexallow", to: "alexsave", occurredOn: "2026-09-03", note: "My move"))
