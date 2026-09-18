@@ -6,6 +6,16 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`ce4cef1` is pushed. Next verified server checkpoint adds month-specific snooze with additive
+`0028_target_snoozes`, exact guidance suppression only, idempotent scoped command, target-row locking,
+and cleanup on target deletion. **356 backend pass, zero skips** including populated migration,
+PostgreSQL concurrent snooze and actual encrypted new-destination restore containing snooze metadata.
+Focused target/migration/planning **44 pass** plus expanded lifecycle checks pass. One valid migration
+head; human Live remains at 0020 and was not migrated. No Swift changes in this checkpoint. Next:
+shared native/API/Demo snooze/resume workflow with current credentials, month isolation and UI proof.
+Evidence: `/tmp/budget-snooze-server-full.log`, `/tmp/budget-snooze-server-focused-final.log`.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 `5a44d93` is pushed. Next verified checkpoint honors target priority and exposes exact remaining
 need/category count in Smart Funding, with an explicit production shortfall explanation. It rejects
 combined need overflow; API decoding remains compatible with older servers. **352 backend pass,

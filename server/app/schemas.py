@@ -392,6 +392,16 @@ class CategoryTargetUpsert(BaseModel):
         return self
 
 
+class CategoryTargetSnoozeUpdate(BaseModel):
+    is_snoozed: bool
+
+
+class CategoryTargetSnoozeResponse(BaseModel):
+    category_id: str
+    month: date
+    is_snoozed: bool
+
+
 class CategoryTargetResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -1157,6 +1167,7 @@ class CategoryMonthSummary(BaseModel):
     target_amount_minor: Optional[int] = None
     target_date: Optional[date] = None
     target_priority: int = 50
+    is_target_snoozed: bool = False
     recommended_contribution_minor: int = 0
     underfunded_minor: int = 0
     cash_overspent_minor: int = 0

@@ -221,6 +221,30 @@ def test_postgres_report_query_plans_use_composite_indexes(pg):
 # 0. Metadata bulk serialization
 # ---------------------------------------------------------------------------
 
+def test_concurrent_target_snoozes_are_idempotent_and_money_neutral(pg):
+    from app.planning_routes import set_category_target_snooze
+    from app.schemas import CategoryTargetSnoozeUpdate
+
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    _, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    root = f"/api/v1/budgets/{budget['id']}"
+    assert pg.client.put(f"{root}/categories/{category['id']}/target", headers=auth(pg.token),
+                         json={"target_type": "monthly_funding", "target_amount_minor": 10000}).status_code == 200
+    before = pg.client.get(f"{root}/months/2026-09-01", headers=auth(pg.token)).json()
+    def attempt(db, user):
+        return set_category_target_snooze(budget_id=budget["id"], category_id=category["id"],
+            month=date(2026, 9, 1), body=CategoryTargetSnoozeUpdate(is_snoozed=True), user=user, db=db)
+    assert outcomes(run_race([route_attempt(pg.factory, pg.owner_id, attempt),
+                              route_attempt(pg.factory, pg.owner_id, attempt)])) == ["ok", "ok"]
+    with pg.factory() as db:
+        assert db.scalar(text("SELECT COUNT(*) FROM category_target_snoozes")) == 1
+    after = pg.client.get(f"{root}/months/2026-09-01", headers=auth(pg.token)).json()
+    assert after["allocation_version"] == before["allocation_version"]
+    assert after["ready_to_assign_minor"] == before["ready_to_assign_minor"]
+    assert after["categories"][0]["available_minor"] == before["categories"][0]["available_minor"]
+    assert after["categories"][0]["is_target_snoozed"] is True
+
+
 def test_concurrent_bulk_tag_additions_serialize_without_lost_update(pg):
     budget = create_budget(pg.client, pg.token, pg.factory)
     account, category = create_budget_structure(pg.client, pg.token, budget["id"])

@@ -13,7 +13,7 @@ Checkpoint completion is followed by the next unblocked engineering task.
 | PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 cadence, incremental Smart Funding, priority and shortfall corrections are verified. Month-specific snooze, import/local-provider and later mission scope remain open. |
 | FINANCIAL | IN PROGRESS | 23 shared single/multi-debt vectors include paid-off parity, horizon/high-APR boundaries, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
 | SECURITY | IN PROGRESS | Server capability/resource guards and regression suites exist. Extend adversarial matrix across reports, projections, imports and future providers; rerun relevant PostgreSQL/privacy gates. |
-| DATA | IN PROGRESS | Source head is `0027_interest_class`; human Live remains at `0020_payee_identity_repair`. Populated PostgreSQL migration/concurrency and real age-encrypted new-destination restore prove canonical equality and encrypted attachment integrity/wrong-key/tamper handling. Complete manifest preflight passes. Real Docker/Compose recovery and production Local Device storage remain open. |
+| DATA | IN PROGRESS | Source head is `0028_target_snoozes`; human Live remains at `0020_payee_identity_repair`. Populated migration/concurrency and real age-encrypted new-destination restore prove canonical equality, snooze metadata and encrypted attachment integrity/wrong-key/tamper handling. Complete manifest preflight passes. Real Docker/Compose recovery and production Local Device storage remain open. |
 | RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Existing native/backend suites provide regression evidence; concurrency, offline failures, cancellation and release-wide regression remain open. |
 | PERFORMANCE | IN PROGRESS | Live core hydration now makes zero detailed-report requests instead of seven; native HTTP tests cover caching/invalidation/retry. Hub uses one bounded scalar summary. Server/Demo computation, category/account fan-out and representative wall-clock measures remain open. |
 | UX | IN PROGRESS | Shared shell, onboarding, scalable payee selection and focused Insights exist. Report filters are reachable again; missing debt terms open the shared editor. Demand-loaded reports have independent loading/error/retry. Full workflow/accessibility closure remains open. |
@@ -78,7 +78,8 @@ month-specific snooze under the documented planning contract, then remaining pla
 
 Never run migration, destructive, scale or restore tests against human Live. Known unapplied chain:
 `0021_scheduled_payee_id` → `0022_report_query_indexes` → `0023_category_favorites` →
-`0024_member_lifecycle` → `0025_request_lifecycle` → `0026_debt_terms` → `0027_interest_class`.
+`0024_member_lifecycle` → `0025_request_lifecycle` → `0026_debt_terms` → `0027_interest_class` →
+`0028_target_snoozes` (additive month-scoped planning metadata only).
 Recheck the source graph before migration work. Use disposable populated PostgreSQL databases and
 restore to new destinations. Preserve human attachments, transactions and reconciliation history.
 

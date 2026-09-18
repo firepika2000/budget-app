@@ -61,6 +61,9 @@ def test_real_dump_restore_preserves_rows_finances_and_encrypted_attachments(pg,
     root = f"/api/v1/budgets/{budget['id']}"
     assigned = pg.client.put(f"{root}/categories/{category['id']}/assignment", headers=auth(pg.token), json={"month": "2026-09-01", "assigned_minor": 10_000, "expected_allocation_version": 0})
     assert assigned.status_code == 200, assigned.text
+    target_path = f"{root}/categories/{category['id']}/target"
+    assert pg.client.put(target_path, headers=auth(pg.token), json={"target_type": "monthly_funding", "target_amount_minor": 50000}).status_code == 200
+    assert pg.client.put(f"{target_path}/snooze/2026-09-01", headers=auth(pg.token), json={"is_snoozed": True}).status_code == 200
     card = create_credit_card(pg.client, pg.token, budget["id"])
     record(pg.client, pg.token, budget["id"], account_id=card["id"], category_id=category["id"], amount_minor=-1200, payee_name="Card merchant")
     terms = pg.client.put(f"{root}/accounts/{card['id']}/debt-terms", headers=auth(pg.token), json={"terms_type": "credit_card", "annual_rate_basis_points": 1999})
@@ -100,7 +103,7 @@ def test_real_dump_restore_preserves_rows_finances_and_encrypted_attachments(pg,
         payload.mkdir()
         shutil.copyfile(dump, payload / "database.sql")
         shutil.copytree(restored_objects, payload / "attachments")
-        (payload / "BACKUP-METADATA").write_text("format_version=1\ncreated_at=2026-09-18T00:00:00Z\ndatabase_revision=0027_interest_class\n")
+        (payload / "BACKUP-METADATA").write_text("format_version=1\ncreated_at=2026-09-18T00:00:00Z\ndatabase_revision=0028_target_snoozes\n")
         (payload / "attachment-key-recovery.env").write_text(f"BUDGET_APP_JWT_SECRET={source_settings.jwt_secret}\n")
         subprocess.run([sys.executable, str(ARCHIVE_TOOL), "create-manifest", str(payload)], check=True, capture_output=True)
         plain_archive = tmp_path / "backup.tar.gz"
@@ -126,7 +129,7 @@ def test_real_dump_restore_preserves_rows_finances_and_encrypted_attachments(pg,
         subprocess.run(["psql", "--single-transaction", "--set", "ON_ERROR_STOP=on", "--dbname", destination_name], input=EMPTY_GUARD.read_bytes() + b"\n" + dump.read_bytes(), env=environment, check=True, capture_output=True)
         assert _rows(restored_engine) == expected
         with restored_engine.connect() as connection:
-            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0027_interest_class"
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0028_target_snoozes"
         restored_app = create_app(Settings(database_url=destination_url.render_as_string(hide_password=False), jwt_secret=source_settings.jwt_secret, attachment_storage_path=str(restored_objects)))
         restored_app.state.session_factory = sessionmaker(bind=restored_engine, expire_on_commit=False)
         with TestClient(restored_app) as client:

@@ -56,6 +56,7 @@ from .models import (
     CategoryFavorite,
     CategoryGroup,
     CategoryTarget,
+    CategoryTargetSnooze,
     CreditCardReserveEvent,
     DelegatedBudgetPolicy,
     DelegatedCategoryRule,
@@ -2138,6 +2139,11 @@ def month_summary(
         CategoryTarget.budget_id == budget_id,
         CategoryTarget.is_active.is_(True),
     ))}
+    snoozed_categories = set(db.scalars(select(CategoryTarget.category_id).join(
+        CategoryTargetSnooze, CategoryTargetSnooze.target_id == CategoryTarget.id,
+    ).where(
+        CategoryTargetSnooze.budget_id == budget_id, CategoryTargetSnooze.month == month,
+    )))
     allocation_rows = db.execute(
         select(AllocationPosting, AllocationOperation)
         .join(AllocationOperation, AllocationOperation.id == AllocationPosting.operation_id)
@@ -2231,6 +2237,7 @@ def month_summary(
         if available < 0:
             total_overspent += -available
         category_target = targets.get(category.id)
+        is_snoozed = category.id in snoozed_categories
         funding = target_funding(
             category_target,
             month=month,
@@ -2249,8 +2256,9 @@ def month_summary(
             target_amount_minor=category_target.target_amount_minor if category_target else None,
             target_date=funding.effective_target_date if funding else None,
             target_priority=category_target.priority if category_target else 50,
-            recommended_contribution_minor=funding.recommended_contribution_minor if funding else 0,
-            underfunded_minor=funding.underfunded_minor if funding else 0,
+            is_target_snoozed=is_snoozed,
+            recommended_contribution_minor=funding.recommended_contribution_minor if funding and not is_snoozed else 0,
+            underfunded_minor=funding.underfunded_minor if funding and not is_snoozed else 0,
             cash_overspent_minor=cash_overspent,
             credit_overspent_minor=credit_overspent,
             funded_credit_spending_minor=funded_credit,

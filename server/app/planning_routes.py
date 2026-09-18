@@ -14,7 +14,9 @@ from .dependencies import get_current_user
 from .models import (
     Account,
     Category,
+    CategoryGroup,
     CategoryTarget,
+    CategoryTargetSnooze,
     ScheduledTransaction,
     Transaction,
     User,
@@ -24,6 +26,8 @@ from .planning import next_occurrence, occurrences_between
 from .schemas import (
     CategoryTargetResponse,
     CategoryTargetUpsert,
+    CategoryTargetSnoozeUpdate,
+    CategoryTargetSnoozeResponse,
     ForecastAccountBalance,
     ForecastOccurrence,
     ForecastResponse,
@@ -35,6 +39,38 @@ from .schemas import (
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
+
+
+@router.put("/categories/{category_id}/target/snooze/{month}", response_model=CategoryTargetSnoozeResponse)
+def set_category_target_snooze(
+    budget_id: str, category_id: str, month: date, body: CategoryTargetSnoozeUpdate,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> dict:
+    budget = require_budget_capability(db, user, budget_id, "manage_planning")
+    if month.day != 1:
+        raise HTTPException(status_code=422, detail="Month must be the first day of a month")
+    category = db.get(Category, category_id)
+    if (category is None or category.budget_id != budget_id or category.is_archived
+            or not can_access_resource(db, user, budget, "category", category_id)):
+        raise HTTPException(status_code=404, detail="Target not found")
+    group = db.get(CategoryGroup, category.group_id)
+    if group is None or group.is_archived:
+        raise HTTPException(status_code=404, detail="Target not found")
+    # Serialize idempotent metadata changes on the existing target, not the money ledger.
+    target = db.scalar(select(CategoryTarget).where(
+        CategoryTarget.budget_id == budget_id, CategoryTarget.category_id == category_id,
+    ).with_for_update())
+    if target is None:
+        raise HTTPException(status_code=404, detail="Target not found")
+    snooze = db.scalar(select(CategoryTargetSnooze).where(
+        CategoryTargetSnooze.target_id == target.id, CategoryTargetSnooze.month == month,
+    ))
+    if body.is_snoozed and snooze is None:
+        db.add(CategoryTargetSnooze(budget_id=budget_id, target_id=target.id, month=month, created_by_user_id=user.id))
+    elif not body.is_snoozed and snooze is not None:
+        db.delete(snooze)
+    db.commit()
+    return {"category_id": category_id, "month": month, "is_snoozed": body.is_snoozed}
 
 
 @router.put(

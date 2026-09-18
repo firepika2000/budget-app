@@ -366,6 +366,19 @@ class CategoryTarget(Base):
     created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+    snoozes: Mapped[list["CategoryTargetSnooze"]] = relationship(cascade="all, delete-orphan")
+
+
+class CategoryTargetSnooze(Base):
+    __tablename__ = "category_target_snoozes"
+    __table_args__ = (UniqueConstraint("target_id", "month", name="uq_target_snooze_month"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    target_id: Mapped[str] = mapped_column(ForeignKey("category_targets.id", ondelete="CASCADE"), index=True)
+    month: Mapped[date] = mapped_column(Date, index=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
 class ScheduledTransaction(Base):
