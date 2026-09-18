@@ -1201,13 +1201,54 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         demo.payees[index].aliases.remove(at: offset)
     }
     func recordTransaction(_ operation: RecordTransactionOperation) async throws { try requireActiveMembership();
+        try requireTransactionCapability("create_transaction")
+        try validateTransactionTarget(operation)
         guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { try requireActiveMembership();
+        let original = try transactionCommandSource(id: id, capability: "edit_transaction", requiresCreator: true)
+        guard original.status == "posted", original.transferID == nil, !original.reconciled else {
+            throw APIClientError.server(status: 409, message: "This transaction cannot be edited")
+        }
+        try validateTransactionTarget(operation)
         guard demo.updateCanonicalTransaction(id: id, operation: operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
 
-    func deleteTransaction(id: String) async throws { try requireActiveMembership(); guard demo.deleteTransaction(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    private func requireTransactionCapability(_ capability: String) throws {
+        guard actorCapabilities.contains(capability) else { throw APIClientError.server(status: 403, message: "Insufficient permission") }
+    }
+    private func transactionCommandSource(id: String, capability: String, requiresCreator: Bool) throws -> DemoTransaction {
+        try requireTransactionCapability(capability)
+        guard let source = resourceVisibleTransactions.first(where: { $0.id == id }) else {
+            throw APIClientError.server(status: 404, message: "Transaction not found")
+        }
+        guard !requiresCreator || source.member == demo.persona || actorCapabilities.contains("manage_budget_structure") else {
+            throw APIClientError.server(status: 403, message: "You may only change your own transactions")
+        }
+        return source
+    }
+    private func validateTransactionTarget(_ operation: RecordTransactionOperation) throws {
+        guard demo.visibleAccounts.contains(where: { $0.id == operation.accountID }) else {
+            throw APIClientError.server(status: 422, message: "Invalid account")
+        }
+        if demo.persona != .rey, let profile = accessProfiles[requestActorID], profile.restrictAccounts,
+           !profile.accountIDs.contains(operation.accountID) {
+            throw APIClientError.server(status: 422, message: "Invalid account")
+        }
+        let ids = [operation.categoryID].compactMap { $0 } + operation.splits.map(\.categoryID)
+        guard ids.allSatisfy({ id in demo.categories.contains { $0.id == id && !$0.isHidden && !demo.archivedGroups.contains($0.group) } }),
+              actorCategoryScope.map({ Set(ids).isSubset(of: $0) }) ?? true else {
+            throw APIClientError.server(status: 422, message: "Invalid category")
+        }
+    }
+    func deleteTransaction(id: String) async throws { try requireActiveMembership();
+        let original = try transactionCommandSource(id: id, capability: "delete_transaction", requiresCreator: true)
+        guard original.status == "posted", original.transferID == nil, !original.reconciled,
+              original.attachmentName == nil, attachmentData[id] == nil else {
+            throw APIClientError.server(status: 409, message: "This transaction cannot be deleted; use an explicit correction")
+        }
+        guard demo.deleteTransaction(id: id) else { throw workspaceRepositoryError(demo.errorMessage) }
+    }
     func duplicateTransaction(id: String, occurredOn: String) async throws { try requireActiveMembership();
         guard let source = demo.transactions.first(where: { $0.id == id }), source.transferID == nil, !source.scheduled else { throw workspaceRepositoryError("This system-linked transaction must be recreated through its specialized workflow") }
         let amounts = demo.canonicalCategoryAmounts(for: source)

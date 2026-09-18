@@ -4,6 +4,51 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoTransactionCommandsEnforceCurrentAuthorityAndPreserveOriginalCreator() async throws {
+        let source = DemoWorkspaceDataSource()
+        func operation(account: String = "checking", category: String = "groceries", amount: Int64 = -100) -> RecordTransactionOperation {
+            .init(accountID: account, categoryID: category, amountMinor: amount, occurredOn: "2026-09-01", payeeName: "Command authority", memo: "", isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: [])
+        }
+        source.demo.persona = .partner
+        try await source.recordTransaction(operation())
+        let id = try XCTUnwrap(source.demo.transactions.first?.id)
+        source.demo.persona = .rey
+        try await source.updateTransaction(id: id, operation: operation(amount: -120))
+        XCTAssertEqual(source.demo.transactions.first { $0.id == id }?.member, .partner)
+        let observation = try await source.browseTransactions(query: .init(search: "Command authority"))
+        XCTAssertEqual(observation.items.first?.createdByUserID, "jordan")
+        func refused(_ status: Int, action: () async throws -> Void) async throws {
+            let before = source.demo.transactions, accounts = source.demo.accounts
+            do { try await action(); XCTFail("Unauthorized transaction mutation") }
+            catch APIClientError.server(let actual, _) { XCTAssertEqual(actual, status) }
+            XCTAssertEqual(source.demo.transactions, before); XCTAssertEqual(source.demo.accounts, accounts)
+        }
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_transactions"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 0))
+        source.demo.persona = .partner
+        try await refused(403) { try await source.recordTransaction(operation()) }
+        try await refused(403) { try await source.updateTransaction(id: id, operation: operation()) }
+        try await refused(403) { try await source.deleteTransaction(id: id) }
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["create_transaction", "edit_transaction", "delete_transaction"], restrictAccounts: true, accountIDs: ["checking"], restrictCategories: true, categoryIDs: ["groceries"], expectedVersion: 1))
+        source.demo.persona = .partner
+        try await refused(422) { try await source.recordTransaction(operation(account: "visa")) }
+        try await refused(422) { try await source.recordTransaction(operation(category: "dining")) }
+        try await refused(422) { try await source.updateTransaction(id: id, operation: operation(category: "dining")) }
+        try await refused(404) { try await source.deleteTransaction(id: "t1") }
+        try await source.updateTransaction(id: id, operation: operation(amount: -130))
+        XCTAssertEqual(source.demo.transactions.first { $0.id == id }?.member, .partner)
+        try await source.deleteTransaction(id: id)
+        XCTAssertFalse(source.demo.transactions.contains { $0.id == id })
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["edit_transaction", "delete_transaction"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 2))
+        source.demo.persona = .partner
+        try await refused(403) { try await source.updateTransaction(id: "t1", operation: operation()) }
+        try await refused(403) { try await source.deleteTransaction(id: "t1") }
+        source.demo.persona = .rey
+        try await refused(409) { try await source.deleteTransaction(id: "t1") }
+    }
+
+    @MainActor
     func testDemoBulkMutationRechecksCapabilityScopeOwnershipAndLifecycleAtomically() async throws {
         let source = DemoWorkspaceDataSource()
         let original = source.demo.transactions, accounts = source.demo.accounts

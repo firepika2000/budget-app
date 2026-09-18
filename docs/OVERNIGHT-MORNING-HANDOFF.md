@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `ff04f33`, ordinary Demo create/edit/delete enforce current capabilities, original resource
+visibility/ownership and destination scope before mutation. Canonical edits preserve original
+creator identity. Active attachments block direct deletion. Duplicate/void/Make Recurring, other
+commands and summary/report scopes remain next; no blanket authorization or release PASS.
+Verified: 137 native PASS, expanded creator-denial test + production register-delete UI PASS,
+20 backend reference tests PASS; Beta build/diff PASS. Logs are in the master ledger. No migration
+or human data change. Human acceptance remains PENDING — DO NOT RETEST.
+
 After `8d44511`, bulk mutations recheck current edit capability, scoped resources, ownership,
 posted lifecycle and bounded unique selection before changing any row/account. Void/reversal and
 custom-profile bypass regressions added; reconciliation/system protections retained. Other command

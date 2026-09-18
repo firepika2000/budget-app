@@ -849,6 +849,8 @@ final class DemoStore: ObservableObject {
             restore(before)
             return false
         }
+        // Editing changes the content, not the original creator's identity.
+        if let updated = transactions.firstIndex(where: { $0.id == id }) { transactions[updated].member = old.member }
         return true
     }
 

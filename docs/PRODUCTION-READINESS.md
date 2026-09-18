@@ -4,6 +4,21 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo ordinary transaction commands after `ff04f33`: create/edit/delete now check current operation
+capability before canonical mutation. Existing-row edit/delete enforce full visibility and original
+creator-or-manager authority; new destination accounts/categories are scoped and inactive categories
+refuse. Non-posted/reconciled/transfer edit/delete paths refuse; deletion also refuses active
+attachment metadata/bytes, preserving the explicit reversal alternative. Demo tombstone history
+parity remains open. Canonical editing now retains the original creator instead of replacing that
+identity with the editor. Regression exercises permission revocation, hidden destination refusal,
+unchanged financial state on failure, successful own-row edits/deletion and owner editing without
+creator reassignment. Duplicate/void/Make Recurring and other command families remain in the audit.
+Verification: full 137 native tests PASS (`/tmp/budget-demo-transaction-command-auth.log`), then
+expanded creator-denial native test + production register-delete UI test PASS
+(`/tmp/budget-demo-command-auth-ui.log`). Beta builds/diff PASS. All 20 backend budgeting and
+transaction-lifecycle reference tests PASS (`/tmp/budget-demo-command-auth-reference.log`).
+Server/package source unchanged; latest full baselines remain 461 backend and 49 Core + 54 API.
+
 Demo bulk command authorization after `8d44511`: the repository previously relied on UI admission
 and fixed persona checks, allowing custom-permission/ownership bypass and voided/reversal bulk
 mutation through a direct call. Bulk preflight now checks current edit capability, unique bounded
