@@ -4,6 +4,16 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Transaction attribution audit after `613a478`: Demo API transaction serialization used the current
+viewer as creator, causing member filters to attribute every visible transaction to whichever
+persona was browsing. Serialization now uses the stored transaction member, with the canonical
+`demo-owner` identity for Rey. Regression checks every seeded creator under both adult viewers,
+member-filter row IDs/counts, restricted-user hidden owner results and unchanged stored ledger.
+This corrects observation identity only; no money/posting changes or Live API changes.
+Verification: all 133 native tests and Beta simulator build PASS; diff check PASS.
+Log: `/tmp/budget-demo-transaction-attribution.log`. Prior attachment UI and package evidence
+remain recorded below; they were not rerun for this serialization-only checkpoint.
+
 Demo attachment authorization after `9701ab2`: direct repository methods previously checked only
 active membership, returned bytes by transaction ID without validating attachment identity, and
 could detach a hidden transaction's receipt. A shared attachment admission check now applies

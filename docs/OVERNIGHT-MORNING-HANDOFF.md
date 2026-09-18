@@ -6,6 +6,12 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `613a478`, corrected Demo transaction creator observations/member filters to use stored
+transaction membership, not the current viewer. Owner identity is consistently `demo-owner`.
+Financial state unchanged; broader dynamic authorization and attachment lifecycle remain open.
+Verified 133 native tests, Beta simulator build and diff check PASS; log
+`/tmp/budget-demo-transaction-attribution.log`.
+
 After `9701ab2`, hardened Demo attachment repository authorization, current profile scopes,
 creator-or-manager mutation authority and exact attachment identity. Hidden/foreign/detached
 attachment access refuses before bytes/mutation. Live encrypted storage unchanged. Demo multi-file

@@ -4,6 +4,32 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoTransactionCreatorAndMemberFilterDoNotChangeWithViewer() async throws {
+        let source = DemoWorkspaceDataSource()
+        let original = source.demo.transactions
+        for viewer in [DemoPersona.rey, .partner] {
+            source.demo.persona = viewer
+            let page = try await source.browseTransactions(query: .init(limit: 200))
+            XCTAssertEqual(page.items.count, original.count)
+            for row in page.items {
+                let creator = try XCTUnwrap(original.first(where: { $0.id == row.id })).member
+                XCTAssertEqual(row.createdByUserID, creator == .rey ? "demo-owner" : creator.rawValue.lowercased())
+            }
+            for creator in DemoPersona.allCases {
+                let id = creator == .rey ? "demo-owner" : creator.rawValue.lowercased()
+                let filtered = try await source.browseTransactions(query: .init(actorUserIDs: [id], limit: 200))
+                XCTAssertEqual(Set(filtered.items.map(\.id)), Set(original.filter { $0.member == creator }.map(\.id)))
+                XCTAssertEqual(filtered.totalCount, filtered.items.count)
+            }
+        }
+        source.demo.persona = .alex
+        let hiddenOwner = try await source.browseTransactions(query: .init(actorUserIDs: ["demo-owner"], limit: 200))
+        XCTAssertTrue(hiddenOwner.items.isEmpty)
+        XCTAssertEqual(hiddenOwner.totalCount, 0)
+        XCTAssertEqual(source.demo.transactions, original)
+    }
+
+    @MainActor
     func testDemoAttachmentAuthorizationAndIdentityAreCheckedBeforeDataAccess() async throws {
         let source = DemoWorkspaceDataSource()
         let original = try await source.downloadTransactionAttachment(transactionID: "t1", attachmentID: "demo-attachment-t1")
