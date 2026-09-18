@@ -4,6 +4,18 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Transfer arithmetic continuation after pushed `a1656ab` (verified): creation, editing
+and deletion stage both account legs and cleared/card-reserve deltas before publication. Edits
+accumulate old/new legs together with exact wide sums, so a valid final result is not rejected
+merely because reversing the original first would overflow. Tests cover failed creation/deletion
+without mutation, valid extreme-value edit cancellation, unchanged IDs and tracking-transfer
+Unassigned neutrality. Existing payment-reserve funding guard remains. No server semantics or
+human data changed. Evidence: `/tmp/budget-transfer-overflow-{native,backend}.log`.
+**106 native XCTest + 1 production transfer XCUITest and 3 focused backend transfer tests PASS**;
+Beta build/test and diff check PASS. The UI test exercises production create/edit, continuous
+amount/memo input, and register refresh. Package code unchanged from 45 Core + 49 API PASS.
+Account creation, legacy splitting, report and forecast arithmetic remain open audit surfaces.
+
 Posting/reversal arithmetic checkpoint after pushed `ef90252` (verified): Demo account,
 cleared, category, Unassigned and card-reserve mutations now use checked exact arithmetic. Deletion
 and edit reversal throw into the existing financial checkpoint rollback rather than trap after a

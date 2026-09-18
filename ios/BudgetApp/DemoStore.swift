@@ -399,10 +399,8 @@ final class DemoStore: ObservableObject {
             return fail(.insufficientFunds(available: accounts[destination].paymentReserved))
         }
         let transferID = UUID().uuidString
-        accounts[source].balance -= amount; accounts[destination].balance += amount
-        if cleared { accounts[source].cleared -= amount; accounts[destination].cleared += amount }
-        if accounts[destination].kind == .credit { accounts[destination].paymentReserved -= amount }
-        if accounts[source].kind == .credit { accounts[source].paymentReserved += amount }
+        do { accounts = try applyingTransferChanges([(source, destination, amount, cleared)]) }
+        catch { return failMessage(error.localizedDescription) }
         transactions.insert(.init(id: "\(transferID)-in", date: date, payee: "Transfer", memo: memo, accountID: destinationID, categoryIDs: [], amount: amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
         transactions.insert(.init(id: "\(transferID)-out", date: date, payee: "Transfer", memo: memo, accountID: sourceID, categoryIDs: [], amount: -amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
         errorMessage = nil
@@ -419,19 +417,14 @@ final class DemoStore: ObservableObject {
               let oldDestination = accounts.firstIndex(where: { $0.id == oldDestinationLeg.accountID }),
               let source = accounts.firstIndex(where: { $0.id == sourceID }),
               let destination = accounts.firstIndex(where: { $0.id == destinationID }), source != destination else { return fail(.invalidAmount) }
-        let oldAmount = -oldSourceLeg.amount
-        var updatedAccounts = accounts
-        updatedAccounts[oldSource].balance += oldAmount; updatedAccounts[oldDestination].balance -= oldAmount
-        if oldSourceLeg.cleared { updatedAccounts[oldSource].cleared += oldAmount; updatedAccounts[oldDestination].cleared -= oldAmount }
-        if updatedAccounts[oldDestination].kind == .credit { updatedAccounts[oldDestination].paymentReserved += oldAmount }
-        if updatedAccounts[oldSource].kind == .credit { updatedAccounts[oldSource].paymentReserved -= oldAmount }
-        if updatedAccounts[destination].kind == .credit && updatedAccounts[destination].paymentReserved < amount { return fail(.insufficientFunds(available: updatedAccounts[destination].paymentReserved)) }
-        updatedAccounts[source].balance -= amount; updatedAccounts[destination].balance += amount
-        if cleared { updatedAccounts[source].cleared -= amount; updatedAccounts[destination].cleared += amount }
-        if updatedAccounts[destination].kind == .credit { updatedAccounts[destination].paymentReserved -= amount }
-        if updatedAccounts[source].kind == .credit { updatedAccounts[source].paymentReserved += amount }
-        accounts = updatedAccounts
         guard let sourceLegIndex = transactions.firstIndex(where: { $0.id == oldSourceLeg.id }), let destinationLegIndex = transactions.firstIndex(where: { $0.id == oldDestinationLeg.id }) else { return fail(.transactionNotFound) }
+        do {
+            let updatedAccounts = try applyingTransferChanges([(oldSource, oldDestination, oldSourceLeg.amount, oldSourceLeg.cleared), (source, destination, amount, cleared)])
+            if updatedAccounts[destination].kind == .credit && updatedAccounts[destination].paymentReserved < 0 {
+                return fail(.insufficientFunds(available: try Money.sumMinorUnits([updatedAccounts[destination].paymentReserved, amount])))
+            }
+            accounts = updatedAccounts
+        } catch { return failMessage(error.localizedDescription) }
         transactions[sourceLegIndex].accountID = sourceID; transactions[sourceLegIndex].amount = -amount; transactions[sourceLegIndex].memo = memo; transactions[sourceLegIndex].cleared = cleared; transactions[sourceLegIndex].date = date
         transactions[destinationLegIndex].accountID = destinationID; transactions[destinationLegIndex].amount = amount; transactions[destinationLegIndex].memo = memo; transactions[destinationLegIndex].cleared = cleared; transactions[destinationLegIndex].date = date
         errorMessage = nil; return true
@@ -444,13 +437,32 @@ final class DemoStore: ObservableObject {
               !sourceLeg.reconciled, !destinationLeg.reconciled,
               let source = accounts.firstIndex(where: { $0.id == sourceLeg.accountID }),
               let destination = accounts.firstIndex(where: { $0.id == destinationLeg.accountID }) else { return fail(.transactionNotFound) }
-        let amount = -sourceLeg.amount
-        accounts[source].balance += amount; accounts[destination].balance -= amount
-        if sourceLeg.cleared { accounts[source].cleared += amount; accounts[destination].cleared -= amount }
-        if accounts[destination].kind == .credit { accounts[destination].paymentReserved += amount }
-        if accounts[source].kind == .credit { accounts[source].paymentReserved -= amount }
+        do { accounts = try applyingTransferChanges([(source, destination, sourceLeg.amount, sourceLeg.cleared)]) }
+        catch { return failMessage(error.localizedDescription) }
         transactions.removeAll { $0.transferID == transferID }
         errorMessage = nil; return true
+    }
+
+    /// Stage all transfer legs together. Signed amounts reverse existing legs without publishing
+    /// an intermediate account state; exact accumulation permits cancellation at edit boundaries.
+    private func applyingTransferChanges(_ changes: [(source: Int, destination: Int, amount: Int64, cleared: Bool)]) throws -> [DemoAccount] {
+        var balance: [Int: [Int64]] = [:], cleared: [Int: [Int64]] = [:], reserve: [Int: [Int64]] = [:]
+        for change in changes {
+            guard change.amount != .min else { throw MoneyError.arithmeticOverflow }
+            balance[change.source, default: []].append(-change.amount)
+            balance[change.destination, default: []].append(change.amount)
+            if change.cleared {
+                cleared[change.source, default: []].append(-change.amount)
+                cleared[change.destination, default: []].append(change.amount)
+            }
+            if accounts[change.destination].kind == .credit { reserve[change.destination, default: []].append(-change.amount) }
+            if accounts[change.source].kind == .credit { reserve[change.source, default: []].append(change.amount) }
+        }
+        var result = accounts
+        for (index, changes) in balance { result[index].balance = try Money.sumMinorUnits([accounts[index].balance] + changes) }
+        for (index, changes) in cleared { result[index].cleared = try Money.sumMinorUnits([accounts[index].cleared] + changes) }
+        for (index, changes) in reserve { result[index].paymentReserved = try Money.sumMinorUnits([accounts[index].paymentReserved] + changes) }
+        return result
     }
 
     @discardableResult

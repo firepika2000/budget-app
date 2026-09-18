@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`a1656ab` pushed posting/reversal rollback. Next transfer checkpoint stages full account deltas,
+including combined reversal/replacement on edit, with exact overflow checks before publication.
+Failed creation/deletion preserve both sides; valid final edit cancellation remains possible at
+Int64 limits. **106 native + 1 production transfer UI + 3 focused backend tests PASS**;
+Beta build and diff check PASS: `/tmp/budget-transfer-overflow-{native,backend}.log`.
+Next audit surfaces: account creation, legacy split fallback, reports/forecast; shared authoritative
+reconciliation observations, allocation-version parity and broader mission gates also remain open.
+
 `ef90252` is pushed. Next checkpoint checks Demo posting/reversal arithmetic and routes overflow
 through financial rollback. Tests cover both Int64 boundaries plus failed deletion/edit with
 unchanged observations/transaction identities. **105 native + 23 server financial vectors PASS**;

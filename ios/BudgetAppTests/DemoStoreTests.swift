@@ -6,6 +6,39 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testTransferOverflowIsAtomicAndEditCancellationUsesFinalBalances() throws {
+        let demo = DemoStore(fresh: true)
+        demo.createAccount(name: "Source", type: "asset", isOnBudget: false)
+        demo.createAccount(name: "Destination", type: "asset", isOnBudget: false, startingBalance: .max)
+        let sourceID = demo.accounts[0].id, destinationID = demo.accounts[1].id
+        let initialIDs = demo.transactions.map(\.id)
+        XCTAssertFalse(demo.transfer(amount: 1, from: sourceID, to: destinationID, memo: "", cleared: true, date: Date()))
+        XCTAssertEqual(demo.accounts.map(\.balance), [0, .max])
+        XCTAssertEqual(demo.accounts.map(\.cleared), [0, .max])
+        XCTAssertEqual(demo.transactions.map(\.id), initialIDs)
+
+        let edit = DemoStore(fresh: true)
+        edit.createAccount(name: "Source", type: "asset", isOnBudget: false, startingBalance: .max)
+        edit.createAccount(name: "Destination", type: "asset", isOnBudget: false)
+        let source = edit.accounts[0].id, destination = edit.accounts[1].id
+        XCTAssertTrue(edit.transfer(amount: 1, from: source, to: destination, memo: "Original", cleared: true, date: Date()))
+        let transferID = try XCTUnwrap(edit.transactions.first?.transferID)
+        XCTAssertTrue(edit.recordCanonicalTransaction(.init(accountID: source, categoryID: nil, amountMinor: 1, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "External", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])))
+        let ids = edit.transactions.map(\.id)
+        XCTAssertFalse(edit.deleteTransfer(id: transferID))
+        XCTAssertEqual(edit.accounts.map(\.balance), [.max, 1])
+        XCTAssertEqual(edit.accounts.map(\.cleared), [.max, 1])
+        XCTAssertEqual(edit.transactions.map(\.id), ids)
+        // Undoing the old amount alone would overflow, but replacing it with two is valid.
+        XCTAssertTrue(edit.updateTransfer(id: transferID, amount: 2, from: source, to: destination, memo: "Edited", cleared: true, date: Date()))
+        XCTAssertEqual(edit.accounts.map(\.balance), [.max - 1, 2])
+        XCTAssertEqual(edit.accounts.map(\.cleared), [.max - 1, 2])
+        XCTAssertEqual(edit.transactions.map(\.id), ids)
+        XCTAssertEqual(edit.transactions.filter { $0.transferID == transferID }.map(\.amount).sorted(), [-2, 2])
+        XCTAssertEqual(edit.unassignedMinor, 0)
+    }
+
+    @MainActor
     func testDemoPostingAndReversalOverflowRefuseWithoutPartialMutation() throws {
         func operation(_ accountID: String, _ amount: Int64) -> RecordTransactionOperation {
             .init(accountID: accountID, categoryID: nil, amountMinor: amount, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Boundary", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])
