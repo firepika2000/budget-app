@@ -1,10 +1,37 @@
 import csv
 from io import StringIO
+import pytest
 
 from app.models import Household
 from .test_delegated_access import add_child
 
 from .conftest import auth
+
+
+@pytest.mark.parametrize("restrict_accounts,restrict_categories", [(False, False), (True, False), (False, True), (True, True)])
+def test_household_structured_export_cannot_override_resource_restrictions(
+    client, owner_token, session_factory, restrict_accounts, restrict_categories
+):
+    from .test_budgeting_api import create_budget, create_budget_structure
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    child_id, child_token = add_child(session_factory, client)
+    path = f"/api/v1/budgets/{budget['id']}"
+    assert client.put(f"{path}/grants", headers=auth(owner_token), json={
+        "user_id": child_id, "permission": "manage",
+    }).status_code == 200
+    assert client.put(f"{path}/access/{child_id}", headers=auth(owner_token), json={
+        "capabilities": ["view_budget", "view_reports", "export_data"],
+        "restrict_accounts": restrict_accounts, "account_ids": [account["id"]] if restrict_accounts else [],
+        "restrict_categories": restrict_categories, "category_ids": [category["id"]] if restrict_categories else [],
+    }).status_code == 200
+    response = client.get(f"{path}/export.json", headers=auth(child_token))
+    restricted = restrict_accounts or restrict_categories
+    assert response.status_code == (403 if restricted else 200)
+    if restricted:
+        assert "household_members" not in response.text
+    assert client.get(f"{path}/export.csv", headers=auth(child_token)).status_code == 200
+    assert client.get(f"{path}/export.json", headers=auth(owner_token)).status_code == 200
 
 
 def test_csv_export_is_permission_scoped_and_formula_safe(

@@ -1056,12 +1056,29 @@ def list_allocation_operations(
     db: Session = Depends(get_db),
 ) -> list[dict]:
     budget = require_budget_capability(db, user, budget_id, "view_allocation_history")
-    operations = list(db.scalars(
+    query = (
         select(AllocationOperation)
         .options(selectinload(AllocationOperation.postings))
         .where(AllocationOperation.budget_id == budget_id)
-        .order_by(AllocationOperation.occurred_on.desc(), AllocationOperation.created_at.desc())
-    ))
+        .order_by(AllocationOperation.occurred_on.desc(), AllocationOperation.created_at.desc(), AllocationOperation.id)
+    )
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    if visible_categories is not None:
+        if not visible_categories:
+            return []
+        # Filter whole operations in SQL before loading notes, actors or counterpart postings.
+        # Returning just the visible leg would leak private transfers and break balanced history.
+        visible_posting = select(AllocationPosting.id).where(
+            AllocationPosting.operation_id == AllocationOperation.id,
+            AllocationPosting.category_id.in_(visible_categories),
+        ).exists()
+        hidden_posting = select(AllocationPosting.id).where(
+            AllocationPosting.operation_id == AllocationOperation.id,
+            AllocationPosting.category_id.is_not(None),
+            AllocationPosting.category_id.not_in(visible_categories),
+        ).exists()
+        query = query.where(visible_posting, ~hidden_posting)
+    operations = list(db.scalars(query))
     return [{
         "id": operation.id,
         "budget_id": operation.budget_id,

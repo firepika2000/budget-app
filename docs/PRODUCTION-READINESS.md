@@ -12,7 +12,7 @@ Checkpoint completion is followed by the next unblocked engineering task.
 |---|---|---|
 | PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 cadence, monthly snooze, exact cost presentation and incremental/priority funding checkpoints are verified. Future-month provider parity, rollover policy history, import/local-provider and later mission scope remain open. |
 | FINANCIAL | IN PROGRESS | 23 shared single/multi-debt vectors include paid-off parity, horizon/high-APR boundaries, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
-| SECURITY | IN PROGRESS | Server capability/resource guards and regression suites exist. Extend adversarial matrix across reports, projections, imports and future providers; rerun relevant PostgreSQL/privacy gates. |
+| SECURITY | IN PROGRESS | Proven allocation-history category leakage and structured-export scope bypass corrected in the current checkpoint. Capability plus resource authority is required; full-operation filtering preserves balanced history. Extend adversarial matrix across reports, projections, imports and future providers; no release-wide security PASS yet. |
 | DATA | IN PROGRESS | Source head is `0028_target_snoozes`; human Live remains at `0020_payee_identity_repair`. Populated migration/concurrency and real age-encrypted new-destination restore prove canonical equality, snooze metadata and encrypted attachment integrity/wrong-key/tamper handling. Complete manifest preflight passes. Real Docker/Compose recovery and production Local Device storage remain open. |
 | RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Existing native/backend suites provide regression evidence; concurrency, offline failures, cancellation and release-wide regression remain open. |
 | PERFORMANCE | IN PROGRESS | Live core hydration now makes zero detailed-report requests instead of seven; native HTTP tests cover caching/invalidation/retry. Hub uses one bounded scalar summary. Server/Demo computation, category/account fan-out and representative wall-clock measures remain open. |
@@ -25,6 +25,32 @@ Checkpoint completion is followed by the next unblocked engineering task.
 | HUMAN ACCEPTANCE | HUMAN REQUIRED | Preserve prior accepted workflows; consolidate only changed/unverified workflows later. No claim of new human acceptance from automation. DO NOT RETEST during autonomous run. |
 
 ## Current execution order
+
+### Allocation-history and export privacy correction
+
+Direct HTTP reproduction showed a member limited to one category receiving a private category's
+assignment plus a mixed transfer's hidden counterpart, actor/date and free-text medical note.
+The allocation-history query now requires at least one visible category and no hidden category
+postings before ORM loading. Empty scopes return no operations. Complete authorized operations
+remain balanced; mixed-scope operations are omitted rather than exposing a misleading half-record.
+Owners and users authorized for every involved category retain those records. Capability revocation,
+missing authentication and inaccessible budgets remain denied. Canonical history is never modified.
+
+A related regression proved `export_data` could bypass explicit account/category restrictions in
+full JSON export, exposing whole-budget/household administration data. That artifact now requires
+unrestricted account AND category scope in addition to the export capability. Existing scoped CSV
+exports remain available under their own report authorization. Unrestricted delegated export is
+preserved, consistent with specification §24.8; an initial test draft incorrectly required Owner
+even for explicitly delegated unrestricted export and was corrected before the production fix.
+No new global Owner-only rule was invented. These fixes do not establish full export fidelity or
+release-wide privacy closure. Reproduction logs: `/tmp/budget-allocation-privacy-reproduction.log`,
+`/tmp/budget-export-privacy-reproduction-final.log`.
+Final verification: **365 backend passed, zero skips**, including disposable PostgreSQL gates,
+golden vectors and encrypted recovery. Focused history/export/allocation/delegation **24 pass**;
+later cross-budget/CSV assertions included in the full run. `/tmp/budget-history-export-privacy-full.log`.
+`git diff --check` passes. No Swift, migration or human data change. The unchanged native/package
+checkpoint remains 94 XCTest + one UI, 39 Core + 49 API. Next: verify archived category/group
+assignment guards; source audit found manual assignment lacks the active-resource check used by targets.
 
 1. v0.8 automated checkpoint is recorded in V0.8-CLOSURE-AUDIT.md; human acceptance remains pending.
 2. Recovery hardening now includes complete archive validation, real encrypted PostgreSQL recovery,

@@ -5,7 +5,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
-from .access import find_visible_budget, has_capability
+from .access import find_visible_budget, has_capability, visible_resource_ids
 from .database import get_db
 from .dependencies import get_current_user
 from .models import (
@@ -57,6 +57,11 @@ def export_budget_json(
         raise HTTPException(status_code=404, detail="Budget not found")
     if not has_capability(db, user, budget, "export_data"):
         raise HTTPException(status_code=403, detail="Insufficient capability")
+    # This artifact contains whole-budget data and household administration records. The
+    # ordinary export capability must not override an explicit resource restriction. Scoped
+    # users can export authorized transaction/report rows through the existing CSV paths.
+    if any(visible_resource_ids(db, user, budget, resource) is not None for resource in ("account", "category")):
+        raise HTTPException(status_code=403, detail="Full structured export requires unrestricted resource access")
 
     operations = list(db.scalars(select(AllocationOperation).where(
         AllocationOperation.budget_id == budget_id

@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`d8567e9` is pushed. Next verified security checkpoint prevents allocation history exposing hidden
+category operations/counterparts/notes and prevents full JSON export bypassing explicit resource
+restrictions. Whole-operation SQL filtering preserves balanced authorized history; scoped CSV and
+explicitly delegated unrestricted export remain available. **365 backend pass, zero skips**,
+`/tmp/budget-history-export-privacy-full.log`. No Swift/migration changes. Next reproduce missing
+archived category/group allocation guards, then resume persistent-month planning work.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 `753fa39` is pushed. Next verified server checkpoint allows future-month assignments of existing
 cash through the canonical dated ledger. Fixed-clock regression proves independent periods, edits,
 forecast exclusion, no duplicate spending and unchanged account observations. **360 backend pass,
