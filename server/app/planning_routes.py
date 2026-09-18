@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .access import can_access_resource, visible_resource_ids
@@ -161,11 +161,28 @@ def list_scheduled_transactions(
     db: Session = Depends(get_db),
 ) -> list[ScheduledTransaction]:
     budget = require_budget_capability(db, user, budget_id, "view_transactions")
-    query = select(ScheduledTransaction).where(ScheduledTransaction.budget_id == budget_id)
+    query = _visible_schedule_query(db, user, budget)
     if not include_inactive:
         query = query.where(ScheduledTransaction.is_active.is_(True))
-    schedules = list(db.scalars(query.order_by(ScheduledTransaction.next_date, ScheduledTransaction.name)))
-    return [item for item in schedules if _can_access_schedule_resources(db, user, budget, item)]
+    return list(db.scalars(query.order_by(ScheduledTransaction.next_date, ScheduledTransaction.name)))
+
+
+def _visible_schedule_query(db, user, budget):
+    """Apply the management resource scope before hydration, expansion or aggregation."""
+    query = select(ScheduledTransaction).where(ScheduledTransaction.budget_id == budget.id)
+    accounts = visible_resource_ids(db, user, budget, "account")
+    categories = visible_resource_ids(db, user, budget, "category")
+    if accounts is not None:
+        query = query.where(
+            ScheduledTransaction.account_id.in_(accounts),
+            or_(ScheduledTransaction.destination_account_id.is_(None),
+                ScheduledTransaction.destination_account_id.in_(accounts)),
+        )
+    if categories is not None:
+        # Null category includes household future income and transfers; neither is visible
+        # to a category-restricted member, matching the mutation authorization guard below.
+        query = query.where(ScheduledTransaction.category_id.in_(categories))
+    return query
 
 
 def _can_access_schedule_resources(db, user, budget, schedule) -> bool:
@@ -423,8 +440,7 @@ def forecast(
         )
     ) or 0) for account in accounts}
     projected = dict(actual_by_account)
-    schedules = list(db.scalars(select(ScheduledTransaction).where(
-        ScheduledTransaction.budget_id == budget_id,
+    schedules = list(db.scalars(_visible_schedule_query(db, user, budget).where(
         ScheduledTransaction.is_active.is_(True),
     )))
     schedules = [schedule for schedule in schedules if (

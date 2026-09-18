@@ -6,6 +6,17 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`1c3b162` pushed opening/split safety. The following forecast audit proved a Live category-scope
+leak: a restricted member's list correctly hid schedules but Forecast/Resilience included them.
+Shared scoped SQL now filters before projection; Demo excludes uncategorized schedules for
+restricted personas too. Before-fix failure: `/tmp/budget-forecast-privacy-reproduction.log`.
+**397 backend zero skips, 109 native, 45 Core + 49 API PASS**; focused scope tests, Beta build/test
+and diff check PASS. Backend includes disposable PostgreSQL/concurrency/migration/recovery.
+Logs `/tmp/budget-forecast-privacy-{focused,backend,native,package}.log`. Server restart will be
+needed when the human later adopts this checkpoint; no migration and no human data touched.
+Next proven financial gap: Demo forecast lowest balance uses start/end rather than chronological
+occurrences. Report/forecast overflow audit remains unfinished. Human acceptance pending, no retest.
+
 `75226d5` pushed transfer hardening. Current opening/legacy-split checkpoint validates aggregate
 cash opening before creation, propagates failures through the repository, replaces absolute-value
 splitting with signed exact quotient/remainder, and rejects repeated category selections on legacy

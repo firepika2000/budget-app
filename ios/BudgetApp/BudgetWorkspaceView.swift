@@ -593,7 +593,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let scheduleRows: [APIScheduledTransaction] = try decode(demo.schedules.filter { item in
             visibleAccounts.contains { $0.id == item.accountID }
                 && (item.destinationAccountID == nil || visibleAccounts.contains { $0.id == item.destinationAccountID })
-                && (item.categoryID == nil || categoryIDs.contains(item.categoryID!))
+                && (item.categoryID.map(categoryIDs.contains) ?? !demo.isRestricted)
         }.map { item in ["id": item.id, "budget_id": budget.id, "account_id": item.accountID, "destination_account_id": item.destinationAccountID.map { $0 as Any } ?? NSNull(), "category_id": item.categoryID.map { $0 as Any } ?? NSNull(), "name": item.name, "amount_minor": item.amount, "next_date": item.nextDate, "recurrence_unit": item.recurrenceUnit, "interval_count": item.intervalCount, "memo": item.memo, "financial_classification": item.financialClassification ?? NSNull(), "is_active": item.isActive, "last_realized_on": item.lastRealizedOn.map { $0 as Any } ?? NSNull()] })
         let forecastStart = Date.demo(monthsAgo: 0, day: 5), forecastThrough = Calendar.current.date(byAdding: .day, value: 90, to: forecastStart)!
         var projected = Dictionary(uniqueKeysWithValues: visibleAccounts.map { ($0.id, $0.balance) })

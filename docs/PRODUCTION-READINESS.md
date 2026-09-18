@@ -4,6 +4,24 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Forecast privacy correction after pushed `1c3b162` (verified): a new Live-shaped
+regression proved that management listed one permitted bill while Forecast exposed that bill,
+a hidden-category household bill, and uncategorized future salary on the same visible account.
+Resilience also inherited the hidden schedules in its aggregates. Schedule reads now share a
+SQL-scoped query (source/destination accounts and category scope) before hydration/expansion;
+category-restricted users cannot receive uncategorized household schedules. Demo management and
+projection apply the same exclusion. Tests cover names/IDs, projected/lowest balances, Resilience
+income/outflow/margin, empty scope after revocation, explicit unrestricted access and unchanged
+actual money. Owner behavior and active/inactive defaults remain unchanged. No migration.
+Reproduction: `/tmp/budget-forecast-privacy-reproduction.log` (failed before correction).
+Verification: `/tmp/budget-forecast-privacy-{focused,backend,native,package}.log`.
+**397 backend tests PASS, zero skips**, including disposable PostgreSQL/concurrency/migration/
+recovery; **109 native + 45 Core + 49 API PASS**, Beta build/test and diff check PASS. Server restart
+is needed when adopting this code later; no migration. Human acceptance remains pending.
+The read audit also identified a separate Demo forecast issue: lowest balance currently uses only
+the start/end minimum rather than chronological occurrences. That and unchecked report/forecast
+arithmetic remain open; do not fold an untested financial-definition change into this scope fix.
+
 Opening/legacy-split hardening after pushed `75226d5` (verified): account creation
 checks the resulting Unassigned balance before inserting either account or opening transaction,
 and the production Demo repository propagates refusal. Legacy split attribution uses signed

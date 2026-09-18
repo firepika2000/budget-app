@@ -17,6 +17,73 @@ from .test_budgeting_api import create_budget, create_budget_structure
 FORECAST_AS_OF = date(2026, 9, 1)
 
 
+def test_forecast_and_resilience_apply_schedule_category_scope_before_projection(
+    client, owner_token, session_factory, monkeypatch
+):
+    from app import analytics_routes
+    from .test_delegated_access import add_child, configure_child
+
+    freeze_today(monkeypatch, FORECAST_AS_OF, planning_routes, analytics_routes)
+    budget = create_budget(client, owner_token, session_factory)
+    account, hidden_category = create_budget_structure(client, owner_token, budget["id"])
+    visible_category = add_category(client, owner_token, budget["id"], "Delegated", "Visible")
+    root = f"/api/v1/budgets/{budget['id']}"
+    schedules = []
+    for name, category, amount, day in [
+        ("Visible bill", visible_category["id"], -700, "2026-09-10"),
+        ("Secret household bill", hidden_category["id"], -12345, "2026-09-11"),
+        ("Secret future salary", None, 99999, "2026-09-12"),
+    ]:
+        response = client.post(f"{root}/scheduled-transactions", headers=auth(owner_token), json={
+            "account_id": account["id"], "category_id": category, "name": name,
+            "amount_minor": amount, "next_date": day, "recurrence_unit": "once",
+        })
+        assert response.status_code == 201, response.text
+        schedules.append(response.json())
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, account["id"], visible_category["id"])
+    profile = {
+        "capabilities": ["view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports"],
+        "restrict_accounts": True, "account_ids": [account["id"]],
+        "restrict_categories": True, "category_ids": [visible_category["id"]],
+    }
+    assert client.put(f"{root}/access/{child_id}", headers=auth(owner_token), json=profile).status_code == 200
+    before = client.get(f"{root}/accounts/{account['id']}/balance", headers=auth(owner_token)).json()
+    listed = client.get(f"{root}/scheduled-transactions", headers=auth(child_token))
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [schedules[0]["id"]]
+
+    projection = client.get(f"{root}/forecast?through=2026-09-30", headers=auth(child_token))
+    assert projection.status_code == 200, projection.text
+    assert [item["scheduled_transaction_id"] for item in projection.json()["occurrences"]] == [schedules[0]["id"]]
+    assert projection.json()["projected_total_on_budget_minor"] == -700
+    assert projection.json()["lowest_projected_total_minor"] == -700
+    for hidden in schedules[1:]:
+        assert hidden["name"] not in projection.text and hidden["id"] not in projection.text
+    resilience = client.get(f"{root}/reports/resilience", headers=auth(child_token))
+    assert resilience.status_code == 200, resilience.text
+    assert resilience.json()["scheduled_income_minor"] == 0
+    assert resilience.json()["scheduled_outflows_minor"] == 700
+    assert resilience.json()["expected_margin_minor"] == -700
+    assert resilience.json()["lowest_projected_on_budget_minor"] == -700
+
+    profile["category_ids"] = []
+    assert client.put(f"{root}/access/{child_id}", headers=auth(owner_token), json=profile).status_code == 200
+    assert client.get(f"{root}/forecast?through=2026-09-30", headers=auth(child_token)).json()["occurrences"] == []
+    empty = client.get(f"{root}/reports/resilience", headers=auth(child_token)).json()
+    assert empty["scheduled_income_minor"] == empty["scheduled_outflows_minor"] == empty["projected_on_budget_minor"] == 0
+
+    # An explicit unrestricted category grant may see all three; owner behavior is unchanged.
+    profile["restrict_categories"] = False
+    assert client.put(f"{root}/access/{child_id}", headers=auth(owner_token), json=profile).status_code == 200
+    for token in [owner_token, child_token]:
+        full = client.get(f"{root}/forecast?through=2026-09-30", headers=auth(token)).json()
+        assert {item["scheduled_transaction_id"] for item in full["occurrences"]} == {item["id"] for item in schedules}
+        assert full["projected_total_on_budget_minor"] == 86954
+    assert client.get(f"{root}/accounts/{account['id']}/balance", headers=auth(owner_token)).json() == before
+    assert client.get(f"{root}/transactions", headers=auth(owner_token)).json() == []
+
+
 def test_historical_smart_funding_cannot_spend_money_assigned_in_later_month(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])

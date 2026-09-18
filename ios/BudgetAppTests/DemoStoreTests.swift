@@ -6,6 +6,36 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testRestrictedForecastAndResilienceExcludeHiddenAndUncategorizedSchedules() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        XCTAssertTrue(source.demo.createAccount(name: "Shared", type: "checking", isOnBudget: true))
+        source.demo.accounts[0].restrictedFromChildren = false
+        let accountID = source.demo.accounts[0].id
+        XCTAssertTrue(source.demo.createCategory(name: "Visible"))
+        source.demo.categories[0].delegatedTo = .alex
+        let visibleID = source.demo.categories[0].id
+        XCTAssertTrue(source.demo.createCategory(name: "Hidden"))
+        let hiddenID = try XCTUnwrap(source.demo.categories.last?.id)
+        let date = BudgetWorkspaceStore.dateString(Calendar.current.date(byAdding: .day, value: 1, to: Date())!)
+        for (name, categoryID, amount) in [("Visible bill", Optional(visibleID), Int64(-700)), ("Secret bill", Optional(hiddenID), Int64(-12345)), ("Secret salary", nil, Int64(99999))] {
+            try await source.createSchedule(.init(accountID: accountID, categoryID: categoryID, name: name, amountMinor: amount, nextDate: date, recurrenceUnit: "once"))
+        }
+        source.demo.persona = .alex
+        let report = WorkspaceReportQuery(start: Date(), end: Calendar.current.date(byAdding: .day, value: 30, to: Date())!, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        let scoped = try await source.snapshot(planMonth: Date(), report: report)
+        XCTAssertEqual(scoped.schedules.map(\.name), ["Visible bill"])
+        XCTAssertEqual(scoped.forecast?.occurrences.map(\.name), ["Visible bill"])
+        XCTAssertEqual(scoped.forecast?.projectedTotalOnBudgetMinor, -700)
+        XCTAssertEqual(scoped.resilience?.scheduledIncomeMinor, 0)
+        XCTAssertEqual(scoped.resilience?.scheduledOutflowsMinor, 700)
+        source.demo.persona = .rey
+        let owner = try await source.snapshot(planMonth: Date(), report: report)
+        XCTAssertEqual(owner.forecast?.occurrences.count, 3)
+        XCTAssertEqual(source.demo.accounts[0].balance, 0)
+        XCTAssertTrue(source.demo.transactions.isEmpty)
+    }
+
+    @MainActor
     func testAccountOpeningOverflowIsRejectedBeforeAccountOrTransactionCreation() async throws {
         for (opening, extra) in [(Int64.max, Int64(1)), (Int64.min, Int64(-1))] {
             let source = DemoWorkspaceDataSource(fresh: true)
