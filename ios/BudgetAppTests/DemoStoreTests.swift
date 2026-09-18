@@ -1397,6 +1397,70 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDemoRequestApprovalHonorsSelectedSourceAndRejectsSecondMutation() async throws {
+        let source = DemoWorkspaceDataSource()
+        let buffer = try XCTUnwrap(source.demo.categories.first { $0.id == "buffer" })
+        let funding = try XCTUnwrap(source.demo.categories.first { $0.id == "emergency" })
+        let destination = try XCTUnwrap(source.demo.categories.first { $0.id == "alexallow" })
+        try await source.decideRequest(id: "request-game", decision: "approve", version: 0, amount: 2_000, sourceCategoryID: funding.id, note: "Selected source")
+        XCTAssertEqual(source.demo.categories.first { $0.id == buffer.id }?.available, buffer.available)
+        XCTAssertEqual(source.demo.categories.first { $0.id == funding.id }?.available, funding.available - 2_000)
+        XCTAssertEqual(source.demo.categories.first { $0.id == destination.id }?.available, destination.available + 2_000)
+        let categories = source.demo.categories
+        let requests = source.demo.requests
+        let eventIDs = source.demo.allocationEvents.map(\.id)
+        do {
+            try await source.decideRequest(id: "request-game", decision: "approve", version: 0, amount: 2_000, sourceCategoryID: funding.id, note: "Duplicate")
+            XCTFail("A decided request must not allocate twice")
+        } catch {}
+        XCTAssertEqual(source.demo.categories, categories)
+        XCTAssertEqual(source.demo.requests, requests)
+        XCTAssertEqual(source.demo.allocationEvents.map(\.id), eventIDs)
+    }
+
+    @MainActor
+    func testDemoRequestApprovalRefusesInvalidOrUnauthorizedIntentWithoutMutation() async throws {
+        for scenario in ["restricted", "stale", "missing-source", "missing-destination", "same-category", "archived-source", "archived-group", "zero", "negative", "excess", "insufficient", "overflow"] {
+            let source = DemoWorkspaceDataSource()
+            var amount: Int64 = 2_000
+            var categoryID = "buffer"
+            var version = 0
+            let buffer = try XCTUnwrap(source.demo.categories.firstIndex { $0.id == "buffer" })
+            let request = try XCTUnwrap(source.demo.requests.firstIndex { $0.id == "request-game" })
+            switch scenario {
+            case "restricted": source.demo.persona = .alex
+            case "stale": version = 1
+            case "missing-source": categoryID = "missing"
+            case "missing-destination": source.demo.requests[request].categoryID = "missing"
+            case "same-category": categoryID = "alexallow"
+            case "archived-source": source.demo.categories[buffer].isHidden = true
+            case "archived-group": source.demo.archivedGroups.insert(source.demo.categories[buffer].group)
+            case "zero": amount = 0
+            case "negative": amount = -1
+            case "excess": amount = 3_501
+            case "insufficient": source.demo.categories[buffer].available = 1
+            case "overflow":
+                let destination = try XCTUnwrap(source.demo.categories.firstIndex { $0.id == "alexallow" })
+                source.demo.categories[destination].assigned = Int64.max
+            default: XCTFail("Unknown scenario")
+            }
+            let categories = source.demo.categories, requests = source.demo.requests
+            let accounts = source.demo.accounts, transactions = source.demo.transactions
+            let unassigned = source.demo.unassignedMinor
+            do {
+                try await source.decideRequest(id: "request-game", decision: "approve", version: version, amount: amount, sourceCategoryID: categoryID, note: "Invalid")
+                XCTFail("Approval should refuse \(scenario)")
+            } catch {}
+            XCTAssertEqual(source.demo.categories, categories, scenario)
+            XCTAssertEqual(source.demo.requests, requests, scenario)
+            XCTAssertEqual(source.demo.accounts, accounts, scenario)
+            XCTAssertEqual(source.demo.transactions, transactions, scenario)
+            XCTAssertEqual(source.demo.unassignedMinor, unassigned, scenario)
+            XCTAssertTrue(source.demo.allocationEvents.isEmpty, scenario)
+        }
+    }
+
+    @MainActor
     func testPartialApprovalFundsOnlyApprovedAmount() {
         let store = DemoStore()
         let before = store.categories.first { $0.id == "alexallow" }!.available

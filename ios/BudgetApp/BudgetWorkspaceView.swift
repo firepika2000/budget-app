@@ -592,7 +592,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         }.map { event in
             ["id": event.id, "budget_id": budget.id, "occurred_on": event.occurredOn,
              "kind": event.kind, "actor_user_id": event.actor, "note": event.note,
-             "source": "manual", "allocation_version": 1,
+             "source": event.kind == "request_approval" ? "approval" : "manual", "allocation_version": 1,
              "postings": [["bucket": event.sourceCategoryID == nil ? "ready_to_assign" : "category",
                            "category_id": event.sourceCategoryID as Any? ?? NSNull(), "amount_minor": -event.amountMinor],
                           ["bucket": "category", "category_id": event.destinationCategoryID, "amount_minor": event.amountMinor]]]
@@ -1016,7 +1016,22 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         demo.schedules[index].lastRealizedOn = item.nextDate; demo.schedules[index].isActive = next != nil; if let next { demo.schedules[index].nextDate = BudgetWorkspaceStore.dateString(next) }
         return ScheduledRealizationObservation(scheduleID: id, transactionIDs: transactionIDs, realizedOn: item.nextDate, nextDate: next.map(BudgetWorkspaceStore.dateString), isActive: next != nil, lastRealizedOn: item.nextDate)
     }
-    func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws { if decision == "approve", let amount { demo.approve(id, amount: amount) } else if let index = demo.requests.firstIndex(where: { $0.id == id }) { demo.requests[index].status = decision == "reject" ? "Rejected" : "Changes requested" } }
+    func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws {
+        guard !demo.isRestricted, budget.can("approve_request") else { throw workspaceRepositoryError("Request approval is not permitted.") }
+        guard version == 0, let index = demo.requests.firstIndex(where: { $0.id == id }), demo.requests[index].status == "Pending" else {
+            throw workspaceRepositoryError("Request has already changed or is unavailable.")
+        }
+        switch decision {
+        case "approve":
+            guard let amount, let sourceCategoryID else { throw workspaceRepositoryError("Choose an approval amount and source category.") }
+            guard demo.approve(id, amount: amount, sourceCategoryID: sourceCategoryID, note: note) else { throw workspaceRepositoryError(demo.errorMessage) }
+        case "reject": demo.requests[index].status = "Rejected"
+        case "changes_requested":
+            guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw workspaceRepositoryError("Explain the requested changes.") }
+            demo.requests[index].status = "Changes requested"
+        default: throw workspaceRepositoryError("Unsupported request decision.")
+        }
+    }
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview {
         let ready = demo.isRestricted ? 0 : demo.readyToAssign
         var remaining = max(ready, 0)

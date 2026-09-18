@@ -8,6 +8,16 @@ This ledger tracks engineering evidence separately from release approval. Main r
 `c5494dd`; historical version tags do not establish acceptance for subsequent development.
 Checkpoint completion is followed by the next unblocked engineering task.
 
+Request-approval parity checkpoint: a native reproduction proved Demo ignored the chosen source
+category and allowed a second approval to allocate again. The repository now checks capability,
+pending state/version and decision inputs; the mutation helper validates both active categories,
+positive bounded amount, available funds and checked arithmetic before changing anything. Actual
+approval history uses the selected source and approval kind. Twelve invalid/unauthorized cases
+preserve all observed state; duplicate approval preserves the first result. **97 native XCTest pass**,
+Beta build/test PASS; four focused server request/approval cases also pass. Logs:
+`/tmp/budget-request-approval-{reproduction,native-verified,server}.log`. No server production or
+migration changes. Full Demo request revision/action-history parity is not claimed by this fix.
+
 Allocation-history checkpoint: Demo no longer invents assignment rows from global totals or a $50
 transfer on every read. Actual command events preserve identity/date/actor; whole-operation scope
 prevents private-source disclosure. Opening fixtures remain separate from user history. **95 native

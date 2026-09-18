@@ -6,6 +6,16 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`6ff6ad4` is pushed. Next verified correction prevents repeated Demo request approval and honors
+the selected funding source (previously hardcoded to buffer). Capability/state/version/category,
+amount, availability and overflow guards precede mutation. Approval events retain actual source/kind.
+Pre-fix native reproduction fails for both defects; final **97 native XCTest pass**, Beta build/test
+PASS, four focused server request cases PASS; `/tmp/budget-request-approval-{reproduction,native-verified,server}.log`.
+Latest full backend remains **395 pass, zero skips**; package **44 Core + 49 API**; last focused
+production assignment/Move Money UI **2 pass**. No migration/Live data change. Full Demo request
+revision/history parity remains open. Continue dated provider/seed migration, not roadmap closure.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 `bdfa497` is pushed. The next verified correction replaces fabricated Demo allocation-history rows
 with actual command events. Refresh/month/persona changes preserve operation IDs, dates and original
 actors; restricted visibility filters entire operations. Seed observations are not invented history.

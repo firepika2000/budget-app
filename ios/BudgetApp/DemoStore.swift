@@ -169,20 +169,37 @@ final class DemoStore: ObservableObject {
         return true
     }
 
-    func approve(_ requestID: String, amount: Int64) {
-        guard let index = requests.firstIndex(where: { $0.id == requestID }),
-              let source = categories.firstIndex(where: { $0.id == "buffer" }),
-              categories[source].available >= amount else { return }
+    @discardableResult
+    func approve(_ requestID: String, amount: Int64, sourceCategoryID: String = "buffer", note: String = "") -> Bool {
+        guard !isRestricted else { return fail(.restrictedCategory) }
+        guard let index = requests.firstIndex(where: { $0.id == requestID }), requests[index].status == "Pending" else {
+            return failMessage("Request has already changed or is unavailable.")
+        }
+        guard amount > 0, amount <= requests[index].amount else { return fail(.invalidAmount) }
+        guard let source = categories.firstIndex(where: { $0.id == sourceCategoryID }),
+              let destination = categories.firstIndex(where: { $0.id == requests[index].categoryID }),
+              source != destination,
+              !categories[source].isHidden, !categories[destination].isHidden,
+              !archivedGroups.contains(categories[source].group), !archivedGroups.contains(categories[destination].group) else {
+            return fail(.categoryNotFound)
+        }
+        guard categories[source].available >= amount else { return fail(.insufficientFunds(available: categories[source].available)) }
+        let sourceAssigned = categories[source].assigned.subtractingReportingOverflow(amount)
+        let destinationAssigned = categories[destination].assigned.addingReportingOverflow(amount)
+        let destinationAvailable = categories[destination].available.addingReportingOverflow(amount)
+        guard !sourceAssigned.overflow, !destinationAssigned.overflow, !destinationAvailable.overflow else {
+            return failMessage("Approval exceeds the supported amount range.")
+        }
         requests[index].approvedAmount = amount
         requests[index].status = amount < requests[index].amount ? "Partially approved" : "Approved"
-        categories[source].assigned -= amount
+        categories[source].assigned = sourceAssigned.partialValue
         categories[source].available -= amount
-        if let category = categories.firstIndex(where: { $0.id == requests[index].categoryID }) {
-            categories[category].assigned += amount
-            categories[category].available += amount
-            recordAllocation(amount: amount, from: categories[source].id, to: categories[category].id,
-                             kind: "category_transfer", note: "Approved funding request")
-        }
+        categories[destination].assigned = destinationAssigned.partialValue
+        categories[destination].available = destinationAvailable.partialValue
+        recordAllocation(amount: amount, from: categories[source].id, to: categories[destination].id,
+                         kind: "request_approval", note: note.isEmpty ? requests[index].reason : note)
+        errorMessage = nil
+        return true
     }
 
     func addTransaction(payee: String, amount: Int64, accountID: String, categoryIDs: [String], memo: String, attachment: Bool) {
