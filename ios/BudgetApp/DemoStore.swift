@@ -21,6 +21,9 @@ final class DemoStore: ObservableObject {
     private var reserveAttribution: [String: [String: Int64]] = [:]
     private(set) var fixtureOpening: PlanningPeriodProjection.Opening?
     private(set) var fixtureAccountOpening: [String: Int64] = [:]
+    // Repository-loaded effective history. Public policy commands/defaults are integrated
+    // separately; an absent history preserves the legacy carry policy.
+    let cashRolloverPolicies: [CashRolloverProjection.Change]
 
     struct AllocationEvent {
         let id: String
@@ -86,7 +89,8 @@ final class DemoStore: ObservableObject {
     let spendingHistory: [Int64] = [594000, 621000, 609000, 642000, 598000, 634000]
     let netWorthHistory: [Int64] = [12840000, 12976000, 13112000, 13200000, 13358000, 13593000]
 
-    init(fresh: Bool = false) {
+    init(fresh: Bool = false, cashRolloverPolicies: [CashRolloverProjection.Change] = []) {
+        self.cashRolloverPolicies = cashRolloverPolicies
         accounts = []; categories = []; transactions = []; payees = []
         schedules = []; requests = []; allowances = []; groupOrder = []
         if !fresh { installSeedLedger() }
@@ -210,7 +214,10 @@ final class DemoStore: ObservableObject {
                 categories[index].activity = row.activityMinor
                 categories[index].available = row.availableMinor
             }
-            precondition(plan.allDateUnassignedMinor == unassignedMinor, "Fixture command and period projections must agree")
+            if !cashRolloverPolicies.contains(where: { $0.policy == .absorb }) {
+                precondition(plan.allDateUnassignedMinor == unassignedMinor, "Fixture command and period projections must agree")
+            }
+            publishPlanning(plan)
         } catch { preconditionFailure("Invalid deterministic financial fixture: \(error)") }
     }
 
@@ -233,12 +240,44 @@ final class DemoStore: ObservableObject {
         // Removing the original here would count only the refund and manufacture category money.
         let activity = try transactions.filter { !$0.scheduled && (through == nil || BudgetWorkspaceStore.dateString($0.date) <= through!) }.map { item in
             guard let account = accounts.first(where: { $0.id == item.accountID }) else { throw DemoMutationError.accountNotFound }
-            let amounts = item.transferID == nil ? canonicalCategoryAmounts(for: item) : [:]
+            let amounts = item.transferID == nil && account.isOnBudget ? canonicalCategoryAmounts(for: item) : [:]
             let cashInflow = item.transferID == nil && amounts.isEmpty && account.isOnBudget && [.checking, .savings, .cash].contains(account.kind)
             return try PlanningPeriodProjection.PostedActivity(occurredOn: BudgetWorkspaceStore.dateString(item.date), categoryAmounts: amounts, unassignedMinor: cashInflow ? item.amount : 0)
         }
         let datedAllocations = (allocations + additionalAllocations).filter { through == nil || $0.occurredOn.iso <= through! }
-        return try PlanningPeriodProjection.snapshot(month: month, categoryIDs: Set(categories.map(\.id)), opening: fixtureOpening, allocations: datedAllocations, activity: activity)
+        var effects: [CashRolloverProjection.Effect] = []
+        if cashRolloverPolicies.contains(where: { $0.policy == .absorb }) {
+            var facts: [CashRolloverProjection.Fact] = []
+            if let opening = fixtureOpening {
+                for (categoryID, amount) in opening.categoryAvailable {
+                    facts.append(try .init(occurredOn: opening.month.iso, categoryID: categoryID, availableDeltaMinor: amount))
+                }
+            }
+            for allocation in datedAllocations {
+                for posting in allocation.postings {
+                    if let categoryID = posting.categoryID {
+                        facts.append(try .init(occurredOn: allocation.occurredOn.iso, categoryID: categoryID, availableDeltaMinor: posting.amountMinor))
+                    }
+                }
+            }
+            let accountByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
+            for item in transactions where !item.scheduled && item.transferID == nil {
+                let day = BudgetWorkspaceStore.dateString(item.date)
+                guard through == nil || day <= through!, let account = accountByID[item.accountID], account.isOnBudget else { continue }
+                for (categoryID, amount) in canonicalCategoryAmounts(for: item) {
+                    facts.append(try .init(occurredOn: day, categoryID: categoryID, availableDeltaMinor: amount,
+                                           unfundedCreditDeltaMinor: account.kind == .credit ? amount : 0))
+                }
+                if account.kind == .credit {
+                    for (categoryID, amount) in recordedReserveAmounts(transactionID: item.id) {
+                        facts.append(try .init(occurredOn: day, categoryID: categoryID, availableDeltaMinor: 0, unfundedCreditDeltaMinor: amount))
+                    }
+                }
+            }
+            effects = try CashRolloverProjection.effects(throughMonth: through.map { String($0.prefix(7)) + "-01" } ?? "9999-12-01",
+                                                        policies: cashRolloverPolicies, facts: facts)
+        }
+        return try PlanningPeriodProjection.snapshot(month: month, categoryIDs: Set(categories.map(\.id)), opening: fixtureOpening, allocations: datedAllocations, activity: activity, rolloverEffects: effects)
     }
 
     func projectedCategories(month: String) throws -> [DemoCategory] {
@@ -359,21 +398,21 @@ final class DemoStore: ObservableObject {
               !archivedGroups.contains(categories[source].group), !archivedGroups.contains(categories[destination].group) else {
             return fail(.categoryNotFound)
         }
-        guard categories[source].available >= amount else { return fail(.insufficientFunds(available: categories[source].available)) }
-        let sourceAssigned = categories[source].assigned.subtractingReportingOverflow(amount)
-        let destinationAssigned = categories[destination].assigned.addingReportingOverflow(amount)
-        let destinationAvailable = categories[destination].available.addingReportingOverflow(amount)
-        guard !sourceAssigned.overflow, !destinationAssigned.overflow, !destinationAvailable.overflow else {
-            return failMessage("Approval exceeds the supported amount range.")
-        }
-        requests[index].approvedAmount = amount
-        requests[index].status = amount < requests[index].amount ? "Partially approved" : "Approved"
-        categories[source].assigned = sourceAssigned.partialValue
-        categories[source].available -= amount
-        categories[destination].assigned = destinationAssigned.partialValue
-        categories[destination].available = destinationAvailable.partialValue
-        recordAllocation(amount: amount, from: categories[source].id, to: categories[destination].id,
-                         kind: "request_approval", note: note.isEmpty ? requests[index].reason : note)
+        do {
+            let day = BudgetWorkspaceStore.dateString(Date())
+            let available = try planningSnapshot(month: currentPlanningMonth, through: day).categories[sourceCategoryID]?.availableMinor ?? 0
+            guard available >= amount else { return fail(.insufficientFunds(available: available)) }
+            let allocation = try PlanningPeriodProjection.Allocation(occurredOn: day, postings: [
+                .init(categoryID: categories[source].id, amountMinor: -amount),
+                .init(categoryID: categories[destination].id, amountMinor: amount),
+            ])
+            let plan = try planningSnapshot(month: currentPlanningMonth, additionalAllocations: [allocation])
+            recordAllocation(amount: amount, from: categories[source].id, to: categories[destination].id,
+                             occurredOn: day, kind: "request_approval", note: note.isEmpty ? requests[index].reason : note)
+            publishPlanning(plan)
+            requests[index].approvedAmount = amount
+            requests[index].status = amount < requests[index].amount ? "Partially approved" : "Approved"
+        } catch { return failMessage(error.localizedDescription) }
         errorMessage = nil
         return true
     }

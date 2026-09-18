@@ -367,3 +367,21 @@ Next: supply equivalent historical policy facts/effects in Demo's actual reposit
 command preflight; then implement prospective policy commands, stale-preview invalidation,
 shared settings and explicit new-budget defaults. Do not expose an operational setting before
 these providers agree. Broader Plan Performance hydration is still a separate bounded-memory gap.
+
+### Demo rollover consumers — historical reporting gate remains
+
+Following the server checkpoint, Demo now loads optional effective policy history into the actual
+repository and derives rollover from its explicit fixture opening, dated allocations and on-budget
+transactions/splits with recorded signed credit funding. A supplied through-date bounds both facts
+and effects; global command preflights include all pending boundaries and additional allocations.
+Transfers/schedules/tracking transactions do not become category rollover activity. Legacy no-history
+construction remains unchanged; no user setting/default has been exposed. Request approval now
+checks the same dated projection and stages its allocation before changing the request status.
+
+Native production-service evidence covers exact dated/global balances, denial without mutation,
+read neutrality, split/move/deletion recomputation, refund recovery, credit debt isolation, later
+purchase funding and pending/superseded policy history. The projection is not a second money ledger.
+Full historical reporting parity remains open: Demo Plan Performance currently builds only one
+selected-month point, independent of the requested report range. Replace that with exact partial-
+period observations before exposing policy settings. Retain private/scoped observations and do not
+claim historical series acceptance from single-month summary tests.

@@ -4,6 +4,32 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo rollover integration after `de9ebd3`: the actual Demo repository accepts effective policy
+history (default remains legacy carry) and supplies dated opening, allocation, on-budget direct/
+split activity and signed recorded credit attribution to the shared boundary engine. Period reads,
+assignment/Smart Funding/move preflights and card purchase funding use the resulting carry and
+Unassigned. Additional-allocation previews recompute pending effects before publishing; refund/
+deletion recomputation adds no allocation. Request approval no longer mutates displayed category
+totals directly: it checks dated ledger availability and validates the complete projection before
+publishing the request decision and balanced allocation. Rejection fixtures now create actual
+ledger insufficiency/overflow rather than corrupting derived display fields.
+
+Four production application-service/native regressions cover monthly/global observations and
+read neutrality, denial/metadata-history preservation, refunds, split coverage/moves/deletion,
+unfunded credit versus subsequent funded purchases, and effective/pending policy revisions.
+**No public policy command, default activation or human migration yet.** The audit also explicitly
+found Demo Plan Performance still emits one selected-month point instead of the server's historical
+series. Correct that range/partial-period projection before claiming full report parity or exposing
+policy settings. Demo allowance issuance, injected clocks and other recorded roadmap gaps remain.
+Verification: **439 backend PASS, zero skips; 119 native XCTest; 48 BudgetCore + 50 BudgetAPI;
+2 production Plan/Smart Funding XCUITests PASS**. Beta build and diff check PASS. Native tools use
+`/Users/firepika/Downloads/Xcode-beta.app/Contents/Developer`, Xcode 27.0 `27A5252f`, existing
+iPhone 17 Pro Max/iOS 27 `3ABD861E-D38D-4AFD-A356-959266051564`; global xcode-select remains
+stable but every native invocation explicitly overrides it. No Simulator erase or human-data change.
+Logs `/tmp/budget-rollover-demo-{focused,native-final,ui,package,backend}.log`; the initial full native
+failure is retained in `native.log` and explains the corrected display-only adversarial fixtures.
+
+
 Rollover service integration after `f89ee57`: a single repository adapter streams scalar allocation,
 on-budget direct/split activity and signed reserve facts, retaining month/category accumulators
 instead of transaction objects. It resolves the latest revision of each effective policy month.

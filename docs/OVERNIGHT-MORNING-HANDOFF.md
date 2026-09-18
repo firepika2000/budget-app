@@ -6,6 +6,24 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Following `de9ebd3`, Demo's actual period projection now consumes repository-supplied effective
+rollover history, including exact opening/allocation/transaction/split and recorded-credit facts.
+Commands and card funding share that projection; request approvals now preflight a dated balanced
+allocation rather than mutate display totals. Default constructors remain carry-only; no settings
+UI/new-budget default changed. Four native service tests exercise absorption, pending/history,
+refund/split/move/deletion, denial/read neutrality and credit funding. Old approval rejection tests
+were corrected to create ledger insufficiency/overflow instead of changing presentation fields.
+
+Next actionable gate found during source audit: Demo Plan Performance still returns only one point
+for the selected Plan month rather than the requested historical range. Fix that and partial-period
+observations before claiming rollover report parity or exposing prospective policy commands/settings.
+No human data changed. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
+Verification: **439 backend zero skips, 119 native XCTest, 48 Core + 50 API, 2 production
+Plan/Smart Funding UI PASS**. Beta build and diff check PASS. Native toolchain: Xcode 27.0
+`27A5252f` at `/Users/firepika/Downloads/Xcode-beta.app/Contents/Developer`; existing iPhone 17 Pro Max,
+iOS 27, `3ABD861E-D38D-4AFD-A356-959266051564`. Logs
+`/tmp/budget-rollover-demo-{focused,native-final,ui,package,backend}.log`. No reset/migration.
+
 Allocation version parity after `1b91b7c`: Demo now starts at zero for a fresh budget, builds its
 fixture version from dated operations, and checks assignment/move tokens before mutation (including
 stale no-ops). Current no-ops do not add history. Smart Funding validates all targets and both

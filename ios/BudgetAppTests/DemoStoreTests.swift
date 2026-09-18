@@ -1961,10 +1961,13 @@ final class DemoStoreTests: XCTestCase {
             case "zero": amount = 0
             case "negative": amount = -1
             case "excess": amount = 3_501
-            case "insufficient": source.demo.categories[buffer].available = 1
+            case "insufficient":
+                let available = try source.demo.planningSnapshot(month: source.demo.currentPlanningMonth).categories["buffer"]!.availableMinor
+                XCTAssertTrue(source.demo.move(amount: available - 1, from: "buffer", to: "mortgage"))
             case "overflow":
-                let destination = try XCTUnwrap(source.demo.categories.firstIndex { $0.id == "alexallow" })
-                source.demo.categories[destination].assigned = Int64.max
+                let assigned = try source.demo.planningSnapshot(month: source.demo.currentPlanningMonth).categories["alexallow"]!.assignedMinor
+                // Adversarial ledger input, not corruption of a disposable display projection.
+                source.demo.recordAllocation(amount: Int64.max - assigned, to: "alexallow")
             default: XCTFail("Unknown scenario")
             }
             let categories = source.demo.categories, requests = source.demo.requests

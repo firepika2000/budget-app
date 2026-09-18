@@ -3,8 +3,140 @@ import XCTest
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testProductionDemoRolloverUsesActualCommandsAndPreservesHistory() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true, cashRolloverPolicies: [try .init(effectiveMonth: "2026-09-01", policy: .absorb, version: 1)])
+        let services = BudgetApplicationServices(repository: source)
+        try await services.accounts.create(.init(name: "Cash", kind: "checking", isOnBudget: true, openingBalanceMinor: 0))
+        let cash = try XCTUnwrap(source.demo.accounts.last?.id)
+        XCTAssertTrue(source.demo.createCategory(name: "Needs", group: "Needs"))
+        let category = try XCTUnwrap(source.demo.categories.last?.id)
+        func record(_ amount: Int64, categoryID: String?, day: String) async throws {
+            try await services.transactions.record(.init(accountID: cash, categoryID: categoryID, amountMinor: amount,
+                occurredOn: day, payeeName: "Rollover proof", memo: "", isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: []))
+        }
+        try await record(50_000, categoryID: nil, day: "2026-08-01")
+        try await services.planning.assign(.init(categoryID: category, month: "2026-08-01", assignedMinor: 10_000, expectedVersion: source.demo.allocationVersion))
+        try await record(-15_000, categoryID: category, day: "2026-08-02")
+        let before = source.demo.financialObservation(accountReferences: ["cash": cash], categoryReferences: ["needs": category])
+        let events = source.demo.allocationEvents.map(\.id)
+        for _ in 0..<2 {
+            let august = try source.demo.planningSnapshot(month: "2026-08-01")
+            let september = try source.demo.planningSnapshot(month: "2026-09-01")
+            XCTAssertEqual(august.readyToAssignMinor, 40_000)
+            XCTAssertEqual(august.allDateUnassignedMinor, 35_000)
+            XCTAssertEqual(august.categories[category]?.availableMinor, -5_000)
+            XCTAssertEqual(september.readyToAssignMinor, 35_000)
+            XCTAssertEqual(september.categories[category]?.carriedAvailableMinor, 0)
+            XCTAssertEqual(september.categories[category]?.activityMinor, 0)
+            XCTAssertEqual(september.categories[category]?.assignedMinor, 0)
+            let report = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+            let snapshot = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: report)
+            XCTAssertEqual(snapshot.summary?.readyToAssignMinor, 35_000)
+            XCTAssertEqual(snapshot.summary?.categories.first?.availableMinor, 0)
+            XCTAssertEqual(snapshot.planPerformance?.points.first?.readyToAssignMinor, 35_000)
+        }
+        do {
+            try await services.planning.assign(.init(categoryID: category, month: "2026-09-01", assignedMinor: 35_001, expectedVersion: source.demo.allocationVersion))
+            XCTFail("Absorbed cash is not assignable a second time")
+        } catch {}
+        XCTAssertEqual(source.demo.financialObservation(accountReferences: ["cash": cash], categoryReferences: ["needs": category]), before)
+        XCTAssertEqual(source.demo.allocationEvents.map(\.id), events)
+        try await record(2_000, categoryID: category, day: "2026-08-03")
+        XCTAssertEqual(try source.demo.planningSnapshot(month: "2026-09-01").readyToAssignMinor, 37_000)
+        XCTAssertEqual(try source.demo.planningSnapshot(month: "2026-09-01").categories[category]?.availableMinor, 0)
+        XCTAssertEqual(source.demo.allocationEvents.map(\.id), events)
+    }
+
+    @MainActor
+    func testProductionDemoRolloverSeparatesUnfundedCreditAndFundsLaterPurchases() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true, cashRolloverPolicies: [try .init(effectiveMonth: "2026-09-01", policy: .absorb, version: 1)])
+        let services = BudgetApplicationServices(repository: source)
+        try await services.accounts.create(.init(name: "Cash", kind: "checking", isOnBudget: true, openingBalanceMinor: 0))
+        let cash = try XCTUnwrap(source.demo.accounts.last?.id)
+        try await services.accounts.create(.init(name: "Card", kind: "credit", isOnBudget: true, openingBalanceMinor: 0))
+        let card = try XCTUnwrap(source.demo.accounts.last?.id)
+        XCTAssertTrue(source.demo.createCategory(name: "Needs", group: "Needs"))
+        let category = try XCTUnwrap(source.demo.categories.last?.id)
+        func record(_ amount: Int64, accountID: String, categoryID: String?, day: String) async throws {
+            try await services.transactions.record(.init(accountID: accountID, categoryID: categoryID, amountMinor: amount,
+                occurredOn: day, payeeName: "Credit rollover proof", memo: "", isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: []))
+        }
+        try await record(50_000, accountID: cash, categoryID: nil, day: "2026-08-01")
+        try await services.planning.assign(.init(categoryID: category, month: "2026-08-01", assignedMinor: 10_000, expectedVersion: source.demo.allocationVersion))
+        try await record(-15_000, accountID: cash, categoryID: category, day: "2026-08-02")
+        try await record(-3_000, accountID: card, categoryID: category, day: "2026-08-03")
+        XCTAssertEqual(try source.demo.planningSnapshot(month: "2026-09-01").categories[category]?.availableMinor, -3_000)
+        XCTAssertEqual(source.demo.readyToAssign, 35_000)
+        XCTAssertEqual(source.demo.accounts.last?.paymentReserved, 0)
+        try await services.planning.assign(.init(categoryID: category, month: "2026-09-01", assignedMinor: 13_000, expectedVersion: source.demo.allocationVersion))
+        try await record(-8_000, accountID: card, categoryID: category, day: "2026-09-02")
+        XCTAssertEqual(source.demo.accounts.last?.paymentReserved, 8_000)
+        XCTAssertEqual(source.demo.accounts.last?.balance, -11_000)
+        XCTAssertEqual(try source.demo.planningSnapshot(month: "2026-09-01").categories[category]?.availableMinor, 2_000)
+        XCTAssertEqual(source.demo.readyToAssign, 22_000)
+    }
+
+    @MainActor
     func testDeterministicAdapterRunsEverySharedFinancialVectorExactly() async throws {
         try await runVectors(fileName: "v1.json", count: 15)
+    }
+
+    @MainActor
+    func testProductionDemoSplitAndMoveRecomputePendingAbsorption() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true, cashRolloverPolicies: [try .init(effectiveMonth: "2026-10-01", policy: .absorb, version: 1)])
+        let services = BudgetApplicationServices(repository: source)
+        try await services.accounts.create(.init(name: "Cash", kind: "checking", isOnBudget: true, openingBalanceMinor: 50_000))
+        let cash = try XCTUnwrap(source.demo.accounts.last?.id)
+        XCTAssertTrue(source.demo.createCategory(name: "Funded", group: "Needs"))
+        let funded = try XCTUnwrap(source.demo.categories.last?.id)
+        XCTAssertTrue(source.demo.createCategory(name: "Unfunded", group: "Needs"))
+        let unfunded = try XCTUnwrap(source.demo.categories.last?.id)
+        try await services.planning.assign(.init(categoryID: funded, month: "2026-09-01", assignedMinor: 10_000, expectedVersion: source.demo.allocationVersion))
+        try await services.transactions.record(.init(accountID: cash, categoryID: nil, amountMinor: -15_000,
+            occurredOn: "2026-09-02", payeeName: "Split", memo: "", isCleared: false,
+            splits: [.init(categoryID: funded, amountMinor: -9_000, memo: ""), .init(categoryID: unfunded, amountMinor: -6_000, memo: "")], flag: nil, tags: [], attachmentMetadata: []))
+        XCTAssertEqual(source.demo.readyToAssign, 34_000)
+        XCTAssertEqual(try source.demo.planningSnapshot(month: "2026-10-01").categories[unfunded]?.availableMinor, 0)
+        try await services.planning.move(.init(sourceCategoryID: funded, destinationCategoryID: unfunded, amountMinor: 1_000,
+            occurredOn: "2026-09-03", note: "Cover before boundary", expectedVersion: source.demo.allocationVersion))
+        XCTAssertEqual(source.demo.readyToAssign, 35_000)
+        XCTAssertEqual(source.demo.accounts.first?.balance, 35_000)
+        XCTAssertEqual(try source.demo.planningSnapshot(month: "2026-09-01").categories[unfunded]?.availableMinor, -5_000)
+        XCTAssertEqual(try source.demo.planningSnapshot(month: "2026-10-01").categories[unfunded]?.availableMinor, 0)
+        let count = source.demo.allocationEvents.count
+        let transactionID = try XCTUnwrap(source.demo.transactions.first(where: { $0.payee == "Split" })?.id)
+        XCTAssertTrue(source.demo.deleteTransaction(id: transactionID))
+        XCTAssertEqual(source.demo.readyToAssign, 40_000)
+        XCTAssertEqual(source.demo.allocationEvents.count, count)
+    }
+
+    @MainActor
+    func testProductionDemoEffectivePolicyHistoryDoesNotRewriteEarlierPeriods() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true, cashRolloverPolicies: [
+            try .init(effectiveMonth: "2026-09-01", policy: .absorb, version: 1),
+            try .init(effectiveMonth: "2026-09-01", policy: .carry, version: 2),
+            try .init(effectiveMonth: "2026-11-01", policy: .absorb, version: 3),
+            try .init(effectiveMonth: "2026-12-01", policy: .carry, version: 4),
+        ])
+        let services = BudgetApplicationServices(repository: source)
+        try await services.accounts.create(.init(name: "Cash", kind: "checking", isOnBudget: true, openingBalanceMinor: 0))
+        let cash = try XCTUnwrap(source.demo.accounts.last?.id)
+        XCTAssertTrue(source.demo.createCategory(name: "Needs", group: "Needs"))
+        let category = try XCTUnwrap(source.demo.categories.last?.id)
+        for (amount, categoryID) in [(Int64(50_000), Optional<String>.none), (-5_000, Optional(category))] {
+            try await services.transactions.record(.init(accountID: cash, categoryID: categoryID, amountMinor: amount,
+                occurredOn: "2026-08-01", payeeName: "History", memo: "", isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: []))
+        }
+        let september = try source.demo.planningSnapshot(month: "2026-09-01")
+        XCTAssertEqual(september.categories[category]?.availableMinor, -5_000)
+        XCTAssertEqual(september.readyToAssignMinor, 50_000)
+        XCTAssertEqual(september.allDateUnassignedMinor, 45_000)
+        for month in ["2026-11-01", "2026-12-01", "2027-01-01"] {
+            let plan = try source.demo.planningSnapshot(month: month)
+            XCTAssertEqual(plan.categories[category]?.availableMinor, 0)
+            XCTAssertEqual(plan.readyToAssignMinor, 45_000)
+        }
+        XCTAssertTrue(source.demo.allocationEvents.isEmpty, "Policy effects are not fake allocations")
     }
 
     @MainActor
