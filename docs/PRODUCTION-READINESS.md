@@ -13,7 +13,7 @@ Checkpoint completion is followed by the next unblocked engineering task.
 | PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved in existing acceptance/closure documents. v0.8 terms, interest classification, projections, strategies and payoff UI exist. Complete v0.8 review before planning/import/local-provider work. Reconcile older roadmap numbering with the approved mission explicitly. |
 | FINANCIAL | IN PROGRESS | 23 shared single/multi-debt vectors include paid-off parity, horizon/high-APR boundaries, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
 | SECURITY | IN PROGRESS | Server capability/resource guards and regression suites exist. Extend adversarial matrix across reports, projections, imports and future providers; rerun relevant PostgreSQL/privacy gates. |
-| DATA | IN PROGRESS | Source head is `0027_interest_class`; human Live remains at `0020_payee_identity_repair`. Populated PostgreSQL migration/concurrency and new-destination pg_dump/restore prove canonical equality and encrypted attachment integrity/wrong-key/tamper handling. Outer age/Docker archive proof and production Local Device storage remain open. |
+| DATA | IN PROGRESS | Source head is `0027_interest_class`; human Live remains at `0020_payee_identity_repair`. Populated PostgreSQL migration/concurrency and real age-encrypted new-destination restore prove canonical equality and encrypted attachment integrity/wrong-key/tamper handling. Complete manifest preflight passes. Real Docker/Compose recovery and production Local Device storage remain open. |
 | RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Existing native/backend suites provide regression evidence; concurrency, offline failures, cancellation and release-wide regression remain open. |
 | PERFORMANCE | IN PROGRESS | Live core hydration now makes zero detailed-report requests instead of seven; native HTTP tests cover caching/invalidation/retry. Hub uses one bounded scalar summary. Server/Demo computation, category/account fan-out and representative wall-clock measures remain open. |
 | UX | IN PROGRESS | Shared shell, onboarding, scalable payee selection and focused Insights exist. Report filters are reachable again; missing debt terms open the shared editor. Demand-loaded reports have independent loading/error/retry. Full workflow/accessibility closure remains open. |
@@ -312,3 +312,21 @@ was accessed or restored. These preflight checks do not yet prove cross-resource
 of an existing database plus attachment volume; prefer new-destination recovery and retain that gate.
 Verification: **319 backend tests passed, zero skips**, including disposable PostgreSQL; 18 backup
 script cases, shell syntax and `git diff --check` pass. Swift/native code did not change in this checkpoint.
+
+Real encryption checkpoint: actual age 1.3.2 passphrase operations now run through a disposable
+controlling terminal, without an unsupported secret environment bypass. Roundtrip, incorrect
+passphrase and ciphertext corruption are covered; failures never contact the recovery target.
+The populated PostgreSQL recovery fixture now also packages real plain SQL, ciphertext objects,
+key recovery and a complete manifest, encrypts/decrypts with age, validates with the production
+helper, and restores into a generated new database. All rows, canonical API observations and
+attachment download/hash equality pass. Both plaintext and encrypted recovery variants pass.
+
+This real test exposed macOS tar manufacturing unmanifested AppleDouble files. Per-command
+`COPYFILE_DISABLE=1` prevents those archive-only sidecars; source attributes are untouched. The
+ordinary script test now validates its own output, not merely a separately assembled archive.
+One terminal hang was confined to the Docker test double reading stdin for commands that consume
+no input; it was corrected without a production delay/workaround. Final **323 backend tests pass,
+zero skips**, including 21 age/script cases and both real PostgreSQL recovery variants. Shell syntax
+and diff check pass. Docker remains a double for orchestration, so no Compose execution is claimed.
+Next: ensure replacement failure cannot expose a database/attachment mismatch; enforce the mission's
+new-destination recovery safety rather than erase an existing destination's objects.

@@ -43,7 +43,9 @@ mkdir -p "$work_dir/attachments"
   'if [ -n "${BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY:-}" ]; then printf "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=%s\\n" "$BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY"; else printf "BUDGET_APP_JWT_SECRET=%s\\n" "$BUDGET_APP_JWT_SECRET"; fi' \
   > "$work_dir/attachment-key-recovery.env"
 python3 "$script_dir/backup_archive.py" create-manifest "$work_dir"
-tar -C "$work_dir" -czf - BACKUP-METADATA database.sql attachments attachment-key-recovery.env MANIFEST.sha256 \
+# macOS tar otherwise manufactures unhashed AppleDouble sidecars for extended attributes.
+# Backup payloads deliberately contain only the regular files covered by the manifest.
+COPYFILE_DISABLE=1 tar -C "$work_dir" -czf - BACKUP-METADATA database.sql attachments attachment-key-recovery.env MANIFEST.sha256 \
   | age --passphrase --output "$archive_dir/complete.age"
 # Same-filesystem publication is atomic and refuses to overwrite an existing backup. A failed
 # tar/encryption operation leaves only private staging, removed by the exit trap.

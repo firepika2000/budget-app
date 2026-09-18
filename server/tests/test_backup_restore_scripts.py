@@ -66,7 +66,7 @@ def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
         '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$FAKE_DOCKER_LOG"\n'
         'if [[ "$*" == *BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY* ]]; then\n'
         '  printf "%s\\n" "${RESTORE_TEST_KEY:-BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=test-key}"\n'
-        'else cat >/dev/null; fi\n'
+        'elif [[ "$*" == *"exec -T database psql"* ]]; then cat >/dev/null; fi\n'
     )
     age.chmod(0o755)
     docker.chmod(0o755)
@@ -140,6 +140,8 @@ def test_backup_targets_named_project_and_archives_database_objects_key_and_mani
         names = set(tar.getnames())
         assert {"BACKUP-METADATA", "database.sql", "attachment-key-recovery.env", "MANIFEST.sha256"} <= names
         assert any(name.endswith("attachments/object-1") for name in names)
+    verification = subprocess.run([sys.executable, str(ARCHIVE_TOOL), "extract-verified", str(archives[0]), str(tmp_path / "verified-backup")], text=True, capture_output=True)
+    assert verification.returncode == 0, verification.stderr
 
 
 def test_restore_verifies_archive_before_addressing_explicit_target(tmp_path):

@@ -6,6 +6,15 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`26ff835` is pushed (complete safe archive preflight). Next verified checkpoint proves actual age
+passphrase encryption, wrong-passphrase/corruption denial and a populated real PostgreSQL recovery
+through the encrypted envelope. Final **323 backend passed, zero skips**; real crypto + command-double
+script tests: 21 pass; real PostgreSQL recovery variants: two pass. The proof caught macOS tar adding
+unhashed AppleDouble members; per-command metadata packaging is disabled without changing source
+attributes. Docker itself remains absent, not falsely treated as verified. No Swift changes.
+Next: harden destination replacement against database/object partial failure, then recurring-target
+cadence. Human Live/Simulator untouched; **HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 `f1a5c68` is pushed (currency-aware charts and v0.8 engineering audit). Current recovery checkpoint
 fixes a reproduced omitted-manifest-member acceptance bug, validates safe complete archives before
 destination contact, covers all regular objects, and publishes encrypted backups only on success

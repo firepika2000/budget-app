@@ -4,6 +4,8 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
+import tarfile
 import uuid
 
 from cryptography.exceptions import InvalidTag
@@ -23,6 +25,8 @@ from .test_advanced_ledger import record
 from .test_budgeting_api import add_member, create_budget, create_budget_structure
 from .test_credit_cards import create_credit_card
 from .test_pg_concurrency import PG_URL, pg, pg_migrated, pytestmark  # shared isolated PG fixtures
+from .test_backup_age import run_with_passphrase
+from .test_backup_restore_scripts import ARCHIVE_TOOL
 
 
 def _connection_environment(url):
@@ -44,8 +48,9 @@ def _rows(engine):
         }
 
 
-def test_real_dump_restore_preserves_rows_finances_and_encrypted_attachments(pg, tmp_path):
-    if not shutil.which("pg_dump") or not shutil.which("pg_restore"):
+@pytest.mark.parametrize("encrypted_archive", [False, pytest.param(True, marks=pytest.mark.skipif(not shutil.which("age"), reason="Real age required for encrypted PostgreSQL recovery"))])
+def test_real_dump_restore_preserves_rows_finances_and_encrypted_attachments(pg, tmp_path, encrypted_archive):
+    if not shutil.which("pg_dump") or not shutil.which("psql"):
         pytest.skip("PostgreSQL client tools are required for real dump/restore proof")
     budget = create_budget(pg.client, pg.token, pg.factory)
     account, category = create_budget_structure(pg.client, pg.token, budget["id"])
@@ -83,18 +88,40 @@ def test_real_dump_restore_preserves_rows_finances_and_encrypted_attachments(pg,
     destination_name = "budget_recovery_" + uuid.uuid4().hex
     destination_url = source_url.set(database=destination_name)
     environment = _connection_environment(source_url)
-    dump = tmp_path / "database.dump"
-    subprocess.run(["pg_dump", "--format=custom", "--no-owner", "--no-privileges", "--file", str(dump)], env=environment, check=True, capture_output=True)
+    dump = tmp_path / "database.sql"
+    subprocess.run(["pg_dump", "--clean", "--if-exists", "--no-owner", "--no-privileges", "--file", str(dump)], env=environment, check=True, capture_output=True)
     source_settings = pg.client.app.state.settings
     restored_objects = tmp_path / "restored-objects"
     shutil.copytree(source_settings.attachment_storage_path, restored_objects)
+    if encrypted_archive:
+        payload = tmp_path / "payload"
+        payload.mkdir()
+        shutil.copyfile(dump, payload / "database.sql")
+        shutil.copytree(restored_objects, payload / "attachments")
+        (payload / "BACKUP-METADATA").write_text("format_version=1\ncreated_at=2026-09-18T00:00:00Z\ndatabase_revision=0027_interest_class\n")
+        (payload / "attachment-key-recovery.env").write_text(f"BUDGET_APP_JWT_SECRET={source_settings.jwt_secret}\n")
+        subprocess.run([sys.executable, str(ARCHIVE_TOOL), "create-manifest", str(payload)], check=True, capture_output=True)
+        plain_archive = tmp_path / "backup.tar.gz"
+        with tarfile.open(plain_archive, "w:gz") as output:
+            for path in sorted(payload.iterdir()): output.add(path, arcname=path.name)
+        cipher_archive = tmp_path / "backup.tar.gz.age"
+        status, transcript = run_with_passphrase([shutil.which("age"), "--passphrase", "--output", str(cipher_archive), str(plain_archive)], environment)
+        assert status == 0, transcript
+        assert source_settings.jwt_secret.encode() not in cipher_archive.read_bytes()
+        decrypted = tmp_path / "decrypted.tar.gz"
+        status, transcript = run_with_passphrase([shutil.which("age"), "--decrypt", "--output", str(decrypted), str(cipher_archive)], environment)
+        assert status == 0, transcript
+        verified = tmp_path / "verified"
+        subprocess.run([sys.executable, str(ARCHIVE_TOOL), "extract-verified", str(decrypted), str(verified)], check=True, capture_output=True)
+        dump = verified / "database.sql"
+        restored_objects = verified / "attachments"
     # The destination name is generated here, never derived from human configuration.
     with pg.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
         connection.execute(text(f'CREATE DATABASE "{destination_name}"'))
     restored_engine = create_engine(destination_url)
     try:
         environment["PGDATABASE"] = destination_name
-        subprocess.run(["pg_restore", "--exit-on-error", "--single-transaction", "--no-owner", "--no-privileges", "--dbname", destination_name, str(dump)], env=environment, check=True, capture_output=True)
+        subprocess.run(["psql", "--single-transaction", "--set", "ON_ERROR_STOP=on", "--dbname", destination_name, "--file", str(dump)], env=environment, check=True, capture_output=True)
         assert _rows(restored_engine) == expected
         with restored_engine.connect() as connection:
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0027_interest_class"

@@ -88,6 +88,9 @@ and keep the passphrase separately.
 Manifest generation includes every regular payload file, including nested/hidden objects, and refuses
 links or special files. A final backup name is published atomically only after encryption succeeds;
 an existing backup is never overwritten. The backup destination must support same-filesystem hard links.
+On macOS, automatic AppleDouble sidecars are excluded from archive creation without changing source
+attributes. Archives with unmanifested members are rejected rather than silently restored. Preserve
+any rejected older archive unchanged; do not bypass validation or delete the last known backup.
 
 Restore is intentionally explicit because it replaces current database contents:
 
