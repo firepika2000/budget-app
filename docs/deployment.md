@@ -8,6 +8,8 @@ This guide deploys Budget App on one Linux host with Docker Compose and Caddy. T
 - A DNS name pointing to that server
 - TCP ports 80 and 443 open to Caddy
 - `age` installed for encrypted backups
+- Python 3.10+ on the backup host for standard-library archive/integrity preflight; no application
+  Python environment or third-party package is needed for that helper
 
 ## Configure
 

@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`f1a5c68` is pushed (currency-aware charts and v0.8 engineering audit). Current recovery checkpoint
+fixes a reproduced omitted-manifest-member acceptance bug, validates safe complete archives before
+destination contact, covers all regular objects, and publishes encrypted backups only on success
+without overwriting an existing name. New host prerequisite: Python 3.10+ standard library. Age 1.3.2
+was installed for real cryptographic recovery proof next; Docker is still absent. Human data untouched.
+Do not conflate preflight/script-double tests with full Compose or atomic database/volume replacement.
+Final backend for this checkpoint: **319 passed, zero skips**, shell syntax and diff check pass.
+
 Latest pushed: `1c70163` (explicit mission/roadmap sequencing), following `43da26f` (partial payoff
 horizon correction). Next verified checkpoint closes raw-minor-unit chart accessibility: all five
 time-series reports now supply currency-aware native audio graphs and exact dated values. Final

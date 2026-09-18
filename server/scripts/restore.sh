@@ -18,27 +18,20 @@ backup_file="$4"
 [[ -f "$backup_file" ]] || { echo "Backup not found: $backup_file" >&2; exit 1; }
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
 command -v age >/dev/null || { echo "age is required (https://age-encryption.org)" >&2; exit 1; }
+command -v python3 >/dev/null || { echo "python3 is required for safe backup integrity validation" >&2; exit 1; }
 work_dir="$(mktemp -d)"
+restore_dir="$work_dir/verified"
 trap 'rm -rf "$work_dir"' EXIT
 
 echo "Restoring $backup_file into the Budget App database."
 echo "Target Docker Compose project: $project_name"
 echo "You will be prompted for the backup passphrase by age."
-age --decrypt "$backup_file" | tar -C "$work_dir" -xzf -
-(cd "$work_dir" && [[ -f BACKUP-METADATA && -f database.sql && -f attachment-key-recovery.env && -d attachments ]] ) || {
-  echo "Backup is incomplete: metadata, database, attachment key recovery, or attachment objects are missing" >&2
-  exit 1
-}
-(cd "$work_dir" && shasum -a 256 -c MANIFEST.sha256)
-format_version="$(sed -n 's/^format_version=//p' "$work_dir/BACKUP-METADATA")"
-[[ "$format_version" == "1" ]] || {
-  echo "Unsupported backup format version: ${format_version:-missing}" >&2
-  exit 1
-}
+age --decrypt "$backup_file" > "$work_dir/archive.tar.gz"
+python3 "$script_dir/backup_archive.py" extract-verified "$work_dir/archive.tar.gz" "$restore_dir"
 compose=(docker compose --project-directory "$server_dir" --project-name "$project_name")
 # Never source recovery material or print secrets. A readable archive is not enough:
 # replacing objects with ciphertext for another key would make attachments unreadable.
-backup_key="$(<"$work_dir/attachment-key-recovery.env")"
+backup_key="$(<"$restore_dir/attachment-key-recovery.env")"
 if [[ ! "$backup_key" =~ ^BUDGET_APP_(ATTACHMENT_ENCRYPTION_KEY|JWT_SECRET)=.+$ || "$backup_key" == *$'\n'* ]]; then
   echo "Backup attachment key recovery material is invalid; no destination data changed" >&2
   exit 1
@@ -52,9 +45,9 @@ if [[ "$destination_key" != "$backup_key" ]]; then
 fi
 unset backup_key destination_key
 "${compose[@]}" exec -T database \
-  psql --single-transaction --set ON_ERROR_STOP=on -U budget -d budget < "$work_dir/database.sql"
+  psql --single-transaction --set ON_ERROR_STOP=on -U budget -d budget < "$restore_dir/database.sql"
 "${compose[@]}" exec -T api sh -c 'find /var/lib/budget-app/attachments -mindepth 1 -maxdepth 1 -type f -delete'
-"${compose[@]}" cp "$work_dir/attachments/." api:/var/lib/budget-app/attachments/
+"${compose[@]}" cp "$restore_dir/attachments/." api:/var/lib/budget-app/attachments/
 
 echo "Restore complete. Restarting the API."
 "${compose[@]}" restart api

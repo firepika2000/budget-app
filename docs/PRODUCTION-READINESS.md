@@ -298,3 +298,17 @@ package **38 Core + 47 API** remains unchanged. Initial UI failures exposed wrap
 and the test's incorrect report traversal order; corrected tests retain all currency assertions.
 Apple's native [audio graph documentation](https://developer.apple.com/documentation/accessibility/representing-chart-data-as-an-audio-graph)
 and the installed Beta SDK contract informed the descriptors. Human VoiceOver remains pending.
+
+Recovery preflight review reproduced a real defect: a backup whose checksum manifest omitted
+`database.sql` still reached restore. The archive helper now requires one digest for every payload
+file, validates safe member names/types, rejects duplicates/links/special files and collisions, checks
+staging capacity, and writes only a private empty staging directory before any destination contact.
+Backup hashing includes nested/hidden objects without fallback; encryption failures publish no final
+archive, and atomic publication refuses an existing backup name. Python 3.10+ standard-library
+preflight is now an explicit advanced-host prerequisite. Focused regressions also preserve a sentinel
+outside staging and prove nonempty destinations are not overwritten. Real outer age proof is the next
+step: age 1.3.2 was installed as a development dependency; Docker remains unavailable. No human data
+was accessed or restored. These preflight checks do not yet prove cross-resource atomic replacement
+of an existing database plus attachment volume; prefer new-destination recovery and retain that gate.
+Verification: **319 backend tests passed, zero skips**, including disposable PostgreSQL; 18 backup
+script cases, shell syntax and `git diff --check` pass. Swift/native code did not change in this checkpoint.

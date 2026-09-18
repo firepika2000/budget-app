@@ -73,7 +73,8 @@ Open `/admin` on the same server. The responsive console supports first-time set
 
 Members with report visibility can download their scoped ledger from `GET /api/v1/budgets/{budget_id}/export.csv`. The export includes exact minor-unit amounts, currency, split rows, clearing state, and stable IDs. User-entered text is escaped to prevent spreadsheet formula injection. Full structured export separately requires `export_data`.
 
-For a full disaster-recovery backup, install [age](https://age-encryption.org) on the Docker host and run:
+For a full disaster-recovery backup, install [age](https://age-encryption.org) and Python 3.10+
+(standard library only, for archive validation) on the Docker host and run:
 
 ```sh
 ./scripts/backup.sh --project-name budget-server
@@ -84,6 +85,9 @@ metadata (including the Alembic revision), and attachment-key recovery material,
 passphrase-encrypts the complete archive with `age`. Its restrictive temporary directory is removed on
 exit. Backups default to `server/backups/`, which is ignored by Git. Store copies away from the server
 and keep the passphrase separately.
+Manifest generation includes every regular payload file, including nested/hidden objects, and refuses
+links or special files. A final backup name is published atomically only after encryption succeeds;
+an existing backup is never overwritten. The backup destination must support same-filesystem hard links.
 
 Restore is intentionally explicit because it replaces current database contents:
 
@@ -91,8 +95,10 @@ Restore is intentionally explicit because it replaces current database contents:
 ./scripts/restore.sh --yes --project-name budget-server /path/to/budget-YYYYMMDDTHHMMSSZ.tar.gz.age
 ```
 
-Before changing the target, restore verifies archive completeness, every manifest digest, the
-supported archive format version, and an exact match between archived attachment-key configuration
+Before changing the target, restore validates archive member paths/types and rejects duplicates,
+traversal, links, special files and file/directory collisions. It extracts only to private empty
+staging, checks that the checksum manifest covers every payload file exactly once, verifies every
+digest, checks the supported archive format version, and requires an exact match between archived attachment-key configuration
 and the destination API's active configuration. Configure the new recovery deployment with the
 same `BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY` (or original `BUDGET_APP_JWT_SECRET` when no dedicated
 key was used) first. A mismatch refuses restore before database/object mutation; secrets are not
