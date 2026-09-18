@@ -4,6 +4,29 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Reconciliation continuation (verified): Demo now forwards and enforces cutoff,
+expected cleared observation, explicit adjustment consent and restricted-persona refusal. Only
+cleared postings through the cutoff are locked; later cleared/uncleared postings remain unchanged.
+Adjustments use the selected date and trimmed reason through the canonical transaction path.
+The shared workspace now date-scopes its expected balance and displayed estimate, including
+explicit opening observations. Server reconciliation remains authoritative and unchanged.
+Native testing exposed a related Demo quick-clearing defect: account cleared totals were not
+updated when flags changed. The correction stages checked totals before publishing mutations.
+Tests now assert those totals, not just flags and working balance. A legacy golden-vector runner
+also incorrectly reconciled today's opening balance through September 1; its unspecified cutoff
+now matches the server runner's current day. Explicit period-vector dates remain unchanged.
+Open follow-up: the shared cutoff estimate depends on the current complete visible transaction
+snapshot. A bounded, server-authoritative reconciliation observation is needed before reducing
+hydration or guaranteeing estimates for partially visible accounts. Server stale checks remain
+in force; this checkpoint does not claim that broader scope/performance gate is closed.
+Verification: **103 native XCTest + 2 production XCUITests PASS**, including register clearing
+through reconciliation lockout and Activity clearing; **44 Core + 49 API PASS**; **7 focused server
+reconciliation tests PASS** (no server changes); Xcode Beta build/test and diff check PASS.
+Logs: `/tmp/budget-reconciliation-{native-complete,package,backend}.log`.
+Initial stronger-native failures: `/tmp/budget-reconciliation-native{,-final}.log`.
+Preserved iPhone 17 Pro Max / iOS 27, Xcode 27.0 27A5252f; same UDID recorded below.
+Human acceptance remains pending. No Live migrations, reset, merge, or tags.
+
 This ledger tracks engineering evidence separately from release approval. Main remains at
 `c5494dd`; historical version tags do not establish acceptance for subsequent development.
 Checkpoint completion is followed by the next unblocked engineering task.
@@ -21,9 +44,8 @@ Logs `/tmp/budget-period-integration-{backend,package,native-complete}.log`.
 Before-fix evidence: `/tmp/budget-period-native-reproduction-values.log`,
 `/tmp/budget-period-ui-month-reproduction.log`, `/tmp/budget-period-void-reproduction.log`.
 No human migration/data reset. This is not v0.9 closure: prospective rollover, allocation-version
-parity, reservation explanation and reconciliation input/date parity remain open. In particular,
-the Demo reconciliation adapter still drops through-date, expected balance and adjustment consent;
-next reproduce and correct it against the canonical server contract. Existing Simulator frame/QoS
+parity and reservation explanation remain open. Reconciliation input/date correction is described
+above. Existing Simulator frame/QoS
 diagnostics were not suppressed or declared resolved by these passing tests.
 
 Deterministic opening-ledger checkpoint: production Demo financial seeds are now derived from

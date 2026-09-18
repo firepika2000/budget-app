@@ -6,6 +6,17 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Reconciliation checkpoint verified from `27b16e5`: date/consent/stale-observation/permission
+inputs now reach Demo; only cutoff-eligible cleared entries lock, explicit adjustments retain their
+date/reason, and later account activity remains intact. Shared Live/Demo cutoff estimate no longer
+uses an all-date or opening-omitting sum. Native regressions exposed and corrected Demo quick-clear
+account totals and the legacy vector runner's mismatched default cutoff. No server/migration or
+human data changes. Follow-up: bounded authoritative reconciliation observations for partially
+visible account histories; current server stale checks are preserved.
+**103 native + 2 production UI, 44 Core + 49 API, 7 focused backend tests PASS**; Beta simulator
+build and diff check PASS. `/tmp/budget-reconciliation-{native-complete,package,backend}.log`.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 `9930a7b` is pushed. Next verified checkpoint integrates dated production reads/commands and all
 **15 financial + 7 period scenarios** in the native repository/snapshot runner. Months retain their
 own assignments/activity/carry, future reservations consume existing cash, date edits reproject,
@@ -17,11 +28,8 @@ registers its group, preventing the newly exposed snapshot force unwrap.
 Final **396 backend zero skips; 44 Core + 49 API; 101 native XCTest + 4 production UI tests pass**;
 Beta build/test and diff check PASS. `/tmp/budget-period-integration-{backend,package,native-complete}.log`.
 All relevant pre-fix failures are linked in the master ledger. Human data, main and tags untouched.
-Next highest-priority concrete defect: `DemoWorkspaceDataSource.reconcileAccount` drops
-`throughDate`, `createAdjustment`, `reason` and `expectedClearedBalanceMinor`, whereas server
-`budgeting_routes.reconcile_account` validates date-scoped cleared balance and explicit consent.
-Reproduce refusal/date/race semantics before fixing; server voids retain original AND reversal, so
-do not incorrectly filter voided original financial facts from reconciliation or planning.
+The subsequent reconciliation checkpoint above corrects dropped Demo inputs and shared cutoff
+observation. Server voids retain original AND reversal; both remain in reconciliation/planning.
 Allocation-version parity, calendar-independent clocks, later-reservation explanation, prospective
 rollover and remaining mission gates stay open. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 

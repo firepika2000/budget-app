@@ -452,16 +452,30 @@ final class DemoStore: ObservableObject {
     }
 
     @discardableResult
-    func reconcile(accountID: String, statementBalance: Int64) -> Bool {
+    func reconcile(accountID: String, statementBalance: Int64, throughDate: String = BudgetWorkspaceStore.dateString(Date()), createAdjustment: Bool = false, reason: String = "", expectedClearedBalance: Int64? = nil) -> Bool {
+        guard !isRestricted else { return failMessage("You do not have permission to reconcile this account.") }
         guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return fail(.accountNotFound) }
-        let difference = statementBalance - accounts[index].cleared
+        guard let cutoff = try? PlanningPeriodProjection.Day(throughDate),
+              fixtureOpening.map({ cutoff >= $0.month }) ?? true else { return failMessage("Invalid reconciliation date.") }
+        let eligible = transactions.filter { $0.accountID == accountID && $0.cleared && !$0.scheduled && BudgetWorkspaceStore.dateString($0.date) <= cutoff.iso }
+        var cleared = fixtureAccountOpening[accountID] ?? 0
+        for transaction in eligible {
+            let result = cleared.addingReportingOverflow(transaction.amount)
+            guard !result.overflow else { return fail(.invalidAmount) }
+            cleared = result.partialValue
+        }
+        guard expectedClearedBalance == nil || expectedClearedBalance == cleared else { return failMessage("Account changed since reconciliation started.") }
+        let result = statementBalance.subtractingReportingOverflow(cleared)
+        guard !result.overflow else { return fail(.invalidAmount) }
+        let difference = result.partialValue
+        guard difference == 0 || createAdjustment else { return failMessage("Cleared balance does not match statement. Confirm an adjustment before continuing.") }
         if difference != 0 {
-            guard recordCanonicalTransaction(.init(accountID: accountID, categoryID: nil, amountMinor: difference, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Reconciliation adjustment", memo: "Confirmed statement balance", isCleared: true, splits: [], flag: "Reconciled", tags: [], attachmentMetadata: [])) else { return false }
+            guard recordCanonicalTransaction(.init(accountID: accountID, categoryID: nil, amountMinor: difference, occurredOn: cutoff.iso, payeeName: "Reconciliation adjustment", memo: reason.trimmingCharacters(in: .whitespacesAndNewlines), isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])) else { return false }
             transactions[0].reconciled = true
         }
-        accounts[index].cleared = statementBalance
         accounts[index].reconciledBalance = statementBalance
-        for transactionIndex in transactions.indices where transactions[transactionIndex].accountID == accountID && transactions[transactionIndex].cleared {
+        let eligibleIDs = Set(eligible.map(\.id))
+        for transactionIndex in transactions.indices where eligibleIDs.contains(transactions[transactionIndex].id) {
             transactions[transactionIndex].reconciled = true
         }
         errorMessage = nil

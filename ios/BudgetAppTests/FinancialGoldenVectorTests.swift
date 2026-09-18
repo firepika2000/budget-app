@@ -73,7 +73,7 @@ final class FinancialGoldenVectorTests: XCTestCase {
                 case "reconcile":
                     let accountID = try XCTUnwrap(accountRefs[string(operation, "account")])
                     let cleared = try XCTUnwrap(source.demo.accounts.first(where: { $0.id == accountID })?.cleared)
-                    try await services.accounts.reconcile(.init(accountID: accountID, statementBalanceMinor: integer(operation, "statement_minor"), throughDate: operation["through_date"] as? String ?? "2026-09-01", createAdjustment: bool(operation, "create_adjustment"), reason: "vector", expectedClearedBalanceMinor: cleared))
+                    try await services.accounts.reconcile(.init(accountID: accountID, statementBalanceMinor: integer(operation, "statement_minor"), throughDate: operation["through_date"] as? String ?? BudgetWorkspaceStore.dateString(Date()), createAdjustment: bool(operation, "create_adjustment"), reason: "vector", expectedClearedBalanceMinor: cleared))
                 case "schedule":
                     let name = "Vector \(string(operation, "ref"))"
                     try await services.schedules.create(.init(accountID: try XCTUnwrap(accountRefs[string(operation, "account")]), categoryID: (operation["category"] as? String).flatMap { categoryRefs[$0] }, name: name, amountMinor: integer(operation, "amount_minor"), nextDate: operation["next_date"] as? String ?? "2026-09-01", recurrenceUnit: string(operation, "recurrence")))

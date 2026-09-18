@@ -6,6 +6,72 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testWorkspaceReconciliationUsesDateScopedObservationIncludingOpening() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let account = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
+        let cutoff = "2026-09-05"
+        let later = store.transactions.filter { $0.accountID == account.id && $0.isCleared && $0.occurredOn > cutoff }
+        XCTAssertFalse(later.isEmpty)
+        let working = store.balance(for: account)
+        let allCleared = store.clearedBalance(for: account)
+        let statement = allCleared - later.reduce(0) { $0 + $1.amountMinor }
+        XCTAssertEqual(try store.reconciliationClearedBalance(accountID: account.id, throughDate: cutoff), statement)
+        try await store.reconcile(accountID: account.id, statementBalance: statement, throughDate: cutoff, createAdjustment: false, reason: "")
+        XCTAssertEqual(store.balance(for: account), working)
+        XCTAssertEqual(store.clearedBalance(for: account), allCleared)
+        for original in later {
+            XCTAssertEqual(store.transactions.first { $0.id == original.id }?.isReconciled, original.isReconciled)
+        }
+        XCTAssertEqual(store.accountBalances[account.id]?.reconciledBalanceMinor, statement)
+    }
+
+    @MainActor
+    func testProductionDemoReconciliationHonorsCutoffConsentAndStaleObservation() async throws {
+        for adjustment in [false, true] {
+            let source = DemoWorkspaceDataSource(fresh: true)
+            let demo = source.demo
+            demo.createAccount(name: "Reconciliation", type: "checking", isOnBudget: true)
+            let accountID = try XCTUnwrap(demo.accounts.first?.id)
+            for (date, amount, cleared) in [("2026-08-01", Int64(10_000), true), ("2026-09-10", 2_000, true), ("2026-09-11", 500, false)] {
+                XCTAssertTrue(demo.recordCanonicalTransaction(.init(accountID: accountID, categoryID: nil, amountMinor: amount, occurredOn: date, payeeName: "Income", memo: "", isCleared: cleared, splits: [], flag: nil, tags: [], attachmentMetadata: [])))
+            }
+            let beforeIDs = demo.transactions.map(\.id)
+            let beforeRTA = demo.unassignedMinor
+            for (expected, consent) in [(Int64(10_000), false), (9_999, true)] {
+                do {
+                    try await source.reconcileAccount(.init(accountID: accountID, statementBalanceMinor: 10_100, throughDate: "2026-09-05", createAdjustment: consent, reason: "Correction", expectedClearedBalanceMinor: expected))
+                    XCTFail("Mismatch without consent and stale observations must be refused")
+                } catch { }
+                XCTAssertEqual(demo.transactions.map(\.id), beforeIDs)
+                XCTAssertFalse(demo.transactions.contains(where: \.reconciled))
+                XCTAssertEqual(demo.accounts.first?.cleared, 12_000)
+                XCTAssertEqual(demo.unassignedMinor, beforeRTA)
+            }
+            demo.persona = .alex
+            do {
+                try await source.reconcileAccount(.init(accountID: accountID, statementBalanceMinor: 10_000, throughDate: "2026-09-05", createAdjustment: false, reason: "", expectedClearedBalanceMinor: 10_000))
+                XCTFail("Restricted persona must not reconcile")
+            } catch { }
+            demo.persona = .rey
+            try await source.reconcileAccount(.init(accountID: accountID, statementBalanceMinor: adjustment ? 10_100 : 10_000, throughDate: "2026-09-05", createAdjustment: adjustment, reason: " Correction ", expectedClearedBalanceMinor: 10_000))
+            XCTAssertEqual(demo.accounts.first?.balance, adjustment ? 12_600 : 12_500)
+            XCTAssertEqual(demo.accounts.first?.cleared, adjustment ? 12_100 : 12_000)
+            XCTAssertEqual(demo.accounts.first?.reconciledBalance, adjustment ? 10_100 : 10_000)
+            XCTAssertTrue(try XCTUnwrap(demo.transactions.first { BudgetWorkspaceStore.dateString($0.date) == "2026-08-01" }).reconciled)
+            XCTAssertFalse(demo.transactions.filter { BudgetWorkspaceStore.dateString($0.date) > "2026-09-05" }.contains(where: \.reconciled))
+            XCTAssertEqual(demo.unassignedMinor, beforeRTA + (adjustment ? 100 : 0))
+            let corrections = demo.transactions.filter { $0.payee == "Reconciliation adjustment" }
+            XCTAssertEqual(corrections.count, adjustment ? 1 : 0)
+            if let correction = corrections.first {
+                XCTAssertEqual(BudgetWorkspaceStore.dateString(correction.date), "2026-09-05")
+                XCTAssertEqual(correction.memo, "Correction")
+                XCTAssertTrue(correction.reconciled && correction.cleared)
+            }
+        }
+    }
+
+    @MainActor
     func testWorkspaceCurrencyFormattingPreservesEveryMinorUnit() {
         let store = BudgetWorkspaceStore.demo()
         let identity = "CurrencyFormattingTest.\(UUID().uuidString)"
@@ -1102,18 +1168,23 @@ final class DemoStoreTests: XCTestCase {
         let transaction = try XCTUnwrap(store.transactions.first(where: { $0.id == "t1" }))
         let account = try XCTUnwrap(store.accounts.first(where: { $0.id == transaction.accountID }))
         let workingBefore = store.balance(for: account)
+        let clearedBefore = store.clearedBalance(for: account)
         let readyBefore = store.summary?.readyToAssignMinor
         let planBefore = store.summary?.categories.map { "\($0.categoryID)|\($0.activityMinor)|\($0.availableMinor)" }
 
         XCTAssertTrue(store.canQuickSetCleared(transaction))
         try await store.setTransactionCleared(id: transaction.id, cleared: true)
         XCTAssertTrue(try XCTUnwrap(store.transactions.first(where: { $0.id == transaction.id })).isCleared)
+        XCTAssertEqual(store.clearedBalance(for: account), clearedBefore + transaction.amountMinor)
+        try await store.setTransactionCleared(id: transaction.id, cleared: true)
+        XCTAssertEqual(store.clearedBalance(for: account), clearedBefore + transaction.amountMinor, "Repeating the state must not apply the amount twice")
         XCTAssertEqual(store.balance(for: account), workingBefore)
         XCTAssertEqual(store.summary?.readyToAssignMinor, readyBefore)
         XCTAssertEqual(store.summary?.categories.map { "\($0.categoryID)|\($0.activityMinor)|\($0.availableMinor)" }, planBefore)
 
         try await store.setTransactionCleared(id: transaction.id, cleared: false)
         XCTAssertFalse(try XCTUnwrap(store.transactions.first(where: { $0.id == transaction.id })).isCleared)
+        XCTAssertEqual(store.clearedBalance(for: account), clearedBefore)
         try await store.setTransactionCleared(id: transaction.id, cleared: true)
         try await store.reconcile(accountID: account.id, statementBalance: store.clearedBalance(for: account), throughDate: "2099-12-31", createAdjustment: false, reason: "")
         let reconciled = try XCTUnwrap(store.transactions.first(where: { $0.id == transaction.id }))
@@ -1577,7 +1648,7 @@ final class DemoStoreTests: XCTestCase {
         let store = DemoStore()
         let accountBefore = store.accounts.first { $0.id == "checking" }!
         let statement = accountBefore.cleared + 1_000
-        XCTAssertTrue(store.reconcile(accountID: "checking", statementBalance: statement))
+        XCTAssertTrue(store.reconcile(accountID: "checking", statementBalance: statement, createAdjustment: true), store.errorMessage ?? "")
         let accountAfter = store.accounts.first { $0.id == "checking" }!
         XCTAssertEqual(accountAfter.cleared, statement)
         XCTAssertEqual(accountAfter.balance, accountBefore.balance + 1_000)

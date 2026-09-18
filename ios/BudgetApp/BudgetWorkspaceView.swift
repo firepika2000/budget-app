@@ -889,6 +889,18 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
         guard update.transactionIDs.allSatisfy({ id in demo.transactions.contains(where: { $0.id == id && !$0.reconciled && $0.transferID == nil && !$0.scheduled && !["Starting Balance", "Reconciliation adjustment"].contains($0.payee) }) }) else { throw workspaceRepositoryError("System-linked or reconciled transactions cannot be changed in bulk") }
+        if update.action == "set_cleared" {
+            guard let cleared = update.cleared else { throw workspaceRepositoryError("A clearing state is required.") }
+            var accounts = demo.accounts
+            let selectedIDs = Set(update.transactionIDs)
+            for transaction in demo.transactions where selectedIDs.contains(transaction.id) && transaction.cleared != cleared {
+                guard let index = accounts.firstIndex(where: { $0.id == transaction.accountID }) else { throw workspaceRepositoryError("Account not found.") }
+                let result = cleared ? accounts[index].cleared.addingReportingOverflow(transaction.amount) : accounts[index].cleared.subtractingReportingOverflow(transaction.amount)
+                guard !result.overflow else { throw workspaceRepositoryError("Cleared balance exceeds the supported amount range.") }
+                accounts[index].cleared = result.partialValue
+            }
+            demo.accounts = accounts
+        }
         for id in update.transactionIDs {
             guard let index = demo.transactions.firstIndex(where: { $0.id == id }) else { continue }
             switch update.action {
@@ -903,7 +915,10 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func transferMoney(_ operation: TransferMoneyOperation) async throws { guard demo.transfer(amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { guard demo.updateTransfer(id: id, amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func deleteTransfer(id: String) async throws { guard demo.deleteTransfer(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
-    func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { guard demo.reconcile(accountID: operation.accountID, statementBalance: operation.statementBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func reconcileAccount(_ operation: ReconcileAccountOperation) async throws {
+        guard budget.can("reconcile_account"), !demo.isRestricted else { throw workspaceRepositoryError("You do not have permission to reconcile this account.") }
+        guard demo.reconcile(accountID: operation.accountID, statementBalance: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, reason: operation.reason, expectedClearedBalance: operation.expectedClearedBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
+    }
     func assignMoney(_ operation: AssignMoneyOperation) async throws {
         try demo.replaceAssignment(categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor)
     }
@@ -1605,9 +1620,24 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func reconcile(accountID: String, statementBalance: Int64, throughDate: String, createAdjustment: Bool, reason: String) async throws {
-        let cleared = transactions.filter { $0.accountID == accountID && $0.isCleared }.reduce(0) { $0 + $1.amountMinor }
+        let cleared = try reconciliationClearedBalance(accountID: accountID, throughDate: throughDate)
         try await services().accounts.reconcile(ReconcileAccountOperation(accountID: accountID, statementBalanceMinor: statementBalance, throughDate: throughDate, createAdjustment: createAdjustment, reason: reason, expectedClearedBalanceMinor: cleared))
         await refresh()
+    }
+
+    func reconciliationClearedBalance(accountID: String, throughDate: String) throws -> Int64 {
+        _ = try PlanningPeriodProjection.Day(throughDate)
+        guard let balance = accountBalances[accountID] else { throw workspaceRepositoryError("Refresh the account before reconciling.") }
+        // The workspace owns a complete transaction snapshot, including reversals and their
+        // originals. Subtract later cleared postings from the authoritative all-date balance;
+        // this also preserves explicit provider opening observations.
+        var cleared = balance.clearedBalanceMinor
+        for transaction in transactions where transaction.accountID == accountID && transaction.isCleared && transaction.occurredOn > throughDate {
+            let next = cleared.subtractingReportingOverflow(transaction.amountMinor)
+            guard !next.overflow else { throw workspaceRepositoryError("Cleared balance exceeds the supported amount range.") }
+            cleared = next.partialValue
+        }
+        return cleared
     }
 
     func updateAssignment(categoryID: String, month: String, assignedMinor: Int64, expectedVersion: Int) async throws {
@@ -3659,10 +3689,15 @@ private struct LiveReconcileView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var statementBalance = ""; @State private var throughDate = Date(); @State private var createAdjustment = false; @State private var reason = ""; @State private var isSaving = false; @State private var errorMessage: String?
     private var parsed: Int64? { CurrencyText.parseMinorUnits(statementBalance, currencyCode: budget.currencyCode) }
-    private var difference: Int64? { parsed.map { $0 - currentBalance } }
+    private var cutoffBalance: Int64? { try? workspace.reconciliationClearedBalance(accountID: account.id, throughDate: BudgetWorkspaceStore.dateString(throughDate)) }
+    private var difference: Int64? {
+        guard let parsed, let cutoffBalance else { return nil }
+        let result = parsed.subtractingReportingOverflow(cutoffBalance)
+        return result.overflow ? nil : result.partialValue
+    }
     var body: some View {
         NavigationStack { Form {
-            Section("Statement") { LabeledContent("Current cleared estimate", value: CurrencyText.editable(currentBalance, currencyCode: budget.currencyCode)); CurrencyAmountField("Statement balance", text: $statementBalance, currencyCode: budget.currencyCode, allowsNegative: true, allowsZero: true); DatePicker("Through", selection: $throughDate, displayedComponents: .date) }
+            Section("Statement") { LabeledContent("Cleared through selected date", value: cutoffBalance.map { CurrencyText.editable($0, currencyCode: budget.currencyCode) } ?? "Unavailable — refresh account"); CurrencyAmountField("Statement balance", text: $statementBalance, currencyCode: budget.currencyCode, allowsNegative: true, allowsZero: true); DatePicker("Through", selection: $throughDate, displayedComponents: .date) }
             if let difference, difference != 0 { Section("Difference") { LabeledContent("Adjustment", value: CurrencyText.editable(difference, currencyCode: budget.currencyCode)); Toggle("Create reconciliation adjustment", isOn: $createAdjustment); if createAdjustment { TextField("Adjustment reason", text: $reason) }; Text("The server calculates the authoritative cleared balance and will reject a mismatch unless you approve an adjustment.").font(.footnote).foregroundStyle(.secondary) } }
         }.navigationTitle("Reconcile \(account.name)").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Reconcile") { Task { await save() } }.disabled(parsed == nil || isSaving) } }.onAppear { statementBalance = CurrencyText.editable(currentBalance, currencyCode: budget.currencyCode) }.alert("Unable to reconcile", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
     }
