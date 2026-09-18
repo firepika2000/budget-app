@@ -6,6 +6,37 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testDemoPostingAndReversalOverflowRefuseWithoutPartialMutation() throws {
+        func operation(_ accountID: String, _ amount: Int64) -> RecordTransactionOperation {
+            .init(accountID: accountID, categoryID: nil, amountMinor: amount, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Boundary", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])
+        }
+        for (opening, amount) in [(Int64.max, Int64(1)), (Int64.min, Int64(-1))] {
+            let demo = DemoStore(fresh: true)
+            demo.createAccount(name: "Boundary", type: "checking", isOnBudget: true, startingBalance: opening)
+            let account = try XCTUnwrap(demo.accounts.first)
+            let ids = demo.transactions.map(\.id)
+            XCTAssertFalse(demo.recordCanonicalTransaction(operation(account.id, amount)))
+            XCTAssertEqual(demo.accounts.first?.balance, opening)
+            XCTAssertEqual(demo.accounts.first?.cleared, opening)
+            XCTAssertEqual(demo.unassignedMinor, opening)
+            XCTAssertEqual(demo.transactions.map(\.id), ids)
+        }
+        let demo = DemoStore(fresh: true)
+        demo.createAccount(name: "Reversal boundary", type: "checking", isOnBudget: true, startingBalance: .max - 1)
+        let accountID = try XCTUnwrap(demo.accounts.first?.id)
+        XCTAssertTrue(demo.recordCanonicalTransaction(operation(accountID, -1), id: "outflow"))
+        XCTAssertTrue(demo.recordCanonicalTransaction(operation(accountID, 2), id: "income"))
+        let ids = demo.transactions.map(\.id)
+        XCTAssertFalse(demo.deleteTransaction(id: "outflow"))
+        XCTAssertFalse(demo.updateCanonicalTransaction(id: "outflow", operation: operation(accountID, 3)))
+        XCTAssertEqual(demo.accounts.first?.balance, .max)
+        XCTAssertEqual(demo.accounts.first?.cleared, .max)
+        XCTAssertEqual(demo.unassignedMinor, .max)
+        XCTAssertEqual(demo.transactions.map(\.id), ids)
+        XCTAssertEqual(demo.transactions.first { $0.id == "outflow" }?.amount, -1)
+    }
+
+    @MainActor
     func testTransactionServiceRejectsOverflowingAndDuplicateSplitsBeforeMutation() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
         let service = TransactionService(repository: source)

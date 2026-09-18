@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`ef90252` is pushed. Next checkpoint checks Demo posting/reversal arithmetic and routes overflow
+through financial rollback. Tests cover both Int64 boundaries plus failed deletion/edit with
+unchanged observations/transaction identities. **105 native + 23 server financial vectors PASS**;
+Beta simulator build and diff check PASS. Evidence in
+`/tmp/budget-posting-overflow-native-final.log` and `/tmp/budget-posting-overflow-vectors.log`.
+Unchecked account creation, transfers, reports/forecast remain open audit work; do not infer
+complete aggregate/arithmetic safety from this focused correction.
+
 `5be09de` pushed reconciliation/clearing corrections. Following checkpoint hardens split validation
 against overflowing totals and duplicate category dictionary traps. Reuses the dated projection's
 exact accumulator, preserving legitimate mixed-sign cancellation. **45 Core + 49 API, 104 native,

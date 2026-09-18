@@ -381,9 +381,11 @@ final class DemoStore: ObservableObject {
         let transaction = transactions[index]
         guard !transaction.reconciled else { return fail(.invalidAmount) }
         let before = checkpoint()
-        reverseCanonicalTransaction(transaction)
-        transactions.remove(at: index)
-        do { publishPlanning(try planningSnapshot(month: currentPlanningMonth)) }
+        do {
+            try reverseCanonicalTransaction(transaction)
+            transactions.remove(at: index)
+            publishPlanning(try planningSnapshot(month: currentPlanningMonth))
+        }
         catch { restore(before); return failMessage(error.localizedDescription) }
         errorMessage = nil
         return true
@@ -604,7 +606,8 @@ final class DemoStore: ObservableObject {
         guard let index = transactions.firstIndex(where: { $0.id == id }), !transactions[index].reconciled else { return fail(.transactionNotFound) }
         let old = transactions[index]
         let before = checkpoint()
-        reverseCanonicalTransaction(old)
+        do { try reverseCanonicalTransaction(old) }
+        catch { restore(before); return failMessage(error.localizedDescription) }
         transactions.remove(at: index)
         guard recordCanonicalTransaction(operation, id: id) else {
             restore(before)
@@ -622,7 +625,7 @@ final class DemoStore: ObservableObject {
             let datedPlan = try planningSnapshot(month: String(day.prefix(7)) + "-01", through: day)
             var datedReserve: Int64 = 0
             for item in transactions where item.accountID == transaction.accountID && item.date <= transaction.date {
-                let amount = item.transferID != nil ? -item.amount : reserveAttribution[item.id]?.values.reduce(0, +) ?? 0
+                let amount = try (item.transferID != nil ? subtract(0, item.amount) : Money.sumMinorUnits((reserveAttribution[item.id] ?? [:]).values))
                 let sum = datedReserve.addingReportingOverflow(amount)
                 guard !sum.overflow else { throw MoneyError.arithmeticOverflow }
                 datedReserve = sum.partialValue
@@ -634,64 +637,70 @@ final class DemoStore: ObservableObject {
                 guard let categoryIndex = categories.firstIndex(where: { $0.id == categoryID }) else { continue }
                 if amount < 0 {
                     let availableBefore = datedPlan.categories[categories[categoryIndex].id]?.availableMinor ?? 0
-                    reserve[categoryID] = min(-amount, max(availableBefore, 0))
+                    reserve[categoryID] = Int64(min(amount.magnitude, UInt64(max(availableBefore, 0))))
                 } else if amount > 0 {
                     // Match the server's net, card/category/date-scoped attribution. Earlier refund
                     // releases reduce that attribution; another card's purchases cannot fund it.
-                    let attributed = transactions.lazy.filter {
+                    let attributed = try Money.sumMinorUnits(transactions.lazy.filter {
                         $0.accountID == transaction.accountID && $0.date <= transaction.date
-                    }.reduce(Int64(0)) { $0 + (reserveAttribution[$1.id]?[categoryID] ?? 0) }
+                    }.map { self.reserveAttribution[$0.id]?[categoryID] ?? 0 })
                     let released = min(amount, max(attributed, 0), remainingPaymentMoney)
                     reserve[categoryID] = -released
                     remainingPaymentMoney -= released
                 }
             }
         }
-        accounts[accountIndex].balance += transaction.amount
-        if transaction.cleared { accounts[accountIndex].cleared += transaction.amount }
+        accounts[accountIndex].balance = try Money.sumMinorUnits([accounts[accountIndex].balance, transaction.amount])
+        if transaction.cleared { accounts[accountIndex].cleared = try Money.sumMinorUnits([accounts[accountIndex].cleared, transaction.amount]) }
         if amounts.isEmpty {
             if accounts[accountIndex].isOnBudget && [.checking, .savings, .cash].contains(accounts[accountIndex].kind) && !isRestricted {
-                unassignedMinor += transaction.amount
+                unassignedMinor = try Money.sumMinorUnits([unassignedMinor, transaction.amount])
             }
         } else {
             for (categoryID, amount) in amounts where categories.contains(where: { $0.id == categoryID }) {
                 let categoryIndex = categories.firstIndex(where: { $0.id == categoryID })!
-                categories[categoryIndex].activity += amount
-                categories[categoryIndex].available += amount
+                categories[categoryIndex].activity = try Money.sumMinorUnits([categories[categoryIndex].activity, amount])
+                categories[categoryIndex].available = try Money.sumMinorUnits([categories[categoryIndex].available, amount])
             }
         }
         if !reserve.isEmpty {
-            let reserved = reserve.values.reduce(0, +)
-            accounts[accountIndex].paymentReserved += reserved
+            let reserved = try Money.sumMinorUnits(reserve.values)
+            accounts[accountIndex].paymentReserved = try Money.sumMinorUnits([accounts[accountIndex].paymentReserved, reserved])
             if transaction.amount < 0 {
-                accounts[accountIndex].fundedSpending += reserved
-                accounts[accountIndex].unfundedSpending += -transaction.amount - reserved
+                accounts[accountIndex].fundedSpending = try Money.sumMinorUnits([accounts[accountIndex].fundedSpending, reserved])
+                accounts[accountIndex].unfundedSpending = try Money.sumMinorUnits([accounts[accountIndex].unfundedSpending, subtract(subtract(0, transaction.amount), reserved)])
             }
             reserveAttribution[transaction.id] = reserve
         }
     }
 
-    private func reverseCanonicalTransaction(_ transaction: DemoTransaction) {
+    private func subtract(_ lhs: Int64, _ rhs: Int64) throws -> Int64 {
+        let result = lhs.subtractingReportingOverflow(rhs)
+        guard !result.overflow else { throw MoneyError.arithmeticOverflow }
+        return result.partialValue
+    }
+
+    private func reverseCanonicalTransaction(_ transaction: DemoTransaction) throws {
         guard let accountIndex = accounts.firstIndex(where: { $0.id == transaction.accountID }) else { return }
-        accounts[accountIndex].balance -= transaction.amount
-        if transaction.cleared { accounts[accountIndex].cleared -= transaction.amount }
+        accounts[accountIndex].balance = try subtract(accounts[accountIndex].balance, transaction.amount)
+        if transaction.cleared { accounts[accountIndex].cleared = try subtract(accounts[accountIndex].cleared, transaction.amount) }
         let amounts = canonicalCategoryAmounts(for: transaction)
         if amounts.isEmpty {
             if accounts[accountIndex].isOnBudget && [.checking, .savings, .cash].contains(accounts[accountIndex].kind) && !isRestricted {
-                unassignedMinor -= transaction.amount
+                unassignedMinor = try subtract(unassignedMinor, transaction.amount)
             }
         } else {
             for (categoryID, amount) in amounts where categories.contains(where: { $0.id == categoryID }) {
                 let categoryIndex = categories.firstIndex(where: { $0.id == categoryID })!
-                categories[categoryIndex].activity -= amount
-                categories[categoryIndex].available -= amount
+                categories[categoryIndex].activity = try subtract(categories[categoryIndex].activity, amount)
+                categories[categoryIndex].available = try subtract(categories[categoryIndex].available, amount)
             }
         }
-        let reserve = reserveAttribution.removeValue(forKey: transaction.id)?.values.reduce(0, +) ?? 0
-        accounts[accountIndex].paymentReserved -= reserve
+        let reserve = try Money.sumMinorUnits((reserveAttribution.removeValue(forKey: transaction.id) ?? [:]).values)
+        accounts[accountIndex].paymentReserved = try subtract(accounts[accountIndex].paymentReserved, reserve)
         if accounts[accountIndex].kind == .credit && transaction.amount < 0 {
-            accounts[accountIndex].fundedSpending -= reserve
-            accounts[accountIndex].unfundedSpending -= -transaction.amount - reserve
+            accounts[accountIndex].fundedSpending = try subtract(accounts[accountIndex].fundedSpending, reserve)
+            accounts[accountIndex].unfundedSpending = try subtract(accounts[accountIndex].unfundedSpending, subtract(subtract(0, transaction.amount), reserve))
         }
     }
 
