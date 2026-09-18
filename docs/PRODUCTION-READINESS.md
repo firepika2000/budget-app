@@ -4,6 +4,20 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Household query audit after `9710981`: both invitation summaries and access-event history loaded the
+entire server user directory (including unused password-hash columns) merely to resolve names.
+A 2,000-unrelated-user regression reproduced both unrestricted queries. Display names now come
+from scalar columns joined to household-authorized invitations/events; no global directory hydration,
+password hash selection or per-row name query. Owner authorization, ordering, removed-member names,
+nullable subject fallback and the 200-event history bound are preserved. This was unnecessary internal
+hydration, not evidence of password hashes appearing in API responses. Invitation-list pagination
+remains a separate open scaling gap; this checkpoint does not claim to bound invitation history.
+Verification: **19 focused household/family tests PASS; 459 full backend tests PASS, zero skips**,
+including disposable PostgreSQL races, populated migrations, golden vectors and encrypted recovery.
+Logs `/tmp/budget-household-scope-focused-final.log` and `/tmp/budget-household-scope-backend.log`.
+Diff check PASS. No native code changed after the preceding 125-native/1-UI Beta PASS checkpoint.
+Human Live remains untouched at 0020; no new migration, merge or tag.
+
 Household presentation audit after `e45e4d7`: invitation creation previously called `dismiss()`,
 awaited a reload, then set a second sheet binding. Network completion did not establish that the
 first presentation had finished dismissing. The one-time code now waits in parent state until

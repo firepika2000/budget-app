@@ -1,5 +1,6 @@
 from app.models import Household, Membership, User
 from app.security import create_access_token, hash_password
+from sqlalchemy import event, insert
 
 from .conftest import auth
 from .test_budgeting_api import create_budget, create_budget_structure
@@ -27,6 +28,34 @@ def grant(client, owner_token, budget_id: str, user_id: str, permission: str):
         json={"user_id": user_id, "permission": permission},
     )
     assert response.status_code == 200, response.text
+
+
+def test_household_lists_do_not_hydrate_global_user_directory(client, owner_token, session_factory):
+    with session_factory() as db:
+        household_id = db.query(Household.id).scalar()
+        db.execute(insert(User), [dict(email=f"unrelated-{i}@example.test", display_name=f"Private {i}",
+                                     password_hash="unusable-test-password") for i in range(2_000)])
+        db.commit()
+    created = client.post(f"/api/v1/households/{household_id}/invitations", headers=auth(owner_token),
+                          json={"email": "invited@example.test", "role": "adult"})
+    assert created.status_code == 201, created.text
+    engine = session_factory.kw["bind"]
+    statements = []
+    def capture(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement.lower())
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        invitations = client.get(f"/api/v1/households/{household_id}/invitations", headers=auth(owner_token))
+        events = client.get(f"/api/v1/households/{household_id}/access-events", headers=auth(owner_token))
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert invitations.status_code == events.status_code == 200
+    assert len(invitations.json()) == len(events.json()) == 1
+    assert invitations.json()[0]["created_by_display_name"] == "Owner"
+    assert events.json()[0]["actor_display_name"] == "Owner"
+    assert "Private " not in invitations.text + events.text
+    global_user_scans = [sql for sql in statements if "from users" in sql and "where" not in sql]
+    assert not global_user_scans, "Household lists must not load every user's record to resolve authorized names"
 
 
 def test_owner_can_inspect_legacy_and_persist_versioned_human_access_profile(

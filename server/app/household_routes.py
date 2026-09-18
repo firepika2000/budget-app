@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from .access import is_household_owner
 from .config import Settings
@@ -209,12 +209,13 @@ def list_invitations(
     if not is_household_owner(db, user, household_id):
         raise HTTPException(status_code=404, detail="Household not found")
     now = datetime.now(timezone.utc)
-    creators = {item.id: item.display_name for item in db.scalars(select(User))}
-    rows = list(db.scalars(select(Invitation).where(
+    rows = db.execute(select(Invitation, User.display_name).outerjoin(
+        User, User.id == Invitation.created_by_user_id,
+    ).where(
         Invitation.household_id == household_id
-    ).order_by(Invitation.created_at.desc(), Invitation.id.desc())))
+    ).order_by(Invitation.created_at.desc(), Invitation.id.desc())).all()
     result = []
-    for invitation in rows:
+    for invitation, creator_name in rows:
         expires_at = invitation.expires_at
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
@@ -226,7 +227,7 @@ def list_invitations(
             "status": state,
             "expires_at": expires_at.isoformat(),
             "created_at": invitation.created_at.isoformat(),
-            "created_by_display_name": creators.get(invitation.created_by_user_id, "Former member"),
+            "created_by_display_name": creator_name if creator_name is not None else "Former member",
         })
     return result
 
@@ -316,14 +317,17 @@ def list_access_events(
 ) -> list[dict]:
     if not is_household_owner(db, user, household_id):
         raise HTTPException(status_code=404, detail="Household not found")
-    users = {item.id: item.display_name for item in db.scalars(select(User))}
-    rows = list(db.scalars(select(HouseholdAccessEvent).where(
+    actor, subject = aliased(User), aliased(User)
+    rows = db.execute(select(HouseholdAccessEvent, actor.display_name, subject.display_name)
+    .outerjoin(actor, actor.id == HouseholdAccessEvent.actor_user_id)
+    .outerjoin(subject, subject.id == HouseholdAccessEvent.subject_user_id).where(
         HouseholdAccessEvent.household_id == household_id
-    ).order_by(HouseholdAccessEvent.created_at.desc(), HouseholdAccessEvent.id.desc()).limit(200)))
+    ).order_by(HouseholdAccessEvent.created_at.desc(), HouseholdAccessEvent.id.desc()).limit(200)).all()
     return [{"id": row.id, "event_type": row.event_type,
-             "actor_display_name": users.get(row.actor_user_id, "Former member"),
-             "subject_display_name": users.get(row.subject_user_id) if row.subject_user_id else None,
-             "detail": row.detail, "created_at": row.created_at.isoformat()} for row in rows]
+             "actor_display_name": actor_name if actor_name is not None else "Former member",
+             "subject_display_name": subject_name,
+             "detail": row.detail, "created_at": row.created_at.isoformat()}
+            for row, actor_name, subject_name in rows]
 
 
 def deactivate_membership(db: Session, household_id: str, member_user_id: str, actor: User) -> None:

@@ -6,6 +6,16 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `9710981`, household invitation/access-event display-name resolution uses authorized scalar
+joins instead of reading every server user record. A disposable 2,000-unrelated-user regression
+first failed with two unrestricted user scans, then passed. No API/financial/migration semantics
+changed. Invitation-history pagination and Demo membership lifecycle remain open.
+Verification: 19 focused + 459 full backend PASS, zero skips, including real disposable PostgreSQL,
+migrations, financial vectors and encrypted recovery. `/tmp/budget-household-scope-backend.log`
+completed in 118.97s. Diff check PASS. Native evidence remains the preceding Beta 125+1 PASS;
+no Swift changes in this server checkpoint. Next: implement Demo invitation lifecycle without fake
+success, then address membership revocation/dynamic persona authority as a separate security scope.
+
 After request checkpoint `e45e4d7`, shared invitation code presentation now waits for the creation
 sheet's actual dismissal callback, with pending-secret state and in-flight dismissal/duplicate guards.
 No Demo persistence claim: invitation/member lifecycle still needs implementation. Allocation-version
