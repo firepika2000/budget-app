@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`753fa39` is pushed. Next verified server checkpoint allows future-month assignments of existing
+cash through the canonical dated ledger. Fixed-clock regression proves independent periods, edits,
+forecast exclusion, no duplicate spending and unchanged account observations. **360 backend pass,
+zero skips**, `/tmp/budget-future-assignment-full.log`; no Swift/migration changes. Demo period
+persistence and prospective rollover remain open. Next: reproduce suspected allocation-history
+category-scope leakage before continuing planning expansion. **DO NOT RETEST**.
+
 `985d660` is pushed. Next verified checkpoint prevents historical Smart Funding from reusing money
 assigned in later months, with an explicit spendable limit and locked/versioned recomputation.
 **359 backend pass, zero skips; 39 Core + 49 API pass; 94 native XCTest + production Smart Funding

@@ -1,6 +1,63 @@
-from .conftest import auth
+from datetime import date
+
+from app import budgeting_routes
+
+from .conftest import auth, freeze_today
 from .test_advanced_ledger import add_category, record
 from .test_budgeting_api import create_budget, create_budget_structure
+
+
+def test_future_month_assignment_uses_existing_cash_without_rewriting_history(
+    client, owner_token, session_factory, monkeypatch
+):
+    freeze_today(monkeypatch, date(2026, 9, 15), budgeting_routes)
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], account["id"], amount=50000)
+    root = f"/api/v1/budgets/{budget['id']}"
+    headers = auth(owner_token)
+    balance_before = client.get(f"{root}/accounts/{account['id']}/balance", headers=headers).json()
+    september_before = client.get(f"{root}/months/2026-09-01", headers=headers).json()
+    scheduled = client.post(f"{root}/scheduled-transactions", headers=headers, json={
+        "account_id": account["id"], "name": "Expected income", "amount_minor": 100000,
+        "next_date": "2026-10-15", "recurrence_unit": "months",
+    })
+    assert scheduled.status_code == 201, scheduled.text
+
+    assignment_url = f"{root}/categories/{category['id']}/assignment"
+    def assign(month, amount, version):
+        return client.put(assignment_url, headers=headers, json={
+            "month": month, "assigned_minor": amount, "expected_allocation_version": version,
+        })
+
+    assigned = assign("2026-10-01", 40000, 0)
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["allocation_version"] == 1
+    september = client.get(f"{root}/months/2026-09-01", headers=headers).json()
+    assert {k: v for k, v in september.items() if k != "allocation_version"} == {
+        k: v for k, v in september_before.items() if k != "allocation_version"
+    }
+    october = client.get(f"{root}/months/2026-10-01", headers=headers).json()
+    assert october["ready_to_assign_minor"] == 10000
+    assert october["categories"][0]["assigned_minor"] == 40000
+    assert october["categories"][0]["activity_minor"] == 0
+    assert october["categories"][0]["available_minor"] == 40000
+    # Neither forecast income nor a still-true historical RTA is new spendable cash.
+    assert assign("2026-11-01", 10001, 1).status_code == 409
+    assert assign("2026-09-01", 10001, 1).status_code == 409
+    assert assign("2026-10-01", 30000, 0).status_code == 409  # stale editor
+    assert assign("2026-10-01", 30000, 1).status_code == 200
+    assert assign("2026-11-01", 20000, 2).status_code == 200
+    november = client.get(f"{root}/months/2026-11-01", headers=headers).json()
+    assert november["ready_to_assign_minor"] == 0
+    assert november["categories"][0]["carried_available_minor"] == 30000
+    assert november["categories"][0]["assigned_minor"] == 20000
+    assert november["categories"][0]["available_minor"] == 50000
+    assert client.get(f"{root}/months/2026-10-01", headers=headers).json()["categories"][0]["assigned_minor"] == 30000
+    assert client.get(f"{root}/accounts/{account['id']}/balance", headers=headers).json() == balance_before
+    history = client.get(f"{root}/allocations", headers=headers).json()
+    assert len(history) == 3
+    assert all(sum(p["amount_minor"] for p in operation["postings"]) == 0 for operation in history)
 
 
 def fund(client, owner_token, budget_id, account_id, amount=100000, occurred_on="2026-09-01"):

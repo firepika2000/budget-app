@@ -47,6 +47,14 @@ See V0.9-PLANNING-POWER-PLAN.md for reproduction and evidence. Next independent 
 month. Prospective overspending-policy history (§7.4) is also not implemented. Neither is declared
 complete or deferred by this safety correction. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Live future assignments now use the existing dated allocation service and real-cash/version guards
+without its obsolete future-month rejection. Fixed-clock regression covers independent months,
+edit/reload, forecast exclusion, no double-use, balanced history and unchanged account observations.
+**360 backend pass, zero skips**, including disposable PostgreSQL; no Swift or migration change.
+Demo month persistence and effective-history rollover remain open, so future-planning parity is not
+complete. Next security audit: allocation-history listing checks its capability but appears to lack
+category-resource filtering; reproduce before correcting. Evidence `/tmp/budget-future-assignment-full.log`.
+
 ### Coordinated source backup checkpoint — 2026-09-18
 
 Following `c08867d`, backup requires an explicitly named source project and briefly pauses its API

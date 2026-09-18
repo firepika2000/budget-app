@@ -1002,9 +1002,8 @@ def upsert_assignment(
         or not can_access_resource(db, user, access_budget, "category", category_id)
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-    current_month = date.today().replace(day=1)
-    if body.month > current_month:
-        raise HTTPException(status_code=422, detail="Future allocations belong in the planning layer")
+    # Planning periods may be in the future, unlike actual transaction dates. The
+    # all-date RTA guard below reserves only existing cash, never forecast income.
     budget = lock_budget(db, budget_id)
     require_version(budget, body.expected_allocation_version)
     next_month = date(
