@@ -85,6 +85,37 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testFocusedReportReadsRequestOnlySelectedPayloadAndCurrentCredential() async throws {
+        let requests = CredentialRequestRecorder()
+        RefreshMockURLProtocol.handler = { request in
+            requests.append(path: request.url!.path, authorization: request.value(forHTTPHeaderField: "Authorization") ?? "")
+            guard request.url!.path.hasSuffix("/reports/debt") else { return Self.json(500, "{}") }
+            return Self.json(200, #"{"start_date":"2026-09-01","end_date":"2026-09-30","currency_code":"USD","opening_debt_minor":1000,"debt_minor":900,"principal_reduction_minor":100,"recorded_interest_range_minor":0,"recorded_interest_month_minor":0,"recorded_interest_ytd_minor":0,"recorded_interest_trailing_12_minor":0,"interest_tracking_started_on":null,"points":[],"accounts":[]}"#)
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let transport = URLSession(configuration: configuration)
+        let url = URL(string: "https://budget.example.com")!
+        let store = BudgetWorkspaceStore.production(
+            context: .live(budget: APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD"), serverURL: url, token: "A1"),
+            clientFactory: { try APIClient(baseURL: $0, session: transport) }
+        )
+        let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: false)
+        let empty = try await store.fetchReports(query: query, kinds: [])
+        XCTAssertNil(empty.debt)
+        XCTAssertEqual(requests.count, 0)
+        let first = try await store.fetchReports(query: query, kinds: [.debt])
+        XCTAssertEqual(first.debt?.debtMinor, 900)
+        XCTAssertNil(first.spending)
+        XCTAssertNil(first.netWorth)
+        XCTAssertEqual(requests.count, 1)
+        store.updateLiveCredentials(serverURL: url, token: "A2")
+        _ = try await store.fetchReports(query: query, kinds: [.debt])
+        XCTAssertEqual(requests.paths, Array(repeating: "/api/v1/budgets/b1/reports/debt", count: 2))
+        XCTAssertEqual(requests.authorizations, ["Bearer A1", "Bearer A2"])
+    }
+
+    @MainActor
     func testLiveWorkspaceAttachmentsAndCommandsUseRotatedCredentialWithoutReconstruction() async throws {
         let requests = CredentialRequestRecorder()
         RefreshMockURLProtocol.handler = { request in

@@ -260,7 +260,21 @@ struct WorkspaceSnapshot {
     var schedules: [APIScheduledTransaction] = []
 }
 
-struct WorkspaceReportQuery {
+enum WorkspaceReportKind: CaseIterable, Hashable {
+    case spending, spendingTrends, income, netWorth, debt, planPerformance, resilience
+}
+
+struct WorkspaceReports {
+    var spending: APISpendingReport?
+    var spendingTrends: APISpendingTrendsReport?
+    var income: APIIncomeSpendingReport?
+    var netWorth: APINetWorthReport?
+    var debt: APIDebtReport?
+    var planPerformance: APIPlanPerformanceReport?
+    var resilience: APIResilienceReport?
+}
+
+struct WorkspaceReportQuery: Equatable {
     let start: Date; let end: Date; let accountID: String; let categoryID: String
     let categoryGroup: String; let payee: String; let memberID: String
     let transactionType: String; let cleared: String; let flag: String; let tag: String
@@ -272,8 +286,27 @@ struct WorkspaceReportQuery {
 protocol WorkspaceDataSource: AnyObject {
     var budget: APIBudget { get }
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot
+    func reports(planMonth: Date, query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports
     func exportReports(report: WorkspaceReportQuery) async throws -> Data
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection
+}
+
+extension WorkspaceDataSource {
+    // The deterministic adapter computes its reports locally using the same
+    // canonical snapshot definitions. Live overrides this with bounded reads.
+    func reports(planMonth: Date, query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
+        guard !kinds.isEmpty else { return WorkspaceReports() }
+        let value = try await snapshot(planMonth: planMonth, report: query)
+        return WorkspaceReports(
+            spending: kinds.contains(.spending) ? value.spending : nil,
+            spendingTrends: kinds.contains(.spendingTrends) ? value.spendingTrends : nil,
+            income: kinds.contains(.income) ? value.income : nil,
+            netWorth: kinds.contains(.netWorth) ? value.netWorth : nil,
+            debt: kinds.contains(.debt) ? value.debt : nil,
+            planPerformance: kinds.contains(.planPerformance) ? value.planPerformance : nil,
+            resilience: kinds.contains(.resilience) ? value.resilience : nil
+        )
+    }
 }
 
 @MainActor
@@ -1032,26 +1065,40 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
     func updateCredentials(serverURL: URL, token: String) { credentials.update(serverURL: serverURL, token: token) }
     func bindCredentialAuthority(_ resolver: @escaping LiveWorkspaceCredentials.Resolver) { credentials.bind(resolver) }
 
+    func reports(planMonth: Date, query report: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
+        guard !kinds.isEmpty, budget.can("view_reports") else { return WorkspaceReports() }
+        try await credentials.prepare()
+        let client = try credentials.client()
+        let token = credentials.token
+        let start = BudgetWorkspaceStore.dateString(report.start), end = BudgetWorkspaceStore.dateString(report.end)
+        let cleared = report.cleared == "all" || report.cleared == "reconciled" ? nil : report.cleared == "cleared"
+        let reconciled = report.cleared == "reconciled" ? true : nil
+        async let loadedSpending: APISpendingReport? = kinds.contains(.spending) ? client.spendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], categoryIDs: report.categoryID.isEmpty ? [] : [report.categoryID], categoryGroups: report.categoryGroup.isEmpty ? [] : [report.categoryGroup], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], transactionType: report.transactionType.isEmpty ? nil : report.transactionType, cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token) : nil
+        async let loadedSpendingTrends: APISpendingTrendsReport? = kinds.contains(.spendingTrends) ? client.spendingTrendsReport(budgetID: budget.id, startDate: start, endDate: end, dimension: report.spendingTrendDimension, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], categoryIDs: report.categoryID.isEmpty ? [] : [report.categoryID], categoryGroups: report.categoryGroup.isEmpty ? [] : [report.categoryGroup], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], transactionType: report.transactionType.isEmpty ? nil : report.transactionType, cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token) : nil
+        async let loadedIncome: APIIncomeSpendingReport? = kinds.contains(.income) ? client.incomeSpendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token) : nil
+        async let loadedNetWorth: APINetWorthReport? = kinds.contains(.netWorth) && budget.can("view_account_balances") ? client.netWorthReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], includeTracking: report.includeTracking, token: token) : nil
+        async let loadedDebt: APIDebtReport? = kinds.contains(.debt) && budget.can("view_account_balances") ? client.debtReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], token: token) : nil
+        async let loadedPlanPerformance: APIPlanPerformanceReport? = kinds.contains(.planPerformance) ? client.planPerformanceReport(budgetID: budget.id, startDate: start, endDate: end, token: token) : nil
+        async let loadedResilience: APIResilienceReport? = kinds.contains(.resilience) && budget.can("view_account_balances") ? client.resilienceReport(budgetID: budget.id, token: token) : nil
+        return try await WorkspaceReports(spending: loadedSpending, spendingTrends: loadedSpendingTrends,
+            income: loadedIncome, netWorth: loadedNetWorth, debt: loadedDebt,
+            planPerformance: loadedPlanPerformance, resilience: loadedResilience)
+    }
+
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
         try await credentials.prepare()
         let client = try credentials.client()
         let month = BudgetWorkspaceStore.dateString(planMonth).prefix(7) + "-01"
-        let start = BudgetWorkspaceStore.dateString(report.start), end = BudgetWorkspaceStore.dateString(report.end)
         async let loadedAccounts = client.accounts(budgetID: budget.id, token: token)
         async let loadedTransactions = client.transactions(budgetID: budget.id, token: token)
         async let loadedCategories = client.categories(budgetID: budget.id, token: token)
         async let loadedGroups = client.categoryGroups(budgetID: budget.id, token: token)
         async let loadedSummary = client.monthSummary(budgetID: budget.id, month: String(month), token: token)
-        let cleared = report.cleared == "all" || report.cleared == "reconciled" ? nil : report.cleared == "cleared"
-        let reconciled = report.cleared == "reconciled" ? true : nil
-        async let loadedSpending = client.spendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], categoryIDs: report.categoryID.isEmpty ? [] : [report.categoryID], categoryGroups: report.categoryGroup.isEmpty ? [] : [report.categoryGroup], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], transactionType: report.transactionType.isEmpty ? nil : report.transactionType, cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token)
-        async let loadedSpendingTrends = client.spendingTrendsReport(budgetID: budget.id, startDate: start, endDate: end, dimension: report.spendingTrendDimension, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], categoryIDs: report.categoryID.isEmpty ? [] : [report.categoryID], categoryGroups: report.categoryGroup.isEmpty ? [] : [report.categoryGroup], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], transactionType: report.transactionType.isEmpty ? nil : report.transactionType, cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token)
-        async let loadedIncome = client.incomeSpendingReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token)
-        async let loadedNetWorth: APINetWorthReport? = budget.can("view_account_balances") ? client.netWorthReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], includeTracking: report.includeTracking, token: token) : nil
-        async let loadedDebt: APIDebtReport? = budget.can("view_account_balances") ? client.debtReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], token: token) : nil
-        async let loadedPlanPerformance = client.planPerformanceReport(budgetID: budget.id, startDate: start, endDate: end, token: token)
-        async let loadedResilience: APIResilienceReport? = budget.can("view_account_balances") ? client.resilienceReport(budgetID: budget.id, token: token) : nil
-        let (accounts, transactions, categories, groups, summary, spending, spendingTrends, income, netWorth, debt, planPerformance, resilience) = try await (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedSpending, loadedSpendingTrends, loadedIncome, loadedNetWorth, loadedDebt, loadedPlanPerformance, loadedResilience)
+        async let loadedReports = self.reports(planMonth: planMonth, query: report, kinds: Set(WorkspaceReportKind.allCases))
+        let (accounts, transactions, categories, groups, summary, reports) = try await
+            (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedReports)
+        let spending = reports.spending, spendingTrends = reports.spendingTrends, income = reports.income
+        let netWorth = reports.netWorth, debt = reports.debt, planPerformance = reports.planPerformance, resilience = reports.resilience
         let allocationOperations = budget.can("view_allocation_history") ? (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] : []
         let schedules = budget.can("view_transactions") ? try await client.scheduledTransactions(budgetID: budget.id, includeInactive: true, token: token) : []
         let targets = await withTaskGroup(of: APICategoryTarget?.self) { group in for category in categories { group.addTask { try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: self.token) } }; var values: [APICategoryTarget] = []; for await target in group { if let target { values.append(target) } }; return values }
@@ -1206,6 +1253,11 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func refresh() async { await loadSnapshot() }
+
+    func fetchReports(query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
+        guard let dataSource else { throw workspaceRepositoryError("Reports are unavailable.") }
+        return try await dataSource.reports(planMonth: planMonth, query: query, kinds: kinds)
+    }
 
     func exportReports() async throws -> URL {
         guard budget.can("export_data"), let dataSource else {

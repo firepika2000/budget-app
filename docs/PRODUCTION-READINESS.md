@@ -82,3 +82,17 @@ remains exact. Duplicate unused custom-order values no longer trap the non-custo
 Verification: 20 focused backend projection/vector tests; full backend 284 passed, 11 PostgreSQL-only
 skips (295 collected); full package 35 BudgetCore + 45 BudgetAPI passed; native 82 passed with Xcode
 `TEST SUCCEEDED`; diff whitespace check passed. No migration or human data changes.
+
+Focused-report contract preparation: selected report kinds now have a provider-neutral read
+contract. Live requests only those endpoints and resolves current credentials for each read;
+Demo retains its canonical report definitions and explicit workspace planning-month context.
+The native regression verifies empty selection performs no requests and debt-only reads use
+token A then rotated token B on the same workspace, without loading other reports or core data.
+Ordinary hydration STILL requests all reports: demand activation, cache invalidation, independent
+loading/error states, and measured launch-request reduction remain IN PROGRESS. This preparatory
+checkpoint is not evidence of completed lazy loading.
+Verification: native XCTest emitted 83 passes/zero failures on the preserved iOS 27 simulator;
+Xcode's result-finalization process remained pending after tests completed (not reported as a clean
+command exit). Full package passed 35 BudgetCore + 45 BudgetAPI using isolated temporary build
+output; the first workspace-build attempt failed code signing on Finder metadata. No backend
+code changed. Whitespace checks passed.
