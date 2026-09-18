@@ -1203,6 +1203,7 @@ class SmartFundingPreviewResponse(BaseModel):
     proposals: list[SmartFundingProposal]
     remaining_need_minor: int = 0
     unfunded_category_count: int = 0
+    funding_limit_minor: int = 0
 
 
 class SmartFundingCommit(BaseModel):

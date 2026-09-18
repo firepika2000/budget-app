@@ -7,10 +7,12 @@ final class SmartFundingContractTests: XCTestCase {
         let legacy = try JSONDecoder().decode(APISmartFundingPreview.self, from: Data(old.utf8))
         XCTAssertNil(legacy.remainingNeedMinor)
         XCTAssertNil(legacy.unfundedCategoryCount)
-        let current = String(old.dropLast()) + #", "remaining_need_minor":80000,"unfunded_category_count":1}"#
+        XCTAssertNil(legacy.fundingLimitMinor)
+        let current = String(old.dropLast()) + #", "remaining_need_minor":80000,"unfunded_category_count":1,"funding_limit_minor":10000}"#
         let decoded = try JSONDecoder().decode(APISmartFundingPreview.self, from: Data(current.utf8))
         XCTAssertEqual(decoded.remainingNeedMinor, 80000)
         XCTAssertEqual(decoded.unfundedCategoryCount, 1)
+        XCTAssertEqual(decoded.fundingLimitMinor, 10000)
         XCTAssertEqual(decoded.proposedMinor, legacy.proposedMinor)
     }
 }

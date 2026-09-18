@@ -221,6 +221,35 @@ def test_postgres_report_query_plans_use_composite_indexes(pg):
 # 0. Metadata bulk serialization
 # ---------------------------------------------------------------------------
 
+def test_cross_month_smart_funding_and_assignment_compete_for_same_real_money(pg):
+    from app.budgeting_routes import commit_smart_funding, upsert_assignment
+    from app.schemas import AssignmentUpsert, SmartFundingCommit
+
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    fund(pg.client, pg.token, budget["id"], account["id"], amount=100000, occurred_on="2026-08-01")
+    root = f"/api/v1/budgets/{budget['id']}"
+    headers = auth(pg.token)
+    assert pg.client.put(f"{root}/categories/{category['id']}/target", headers=headers,
+                         json={"target_type": "monthly_funding", "target_amount_minor": 100000}).status_code == 200
+    assert pg.client.put(f"{root}/categories/{category['id']}/assignment", headers=headers,
+                         json={"month": "2026-09-01", "assigned_minor": 70000}).status_code == 200
+    version = pg.client.get(f"{root}/months/2026-09-01", headers=headers).json()["allocation_version"]
+    def smart(db, user):
+        return commit_smart_funding(budget_id=budget["id"],
+            body=SmartFundingCommit(month=date(2026, 8, 1), expected_allocation_version=version), user=user, db=db)
+    def manual(db, user):
+        return upsert_assignment(budget_id=budget["id"], category_id=category["id"],
+            body=AssignmentUpsert(month=date(2026, 9, 1), assigned_minor=100000, expected_allocation_version=version), user=user, db=db)
+    results = run_race([route_attempt(pg.factory, pg.owner_id, smart), route_attempt(pg.factory, pg.owner_id, manual)])
+    assert outcomes(results) == ["conflict", "ok"], results
+    assert [value for kind, value in results if kind == "conflict"] == [409]
+    summary = pg.client.get(f"{root}/months/2026-09-01", headers=headers).json()
+    assert summary["ready_to_assign_minor"] == 0
+    assert summary["allocation_version"] == version + 1
+    assert summary["categories"][0]["available_minor"] == 100000
+
+
 def test_concurrent_target_snoozes_are_idempotent_and_money_neutral(pg):
     from app.planning_routes import set_category_target_snooze
     from app.schemas import CategoryTargetSnoozeUpdate

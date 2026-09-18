@@ -2276,8 +2276,13 @@ def month_summary(
     )
 
 
-def build_smart_funding_preview(summary: MonthSummaryResponse) -> dict:
-    remaining = max(summary.ready_to_assign_minor, 0)
+def build_smart_funding_preview(summary: MonthSummaryResponse, *, available_minor: int | None = None) -> dict:
+    # A historical month can show money that has since been assigned elsewhere. Observations
+    # remain date-scoped, but a new operation may consume only still-unassigned real money.
+    funding_limit = max(summary.ready_to_assign_minor, 0)
+    if available_minor is not None:
+        funding_limit = min(funding_limit, max(available_minor, 0))
+    remaining = funding_limit
     total_need = sum(max(category.underfunded_minor, 0) for category in summary.categories)
     if total_need > MAX_INT64:
         raise HTTPException(status_code=422, detail="Combined target need exceeds the supported amount range")
@@ -2298,7 +2303,7 @@ def build_smart_funding_preview(summary: MonthSummaryResponse) -> dict:
         remaining -= requested
         if remaining == 0:
             break
-    proposed = max(summary.ready_to_assign_minor, 0) - remaining
+    proposed = funding_limit - remaining
     amounts = {item["category_id"]: item["amount_minor"] for item in proposals}
     return {
         "month": summary.month,
@@ -2311,6 +2316,7 @@ def build_smart_funding_preview(summary: MonthSummaryResponse) -> dict:
         "remaining_need_minor": total_need - proposed,
         "unfunded_category_count": sum(category.underfunded_minor > amounts.get(category.category_id, 0)
                                        for category in summary.categories),
+        "funding_limit_minor": funding_limit,
     }
 
 
@@ -2321,7 +2327,8 @@ def smart_funding_preview(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return build_smart_funding_preview(month_summary(budget_id, month, user, db))
+    summary = month_summary(budget_id, month, user, db)
+    return build_smart_funding_preview(summary, available_minor=ready_to_assign_balance(db, budget_id))
 
 
 @router.post("/smart-funding", response_model=AllocationOperationResponse, status_code=status.HTTP_201_CREATED)
@@ -2341,12 +2348,12 @@ def commit_smart_funding(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Delegated members allocate only from their delegated pool",
         )
-    summary = month_summary(budget_id, body.month, user, db)
-    preview = build_smart_funding_preview(summary)
-    if not preview["proposals"]:
-        raise HTTPException(status_code=409, detail="No funded recommendations are currently available")
     budget = lock_budget(db, budget_id)
     require_version(budget, body.expected_allocation_version)
+    summary = month_summary(budget_id, body.month, user, db)
+    preview = build_smart_funding_preview(summary, available_minor=ready_to_assign_balance(db, budget_id))
+    if not preview["proposals"]:
+        raise HTTPException(status_code=409, detail="No funded recommendations are currently available")
     total = preview["proposed_minor"]
     operation = append_operation(
         db, budget=budget, actor=user, occurred_on=body.month, kind="smart_funding",

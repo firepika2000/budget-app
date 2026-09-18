@@ -17,6 +17,58 @@ from .test_budgeting_api import create_budget, create_budget_structure
 FORECAST_AS_OF = date(2026, 9, 1)
 
 
+def test_historical_smart_funding_cannot_spend_money_assigned_in_later_month(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], account["id"], amount=50000, occurred_on="2026-08-01")
+    root = f"/api/v1/budgets/{budget['id']}"
+    headers = auth(owner_token)
+    assert client.put(f"{root}/categories/{category['id']}/target", headers=headers,
+                      json={"target_type": "monthly_funding", "target_amount_minor": 30000}).status_code == 200
+    assert client.put(f"{root}/categories/{category['id']}/assignment", headers=headers,
+                      json={"month": "2026-09-01", "assigned_minor": 50000}).status_code == 200
+    before = client.get(f"{root}/months/2026-09-01", headers=headers).json()
+    assert before["ready_to_assign_minor"] == 0
+    historical = client.get(f"{root}/months/2026-08-01", headers=headers).json()
+    assert historical["ready_to_assign_minor"] == 50000  # historical observation remains true
+    preview = client.get(f"{root}/smart-funding/2026-08-01", headers=headers)
+    assert preview.status_code == 200
+    assert preview.json()["before_ready_to_assign_minor"] == 50000
+    assert preview.json()["funding_limit_minor"] == 0
+    assert preview.json()["proposed_minor"] == 0
+    assert preview.json()["remaining_need_minor"] == 30000
+    attempted = client.post(f"{root}/smart-funding", headers=headers,
+                            json={"month": "2026-08-01", "expected_allocation_version": before["allocation_version"]})
+    after = client.get(f"{root}/months/2026-09-01", headers=headers).json()
+    assert attempted.status_code == 409, f"Historical funding returned {attempted.status_code}, current RTA became {after['ready_to_assign_minor']}"
+    assert after == before
+
+
+def test_historical_smart_funding_caps_partial_availability_and_preserves_assets(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], account["id"], amount=50000, occurred_on="2026-08-01")
+    root = f"/api/v1/budgets/{budget['id']}"
+    headers = auth(owner_token)
+    assert client.put(f"{root}/categories/{category['id']}/target", headers=headers,
+                      json={"target_type": "monthly_funding", "target_amount_minor": 30000}).status_code == 200
+    assert client.put(f"{root}/categories/{category['id']}/assignment", headers=headers,
+                      json={"month": "2026-09-01", "assigned_minor": 40000}).status_code == 200
+    before_balance = client.get(f"{root}/accounts/{account['id']}/balance", headers=headers).json()
+    preview = client.get(f"{root}/smart-funding/2026-08-01", headers=headers).json()
+    assert preview["before_ready_to_assign_minor"] == 50000
+    assert preview["funding_limit_minor"] == preview["proposed_minor"] == 10000
+    assert preview["after_ready_to_assign_minor"] == 40000
+    assert preview["remaining_need_minor"] == 20000
+    committed = client.post(f"{root}/smart-funding", headers=headers,
+                            json={"month": "2026-08-01", "expected_allocation_version": preview["allocation_version"]})
+    assert committed.status_code == 201
+    assert sum(p["amount_minor"] for p in committed.json()["postings"]) == 0
+    assert client.get(f"{root}/months/2026-09-01", headers=headers).json()["ready_to_assign_minor"] == 0
+    assert client.get(f"{root}/accounts/{account['id']}/balance", headers=headers).json() == before_balance
+    assert client.get(f"{root}/smart-funding/2026-08-01", headers=headers).json()["proposed_minor"] == 0
+
+
 def test_smart_funding_partial_guidance_and_negative_rta_are_exact():
     category = SimpleNamespace(category_id="category", name="Target", available_minor=2000,
                                recommended_contribution_minor=10000, underfunded_minor=5000)

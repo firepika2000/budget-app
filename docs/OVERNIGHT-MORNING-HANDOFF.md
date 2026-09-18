@@ -6,6 +6,15 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`985d660` is pushed. Next verified checkpoint prevents historical Smart Funding from reusing money
+assigned in later months, with an explicit spendable limit and locked/versioned recomputation.
+**359 backend pass, zero skips; 39 Core + 49 API pass; 94 native XCTest + production Smart Funding
+UI pass**, final Xcode 27 Beta build/test successful. Logs `/tmp/budget-cross-month-full.log`,
+`/tmp/budget-cross-month-package.log`, `/tmp/budget-cross-month-native-final.log`. No migration.
+Next: future-month assignment/persistent period parity, explicitly authorized by product spec §7.2;
+Demo currently ignores the month and Live rejects manual future assignment. Rollover policy history
+is another open planning dependency. Human Live/data remain untouched. **DO NOT RETEST**.
+
 `ac5dd07` is pushed. Next verified checkpoint makes Monthly plan cost checked/explainable and fixes
 proven Double-based currency display loss using exact Decimal formatting. **94 native XCTest + four
 production UI tests pass; 39 Core + 49 API pass**, Beta build/test successful. Backend unchanged

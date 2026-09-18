@@ -221,6 +221,7 @@ def test_target_management_requires_manage_planning_and_respects_scope(client, o
     assert preview.json()["remaining_need_minor"] == 40000
     assert preview.json()["unfunded_category_count"] == 1
     assert preview.json()["before_ready_to_assign_minor"] == 0
+    assert preview.json()["funding_limit_minor"] == 0
     assert preview.json()["proposals"] == []
     assert hidden["id"] not in preview.text
 

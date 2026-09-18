@@ -10,7 +10,7 @@ Checkpoint completion is followed by the next unblocked engineering task.
 
 | Gate | Status | Evidence and remaining work |
 |---|---|---|
-| PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 cadence, incremental Smart Funding, priority and shortfall corrections are verified. Month-specific snooze, import/local-provider and later mission scope remain open. |
+| PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 cadence, monthly snooze, exact cost presentation and incremental/priority funding checkpoints are verified. Future-month provider parity, rollover policy history, import/local-provider and later mission scope remain open. |
 | FINANCIAL | IN PROGRESS | 23 shared single/multi-debt vectors include paid-off parity, horizon/high-APR boundaries, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
 | SECURITY | IN PROGRESS | Server capability/resource guards and regression suites exist. Extend adversarial matrix across reports, projections, imports and future providers; rerun relevant PostgreSQL/privacy gates. |
 | DATA | IN PROGRESS | Source head is `0028_target_snoozes`; human Live remains at `0020_payee_identity_repair`. Populated migration/concurrency and real age-encrypted new-destination restore prove canonical equality, snooze metadata and encrypted attachment integrity/wrong-key/tamper handling. Complete manifest preflight passes. Real Docker/Compose recovery and production Local Device storage remain open. |
@@ -32,6 +32,20 @@ Checkpoint completion is followed by the next unblocked engineering task.
 3. Proceed with V0.9-PLANNING-POWER-PLAN.md: reproduce and correct recurring-target cadence, then
    scoped snooze and planning closure. Preserve the normal-user server distribution requirement.
 4. Continue the highest-priority unblocked engineering gate through release-candidate readiness.
+
+### Cross-month allocation safety checkpoint
+
+Historical Smart Funding could reuse cash assigned in a later month: reproduced 201 with current
+RTA becoming -30000. Preview and commit now cap date-scoped observations by all-date unassigned
+real money; commit computes inside the budget lock after version validation. An explicit funding
+limit keeps historical RTA truthful without presenting it as all currently spendable. Hidden scopes
+remain bounded by the authorized summary. Full backend **359 pass, zero skips**, including real
+PostgreSQL competing assignment/Smart Funding, populated migrations, encrypted recovery and golden
+vectors. Swift **39 Core + 49 API pass**. No migration or human data operation.
+See V0.9-PLANNING-POWER-PLAN.md for reproduction and evidence. Next independent gap: specification
+§7.2 permits future assignment of existing cash, but Live rejects it and Demo ignores assignment
+month. Prospective overspending-policy history (§7.4) is also not implemented. Neither is declared
+complete or deferred by this safety correction. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
 ### Coordinated source backup checkpoint — 2026-09-18
 

@@ -1051,7 +1051,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         }
         let proposed = max(ready, 0) - remaining
         let unfundedCount = guidance.filter { $0.1.underfundedMinor > (fundedAmounts[$0.0.id] ?? 0) }.count
-        return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": ready, "proposed_minor": proposed, "after_ready_to_assign_minor": ready - proposed, "allocation_version": 1, "proposals": rows, "remaining_need_minor": totalNeed - proposed, "unfunded_category_count": unfundedCount]))
+        return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": ready, "proposed_minor": proposed, "after_ready_to_assign_minor": ready - proposed, "allocation_version": 1, "proposals": rows, "remaining_need_minor": totalNeed - proposed, "unfunded_category_count": unfundedCount, "funding_limit_minor": max(ready, 0)]))
     }
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws {
         guard !demo.isRestricted, budget.can("assign_money") else {
@@ -2781,9 +2781,16 @@ private struct LiveSmartFundingView: View {
             List {
                 if let preview {
                     Section("Preview — nothing moves yet") {
-                        LabeledContent("Before", value: workspace.format(preview.beforeReadyToAssignMinor))
+                        LabeledContent("Selected month before", value: workspace.format(preview.beforeReadyToAssignMinor))
+                        if let limit = preview.fundingLimitMinor {
+                            LabeledContent("Available for this preview", value: workspace.format(limit))
+                            if limit < max(preview.beforeReadyToAssignMinor, 0) {
+                                Text("Other months' activity or allocations limit how much is available for this preview.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
                         LabeledContent("Proposed", value: workspace.format(-preview.proposedMinor))
-                        LabeledContent("After", value: workspace.format(preview.afterReadyToAssignMinor))
+                        LabeledContent("Selected month after", value: workspace.format(preview.afterReadyToAssignMinor))
                     }
                     Section("Target recommendations") { ForEach(preview.proposals) { proposal in LabeledContent(proposal.categoryName, value: workspace.format(proposal.amountMinor)) } }
                     if let remaining = preview.remainingNeedMinor {
