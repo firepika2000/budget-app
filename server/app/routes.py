@@ -1,4 +1,5 @@
 from typing import Optional
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import delete, select
@@ -18,6 +19,7 @@ from .dependencies import get_current_user, get_settings
 from .models import (
     Account,
     Budget,
+    CashRolloverPolicyChange,
     BudgetAccessProfile,
     BudgetGrant,
     CapabilityGrant,
@@ -160,6 +162,12 @@ def create_budget(
         currency_code=body.currency_code,
     )
     db.add(budget)
+    if body.cash_rollover_policy is not None:
+        db.flush()
+        db.add(CashRolloverPolicyChange(
+            budget_id=budget.id, effective_month=date.min, policy=body.cash_rollover_policy,
+            version=0, source="budget_creation", actor_user_id=user.id,
+        ))
     db.commit()
     db.refresh(budget)
     return budget_response(db, user, budget)

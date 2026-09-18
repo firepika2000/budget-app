@@ -8,6 +8,50 @@ from .test_advanced_ledger import record
 from .test_budgeting_api import create_budget, create_budget_structure, add_member
 
 
+@pytest.mark.parametrize("policy, expected_future_rta", [
+    ("absorb_next_month", 8000), ("carry_category_deficit", 10000),
+])
+def test_explicit_creation_policy_has_owner_provenance_and_exact_projection(
+    client, owner_token, session_factory, policy, expected_future_rta,
+):
+    from app.models import Household
+    with session_factory() as db:
+        household_id = db.query(Household.id).scalar()
+    response = client.post("/api/v1/budgets", headers=auth(owner_token), json={
+        "household_id": household_id, "name": "Explicit policy", "currency_code": "USD",
+        "cash_rollover_policy": policy,
+    })
+    assert response.status_code == 201, response.text
+    budget = response.json()
+    root = f"/api/v1/budgets/{budget['id']}"
+    observation = client.get(root + "/cash-rollover-policy", headers=auth(owner_token)).json()
+    assert observation["current_policy"] == policy
+    assert observation["allocation_version"] == observation["policy_version"] == 0
+    audit = client.get(root + "/cash-rollover-policy/history", headers=auth(owner_token)).json()["items"]
+    assert len(audit) == 1
+    assert audit[0]["source"] == "budget_creation" and audit[0]["actor_user_id"]
+    assert audit[0]["effective_month"] == "0001-01-01"
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=10000, occurred_on="2026-09-01")
+    record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-2000, occurred_on="2026-09-02")
+    result = client.get(root + "/months/2026-10-01", headers=auth(owner_token))
+    assert result.status_code == 200, result.text
+    assert result.json()["ready_to_assign_minor"] == expected_future_rta
+    assert client.get(root + "/cash-rollover-policy/history", headers=auth(owner_token)).json()["items"] == audit
+
+
+def test_invalid_creation_policy_does_not_create_budget(client, owner_token, session_factory):
+    from app.models import Household
+    with session_factory() as db:
+        household_id = db.query(Household.id).scalar()
+    before = client.get("/api/v1/budgets", headers=auth(owner_token)).json()
+    result = client.post("/api/v1/budgets", headers=auth(owner_token), json={
+        "household_id": household_id, "name": "Invalid", "currency_code": "USD", "cash_rollover_policy": "unknown",
+    })
+    assert result.status_code == 422
+    assert client.get("/api/v1/budgets", headers=auth(owner_token)).json() == before
+
+
 def test_policy_lifecycle_is_prospective_audited_and_invalidates_allocations(client, owner_token, session_factory, monkeypatch):
     freeze_today(monkeypatch, date(2026, 9, 18), rollover_routes)
     budget = create_budget(client, owner_token, session_factory)

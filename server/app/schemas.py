@@ -50,6 +50,8 @@ class BudgetCreate(BaseModel):
     household_id: str
     name: str = Field(min_length=1, max_length=100)
     currency_code: str = Field(min_length=3, max_length=3)
+    # Omission preserves older clients' legacy carry behavior. New clients send an explicit choice.
+    cash_rollover_policy: Optional[Literal["absorb_next_month", "carry_category_deficit"]] = None
 
     @field_validator("currency_code")
     @classmethod

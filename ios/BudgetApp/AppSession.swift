@@ -247,12 +247,12 @@ final class AppSession: ObservableObject {
         }
     }
 
-    func createBudget(name: String, currencyCode: String, householdID: String) async {
+    func createBudget(name: String, currencyCode: String, householdID: String, cashRolloverPolicy: APICashRolloverPolicy? = nil) async {
         guard sourceMode == .liveServer else { return }
         await perform {
             let (serverURL, token) = try await self.currentLiveCredentials(caller: "createBudget")
             let client = try self.clientFactory(serverURL)
-            let created = try await client.createBudget(APIBudgetCreate(householdID: householdID, name: name, currencyCode: currencyCode), token: token)
+            let created = try await client.createBudget(APIBudgetCreate(householdID: householdID, name: name, currencyCode: currencyCode, cashRolloverPolicy: cashRolloverPolicy), token: token)
             self.budgets = try await client.budgets(token: token)
             self.selectBudget(created.id)
         }

@@ -381,6 +381,7 @@ struct BudgetCreationView: View {
     @State private var name = ""
     @State private var currencyCode = Locale.current.currency?.identifier ?? "USD"
     @State private var householdID = ""
+    @State private var cashRolloverPolicy: APICashRolloverPolicy = .absorbNextMonth
 
     var body: some View {
         NavigationStack {
@@ -392,6 +393,14 @@ struct BudgetCreationView: View {
                 TextField("Currency code", text: $currencyCode)
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
+                Section("Cash overspending") {
+                    Picker("Rollover policy", selection: $cashRolloverPolicy) {
+                        Text("Absorb next month (recommended)").tag(APICashRolloverPolicy.absorbNextMonth)
+                        Text("Carry category deficit").tag(APICashRolloverPolicy.carryCategoryDeficit)
+                    }.pickerStyle(.inline)
+                    Text("Absorb clears an unresolved cash category deficit next month and reduces Unassigned once. Carry keeps the deficit in its category. Credit-card debt stays separate. Later changes are prospective.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("New Budget")
             .navigationBarTitleDisplayMode(.inline)
@@ -403,7 +412,8 @@ struct BudgetCreationView: View {
                             await session.createBudget(
                                 name: name,
                                 currencyCode: currencyCode.uppercased(),
-                                householdID: householdID
+                                householdID: householdID,
+                                cashRolloverPolicy: cashRolloverPolicy
                             )
                             if session.errorMessage == nil { dismiss() }
                         }

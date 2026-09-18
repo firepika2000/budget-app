@@ -259,17 +259,20 @@ public struct APIBudgetCreate: Encodable, Sendable {
     public let householdID: String
     public let name: String
     public let currencyCode: String
+    public let cashRolloverPolicy: APICashRolloverPolicy?
 
-    public init(householdID: String, name: String, currencyCode: String) {
+    public init(householdID: String, name: String, currencyCode: String, cashRolloverPolicy: APICashRolloverPolicy? = nil) {
         self.householdID = householdID
         self.name = name
         self.currencyCode = currencyCode
+        self.cashRolloverPolicy = cashRolloverPolicy
     }
 
     enum CodingKeys: String, CodingKey {
         case name
         case householdID = "household_id"
         case currencyCode = "currency_code"
+        case cashRolloverPolicy = "cash_rollover_policy"
     }
 }
 

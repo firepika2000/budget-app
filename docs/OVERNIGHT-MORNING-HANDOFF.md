@@ -6,6 +6,23 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+New-budget policy activation after `44a2bc5`: native creation sends an explicit recommended absorb
+or selected carry policy. Server creates version-zero, actor-attributed `budget_creation` history
+in the same transaction as the budget; initial effective date 0001-01-01 covers its complete history.
+Old clients omitting/nulling the field retain legacy carry; no existing budget changes.
+**449 backend (zero skips), 48 Core + 52 API, 122 native + 1 UI PASS**; Beta build/diff check PASS.
+Logs `/tmp/budget-policy-creation-{backend,package,native}.log`. No new migration; human Live remains
+at 0020, source at 0029. No merge/tag. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
+
+Next concrete implementation: `DemoWorkspaceDataSource` currently has no-op `createAllowance`,
+`setAllowanceActive`, `issueAllowance`, and empty `allowanceIssuances`. `DemoStore.issueAllowance`
+also directly mutates displayed category fields and records separate split operations; do not
+simply connect that obsolete helper. Implement server-equivalent authorization, expected allocation
+version, issue-date/idempotency, exact split validation, one compound operation, recurrence advancement,
+read-only history and projection-driven publication. Keep new tests through canonical services.
+Also open: uniform injected clocks; other Demo request lifecycle no-ops; imports/local provider,
+real Docker/Compose recovery, and the larger mission ledger. Commercial decision remains external.
+
 Shared owner Cash Rollover settings now follow service checkpoint `5fd6d8f`. Profile navigation
 passes the existing store explicitly. Future-month changes require an explicit Cancel/Schedule
 alert; current policy, pending decisions, versioned history and error/reload states stay separate.

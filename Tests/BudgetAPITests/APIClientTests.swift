@@ -2,6 +2,19 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testBudgetCreationPolicyIsExplicitAndLegacyOmissionIsPreserved() throws {
+        let encoder = JSONEncoder()
+        let legacy = try JSONSerialization.jsonObject(with: encoder.encode(APIBudgetCreate(householdID: "h1", name: "Legacy", currencyCode: "USD"))) as! [String: Any]
+        XCTAssertNil(legacy["cash_rollover_policy"])
+        XCTAssertEqual(Set(legacy.keys), ["household_id", "name", "currency_code"])
+        for policy in APICashRolloverPolicy.allCases {
+            let value = APIBudgetCreate(householdID: "h1", name: "Explicit", currencyCode: "USD", cashRolloverPolicy: policy)
+            let payload = try JSONSerialization.jsonObject(with: encoder.encode(value)) as! [String: Any]
+            XCTAssertEqual(payload["cash_rollover_policy"] as? String, policy.rawValue)
+            XCTAssertEqual(Set(payload.keys), ["household_id", "name", "currency_code", "cash_rollover_policy"])
+        }
+    }
+
     func testCashRolloverPolicyContractUsesExactVersionedSelectionAndBoundedHistory() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

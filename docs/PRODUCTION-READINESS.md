@@ -4,6 +4,23 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Creation checkpoint after `44a2bc5`: the native new-budget form now recommends Absorb next month
+and offers Carry explicitly. AppSession/API pass the choice to the canonical owner-authorized create
+route. Budget plus version-zero `budget_creation` provenance are committed atomically, attributed
+to the authenticated owner. The baseline covers the new budget's complete history (0001-01-01),
+including later imported historical transactions. It generates no financial operation and leaves
+the allocation version at zero. Omission/null retains carry for older clients; existing budgets and
+seeded Demo fixtures retain their established policies. Invalid choices create no budget.
+
+Verification: **449 backend PASS, zero skips**, including PostgreSQL concurrency, populated migration
+and real encrypted recovery; **48 Core + 52 API PASS**; **122 native + 1 production UI PASS**;
+Beta simulator build/diff check PASS. Logs `/tmp/budget-policy-creation-{backend,package,native}.log`.
+The native creation/session regression retains immediate active-budget routing. No new migration;
+policy storage uses 0029, still unapplied to human Live. Human creation/settings acceptance remains
+pending. Next highest-priority proven gap: Demo allowance commands still silently return success
+without implementing their production lifecycle; implement canonical versioned/atomic allocation
+and issuance history rather than reusing the old direct-display mutation helper.
+
 Shared settings checkpoint after `5fd6d8f`: Profile & Settings now exposes owner-only Cash Rollover
 through the same workspace store in Live and Demo. It explains cash versus card consequences,
 separates current and pending policies, offers the next 24 authoritative months and requires an
@@ -403,10 +420,10 @@ No claim of provider parity from package-only projection tests. See PERSISTENT-M
 
 | Gate | Status | Evidence and remaining work |
 |---|---|---|
-| PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 cadence, monthly snooze, exact cost presentation and incremental/priority funding checkpoints are verified. Future-month provider parity, rollover policy history, import/local-provider and later mission scope remain open. |
+| PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 cadence, monthly snooze, dated provider parity, exact cost presentation, incremental/priority funding and prospective rollover checkpoints are implemented with automated evidence above. Injected clocks, Demo allowance parity, import/local-provider and later mission scope remain open. |
 | FINANCIAL | IN PROGRESS | 23 shared single/multi-debt vectors include paid-off parity, horizon/high-APR boundaries, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
 | SECURITY | IN PROGRESS | Proven allocation-history category leakage and structured-export scope bypass corrected in the current checkpoint. Capability plus resource authority is required; full-operation filtering preserves balanced history. Extend adversarial matrix across reports, projections, imports and future providers; no release-wide security PASS yet. |
-| DATA | IN PROGRESS | Source head is `0029_cash_rollover_history`; human Live remains at `0020_payee_identity_repair`. Rollover policy metadata is a non-activated foundation, not changed financial semantics. Populated migration/concurrency and real age-encrypted new-destination restore cover canonical equality, snoozes, policy history and encrypted attachment integrity. Real Docker/Compose recovery and production Local Device storage remain open. |
+| DATA | IN PROGRESS | Source head is `0029_cash_rollover_history`; human Live remains at `0020_payee_identity_repair`. Effective policy history now drives canonical projections and owner-authorized prospective settings; no migration silently changes legacy policy. Populated migration/concurrency and real age-encrypted new-destination restore cover canonical equality, snoozes, policy history and encrypted attachment integrity. Real Docker/Compose recovery and production Local Device storage remain open. |
 | RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Existing native/backend suites provide regression evidence; concurrency, offline failures, cancellation and release-wide regression remain open. |
 | PERFORMANCE | IN PROGRESS | Live core hydration makes zero detailed-report requests instead of seven; native tests cover caching/invalidation/retry. Hub has a bounded scalar response. Monthly summary now streams historical rows in batches; disposable 10k-transaction/split and 10k-allocation fixtures prove bounded ORM hydration and exact observations. Other report/Demo computation, category/account fan-out and release-scale closure remain open. |
 | UX | IN PROGRESS | Shared shell, onboarding, scalable payee selection and focused Insights exist. Report filters are reachable again; missing debt terms open the shared editor. Demand-loaded reports have independent loading/error/retry. Full workflow/accessibility closure remains open. |

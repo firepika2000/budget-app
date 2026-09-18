@@ -432,5 +432,18 @@ and version-paged decision history. Failed/stale writes require a reload rather 
 rebasing the user's decision. Cancel never calls the mutation. Current policy remains distinct
 from pending choices. Full-access nonowner members cannot open or call this owner-only operation.
 
-New-budget default activation remains separate and pending. Human Live remains untouched; these
-operations require the existing 0029 schema and do not automatically migrate any database.
+### Explicit new-budget policy choice
+
+The shared Live budget-creation form now recommends Absorb next month and offers Carry category
+deficit before creation. It sends `cash_rollover_policy` through AppSession/BudgetAPI to the ordinary
+owner-authorized create endpoint. Budget and version-zero `budget_creation` provenance commit
+together, with authenticated actor and server timestamp. The initial policy is effective from
+`0001-01-01`, defining the new budget's baseline even for imported/backdated records; no previous
+budget history exists to reinterpret. Allocation version stays zero and no financial entry is made.
+
+Omission/null deliberately preserves the legacy carry contract for old API clients. Existing budgets
+are never assigned the recommendation retroactively, and seeded Demo fixtures remain legacy budgets.
+An explicit carry choice is recorded as budget creation, not falsely labeled a legacy migration.
+Malformed enum values fail before creating a budget. Subsequent changes still use prospective,
+version-checked commands. Human Live remains untouched; these operations require existing 0029
+schema and do not automatically migrate any database. No new migration is required for this step.

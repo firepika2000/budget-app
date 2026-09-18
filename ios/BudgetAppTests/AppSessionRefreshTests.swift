@@ -601,7 +601,7 @@ final class AppSessionRefreshTests: XCTestCase {
         }
         await session.loadBudgets(caller: "test.firstBudget")
         XCTAssertEqual(session.route, .budgetSelection)
-        await session.createBudget(name: "First budget", currencyCode: "USD", householdID: "h1")
+        await session.createBudget(name: "First budget", currencyCode: "USD", householdID: "h1", cashRolloverPolicy: .absorbNextMonth)
         XCTAssertEqual(session.activeBudgetID, "b1")
         guard case .workspace = session.route else { return XCTFail("newly created first budget must immediately enter the shared shell") }
     }
