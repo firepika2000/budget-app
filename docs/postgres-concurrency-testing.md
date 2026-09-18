@@ -42,3 +42,26 @@ docker run --rm -d --name budgetpg -e POSTGRES_DB=budget_test -e POSTGRES_USER=b
 - Isolation: `public` is dropped + re-migrated once per session; each test `TRUNCATE … RESTART IDENTITY CASCADE`s all tables. Assumes a **non-parallel** pytest run (default); do not run this file under `pytest-xdist` against one shared database.
 - The tests contend on **row locks** (`with_for_update`) and the **optimistic `allocation_version`/request `version`** guards — the exact production mechanisms. They do not test `SERIALIZABLE` isolation (the app relies on row locks + version checks, not serializable retries).
 - PostgreSQL version validated in CI: **17** (`postgres:17-alpine`). Any 14+ server should behave identically for these locks.
+
+## Real recovery regression
+
+`tests/test_pg_recovery.py` uses the same explicitly disposable source fixture and requires
+`pg_dump` / `pg_restore` plus permission to create a database on that test cluster. It generates a
+unique `budget_recovery_<uuid>` destination, restores there, and drops only that generated
+destination afterward. It never restores into an existing destination. Attachment roots are
+temporary directories, including for the shared PostgreSQL fixture.
+
+The representative fixture includes income, reconciled spending, assignment postings, a funded
+credit purchase/reserve, an account transfer, first-class payees, a schedule, member grant, debt
+terms and an encrypted attachment. It compares all model-table rows plus authoritative balance,
+month summary, transaction, payee, schedule and debt-term responses. It also checks the migration
+head, attachment plaintext digest after restoration, wrong-key rejection and corruption rejection
+without altering the source ciphertext.
+
+Run with the same `BUDGET_APP_TEST_PG_URL` safety rules:
+```bash
+cd server
+pytest tests/test_pg_concurrency.py tests/test_pg_recovery.py -v
+```
+This proves real PostgreSQL and attachment-ciphertext recovery, **not** the outer `age` archive or
+Docker Compose orchestration. Those remain distinct end-to-end deployment gates.

@@ -97,13 +97,13 @@ def pg_migrated():
 
 
 @pytest.fixture
-def pg(pg_migrated):
+def pg(pg_migrated, tmp_path):
     engine = pg_migrated
     tables = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
     with engine.begin() as conn:
         conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     factory = sessionmaker(bind=engine, expire_on_commit=False)
-    app = create_app(Settings(database_url=PG_URL, jwt_secret="test-secret-that-is-longer-than-32-characters"))
+    app = create_app(Settings(database_url=PG_URL, jwt_secret="test-secret-that-is-longer-than-32-characters", attachment_storage_path=str(tmp_path / "attachments")))
     app.state.session_factory = factory
     with TestClient(app) as client:
         boot = client.post("/api/v1/auth/bootstrap", json={

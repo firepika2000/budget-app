@@ -40,8 +40,8 @@ with clean `TEST SUCCEEDED`; all 11 shared strategy vectors remain exact. No mig
 
 - Current branch: `codex/development`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
-- Latest independently verified pushed checkpoint: `b30d88b` (demand-loaded reports)
-- Push status: checkpoints through `b30d88b` are pushed. Later dated entries supersede historical pending notes below.
+- Latest independently verified pushed checkpoint: `f772f1d` (restore key safety)
+- Push status: checkpoints through `f772f1d` are pushed. Later dated entries supersede historical pending notes below.
 
 Focused report read-contract preparation follows this checkpoint. It preserves existing eager
 hydration while separating report selection and current-credential resolution for upcoming demand
@@ -66,6 +66,12 @@ script tests passed 7/7 after two extra test-only cases. Docker/age are absent, 
 Compose backup/restore remains an explicit gap. Native demand loading passed 84 XCTest and three
 production UI tests; final Xcode processes stalled after test completion and were terminated,
 not reported as clean finalizer exits. Previous combined run emitted TEST SUCCEEDED.
+
+Real PostgreSQL recovery checkpoint follows: generated destination database, all persisted row
+equality, financial API equality, copied AES-GCM attachment digest, wrong-key/corruption rejection,
+and unchanged source ciphertext. Full backend **299 passed, zero skips**, including 12 PG cases.
+The shared PG fixture now uses temporary attachment roots. Outer age/Docker recovery still requires
+those tools; the new proof does not substitute for it. Human Live was not used.
 - Active mission: [Production readiness ledger](PRODUCTION-READINESS.md); finish v0.8 and continue independent engineering toward an App Store release candidate.
 - Next task: demand-loaded Insights reports, authoritative invalidation, loading/error states and request-count evidence.
 - Human acceptance: **PENDING — DO NOT RETEST** during the autonomous run.

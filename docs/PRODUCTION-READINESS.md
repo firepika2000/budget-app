@@ -137,3 +137,13 @@ two further test-only recovery cases passed in the focused rerun. Shell syntax a
 passed. Docker and age are not installed in this environment: real encrypted Compose recovery
 remains unproven; fake-tool script tests are not represented as end-to-end encryption proof.
 The earlier full backend before this correction also passed all 295 tests, zero skips.
+
+Real recovery proof added: `test_pg_recovery.py` dumps the migrated disposable PostgreSQL source
+and restores into a newly generated database, then compares every model-table row and financial
+API observations. Fixture includes assignments, funded credit reserve, transfer, reconciliation,
+payees, schedule, member grant, debt terms and encrypted receipt. Restored receipt hash matches;
+wrong-key and tampered-ciphertext reads fail authentication, while the source copy is unchanged.
+The generated destination is removed after verification; no existing destination is overwritten.
+This is real PostgreSQL/AES-GCM evidence, not a claim about the unavailable Docker/age envelope.
+Final verification for that checkpoint: full backend **299 passed, zero skips**, including all
+12 PostgreSQL concurrency/recovery cases; focused populated recovery passed; diff checks passed.
