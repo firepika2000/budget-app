@@ -164,3 +164,10 @@ PostgreSQL; package 35 BudgetCore + 46 BudgetAPI passed; native 84 passed; three
 passed (focused navigation, filter context, Dark Mode/accessibility-sized report reachability).
 Simulator build succeeded; Xcode result finalization was pending after test completion. No human
 acceptance or comprehensive VoiceOver sign-off is claimed.
+
+Representative summary baseline (`test_report_scale.py`, disposable SQLite, same production HTTP
+route): 10 posted transactions over the selected multi-year range produced 150 bytes / 44 SQL
+statements / 0.0193s; 10,000 produced 156 bytes / 82 SQL statements / 0.8025s on this Mac. The test
+gates bounded payload and absence of per-transaction SQL fan-out, not elapsed time. Select-in split
+batches explain bounded query growth; no machine-independent latency guarantee or PostgreSQL load
+benchmark is claimed. Source data was synthetic and never written to human Live.
