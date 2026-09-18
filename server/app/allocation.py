@@ -13,6 +13,7 @@ from .models import (
     AllocationPosting,
     Budget,
     Category,
+    CategoryGroup,
     CreditCardReserveEvent,
     Transaction,
     TransactionSplit,
@@ -75,12 +76,18 @@ def append_operation(
     categories = {
         item.id: item for item in db.scalars(select(Category).where(Category.id.in_(category_ids)))
     } if category_ids else {}
+    active_groups = set(db.scalars(select(CategoryGroup.id).where(
+        CategoryGroup.id.in_({category.group_id for category in categories.values()}),
+        CategoryGroup.budget_id == budget.id,
+        CategoryGroup.is_archived.is_(False),
+    ))) if categories else set()
     for posting in postings:
         if not MIN_LEDGER_AMOUNT <= posting.amount_minor <= MAX_LEDGER_AMOUNT or posting.amount_minor == 0:
             raise ValueError("allocation posting is outside the supported nonzero minor-unit range")
         if posting.bucket == "category":
             category = categories.get(posting.category_id)
-            if category is None or category.budget_id != budget.id or category.is_archived:
+            if (category is None or category.budget_id != budget.id or category.is_archived
+                    or category.group_id not in active_groups):
                 raise HTTPException(status_code=422, detail="Invalid allocation category")
         elif posting.bucket != "ready_to_assign" or posting.category_id is not None:
             raise ValueError("invalid allocation bucket")

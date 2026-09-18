@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`323afa2` is pushed. Next verified ledger checkpoint rejects allocations into/out of categories
+whose parent group is archived. Individual category archival was already protected centrally; the
+reproduction refined the diagnosis, and the fix extends that same shared service with one group
+query. Archive/restore history and money remain unchanged. **367 backend pass, zero skips; focused
+22 pass**, `/tmp/budget-archived-allocation-full.log`. No Swift/migration changes. Next audit:
+calendar upper-bound input currently constructs year 10000 in planning/report paths. **DO NOT RETEST**.
+
 `d8567e9` is pushed. Next verified security checkpoint prevents allocation history exposing hidden
 category operations/counterparts/notes and prevents full JSON export bypassing explicit resource
 restrictions. Whole-operation SQL filtering preserves balanced authorized history; scoped CSV and

@@ -52,6 +52,19 @@ later cross-budget/CSV assertions included in the full run. `/tmp/budget-history
 checkpoint remains 94 XCTest + one UI, 39 Core + 49 API. Next: verify archived category/group
 assignment guards; source audit found manual assignment lacks the active-resource check used by targets.
 
+Follow-up reproduction refined that suspicion: the central `append_operation` service already
+rejects individually archived categories; the missing check is the parent group's archived state.
+It now validates active budget-owned groups in one bounded query before adding any postings or
+incrementing the allocation version. This protects assignment, moves and other canonical allocation
+callers without duplicating endpoint-specific guards. Regression covers archive category versus
+archive group, attempted increases/decreases, both move directions, unchanged account/audit state,
+then restoration and successful assignment. No historical data is rewritten or erased.
+Verification: **367 backend pass, zero skips**; focused allocation/delegation/allowance cases **22
+pass**. `/tmp/budget-archived-allocation-{reproduction,focused,full}.log`. No native/schema changes;
+diff check passes. Next reliability audit: month-boundary arithmetic constructs year 10000 for
+valid December 9999 input, and report loops advance after their terminal month. Reproduce before
+changing the shared calendar behavior.
+
 1. v0.8 automated checkpoint is recorded in V0.8-CLOSURE-AUDIT.md; human acceptance remains pending.
 2. Recovery hardening now includes complete archive validation, real encrypted PostgreSQL recovery,
    fresh-target guards and coordinated source capture. Actual Docker execution remains open.
