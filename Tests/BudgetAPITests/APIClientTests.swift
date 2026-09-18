@@ -2,6 +2,22 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testDebtCostUsesAuthorizedAccountFilterAndPreservesUnknownAndExactMoney() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/reports/debt-cost")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first?.value, "a1")
+            let body = Data(#"{"as_of":"2026-09-18","currency_code":"USD","model":"unchanged_balance_monthly_apr","accounts":[{"account_id":"a1","account_name":"Debt","principal_minor":9007199254740993,"effective_rate_basis_points":null,"estimated_monthly_interest_minor":null,"missing_fields":["annual_rate_basis_points"]}]}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let value = try await client.debtCost(budgetID: "b1", accountIDs: ["a1"], token: "current")
+        XCTAssertEqual(value.accounts.first?.principalMinor, 9_007_199_254_740_993)
+        XCTAssertNil(value.accounts.first?.estimatedMonthlyInterestMinor)
+    }
     override func setUp() {
         URLProtocol.registerClass(MockURLProtocol.self)
     }

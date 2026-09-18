@@ -12,17 +12,58 @@ from sqlalchemy.orm import Session, selectinload
 from starlette.responses import Response
 
 from .access import has_capability, is_household_owner, visible_resource_ids
-from .budgeting_routes import require_budget_capability
+from .budgeting_routes import account_working_balances, require_budget_capability
+from .debt_projection import estimated_monthly_interest
 from .database import get_db
 from .dependencies import get_current_user
-from .models import Account, AllocationOperation, AllocationPosting, Category, CategoryGroup, CreditCardReserveEvent, Membership, Transaction, TransactionSplit, User
+from .models import Account, AccountDebtTerms, AllocationOperation, AllocationPosting, Category, CategoryGroup, CreditCardReserveEvent, Membership, Transaction, TransactionSplit, User
 from .planning_routes import forecast
-from .schemas import DebtReportResponse, IncomeSpendingReportResponse, InsightsSummaryResponse, NetWorthReportResponse, PlanPerformanceReportResponse, ResilienceReportResponse, SpendingReportResponse, SpendingTrendsReportResponse
+from .schemas import DebtCostResponse, DebtReportResponse, IncomeSpendingReportResponse, InsightsSummaryResponse, NetWorthReportResponse, PlanPerformanceReportResponse, ResilienceReportResponse, SpendingReportResponse, SpendingTrendsReportResponse
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/reports")
 MAX_REPORT_TRANSACTION_IDS = 500
 MAX_REPORT_MONTHS = 600
+
+
+@router.get("/debt-cost", response_model=DebtCostResponse)
+def debt_cost_report(
+    budget_id: str,
+    account_id: list[str] = Query(default=[]),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Estimate current simple monthly cost, distinct from recorded/historical interest."""
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
+    require_budget_capability(db, user, budget_id, "view_account_balances")
+    visible = visible_resource_ids(db, user, budget, "account")
+    budget_accounts = dict(db.execute(select(Account.id, Account.account_type).where(Account.budget_id == budget_id)).all())
+    eligible_ids = {key for key, kind in budget_accounts.items() if kind in {"credit", "loan"}}
+    if any(value not in budget_accounts or (visible is not None and value not in visible) for value in account_id):
+        raise HTTPException(status_code=404, detail="Report resource not found")
+    selected = set(account_id) & eligible_ids if account_id else eligible_ids
+    if visible is not None:
+        selected &= visible
+    rows = []
+    as_of = date.today()
+    balances = account_working_balances(db, list(selected))
+    accounts = db.execute(select(Account, AccountDebtTerms).outerjoin(
+        AccountDebtTerms, AccountDebtTerms.account_id == Account.id
+    ).where(Account.id.in_(selected)).order_by(Account.name, Account.id)) if selected else []
+    for account, terms in accounts:
+        principal = max(-balances[account.id], 0)
+        rate = terms.annual_rate_basis_points if terms else None
+        if terms and terms.promotional_rate_basis_points is not None and terms.promotional_ends_on is not None and as_of <= terms.promotional_ends_on:
+            rate = terms.promotional_rate_basis_points
+        try:
+            bounded_estimate = estimated_monthly_interest(principal, rate if rate is not None else 0)
+            estimate = bounded_estimate if rate is not None else None
+        except (ValueError, OverflowError) as error:
+            raise HTTPException(status_code=422, detail="Debt cost exceeds the supported money range") from error
+        rows.append({"account_id": account.id, "account_name": account.name, "principal_minor": principal,
+                     "effective_rate_basis_points": rate, "estimated_monthly_interest_minor": estimate,
+                     "missing_fields": ["annual_rate_basis_points"] if rate is None else []})
+    return {"as_of": as_of, "currency_code": budget.currency_code, "accounts": rows}
 
 
 def _bounded_ids(values: list[str]) -> tuple[list[str], bool]:

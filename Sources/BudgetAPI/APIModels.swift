@@ -568,6 +568,32 @@ public struct APIAccountDebtTerms: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIDebtCost: Decodable, Equatable, Sendable {
+    public let asOf: String
+    public let currencyCode: String
+    public let model: String
+    public let accounts: [APIDebtCostAccount]
+    enum CodingKeys: String, CodingKey {
+        case model, accounts
+        case asOf = "as_of", currencyCode = "currency_code"
+    }
+}
+
+public struct APIDebtCostAccount: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String { accountID }
+    public let accountID: String
+    public let accountName: String
+    public let principalMinor: Int64
+    public let effectiveRateBasisPoints: Int?
+    public let estimatedMonthlyInterestMinor: Int64?
+    public let missingFields: [String]
+    enum CodingKeys: String, CodingKey {
+        case accountID = "account_id", accountName = "account_name", principalMinor = "principal_minor"
+        case effectiveRateBasisPoints = "effective_rate_basis_points"
+        case estimatedMonthlyInterestMinor = "estimated_monthly_interest_minor", missingFields = "missing_fields"
+    }
+}
+
 public struct APIDebtStrategyProjectionRequest: Encodable, Sendable {
     public let firstPaymentOn: String
     public let strategy: String

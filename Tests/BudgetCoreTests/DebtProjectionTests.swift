@@ -2,6 +2,12 @@ import XCTest
 @testable import BudgetCore
 
 final class DebtProjectionTests: XCTestCase {
+    func testCurrentMonthlyCostIsExactAndNotAStoredCharge() throws {
+        XCTAssertEqual(try DebtProjectionEngine.estimatedMonthlyInterest(principalMinor: 100_000, annualRateBasisPoints: 1_300), 1_083)
+        XCTAssertEqual(try DebtProjectionEngine.estimatedMonthlyInterest(principalMinor: 50, annualRateBasisPoints: 1_200), 1)
+        XCTAssertEqual(try DebtProjectionEngine.estimatedMonthlyInterest(principalMinor: .max, annualRateBasisPoints: 0), 0)
+        XCTAssertThrowsError(try DebtProjectionEngine.estimatedMonthlyInterest(principalMinor: -1, annualRateBasisPoints: 100))
+    }
     func testMonthlyStrategyPaymentNormalizesFrequencyAndMinimumRuleExactly() throws {
         let first = date("2026-01-31")
         XCTAssertEqual(try DebtProjectionEngine.monthlyStrategyPayment(principalMinor: 10_000, firstPaymentOn: first,

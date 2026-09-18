@@ -6,6 +6,16 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Latest pushed: `f2e7608` (single-debt explicit rate-transition correction). Next checkpoint adds
+Estimated Current Cost as a distinct shared production screen and authorized read-only route, with
+current credential resolution, explicit approximation/unknown-rate semantics and batched balances.
+Native verification: 87 XCTest, three focused debt UI cases; final Cost rerun includes an unfiltered
+description/trait accessibility audit. Package 38 Core + 47 API and focused backend 26 pass. Full
+backend final run: **308 passed, zero skips**. No migration or human data changes; **DO NOT RETEST**.
+Next audit finding: the old debt-history chart still exists in an unused view; the actual Overview
+currently renders only scalar observations. Restore it through the production composition and add
+runtime coverage rather than relying on source-string presence. Review monetary chart axis labels.
+
 `9964f24` is pushed: promotional strategy terms, Demo normalization/readiness, dated debt labels,
 explicit scenario assumptions and verified UI recovery. The immediately following single-debt
 rate-transition correction adds the 21st shared vector after reproducing premature non-amortization.

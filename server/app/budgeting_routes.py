@@ -154,9 +154,18 @@ def projection_terms(terms: AccountDebtTerms) -> ProjectionTerms:
 
 
 def account_working_balance(db: Session, account_id: str) -> int:
-    return int(db.scalar(select(func.coalesce(func.sum(Transaction.amount_minor), 0)).where(
-        Transaction.account_id == account_id
-    )) or 0)
+    return account_working_balances(db, [account_id])[account_id]
+
+
+def account_working_balances(db: Session, account_ids: list[str]) -> dict[str, int]:
+    """Canonical posted balances, batched without transaction hydration."""
+    balances = dict.fromkeys(account_ids, 0)
+    if account_ids:
+        for account_id, amount in db.execute(select(Transaction.account_id, func.sum(Transaction.amount_minor)).where(
+            Transaction.account_id.in_(account_ids)
+        ).group_by(Transaction.account_id)):
+            balances[account_id] = int(amount or 0)
+    return balances
 
 
 def validate_account_treatment(account_type: str, is_on_budget: bool) -> None:

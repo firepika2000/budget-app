@@ -655,6 +655,11 @@ public struct APIClient {
         )
     }
 
+    public func debtCost(budgetID: String, accountIDs: [String] = [], token: String) async throws -> APIDebtCost {
+        try await send(path: "api/v1/budgets/\(budgetID)/reports/debt-cost",
+                       queryItems: accountIDs.map { URLQueryItem(name: "account_id", value: $0) }, token: token)
+    }
+
     public func planPerformanceReport(budgetID: String, startDate: String, endDate: String, token: String) async throws -> APIPlanPerformanceReport {
         try await send(path: "api/v1/budgets/\(budgetID)/reports/plan-performance", queryItems: [
             URLQueryItem(name: "start_date", value: startDate), URLQueryItem(name: "end_date", value: endDate),

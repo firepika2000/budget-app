@@ -77,6 +77,11 @@ public struct DebtStrategyProjectionResult: Sendable {
 public enum DebtProjectionEngine {
     public static let maximumPeriods = 1_200
 
+    public static func estimatedMonthlyInterest(principalMinor: Int64, annualRateBasisPoints: Int64) throws -> Int64 {
+        guard principalMinor >= 0, (0...100_000).contains(annualRateBasisPoints) else { throw ProjectionError.invalidInput }
+        return try multipliedAndRounded(principalMinor, by: annualRateBasisPoints, dividedBy: 120_000)
+    }
+
     /// A fixed monthly scenario budget, normalized from the first scheduled payment.
     /// This is not a claim about an issuer's future minimum-payment rules.
     public static func monthlyStrategyPayment(principalMinor: Int64, firstPaymentOn: Date, terms: DebtProjectionTerms) throws -> Int64 {
@@ -203,7 +208,7 @@ public enum DebtProjectionEngine {
             let startingTotal = try active.reduce(Int64(0)) { try checkedAdd($0, balances[$1]!) }
             var remaining: [String: Int64] = [:]
             for id in active {
-                let interest = try multipliedAndRounded(balances[id]!, by: rates[id]!, dividedBy: 120_000)
+                let interest = try estimatedMonthlyInterest(principalMinor: balances[id]!, annualRateBasisPoints: rates[id]!)
                 interestByID[id] = try checkedAdd(interestByID[id]!, interest)
                 remaining[id] = try checkedAdd(balances[id]!, interest)
             }

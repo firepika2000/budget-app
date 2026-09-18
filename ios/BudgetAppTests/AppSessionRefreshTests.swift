@@ -89,6 +89,9 @@ final class AppSessionRefreshTests: XCTestCase {
         let requests = CredentialRequestRecorder()
         RefreshMockURLProtocol.handler = { request in
             requests.append(path: request.url!.path, authorization: request.value(forHTTPHeaderField: "Authorization") ?? "")
+            if request.url!.path.hasSuffix("/reports/debt-cost") {
+                return Self.json(200, #"{"as_of":"2026-09-18","currency_code":"USD","model":"unchanged_balance_monthly_apr","accounts":[]}"#)
+            }
             guard request.url!.path.hasSuffix("/reports/debt") else { return Self.json(500, "{}") }
             return Self.json(200, #"{"start_date":"2026-09-01","end_date":"2026-09-30","currency_code":"USD","opening_debt_minor":1000,"debt_minor":900,"principal_reduction_minor":100,"recorded_interest_range_minor":0,"recorded_interest_month_minor":0,"recorded_interest_ytd_minor":0,"recorded_interest_trailing_12_minor":0,"interest_tracking_started_on":null,"points":[],"accounts":[]}"#)
         }
@@ -113,6 +116,11 @@ final class AppSessionRefreshTests: XCTestCase {
         _ = try await store.fetchReports(query: query, kinds: [.debt])
         XCTAssertEqual(requests.paths, Array(repeating: "/api/v1/budgets/b1/reports/debt", count: 2))
         XCTAssertEqual(requests.authorizations, ["Bearer A1", "Bearer A2"])
+        _ = try await store.debtCost(accountIDs: [])
+        store.updateLiveCredentials(serverURL: url, token: "A3")
+        _ = try await store.debtCost(accountIDs: ["card"])
+        XCTAssertEqual(Array(requests.paths.suffix(2)), Array(repeating: "/api/v1/budgets/b1/reports/debt-cost", count: 2))
+        XCTAssertEqual(Array(requests.authorizations.suffix(2)), ["Bearer A2", "Bearer A3"])
     }
 
     @MainActor

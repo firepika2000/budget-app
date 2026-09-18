@@ -298,9 +298,13 @@ protocol WorkspaceDataSource: AnyObject {
     func reports(planMonth: Date, query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports
     func exportReports(report: WorkspaceReportQuery) async throws -> Data
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection
+    func debtCost(accountIDs: [String]) async throws -> APIDebtCost
 }
 
 extension WorkspaceDataSource {
+    func debtCost(accountIDs: [String]) async throws -> APIDebtCost {
+        throw workspaceRepositoryError("Current debt cost is unavailable from this provider.")
+    }
     func coreSnapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
         var value = try await snapshot(planMonth: planMonth, report: report)
         value.spending = nil; value.spendingTrends = nil; value.income = nil
@@ -681,6 +685,26 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         }
         let status = result.status == .paidOff ? "paid_off" : result.status == .nonAmortizing ? "non_amortizing" : "iteration_limit"
         return try decode(["currency_code": budget.currencyCode, "status": status, "strategy": request.strategy, "rollover": request.rollover, "extra_payment_minor": request.extraPaymentMinor, "payoff_order": result.payoffOrder, "debt_free_date": result.debtFreeDate.map(BudgetWorkspaceStore.dateString) ?? NSNull(), "payment_count": result.paymentCount, "projected_interest_minor": result.projectedInterestMinor, "projected_total_paid_minor": result.projectedTotalPaidMinor, "projected_total_cost_minor": result.projectedTotalCostMinor, "accounts": rows, "incomplete_accounts": []])
+    }
+
+    func debtCost(accountIDs: [String]) async throws -> APIDebtCost {
+        guard budget.can("view_reports"), budget.can("view_account_balances") else { throw workspaceRepositoryError("You do not have permission to view debt cost.") }
+        let visible = demo.visibleAccounts.filter { ["credit", "loan"].contains($0.kind.rawValue) }
+        guard Set(accountIDs).isSubset(of: Set(demo.visibleAccounts.map(\.id))) else { throw workspaceRepositoryError("Report resource not found.") }
+        let asOf = Date.demo(monthsAgo: 0, day: 30)
+        let rows = try visible.filter { accountIDs.isEmpty || accountIDs.contains($0.id) }.map { account -> [String: Any] in
+            let terms = debtTermsValues[account.id]
+            var rate = terms?.annualRateBasisPoints
+            if let promotionalRate = terms?.promotionalRateBasisPoints, let expiry = terms?.promotionalEndsOn,
+               asOf <= BudgetWorkspaceStore.parseDate(expiry) { rate = promotionalRate }
+            let principal = max(-account.balance, 0)
+            let estimate = try rate.map { try DebtProjectionEngine.estimatedMonthlyInterest(principalMinor: principal, annualRateBasisPoints: Int64($0)) }
+            return ["account_id": account.id, "account_name": account.name, "principal_minor": principal,
+                    "effective_rate_basis_points": rate ?? NSNull(), "estimated_monthly_interest_minor": estimate ?? NSNull(),
+                    "missing_fields": rate == nil ? ["annual_rate_basis_points"] : []]
+        }
+        return try decode(["as_of": BudgetWorkspaceStore.dateString(asOf), "currency_code": budget.currencyCode,
+                           "model": "unchanged_balance_monthly_apr", "accounts": rows])
     }
 
     private func missingDebtProjectionFields(_ terms: APIAccountDebtTermsUpsert) -> [String] {
@@ -1178,6 +1202,10 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         try await credentials.prepare()
         return try await credentials.client().debtStrategyProjection(budgetID: budget.id, request: request, token: token)
     }
+    func debtCost(accountIDs: [String]) async throws -> APIDebtCost {
+        try await credentials.prepare()
+        return try await credentials.client().debtCost(budgetID: budget.id, accountIDs: accountIDs, token: token)
+    }
 }
 
 @MainActor
@@ -1329,7 +1357,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func reportsReady(_ kinds: Set<WorkspaceReportKind>) -> Bool {
-        loadedReportContext == reportContext && kinds.isSubset(of: loadedReportKinds)
+        kinds.isEmpty || (loadedReportContext == reportContext && kinds.isSubset(of: loadedReportKinds))
     }
 
     func resetReportSelection() {
@@ -1397,6 +1425,10 @@ final class BudgetWorkspaceStore: ObservableObject {
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection {
         guard let dataSource else { throw workspaceRepositoryError("Debt payoff scenarios are unavailable.") }
         return try await dataSource.debtStrategyProjection(request)
+    }
+    func debtCost(accountIDs: [String]) async throws -> APIDebtCost {
+        guard let dataSource else { throw workspaceRepositoryError("Current debt cost is unavailable.") }
+        return try await dataSource.debtCost(accountIDs: accountIDs)
     }
 
     func createTransaction(_ operation: RecordTransactionOperation) async throws {
@@ -3475,6 +3507,7 @@ private struct ReportLoadModifier: ViewModifier {
     private struct LoadKey: Equatable {
         let context: WorkspaceReportContext
         let suspended: Bool
+        let kinds: Set<WorkspaceReportKind>
     }
     func body(content: Content) -> some View {
         let ready = store.reportsReady(kinds)
@@ -3495,8 +3528,8 @@ private struct ReportLoadModifier: ViewModifier {
                     } else { ProgressView("Loading report…") }
                 }
             }
-            .task(id: LoadKey(context: store.reportContext, suspended: suspended)) {
-                if !suspended { await store.loadReports(kinds) }
+            .task(id: LoadKey(context: store.reportContext, suspended: suspended, kinds: kinds)) {
+                if !suspended && !kinds.isEmpty { await store.loadReports(kinds) }
             }
     }
 }
@@ -3615,19 +3648,89 @@ private struct NetWorthDestinationView: View {
 }
 
 private struct DebtInterestDestinationView: View {
-    enum SectionChoice:String,CaseIterable {case overview="Overview",interest="Interest",payoff="Payoff"}
+    enum SectionChoice:String,CaseIterable {case overview="Overview",interest="Interest",cost="Cost",payoff="Payoff"}
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var choice=SectionChoice.overview
     @State private var editingTermsAccount: APIAccount?
     @State private var termsRevision = 0
     var body: some View { List { Section { Picker("Debt section",selection:$choice){ForEach(SectionChoice.allCases,id:\.self){Text($0.rawValue).tag($0)}}.pickerStyle(.segmented).accessibilityIdentifier("debt-insights-sections") }
-        if choice != .payoff { ReportPeriodControls() }
-        if let report=store.debtReport { switch choice { case .overview: DebtOverviewContent(report:report); case .interest: DebtInterestContent(report:report); case .payoff: DebtPayoffContent(report: report, editingTermsAccount: $editingTermsAccount, termsRevision: termsRevision) } }
+        if choice == .overview || choice == .interest { ReportPeriodControls() }
+        if choice == .cost { DebtCurrentCostContent(editingTermsAccount: $editingTermsAccount, termsRevision: termsRevision) }
+        else if let report=store.debtReport { switch choice { case .overview: DebtOverviewContent(report:report); case .interest: DebtInterestContent(report:report); case .payoff: DebtPayoffContent(report: report, editingTermsAccount: $editingTermsAccount, termsRevision: termsRevision); case .cost: EmptyView() } }
         else { ContentUnavailableView("No debt",systemImage:"checkmark.circle",description:Text("Credit cards and loans will appear here when visible.")) }
-    }.modifier(ReportLoadModifier(kinds: [.debt])).navigationTitle("Debt & Interest")
+    }.modifier(ReportLoadModifier(kinds: choice == .cost ? [] : [.debt])).navigationTitle("Debt & Interest")
         .sheet(item: $editingTermsAccount, onDismiss: { termsRevision += 1 }) { account in
             DebtTermsEditorView(account: account).environmentObject(store)
         }
+    }
+}
+
+private struct DebtCurrentCostContent: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Binding var editingTermsAccount: APIAccount?
+    let termsRevision: Int
+    @State private var report: APIDebtCost?
+    @State private var loading = false
+    @State private var error: String?
+    private var context: String { "\(store.reportAccountID)|\(store.reportRevision)|\(store.liveCredentialRevision)|\(termsRevision)" }
+
+    var body: some View {
+        Group {
+        Section("Estimated current interest") {
+            Text("An unchanged-balance estimate for one month at the saved APR—not a posted charge or an issuer statement. Payments, daily balance changes, grace periods, fees and future rate changes can change actual interest.")
+                .font(.footnote).foregroundStyle(.secondary)
+            if let report { Text("Current balances and effective APR as of \(report.asOf). Historical report dates do not apply.").font(.caption).foregroundStyle(.secondary) }
+        }
+        if loading { Section { ProgressView("Loading estimated cost…") } }
+        if let error {
+            Section("Unable to load estimated cost") {
+                Text(error)
+                Button("Retry") { Task { await load() } }.disabled(loading)
+            }
+        }
+        if let report {
+            if report.accounts.isEmpty {
+                ContentUnavailableView("No visible debt accounts", systemImage: "checkmark.circle",
+                                       description: Text("Credit cards and loans will appear here when available."))
+            }
+            ForEach(report.accounts) { row in
+                Section(row.accountName) {
+                    LabeledContent("Current debt", value: store.format(row.principalMinor))
+                    if let rate = row.effectiveRateBasisPoints {
+                        LabeledContent("Effective APR", value: String(format: "%d.%02d%%", rate / 100, rate % 100))
+                    }
+                    if let estimate = row.estimatedMonthlyInterestMinor {
+                        LabeledContent("Estimated monthly interest", value: store.format(estimate))
+                            .accessibilityIdentifier("estimated-debt-cost-\(row.accountID)")
+                    } else {
+                        Text("Estimate unavailable: add a saved APR. An unknown rate is not treated as zero.")
+                    }
+                    if let account = store.accounts.first(where: { $0.id == row.accountID }) {
+                        if store.budget.can("manage_budget_structure") {
+                            Button("Edit Debt Terms") { editingTermsAccount = account }
+                                .accessibilityIdentifier("cost-debt-terms-\(row.accountID)")
+                        }
+                        NavigationLink("View account") { LiveAccountRegisterView(initialAccount: account) }
+                    }
+                }
+            }
+        }
+        Section { Text("Read-only estimate. No transaction, balance, reconciliation, assignment or payment reserve is changed.")
+            .font(.caption).foregroundStyle(.secondary) }
+        }
+        .task(id: context) { await load() }
+    }
+
+    private func load() async {
+        let requested = context
+        loading = true; error = nil; report = nil
+        defer { if requested == context { loading = false } }
+        do {
+            let value = try await store.debtCost(accountIDs: store.reportAccountID.isEmpty ? [] : [store.reportAccountID])
+            guard !Task.isCancelled, requested == context else { return }
+            guard value.model == "unchanged_balance_monthly_apr" else { throw workspaceRepositoryError("This estimate model is not supported by this app version.") }
+            report = value
+        } catch { if !Task.isCancelled, requested == context { self.error = error.localizedDescription } }
     }
 }
 

@@ -901,6 +901,22 @@ class InsightsSummaryResponse(BaseModel):
     expected_margin_minor: Optional[int] = None
 
 
+class DebtCostAccountResponse(BaseModel):
+    account_id: str
+    account_name: str
+    principal_minor: int
+    effective_rate_basis_points: Optional[int] = None
+    estimated_monthly_interest_minor: Optional[int] = None
+    missing_fields: list[str] = []
+
+
+class DebtCostResponse(BaseModel):
+    as_of: date
+    currency_code: str
+    model: Literal["unchanged_balance_monthly_apr"] = "unchanged_balance_monthly_apr"
+    accounts: list[DebtCostAccountResponse]
+
+
 class DebtReportResponse(BaseModel):
     start_date: date
     end_date: date

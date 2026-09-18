@@ -235,3 +235,23 @@ payments still return non-amortizing. The 21st shared vector asserts every date,
 remaining balance. Verification: 23 focused Python tests, full backend **305 passed / zero skips**,
 Swift **37 Core + 46 API**, native **86 XCTest**, Simulator build and **TEST SUCCEEDED**. No UI,
 schema, migration, authorization or posted accounting behavior changed in this follow-up.
+
+Estimated current cost is now a separate Cost section in the shared Debt & Interest destination.
+`GET reports/debt-cost` uses canonical current visible balances, explicit effective APR (including
+promotional expiry), and the same exact half-up APR/12 helper as the monthly strategy engine. It is
+labelled an unchanged-balance approximation, not a charge prediction; daily balances, grace periods,
+fees, actual weekly payment timing and unknown future rates are not fabricated. Unknown APR remains
+null; zero APR is an exact zero. Missing payoff payment/due inputs do not prevent this limited estimate.
+Visible cash-only filters return an empty debt list; hidden/cross-budget/missing IDs return equivalent
+404s, absent grants are denied and revoked balance capability returns 403. Canonical balances are
+batched rather than loading transaction history or one query per account. No persistence is changed.
+
+Demo shares the exact helper and fixture clock. Live uses the current credential after rotation.
+The UI provides loading/error/retry, empty/unknown states, a shared authorized terms editor, account
+drill-through and explicit estimated accessibility labels. Changing report kinds is now part of the
+loading task identity, avoiding an unloaded destination after switching modes. Verified: 26 focused
+backend/domain tests; 38 Core + 47 API; 87 native XCTest; three production debt UI cases. The final
+Cost UI rerun also passed Apple's sufficient-description/trait accessibility audit without filtering
+issues. This is not comprehensive human VoiceOver acceptance. Final backend: **308 passed, zero
+skips**, including disposable PostgreSQL. Simulator build and `git diff --check` pass.
+Matching app/server deployment is required for the new route; no new migration, no human Live update.

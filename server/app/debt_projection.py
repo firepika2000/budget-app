@@ -29,6 +29,14 @@ def _money(value: int) -> int:
     return value
 
 
+def estimated_monthly_interest(principal_minor: int, annual_rate_basis_points: int) -> int:
+    """Unchanged-balance, simple APR/12 estimate; never an issuer charge prediction."""
+    _money(principal_minor)
+    if not 0 <= annual_rate_basis_points <= 100_000:
+        raise ValueError("invalid annual rate")
+    return _money(_round_ratio_half_up(principal_minor * annual_rate_basis_points, 120_000))
+
+
 @dataclass(frozen=True)
 class ProjectionTerms:
     annual_rate_basis_points: int
@@ -295,7 +303,7 @@ def project_debt_strategy(
         starting_total = _money(sum(balances[item] for item in active))
         statements: dict[str, int] = {}
         for item in active:
-            interest = _round_ratio_half_up(balances[item] * rates[item], 10_000 * 12)
+            interest = estimated_monthly_interest(balances[item], rates[item])
             interest_by_id[item] += interest
             statements[item] = _money(balances[item] + interest)
 

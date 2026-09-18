@@ -6,6 +6,31 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testCurrentDebtCostIsReadOnlyAndPartialAPRDoesNotRequirePayoffTerms() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let balances = store.accountBalances
+        let summary = store.summary
+        try await store.deleteAccountDebtTerms(accountID: "visa")
+        let missing = try await store.debtCost(accountIDs: ["visa"])
+        XCTAssertEqual(missing.accounts.count, 1)
+        XCTAssertNil(missing.accounts.first?.estimatedMonthlyInterestMinor)
+        _ = try await store.updateAccountDebtTerms(accountID: "visa", value: .init(termsType: "credit_card", annualRateBasisPoints: 0))
+        let zero = try await store.debtCost(accountIDs: ["visa"])
+        XCTAssertEqual(zero.accounts.first?.estimatedMonthlyInterestMinor, 0)
+        XCTAssertEqual(zero.model, "unchanged_balance_monthly_apr")
+        XCTAssertEqual(zero.asOf, "2026-09-30")
+        let cash = try XCTUnwrap(store.accounts.first { $0.accountType == "checking" })
+        let noDebt = try await store.debtCost(accountIDs: [cash.id])
+        XCTAssertTrue(noDebt.accounts.isEmpty)
+        do {
+            _ = try await store.debtCost(accountIDs: ["hidden-or-missing"])
+            XCTFail("Unknown account must not broaden cost scope")
+        } catch {}
+        XCTAssertEqual(store.accountBalances, balances)
+        XCTAssertEqual(store.summary, summary)
+    }
+    @MainActor
     func testDemoStrategyUsesPromotionalTermsNormalizedPaymentsAndPartialReadiness() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()

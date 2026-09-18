@@ -1,6 +1,30 @@
 import XCTest
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testDebtCurrentCostIsSeparateFromRecordedInterestAndOpensSharedTerms() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+        let debt = app.buttons["insights-debt-interest"]
+        for _ in 0..<6 where !debt.exists { app.swipeUp() }
+        debt.tap()
+        app.segmentedControls.buttons["Cost"].tap()
+        let estimate = app.descendants(matching: .any)["estimated-debt-cost-visa"]
+        for _ in 0..<8 where !estimate.exists { app.swipeUp() }
+        XCTAssertTrue(estimate.waitForExistence(timeout: 5))
+        XCTAssertTrue(estimate.label.contains("Estimated monthly interest"))
+        try app.performAccessibilityAudit(for: [.sufficientElementDescription, .trait])
+        let edit = app.buttons["cost-debt-terms-visa"]
+        for _ in 0..<4 where !edit.exists { app.swipeUp() }
+        edit.tap()
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Debt & Interest"].waitForExistence(timeout: 5))
+        for _ in 0..<8 where !app.segmentedControls.buttons["Interest"].isHittable { app.swipeDown() }
+        app.segmentedControls.buttons["Interest"].tap()
+        XCTAssertTrue(app.staticTexts["Recorded Interest"].waitForExistence(timeout: 5))
+    }
     func testAppearancePreferenceUsesProductionSettingsAndPersistsAcrossRelaunch() {
         let suite = "BudgetAppUITests.Appearance.\(UUID().uuidString)"
         let app = XCUIApplication()
