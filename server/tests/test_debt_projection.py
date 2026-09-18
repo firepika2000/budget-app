@@ -323,3 +323,42 @@ def test_strategy_filters_hidden_debt_before_projection_and_rejects_hidden_ids(
     })
     assert direct.status_code == 404
     assert hidden["id"] not in direct.text
+
+    # A hidden debt with missing terms must not turn an otherwise complete visible
+    # scenario into an incomplete result, change totals/order/dates, or leak counts.
+    removed = client.delete(
+        f"{base}/accounts/{hidden['id']}/debt-terms", headers=auth(owner_token)
+    )
+    assert removed.status_code == 204, removed.text
+    after = client.post(path, headers=auth(child_token), json=body)
+    assert after.status_code == 200
+    assert after.json() == scoped.json()
+
+    other_budget = create_budget(client, owner_token, session_factory)
+    foreign = create_strategy_card(client, owner_token, other_budget["id"], "Foreign", 90_000, 999, 1_000)
+    for inaccessible_id in (hidden["id"], foreign["id"], "00000000-0000-0000-0000-000000000000"):
+        for field in ("account_ids", "custom_order"):
+            probe = client.post(path, headers=auth(child_token), json=body | {
+                field: [visible["id"], inaccessible_id],
+            })
+            assert probe.status_code == 404
+            assert probe.json() == direct.json(), "hidden, cross-budget and missing resources are indistinguishable"
+        individual = client.post(
+            f"{base}/accounts/{inaccessible_id}/debt-projection",
+            headers=auth(child_token), json={"first_payment_on": "2026-01-15"},
+        )
+        assert individual.status_code == 404
+        assert individual.json() == {"detail": "Account not found"}
+
+    # Report visibility alone cannot reveal principal through a projection when
+    # balance permission has been revoked on this same long-lived session.
+    assert client.put(f"{base}/access/{child_id}", headers=auth(owner_token), json={
+        "capabilities": ["view_budget", "view_accounts", "view_reports"],
+        "restrict_accounts": True, "account_ids": [visible["id"]],
+        "restrict_categories": False, "category_ids": [],
+    }).status_code == 200
+    assert client.post(path, headers=auth(child_token), json=body).status_code == 403
+    assert client.post(
+        f"{base}/accounts/{visible['id']}/debt-projection",
+        headers=auth(child_token), json={"first_payment_on": "2026-01-15"},
+    ).status_code == 403

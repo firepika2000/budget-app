@@ -193,3 +193,10 @@ totals/status. Together with the 11 strategy vectors this gives 17 shared cases.
 projection/vector tests: 21 passed; full Swift package: 36 Core + 46 API passed. No engine semantics
 changed. Broader production UI suite is running separately and its failures are not hidden by this
 financial-test checkpoint.
+
+Debt projection privacy coverage now compares the entire visible response before/after removing a
+hidden debt's terms: no incomplete status, count, payoff date/order or aggregate changes are allowed.
+Hidden, cross-budget and nonexistent IDs are tested through both strategy selector fields and the
+individual projection route with indistinguishable resource errors. Revoking balance capability on
+the same session blocks both routes despite retained report access. All 19 focused projection tests
+pass. No production change was needed for these additional adversarial cases.
