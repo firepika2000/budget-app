@@ -6,6 +6,23 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Latest pushed: `d9a64cd` (estimated current cost). The next verified checkpoint restores recorded
+debt history in the actual Overview rather than its unused predecessor. Five time-series reports
+now format monetary axes as currency and select bounded ticks from real observation dates. Debt
+marks expose exact date/currency accessibility values and expandable exact observations.
+Final Xcode Beta run: **87 XCTest + four production UI tests PASS**, build PASS, final TEST SUCCEEDED.
+The final screenshot and accessibility hierarchy were inspected. No backend changes since the
+**308 passed / zero skips** result; package remains **38 Core + 47 API**.
+
+An important test-evidence correction: previous largest-text tests passed an invalid literal launch
+argument, so those runs proved dark mode but not accessibility text size. They now use UIKit's
+actual accessibility-extra-extra-extra-large raw value. Home and Insights pass at that real size;
+the debt section selector becomes a native menu to keep all four destinations reachable. A failing
+exact-row test also exposed DisclosureGroup ancestor identifiers replacing child identifiers; that
+ancestor identifier was removed, preserving unique observation targets. No assertions were weakened.
+Human acceptance remains **PENDING — DO NOT RETEST**. Next: correct payoff horizon presentation so
+bounded partial results cannot be mistaken for complete payoff cost, then continue readiness work.
+
 Latest pushed: `f2e7608` (single-debt explicit rate-transition correction). Next checkpoint adds
 Estimated Current Cost as a distinct shared production screen and authorized read-only route, with
 current credential resolution, explicit approximation/unknown-rate semantics and batched balances.

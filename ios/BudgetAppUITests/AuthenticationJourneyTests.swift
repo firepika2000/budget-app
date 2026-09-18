@@ -1,6 +1,39 @@
 import XCTest
+import UIKit
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testProductionDebtOverviewActuallyRendersHistoryAndExactObservations() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+        let debt = app.buttons["insights-debt-interest"]
+        for _ in 0..<6 where !debt.exists { app.swipeUp() }
+        debt.tap()
+        app.buttons["report-period"].tap()
+        app.buttons["90 Days"].tap()
+        let chart = app.descendants(matching: .any)["debt-history-chart"]
+        for _ in 0..<10 where !chart.exists || chart.frame.intersection(app.frame).height < 180 { app.swipeUp() }
+        XCTAssertTrue(chart.waitForExistence(timeout: 5), "An unused chart type or source-string assertion is not production rendering")
+        XCTAssertTrue(chart.label.contains("Debt history"))
+        XCTAssertGreaterThan(chart.frame.intersection(app.frame).height, 100)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Production debt history with currency axis"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let accessibility = XCTAttachment(string: chart.debugDescription)
+        accessibility.name = "Debt chart accessibility hierarchy"
+        accessibility.lifetime = .keepAlways
+        add(accessibility)
+        let observations = app.buttons["Recorded observations"]
+        for _ in 0..<5 where !observations.exists { app.swipeUp() }
+        observations.tap()
+        let closing = app.descendants(matching: .any)["debt-observation-2026-09-30"]
+        for _ in 0..<5 where !closing.exists { app.swipeUp() }
+        XCTAssertTrue(closing.waitForExistence(timeout: 5))
+        XCTAssertTrue(closing.label.contains("$") || String(describing: closing.value).contains("$"))
+        try app.performAccessibilityAudit(for: [.sufficientElementDescription, .trait])
+    }
     func testDebtCurrentCostIsSeparateFromRecordedInterestAndOpensSharedTerms() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -101,7 +134,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = [
             "--demo", "--demo-screen=home",
-            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
+            "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue
         ]
         app.launch()
 
@@ -144,15 +177,25 @@ final class AuthenticationJourneyTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = [
             "--demo", "--demo-screen=insights",
-            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
+            "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue,
         ]
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["insights-spending-income"].waitForExistence(timeout: 5))
+        let spending = app.buttons["insights-spending-income"]
+        for _ in 0..<8 where !spending.exists { app.swipeUp() }
+        XCTAssertTrue(spending.waitForExistence(timeout: 5))
         let debt = app.buttons["insights-debt-interest"]
         for _ in 0..<8 where !debt.exists { app.swipeUp() }
         XCTAssertTrue(debt.waitForExistence(timeout: 5), "large accessibility text must keep every focused report reachable")
+        debt.tap()
+        let sections = app.buttons["debt-insights-sections"]
+        XCTAssertTrue(sections.waitForExistence(timeout: 5), "Accessibility sizes use a readable menu rather than four cramped segments")
+        sections.tap()
+        app.buttons["Cost"].tap()
+        let estimated = app.descendants(matching: .any)["estimated-debt-cost-visa"]
+        for _ in 0..<10 where !estimated.exists { app.swipeUp() }
+        XCTAssertTrue(estimated.waitForExistence(timeout: 5))
     }
 
     func testProductionDebtPayoffScenarioIsReadOnlyAndExposesExplicitAssumptions() {

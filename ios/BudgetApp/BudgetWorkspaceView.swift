@@ -3650,10 +3650,18 @@ private struct NetWorthDestinationView: View {
 private struct DebtInterestDestinationView: View {
     enum SectionChoice:String,CaseIterable {case overview="Overview",interest="Interest",cost="Cost",payoff="Payoff"}
     @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var choice=SectionChoice.overview
     @State private var editingTermsAccount: APIAccount?
     @State private var termsRevision = 0
-    var body: some View { List { Section { Picker("Debt section",selection:$choice){ForEach(SectionChoice.allCases,id:\.self){Text($0.rawValue).tag($0)}}.pickerStyle(.segmented).accessibilityIdentifier("debt-insights-sections") }
+    private var sectionPicker: some View {
+        Picker("Debt section", selection: $choice) { ForEach(SectionChoice.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+            .accessibilityIdentifier("debt-insights-sections")
+    }
+    var body: some View { List { Section {
+        if dynamicTypeSize.isAccessibilitySize { sectionPicker.pickerStyle(.menu) }
+        else { sectionPicker.pickerStyle(.segmented) }
+    }
         if choice == .overview || choice == .interest { ReportPeriodControls() }
         if choice == .cost { DebtCurrentCostContent(editingTermsAccount: $editingTermsAccount, termsRevision: termsRevision) }
         else if let report=store.debtReport { switch choice { case .overview: DebtOverviewContent(report:report); case .interest: DebtInterestContent(report:report); case .payoff: DebtPayoffContent(report: report, editingTermsAccount: $editingTermsAccount, termsRevision: termsRevision); case .cost: EmptyView() } }
@@ -3753,9 +3761,11 @@ private struct DebtOverviewContent: View {
                     NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: {
                         LabeledContent(row.accountName, value: store.format(row.debtMinor))
                     }
+                    .accessibilityIdentifier("debt-account-\(account.id)")
                 }
             }
         }
+        DebtHistoryContent(report: report)
     }
 }
 private struct DebtInterestContent: View {
@@ -3964,8 +3974,9 @@ private struct SpendingTrendsView: View {
                         }
                     }
                 }
-                .chartXAxis { AxisMarks(values: .automatic(desiredCount: min(report.series.first?.points.count ?? 1, 6))) { _ in AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
+                .modifier(ReportDateChartAxis(dates: (report.series.first?.points ?? []).compactMap { dateFormatter.date(from: $0.periodStart) }))
                 .frame(minHeight: 240)
+                .modifier(CurrencyChartAxis())
                 .accessibilityIdentifier("spending-trends-chart")
                 .accessibilityLabel("Spending trends by \(dimensionLabel.lowercased()) from \(report.startDate) through \(report.endDate)")
                 .accessibilityValue("Total spending \(store.format(report.totalSpendingMinor)); \(report.series.count) ranked series. Exact values follow the chart.")
@@ -4039,8 +4050,9 @@ private struct HistoricalPlanPerformanceView: View {
                             .foregroundStyle(by: .value("Plan value", "Spent"))
                     }
                 }
-                .chartXAxis { AxisMarks(values: .automatic(desiredCount: min(report.points.count, 6))) { _ in AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
+                .modifier(ReportDateChartAxis(dates: report.points.compactMap { dateFormatter.date(from: $0.periodStart) }))
                 .frame(minHeight: 230)
+                .modifier(CurrencyChartAxis())
                 .accessibilityIdentifier("plan-performance-history-chart")
                 .accessibilityLabel("Plan performance history from \(report.startDate) through \(report.endDate)")
                 .accessibilityValue("\(report.points.count) monthly observations. Exact values follow the chart.")
@@ -4121,9 +4133,10 @@ private struct NetWorthReportView: View {
                             .foregroundStyle(by: .value("Series", "Liabilities"))
                     }
                 }
-                .chartXAxis { AxisMarks(values: .automatic(desiredCount: min(report.points.count, 6))) { _ in AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
+                .modifier(ReportDateChartAxis(dates: report.points.compactMap { dateFormatter.date(from: $0.asOf) }))
                 .chartXSelection(value: $selectedDate)
                 .frame(minHeight: 240)
+                .modifier(CurrencyChartAxis())
                 .accessibilityIdentifier("net-worth-history-chart")
                 .accessibilityLabel("Net worth history from \(report.startDate) through \(report.endDate)")
                 .accessibilityValue("Assets \(store.format(report.assetsMinor)), liabilities \(store.format(report.liabilitiesMinor)), net worth \(store.format(report.netWorthMinor))")
@@ -4156,44 +4169,71 @@ private struct NetWorthReportView: View {
     }
 }
 
-private struct DebtReportView: View {
+private struct CurrencyChartAxis: ViewModifier {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    func body(content: Content) -> some View {
+        content.chartYAxis {
+            AxisMarks { value in
+                AxisGridLine()
+                AxisValueLabel {
+                    if let amount = value.as(Int64.self) { Text(store.format(amount)).font(.caption2) }
+                }
+            }
+        }
+        .accessibilityHidden(store.hideAmounts)
+    }
+}
+
+private struct ReportDateChartAxis: ViewModifier {
+    let dates: [Date]
+    private var ticks: [Date] {
+        guard dates.count > 6 else { return dates }
+        let step = max(1, (dates.count - 1 + 4) / 5)
+        var selected = stride(from: 0, to: dates.count, by: step).map { dates[$0] }
+        if selected.last != dates.last, let last = dates.last { selected.append(last) }
+        return selected
+    }
+    func body(content: Content) -> some View {
+        content.chartXAxis {
+            AxisMarks(values: ticks) { _ in
+                AxisGridLine(); AxisTick()
+                AxisValueLabel(format: .dateTime.month(.abbreviated).year(.twoDigits))
+            }
+        }
+    }
+}
+
+private struct DebtHistoryContent: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let report: APIDebtReport
     private let dateFormatter: DateFormatter = { let value = DateFormatter(); value.locale = Locale(identifier: "en_US_POSIX"); value.dateFormat = "yyyy-MM-dd"; return value }()
 
     var body: some View {
-        Section("Debt") {
-            if report.accounts.isEmpty {
+        Section("Recorded debt history") {
+            if report.accounts.isEmpty || report.points.isEmpty {
                 ContentUnavailableView("No debt accounts", systemImage: "checkmark.circle", description: Text("Credit cards and loans will appear here when visible."))
             } else {
                 Chart(report.points) { point in
                     LineMark(x: .value("Date", dateFormatter.date(from: point.asOf) ?? .distantPast), y: .value("Debt", point.debtMinor))
                         .foregroundStyle(Theme.attention)
                         .symbol(.circle)
+                        .accessibilityLabel("Recorded debt on \(point.asOf)")
+                        .accessibilityValue(store.format(point.debtMinor))
                 }
-                .chartXAxis { AxisMarks(values: .automatic(desiredCount: min(report.points.count, 6))) { _ in AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
+                .modifier(ReportDateChartAxis(dates: report.points.compactMap { dateFormatter.date(from: $0.asOf) }))
+                .modifier(CurrencyChartAxis())
                 .frame(minHeight: 220)
                 .accessibilityIdentifier("debt-history-chart")
                 .accessibilityLabel("Debt history from \(report.startDate) through \(report.endDate)")
                 .accessibilityValue("Recorded debt as of \(report.endDate): \(store.format(report.debtMinor)), \(report.principalReductionMinor >= 0 ? "net debt decrease" : "net debt increase") \(store.format(abs(report.principalReductionMinor)))")
-                LabeledContent("Opening debt", value: store.format(report.openingDebtMinor))
-                LabeledContent("Debt as of \(report.endDate)", value: store.format(report.debtMinor)).fontWeight(.semibold)
-                LabeledContent(report.principalReductionMinor >= 0 ? "Net debt decrease" : "Net debt increase", value: store.format(abs(report.principalReductionMinor)))
-                Section("Recorded Interest") {
-                    LabeledContent("Selected range", value: store.format(report.recordedInterestRangeMinor)).accessibilityIdentifier("recorded-interest-range")
-                    LabeledContent("This month", value: store.format(report.recordedInterestMonthMinor))
-                    LabeledContent("Year to date", value: store.format(report.recordedInterestYTDMinor))
-                    LabeledContent("Trailing 12 months", value: store.format(report.recordedInterestTrailing12Minor))
-                    if let started = report.interestTrackingStartedOn { Text("Recorded since \(started). Earlier interest may not be classified.").font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("recorded-interest-coverage") }
-                    else { Text("No explicitly classified interest is recorded. Historical interest is not inferred from names or memos.").font(.caption).foregroundStyle(.secondary) }
-                }
-                ForEach(report.accounts) { row in
-                    if let account = store.accounts.first(where: { $0.id == row.accountID }) {
-                        NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: { VStack(alignment: .leading) { LabeledContent(row.accountName, value: store.format(row.debtMinor)); if row.recordedInterestMinor != 0 { Text("Recorded interest \(store.format(row.recordedInterestMinor))").font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("recorded-interest-account-\(account.id)") } } }
-                            .accessibilityIdentifier("debt-account-\(account.id)")
+                DisclosureGroup("Recorded observations") {
+                    ForEach(report.points) { point in
+                        LabeledContent(point.asOf, value: store.format(point.debtMinor))
+                            .accessibilityIdentifier("debt-observation-\(point.asOf)")
                     }
                 }
-                Text("Recorded interest is posted classified history. Estimates and future payoff projections remain separate.").font(.caption).foregroundStyle(.secondary)
+                Text("Recorded balance observations, not a payoff forecast. Exact values are available in Recorded observations.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -4216,8 +4256,8 @@ private struct IncomeSpendingTrendsView: View {
                             .foregroundStyle(by: .value("Flow", "Spending"))
                     }
                 }
-                .chartXAxis { AxisMarks(values: .automatic(desiredCount: min(report.periods.count, 6))) { _ in AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
-                .chartYAxis { AxisMarks { value in AxisGridLine(); AxisValueLabel { if let amount = value.as(Int64.self) { Text(store.format(amount)).font(.caption2) } } } }
+                .modifier(ReportDateChartAxis(dates: report.periods.compactMap { dateFormatter.date(from: $0.periodStart) }))
+                .modifier(CurrencyChartAxis())
                 .chartXSelection(value: $selectedDate)
                 .frame(minHeight: 220)
                 .accessibilityIdentifier("income-spending-trends-chart")
@@ -4298,6 +4338,7 @@ private struct SpendingBreakdownView: View {
                 .accessibilityIdentifier("spending-breakdown-sector-chart")
                 .accessibilityLabel("Spending breakdown by \(mode.rawValue.lowercased())")
                 .accessibilityValue("Total spending \(store.format(report.totalSpendingMinor)); \(slices.count) segments. Ranked values follow the chart.")
+                .accessibilityHidden(store.hideAmounts)
                 .onChange(of: selectedAngle) { _, value in if let value { selectedSlice = slice(at: value) } }
             }
         }

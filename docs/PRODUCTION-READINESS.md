@@ -11,13 +11,13 @@ Checkpoint completion is followed by the next unblocked engineering task.
 | Gate | Status | Evidence and remaining work |
 |---|---|---|
 | PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved in existing acceptance/closure documents. v0.8 terms, interest classification, projections, strategies and payoff UI exist. Complete v0.8 review before planning/import/local-provider work. Reconcile older roadmap numbering with the approved mission explicitly. |
-| FINANCIAL | IN PROGRESS | Eleven shared strategy vectors now include paid-off parity; checked Int64 projection arithmetic and HTTP 422 boundaries passed backend/native/package regressions. Release-wide financial reconciliation and migration/recovery proof remain open. |
+| FINANCIAL | IN PROGRESS | 21 shared single/multi-debt vectors include paid-off parity, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
 | SECURITY | IN PROGRESS | Server capability/resource guards and regression suites exist. Extend adversarial matrix across reports, projections, imports and future providers; rerun relevant PostgreSQL/privacy gates. |
-| DATA | IN PROGRESS | Source migration chain ends at `0027_interest_class`; human Live remains at `0020_payee_identity_repair`. Repeat populated upgrade and encrypted attachment-inclusive restore into disposable destinations. Production Local Device storage remains open. |
+| DATA | IN PROGRESS | Source head is `0027_interest_class`; human Live remains at `0020_payee_identity_repair`. Populated PostgreSQL migration/concurrency and new-destination pg_dump/restore prove canonical equality and encrypted attachment integrity/wrong-key/tamper handling. Outer age/Docker archive proof and production Local Device storage remain open. |
 | RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Existing native/backend suites provide regression evidence; concurrency, offline failures, cancellation and release-wide regression remain open. |
 | PERFORMANCE | IN PROGRESS | Live core hydration now makes zero detailed-report requests instead of seven; native HTTP tests cover caching/invalidation/retry. Hub uses one bounded scalar summary. Server/Demo computation, category/account fan-out and representative wall-clock measures remain open. |
 | UX | IN PROGRESS | Shared shell, onboarding, scalable payee selection and focused Insights exist. Report filters are reachable again; missing debt terms open the shared editor. Demand-loaded reports have independent loading/error/retry. Full workflow/accessibility closure remains open. |
-| ACCESSIBILITY | IN PROGRESS | Existing accessibility-sized/dark-mode navigation tests passed at earlier checkpoints. Repeat on changed report screens; audit VoiceOver amounts, charts, controls and custom ordering. |
+| ACCESSIBILITY | IN PROGRESS | Historical large-text launch strings were invalid and did not prove the claimed size; corrected tests use UIKit's actual raw value and require the adaptive debt menu. Description/trait audits pass for Cost and debt observations. Full VoiceOver, chart and release-wide accessibility closure remain open. |
 | PLATFORM | IN PROGRESS | Xcode 27 Beta and existing iPhone 17 Pro Max/iOS 27 are required. Preserve Simulator data. Release configuration, lifecycle, platform scope and Apple integrations need closure. |
 | COMMERCIAL | BLOCKED | HUMAN PRODUCT DECISION REQUIRED: paid download versus free Demo plus non-consumable Lifetime Unlock. Preferred documented hypothesis is the latter; it adds restoration/offline/revocation complexity while allowing evaluation. Paid download reduces entitlement complexity but prevents pre-purchase evaluation. No StoreKit implementation before decision. Independent engineering continues. |
 | APP STORE | IN PROGRESS | Commercial strategy includes positioning and draft screenshot narrative. Verify current Apple primary sources when preparing privacy/distribution artifacts. Signing, developer enrollment, final identity/pricing and submission remain human/external actions. |
@@ -255,3 +255,20 @@ Cost UI rerun also passed Apple's sufficient-description/trait accessibility aud
 issues. This is not comprehensive human VoiceOver acceptance. Final backend: **308 passed, zero
 skips**, including disposable PostgreSQL. Simulator build and `git diff --check` pass.
 Matching app/server deployment is required for the new route; no new migration, no human Live update.
+
+Production chart checkpoint: the Debt Overview now includes the canonical recorded-history chart;
+the old chart was stranded in an unused view. Runtime UI coverage navigates the real workspace,
+verifies the rendered chart, expands exact observations and audits description/traits. Currency
+axes and bounded real-date ticks replace raw minor-unit/default ticks on five time-series reports.
+Debt marks announce exact dated currency values; chart accessibility respects Hide Amounts.
+Final screenshot and accessibility hierarchy confirm this behavior. Final native run: **87 XCTest
++ four production UI tests PASS**, build and `git diff --check` PASS. No backend/package changes;
+the latest **308 backend / zero skips, 38 Core + 47 API** remain applicable.
+
+Accessibility evidence correction: earlier tests used an invalid literal content-size argument,
+which did not actually select accessibility text size. Those prior results must not establish
+large-text acceptance. UIKit's real accessibility-extra-extra-extra-large value now drives both
+Home and Insights tests, which pass without weakening reachability assertions. The debt selector
+uses a native menu at accessibility sizes. An ancestor DisclosureGroup identifier also masked
+individual observation identifiers in XCTest; removing it restores distinct exact-row targets.
+These are automated results, not human VoiceOver acceptance. **DO NOT RETEST** remains in effect.
