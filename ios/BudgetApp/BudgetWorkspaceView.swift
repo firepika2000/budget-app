@@ -375,17 +375,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     let budget: APIBudget
 
     init(fresh: Bool = false) {
-        let store = DemoStore()
-        if fresh || ProcessInfo.processInfo.arguments.contains("--demo-fresh-budget") {
-            store.accounts = []
-            store.categories = []
-            store.transactions = []
-            store.schedules = []
-            store.requests = []
-            store.allowances = []
-            store.groupOrder = []
-            store.setUnassigned(0)
-        }
+        let store = DemoStore(fresh: fresh || ProcessInfo.processInfo.arguments.contains("--demo-fresh-budget"))
         // Adversarial production-composition fixture: valid per-target amounts whose sum overflows.
         if ProcessInfo.processInfo.arguments.contains("--demo-plan-cost-overflow") {
             for index in store.categories.indices {

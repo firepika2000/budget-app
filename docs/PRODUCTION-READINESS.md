@@ -8,6 +8,17 @@ This ledger tracks engineering evidence separately from release approval. Main r
 `c5494dd`; historical version tags do not establish acceptance for subsequent development.
 Checkpoint completion is followed by the next unblocked engineering task.
 
+Deterministic opening-ledger checkpoint: production Demo financial seeds are now derived from
+explicit 2025-10-01 openings, chronological allocations and actual posted transactions, including
+canonical card reserve events. Independent hardcoded category Activity/Available and card reserves
+are removed. The shared exact dated projection initializes current Plan observations. Native proof
+reconstructs account Working/Cleared, every category and cash/purpose/reserve conservation; a fresh
+Demo contains no fixture history. Demo display amounts intentionally change to match actual facts;
+Live data is untouched. **395 backend (zero skips), 44 Core + 49 API, 98 native XCTest + 3 production
+UI tests pass**, Beta build/test and diff check PASS. Logs `/tmp/budget-seed-ledger-{backend,package,native}.log`.
+Full month-specific read/command routing and historical request metadata parity remain open;
+see PERSISTENT-MONTH-IMPLEMENTATION.md. Human acceptance remains pending, not requested now.
+
 Request-approval parity checkpoint: a native reproduction proved Demo ignored the chosen source
 category and allowed a second approval to allocate again. The repository now checks capability,
 pending state/version and decision inputs; the mutation helper validates both active categories,

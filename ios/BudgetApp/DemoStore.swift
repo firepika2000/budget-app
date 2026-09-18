@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import BudgetCore
 
 @MainActor
 final class DemoStore: ObservableObject {
@@ -15,9 +16,11 @@ final class DemoStore: ObservableObject {
     @Published var groupOrder: [String]
     @Published var archivedGroups = Set<String>()
     @Published var selectedMonth = "September 2026"
-    @Published private(set) var unassignedMinor: Int64 = 320000
+    @Published private(set) var unassignedMinor: Int64 = 0
     @Published var errorMessage: String?
     private var reserveAttribution: [String: [String: Int64]] = [:]
+    private(set) var fixtureOpening: PlanningPeriodProjection.Opening?
+    private(set) var fixtureAccountOpening: [String: Int64] = [:]
 
     struct AllocationEvent {
         let id: String
@@ -34,9 +37,9 @@ final class DemoStore: ObservableObject {
 
     func recordAllocation(amount: Int64, from source: String? = nil, to destination: String,
                           occurredOn: String = BudgetWorkspaceStore.dateString(Date()),
-                          kind: String = "assignment", note: String = "") {
+                          kind: String = "assignment", note: String = "", id: String = UUID().uuidString) {
         guard amount != 0 else { return }
-        allocationEvents.append(.init(id: UUID().uuidString, occurredOn: occurredOn, kind: kind,
+        allocationEvents.append(.init(id: id, occurredOn: occurredOn, kind: kind,
                                      actor: persona.rawValue.lowercased(), note: note,
                                      sourceCategoryID: source, destinationCategoryID: destination,
                                      amountMinor: amount))
@@ -46,15 +49,10 @@ final class DemoStore: ObservableObject {
     let spendingHistory: [Int64] = [594000, 621000, 609000, 642000, 598000, 634000]
     let netWorthHistory: [Int64] = [12840000, 12976000, 13112000, 13200000, 13358000, 13593000]
 
-    init() {
-        accounts = Self.seedAccounts
-        categories = Self.seedCategories
-        transactions = Self.seedTransactions
-        payees = Self.seedPayees
-        schedules = Self.seedSchedules
-        requests = Self.seedRequests
-        allowances = Self.seedAllowances
-        groupOrder = Array(Set(Self.seedCategories.map(\.group))).sorted()
+    init(fresh: Bool = false) {
+        accounts = []; categories = []; transactions = []; payees = []
+        schedules = []; requests = []; allowances = []; groupOrder = []
+        if !fresh { installSeedLedger() }
     }
 
     var isRestricted: Bool { persona.isChild }
@@ -108,18 +106,92 @@ final class DemoStore: ObservableObject {
     func reset() {
         persona = .rey
         hideAmounts = false
+        archivedGroups = []
+        installSeedLedger()
+    }
+
+    /// A complete deterministic opening plus chronological fixture commands. No differences
+    /// between independent display totals are reclassified as income or invented transactions.
+    private func installSeedLedger() {
         accounts = Self.seedAccounts
         categories = Self.seedCategories
-        transactions = Self.seedTransactions
+        transactions = []
         payees = Self.seedPayees
         schedules = Self.seedSchedules
         requests = Self.seedRequests
         allowances = Self.seedAllowances
         groupOrder = Array(Set(Self.seedCategories.map(\.group))).sorted()
-        archivedGroups = []
-        unassignedMinor = 320000
         reserveAttribution = [:]
         allocationEvents = []
+        fixtureAccountOpening = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0.balance) })
+        let openingAvailable: [String: Int64] = [
+            "emergency": 800_000, "newcar": 300_000, "vacation": 200_000, "repair": 100_000,
+            "medical": 40_000, "christmas": 70_000, "subscriptions": 60_000,
+            "maintenance": 100_000, "cnc": 40_000, "alexsave": 20_000, "miabike": 20_000,
+        ]
+        let openingCash = accounts.filter { $0.isOnBudget && [.checking, .savings, .cash].contains($0.kind) }.reduce(Int64(0)) { $0 + $1.balance }
+        unassignedMinor = openingCash - openingAvailable.values.reduce(0, +)
+        for index in categories.indices {
+            categories[index].assigned = 0; categories[index].activity = 0
+            categories[index].available = openingAvailable[categories[index].id] ?? 0
+        }
+        do {
+            fixtureOpening = try .init(month: "2025-10-01", unassignedMinor: unassignedMinor, categoryAvailable: openingAvailable)
+            let posted = Self.seedTransactions.sorted { ($0.date, $0.id) < ($1.date, $1.id) }
+            for offset in (0...11).reversed() {
+                let month = String(BudgetWorkspaceStore.dateString(.demo(monthsAgo: offset, day: 1)).prefix(7)) + "-01"
+                let activity = posted.filter { String(BudgetWorkspaceStore.dateString($0.date).prefix(7)) == String(month.prefix(7)) }
+                // Historical fixture months deliberately fund each demonstrated expense. Current
+                // month uses the explicit plan below, including an overspent dining category.
+                var assignments: [String: Int64] = [:]
+                if offset == 0 {
+                    assignments = Dictionary(uniqueKeysWithValues: Self.seedCategories.map { ($0.id, $0.assigned) })
+                } else {
+                    for item in activity {
+                        for (id, amount) in canonicalCategoryAmounts(for: item) { assignments[id, default: 0] += max(-amount, 0) }
+                    }
+                }
+                for id in assignments.keys.sorted() {
+                    let amount = assignments[id]!
+                    guard amount > 0, let index = categories.firstIndex(where: { $0.id == id }) else { continue }
+                    precondition(amount <= unassignedMinor, "Fixture allocations require real opening cash")
+                    unassignedMinor -= amount
+                    categories[index].assigned += amount; categories[index].available += amount
+                    recordAllocation(amount: amount, to: id, occurredOn: month, note: "Deterministic fixture assignment", id: "fixture-\(month)-\(id)")
+                }
+                for item in activity {
+                    applyCanonicalTransaction(item)
+                    transactions.append(item)
+                }
+            }
+            transactions.sort { ($0.date, $0.id) > ($1.date, $1.id) }
+            let plan = try fixturePlanningSnapshot(month: "2026-09-01")
+            for index in categories.indices {
+                let row = plan.categories[categories[index].id]!
+                categories[index].assigned = row.assignedMinor
+                categories[index].activity = row.activityMinor
+                categories[index].available = row.availableMinor
+            }
+            precondition(plan.allDateUnassignedMinor == unassignedMinor, "Fixture command and period projections must agree")
+        } catch { preconditionFailure("Invalid deterministic financial fixture: \(error)") }
+    }
+
+    /// Dated facts supplied to the shared projection. Command routing is migrated separately;
+    /// this method also proves the production fixture's opening/posted/allocation provenance.
+    func fixturePlanningSnapshot(month: String) throws -> PlanningPeriodProjection.Snapshot {
+        let allocations = try allocationEvents.map { event in
+            try PlanningPeriodProjection.Allocation(occurredOn: event.occurredOn, postings: [
+                .init(categoryID: event.sourceCategoryID, amountMinor: -event.amountMinor),
+                .init(categoryID: event.destinationCategoryID, amountMinor: event.amountMinor),
+            ])
+        }
+        let activity = try transactions.filter { $0.status != "voided" && !$0.scheduled }.map { item in
+            let account = accounts.first { $0.id == item.accountID }!
+            let amounts = item.transferID == nil ? canonicalCategoryAmounts(for: item) : [:]
+            let cashInflow = item.transferID == nil && amounts.isEmpty && account.isOnBudget && [.checking, .savings, .cash].contains(account.kind)
+            return try PlanningPeriodProjection.PostedActivity(occurredOn: BudgetWorkspaceStore.dateString(item.date), categoryAmounts: amounts, unassignedMinor: cashInflow ? item.amount : 0)
+        }
+        return try PlanningPeriodProjection.snapshot(month: month, categoryIDs: Set(categories.map(\.id)), opening: fixtureOpening, allocations: allocations, activity: activity)
     }
 
     func setUnassigned(_ value: Int64) { unassignedMinor = value }
@@ -554,52 +626,54 @@ final class DemoStore: ObservableObject {
         return false
     }
 
+    // Explicit account opening observations at 2025-10-01, not current display balances.
     static let seedAccounts: [DemoAccount] = [
-        .init(id: "checking", name: "Household Checking", kind: .checking, balance: 684032, cleared: 671532),
-        .init(id: "savings", name: "High-Yield Savings", kind: .savings, balance: 1425000, cleared: 1425000),
+        .init(id: "checking", name: "Household Checking", kind: .checking, balance: 2_000_000, cleared: 2_000_000),
+        .init(id: "savings", name: "High-Yield Savings", kind: .savings, balance: 2_000_000, cleared: 2_000_000),
         .init(id: "cash", name: "Wallet Cash", kind: .cash, balance: 18000, cleared: 18000),
-        .init(id: "visa", name: "Everyday Visa", kind: .credit, balance: -142864, cleared: -130364, paymentReserved: 121250, fundedSpending: 48264, unfundedSpending: 21614, apr: 20.49, minimumPayment: 4500, dueText: "Due Sep 18"),
-        .init(id: "mastercard", name: "Travel Mastercard", kind: .credit, balance: -36421, cleared: -36421, paymentReserved: 36421, fundedSpending: 18210, dueText: "Due Sep 24"),
+        .init(id: "visa", name: "Everyday Visa", kind: .credit, balance: -20_000, cleared: -20_000, apr: 20.49, minimumPayment: 4500, dueText: "Due Sep 18"),
+        .init(id: "mastercard", name: "Travel Mastercard", kind: .credit, balance: -10_000, cleared: -10_000, dueText: "Due Sep 24"),
         .init(id: "auto", name: "Auto Loan", kind: .loan, balance: -1875000, cleared: -1875000, isOnBudget: false, apr: 6.25, minimumPayment: 41200, dueText: "Due Oct 1"),
         .init(id: "mortgage", name: "Home Mortgage", kind: .mortgage, balance: -23840000, cleared: -23840000, isOnBudget: false, apr: 3.75, minimumPayment: 184500, dueText: "Due Oct 1"),
         .init(id: "home", name: "Home Value", kind: .asset, balance: 39200000, cleared: 39200000, isOnBudget: false)
     ]
 
+    // Metadata and September assignment intent only. Activity/Available are projected from facts.
     static let seedCategories: [DemoCategory] = [
-        .init(id:"mortgage",group:"Housing",name:"Mortgage",icon:"house.fill",assigned:184500,activity:-184500,available:184500,target:184500,pinned:true),
-        .init(id:"electric",group:"Housing",name:"Electric",icon:"bolt.fill",assigned:16500,activity:-14820,available:1680,target:16500),
-        .init(id:"water",group:"Housing",name:"Water",icon:"drop.fill",assigned:8500,activity:-7200,available:1300,target:8500),
-        .init(id:"internet",group:"Housing",name:"Internet",icon:"wifi",assigned:7900,activity:-7900,available:7900,target:7900),
-        .init(id:"groceries",group:"Food",name:"Groceries",icon:"cart.fill",assigned:72000,activity:-48264,available:23736,target:72000,pinned:true),
-        .init(id:"dining",group:"Food",name:"Dining Out",icon:"fork.knife",assigned:22000,activity:-26840,available:-4840,target:22000),
-        .init(id:"fuel",group:"Transportation",name:"Fuel",icon:"fuelpump.fill",assigned:28000,activity:-18520,available:9480,target:30000),
-        .init(id:"maintenance",group:"Transportation",name:"Car Maintenance",icon:"wrench.and.screwdriver.fill",assigned:15000,activity:0,available:84500,target:120000,targetDate:"2026-12-01"),
-        .init(id:"medical",group:"True Expenses",name:"Medical",icon:"cross.case.fill",assigned:10000,activity:-4500,available:35500,target:50000),
-        .init(id:"repair",group:"True Expenses",name:"Home Repair",icon:"hammer.fill",assigned:25000,activity:0,available:186000,target:300000),
-        .init(id:"christmas",group:"True Expenses",name:"Christmas",icon:"gift.fill",assigned:35000,activity:0,available:188000,target:300000,targetDate:"2026-12-01"),
-        .init(id:"subscriptions",group:"True Expenses",name:"Annual Subscriptions",icon:"calendar.badge.clock",assigned:12000,activity:0,available:74000,target:120000,targetDate:"2027-01-01"),
-        .init(id:"buffer",group:"True Expenses",name:"General Buffer",icon:"tray.full.fill",assigned:35000,activity:0,available:35000,target:35000),
-        .init(id:"emergency",group:"Goals",name:"Emergency Fund",icon:"shield.fill",assigned:50000,activity:0,available:1125000,target:1500000,pinned:true),
-        .init(id:"vacation",group:"Goals",name:"Vacation",icon:"airplane",assigned:40000,activity:0,available:385000,target:600000,targetDate:"2027-06-01"),
-        .init(id:"cnc",group:"Goals",name:"CNC Machine",icon:"gearshape.2.fill",assigned:25000,activity:0,available:64000,target:200000,targetDate:"2027-06-01",pinned:true),
-        .init(id:"newcar",group:"Goals",name:"New Car",icon:"car.side.fill",assigned:30000,activity:0,available:420000,target:2500000,targetDate:"2029-09-01"),
-        .init(id:"rey",group:"Personal",name:"Rey Spending",icon:"person.fill",assigned:20000,activity:-8300,available:11700,target:20000),
-        .init(id:"partner",group:"Personal",name:"Jordan Spending",icon:"person.fill",assigned:20000,activity:-4200,available:15800,target:20000),
-        .init(id:"alexallow",group:"Kids",name:"Alex Allowance",icon:"gamecontroller.fill",assigned:4800,activity:-2200,available:4200,target:4800,delegatedTo:.alex),
-        .init(id:"alexsave",group:"Kids",name:"Alex Savings",icon:"banknote.fill",assigned:2000,activity:0,available:18500,target:50000,targetDate:"2027-03-01",delegatedTo:.alex),
+        .init(id:"mortgage",group:"Housing",name:"Mortgage",icon:"house.fill",assigned:184500,activity:0,available:0,target:184500,pinned:true),
+        .init(id:"electric",group:"Housing",name:"Electric",icon:"bolt.fill",assigned:16500,activity:0,available:0,target:16500),
+        .init(id:"water",group:"Housing",name:"Water",icon:"drop.fill",assigned:8500,activity:0,available:0,target:8500),
+        .init(id:"internet",group:"Housing",name:"Internet",icon:"wifi",assigned:7900,activity:0,available:0,target:7900),
+        .init(id:"groceries",group:"Food",name:"Groceries",icon:"cart.fill",assigned:72000,activity:0,available:0,target:72000,pinned:true),
+        .init(id:"dining",group:"Food",name:"Dining Out",icon:"fork.knife",assigned:22000,activity:0,available:0,target:22000),
+        .init(id:"fuel",group:"Transportation",name:"Fuel",icon:"fuelpump.fill",assigned:28000,activity:0,available:0,target:30000),
+        .init(id:"maintenance",group:"Transportation",name:"Car Maintenance",icon:"wrench.and.screwdriver.fill",assigned:15000,activity:0,available:0,target:120000,targetDate:"2026-12-01"),
+        .init(id:"medical",group:"True Expenses",name:"Medical",icon:"cross.case.fill",assigned:10000,activity:0,available:0,target:50000),
+        .init(id:"repair",group:"True Expenses",name:"Home Repair",icon:"hammer.fill",assigned:25000,activity:0,available:0,target:300000),
+        .init(id:"christmas",group:"True Expenses",name:"Christmas",icon:"gift.fill",assigned:35000,activity:0,available:0,target:300000,targetDate:"2026-12-01"),
+        .init(id:"subscriptions",group:"True Expenses",name:"Annual Subscriptions",icon:"calendar.badge.clock",assigned:12000,activity:0,available:0,target:120000,targetDate:"2027-01-01"),
+        .init(id:"buffer",group:"True Expenses",name:"General Buffer",icon:"tray.full.fill",assigned:35000,activity:0,available:0,target:35000),
+        .init(id:"emergency",group:"Goals",name:"Emergency Fund",icon:"shield.fill",assigned:50000,activity:0,available:0,target:1500000,pinned:true),
+        .init(id:"vacation",group:"Goals",name:"Vacation",icon:"airplane",assigned:40000,activity:0,available:0,target:600000,targetDate:"2027-06-01"),
+        .init(id:"cnc",group:"Goals",name:"CNC Machine",icon:"gearshape.2.fill",assigned:25000,activity:0,available:0,target:200000,targetDate:"2027-06-01",pinned:true),
+        .init(id:"newcar",group:"Goals",name:"New Car",icon:"car.side.fill",assigned:30000,activity:0,available:0,target:2500000,targetDate:"2029-09-01"),
+        .init(id:"rey",group:"Personal",name:"Rey Spending",icon:"person.fill",assigned:20000,activity:0,available:0,target:20000),
+        .init(id:"partner",group:"Personal",name:"Jordan Spending",icon:"person.fill",assigned:20000,activity:0,available:0,target:20000),
+        .init(id:"alexallow",group:"Kids",name:"Alex Allowance",icon:"gamecontroller.fill",assigned:4800,activity:0,available:0,target:4800,delegatedTo:.alex),
+        .init(id:"alexsave",group:"Kids",name:"Alex Savings",icon:"banknote.fill",assigned:2000,activity:0,available:0,target:50000,targetDate:"2027-03-01",delegatedTo:.alex),
         .init(id:"alexgive",group:"Kids",name:"Giving",icon:"heart.fill",assigned:0,activity:0,available:0,target:nil,delegatedTo:.alex),
-        .init(id:"miaallow",group:"Kids",name:"Mia Allowance",icon:"paintpalette.fill",assigned:3200,activity:-1200,available:2800,target:3200,delegatedTo:.mia),
-        .init(id:"miabike",group:"Kids",name:"Mia Bike Goal",icon:"bicycle",assigned:1200,activity:0,available:18500,target:50000,targetDate:"2027-05-01",delegatedTo:.mia)
+        .init(id:"miaallow",group:"Kids",name:"Mia Allowance",icon:"paintpalette.fill",assigned:3200,activity:0,available:0,target:3200,delegatedTo:.mia),
+        .init(id:"miabike",group:"Kids",name:"Mia Bike Goal",icon:"bicycle",assigned:1200,activity:0,available:0,target:50000,targetDate:"2027-05-01",delegatedTo:.mia)
     ]
 
     static var seedTransactions: [DemoTransaction] {
         var items: [DemoTransaction] = [
             .init(id:"t1",date:.demo(monthsAgo:0,day:3),payee:"Fresh Market",memo:"Weekly groceries",accountID:"visa",categoryIDs:["groceries"],amount:-12500,member:.rey,cleared:false,flag:"Groceries",attachmentName:"receipt-placeholder.png"),
             .init(id:"t2",date:.demo(monthsAgo:0,day:2),payee:"Payroll",memo:"September paycheck",accountID:"checking",categoryIDs:[],amount:375000,member:.rey,cleared:true),
-            .init(id:"t3",date:.demo(monthsAgo:0,day:8),payee:"Corner Bistro",memo:"Family dinner",accountID:"mastercard",categoryIDs:["dining"],amount:-8640,member:.partner,cleared:true),
+            .init(id:"t3",date:.demo(monthsAgo:0,day:8),payee:"Corner Bistro",memo:"Family dinner",accountID:"mastercard",categoryIDs:["dining"],amount:-26840,member:.partner,cleared:true),
             .init(id:"t4",date:.demo(monthsAgo:0,day:11),payee:"Home Center",memo:"Paint and repair supplies",accountID:"checking",categoryIDs:["repair","maintenance"],amount:-12640,member:.rey,cleared:true,flag:"Split"),
             .init(id:"t5",date:.demo(monthsAgo:0,day:15),payee:"Auto Loan Payment",memo:"Principal $315 · Interest $97",accountID:"checking",categoryIDs:["maintenance"],amount:-41200,member:.rey,cleared:true),
-            .init(id:"t6",date:.demo(monthsAgo:0,day:20),payee:"Weekly Allowance",memo:"Alex: spend, save, give",accountID:"checking",categoryIDs:["alexallow","alexsave"],amount:-2000,member:.alex,cleared:true,scheduled:true),
+            .init(id:"t6",date:.demo(monthsAgo:0,day:12),payee:"Weekly Allowance",memo:"Posted allowance spending",accountID:"checking",categoryIDs:["alexallow","alexsave"],amount:-2000,member:.alex,cleared:true),
             .init(id:"t7",date:.demo(monthsAgo:0,day:14),payee:"Card issuer",memo:"Posted finance charge",accountID:"visa",categoryIDs:["maintenance"],amount:-3200,member:.rey,cleared:true,financialClassification:"interest_charge")
         ]
         let merchants = ["Fresh Market","Fuel Station","Electric Co.","Neighborhood Cafe","Pharmacy","Internet Service"]

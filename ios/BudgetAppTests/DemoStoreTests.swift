@@ -377,12 +377,7 @@ final class DemoStoreTests: XCTestCase {
 
     @MainActor
     func testFreshBudgetStartingBalanceAndActivationSurfacesUseProductionPaths() throws {
-        let demo = DemoStore()
-        demo.accounts = []
-        demo.transactions = []
-        demo.categories = []
-        demo.groupOrder = []
-        demo.setUnassigned(0)
+        let demo = DemoStore(fresh: true)
 
         demo.createAccount(name: "Everyday Checking", type: "checking", isOnBudget: true, startingBalance: 72_000)
         XCTAssertEqual(demo.accounts.first?.balance, 72_000)
@@ -1016,14 +1011,17 @@ final class DemoStoreTests: XCTestCase {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
         // The same production category-detail view reads store.allocationOperations for demo and live.
-        XCTAssertTrue(store.allocationOperations.isEmpty, "opening fixtures must not manufacture historical assignments or moves")
+        let fixtureOperations = store.allocationOperations
+        XCTAssertFalse(fixtureOperations.isEmpty, "the fixture now executes real dated assignment commands")
+        XCTAssertTrue(fixtureOperations.allSatisfy { $0.id.hasPrefix("fixture-") && $0.kind == "assignment" })
         let groceries = try XCTUnwrap(store.categories.first { $0.id == "groceries" })
         try await store.updateAssignment(categoryID: groceries.id, month: "2026-09-01", assignedMinor: 73_000, expectedVersion: 1)
         try await store.moveAllocation(.init(sourceCategoryID: groceries.id, destinationCategoryID: "dining", amountMinor: 123, occurredOn: "2026-09-03", note: "Actual move", expectedVersion: 1))
-        XCTAssertEqual(store.allocationOperations.count, 2)
-        XCTAssertEqual(store.allocationOperations[0].postings.last?.amountMinor, 1_000)
-        XCTAssertEqual(store.allocationOperations[1].postings.last?.amountMinor, 123)
-        XCTAssertEqual(store.allocationOperations.map(\.occurredOn), ["2026-09-01", "2026-09-03"])
+        XCTAssertEqual(store.allocationOperations.count, fixtureOperations.count + 2)
+        let commands = Array(store.allocationOperations.suffix(2))
+        XCTAssertEqual(commands[0].postings.last?.amountMinor, 1_000)
+        XCTAssertEqual(commands[1].postings.last?.amountMinor, 123)
+        XCTAssertEqual(commands.map(\.occurredOn), ["2026-09-01", "2026-09-03"])
         let recordedIDs = store.allocationOperations.map(\.id)
         await store.refresh()
         XCTAssertEqual(store.allocationOperations.map(\.id), recordedIDs)
@@ -1049,7 +1047,7 @@ final class DemoStoreTests: XCTestCase {
             try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate(month), report: report).allocationOperations
         }
         let initial = try await history("2026-09-01")
-        XCTAssertTrue(initial.isEmpty)
+        XCTAssertTrue(initial.allSatisfy { $0.id.hasPrefix("fixture-") })
         try await source.assignMoney(.init(categoryID: "groceries", month: "2026-09-01", assignedMinor: 73_000, expectedVersion: 1))
         XCTAssertTrue(source.demo.move(amount: 100, from: "buffer", to: "alexallow", occurredOn: "2026-09-02", note: "Private source"))
         source.demo.persona = .alex
@@ -1061,12 +1059,12 @@ final class DemoStoreTests: XCTestCase {
         source.demo.persona = .rey
         let september = try await history("2026-09-01")
         let october = try await history("2026-10-01")
-        XCTAssertEqual(september.count, 3)
+        XCTAssertEqual(september.count, initial.count + 3)
         XCTAssertEqual(october.map(\.id), september.map(\.id))
-        XCTAssertEqual(october.map(\.occurredOn), ["2026-09-01", "2026-09-02", "2026-09-03"])
-        XCTAssertEqual(october.map(\.actorUserID), ["rey", "rey", "alex"])
+        XCTAssertEqual(october.suffix(3).map(\.occurredOn), ["2026-09-01", "2026-09-02", "2026-09-03"])
+        XCTAssertEqual(october.suffix(3).map(\.actorUserID), ["rey", "rey", "alex"])
         source.demo.reset()
-        XCTAssertTrue(source.demo.allocationEvents.isEmpty)
+        XCTAssertEqual(source.demo.allocationEvents.map(\.id), initial.map(\.id))
     }
 
     @MainActor
@@ -1331,16 +1329,16 @@ final class DemoStoreTests: XCTestCase {
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
         let groceries = try XCTUnwrap(store.summary?.categories.first(where: { $0.name == "Groceries" }))
         XCTAssertEqual(groceries.assignedMinor, 72_000)
-        XCTAssertEqual(groceries.activityMinor, -48_264)
-        XCTAssertEqual(store.summary?.readyToAssignMinor, 320_000)
+        XCTAssertEqual(groceries.activityMinor, -12_500)
+        let readyBefore = try XCTUnwrap(store.summary?.readyToAssignMinor)
 
         try await store.updateAssignment(categoryID: groceries.categoryID, month: "2026-09-01", assignedMinor: 82_000, expectedVersion: store.summary!.allocationVersion)
 
         let updated = try XCTUnwrap(store.summary?.categories.first(where: { $0.categoryID == groceries.categoryID }))
         XCTAssertEqual(updated.assignedMinor, 82_000)
-        XCTAssertEqual(updated.activityMinor, -48_264)
-        XCTAssertEqual(updated.availableMinor, 33_736)
-        XCTAssertEqual(store.summary?.readyToAssignMinor, 310_000)
+        XCTAssertEqual(updated.activityMinor, -12_500)
+        XCTAssertEqual(updated.availableMinor, 69_500)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, readyBefore - 10_000)
     }
 
     private func isolatedDefaults() -> (UserDefaults, String) {
@@ -1367,6 +1365,44 @@ final class DemoStoreTests: XCTestCase {
             let text = CurrencyText.editable(value, currencyCode: "USD")
             XCTAssertEqual(CurrencyText.parseMinorUnits(text, currencyCode: "USD"), value)
         }
+    }
+
+    @MainActor
+    func testProductionDemoSeedReconcilesOpeningAccountsDatedPlanAndCardReserves() throws {
+        let demo = DemoStore()
+        let opening = try XCTUnwrap(demo.fixtureOpening)
+        XCTAssertEqual(opening.month.iso, "2025-10-01")
+        XCTAssertThrowsError(try demo.fixturePlanningSnapshot(month: "2025-09-01"))
+        XCTAssertTrue(demo.transactions.allSatisfy { !$0.scheduled && $0.date <= .demo(monthsAgo: 0, day: 15) })
+        for account in demo.accounts {
+            let posted = demo.transactions.filter { $0.accountID == account.id }
+            let balance = try XCTUnwrap(demo.fixtureAccountOpening[account.id])
+            XCTAssertEqual(account.balance, balance + posted.reduce(0) { $0 + $1.amount }, account.id)
+            XCTAssertEqual(account.cleared, balance + posted.filter(\.cleared).reduce(0) { $0 + $1.amount }, account.id)
+        }
+        let plan = try demo.fixturePlanningSnapshot(month: "2026-09-01")
+        XCTAssertEqual(plan.allDateUnassignedMinor, demo.readyToAssign)
+        XCTAssertEqual(plan.categories["groceries"]?.assignedMinor, 72_000)
+        XCTAssertEqual(plan.categories["groceries"]?.activityMinor, -12_500)
+        for category in demo.categories {
+            XCTAssertEqual(plan.categories[category.id]?.availableMinor, category.available)
+            XCTAssertEqual(plan.categories[category.id]?.activityMinor, category.activity)
+            XCTAssertEqual(plan.categories[category.id]?.assignedMinor, category.assigned)
+        }
+        let cards = demo.accounts.filter { $0.kind == .credit }
+        let currentUnfunded = cards.reduce(Int64(0)) { $0 + max(-$1.balance - $1.paymentReserved, 0) }
+        let openingUnfunded = cards.reduce(Int64(0)) { $0 + max(-(demo.fixtureAccountOpening[$1.id] ?? 0), 0) }
+        let cash = demo.accounts.filter { $0.isOnBudget && [.checking, .savings, .cash].contains($0.kind) }.reduce(Int64(0)) { $0 + $1.balance }
+        XCTAssertEqual(cash, demo.readyToAssign + demo.categories.reduce(0) { $0 + $1.available }
+                       + cards.reduce(0) { $0 + $1.paymentReserved } + currentUnfunded - openingUnfunded)
+        XCTAssertTrue(cards.allSatisfy { $0.paymentReserved >= 0 })
+        XCTAssertEqual(currentUnfunded - openingUnfunded, 4_840, "Only the deliberate dining deficit is new unfunded debt")
+        let again = DemoStore()
+        XCTAssertEqual(demo.allocationEvents.map(\.id), again.allocationEvents.map(\.id))
+        XCTAssertEqual(demo.fixtureOpening, again.fixtureOpening)
+        let fresh = DemoStore(fresh: true)
+        XCTAssertNil(fresh.fixtureOpening)
+        XCTAssertTrue(fresh.accounts.isEmpty && fresh.transactions.isEmpty && fresh.categories.isEmpty && fresh.allocationEvents.isEmpty)
     }
 
     @MainActor
@@ -1447,6 +1483,7 @@ final class DemoStoreTests: XCTestCase {
             let categories = source.demo.categories, requests = source.demo.requests
             let accounts = source.demo.accounts, transactions = source.demo.transactions
             let unassigned = source.demo.unassignedMinor
+            let eventIDs = source.demo.allocationEvents.map(\.id)
             do {
                 try await source.decideRequest(id: "request-game", decision: "approve", version: version, amount: amount, sourceCategoryID: categoryID, note: "Invalid")
                 XCTFail("Approval should refuse \(scenario)")
@@ -1456,7 +1493,7 @@ final class DemoStoreTests: XCTestCase {
             XCTAssertEqual(source.demo.accounts, accounts, scenario)
             XCTAssertEqual(source.demo.transactions, transactions, scenario)
             XCTAssertEqual(source.demo.unassignedMinor, unassigned, scenario)
-            XCTAssertTrue(source.demo.allocationEvents.isEmpty, scenario)
+            XCTAssertEqual(source.demo.allocationEvents.map(\.id), eventIDs, scenario)
         }
     }
 

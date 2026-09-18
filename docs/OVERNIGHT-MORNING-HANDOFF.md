@@ -6,6 +6,19 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Starting HEAD for this continuation: `17efbcb` (remote matched, clean). Next verified checkpoint
+replaces disconnected Demo financial seeds with explicit opening observations plus actual dated
+assignments/posted transactions. Ordinary Demo now initializes its September plan through the
+shared exact dated projection; card reserves come from the canonical posting path. The fixture
+has a supported 2025-10-01 boundary and stable IDs; fresh Demo remains empty. Amount changes are
+intentional fixture corrections, not Live migration. **395 backend zero skips; 44 Core + 49 API;
+98 native XCTest + 3 production UI tests pass**, Beta build/test and diff check PASS.
+Evidence `/tmp/budget-seed-ledger-{backend,package,native}.log` and focused opening-conservation test.
+Next: route all month-specific reads/mutations through the dated facts, including date-scoped card
+funding and atomic edit rollback; run the six full period vectors through the native provider.
+Do not claim this seed checkpoint closes monthly provider parity, request history, or rollover.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST**. Human Live remains at 0020, source head 0028.
+
 `6ff6ad4` is pushed. Next verified correction prevents repeated Demo request approval and honors
 the selected funding source (previously hardcoded to buffer). Capability/state/version/category,
 amount, availability and overflow guards precede mutation. Approval events retain actual source/kind.
