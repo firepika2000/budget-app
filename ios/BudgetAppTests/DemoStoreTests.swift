@@ -6,6 +6,41 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testDemoStrategyUsesPromotionalTermsNormalizedPaymentsAndPartialReadiness() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let balances = store.accountBalances
+        let summary = store.summary
+        let cardBalance = try XCTUnwrap(balances["visa"])
+        let principal = -cardBalance.workingBalanceMinor
+        XCTAssertGreaterThan(principal, 0)
+        let query = APIDebtStrategyProjectionRequest(firstPaymentOn: "2026-09-17", strategy: "avalanche", rollover: false, accountIDs: ["visa"])
+        let saved = try await store.updateAccountDebtTerms(accountID: "visa", value: .init(
+            termsType: "credit_card", annualRateBasisPoints: 1_200, rateType: "fixed", paymentFrequency: "monthly",
+            minimumPaymentRule: "fixed", minimumPaymentMinor: principal, dueDay: 17,
+            promotionalRateBasisPoints: 0, promotionalEndsOn: "2026-09-17"))
+        XCTAssertTrue(saved.projectionReady)
+        let promo = try await store.debtStrategyProjection(query)
+        XCTAssertEqual(promo.projectedInterestMinor, 0)
+        XCTAssertEqual(promo.projectedTotalPaidMinor, principal)
+        XCTAssertEqual(promo.paymentCount, 1)
+        _ = try await store.updateAccountDebtTerms(accountID: "visa", value: .init(
+            termsType: "credit_card", annualRateBasisPoints: 0, rateType: "fixed", paymentFrequency: "weekly",
+            minimumPaymentRule: "fixed", minimumPaymentMinor: 1_000, dueDay: 17))
+        let normalized = try await store.debtStrategyProjection(query)
+        XCTAssertEqual(normalized.projectedInterestMinor, 0)
+        XCTAssertEqual(normalized.paymentCount, Int((principal + 4_332) / 4_333))
+        let partial = try await store.updateAccountDebtTerms(accountID: "visa", value: .init(termsType: "credit_card"))
+        XCTAssertFalse(partial.projectionReady)
+        XCTAssertTrue(partial.missingProjectionFields.contains("annual_rate_basis_points"))
+        let incomplete = try await store.debtStrategyProjection(query)
+        XCTAssertEqual(incomplete.status, "incomplete")
+        XCTAssertEqual(incomplete.incompleteAccounts.first?.missingProjectionFields, partial.missingProjectionFields)
+        XCTAssertEqual(store.accountBalances, balances)
+        XCTAssertEqual(store.summary, summary)
+    }
+
+    @MainActor
     func testReportSelectionResetRecoversInvalidContextWithoutMoneyMutation() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()

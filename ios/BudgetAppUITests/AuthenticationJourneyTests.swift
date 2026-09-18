@@ -147,6 +147,9 @@ final class AuthenticationJourneyTests: XCTestCase {
         let outcome = app.descendants(matching: .any)["debt-payoff-outcome"]
         for _ in 0..<8 where !outcome.exists { app.swipeUp() }
         XCTAssertTrue(outcome.waitForExistence(timeout: 8))
+        let projectedInterest = app.staticTexts["Projected remaining interest"]
+        for _ in 0..<4 where !projectedInterest.exists { app.swipeUp() }
+        XCTAssertTrue(projectedInterest.exists)
         let readOnly = app.descendants(matching: .any)["debt-payoff-read-only"]
         for _ in 0..<5 where !readOnly.exists { app.swipeUp() }
         XCTAssertTrue(readOnly.waitForExistence(timeout: 5))
@@ -249,6 +252,11 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
         app.buttons["insights-debt-interest"].tap()
         XCTAssertTrue(app.navigationBars["Debt & Interest"].waitForExistence(timeout: 5))
+        let observation = app.descendants(matching: .any)["recorded-debt-as-of"]
+        for _ in 0..<6 where !observation.exists { app.swipeUp() }
+        XCTAssertTrue(observation.waitForExistence(timeout: 5))
+        XCTAssertTrue(observation.label.contains("Debt as of"))
+        for _ in 0..<6 where !app.segmentedControls.buttons["Interest"].isHittable { app.swipeDown() }
         app.segmentedControls.buttons["Interest"].tap()
         XCTAssertTrue(app.buttons["report-period"].exists || app.descendants(matching: .any)["report-period"].exists)
         let recordedInterest = app.staticTexts["Recorded Interest"]
@@ -434,6 +442,7 @@ final class AuthenticationJourneyTests: XCTestCase {
     }
 
     func testDebtTermsUseProductionAccountSettingsAndPersistWithoutBalanceEditing() {
+        continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=accounts"]
         app.launch()
@@ -448,19 +457,27 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["These are planning assumptions. Posted balances and actual interest remain separate financial facts."].exists)
 
         let apr = app.textFields["debt-apr"]
-        apr.tap(); apr.typeText("6.25")
+        XCTAssertEqual(apr.value as? String, "6.25")
+        apr.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+        apr.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4))
+        apr.typeText("7.25")
         let payment = app.textFields["debt-payment"]
-        payment.tap(); payment.typeText("412.00")
+        app.buttons["Clear Payment"].tap()
+        payment.typeText("425.00")
         let dueDay = app.textFields["debt-due-day"]
-        dueDay.tap(); dueDay.typeText("1")
+        XCTAssertEqual(dueDay.value as? String, "1")
+        dueDay.tap(); dueDay.typeText(XCUIKeyboardKey.delete.rawValue + "2")
         app.buttons.matching(NSPredicate(format: "identifier == 'save-debt-terms'")).firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Debt Terms"].waitForNonExistence(timeout: 5))
 
         app.buttons["account-debt-terms-action"].tap()
         XCTAssertTrue(app.navigationBars["Debt Terms"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.textFields["debt-apr"].value as? String, "6.25")
-        XCTAssertEqual(app.textFields["debt-due-day"].value as? String, "1")
-        XCTAssertTrue(app.buttons["Remove Debt Terms"].exists)
+        XCTAssertEqual(app.textFields["debt-apr"].value as? String, "7.25")
+        XCTAssertEqual(app.textFields["debt-payment"].value as? String, "425.00")
+        XCTAssertEqual(app.textFields["debt-due-day"].value as? String, "2")
+        let remove = app.buttons["Remove Debt Terms"]
+        for _ in 0..<6 where !remove.exists { app.swipeUp() }
+        XCTAssertTrue(remove.exists)
     }
 
     func testEmptyCategoryGroupRemainsVisibleAndDefaultsCategoryCreation() {

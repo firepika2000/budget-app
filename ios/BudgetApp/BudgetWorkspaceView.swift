@@ -653,15 +653,27 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             ["credit", "loan"].contains($0.kind.rawValue)
                 && (request.accountIDs.isEmpty || request.accountIDs.contains($0.id))
         }
-        let missing = selected.filter { debtTermsValues[$0.id] == nil }.map {
-            ["account_id": $0.id, "missing_projection_fields": ["debt_terms"]] as [String: Any]
+        let missing = selected.compactMap { account -> [String: Any]? in
+            let fields = debtTermsValues[account.id].map(missingDebtProjectionFields) ?? ["debt_terms"]
+            return fields.isEmpty ? nil : ["account_id": account.id, "missing_projection_fields": fields]
         }
         if !missing.isEmpty {
             return try decode(["currency_code": budget.currencyCode, "status": "incomplete", "strategy": request.strategy, "rollover": request.rollover, "extra_payment_minor": request.extraPaymentMinor, "payoff_order": [], "payment_count": 0, "projected_interest_minor": 0, "projected_total_paid_minor": 0, "projected_total_cost_minor": 0, "accounts": [], "incomplete_accounts": missing])
         }
-        let inputs = selected.compactMap { account -> DebtStrategyInput? in
+        let inputs = try selected.compactMap { account -> DebtStrategyInput? in
             guard let terms = debtTermsValues[account.id], let rate = terms.annualRateBasisPoints else { return nil }
-            return .init(debtID: account.id, principalMinor: max(-account.balance, 0), annualRateBasisPoints: Int64(rate), plannedPaymentMinor: terms.scheduledPaymentMinor ?? terms.minimumPaymentMinor ?? 0)
+            guard let frequency = terms.paymentFrequency.flatMap(DebtPaymentFrequency.init(rawValue:)) else { throw DebtProjectionEngine.ProjectionError.invalidInput }
+            let projectionTerms = DebtProjectionTerms(annualRateBasisPoints: Int64(rate), frequency: frequency,
+                scheduledPaymentMinor: terms.scheduledPaymentMinor,
+                minimumRule: terms.minimumPaymentRule.flatMap(DebtMinimumPaymentRule.init(rawValue:)),
+                minimumPaymentMinor: terms.minimumPaymentMinor,
+                minimumRateBasisPoints: terms.minimumPaymentRateBasisPoints.map(Int64.init),
+                promotionalRateBasisPoints: terms.promotionalRateBasisPoints.map(Int64.init),
+                promotionalEndsOn: terms.promotionalEndsOn.map(BudgetWorkspaceStore.parseDate))
+            let principal = max(-account.balance, 0)
+            let payment = try DebtProjectionEngine.monthlyStrategyPayment(principalMinor: principal,
+                firstPaymentOn: BudgetWorkspaceStore.parseDate(request.firstPaymentOn), terms: projectionTerms)
+            return .init(debtID: account.id, principalMinor: principal, annualRateBasisPoints: Int64(rate), plannedPaymentMinor: payment, promotionalRateBasisPoints: projectionTerms.promotionalRateBasisPoints, promotionalEndsOn: projectionTerms.promotionalEndsOn)
         }
         let result = try DebtProjectionEngine.projectStrategy(debts: inputs, firstPaymentOn: BudgetWorkspaceStore.parseDate(request.firstPaymentOn), strategy: DebtPayoffStrategy(rawValue: request.strategy) ?? .avalanche, rollover: request.rollover, extraPaymentMinor: request.extraPaymentMinor, customOrder: request.customOrder)
         let rows = result.debts.map { item in
@@ -669,6 +681,20 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         }
         let status = result.status == .paidOff ? "paid_off" : result.status == .nonAmortizing ? "non_amortizing" : "iteration_limit"
         return try decode(["currency_code": budget.currencyCode, "status": status, "strategy": request.strategy, "rollover": request.rollover, "extra_payment_minor": request.extraPaymentMinor, "payoff_order": result.payoffOrder, "debt_free_date": result.debtFreeDate.map(BudgetWorkspaceStore.dateString) ?? NSNull(), "payment_count": result.paymentCount, "projected_interest_minor": result.projectedInterestMinor, "projected_total_paid_minor": result.projectedTotalPaidMinor, "projected_total_cost_minor": result.projectedTotalCostMinor, "accounts": rows, "incomplete_accounts": []])
+    }
+
+    private func missingDebtProjectionFields(_ terms: APIAccountDebtTermsUpsert) -> [String] {
+        var fields: [String] = []
+        if terms.annualRateBasisPoints == nil { fields.append("annual_rate_basis_points") }
+        if terms.rateType == nil { fields.append("rate_type") }
+        if terms.paymentFrequency == nil { fields.append("payment_frequency") }
+        if terms.dueDay == nil { fields.append("due_day") }
+        if terms.termsType == "credit_card" {
+            if terms.minimumPaymentRule == nil { fields.append("minimum_payment_rule") }
+            if ["fixed", "greater_of"].contains(terms.minimumPaymentRule ?? "") && terms.minimumPaymentMinor == nil { fields.append("minimum_payment_minor") }
+            if ["percentage", "greater_of"].contains(terms.minimumPaymentRule ?? "") && terms.minimumPaymentRateBasisPoints == nil { fields.append("minimum_payment_rate_basis_points") }
+        } else if terms.scheduledPaymentMinor == nil { fields.append("scheduled_payment_minor") }
+        return fields
     }
 
     private func decode<T: Decodable>(_ value: Any) throws -> T { try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value)) }
@@ -882,7 +908,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             "statement_day": value.statementDay ?? NSNull(), "original_principal_minor": value.originalPrincipalMinor ?? NSNull(),
             "original_term_months": value.originalTermMonths ?? NSNull(), "remaining_term_months": value.remainingTermMonths ?? NSNull(),
             "promotional_rate_basis_points": value.promotionalRateBasisPoints ?? NSNull(), "promotional_ends_on": value.promotionalEndsOn ?? NSNull(),
-            "projection_ready": false, "missing_projection_fields": [], "updated_at": "2026-09-16T12:00:00Z",
+            "projection_ready": missingDebtProjectionFields(value).isEmpty, "missing_projection_fields": missingDebtProjectionFields(value), "updated_at": "2026-09-16T12:00:00Z",
         ] as [String: Any])
     }
     func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms {
@@ -3605,7 +3631,30 @@ private struct DebtInterestDestinationView: View {
     }
 }
 
-private struct DebtOverviewContent: View { @EnvironmentObject private var store:BudgetWorkspaceStore;let report:APIDebtReport;var body:some View{Section("Overview"){LabeledContent("Opening debt",value:store.format(report.openingDebtMinor));LabeledContent("Current debt",value:store.format(report.debtMinor));LabeledContent(report.principalReductionMinor>=0 ? "Principal reduced":"Debt increased",value:store.format(abs(report.principalReductionMinor)));Text("Debt is the visible balance owed on credit cards and loans.").font(.caption).foregroundStyle(.secondary)};Section("Debt Accounts"){ForEach(report.accounts){row in if let account=store.accounts.first(where:{$0.id==row.accountID}){NavigationLink{LiveAccountRegisterView(initialAccount:account)}label:{LabeledContent(row.accountName,value:store.format(row.debtMinor))}}}}} }
+private struct DebtOverviewContent: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let report: APIDebtReport
+    var body: some View {
+        Section("Recorded debt") {
+            LabeledContent("Before \(report.startDate)", value: store.format(report.openingDebtMinor))
+            LabeledContent("Debt as of \(report.endDate)", value: store.format(report.debtMinor))
+                .accessibilityIdentifier("recorded-debt-as-of")
+            LabeledContent(report.principalReductionMinor >= 0 ? "Net debt decrease" : "Net debt increase",
+                           value: store.format(abs(report.principalReductionMinor)))
+            Text("Recorded balances include borrowing, payments, interest and adjustments. Net debt change is not a measure of principal payments alone.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        Section("Debt accounts as of \(report.endDate)") {
+            ForEach(report.accounts) { row in
+                if let account = store.accounts.first(where: { $0.id == row.accountID }) {
+                    NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: {
+                        LabeledContent(row.accountName, value: store.format(row.debtMinor))
+                    }
+                }
+            }
+        }
+    }
+}
 private struct DebtInterestContent: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let report: APIDebtReport
@@ -3690,6 +3739,8 @@ private struct DebtPayoffContent: View {
                 .accessibilityIdentifier("debt-payoff-read-only")
             Text("Projected results use current visible balances and saved Debt Terms. Changing this scenario does not alter transactions, balances, Plan assignments, schedules, or debt terms.")
                 .font(.caption).foregroundStyle(.secondary)
+            Text("Payments are normalized to a fixed monthly scenario budget. Actual weekly or biweekly payment dates are not modeled here. Saved APRs remain constant except for an explicit promotional expiry; unknown future rate changes are not predicted.")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .task(id: scenarioKey) {
             guard extraPayment != nil, !report.accounts.isEmpty else { result = nil; return }
@@ -3741,10 +3792,10 @@ private struct DebtPayoffContent: View {
             }
         } else {
             Section("Projected outcome") {
-                LabeledContent("Debt-free date", value: value.debtFreeDate ?? "Beyond projection range")
-                LabeledContent("Remaining interest", value: store.format(value.projectedInterestMinor))
+                LabeledContent("Projected debt-free date", value: value.debtFreeDate ?? "Beyond projection range")
+                LabeledContent("Projected remaining interest", value: store.format(value.projectedInterestMinor))
                 LabeledContent("Total projected cost", value: store.format(value.projectedTotalCostMinor))
-                LabeledContent("Projected payments", value: "\(value.paymentCount)")
+                LabeledContent("Projected months", value: "\(value.paymentCount)")
                 if let baseline, baseline.status == "paid_off" {
                     let interestDifference = baseline.projectedInterestMinor - value.projectedInterestMinor
                     let monthDifference = baseline.paymentCount - value.paymentCount
@@ -4021,10 +4072,10 @@ private struct DebtReportView: View {
                 .frame(minHeight: 220)
                 .accessibilityIdentifier("debt-history-chart")
                 .accessibilityLabel("Debt history from \(report.startDate) through \(report.endDate)")
-                .accessibilityValue("Current debt \(store.format(report.debtMinor)), principal reduction \(store.format(report.principalReductionMinor))")
+                .accessibilityValue("Recorded debt as of \(report.endDate): \(store.format(report.debtMinor)), \(report.principalReductionMinor >= 0 ? "net debt decrease" : "net debt increase") \(store.format(abs(report.principalReductionMinor)))")
                 LabeledContent("Opening debt", value: store.format(report.openingDebtMinor))
-                LabeledContent("Current debt", value: store.format(report.debtMinor)).fontWeight(.semibold)
-                LabeledContent(report.principalReductionMinor >= 0 ? "Principal reduced" : "Debt increased", value: store.format(abs(report.principalReductionMinor)))
+                LabeledContent("Debt as of \(report.endDate)", value: store.format(report.debtMinor)).fontWeight(.semibold)
+                LabeledContent(report.principalReductionMinor >= 0 ? "Net debt decrease" : "Net debt increase", value: store.format(abs(report.principalReductionMinor)))
                 Section("Recorded Interest") {
                     LabeledContent("Selected range", value: store.format(report.recordedInterestRangeMinor)).accessibilityIdentifier("recorded-interest-range")
                     LabeledContent("This month", value: store.format(report.recordedInterestMonthMinor))

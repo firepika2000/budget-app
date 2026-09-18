@@ -41,11 +41,15 @@ public struct DebtStrategyInput: Equatable, Sendable {
     public let principalMinor: Int64
     public let annualRateBasisPoints: Int64
     public let plannedPaymentMinor: Int64
+    public let promotionalRateBasisPoints: Int64?
+    public let promotionalEndsOn: Date?
 
-    public init(debtID: String, principalMinor: Int64, annualRateBasisPoints: Int64, plannedPaymentMinor: Int64) {
+    public init(debtID: String, principalMinor: Int64, annualRateBasisPoints: Int64, plannedPaymentMinor: Int64, promotionalRateBasisPoints: Int64? = nil, promotionalEndsOn: Date? = nil) {
         self.debtID = debtID; self.principalMinor = principalMinor
         self.annualRateBasisPoints = annualRateBasisPoints
         self.plannedPaymentMinor = plannedPaymentMinor
+        self.promotionalRateBasisPoints = promotionalRateBasisPoints
+        self.promotionalEndsOn = promotionalEndsOn
     }
 }
 
@@ -73,6 +77,32 @@ public struct DebtStrategyProjectionResult: Sendable {
 public enum DebtProjectionEngine {
     public static let maximumPeriods = 1_200
 
+    /// A fixed monthly scenario budget, normalized from the first scheduled payment.
+    /// This is not a claim about an issuer's future minimum-payment rules.
+    public static func monthlyStrategyPayment(principalMinor: Int64, firstPaymentOn: Date, terms: DebtProjectionTerms) throws -> Int64 {
+        guard principalMinor >= 0, (0...100_000).contains(terms.annualRateBasisPoints),
+              (0...100_000).contains(terms.promotionalRateBasisPoints ?? 0),
+              (0...10_000).contains(terms.minimumRateBasisPoints ?? 0),
+              (terms.scheduledPaymentMinor ?? 0) >= 0, (terms.minimumPaymentMinor ?? 0) >= 0 else { throw ProjectionError.invalidInput }
+        let periods: Int64 = terms.frequency == .weekly ? 52 : terms.frequency == .biweekly ? 26 : 12
+        let rate = terms.promotionalRateBasisPoints != nil && terms.promotionalEndsOn != nil && firstPaymentOn <= terms.promotionalEndsOn! ? terms.promotionalRateBasisPoints! : terms.annualRateBasisPoints
+        let interest = try multipliedAndRounded(principalMinor, by: rate, dividedBy: 10_000 * periods)
+        let statement = try checkedAdd(principalMinor, interest)
+        let payment = try plannedPayment(statement: statement, terms: terms)
+        return try multipliedAndRounded(payment, by: periods, dividedBy: 12)
+    }
+
+    private static func plannedPayment(statement: Int64, terms: DebtProjectionTerms) throws -> Int64 {
+        if let scheduled = terms.scheduledPaymentMinor { return scheduled }
+        let percentage = try multipliedAndRounded(statement, by: terms.minimumRateBasisPoints ?? 0, dividedBy: 10_000)
+        switch terms.minimumRule {
+        case .fixed: return terms.minimumPaymentMinor ?? 0
+        case .percentage: return percentage
+        case .greaterOf: return max(terms.minimumPaymentMinor ?? 0, percentage)
+        case nil: throw ProjectionError.missingPaymentRule
+        }
+    }
+
     public static func project(principalMinor: Int64, firstPaymentOn: Date, terms: DebtProjectionTerms, extraPaymentMinor: Int64 = 0, maximumPeriods: Int = maximumPeriods, calendar: Calendar = Calendar(identifier: .gregorian)) throws -> DebtProjectionResult {
         guard principalMinor >= 0, extraPaymentMinor >= 0, (0...100_000).contains(terms.annualRateBasisPoints), (1...self.maximumPeriods).contains(maximumPeriods) else { throw ProjectionError.invalidInput }
         guard (terms.scheduledPaymentMinor ?? 0) >= 0, (terms.minimumPaymentMinor ?? 0) >= 0,
@@ -86,13 +116,7 @@ public enum DebtProjectionEngine {
             let rate = terms.promotionalRateBasisPoints != nil && terms.promotionalEndsOn != nil && date <= terms.promotionalEndsOn! ? terms.promotionalRateBasisPoints! : terms.annualRateBasisPoints
             let interest = try multipliedAndRounded(principal, by: rate, dividedBy: 10_000 * periods)
             let statement = try checkedAdd(principal, interest)
-            let percentage = try multipliedAndRounded(statement, by: terms.minimumRateBasisPoints ?? 0, dividedBy: 10_000)
-            let base: Int64
-            if let scheduled = terms.scheduledPaymentMinor { base = scheduled }
-            else if terms.minimumRule == .fixed { base = terms.minimumPaymentMinor ?? 0 }
-            else if terms.minimumRule == .percentage { base = percentage }
-            else if terms.minimumRule == .greaterOf { base = max(terms.minimumPaymentMinor ?? 0, percentage) }
-            else { throw ProjectionError.missingPaymentRule }
+            let base = try plannedPayment(statement: statement, terms: terms)
             let planned = try checkedAdd(base, extraPaymentMinor)
             if planned <= interest { return .init(status: .nonAmortizing, payoffDate: nil, projectedInterestMinor: interestTotal, projectedTotalCostMinor: paid, points: points) }
             let payment = min(planned, statement), ending = statement - payment
@@ -121,11 +145,19 @@ public enum DebtProjectionEngine {
               debts.allSatisfy({ !$0.debtID.isEmpty && $0.principalMinor >= 0 && $0.plannedPaymentMinor >= 0 && (0...100_000).contains($0.annualRateBasisPoints) }),
               Set(debts.map(\.debtID)).count == debts.count else { throw ProjectionError.invalidInput }
         let ids = debts.map(\.debtID)
+        guard debts.allSatisfy({ (0...100_000).contains($0.promotionalRateBasisPoints ?? 0)
+            && (($0.promotionalRateBasisPoints == nil) == ($0.promotionalEndsOn == nil)) }) else { throw ProjectionError.invalidInput }
         if strategy == .custom && (customOrder.count != ids.count || Set(customOrder) != Set(ids)) {
             throw ProjectionError.invalidCustomOrder
         }
         var balances = Dictionary(uniqueKeysWithValues: debts.map { ($0.debtID, $0.principalMinor) })
-        let rates = Dictionary(uniqueKeysWithValues: debts.map { ($0.debtID, $0.annualRateBasisPoints) })
+        func ratesOn(_ date: Date) -> [String: Int64] {
+            Dictionary(uniqueKeysWithValues: debts.map { debt in
+                let rate = debt.promotionalEndsOn.map { date <= $0 } == true ? debt.promotionalRateBasisPoints! : debt.annualRateBasisPoints
+                return (debt.debtID, rate)
+            })
+        }
+        var rates = ratesOn(firstPaymentOn)
         let payments = Dictionary(uniqueKeysWithValues: debts.map { ($0.debtID, $0.plannedPaymentMinor) })
         var interestByID = Dictionary(uniqueKeysWithValues: ids.map { ($0, Int64(0)) })
         var paidByID = Dictionary(uniqueKeysWithValues: ids.map { ($0, Int64(0)) })
@@ -162,6 +194,7 @@ public enum DebtProjectionEngine {
             payoffOrder.append(id); payoffDates[id] = firstPaymentOn; payoffMonths[id] = 0
         }
         for number in 1...maximumPeriods {
+            rates = ratesOn(paymentDate)
             let active = ids.filter { balances[$0]! > 0 }
             if active.isEmpty { return try result(status: .paidOff, date: paymentDate, count: number - 1) }
             let startingTotal = try active.reduce(Int64(0)) { try checkedAdd($0, balances[$1]!) }
@@ -193,7 +226,10 @@ public enum DebtProjectionEngine {
                 if rollover { rolloverPool = try checkedAdd(rolloverPool, payments[id]!) }
             }
             if balances.values.allSatisfy({ $0 == 0 }) { return try result(status: .paidOff, date: paymentDate, count: number) }
-            if try balances.values.reduce(0, checkedAdd) >= startingTotal && newlyPaid.isEmpty {
+            let upcomingRateChange = debts.contains { debt in
+                balances[debt.debtID]! > 0 && debt.promotionalEndsOn.map { paymentDate <= $0 } == true
+            }
+            if try balances.values.reduce(0, checkedAdd) >= startingTotal && newlyPaid.isEmpty && !upcomingRateChange {
                 return try result(status: .nonAmortizing, date: nil, count: number)
             }
             paymentDate = calendar.date(byAdding: .month, value: 1, to: paymentDate)!

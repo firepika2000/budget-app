@@ -2,6 +2,22 @@ import XCTest
 @testable import BudgetCore
 
 final class DebtProjectionTests: XCTestCase {
+    func testMonthlyStrategyPaymentNormalizesFrequencyAndMinimumRuleExactly() throws {
+        let first = date("2026-01-31")
+        XCTAssertEqual(try DebtProjectionEngine.monthlyStrategyPayment(principalMinor: 10_000, firstPaymentOn: first,
+            terms: .init(annualRateBasisPoints: 0, frequency: .weekly, scheduledPaymentMinor: 1_000)), 4_333)
+        XCTAssertEqual(try DebtProjectionEngine.monthlyStrategyPayment(principalMinor: 10_000, firstPaymentOn: first,
+            terms: .init(annualRateBasisPoints: 0, frequency: .biweekly, scheduledPaymentMinor: 1_000)), 2_167)
+        XCTAssertEqual(try DebtProjectionEngine.monthlyStrategyPayment(principalMinor: 10_000, firstPaymentOn: first,
+            terms: .init(annualRateBasisPoints: 1_200, frequency: .monthly, minimumRule: .percentage, minimumRateBasisPoints: 200)), 202)
+        XCTAssertEqual(try DebtProjectionEngine.monthlyStrategyPayment(principalMinor: 10_000, firstPaymentOn: first,
+            terms: .init(annualRateBasisPoints: 1_200, frequency: .monthly, minimumRule: .percentage, minimumRateBasisPoints: 200,
+                         promotionalRateBasisPoints: 0, promotionalEndsOn: first)), 200)
+        XCTAssertEqual(try DebtProjectionEngine.monthlyStrategyPayment(principalMinor: 10_000, firstPaymentOn: first,
+            terms: .init(annualRateBasisPoints: 1_200, frequency: .monthly, minimumRule: .greaterOf, minimumPaymentMinor: 300, minimumRateBasisPoints: 200)), 300)
+        XCTAssertThrowsError(try DebtProjectionEngine.monthlyStrategyPayment(principalMinor: 10_000, firstPaymentOn: first,
+            terms: .init(annualRateBasisPoints: 0, frequency: .weekly, scheduledPaymentMinor: .max)))
+    }
     private struct SingleVectorFile: Decodable {
         let formatVersion: Int
         let cases: [SingleVector]
@@ -53,6 +69,8 @@ final class DebtProjectionTests: XCTestCase {
         let principalMinor: Int64
         let annualRateBasisPoints: Int64
         let plannedPaymentMinor: Int64
+        let promotionalRateBasisPoints: Int64?
+        let promotionalEndsOn: String?
     }
     private struct StrategyVectorExpected: Decodable {
         let status: String
@@ -182,7 +200,9 @@ final class DebtProjectionTests: XCTestCase {
                         debtID: $0.id,
                         principalMinor: $0.principalMinor,
                         annualRateBasisPoints: $0.annualRateBasisPoints,
-                        plannedPaymentMinor: $0.plannedPaymentMinor
+                        plannedPaymentMinor: $0.plannedPaymentMinor,
+                        promotionalRateBasisPoints: $0.promotionalRateBasisPoints,
+                        promotionalEndsOn: $0.promotionalEndsOn.map(date)
                     )
                 },
                 firstPaymentOn: date(vectors.firstPaymentOn),

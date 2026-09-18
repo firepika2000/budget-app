@@ -4,6 +4,42 @@ This is a durable, incrementally updated handoff for the autonomous run beginnin
 It records engineering evidence separately from human acceptance and does not authorize a merge,
 tag, or release.
 
+## 2026-09-18 — current production-readiness continuation
+
+Latest pushed checkpoint: `a5216c2` on `codex/development` (projection privacy/revocation coverage),
+following `65c7704` (17 shared single/multi-debt exact vector cases) and `315d5f7` (all-recorded
+interest/date recovery). Current full backend: **303 passed, zero skips**, including disposable
+PostgreSQL concurrency, migration and encrypted-object recovery. Swift package: **36 Core + 46 API
+passed** using an isolated temporary build directory; a workspace `.build` attempt failed signing
+because of Finder/resource-fork metadata, not a test assertion.
+
+The broad production UI run completed 37 selected cases: 35 passed, two failed (five assertions).
+Two preference-changing cases were deliberately excluded to preserve human Simulator state.
+One failed test appended inputs to now-prefilled Demo Debt Terms; the correction explicitly replaces
+the existing values. The other timed out synthesizing a Plan tap at 07:14:15, coincident with host
+Maintenance Sleep starting 07:14:14 (557 seconds), then another 900-second sleep at 07:23:37.
+Both focused awake reruns passed and finalized **TEST SUCCEEDED**, with serial native tests and
+process-scoped idle-sleep prevention.
+Do not report this broad run as green or a new app defect without those results. The earlier final
+native run did finish with **TEST SUCCEEDED**, 85 XCTest + three focused UI cases.
+
+Human Live remains at the recorded `0020` checkpoint and is untouched. No new migration in these
+checkpoints. Human acceptance remains **PENDING — DO NOT RETEST**.
+
+The next correction proved and fixed ignored promotional APR in the strategy endpoint (153 versus
+51 cents), carried expiry through both engines/adapters, and added three shared vectors (20 total).
+Demo also now normalizes weekly/biweekly/percentage payments into the same monthly scenario budget
+as Live and reports partial terms consistently. UI debt observations are dated, net debt change is
+not described as principal payments, and payoff values are explicitly projected with monthly/rate
+assumptions disclosed. Final verification: **305 backend / zero skips, 37 Core + 46 API, 86 native
+XCTest + two production debt UI tests**, final **TEST SUCCEEDED**, `git diff --check` green.
+The two earlier recovery UI cases also passed. No new migration or posted-money mutation.
+
+Next: finish v0.8 estimated-current-cost/VoiceOver and remaining financial boundary review, then
+reconcile the larger approved roadmap. Native verbose sysdiagnose collection was disabled only on
+the final focused rerun using Xcode's documented `-collect-test-diagnostics never`; normal console
+output, test assertions and result bundles remain enabled. No release readiness, merge or tag claimed.
+
 ## 2026-09-17 — v0.8 exact strategy parity checkpoint
 
 - `d7a702d` adds one versioned debt-strategy fixture consumed directly by Python and BudgetCore.

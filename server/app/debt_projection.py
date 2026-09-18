@@ -77,6 +77,8 @@ class StrategyDebt:
     principal_minor: int
     annual_rate_basis_points: int
     planned_payment_minor: int
+    promotional_rate_basis_points: int | None = None
+    promotional_ends_on: date | None = None
 
 
 @dataclass(frozen=True)
@@ -237,6 +239,9 @@ def project_debt_strategy(
     ids = [item.debt_id for item in debts]
     if any(not item.debt_id or item.principal_minor < 0 or item.planned_payment_minor < 0 or not 0 <= item.annual_rate_basis_points <= 100_000 for item in debts):
         raise ValueError("invalid strategy debt")
+    if any(not 0 <= (item.promotional_rate_basis_points or 0) <= 100_000
+           or (item.promotional_rate_basis_points is None) != (item.promotional_ends_on is None) for item in debts):
+        raise ValueError("invalid promotional terms")
     if len(set(ids)) != len(ids):
         raise ValueError("strategy debt IDs must be unique")
     custom = tuple(custom_order)
@@ -244,7 +249,11 @@ def project_debt_strategy(
         raise ValueError("custom order must contain every debt exactly once")
 
     balances = {item.debt_id: item.principal_minor for item in debts}
-    rates = {item.debt_id: item.annual_rate_basis_points for item in debts}
+    def rates_on(payment_date: date) -> dict[str, int]:
+        return {item.debt_id: item.promotional_rate_basis_points
+                if item.promotional_ends_on is not None and payment_date <= item.promotional_ends_on
+                else item.annual_rate_basis_points for item in debts}
+    rates = rates_on(first_payment_on)
     payments = {item.debt_id: item.planned_payment_minor for item in debts}
     interest_by_id = {item.debt_id: 0 for item in debts}
     paid_by_id = {item.debt_id: 0 for item in debts}
@@ -275,6 +284,7 @@ def project_debt_strategy(
         )
 
     for number in range(1, max_periods + 1):
+        rates = rates_on(payment_date)
         active = [item for item in ids if balances[item] > 0]
         if not active:
             break
@@ -326,7 +336,9 @@ def project_debt_strategy(
         # If aggregate principal did not decline, the fixed household payment
         # budget cannot amortize this scenario. Return an explicit typed result
         # instead of manufacturing a debt-free date.
-        if _money(sum(balances.values())) >= starting_total and not newly_paid:
+        upcoming_rate_change = any(balances[item.debt_id] > 0 and item.promotional_ends_on is not None
+                                   and payment_date <= item.promotional_ends_on for item in debts)
+        if _money(sum(balances.values())) >= starting_total and not newly_paid and not upcoming_rate_change:
             results = tuple(
                 StrategyDebtResult(item, payoff_dates.get(item), payoff_months.get(item), interest_by_id[item], paid_by_id[item])
                 for item in ids

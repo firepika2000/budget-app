@@ -575,6 +575,8 @@ def debt_strategy_projection(
             debt_id=account.id,
             principal_minor=principal,
             annual_rate_basis_points=terms.annual_rate_basis_points,
+            promotional_rate_basis_points=terms.promotional_rate_basis_points,
+            promotional_ends_on=terms.promotional_ends_on,
             planned_payment_minor=monthly_strategy_payment(
                 resolved_terms, principal, body.first_payment_on
             ),

@@ -41,6 +41,8 @@ def test_shared_debt_strategy_golden_vectors_are_exact() -> None:
                 principal_minor=item["principal_minor"],
                 annual_rate_basis_points=item["annual_rate_basis_points"],
                 planned_payment_minor=item["planned_payment_minor"],
+                promotional_rate_basis_points=item.get("promotional_rate_basis_points"),
+                promotional_ends_on=date.fromisoformat(item["promotional_ends_on"]) if item.get("promotional_ends_on") else None,
             )
             for item in case["debts"]
         ]

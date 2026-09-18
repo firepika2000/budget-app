@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from app.debt_projection import ProjectionTerms, StrategyDebt, project_debt, project_debt_strategy
+from app.debt_projection import ProjectionTerms, StrategyDebt, monthly_strategy_payment, project_debt, project_debt_strategy
 from .conftest import auth
 from .test_budgeting_api import create_budget
 from .test_delegated_access import add_child
@@ -49,6 +49,42 @@ def test_zero_apr_and_final_partial_payment_are_exact():
     assert result.projected_interest_minor == 0
     assert result.projected_total_cost_minor == 2501
     assert [point.payment_minor for point in result.points] == [1000, 1000, 501]
+
+
+def test_monthly_strategy_payment_normalizes_frequency_and_minimum_rule_exactly():
+    first = date(2026, 1, 31)
+    assert monthly_strategy_payment(loan(frequency="weekly"), 10_000, first) == 4_333
+    assert monthly_strategy_payment(loan(frequency="biweekly"), 10_000, first) == 2_167
+    percentage = ProjectionTerms(1200, "monthly", minimum_payment_rule="percentage", minimum_payment_rate_basis_points=200)
+    assert monthly_strategy_payment(percentage, 10_000, first) == 202
+    promo = ProjectionTerms(1200, "monthly", minimum_payment_rule="percentage", minimum_payment_rate_basis_points=200,
+                            promotional_rate_basis_points=0, promotional_ends_on=first)
+    assert monthly_strategy_payment(promo, 10_000, first) == 200
+    greater = ProjectionTerms(1200, "monthly", minimum_payment_rule="greater_of", minimum_payment_minor=300, minimum_payment_rate_basis_points=200)
+    assert monthly_strategy_payment(greater, 10_000, first) == 300
+
+
+def test_strategy_uses_saved_promotional_rate_until_its_explicit_expiry(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account = create_strategy_card(client, owner_token, budget["id"], "Promotional", 10_000, 1_200, 5_000)
+    base = f"/api/v1/budgets/{budget['id']}"
+    saved = client.put(f"{base}/accounts/{account['id']}/debt-terms", headers=auth(owner_token), json={
+        "terms_type": "credit_card", "annual_rate_basis_points": 1_200,
+        "rate_type": "fixed", "payment_frequency": "monthly", "due_day": 31,
+        "minimum_payment_rule": "fixed", "minimum_payment_minor": 5_000,
+        "promotional_rate_basis_points": 0, "promotional_ends_on": "2026-01-31",
+    })
+    assert saved.status_code == 200, saved.text
+    response = client.post(f"{base}/debt-strategy-projection", headers=auth(owner_token), json={
+        "first_payment_on": "2026-01-31", "strategy": "avalanche",
+        "rollover": False, "extra_payment_minor": 0,
+    })
+    assert response.status_code == 200, response.text
+    # Jan: no interest, 5,000 remains. Feb: 50 interest, 50 remains.
+    # Mar: half-cent interest rounds to 1; final payment is 51.
+    assert response.json()["projected_interest_minor"] == 51
+    assert response.json()["projected_total_paid_minor"] == 10_051
+    assert response.json()["debt_free_date"] == "2026-03-28"
 
 
 def test_projection_int64_boundaries_are_explicit_and_provider_compatible():

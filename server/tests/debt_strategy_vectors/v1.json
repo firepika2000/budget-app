@@ -3,6 +3,24 @@
   "first_payment_on": "2026-01-31",
   "cases": [
     {
+      "id": "promotional_expiry_exact_boundary",
+      "strategy": "avalanche", "rollover": false, "extra_payment_minor": 0,
+      "debts": [{"id": "promo", "principal_minor": 10000, "annual_rate_basis_points": 1200, "planned_payment_minor": 5000, "promotional_rate_basis_points": 0, "promotional_ends_on": "2026-01-31"}],
+      "expected": {"status": "paid_off", "payoff_order": ["promo"], "debt_free_date": "2026-03-28", "payment_count": 3, "projected_interest_minor": 51, "projected_total_paid_minor": 10051}
+    },
+    {
+      "id": "avalanche_reorders_after_promotional_expiry",
+      "strategy": "avalanche", "rollover": false, "extra_payment_minor": 1000,
+      "debts": [{"id": "promo", "principal_minor": 10000, "annual_rate_basis_points": 2400, "planned_payment_minor": 5000, "promotional_rate_basis_points": 0, "promotional_ends_on": "2026-01-31"}, {"id": "regular", "principal_minor": 5000, "annual_rate_basis_points": 1200, "planned_payment_minor": 1000}],
+      "expected": {"status": "paid_off", "payoff_order": ["promo", "regular"], "debt_free_date": "2026-03-28", "payment_count": 3, "projected_interest_minor": 193, "projected_total_paid_minor": 15193}
+    },
+    {
+      "id": "temporary_non_amortization_before_explicit_rate_drop",
+      "strategy": "snowball", "rollover": false, "extra_payment_minor": 0,
+      "debts": [{"id": "promo", "principal_minor": 100, "annual_rate_basis_points": 0, "planned_payment_minor": 10, "promotional_rate_basis_points": 12000, "promotional_ends_on": "2026-01-31"}],
+      "expected": {"status": "paid_off", "payoff_order": ["promo"], "debt_free_date": "2026-11-28", "payment_count": 11, "projected_interest_minor": 10, "projected_total_paid_minor": 110}
+    },
+    {
       "id": "all_debts_already_paid",
       "strategy": "avalanche", "rollover": false, "extra_payment_minor": 0,
       "debts": [{"id": "solo", "principal_minor": 0, "annual_rate_basis_points": 1200, "planned_payment_minor": 1000}],

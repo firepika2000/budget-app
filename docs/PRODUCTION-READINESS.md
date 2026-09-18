@@ -200,3 +200,30 @@ Hidden, cross-budget and nonexistent IDs are tested through both strategy select
 individual projection route with indistinguishable resource errors. Revoking balance capability on
 the same session blocks both routes despite retained report access. All 19 focused projection tests
 pass. No production change was needed for these additional adversarial cases.
+
+Further v0.8 review proved a promotional-rate projection defect: the Live multi-debt adapter
+discarded saved promotional terms, yielding 153 cents instead of the hand-calculated 51 cents.
+Both engines now apply the explicit promotional APR through its inclusive expiry date, recalculate
+avalanche priority per month and avoid prematurely declaring permanent non-amortization before an
+explicit future rate transition. Three shared vectors cover expiry, changing priority and a temporary
+non-amortizing period. The suite now contains 20 shared single/multi-debt vectors.
+
+The Demo adapter also used an unnormalized raw payment, ignored percentage minimums and treated
+partial terms inconsistently. Its fixed monthly scenario budget now uses the same exact first-payment
+normalization as Live; readiness reflects missing fields. Shared financial truth remains unchanged.
+The UI discloses monthly normalization and known-versus-unknown rate assumptions, labels payoff values
+individually as projected, and labels historical debt with its observation date and net debt change
+rather than claiming a historical balance is current or a balance difference is principal payments.
+Verification so far: 23 focused projection/vector tests; full backend **305 passed, zero skips**
+(disposable PostgreSQL enabled); package **37 Core + 46 API passed**. Native final verification:
+**86 XCTest + two production debt UI tests passed**, Simulator build and final **TEST SUCCEEDED**.
+`git diff --check` passed; no new migration, no human data changes and no human acceptance claim.
+
+Broad UI investigation: 35/37 selected cases passed initially. The debt-terms test appended values
+to newly prefilled fields; it now explicitly replaces and verifies different persisted values. The
+unmodified Plan relaunch test timed out at the exact start of host Maintenance Sleep. Both focused
+reruns passed (49 seconds combined), and Xcode finalized **TEST SUCCEEDED**. Initial failure evidence
+is retained, not retroactively reported as a green broad run. Two preference-changing UI cases were
+excluded to preserve human state. A temporary test-process idle-sleep assertion changes no permanent
+power settings. QuartzCore diagnostics remain visible; this sleep correlation does not establish a
+new application defect or a blanket explanation for every runtime warning.
