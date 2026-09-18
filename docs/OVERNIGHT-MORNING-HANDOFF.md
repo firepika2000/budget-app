@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `51f65e0`, Demo profile defaults reflect actual seeded manager/delegated scopes. Updates
+validate capability/resource sets and scope flags, preserve the base grant type, sort returned IDs,
+and record actual owner/injected-time/member audit metadata once. No financial mutation. Broader
+dynamic custom-scope enforcement remains open and is not claimed by this profile-contract fix.
+Verified: 131 native + 2 household production UI tests, Beta build, 4 backend reference tests and
+diff check PASS. Human/Simulator data preserved; no migration or server behavior change.
+
 After `1d5d163`, authorization audit reproduced 25 Swift/server capability mismatches caused by
 APIBudget's default-true fallback. Replaced it with the exact legacy permission matrix, explicit
 custom override semantics and unknown-capability denial. Shared JSON vectors assert Python

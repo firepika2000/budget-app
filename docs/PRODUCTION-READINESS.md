@@ -4,6 +4,21 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo access-profile contract after `51f65e0`: initial profiles now describe actual seeded manager /
+delegated capabilities and resource scopes instead of presenting every member as unrestricted
+view-only. Updates validate supported/unique capabilities, unique budget-local resource IDs and
+required restriction flags before mutation; stale versions refuse. Custom profiles retain the
+underlying manage/contribute grant rather than returning the server-invalid `custom` grant value.
+Lists are sorted as in Live. Attribution now uses the actual owner (Rey), injected clock and one
+`access_profile_updated` event with member identity, rather than fabricated Alex/September-16 values.
+Native regression covers invalid atomic refusal, unchanged history, correct actor/time, stale replay,
+and unchanged money. This closes profile contract/audit correctness, not full dynamic custom-scope
+enforcement throughout Demo; that broader provider parity remains open.
+Verification: 131 native tests + 2 production household UI tests PASS on the existing Xcode 27 Beta
+iPhone 17 Pro Max simulator; build PASS. Four backend household/authorization reference tests PASS.
+Logs: `/tmp/budget-demo-access-profile-native.log` and
+`/tmp/budget-demo-access-profile-reference.log`; `git diff --check` PASS.
+
 Capability contract audit after `1d5d163`: `APIBudget.can` defaulted to true for unlisted capabilities,
 making legacy view-only grants appear eligible for edit/delete/payee/export/own-category actions and
 accepting unknown capability names. Two shared-vector tests reproduced 25 mismatches. Swift now

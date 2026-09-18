@@ -370,6 +370,7 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
 
 @MainActor
 final class DemoWorkspaceDataSource: WorkspaceDataSource {
+    private static let delegatedCapabilities = ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances", "create_transaction", "edit_transaction", "delete_transaction", "request_money", "move_money", "manage_own_categories"]
     let demo: DemoStore
     var actorUserID: String? { requestActorID }
     private var attachmentData: [String: Data] = [:]
@@ -418,7 +419,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         budget = APIBudget(
             id: "demo-budget", householdID: "demo-household", name: "Rivera Household", currencyCode: "USD",
             effectivePermission: store.persona == .rey ? .owner : (restricted ? .contribute : .manage),
-            capabilities: restricted ? ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances", "create_transaction", "edit_transaction", "delete_transaction", "request_money", "move_money", "manage_own_categories"] : nil
+            capabilities: restricted ? Self.delegatedCapabilities : nil
         )
         debtTermsValues["visa"] = .init(termsType: "credit_card", annualRateBasisPoints: 2049, rateType: "variable", paymentFrequency: "monthly", minimumPaymentRule: "fixed", minimumPaymentMinor: 4500, dueDay: 18)
         debtTermsValues["mastercard"] = .init(termsType: "credit_card", annualRateBasisPoints: 1899, rateType: "variable", paymentFrequency: "monthly", minimumPaymentRule: "fixed", minimumPaymentMinor: 3500, dueDay: 24)
@@ -1045,14 +1046,33 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard let member = DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == userID }), member != .rey,
               !removedMembers.contains(member) else { throw workspaceRepositoryError("Active non-owner member not found.") }
         if let profile = accessProfiles[userID] { return profile }
-        return try decode(["budget_id": budget.id, "user_id": userID, "capabilities": ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"], "restrict_accounts": false, "account_ids": [], "restrict_categories": false, "category_ids": [], "grant_permission": "view", "is_custom": false, "version": 0, "updated_by_user_id": NSNull(), "updated_by_display_name": NSNull(), "updated_at": NSNull()])
+        let permission: APIBudgetPermission = member.isChild ? .contribute : .manage
+        return try decode(["budget_id": budget.id, "user_id": userID,
+            "capabilities": member.isChild ? Self.delegatedCapabilities.sorted() : permission.legacyCapabilities.sorted(),
+            "restrict_accounts": member.isChild, "account_ids": member.isChild ? demo.accounts.filter { !$0.restrictedFromChildren }.map(\.id).sorted() : [],
+            "restrict_categories": member.isChild, "category_ids": member.isChild ? demo.categories.filter { $0.delegatedTo == member }.map(\.id).sorted() : [],
+            "grant_permission": permission.rawValue, "is_custom": member.isChild, "version": 0,
+            "updated_by_user_id": NSNull(), "updated_by_display_name": NSNull(), "updated_at": NSNull()])
     }
 
     func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile { try requireActiveMembership();
         let current = try await accessProfile(userID: userID)
+        guard Set(value.capabilities).isSubset(of: APIBudget.supportedCapabilities),
+              Set(value.capabilities).count == value.capabilities.count,
+              Set(value.accountIDs).count == value.accountIDs.count,
+              Set(value.categoryIDs).count == value.categoryIDs.count,
+              value.restrictAccounts || value.accountIDs.isEmpty,
+              value.restrictCategories || value.categoryIDs.isEmpty,
+              Set(value.accountIDs).isSubset(of: Set(demo.accounts.map(\.id))),
+              Set(value.categoryIDs).isSubset(of: Set(demo.categories.map(\.id))) else {
+            throw workspaceRepositoryError("Choose unique, supported capabilities and resources belonging to this budget, with their scope restrictions enabled.")
+        }
         guard value.expectedVersion == nil || value.expectedVersion == current.version else { throw APIClientError.server(status: 409, message: "Access changed elsewhere. Reload and try again.") }
-        let profile: APIAccessProfile = try decode(["budget_id": budget.id, "user_id": userID, "capabilities": value.capabilities, "restrict_accounts": value.restrictAccounts, "account_ids": value.accountIDs, "restrict_categories": value.restrictCategories, "category_ids": value.categoryIDs, "grant_permission": "custom", "is_custom": true, "version": current.version + 1, "updated_by_user_id": "demo-owner", "updated_by_display_name": "Alex Rivera", "updated_at": "2026-09-16T12:00:00Z"])
+        let timestamp = now()
+        let profile: APIAccessProfile = try decode(["budget_id": budget.id, "user_id": userID, "capabilities": value.capabilities.sorted(), "restrict_accounts": value.restrictAccounts, "account_ids": value.accountIDs.sorted(), "restrict_categories": value.restrictCategories, "category_ids": value.categoryIDs.sorted(), "grant_permission": current.grantPermission, "is_custom": true, "version": current.version + 1, "updated_by_user_id": "demo-owner", "updated_by_display_name": "Rey Rivera", "updated_at": ISO8601DateFormatter().string(from: timestamp)])
         accessProfiles[userID] = profile
+        accessEventRecords.append(.init(id: UUID().uuidString, kind: "access_profile_updated", detail: budget.name, date: timestamp,
+            subject: DemoPersona.allCases.first { $0.rawValue.lowercased() == userID }))
         return profile
     }
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try requireActiveMembership();

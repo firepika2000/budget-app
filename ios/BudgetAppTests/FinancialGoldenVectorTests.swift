@@ -4,6 +4,55 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoAccessProfileValidatesScopeAndRecordsRealOwnerTimeAndGrant() async throws {
+        let timestamp = BudgetWorkspaceStore.parseDate("2026-09-18")
+        let source = DemoWorkspaceDataSource(now: { timestamp })
+        let before = try await source.accessProfile(userID: "jordan")
+        XCTAssertEqual(before.grantPermission, "manage")
+        XCTAssertEqual(Set(before.capabilities), APIBudgetPermission.manage.legacyCapabilities)
+        let child = try await source.accessProfile(userID: "alex")
+        XCTAssertEqual(child.grantPermission, "contribute")
+        XCTAssertTrue(child.restrictAccounts); XCTAssertTrue(child.restrictCategories)
+        XCTAssertFalse(child.categoryIDs.contains("miaallow"))
+        let accounts = source.demo.accounts, transactions = source.demo.transactions
+        let version = source.demo.allocationVersion
+        let invalid: [APIAccessProfileUpsert] = [
+            .init(capabilities: ["unknown"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 0),
+            .init(capabilities: ["view_budget", "view_budget"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 0),
+            .init(capabilities: [], restrictAccounts: true, accountIDs: ["foreign"], restrictCategories: false, categoryIDs: [], expectedVersion: 0),
+            .init(capabilities: [], restrictAccounts: false, accountIDs: ["checking"], restrictCategories: false, categoryIDs: [], expectedVersion: 0),
+            .init(capabilities: [], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: ["groceries"], expectedVersion: 0),
+            .init(capabilities: [], restrictAccounts: false, accountIDs: [], restrictCategories: true, categoryIDs: ["groceries", "groceries"], expectedVersion: 0),
+            .init(capabilities: [], restrictAccounts: true, accountIDs: ["checking"], restrictCategories: true, categoryIDs: ["foreign"], expectedVersion: 0)
+        ]
+        for value in invalid {
+            do { _ = try await source.updateAccessProfile(userID: "jordan", value: value); XCTFail("Invalid access must refuse atomically") } catch {}
+            let unchanged = try await source.accessProfile(userID: "jordan")
+            let events = try await source.householdAccessEvents()
+            XCTAssertEqual(unchanged, before); XCTAssertTrue(events.isEmpty)
+        }
+        let input = APIAccessProfileUpsert(capabilities: ["view_transactions", "view_budget"], restrictAccounts: true,
+            accountIDs: ["checking"], restrictCategories: true, categoryIDs: ["groceries", "dining"], expectedVersion: 0)
+        let updated = try await source.updateAccessProfile(userID: "jordan", value: input)
+        XCTAssertEqual(updated.grantPermission, "manage"); XCTAssertTrue(updated.isCustom)
+        XCTAssertEqual(updated.capabilities, ["view_budget", "view_transactions"])
+        XCTAssertEqual(updated.categoryIDs, ["dining", "groceries"])
+        XCTAssertEqual(updated.updatedByDisplayName, "Rey Rivera")
+        XCTAssertEqual(updated.updatedAt, ISO8601DateFormatter().string(from: timestamp))
+        XCTAssertEqual(updated.version, 1)
+        do { _ = try await source.updateAccessProfile(userID: "jordan", value: input); XCTFail("Stale version") } catch {}
+        let reloaded = try await source.accessProfile(userID: "jordan")
+        let events = try await source.householdAccessEvents()
+        XCTAssertEqual(reloaded, updated); XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events[0].eventType, "access_profile_updated")
+        XCTAssertEqual(events[0].actorDisplayName, "Rey Rivera")
+        XCTAssertEqual(events[0].subjectDisplayName, "Jordan Rivera")
+        XCTAssertEqual(events[0].createdAt, updated.updatedAt)
+        XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+        XCTAssertEqual(source.demo.allocationVersion, version)
+    }
+
+    @MainActor
     func testRemovedDemoMemberCannotReadOrMutateAndCannotReceiveAllowance() async throws {
         let source = DemoWorkspaceDataSource()
         let month = BudgetWorkspaceStore.parseDate("2026-09-01")
