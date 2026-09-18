@@ -28,6 +28,8 @@ from .test_pg_concurrency import PG_URL, pg, pg_migrated, pytestmark  # shared i
 from .test_backup_age import run_with_passphrase
 from .test_backup_restore_scripts import ARCHIVE_TOOL
 
+EMPTY_GUARD = ARCHIVE_TOOL.with_name("require_empty_restore.sql")
+
 
 def _connection_environment(url):
     environment = {key: value for key, value in os.environ.items() if not key.startswith("PG")}
@@ -121,7 +123,7 @@ def test_real_dump_restore_preserves_rows_finances_and_encrypted_attachments(pg,
     restored_engine = create_engine(destination_url)
     try:
         environment["PGDATABASE"] = destination_name
-        subprocess.run(["psql", "--single-transaction", "--set", "ON_ERROR_STOP=on", "--dbname", destination_name, "--file", str(dump)], env=environment, check=True, capture_output=True)
+        subprocess.run(["psql", "--single-transaction", "--set", "ON_ERROR_STOP=on", "--dbname", destination_name], input=EMPTY_GUARD.read_bytes() + b"\n" + dump.read_bytes(), env=environment, check=True, capture_output=True)
         assert _rows(restored_engine) == expected
         with restored_engine.connect() as connection:
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0027_interest_class"
@@ -151,3 +153,12 @@ def test_real_dump_restore_preserves_rows_finances_and_encrypted_attachments(pg,
         restored_engine.dispose()
         with pg.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
             connection.execute(text(f'DROP DATABASE "{destination_name}"'))
+
+
+def test_restore_guard_refuses_populated_database_without_changing_rows(pg):
+    expected = _rows(pg.engine)
+    result = subprocess.run(["psql", "--single-transaction", "--set", "ON_ERROR_STOP=on"],
+                            input=EMPTY_GUARD.read_bytes(), env=_connection_environment(make_url(PG_URL)), capture_output=True)
+    assert result.returncode != 0
+    assert b"empty recovery destination" in result.stderr
+    assert _rows(pg.engine) == expected

@@ -92,10 +92,12 @@ On macOS, automatic AppleDouble sidecars are excluded from archive creation with
 attributes. Archives with unmanifested members are rejected rather than silently restored. Preserve
 any rejected older archive unchanged; do not bypass validation or delete the last known backup.
 
-Restore is intentionally explicit because it replaces current database contents:
+Restore is intentionally restricted to a **new, empty recovery deployment**, not an in-place
+overwrite of an existing household. Start that deployment so its schema exists, but do not complete
+First setup or create users/budgets. Use a separate host or explicitly isolated project/ports/volumes:
 
 ```sh
-./scripts/restore.sh --yes --project-name budget-server /path/to/budget-YYYYMMDDTHHMMSSZ.tar.gz.age
+./scripts/restore.sh --yes --project-name budget-server-recovery /path/to/budget-YYYYMMDDTHHMMSSZ.tar.gz.age
 ```
 
 Before changing the target, restore validates archive member paths/types and rejects duplicates,
@@ -106,9 +108,24 @@ and the destination API's active configuration. Configure the new recovery deplo
 same `BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY` (or original `BUDGET_APP_JWT_SECRET` when no dedicated
 key was used) first. A mismatch refuses restore before database/object mutation; secrets are not
 printed or sourced as shell code. SQL restoration uses a single transaction with stop-on-error.
+Populated databases or attachment stores are refused before stopping the API. The script then stops
+the recovery API, rechecks the empty database, copies objects as the normal non-root service user,
+and applies the SQL behind a final locked empty-target check in the same transaction. It never deletes
+existing attachment objects. The image provisions the attachment directory for that service user;
+this does not change permissions on existing user-managed volumes.
+
+If copying, SQL or startup fails, the recovery API is kept stopped (or an explicit warning says its
+state could not be confirmed). Preserve the original deployment and backup. Do not start an incomplete
+recovery target or bypass its guards; investigate it or use another new destination. A successful
+start command is not a complete operational acceptance test: verify health, canonical balances and
+an attachment download before switching clients. There is deliberately no destructive override flag.
 The restore command requires the exact Docker Compose project name so it cannot silently select an
 implicit target. For a recovery drill, create a separate Compose project (for example,
 `budget-server-recovery`) and name that project explicitly. Test recovery periodically on a
 non-production instance. The complete archive contains the attachment-key recovery material inside its
 encrypted envelope. Preserve the deployment `.env` separately in a secure password manager as well;
 JWT and database secrets are still required to operate the restored server.
+
+The normal-user graphical server manager remains future distribution work; these are advanced
+self-hosting operations. Actual Compose execution remains a release gate in the current engineering
+environment; command doubles do not prove Docker volume ownership or service startup behavior.

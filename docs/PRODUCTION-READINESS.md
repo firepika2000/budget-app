@@ -330,3 +330,20 @@ zero skips**, including 21 age/script cases and both real PostgreSQL recovery va
 and diff check pass. Docker remains a double for orchestration, so no Compose execution is claimed.
 Next: ensure replacement failure cannot expose a database/attachment mismatch; enforce the mission's
 new-destination recovery safety rather than erase an existing destination's objects.
+
+Recovery lifecycle correction now enforces a new/schema-only database and empty object store,
+refusing populated destinations before service stop. A PostgreSQL guard takes bounded locks and
+is repeated after quiescence and inside the final SQL transaction. Objects are copied before SQL
+as the normal non-root service user, never deleted in place; failure keeps the recovery API stopped.
+Failed startup attempts stop again rather than treating a failed start as a ready server. The image
+now creates its attachment mount directory owned by the service user instead of relying on a
+root-owned empty path. Existing volume ownership is not automatically rewritten. Real Compose
+ownership/startup verification is still open, not established by the command-double tests.
+
+Regression evidence: populated-destination refusal leaves every PostgreSQL row unchanged; both
+real plain/encrypted new-destination recoveries pass; copy/SQL/start failures and preflight refusals
+have explicit command-order assertions. Full backend **329 passed, zero skips**, shell syntax and
+diff check pass. No native changes. This intentionally removes destructive in-place restore; the
+documented mission requires new-destination recovery and preserves the original deployment/backup.
+Next operational gap: coordinate source database/object backup capture against concurrent writers;
+do not claim a hot cross-resource snapshot is atomic merely because its manifest is complete.

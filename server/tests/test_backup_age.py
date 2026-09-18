@@ -105,7 +105,7 @@ def test_real_age_backup_roundtrip_preserves_verified_payload_and_uses_terminal_
     (tmp_path / "tools" / "age").unlink()
     status, transcript = run_with_passphrase([str(RESTORE), "--yes", "--project-name", "disposable-recovery", str(archive)], environment)
     assert status == 0, transcript
-    assert len(log.read_text().splitlines()) == 5
+    assert len(log.read_text().splitlines()) == 8
 
 
 @pytest.mark.parametrize("failure", ["wrong-passphrase", "corrupted-ciphertext"])

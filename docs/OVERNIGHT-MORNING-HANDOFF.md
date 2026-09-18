@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`87e3146` is pushed (real encrypted PostgreSQL recovery). Next verified correction restricts restore
+to a new/schema-only database and empty object store, with bounded locked guards, quiesced recovery
+API, non-root object copying, no object deletion and stopped-on-failure behavior. Real populated-target
+refusal preserves all rows; full backend **329 pass, zero skips**, shell syntax/diff pass. The image
+provisions a service-owned attachment directory; actual Compose runtime remains unverified. No human
+data touched. Next: source backup capture consistency during concurrent writes, then the proven
+recurring-target cadence gap. **DO NOT RETEST** remains in effect.
+
 `26ff835` is pushed (complete safe archive preflight). Next verified checkpoint proves actual age
 passphrase encryption, wrong-passphrase/corruption denial and a populated real PostgreSQL recovery
 through the encrypted envelope. Final **323 backend passed, zero skips**; real crypto + command-double

@@ -66,7 +66,18 @@ def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
         '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$FAKE_DOCKER_LOG"\n'
         'if [[ "$*" == *BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY* ]]; then\n'
         '  printf "%s\\n" "${RESTORE_TEST_KEY:-BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=test-key}"\n'
-        'elif [[ "$*" == *"exec -T database psql"* ]]; then cat >/dev/null; fi\n'
+        'elif [[ "$*" == *"exec -T database psql"* ]]; then\n'
+        '  payload="$(cat)"\n'
+        '  [[ "${RESTORE_TEST_NONEMPTY_DB:-}" != 1 ]] || exit 1\n'
+        '  if [[ "$payload" == *BUDGET_RESTORE_PAYLOAD* && "${RESTORE_TEST_FAIL_SQL:-}" == 1 ]]; then exit 1; fi\n'
+        'elif [[ "$*" == *"run --rm --no-deps -T api"* ]]; then\n'
+        '  cat >/dev/null\n'
+        '  [[ "${RESTORE_TEST_FAIL_COPY:-}" != 1 ]] || exit 1\n'
+        'elif [[ "$*" == *"find /var/lib/budget-app/attachments"* ]]; then\n'
+        '  [[ "${RESTORE_TEST_NONEMPTY_OBJECTS:-}" != 1 ]] || exit 1\n'
+        'elif [[ "$*" == *"start api"* ]]; then\n'
+        '  [[ "${RESTORE_TEST_FAIL_START:-}" != 1 ]] || exit 1\n'
+        'fi\n'
     )
     age.chmod(0o755)
     docker.chmod(0o755)
@@ -153,11 +164,15 @@ def test_restore_verifies_archive_before_addressing_explicit_target(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     calls = log.read_text().splitlines()
-    assert len(calls) == 5
+    assert len(calls) == 8
     assert all("--project-name budget-recovery" in call for call in calls)
     assert "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY" in calls[0]
     assert "exec -T database psql --single-transaction --set ON_ERROR_STOP=on" in calls[1]
-    assert "restart api" in calls[-1]
+    assert "stop api" in calls[3]
+    assert "run --rm --no-deps -T api" in calls[5]
+    assert "psql --single-transaction --set ON_ERROR_STOP=on" in calls[6]
+    assert "start api" in calls[-1]
+    assert not any("-delete" in call for call in calls)
 
 
 def test_corrupt_or_incomplete_backup_never_reaches_restore_target(tmp_path):
@@ -320,3 +335,41 @@ def test_backup_publication_refuses_to_overwrite_existing_archive(tmp_path):
     assert archive.read_bytes() == before
     assert list(output.iterdir()) == [archive]
     assert "Backup complete:" not in second.stdout
+
+
+@pytest.mark.parametrize("resource", ["DB", "OBJECTS"])
+def test_restore_refuses_populated_target_before_stopping_api(tmp_path, resource):
+    archive = _archive(tmp_path)
+    environment, log = _environment(tmp_path)
+    environment[f"RESTORE_TEST_NONEMPTY_{resource}"] = "1"
+    result = subprocess.run([str(RESTORE), "--yes", "--project-name", "recovery", str(archive)], env=environment, text=True, capture_output=True)
+    assert result.returncode != 0
+    calls = log.read_text().splitlines()
+    assert not any("stop api" in call or "run --rm" in call or "start api" in call or "-delete" in call for call in calls)
+
+
+@pytest.mark.parametrize("failure", ["COPY", "SQL"])
+def test_partial_restore_leaves_recovery_api_stopped_without_deleting_existing_objects(tmp_path, failure):
+    archive = _archive(tmp_path)
+    environment, log = _environment(tmp_path)
+    environment[f"RESTORE_TEST_FAIL_{failure}"] = "1"
+    result = subprocess.run([str(RESTORE), "--yes", "--project-name", "recovery", str(archive)], env=environment, text=True, capture_output=True)
+    assert result.returncode != 0
+    calls = log.read_text().splitlines()
+    assert any("stop api" in call for call in calls)
+    assert not any("start api" in call or "restart api" in call or "-delete" in call for call in calls)
+    assert "recovery API remains stopped" in result.stderr
+    if failure == "COPY":
+        assert len([call for call in calls if "psql" in call]) == 2, "Only the two empty-target checks precede a failed copy"
+
+
+def test_failed_api_start_attempts_to_stop_recovery_again(tmp_path):
+    archive = _archive(tmp_path)
+    environment, log = _environment(tmp_path)
+    environment["RESTORE_TEST_FAIL_START"] = "1"
+    result = subprocess.run([str(RESTORE), "--yes", "--project-name", "recovery", str(archive)], env=environment, text=True, capture_output=True)
+    assert result.returncode != 0
+    calls = log.read_text().splitlines()
+    assert len([call for call in calls if "stop api" in call]) == 2
+    assert "stop api" in calls[-1]
+    assert "recovery API remains stopped" in result.stderr

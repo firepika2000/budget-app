@@ -55,6 +55,21 @@ The API container applies forward-only database migrations before accepting traf
 - Renew the JWT secret only as a deliberate sign-out-all-users operation.
 - Apply host OS, Docker, Caddy, and Budget App updates promptly.
 
+## Recovery destination safety
+
+Restore into a new/schema-only deployment with empty attachment storage and the matching encryption
+configuration. Do not bootstrap that destination first. Keep the source deployment and backup intact;
+use a separate host or deliberately isolated project/ports/volumes. The restore script refuses existing
+application rows or objects, quiesces the recovery API, copies under the normal service identity and
+uses a locked empty-database guard plus SQL restore in one transaction. Failures leave the recovery
+API stopped; partial recovery is not safe to serve. There is no in-place overwrite bypass.
+
+After successful recovery, check health, financial observations and an attachment download before
+any client cutover. Starting a container is not proof that migrations/health succeeded. Docker's
+[one-off service command](https://docs.docker.com/reference/cli/docker/compose/run/) preserves service
+configuration/volumes without publishing service ports; the recovery helper does not run an extra API.
+Do not share those volumes with another writer during recovery.
+
 ## Network choices
 
 For home-only access, a private mesh VPN is preferable to exposing the app publicly. If it is internet-facing, retain Caddy's HTTPS and security headers, use unique strong passwords, and never publish PostgreSQL's port.
