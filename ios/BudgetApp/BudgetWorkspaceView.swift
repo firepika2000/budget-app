@@ -3374,6 +3374,14 @@ private struct LiveInsightsView: View {
             }
             if let resilience = store.resilienceReport { Section("Looking Ahead") { LabeledContent("Expected 30-day margin", value: store.format(resilience.expectedMarginMinor)); Text("Forecast-only scheduled income and outflows. It does not change money available today.").font(.caption).foregroundStyle(.secondary) } }
         }.navigationTitle("Insights").accessibilityIdentifier("insights-hub")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showFilters = true } label: {
+                    Label("Report Filters", systemImage: hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                }.accessibilityIdentifier("insights-report-filters")
+            }
+        }
+        .sheet(isPresented: $showFilters) { filters.environmentObject(store) }
         .alert("Unable to export reports", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) { Button("OK", role: .cancel) {} } message: { Text(exportError ?? "Unknown error") }
     }
     private func reportLink(_ title: String, _ explanation: String, _ symbol: String) -> some View { Label { VStack(alignment: .leading, spacing: 3) { Text(title); Text(explanation).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: symbol).foregroundStyle(Theme.accent) } }

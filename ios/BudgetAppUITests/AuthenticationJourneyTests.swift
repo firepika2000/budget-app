@@ -259,6 +259,34 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(range.label.contains("$32.00") || String(describing: range.value).contains("$32.00"))
     }
 
+    func testInsightsReportFiltersAreReachableAndPreserveAppliedContext() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+        let filters = app.buttons["insights-report-filters"]
+        XCTAssertTrue(filters.waitForExistence(timeout: 5))
+        filters.tap()
+        XCTAssertTrue(app.navigationBars["Report Filters"].waitForExistence(timeout: 5))
+        let tag = app.textFields["Tag"]
+        if !tag.isHittable { app.swipeUp() }
+        XCTAssertTrue(tag.waitForExistence(timeout: 5))
+        tag.tap()
+        tag.typeText("report-filter-regression")
+        app.buttons["Apply"].tap()
+        XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
+        filters.tap()
+        XCTAssertTrue(app.navigationBars["Report Filters"].waitForExistence(timeout: 5))
+        if !tag.isHittable { app.swipeUp() }
+        XCTAssertEqual(tag.value as? String, "report-filter-regression")
+        app.buttons["Reset"].tap()
+        XCTAssertEqual(tag.value as? String, "Tag")
+        app.buttons["Apply"].tap()
+        app.buttons["insights-spending-income"].tap()
+        XCTAssertTrue(app.navigationBars["Spending & Income"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements.matching(identifier: "spending-breakdown-sector-chart").firstMatch.waitForExistence(timeout: 5))
+    }
+
     func testInsightsHubNavigatesFocusedReportsAndDebtProgression() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=insights"]

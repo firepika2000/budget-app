@@ -40,13 +40,15 @@ with clean `TEST SUCCEEDED`; all 11 shared strategy vectors remain exact. No mig
 
 - Current branch: `codex/development`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
-- Latest independently verified pushed checkpoint: `9a01b1f` (projection arithmetic hardening)
-- Push status: checkpoints through `9a01b1f` are pushed. Later dated entries supersede historical pending notes below.
+- Latest independently verified pushed checkpoint: `a4aabf0` (focused report read contract)
+- Push status: checkpoints through `a4aabf0` are pushed. Later dated entries supersede historical pending notes below.
 
 Focused report read-contract preparation follows this checkpoint. It preserves existing eager
 hydration while separating report selection and current-credential resolution for upcoming demand
 loading. Next work: activate demand loading with query/mutation invalidation, loading/error/retry
-states, report-filter reachability, and production navigation tests. Do not claim the seven-report
+states and production navigation tests. The following filter-reachability fix restores the hub
+toolbar entry to its existing shared filter form and adds a production apply/reopen/reset/chart
+navigation regression. Do not claim the seven-report
 launch fan-out has been removed yet. Human Live migrations and all human data remain untouched.
 - Active mission: [Production readiness ledger](PRODUCTION-READINESS.md); finish v0.8 and continue independent engineering toward an App Store release candidate.
 - Next task: demand-loaded Insights reports, authoritative invalidation, loading/error states and request-count evidence.

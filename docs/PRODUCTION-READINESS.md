@@ -96,3 +96,10 @@ Xcode's result-finalization process remained pending after tests completed (not 
 command exit). Full package passed 35 BudgetCore + 45 BudgetAPI using isolated temporary build
 output; the first workspace-build attempt failed code signing on Finder metadata. No backend
 code changed. Whitespace checks passed.
+
+Insights filter reachability correction: the hub refactor left the existing Report Filters form
+without a presentation trigger. Restored a labeled native toolbar action, active-filter icon,
+and sheet using the same workspace store. No accounting/filter contract changed. Production
+XCUITest verifies opening the form, applying a tag, reopening with the same context, resetting,
+and reaching the sector chart through normal navigation. This is automated evidence, not human
+acceptance; human acceptance remains consolidated and pending.
