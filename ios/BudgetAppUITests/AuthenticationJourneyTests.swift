@@ -855,6 +855,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         assignment(expected: "0.00", replacement: "200.00")
         app.buttons["plan-previous-month"].tap()
         XCTAssertEqual(app.staticTexts["plan-month-label"].label, "September 2026")
+        XCTAssertTrue(app.descendants(matching: .any)["plan-funding-limit"].exists)
+        XCTAssertTrue(app.staticTexts["plan-funding-context"].exists, "Returning from future funding must explain the dated/current cash distinction")
         assignment(expected: "820.00")
         app.buttons["plan-next-month"].tap()
         assignment(expected: "200.00")

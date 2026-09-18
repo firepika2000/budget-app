@@ -1179,6 +1179,8 @@ class MonthSummaryResponse(BaseModel):
     month: date
     currency_code: str
     ready_to_assign_minor: int
+    all_date_unassigned_minor: Optional[int] = None
+    funding_limit_minor: Optional[int] = None
     total_assigned_minor: int
     total_overspent_minor: int
     allocation_version: int

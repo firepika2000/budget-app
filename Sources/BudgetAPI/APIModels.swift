@@ -1410,6 +1410,8 @@ public struct APIMonthSummary: Decodable, Equatable, Sendable {
     public let month: String
     public let currencyCode: String
     public let readyToAssignMinor: Int64
+    public let allDateUnassignedMinor: Int64?
+    public let fundingLimitMinor: Int64?
     public let totalAssignedMinor: Int64
     public let totalOverspentMinor: Int64
     public let allocationVersion: Int
@@ -1419,6 +1421,8 @@ public struct APIMonthSummary: Decodable, Equatable, Sendable {
         case month, categories
         case currencyCode = "currency_code"
         case readyToAssignMinor = "ready_to_assign_minor"
+        case allDateUnassignedMinor = "all_date_unassigned_minor"
+        case fundingLimitMinor = "funding_limit_minor"
         case totalAssignedMinor = "total_assigned_minor"
         case totalOverspentMinor = "total_overspent_minor"
         case allocationVersion = "allocation_version"

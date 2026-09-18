@@ -450,7 +450,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let creditOverspent = min(overspent, creditSpent)
             return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": plan.categories[item.id]?.carriedAvailableMinor ?? 0, "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": max(creditSpent - creditOverspent, 0), "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "is_target_snoozed": item.targetSnoozedMonths.contains(month), "target_date": effectiveTargetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
         }
-        let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.isRestricted ? 0 : plan.readyToAssignMinor, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": demo.allocationVersion, "categories": summaryRows])
+        let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.isRestricted ? 0 : plan.readyToAssignMinor, "all_date_unassigned_minor": demo.isRestricted ? NSNull() : plan.allDateUnassignedMinor as Any, "funding_limit_minor": demo.isRestricted ? NSNull() : plan.fundingLimitMinor as Any, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": demo.allocationVersion, "categories": summaryRows])
         let start = report.start
         let included = demo.visibleTransactions.filter { item in
             item.date >= start && item.date <= report.end
@@ -2578,9 +2578,21 @@ private struct LivePlanView: View {
                     Text("Reallocations conserve your household allocation and follow the limits selected by the owner.").font(.footnote).foregroundStyle(.secondary)
                 }
             } else if let summary = store.summary {
-                Section("Available to assign") {
+                Section("Unassigned in selected month") {
                     Text(store.format(summary.readyToAssignMinor)).font(.largeTitle.bold()).monospacedDigit()
-                    Text("Money you currently have that has not been given a purpose yet.").font(.footnote).foregroundStyle(.secondary)
+                    if let limit = summary.fundingLimitMinor {
+                        LabeledContent("Available for Smart Funding", value: store.format(limit))
+                            .accessibilityIdentifier("plan-funding-limit")
+                        if let allDate = summary.allDateUnassignedMinor, allDate != summary.readyToAssignMinor {
+                            LabeledContent("Unassigned across all months", value: store.format(allDate))
+                            Text("The selected month is a dated view. Later allocations and posted activity can change what remains available now. Scheduled income is not spendable until entered.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("plan-funding-context")
+                        }
+                    } else {
+                        Text("This is the selected month's observation, not a guarantee of cash available now. Availability is checked when you assign money.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
             }
             if let summary = store.summary, activation.showsNormalPlan {

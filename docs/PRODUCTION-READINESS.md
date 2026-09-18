@@ -4,6 +4,22 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Dated/current funding explanation after pushed `f42f262` (verified): monthly responses expose
+optional canonical all-date Unassigned and the existing Smart Funding limit without changing dated
+RTA or assignment semantics. Shared Plan distinguishes these values and explains later allocations,
+posted activity and non-spendable scheduled income. Global values are omitted for scoped
+accounts/categories or missing balance capability; older servers remain compatible. Server
+aggregates use existing SQL sums, not a second ledger or unbounded transaction hydration.
+Future allocation/release preserves historical category observations and actual account balances.
+**399 backend zero skips, 114 native XCTest, 45 Core + 50 API, 2 production UI PASS**; Beta build
+and diff check PASS. UI checks the actual explanation after returning from a future assignment
+and exercises Smart Funding cancel/confirm/refresh. Focused backend: **15 PASS**. Logs:
+`/tmp/budget-month-funding-{focused,backend,package,native-final}.log`.
+Initial test compile failures (Python 3.9 optional annotation and Swift optional test unwrap) were
+corrected before the successful suites. No schema migration; eventual adoption needs server
+restart/app rebuild. Human Live/Simulator data untouched. Remaining classification/rollover/clock
+and broader mission gates are not closed by this checkpoint.
+
 Allocation command parity after `1b91b7c` (verified): Demo no longer hardcodes allocation version 1
 or ignores expected versions. Same-token commands have one winner; stale no-ops conflict, current
 no-ops do not add operations, and moving money away/back cannot revive an old token. Smart Funding

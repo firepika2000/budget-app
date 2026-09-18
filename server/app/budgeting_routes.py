@@ -2279,12 +2279,21 @@ def month_summary(
             credit_overspent_minor=credit_overspent,
             funded_credit_spending_minor=funded_credit,
         ))
+    # A scoped household view cannot derive global spendable cash from its visible subset.
+    # Omit these observations rather than leak hidden accounts/allocations or invent a balance.
+    dated_unassigned = 0 if visible_categories is not None else unassigned_cash_to_date + ready_to_assign_postings
+    all_date_unassigned = (
+        ready_to_assign_balance(db, budget_id)
+        if visible_categories is None and visible_accounts is None
+        and has_capability(db, user, budget, "view_account_balances") else None
+    )
     return MonthSummaryResponse(
         month=month,
         currency_code=budget.currency_code,
-        ready_to_assign_minor=(
-            0 if visible_categories is not None else unassigned_cash_to_date + ready_to_assign_postings
-        ),
+        ready_to_assign_minor=dated_unassigned,
+        all_date_unassigned_minor=all_date_unassigned,
+        funding_limit_minor=(min(max(dated_unassigned, 0), max(all_date_unassigned, 0))
+                             if all_date_unassigned is not None else None),
         total_assigned_minor=sum(row.assigned_minor for row in rows),
         total_overspent_minor=total_overspent,
         allocation_version=budget.allocation_version,

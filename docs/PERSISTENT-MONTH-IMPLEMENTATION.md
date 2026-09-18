@@ -253,7 +253,24 @@ The following boundary is now implemented (verification recorded in the mission 
 Reconciliation input/date/consent parity was corrected in `5be09de`; a bounded authoritative cutoff
 observation for partially visible histories remains separate follow-up. Forecast scope (`bed7c93`)
 and chronological lows (`f686a20`) are now verified. These corrections do not complete prospective
-cash rollover, later-reservation explanation, clocks or the Local Device provider.
+cash rollover, clocks or the Local Device provider.
+
+### Dated versus spendable Unassigned — summary and shared Plan
+
+The monthly API now additionally reports optional `all_date_unassigned_minor` (canonical existing
+cash plus all recorded allocation postings) and `funding_limit_minor` (the same minimum of
+nonnegative dated/all-date Unassigned used by Smart Funding). The dated `ready_to_assign_minor`
+is unchanged. Schedules do not enter either observation. Releasing a future assignment restores
+current available funding without rewriting historical Assigned/Activity/Available.
+
+Global observations are null unless both account/category scopes are unrestricted and the member
+can view account balances. They are not inferred from a partial household. Swift decodes their
+absence/null for older or restricted servers. Demo derives them from the existing exact period
+projection, and the shared Plan labels the dated observation, Smart Funding limit and (when
+different) all-month Unassigned with a later-allocations/posted-activity explanation. The UI does
+not falsely name the difference “future reservations”: later actual inflows can also explain it.
+This changes no assignment permissions, transaction accounting or manual-command semantics.
+No migration; server restart and app rebuild required when eventually adopting. No human retest.
 
 Full structured export fidelity, bounded hydration in other reports, actual Docker/Compose recovery,
 Local Device/import dependencies and the remaining roadmap are not closed by the current checkpoints.

@@ -34,9 +34,13 @@ def test_future_month_assignment_uses_existing_cash_without_rewriting_history(
     assert assigned.status_code == 200, assigned.text
     assert assigned.json()["allocation_version"] == 1
     september = client.get(f"{root}/months/2026-09-01", headers=headers).json()
-    assert {k: v for k, v in september.items() if k != "allocation_version"} == {
-        k: v for k, v in september_before.items() if k != "allocation_version"
+    current_observations = {"allocation_version", "all_date_unassigned_minor", "funding_limit_minor"}
+    assert {k: v for k, v in september.items() if k not in current_observations} == {
+        k: v for k, v in september_before.items() if k not in current_observations
     }
+    assert september_before["all_date_unassigned_minor"] == september_before["funding_limit_minor"] == 50000
+    assert september["ready_to_assign_minor"] == 50000
+    assert september["all_date_unassigned_minor"] == september["funding_limit_minor"] == 10000
     october = client.get(f"{root}/months/2026-10-01", headers=headers).json()
     assert october["ready_to_assign_minor"] == 10000
     assert october["categories"][0]["assigned_minor"] == 40000
@@ -47,9 +51,13 @@ def test_future_month_assignment_uses_existing_cash_without_rewriting_history(
     assert assign("2026-09-01", 10001, 1).status_code == 409
     assert assign("2026-10-01", 30000, 0).status_code == 409  # stale editor
     assert assign("2026-10-01", 30000, 1).status_code == 200
+    released = client.get(f"{root}/months/2026-09-01", headers=headers).json()
+    assert released["ready_to_assign_minor"] == 50000
+    assert released["all_date_unassigned_minor"] == released["funding_limit_minor"] == 20000
     assert assign("2026-11-01", 20000, 2).status_code == 200
     november = client.get(f"{root}/months/2026-11-01", headers=headers).json()
     assert november["ready_to_assign_minor"] == 0
+    assert november["all_date_unassigned_minor"] == november["funding_limit_minor"] == 0
     assert november["categories"][0]["carried_available_minor"] == 30000
     assert november["categories"][0]["assigned_minor"] == 20000
     assert november["categories"][0]["available_minor"] == 50000

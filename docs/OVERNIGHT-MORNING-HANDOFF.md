@@ -17,13 +17,22 @@ Verification: **398 backend zero skips, 113 native, 45 Core + 49 API, 3 producti
 Beta build/test and diff check PASS. Logs `/tmp/budget-allocation-version-{backend,package,final,native-final}.log`.
 Production UI covers month independence, Move Money and Smart Funding cancel/confirm/refresh.
 
-Next highest-priority planning closure: expose authoritative selected-month versus currently
-spendable Unassigned in the summary contract/shared Plan UI, explaining later reservations rather
-than letting a historical RTA imply permission to spend cash twice. Live assignment already guards
-all-date cash and Smart Funding exposes its funding limit; MonthSummary currently does not. Scope
-new observations before disclosure, preserve date semantics, and prove future-assignment/release
-flows through both providers and shared UI. Report arithmetic, uniform clocks, prospective rollover
-history and the remaining roadmap remain open too. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
+After pushed `f42f262`, monthly summaries/shared Plan now separate dated Unassigned, optional
+all-month Unassigned and the authoritative Smart Funding limit. Global observations are omitted for
+scoped accounts/categories or missing balance capability; older servers still decode. Future
+assignment/release changes current spendable cash without rewriting the historical month. The
+shared UI explains later allocations/posted activity rather than equating historical RTA with cash
+available now. No migration; adoption eventually requires server restart and app rebuild.
+Verification: **399 backend zero skips, 114 native, 45 Core + 50 API, 2 production UI PASS**;
+Beta build/test and diff check PASS. Logs `/tmp/budget-month-funding-{focused,backend,package,native-final}.log`.
+
+Next highest-priority planning closure: reproduce and correct Demo's cash/card overspending
+classification before implementing prospective rollover. Source audit finds Demo still uses
+`min(overspent, creditSpent)` while Live uses recorded category/card reserve events. Example to
+prove against both providers: fully funded card purchase followed by a cash expense in the same
+category must not relabel the cash deficit as unfunded credit. Include refund/split/void/edit paths
+and preserve historical reserve attribution. Then continue the documented effective-period cash
+rollover policy, uniform clocks and remaining roadmap. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
 
 `bed7c93` pushed forecast privacy. Current chronological projection correction is reproduced against
 the server: 10,000 start, -8,000 bill, neutral transfer, +9,000 income ends 11,000 but reaches 2,000

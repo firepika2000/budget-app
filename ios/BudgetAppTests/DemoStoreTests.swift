@@ -7,6 +7,38 @@ import BudgetCore
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testMonthSummaryExplainsFutureReservationsWithoutChangingDatedMoney() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        XCTAssertTrue(source.demo.createAccount(name: "Cash", type: "checking", isOnBudget: true, startingBalance: 50000))
+        XCTAssertTrue(source.demo.createCategory(name: "Needs", group: "Plan"))
+        let category = source.demo.categories[0].id
+        let month = source.demo.currentPlanningMonth
+        let future = BudgetWorkspaceStore.dateString(try XCTUnwrap(Calendar(identifier: .gregorian).date(byAdding: .month, value: 1, to: BudgetWorkspaceStore.parseDate(month))))
+        let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate(month), end: BudgetWorkspaceStore.parseDate(future), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        func summary() async throws -> APIMonthSummary {
+            let loaded = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate(month), report: query)
+            return try XCTUnwrap(loaded.summary)
+        }
+        let before = try await summary()
+        XCTAssertEqual(before.readyToAssignMinor, 50000)
+        XCTAssertEqual(before.fundingLimitMinor, 50000)
+        try await source.assignMoney(.init(categoryID: category, month: future, assignedMinor: 40000, expectedVersion: 0))
+        let reserved = try await summary()
+        XCTAssertEqual(reserved.readyToAssignMinor, 50000)
+        XCTAssertEqual(reserved.allDateUnassignedMinor, 10000)
+        XCTAssertEqual(reserved.fundingLimitMinor, 10000)
+        try await source.assignMoney(.init(categoryID: category, month: future, assignedMinor: 30000, expectedVersion: 1))
+        let released = try await summary()
+        XCTAssertEqual(released.readyToAssignMinor, 50000)
+        XCTAssertEqual(released.fundingLimitMinor, 20000)
+        XCTAssertEqual(source.demo.accounts[0].balance, 50000)
+        source.demo.persona = .alex
+        let restricted = try await summary()
+        XCTAssertNil(restricted.allDateUnassignedMinor)
+        XCTAssertNil(restricted.fundingLimitMinor)
+    }
+
+    @MainActor
     func testAllocationVersionsRejectStaleNoOpsAndMoneyRoundTrips() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
         XCTAssertEqual(source.demo.allocationVersion, 0)
@@ -788,7 +820,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertFalse(workspace.contains("workspaceDismissToolbar"), "the active budget must not navigate back to a Budgets parent")
         XCTAssertTrue(workspace.contains("Create Category Group"))
         XCTAssertTrue(workspace.contains("Add your first category"))
-        XCTAssertTrue(workspace.contains("Money you currently have that has not been given a purpose yet."))
+        XCTAssertTrue(workspace.contains("Unassigned in selected month"))
+        XCTAssertTrue(workspace.contains("plan-funding-limit"))
         XCTAssertTrue(editor.contains("openingBalanceMinor: balance"))
         XCTAssertTrue(editor.contains("selection: $date, in: ...Date()"), "ordinary transaction entry must not accept future actual dates")
         XCTAssertTrue(workspace.contains("Button(\"Schedule Transaction\""), "the production Activity action menu must expose canonical schedule creation")
