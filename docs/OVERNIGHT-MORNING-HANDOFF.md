@@ -6,6 +6,31 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Demo allowance parity implementation after `465f20b`: canonical plan lifecycle and history replace
+the four no-op methods. Identity/date fixtures are repaired, household membership includes real
+personas, and category creation preserves delegated identity. Issuance preflights exact balanced
+postings through the existing planning projection, then publishes one operation/version/history
+entry and advances the recurrence. Reclaim uses dated positive destination Available only.
+The serializer now retains all legs of compound allocation operations. Existing old direct category
+balance edits were removed. No account/posting/card or Live-data mutation is introduced.
+Month-end test exposed UTC parsing plus local-calendar addition producing 2026-10-01 from
+2026-08-31 + one month. Fixed recurrence and rollover month-picker arithmetic to explicit UTC
+Gregorian calendars; do not restore reliance on the device's timezone for date-only month math.
+Final verification: **124 native + 2 production UI PASS**, Xcode Beta simulator build/diff check PASS;
+**48 Core + 52 API PASS**, **9 backend allowance reference tests PASS**. Server unchanged from
+the preceding 454-test full suite. Final native log `/tmp/budget-demo-allowance-utc-final.log`,
+result `/tmp/budget-focused-report-final/Logs/Test/Test-BudgetApp-2026.09.18_18-00-01--0400.xcresult`.
+Household-member UI separately passed in `/tmp/budget-demo-allowance-final.log`; the calendar failure
+in that older run is superseded by the final UTC-corrected result. Package/reference logs use
+`/tmp/budget-demo-allowance-package.log` and `/tmp/budget-demo-allowance-server-reference.log`.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
+
+Known remaining Demo scope: child personas still cannot become allowance managers through a custom
+capability grant (conservative relative to server); general dynamic persona/capability parity needs
+consolidation. Membership invite/remove and request revise/cancel still include no-ops and must not
+be considered production-complete. Uniform clocks remain open. Seed Giving was not a valid delegated
+destination; the planned Alex split is now $12 allowance/$8 savings with the same $20 total.
+
 Allowance source review after `055c74f` found and reproduced a server scope bypass before starting
 Demo parity. A custom scoped manager could list hidden source data and invoke plan operations based
 on capability alone. Scope now covers list/create/status/deactivate/issue/history, with whole-plan

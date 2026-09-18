@@ -218,7 +218,9 @@ struct DemoAllowance: Identifiable, Hashable {
     let id: String
     var member: DemoPersona
     var amount: Int64
-    var frequency: String
+    var name: String
+    var recurrenceUnit: String
+    var intervalCount = 1
     var nextDate: String
     var source: String
     var splits: [(String, Int64)]
@@ -227,6 +229,12 @@ struct DemoAllowance: Identifiable, Hashable {
 
     static func == (lhs: DemoAllowance, rhs: DemoAllowance) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
+
+struct DemoAllowanceIssuance {
+    let id: String; let planID: String; let issuedOn: String
+    let amount: Int64; let reclaimed: Int64; let operationID: String
+    let actorID: String; let createdAt: String
 }
 
 struct DemoForecastPoint: Identifiable {

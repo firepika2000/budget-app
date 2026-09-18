@@ -1172,8 +1172,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["profile-settings-button"].tap()
         app.buttons["Household and access"].tap()
         XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
-        app.buttons["member-access-demo-member"].tap()
-        XCTAssertTrue(app.navigationBars["Sam Rivera"].waitForExistence(timeout: 5))
+        app.buttons["member-access-jordan"].tap()
+        XCTAssertTrue(app.navigationBars["Jordan Rivera"].waitForExistence(timeout: 5))
 
         let preset = app.buttons["member-access-preset"]
         XCTAssertTrue(preset.waitForExistence(timeout: 5))
@@ -1191,11 +1191,40 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["Saved"].waitForExistence(timeout: 5))
 
         app.navigationBars.buttons["Household"].tap()
-        app.buttons["member-access-demo-member"].tap()
-        XCTAssertTrue(app.navigationBars["Sam Rivera"].waitForExistence(timeout: 5))
+        app.buttons["member-access-jordan"].tap()
+        XCTAssertTrue(app.navigationBars["Jordan Rivera"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["member-access-preset"].label.contains("Full Access"))
         for _ in 0..<6 where !app.switches["member-access-restrict-accounts"].exists { app.swipeUp() }
         XCTAssertEqual(app.switches["member-access-restrict-accounts"].value as? String, "1")
+    }
+
+    func testProductionDemoAllowanceIssuePauseAndReopenUsesSharedHouseholdFlow() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=home"]
+        app.launch()
+        app.buttons["profile-settings-button"].tap()
+        app.buttons["Household and access"].tap()
+        let allowances = app.buttons["allowance-management"]
+        XCTAssertTrue(allowances.waitForExistence(timeout: 5)); allowances.tap()
+        XCTAssertTrue(app.navigationBars["Allowances"].waitForExistence(timeout: 5))
+        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Alex weekly allowance")).firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Alex weekly allowance"].waitForExistence(timeout: 5))
+        let issue = app.buttons["Issue Now"]
+        for _ in 0..<5 where !issue.isHittable { app.swipeUp() }
+        XCTAssertTrue(issue.exists); issue.tap()
+        for _ in 0..<5 where !app.staticTexts["Issued $20.00"].exists { app.swipeUp() }
+        XCTAssertTrue(app.staticTexts["Issued $20.00"].waitForExistence(timeout: 5))
+        app.buttons["Pause Allowance"].tap()
+        XCTAssertTrue(app.buttons["Reactivate Allowance"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Issue Now"].exists)
+        app.navigationBars.buttons["Allowances"].tap()
+        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Alex weekly allowance")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["Reactivate Allowance"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Issued $20.00"].exists)
+        app.buttons["Reactivate Allowance"].tap()
+        XCTAssertTrue(app.buttons["Pause Allowance"].waitForExistence(timeout: 5))
+        for _ in 0..<5 where !app.staticTexts["Issued $20.00"].exists { app.swipeUp() }
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Issued $20.00").count, 1)
     }
 
     func testProductionPayeeManagementAddsAliasWithoutRewritingHistory() {

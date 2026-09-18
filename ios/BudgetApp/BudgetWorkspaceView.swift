@@ -589,13 +589,13 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                              "amount_minor": -(try Money.sumMinorUnits(legs.map(\.amountMinor)))]]
                     + legs.map { ["bucket": "category", "category_id": $0.destinationCategoryID, "amount_minor": $0.amountMinor] }
             } else {
-                postings = [["bucket": event.sourceCategoryID == nil ? "ready_to_assign" : "category",
-                             "category_id": event.sourceCategoryID as Any? ?? NSNull(), "amount_minor": -event.amountMinor],
-                            ["bucket": "category", "category_id": event.destinationCategoryID, "amount_minor": event.amountMinor]]
+                postings = legs.flatMap { leg in [["bucket": leg.sourceCategoryID == nil ? "ready_to_assign" : "category",
+                             "category_id": leg.sourceCategoryID as Any? ?? NSNull(), "amount_minor": -leg.amountMinor],
+                            ["bucket": "category", "category_id": leg.destinationCategoryID, "amount_minor": leg.amountMinor]] }
             }
             return ["id": event.operationID, "budget_id": budget.id, "occurred_on": event.occurredOn,
              "kind": event.kind, "actor_user_id": event.actor, "note": event.note,
-             "source": event.kind == "smart_funding" ? "smart_funding" : event.kind == "request_approval" ? "approval" : "manual",
+             "source": event.kind == "smart_funding" ? "smart_funding" : event.kind == "allowance_issuance" ? "allowance" : event.kind == "request_approval" ? "approval" : "manual",
              "allocation_version": demo.allocationVersion, "postings": postings]
         }
         let allocationOperations: [APIAllocationOperation] = try decode(allocationRows)
@@ -653,11 +653,17 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let scheduledOutflows = try difference(0, Money.sumMinorUnits(demoForecast.occurrences.filter { $0.destinationAccountID == nil && $0.amountMinor < 0 }.map(\.amountMinor)))
         let cashIDs = Set(visibleAccounts.filter { $0.isOnBudget && ["checking", "savings", "cash"].contains($0.kind.rawValue) }.map(\.id))
         let resilience: APIResilienceReport = try decode(["as_of": demoForecast.asOf, "through": demoForecast.through, "currency_code": budget.currencyCode, "cash_buffer_minor": Money.sumMinorUnits(demoForecast.accounts.filter { cashIDs.contains($0.accountID) }.map(\.actualBalanceMinor)), "current_on_budget_minor": demoForecast.actualTotalOnBudgetMinor, "projected_on_budget_minor": demoForecast.projectedTotalOnBudgetMinor, "lowest_projected_on_budget_minor": demoForecast.lowestProjectedTotalMinor, "scheduled_income_minor": scheduledIncome, "scheduled_outflows_minor": scheduledOutflows, "expected_margin_minor": difference(scheduledIncome, scheduledOutflows), "essential_expense_coverage_days": NSNull(), "emergency_fund_coverage_days": NSNull(), "unavailable_metrics": ["essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.", "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification."]])
-        let members: [APIHouseholdMember] = try decode([
-            ["user_id": "demo-owner", "email": "alex@example.test", "display_name": "Alex Rivera", "role": "owner", "is_active": true],
-            ["user_id": "demo-member", "email": "sam@example.test", "display_name": "Sam Rivera", "role": "adult", "is_active": true]
-        ])
-        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: [], spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: demoForecast, members: members, delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
+        let members: [APIHouseholdMember] = try decode(DemoPersona.allCases.map { persona in
+            ["user_id": persona == .rey ? "demo-owner" : persona.rawValue.lowercased(), "email": "\(persona.rawValue.lowercased())@example.test",
+             "display_name": "\(persona.rawValue) Rivera", "role": persona == .rey ? "owner" : persona.isChild ? "child" : "adult", "is_active": true] as [String: Any]
+        })
+        let allowanceRows: [APIAllowancePlan] = try decode(demo.allowances.filter { allowanceVisible($0) }.sorted { ($0.nextDate, $0.id) < ($1.nextDate, $1.id) }.map { plan in
+            ["id": plan.id, "delegated_user_id": plan.member.rawValue.lowercased(), "source_category_id": canManageAllowances ? plan.source as Any : NSNull(),
+             "name": plan.name, "amount_minor": plan.amount, "next_issue_date": plan.nextDate, "recurrence_unit": plan.recurrenceUnit,
+             "interval_count": plan.intervalCount, "rollover_policy": plan.rollover ? "rollover" : "use_it_or_lose_it", "is_active": !plan.isPaused,
+             "splits": plan.splits.map { ["destination_category_id": $0.0, "amount_minor": $0.1] as [String: Any] }] as [String: Any]
+        })
+        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: allowanceRows, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: demoForecast, members: members, delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
     }
 
     private func transactionRows(categoryIDs: Set<String>) throws -> [APITransaction] {
@@ -841,10 +847,56 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] { [] }
     func cancelRequest(id: String, version: Int, note: String) async throws {}
     func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws {}
-    func createAllowance(_ value: APIAllowancePlanCreate) async throws {}
-    func setAllowanceActive(id: String, active: Bool) async throws {}
-    func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws {}
-    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] { [] }
+    private var canManageAllowances: Bool {
+        if demo.persona == .rey { return true }
+        if let profile = accessProfiles[demo.persona.rawValue.lowercased()] { return !demo.isRestricted && profile.capabilities.contains("manage_allowances") }
+        return !demo.isRestricted
+    }
+    private func requireAllowanceManager() throws {
+        guard canManageAllowances else { throw workspaceRepositoryError("You do not have permission to manage allowances.") }
+    }
+    private func allowanceVisible(_ plan: DemoAllowance, history: Bool = false) -> Bool {
+        if !canManageAllowances && (plan.member != demo.persona || (!history && plan.isPaused)) { return false }
+        let actorID = demo.persona == .rey ? "demo-owner" : demo.persona.rawValue.lowercased()
+        let ids = Set(plan.splits.map { $0.0 } + (canManageAllowances ? [plan.source] : []))
+        if let profile = accessProfiles[actorID], profile.restrictCategories, !ids.isSubset(of: Set(profile.categoryIDs)) { return false }
+        return !demo.isRestricted || ids.isSubset(of: Set(demo.visibleCategories.map(\.id)))
+    }
+    private func requireAllowanceRecipient(_ plan: DemoAllowance) throws {
+        if let profile = accessProfiles[plan.member.rawValue.lowercased()], profile.restrictCategories,
+           !Set(plan.splits.map { $0.0 }).isSubset(of: Set(profile.categoryIDs)) {
+            throw workspaceRepositoryError("Allowance destinations are no longer visible to the recipient.")
+        }
+    }
+    func createAllowance(_ value: APIAllowancePlanCreate) async throws {
+        try requireAllowanceManager()
+        guard let member = DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == value.delegatedUserID }),
+              ["rollover", "use_it_or_lose_it"].contains(value.rolloverPolicy) else { throw workspaceRepositoryError("Invalid allowance recipient or policy.") }
+        let plan = DemoAllowance(id: UUID().uuidString, member: member, amount: value.amountMinor, name: value.name,
+            recurrenceUnit: value.recurrenceUnit, intervalCount: value.intervalCount, nextDate: value.nextIssueDate,
+            source: value.sourceCategoryID, splits: value.splits.map { ($0.destinationCategoryID, $0.amountMinor) }, rollover: value.rolloverPolicy == "rollover")
+        guard allowanceVisible(plan) else { throw workspaceRepositoryError("Allowance categories not found.") }
+        try requireAllowanceRecipient(plan); try demo.createAllowance(plan)
+    }
+    func setAllowanceActive(id: String, active: Bool) async throws {
+        try requireAllowanceManager()
+        guard let plan = demo.allowances.first(where: { $0.id == id }), allowanceVisible(plan, history: true) else { throw workspaceRepositoryError("Allowance not found.") }
+        if active { try requireAllowanceRecipient(plan) }
+        try demo.setAllowanceActive(id: id, active: active)
+    }
+    func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws {
+        try requireAllowanceManager()
+        guard let plan = demo.allowances.first(where: { $0.id == id }), allowanceVisible(plan) else { throw workspaceRepositoryError("Allowance not found.") }
+        try requireAllowanceRecipient(plan)
+        try demo.issueAllowance(id: id, issueDate: issueDate, expectedVersion: expectedVersion)
+    }
+    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] {
+        guard let plan = demo.allowances.first(where: { $0.id == id }), allowanceVisible(plan, history: true) else { throw workspaceRepositoryError("Allowance not found.") }
+        return try decode(demo.allowanceHistory.filter { $0.planID == id }.sorted { $0.issuedOn > $1.issuedOn }.map { item in
+            ["id": item.id, "plan_id": id, "issued_on": item.issuedOn, "amount_minor": item.amount, "reclaimed_minor": item.reclaimed,
+             "actor_user_id": item.actorID, "created_at": item.createdAt, "next_issue_date": plan.nextDate] as [String: Any]
+        })
+    }
     func accessProfile(userID: String) async throws -> APIAccessProfile {
         if let profile = accessProfiles[userID] { return profile }
         return try decode(["budget_id": budget.id, "user_id": userID, "capabilities": ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"], "restrict_accounts": false, "account_ids": [], "restrict_categories": false, "category_ids": [], "grant_permission": "view", "is_custom": false, "version": 0, "updated_by_user_id": NSNull(), "updated_by_display_name": NSNull(), "updated_at": NSNull()])
@@ -1065,7 +1117,12 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         try demo.requireAllocationVersion(operation.expectedVersion)
         guard demo.move(amount: operation.amountMinor, from: operation.sourceCategoryID, to: operation.destinationCategoryID, occurredOn: operation.occurredOn, note: operation.note) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
-    func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { guard demo.createCategory(name: name, group: groupName.isEmpty ? newGroupName : groupName) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws {
+        let member = delegatedUserID.flatMap { id in DemoPersona.allCases.first { $0.rawValue.lowercased() == id } }
+        guard delegatedUserID == nil || member != nil, !demo.isRestricted || member == nil || member == demo.persona else { throw workspaceRepositoryError("Invalid delegated category recipient.") }
+        guard demo.createCategory(name: name, group: groupName.isEmpty ? newGroupName : groupName) else { throw workspaceRepositoryError(demo.errorMessage) }
+        if !demo.isRestricted { demo.categories[demo.categories.count - 1].delegatedTo = member }
+    }
     func createGroup(name: String) async throws { if !demo.groupOrder.contains(name) { demo.groupOrder.append(name) } }
     func createAccount(_ operation: CreateAccountOperation) async throws {
         guard demo.createAccount(name: operation.name, type: operation.kind, isOnBudget: operation.isOnBudget, startingBalance: operation.openingBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
@@ -2295,12 +2352,13 @@ private struct CashRolloverSettingsView: View {
     // Month choices are based on the repository's authoritative current month, not the device clock.
     private var months: [String] {
         guard let current = observation?.currentMonth else { return [] }
-        let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let formatter = DateFormatter(); formatter.calendar = calendar
         formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "yyyy-MM-dd"
         guard let start = formatter.date(from: current) else { return [] }
         return (1...24).compactMap { offset in
-            formatter.calendar.date(byAdding: .month, value: offset, to: start).map { formatter.string(from: $0) }
+            calendar.date(byAdding: .month, value: offset, to: start).map { formatter.string(from: $0) }
         }
     }
     var body: some View {

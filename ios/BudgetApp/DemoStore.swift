@@ -13,6 +13,7 @@ final class DemoStore: ObservableObject {
     @Published var schedules: [DemoSchedule]
     @Published var requests: [DemoRequest]
     @Published var allowances: [DemoAllowance]
+    private(set) var allowanceHistory: [DemoAllowanceIssuance] = []
     @Published var groupOrder: [String]
     @Published var archivedGroups = Set<String>()
     @Published var selectedMonth = "September 2026"
@@ -209,6 +210,7 @@ final class DemoStore: ObservableObject {
         schedules = Self.seedSchedules
         requests = Self.seedRequests
         allowances = Self.seedAllowances
+        allowanceHistory = []
         groupOrder = Array(Set(Self.seedCategories.map(\.group))).sorted()
         reserveAttribution = [:]
         allocationEvents = []
@@ -685,20 +687,82 @@ final class DemoStore: ObservableObject {
         return true
     }
 
-    func issueAllowance(_ id: String) {
-        guard let plan = allowances.first(where: { $0.id == id }), !plan.isPaused,
-              let source = categories.firstIndex(where: { $0.id == "buffer" }),
-              categories[source].available >= plan.amount else { return }
-        categories[source].assigned -= plan.amount
-        categories[source].available -= plan.amount
-        for split in plan.splits {
-            if let index = categories.firstIndex(where: { $0.name == split.0 }) {
-                categories[index].assigned += split.1
-                categories[index].available += split.1
-                recordAllocation(amount: split.1, from: categories[source].id, to: categories[index].id,
-                                 kind: "category_transfer", note: "Allowance")
-            }
+    func validateAllowance(_ plan: DemoAllowance) throws {
+        guard !isRestricted else { throw DemoMutationError.restrictedCategory }
+        _ = try PlanningPeriodProjection.Day(plan.nextDate)
+        guard !plan.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, plan.name.count <= 100,
+              plan.amount > 0, (1...52).contains(plan.intervalCount), ["week", "month"].contains(plan.recurrenceUnit),
+              (1...10).contains(plan.splits.count), Set(plan.splits.map { $0.0 }).count == plan.splits.count,
+              plan.splits.allSatisfy({ $0.1 > 0 && $0.0 != plan.source }),
+              try Money.sumMinorUnits(plan.splits.map { $0.1 }) == plan.amount else { throw DemoMutationError.invalidAmount }
+        let active = categories.filter { !$0.isHidden && !archivedGroups.contains($0.group) }
+        guard active.contains(where: { $0.id == plan.source }), plan.splits.allSatisfy({ split in
+            active.contains { $0.id == split.0 && $0.delegatedTo == plan.member }
+        }) else { throw DemoMutationError.restrictedCategory }
+    }
+
+    func createAllowance(_ plan: DemoAllowance) throws {
+        try validateAllowance(plan)
+        try requireAllowanceDestinationsFree(plan)
+        allowances.append(plan)
+    }
+
+    private func requireAllowanceDestinationsFree(_ plan: DemoAllowance) throws {
+        let ids = Set(plan.splits.map { $0.0 })
+        guard !allowances.contains(where: { $0.id != plan.id && !$0.isPaused && !ids.isDisjoint(with: $0.splits.map { $0.0 }) }) else {
+            throw NSError(domain: "BudgetWorkspace", code: 409, userInfo: [NSLocalizedDescriptionKey: "A destination already belongs to an active allowance."])
         }
+    }
+
+    func setAllowanceActive(id: String, active: Bool) throws {
+        guard !isRestricted else { throw DemoMutationError.restrictedCategory }
+        guard let index = allowances.firstIndex(where: { $0.id == id }) else { throw DemoMutationError.categoryNotFound }
+        if active { try validateAllowance(allowances[index]); try requireAllowanceDestinationsFree(allowances[index]) }
+        allowances[index].isPaused = !active
+    }
+
+    func issueAllowance(id: String, issueDate: String, expectedVersion: Int) throws {
+        guard !isRestricted else { throw DemoMutationError.restrictedCategory }
+        guard let index = allowances.firstIndex(where: { $0.id == id }), !allowances[index].isPaused else { throw DemoMutationError.categoryNotFound }
+        let rule = allowances[index]
+        try validateAllowance(rule)
+        try requireAllocationVersion(expectedVersion)
+        let day = try PlanningPeriodProjection.Day(issueDate)
+        guard rule.nextDate == issueDate, issueDate <= BudgetWorkspaceStore.dateString(Date()),
+              !allowanceHistory.contains(where: { $0.planID == id && $0.issuedOn == issueDate }) else {
+            throw NSError(domain: "BudgetWorkspace", code: 409, userInfo: [NSLocalizedDescriptionKey: "The allowance date changed or is still in the future."])
+        }
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let formatter = DateFormatter(); formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = TimeZone(secondsFromGMT: 0); formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: issueDate), let next = calendar.date(byAdding: rule.recurrenceUnit == "week" ? .day : .month,
+            value: rule.recurrenceUnit == "week" ? rule.intervalCount * 7 : rule.intervalCount, to: date) else { throw DemoMutationError.invalidAmount }
+        let nextDate = formatter.string(from: next)
+        _ = try PlanningPeriodProjection.Day(nextDate)
+        let dated = try planningSnapshot(month: day.month, through: issueDate)
+        let reclaimed = rule.rollover ? [] : rule.splits.compactMap { split -> (String, Int64)? in
+            let amount = max(dated.categories[split.0]?.availableMinor ?? 0, 0)
+            return amount == 0 ? nil : (split.0, amount)
+        }
+        let returned = try Money.sumMinorUnits(reclaimed.map { $0.1 })
+        let available = try Money.sumMinorUnits([dated.categories[rule.source]?.availableMinor ?? 0, returned])
+        guard available >= rule.amount else { throw DemoMutationError.insufficientFunds(available: available) }
+        let operationID = UUID().uuidString
+        let actor = persona == .rey ? "demo-owner" : persona.rawValue.lowercased()
+        let events = reclaimed.map { AllocationEvent(id: UUID().uuidString, operationID: operationID, occurredOn: issueDate,
+            kind: "allowance_issuance", actor: actor, note: rule.name, sourceCategoryID: $0.0, destinationCategoryID: rule.source, amountMinor: $0.1) }
+            + rule.splits.map { AllocationEvent(id: UUID().uuidString, operationID: operationID, occurredOn: issueDate,
+                kind: "allowance_issuance", actor: actor, note: rule.name, sourceCategoryID: rule.source, destinationCategoryID: $0.0, amountMinor: $0.1) }
+        let candidate = try PlanningPeriodProjection.Allocation(occurredOn: issueDate, postings: events.flatMap {
+            [.init(categoryID: $0.sourceCategoryID, amountMinor: -$0.amountMinor), .init(categoryID: $0.destinationCategoryID, amountMinor: $0.amountMinor)]
+        })
+        _ = try planningSnapshot(month: day.month, additionalAllocations: [candidate])
+        let current = try planningSnapshot(month: currentPlanningMonth, additionalAllocations: [candidate])
+        allocationEvents.append(contentsOf: events); allocationVersion += 1
+        allowances[index].nextDate = nextDate
+        allowanceHistory.append(.init(id: UUID().uuidString, planID: id, issuedOn: issueDate, amount: rule.amount,
+            reclaimed: returned, operationID: operationID, actorID: actor, createdAt: ISO8601DateFormatter().string(from: Date())))
+        publishPlanning(current)
     }
 
     @discardableResult
@@ -975,8 +1039,8 @@ final class DemoStore: ObservableObject {
     ]
 
     static let seedAllowances: [DemoAllowance] = [
-        .init(id:"alex-weekly",member:.alex,amount:2000,frequency:"Every Friday",nextDate:"Friday · Sep 11",source:"General Buffer",splits:[("Alex Allowance",1200),("Alex Savings",500),("Giving",300)],rollover:true),
-        .init(id:"mia-weekly",member:.mia,amount:1200,frequency:"Every Friday",nextDate:"Friday · Sep 11",source:"General Buffer",splits:[("Mia Allowance",800),("Mia Bike Goal",400)],rollover:true)
+        .init(id:"alex-weekly",member:.alex,amount:2000,name:"Alex weekly allowance",recurrenceUnit:"week",nextDate:"2026-09-11",source:"buffer",splits:[("alexallow",1200),("alexsave",800)],rollover:true),
+        .init(id:"mia-weekly",member:.mia,amount:1200,name:"Mia weekly allowance",recurrenceUnit:"week",nextDate:"2026-09-11",source:"buffer",splits:[("miaallow",800),("miabike",400)],rollover:true)
     ]
 
     static let seedSchedules: [DemoSchedule] = [

@@ -4,6 +4,35 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo allowance lifecycle after `465f20b`: canonical create/pause/reactivate/issue/history commands
+replace silent no-ops. Plans use stable category IDs, ISO issue dates and explicit cadence; the
+shared household list now uses the actual Rey/Jordan/Alex/Mia identities. Category creation respects
+the selected delegated recipient. The old direct-display allowance mutation helper is removed.
+Creation/status changes are money-neutral. Issuance validates dated source funds, expected allocation
+version, exact unique splits, active delegated destinations and current recipient visibility; it
+preflights one compound projection before publishing one operation/version, history and next date.
+Weekly/monthly recurrence and unused-fund reclaim are implemented. Account/transaction/card state
+is unchanged. Duplicate dates and stale commands refuse. Operation serialization now includes every
+balanced leg instead of dropping all but the first leg of a compound non-Smart-Funding operation.
+
+Seed plans now reference delegated destinations only: Alex's $20 plan sends $12 to allowance and
+$8 to savings, rather than $3 to a nondelegated household Giving category. This is a planned Demo
+fixture correction, not an existing Live transfer. Recipient views redact source and sibling plans;
+owner/partner management honors stored category scope. Child personas remain conservatively unable
+to manage allowances even if their Demo custom capability profile is broadened; general dynamic
+persona/capability parity remains open alongside membership lifecycle and other request no-ops.
+The new month-end regression caught a real Foundation timezone mismatch: parsing August 31 at UTC
+but adding months in `America/New_York` produced October 1 instead of September 30. An isolated
+Foundation reproduction confirmed it. Allowance recurrence and the shared future-month policy
+picker now both use an explicitly UTC Gregorian calendar for their date-only arithmetic.
+Verification: **124 native XCTest + 2 production XCUITest PASS**, Beta build and diff check PASS;
+**48 Core + 52 API PASS**; **9 server allowance reference tests PASS**. The separate production
+household-member access UI regression also passed with Jordan's corrected identity. Server code is
+unchanged from the preceding **454-backend-test** checkpoint. Logs:
+`/tmp/budget-demo-allowance-utc-final.log`, `/tmp/budget-demo-allowance-final.log` (household UI PASS;
+superseded failed date assertion), `/tmp/budget-demo-allowance-package.log`,
+`/tmp/budget-demo-allowance-server-reference.log`. No human data, migration, merge or tag.
+
 Allowance authorization checkpoint after `055c74f`: an adversarial regression reproduced a hidden
 source leak when a resource-restricted member held `manage_allowances`. Capability alone had
 authorized the whole plan. Lists now filter complete destination scope (and manager source scope)

@@ -4,6 +4,109 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testProductionDemoAllowanceIssuanceIsAtomicVersionedAndMatchesServerRollover() async throws {
+        for policy in ["rollover", "use_it_or_lose_it"] {
+            let source = DemoWorkspaceDataSource(fresh: true)
+            let services = BudgetApplicationServices(repository: source)
+            try await services.accounts.create(.init(name: "Cash", kind: "checking", isOnBudget: true, openingBalanceMinor: 0))
+            let account = try XCTUnwrap(source.demo.accounts.first?.id)
+            try await services.transactions.record(.init(accountID: account, categoryID: nil, amountMinor: 10_000, occurredOn: "2026-08-01", payeeName: "Income", memo: "", isCleared: true, splits: [], flag: "", tags: [], attachmentMetadata: []))
+            for (name, member) in [("Pool", nil), ("Spend", "alex"), ("Save", "alex")] as [(String, String?)] {
+                try await source.createCategory(groupID: "", groupName: "Allowance", newGroupName: "", name: name, delegatedUserID: member)
+            }
+            let pool = source.demo.categories[0].id, spend = source.demo.categories[1].id, save = source.demo.categories[2].id
+            try await source.assignMoney(.init(categoryID: pool, month: "2026-08-01", assignedMinor: 10_000, expectedVersion: 0))
+            let beforeAccounts = source.demo.accounts, beforeTransactions = source.demo.transactions
+            let body = APIAllowancePlanCreate(delegatedUserID: "alex", sourceCategoryID: pool, name: "Weekly", amountMinor: 2_000,
+                nextIssueDate: "2026-08-28", recurrenceUnit: "week", intervalCount: 1, rolloverPolicy: policy,
+                splits: [.init(destinationCategoryID: spend, amountMinor: 1_500), .init(destinationCategoryID: save, amountMinor: 500)])
+            try await source.createAllowance(body)
+            let id = try XCTUnwrap(source.demo.allowances.first?.id)
+            XCTAssertEqual(source.demo.allocationVersion, 1)
+            do { try await source.createAllowance(body); XCTFail("Active destination conflict") } catch {}
+            try await source.setAllowanceActive(id: id, active: false)
+            do { try await source.issueAllowance(id: id, issueDate: "2026-08-28", expectedVersion: 1); XCTFail("Paused issuance") } catch {}
+            try await source.setAllowanceActive(id: id, active: true)
+            XCTAssertEqual(source.demo.allocationVersion, 1)
+            try await source.issueAllowance(id: id, issueDate: "2026-08-28", expectedVersion: 1)
+            XCTAssertEqual(source.demo.allowances[0].nextDate, "2026-09-04")
+            XCTAssertEqual(source.demo.allocationVersion, 2)
+            do { try await source.issueAllowance(id: id, issueDate: "2026-08-28", expectedVersion: 2); XCTFail("Duplicate date") } catch {}
+            do { try await source.issueAllowance(id: id, issueDate: "2026-09-04", expectedVersion: 1); XCTFail("Stale allocation token") } catch {}
+            try await source.issueAllowance(id: id, issueDate: "2026-09-04", expectedVersion: 2)
+            let plan = try source.demo.planningSnapshot(month: "2026-09-01")
+            XCTAssertEqual(plan.categories[pool]?.availableMinor, policy == "rollover" ? 6_000 : 8_000)
+            XCTAssertEqual(plan.categories[spend]?.availableMinor, policy == "rollover" ? 3_000 : 1_500)
+            XCTAssertEqual(plan.categories[save]?.availableMinor, policy == "rollover" ? 1_000 : 500)
+            XCTAssertEqual(plan.readyToAssignMinor, 0)
+            XCTAssertEqual(source.demo.accounts, beforeAccounts); XCTAssertEqual(source.demo.transactions, beforeTransactions)
+            XCTAssertEqual(source.demo.allocationVersion, 3)
+            let history = try await source.allowanceIssuances(id: id)
+            XCTAssertEqual(history.count, 2)
+            XCTAssertEqual(history.first?.reclaimedMinor, policy == "rollover" ? 0 : 2_000)
+            let reread = try await source.allowanceIssuances(id: id)
+            XCTAssertEqual(reread, history)
+            let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-08-01"), end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+            let snapshot = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+            let operations = snapshot.allocationOperations.filter { $0.kind == "allowance_issuance" }
+            XCTAssertEqual(operations.count, 2)
+            XCTAssertTrue(operations.allSatisfy { $0.postings.reduce(Int64(0)) { $0 + $1.amountMinor } == 0 })
+            XCTAssertEqual(operations.map { $0.postings.count }.max(), policy == "rollover" ? 4 : 8)
+            source.demo.persona = .alex
+            let child = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+            XCTAssertEqual(child.allowances.count, 1); XCTAssertNil(child.allowances.first?.sourceCategoryID)
+            XCTAssertTrue(child.allocationOperations.isEmpty)
+            do { try await source.issueAllowance(id: id, issueDate: "2026-09-11", expectedVersion: 3); XCTFail("Child cannot issue") } catch {}
+            source.demo.persona = .mia
+            do { _ = try await source.allowanceIssuances(id: id); XCTFail("Sibling history leak") } catch {}
+            source.demo.persona = .rey
+            source.demo.categories[1].delegatedTo = .mia
+            do { try await source.issueAllowance(id: id, issueDate: "2026-09-11", expectedVersion: 3); XCTFail("Revoked delegation") } catch {}
+            XCTAssertEqual(source.demo.allocationVersion, 3)
+            XCTAssertEqual(source.demo.allowanceHistory.count, 2)
+        }
+    }
+
+    @MainActor
+    func testDemoAllowanceFailuresAndCalendarAdvancePreserveFinancialState() async throws {
+        let source = DemoWorkspaceDataSource()
+        for plan in source.demo.allowances { try await source.setAllowanceActive(id: plan.id, active: false) }
+        try await source.assignMoney(.init(categoryID: "buffer", month: "2026-08-01", assignedMinor: 35_000, expectedVersion: source.demo.allocationVersion))
+        func body(_ amount: Int64, name: String) -> APIAllowancePlanCreate {
+            .init(delegatedUserID: "alex", sourceCategoryID: "buffer", name: name, amountMinor: amount,
+                nextIssueDate: "2026-08-31", recurrenceUnit: "month", intervalCount: 1, rolloverPolicy: "rollover",
+                splits: [.init(destinationCategoryID: "alexallow", amountMinor: amount)])
+        }
+        let accounts = source.demo.accounts, transactions = source.demo.transactions
+        let version = source.demo.allocationVersion, events = source.demo.allocationEvents.map(\.id)
+        try await source.createAllowance(body(50_000, name: "Too much"))
+        let largeID = try XCTUnwrap(source.demo.allowances.last?.id)
+        do { try await source.issueAllowance(id: largeID, issueDate: "2026-08-31", expectedVersion: version); XCTFail("Insufficient source") } catch {}
+        XCTAssertEqual(source.demo.allowanceHistory.count, 0)
+        XCTAssertEqual(source.demo.allocationVersion, version)
+        XCTAssertEqual(source.demo.allocationEvents.map(\.id), events)
+        XCTAssertEqual(source.demo.allowances.last?.nextDate, "2026-08-31")
+        try await source.setAllowanceActive(id: largeID, active: false)
+        try await source.createAllowance(body(2_000, name: "Monthly"))
+        let id = try XCTUnwrap(source.demo.allowances.last?.id)
+        do { try await source.setAllowanceActive(id: largeID, active: true); XCTFail("Conflicting active destination") } catch {}
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_budget", "manage_allowances"], restrictAccounts: false, accountIDs: [], restrictCategories: true, categoryIDs: ["alexallow"], expectedVersion: 0))
+        source.demo.persona = .partner
+        do { try await source.issueAllowance(id: id, issueDate: "2026-08-31", expectedVersion: version); XCTFail("Hidden source") } catch {}
+        do { _ = try await source.allowanceIssuances(id: id); XCTFail("Hidden source history") } catch {}
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "alex", value: .init(capabilities: ["view_budget"], restrictAccounts: false, accountIDs: [], restrictCategories: true, categoryIDs: ["alexsave"], expectedVersion: 0))
+        do { try await source.issueAllowance(id: id, issueDate: "2026-08-31", expectedVersion: version); XCTFail("Recipient visibility revoked") } catch {}
+        _ = try await source.updateAccessProfile(userID: "alex", value: .init(capabilities: ["view_budget"], restrictAccounts: false, accountIDs: [], restrictCategories: true, categoryIDs: ["alexallow", "alexsave"], expectedVersion: 1))
+        try await source.issueAllowance(id: id, issueDate: "2026-08-31", expectedVersion: version)
+        XCTAssertEqual(source.demo.allowances.last?.nextDate, "2026-09-30")
+        XCTAssertEqual(source.demo.allowanceHistory.count, 1)
+        XCTAssertEqual(source.demo.allocationVersion, version + 1)
+        XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+    }
+
+
+    @MainActor
     func testProductionPolicyServiceIsProspectiveVersionedAuditedAndOwnerOnly() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
         let services = BudgetApplicationServices(repository: source)
