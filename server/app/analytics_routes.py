@@ -14,6 +14,7 @@ from starlette.responses import Response
 from .access import has_capability, is_household_owner, visible_resource_ids
 from .budgeting_routes import account_working_balances, require_budget_capability
 from .calendar_dates import month_periods
+from .cash_rollover_repository import cash_rollover_effects
 from .debt_projection import estimated_monthly_interest
 from .database import get_db
 from .dependencies import get_current_user
@@ -630,6 +631,7 @@ def plan_performance_report(
     reserve_events = list(db.scalars(select(CreditCardReserveEvent).where(
         CreditCardReserveEvent.budget_id == budget_id,
         CreditCardReserveEvent.payment_category_id.in_(category_ids),
+        CreditCardReserveEvent.credit_account_id.in_(account_ids),
         CreditCardReserveEvent.occurred_on <= end_date,
     ).order_by(CreditCardReserveEvent.occurred_on, CreditCardReserveEvent.id))) if category_ids else []
 
@@ -673,8 +675,16 @@ def plan_performance_report(
     while reserve_index < len(reserve_events) and reserve_events[reserve_index].occurred_on < start_date:
         apply_reserve(reserve_events[reserve_index]); reserve_index += 1
 
+    rollover = cash_rollover_effects(db, budget_id, end_date, category_ids=category_ids, account_ids=account_ids)
+    rollover_index = 0
     points = []
     for period_start, period_end in month_periods(start_date, end_date):
+        while rollover_index < len(rollover) and rollover[rollover_index].month <= period_start:
+            effect = rollover[rollover_index]
+            category_balances[effect.category_id] += effect.amount_minor
+            if visible_categories is None:
+                ready_postings -= effect.amount_minor
+            rollover_index += 1
         carried = sum(category_balances.values())
         assigned = activity = transaction_activity = 0
         while allocation_index < len(allocation_rows) and allocation_rows[allocation_index][1].occurred_on <= period_end:

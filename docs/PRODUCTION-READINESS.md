@@ -4,6 +4,31 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Rollover service integration after `f89ee57`: a single repository adapter streams scalar allocation,
+on-budget direct/split activity and signed reserve facts, retaining month/category accumulators
+instead of transaction objects. It resolves the latest revision of each effective policy month.
+Legacy carry-only budgets skip the ledger scan. Dated balance guards, global spendable Unassigned,
+monthly carry and Plan Performance now consume those same derived effects. No synthetic assignment,
+transaction or read-time write is made. Singleton category guards narrow the scan; scoped reports
+filter accounts/categories before deriving effects. An adjacent privacy gap was corrected: existing
+monthly/Plan Performance reserve-event reads now enforce the same account scope as transactions.
+
+Production-service regressions cover dated/global agreement, repeat-read neutrality, unchanged
+Assigned/Activity/transaction/account/history observations, assignment refusal, policy revisions,
+credit debt exclusion, hidden-account/reserve privacy, post-boundary card funding and historical
+cash refunds. A real PostgreSQL race proves two allocations cannot spend cash already absorbed.
+**Public policy selection/default activation remains gated** on Demo provider integration, command
+lifecycle/versioning and shared settings. Existing public budgets remain carry-only. This is not
+human acceptance or production closure. Human Live remains untouched at 0020; no new migration
+or Swift source change in this checkpoint. Current application code requires the current migrated
+schema; the populated migration fixture seeds via current APIs and then downgrades its empty
+policy table before testing the real 0028→0029 upgrade, rather than running new code on an old schema.
+Verification: **439 backend PASS, zero skips; 48 BudgetCore + 50 BudgetAPI PASS**. Focused
+projection/service/PostgreSQL race checks: **31 PASS**. Diff check PASS. Logs:
+`/tmp/budget-rollover-consumers-{focused-final,backend-final,package}.log`. No Swift source changed;
+native XCTest/UI/build evidence remains the preceding `f89ee57` run, not a new native run.
+
+
 Rollover projection foundation after `6791157`: Python and Swift consume 17 shared exact vectors
 for derived boundary effects, including legacy carry, cash absorption, cumulative prior credit
 debt, signed funding/refunds, split categories, policy switches/pending revisions, long sparse gaps,
@@ -12,8 +37,8 @@ projection applies them to carry and Unassigned separately from user Assigned/Ac
 duplicate category/month effects. Future effects reserve already-spent cash consistently with
 future allocations, while dated pre-boundary RTA remains unchanged. Historical fact edits recompute
 amounts under the historical policy, not a newly selected current enum.
-**Repository activation is still gated**: Live/Demo normal operations do not supply policy effects
-yet. Every balance guard, report and canonical command must integrate before exposing the setting
+**At this earlier projection checkpoint, repository activation was still gated**: Live/Demo
+operations did not supply policy effects. Every balance guard, report and command must integrate before exposing the setting
 or changing new-budget defaults. These pure/shared-vector tests are not full production rollover
 acceptance, and do not close the financial/product gates. No new migration or human data changes.
 Verification: **433 backend PASS, zero skips; 48 BudgetCore + 50 BudgetAPI; 115 native XCTest;

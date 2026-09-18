@@ -56,13 +56,24 @@ Verification: **433 backend zero skips, 48 Core + 50 API, 115 native, 2 producti
 Funding UI PASS**; Beta build and diff check PASS. Focused projection checks: 25 PASS. Logs
 `/tmp/budget-rollover-projection-{focused-final,package-final,backend,native,ui}.log`.
 
-Next highest-priority planning closure: repository/application-service integration. Build canonical
-dated inputs from allocations, direct/split on-budget transactions, payment-category reserve events,
-and spending-category reserve attribution. Stream/bound history and use a consistent complete
-known-fact horizon (next boundary plus pending policy dates), not the selected screen's month as
-global cash authority. Route `ready_to_assign_balance`, `category_available_balance`, monthly/report
-carry and Demo production commands through the same effects. No fake user allocation or repeated
-posting on read. Prove actual service flows with policies, scopes, refunds/edits, races and unchanged
+After `f89ee57`, the Live repository adapter now streams all five canonical fact sources with
+account/category scope before aggregation; the projection retains category/month totals, not
+transactions. Actual Unassigned/category guards and monthly/Plan Performance carry consume the
+same policy effects. Reads remain money-neutral. Tests prove exact dated/global agreement,
+assignment denial, prospective revisions, hidden-account and credit-debt isolation, post-boundary
+card funding, historical refunds and a real PostgreSQL allocation race. An existing adjacent privacy
+gap was corrected: scoped report reserve events now receive the account filter already applied to
+transactions. No public policy control/default or Swift source changed; Human Live is untouched.
+Verification: **439 backend PASS, zero skips; 48 Core + 50 API PASS; 31 focused projection/service/
+PostgreSQL race checks PASS**. Diff check PASS. Logs
+`/tmp/budget-rollover-consumers-{focused-final,backend-final,package}.log`. Native XCTest/UI/build
+evidence remains `f89ee57`; no new native run is claimed for this server-only checkpoint.
+
+Next highest-priority planning closure: Demo repository/application-service integration. Supply
+equivalent dated facts, policy history and effects to its production reads and command preflights,
+including additional-allocation projections and rollback. Then implement prospective policy commands
+with preview-version invalidation, shared settings and explicit new-budget defaults. Do not expose
+an active policy setting before providers agree. Retain actual service proofs for edits and unchanged
 account/card/reconciliation state before exposing settings. Then append audited next-period choices
 under budget locking/version checks, activate explicit new-budget absorb defaults, and expose shared
 UI. Fresh budgets created during these gated checkpoints need legacy baselines at activation too.

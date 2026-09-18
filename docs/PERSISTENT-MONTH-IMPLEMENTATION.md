@@ -346,3 +346,24 @@ This fixes a classification prerequisite, not prospective rollover policy or uni
 Full structured export fidelity, bounded hydration in other reports, actual Docker/Compose recovery,
 Local Device/import dependencies and the remaining roadmap are not closed by the current checkpoints.
 The commercial purchase-model decision is external; this planning work is not blocked on it.
+
+### Server rollover consumers (policy UI/default still gated)
+
+`cash_rollover_repository.cash_rollover_effects` is the canonical ledger-to-projection adapter.
+It streams scalar rows from five sources (allocations, direct/split on-budget transactions,
+payment-category reserve activity, spending-category funding attribution), and selects the latest
+version for each effective month. Retained storage scales with occupied category/month pairs,
+not transaction count. No-policy/carry-only history avoids a ledger scan. A category-specific guard
+can restrict to that category without changing its result; report resource scope is applied before
+aggregation. This internal helper does not authorize; callers must do so.
+
+`ready_to_assign_balance` debits effects, `category_available_balance` adds effects, and monthly
+summaries/Plan Performance add them to carry, never Assigned or Activity. All-date guards use the
+full known-fact horizon, including pending policy boundaries; dated guards only use effects through
+their month. No schedule income is consumed. The same ordinary budget lock protects competing
+allocations after absorption. Current scopes also apply to previously unfiltered reserve events.
+
+Next: supply equivalent historical policy facts/effects in Demo's actual repository and every
+command preflight; then implement prospective policy commands, stale-preview invalidation,
+shared settings and explicit new-budget defaults. Do not expose an operational setting before
+these providers agree. Broader Plan Performance hydration is still a separate bounded-memory gap.

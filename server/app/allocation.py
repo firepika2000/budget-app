@@ -6,6 +6,7 @@ from datetime import date
 from fastapi import HTTPException, status
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
+from .cash_rollover_repository import cash_rollover_effects
 
 from .models import (
     Account,
@@ -155,9 +156,9 @@ def unassigned_cash_balance(db: Session, budget_id: str, through: date | None = 
 
 
 def ready_to_assign_balance(db: Session, budget_id: str, through: date | None = None) -> int:
-    return unassigned_cash_balance(db, budget_id, through) + allocation_balance(
-        db, budget_id, category_id=None, through=through
-    )
+    absorbed = sum(item.amount_minor for item in cash_rollover_effects(db, budget_id, through))
+    return (unassigned_cash_balance(db, budget_id, through)
+            + allocation_balance(db, budget_id, category_id=None, through=through) - absorbed)
 
 
 def category_activity_balance(
@@ -215,6 +216,8 @@ def category_available_balance(
     category_id: str,
     through: date | None = None,
 ) -> int:
-    return allocation_balance(db, budget_id, category_id=category_id, through=through) + category_activity_balance(
-        db, budget_id, category_id, through=through
-    )
+    absorbed = sum(item.amount_minor for item in cash_rollover_effects(
+        db, budget_id, through, category_ids={category_id}
+    ))
+    return (allocation_balance(db, budget_id, category_id=category_id, through=through)
+            + category_activity_balance(db, budget_id, category_id, through=through) + absorbed)

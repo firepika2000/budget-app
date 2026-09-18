@@ -13,6 +13,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import Response, StreamingResponse
 from .schemas import MAX_INT64
 from .calendar_dates import month_end
+from .cash_rollover_repository import cash_rollover_effects
 from sqlalchemy import String, and_, cast, delete, false, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.exc import IntegrityError
@@ -2229,10 +2230,13 @@ def month_summary(
             if on_credit and transaction.occurred_on >= month:
                 credit_activity_current[split.category_id] = credit_activity_current.get(split.category_id, 0) + split.amount_minor
 
-    reserve_events = db.scalars(select(CreditCardReserveEvent).where(
+    reserve_query = select(CreditCardReserveEvent).where(
         CreditCardReserveEvent.budget_id == budget_id,
         CreditCardReserveEvent.occurred_on <= through,
-    ).execution_options(yield_per=500))
+    )
+    if visible_accounts is not None:
+        reserve_query = reserve_query.where(CreditCardReserveEvent.credit_account_id.in_(visible_accounts))
+    reserve_events = db.scalars(reserve_query.execution_options(yield_per=500))
     funded_credit_current: dict[str, int] = {}
     for event in reserve_events:
         target = activity_current if event.occurred_on >= month else activity_before
@@ -2240,10 +2244,14 @@ def month_summary(
         if event.occurred_on >= month and event.spending_category_id is not None:
             funded_credit_current[event.spending_category_id] = funded_credit_current.get(event.spending_category_id, 0) + event.amount_minor
 
+    rollover = cash_rollover_effects(db, budget_id, month, category_ids=visible_categories, account_ids=visible_accounts)
+    rollover_by_category: dict[str, int] = {}
+    for effect in rollover:
+        rollover_by_category[effect.category_id] = rollover_by_category.get(effect.category_id, 0) + effect.amount_minor
     rows: list[CategoryMonthSummary] = []
     total_overspent = 0
     for category in categories:
-        carried = assigned_before.get(category.id, 0) + activity_before.get(category.id, 0)
+        carried = assigned_before.get(category.id, 0) + activity_before.get(category.id, 0) + rollover_by_category.get(category.id, 0)
         assigned = assigned_current.get(category.id, 0)
         activity = activity_current.get(category.id, 0)
         available = carried + assigned + activity
@@ -2281,7 +2289,7 @@ def month_summary(
         ))
     # A scoped household view cannot derive global spendable cash from its visible subset.
     # Omit these observations rather than leak hidden accounts/allocations or invent a balance.
-    dated_unassigned = 0 if visible_categories is not None else unassigned_cash_to_date + ready_to_assign_postings
+    dated_unassigned = 0 if visible_categories is not None else unassigned_cash_to_date + ready_to_assign_postings - sum(rollover_by_category.values())
     all_date_unassigned = (
         ready_to_assign_balance(db, budget_id)
         if visible_categories is None and visible_accounts is None

@@ -23,7 +23,9 @@ def test_populated_0028_policy_history_upgrade_preserves_rows_and_financial_obse
     monkeypatch.setenv("BUDGET_APP_DATABASE_URL", url)
     monkeypatch.setenv("BUDGET_APP_JWT_SECRET", "migration-test-secret-that-is-longer-than-32-characters")
     config = migration_config()
-    command.upgrade(config, "0028_target_snoozes")
+    # Seed via the current API/schema, then downgrade its empty policy table to create
+    # the populated old-schema fixture. Current application code requires current migrations.
+    command.upgrade(config, "head")
     engine = create_engine(url, connect_args={"check_same_thread": False})
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     app = create_app(Settings(database_url=url, jwt_secret="migration-test-secret-that-is-longer-than-32-characters", attachment_storage_path=str(tmp_path / "objects")))
@@ -49,9 +51,10 @@ def test_populated_0028_policy_history_upgrade_preserves_rows_and_financial_obse
         paths += [f"{root}/accounts/{item['id']}/balance" for item in (account, card)]
         paths += [f"{root}/transactions", f"{root}/allocations"]
         observations = {path: client.get(path, headers=auth(token)).json() for path in paths}
-        tables = [name for name in inspect(engine).get_table_names() if name not in ("alembic_version", "refresh_sessions", "audit_events")]
+        tables = [name for name in inspect(engine).get_table_names() if name not in ("alembic_version", "refresh_sessions", "audit_events", "cash_rollover_policy_changes")]
         with engine.connect() as connection:
             before = {name: sorted(connection.execute(text(f'SELECT * FROM "{name}"')).all(), key=repr) for name in tables}
+        command.downgrade(config, "0028_target_snoozes")
         for revision in ("head", "0028_target_snoozes", "head"):
             (command.upgrade if revision == "head" else command.downgrade)(config, revision)
             with engine.connect() as connection:
@@ -61,7 +64,8 @@ def test_populated_0028_policy_history_upgrade_preserves_rows_and_financial_obse
                     assert connection.execute(text("SELECT COUNT(*) FROM cash_rollover_policy_changes")).scalar_one() == 502
                     baseline = connection.execute(text("SELECT budget_id, effective_month, policy, version, source, actor_user_id FROM cash_rollover_policy_changes WHERE budget_id=:budget"), {"budget": budget["id"]}).one()
                     assert baseline == (budget["id"], "0001-01-01", "carry_category_deficit", 0, "legacy_migration", None)
-            assert {path: client.get(path, headers=auth(token)).json() for path in paths} == observations
+            if revision == "head":
+                assert {path: client.get(path, headers=auth(token)).json() for path in paths} == observations
         # Downgrade refuses to discard future real decisions, even though this checkpoint does
         # not yet expose policy selection or activate absorption in production projections.
         with engine.begin() as connection:

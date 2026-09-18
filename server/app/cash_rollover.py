@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from collections.abc import Iterable
 
 MAX_MINOR = 2**63 - 1
 MIN_MINOR = -(2**63)
@@ -51,7 +52,7 @@ def _next_month(month: date) -> date | None:
     return date(month.year + (month.month == 12), month.month % 12 + 1, 1)
 
 
-def project_rollover_effects(*, through_month: date, policies: list[PolicyChange], facts: list[CategoryFact]) -> list[RolloverEffect]:
+def project_rollover_effects(*, through_month: date, policies: list[PolicyChange], facts: Iterable[CategoryFact]) -> list[RolloverEffect]:
     if through_month.day != 1:
         raise ValueError("Rollover horizon must be a month start")
     if len({item.version for item in policies}) != len(policies):
@@ -61,7 +62,8 @@ def project_rollover_effects(*, through_month: date, policies: list[PolicyChange
                 or isinstance(item.version, bool) or item.version < 0 or item.policy not in POLICIES):
             raise ValueError("Invalid rollover policy history")
     history = sorted(policies, key=lambda item: (item.effective_month, item.version))
-    by_month: dict[date, list[CategoryFact]] = {}
+    # Retain only month/category accumulators, not every transaction from a streamed ledger.
+    by_month: dict[date, dict[str, tuple[int, int]]] = {}
     boundaries = {item.effective_month for item in history if item.effective_month <= through_month}
     for item in facts:
         _checked(item.available_delta_minor)
@@ -69,7 +71,9 @@ def project_rollover_effects(*, through_month: date, policies: list[PolicyChange
         month = item.occurred_on.replace(day=1)
         if month > through_month:
             continue
-        by_month.setdefault(month, []).append(item)
+        monthly = by_month.setdefault(month, {})
+        balance, debt = monthly.get(item.category_id, (0, 0))
+        monthly[item.category_id] = (balance + item.available_delta_minor, debt + item.unfunded_credit_delta_minor)
         boundaries.add(month)
         following = _next_month(month)
         if following is not None and following <= through_month:
@@ -92,9 +96,9 @@ def project_rollover_effects(*, through_month: date, policies: list[PolicyChange
                     _checked(cash_deficit)
                     available[category] = _checked(available[category] + cash_deficit)
                     effects.append(RolloverEffect(month, category, cash_deficit, policy.version))
-        for item in by_month.get(month, []):
-            available[item.category_id] = available.get(item.category_id, 0) + item.available_delta_minor
-            credit[item.category_id] = credit.get(item.category_id, 0) + item.unfunded_credit_delta_minor
+        for category, (balance, debt) in by_month.get(month, {}).items():
+            available[category] = available.get(category, 0) + balance
+            credit[category] = credit.get(category, 0) + debt
         # Sum a whole month exactly before checking its published boundary state: input
         # ordering cannot turn a representable cancelling total into an intermediate trap.
         for value in available.values():
