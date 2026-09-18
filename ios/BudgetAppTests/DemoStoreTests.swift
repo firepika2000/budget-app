@@ -649,6 +649,10 @@ final class DemoStoreTests: XCTestCase {
         let resilience = try XCTUnwrap(store.resilienceReport)
         XCTAssertEqual(resilience.expectedMarginMinor, resilience.scheduledIncomeMinor - resilience.scheduledOutflowsMinor)
         XCTAssertNil(resilience.essentialExpenseCoverageDays)
+        XCTAssertEqual(store.insightsSummary?.netCashFlowMinor, report.differenceMinor)
+        XCTAssertEqual(store.insightsSummary?.netWorthMinor, netWorth.netWorthMinor)
+        XCTAssertEqual(store.insightsSummary?.debtMinor, debt.debtMinor)
+        XCTAssertEqual(store.insightsSummary?.expectedMarginMinor, resilience.expectedMarginMinor)
     }
 
     @MainActor

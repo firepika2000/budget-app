@@ -610,6 +610,23 @@ public struct APIClient {
         return try await send(path: "api/v1/budgets/\(budgetID)/reports/net-worth", queryItems: query, token: token)
     }
 
+    public func insightsSummary(
+        budgetID: String, startDate: String, endDate: String,
+        accountIDs: [String] = [], memberIDs: [String] = [], payees: [String] = [],
+        cleared: Bool? = nil, reconciled: Bool? = nil, flags: [String] = [], tags: [String] = [],
+        includeTracking: Bool = false, token: String
+    ) async throws -> APIInsightsSummary {
+        var query = [URLQueryItem(name: "start_date", value: startDate), URLQueryItem(name: "end_date", value: endDate), URLQueryItem(name: "include_tracking", value: String(includeTracking))]
+        query += accountIDs.map { URLQueryItem(name: "account_id", value: $0) }
+        query += memberIDs.map { URLQueryItem(name: "member_id", value: $0) }
+        query += payees.map { URLQueryItem(name: "payee", value: $0) }
+        query += flags.map { URLQueryItem(name: "flag", value: $0) }
+        query += tags.map { URLQueryItem(name: "tag", value: $0) }
+        if let cleared { query.append(URLQueryItem(name: "cleared", value: String(cleared))) }
+        if let reconciled { query.append(URLQueryItem(name: "reconciled", value: String(reconciled))) }
+        return try await send(path: "api/v1/budgets/\(budgetID)/reports/summary", queryItems: query, token: token)
+    }
+
     public func debtReport(
         budgetID: String,
         startDate: String,

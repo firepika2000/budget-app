@@ -17,7 +17,7 @@ from .database import get_db
 from .dependencies import get_current_user
 from .models import Account, AllocationOperation, AllocationPosting, Category, CategoryGroup, CreditCardReserveEvent, Membership, Transaction, TransactionSplit, User
 from .planning_routes import forecast
-from .schemas import DebtReportResponse, IncomeSpendingReportResponse, NetWorthReportResponse, PlanPerformanceReportResponse, ResilienceReportResponse, SpendingReportResponse, SpendingTrendsReportResponse
+from .schemas import DebtReportResponse, IncomeSpendingReportResponse, InsightsSummaryResponse, NetWorthReportResponse, PlanPerformanceReportResponse, ResilienceReportResponse, SpendingReportResponse, SpendingTrendsReportResponse
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/reports")
@@ -719,6 +719,49 @@ def resilience_report(
             "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification.",
         },
     }
+
+
+@router.get("/summary", response_model=InsightsSummaryResponse)
+def insights_summary(
+    budget_id: str,
+    start_date: date,
+    end_date: date,
+    account_id: list[str] = Query(default=[]),
+    member_id: list[str] = Query(default=[]),
+    payee: list[str] = Query(default=[]),
+    cleared: Optional[bool] = None,
+    reconciled: Optional[bool] = None,
+    flag: list[str] = Query(default=[]),
+    tag: list[str] = Query(default=[]),
+    include_tracking: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Bounded hub payload using the canonical authorized report definitions.
+
+    This consolidates transport, not a second accounting engine. Internal detailed
+    report computation remains a separate performance concern.
+    """
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
+    income = income_spending_report(
+        budget_id=budget_id, start_date=start_date, end_date=end_date,
+        account_id=account_id, member_id=member_id, payee=payee, cleared=cleared,
+        reconciled=reconciled, flag=flag, tag=tag, include_tracking=include_tracking,
+        user=user, db=db,
+    )
+    result = {"currency_code": budget.currency_code, "net_cash_flow_minor": income["difference_minor"]}
+    if has_capability(db, user, budget, "view_account_balances"):
+        worth = net_worth_report(
+            budget_id=budget_id, start_date=start_date, end_date=end_date,
+            account_id=account_id, include_tracking=include_tracking,
+            include_transaction_ids=False, user=user, db=db,
+        )
+        debt = debt_report(budget_id=budget_id, start_date=start_date, end_date=end_date, account_id=account_id, user=user, db=db)
+        resilience = resilience_report(budget_id=budget_id, horizon_days=30, user=user, db=db)
+        result.update(net_worth_minor=worth["net_worth_minor"], debt_minor=debt["debt_minor"],
+                      recorded_interest_month_minor=debt["recorded_interest_month_minor"],
+                      expected_margin_minor=resilience["expected_margin_minor"])
+    return result
 
 
 @router.get("/export.csv", response_class=Response)

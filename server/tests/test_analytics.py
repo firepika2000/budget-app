@@ -5,6 +5,32 @@ from .test_advanced_ledger import add_category, record
 from .test_budgeting_api import create_budget, create_budget_structure
 
 
+def test_insights_summary_matches_canonical_reports_without_detail_payloads(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=100_000)
+    record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-2345)
+    record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=345)
+    base = f"/api/v1/budgets/{budget['id']}/reports"
+    period = "start_date=2026-09-01&end_date=2026-09-30"
+    response = client.get(f"{base}/summary?{period}", headers=auth(owner_token))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    income = client.get(f"{base}/income-spending?{period}", headers=auth(owner_token)).json()
+    worth = client.get(f"{base}/net-worth?{period}&include_tracking=false", headers=auth(owner_token)).json()
+    debt = client.get(f"{base}/debt?{period}", headers=auth(owner_token)).json()
+    resilience = client.get(f"{base}/resilience", headers=auth(owner_token)).json()
+    assert body == {"currency_code": "USD", "net_cash_flow_minor": income["difference_minor"],
+                    "net_worth_minor": worth["net_worth_minor"], "debt_minor": debt["debt_minor"],
+                    "recorded_interest_month_minor": debt["recorded_interest_month_minor"],
+                    "expected_margin_minor": resilience["expected_margin_minor"]}
+    assert body["net_cash_flow_minor"] == 98_000
+    assert len(response.content) < 512
+    assert account["id"] not in response.text and category["id"] not in response.text
+    assert client.get(f"{base}/summary?{period}&account_id=missing", headers=auth(owner_token)).status_code == 404
+    assert client.get(f"{base}/summary?start_date=2026-09-30&end_date=2026-09-01", headers=auth(owner_token)).status_code == 422
+
+
 def test_spending_report_is_explainable_and_split_aware(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     checking, groceries = create_budget_structure(client, owner_token, budget["id"])
@@ -638,6 +664,24 @@ def test_recorded_interest_respects_category_scope_on_visible_debt_account(clien
     assert body["interest_tracking_started_on"] == "2026-09-10"
     # Balance access is independently authorized: filtering interest must not redefine card debt.
     assert body["debt_minor"] == owner.json()["debt_minor"] == 13000
+    summary_url = url.replace("/reports/debt?", "/reports/summary?")
+    summary = client.get(summary_url, headers=auth(child_token))
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["recorded_interest_month_minor"] == 1000
+    assert summary.json()["net_cash_flow_minor"] == -1000
+    limited_profile = profile.json()
+    updated = client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token),
+        json={"capabilities": [value for value in limited_profile["capabilities"] if value != "view_account_balances"],
+              "restrict_accounts": True, "account_ids": [card["id"]],
+              "restrict_categories": True, "category_ids": [visible_category["id"]]},
+    )
+    assert updated.status_code == 200, updated.text
+    limited_summary = client.get(summary_url, headers=auth(child_token))
+    assert limited_summary.status_code == 200, limited_summary.text
+    assert limited_summary.json()["net_cash_flow_minor"] == -1000
+    for field in ("net_worth_minor", "debt_minor", "recorded_interest_month_minor", "expected_margin_minor"):
+        assert limited_summary.json()[field] is None
 
 
 def test_interest_classification_requires_debt_account(client, owner_token, session_factory):
@@ -1114,6 +1158,8 @@ def test_net_worth_rejects_hidden_account_filter_and_never_aggregates_it(
     assert response.json()["net_worth_minor"] == 0
     forbidden = client.get(f"{url}&account_id={hidden['id']}", headers=auth(child_token))
     assert forbidden.status_code == 404
+    summary_url = url.replace("/reports/net-worth?", "/reports/summary?")
+    assert client.get(f"{summary_url}&account_id={hidden['id']}", headers=auth(child_token)).status_code == 404
 
 
 def test_reports_reject_cross_budget_resource_filters(client, owner_token, session_factory):

@@ -1,6 +1,6 @@
 # Production readiness mission ledger
 
-Updated: 2026-09-17. Active branch: `codex/development`.
+Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
@@ -15,7 +15,7 @@ Checkpoint completion is followed by the next unblocked engineering task.
 | SECURITY | IN PROGRESS | Server capability/resource guards and regression suites exist. Extend adversarial matrix across reports, projections, imports and future providers; rerun relevant PostgreSQL/privacy gates. |
 | DATA | IN PROGRESS | Source migration chain ends at `0027_interest_class`; human Live remains at `0020_payee_identity_repair`. Repeat populated upgrade and encrypted attachment-inclusive restore into disposable destinations. Production Local Device storage remains open. |
 | RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Existing native/backend suites provide regression evidence; concurrency, offline failures, cancellation and release-wide regression remain open. |
-| PERFORMANCE | IN PROGRESS | Live core hydration now makes zero detailed-report requests instead of seven; native HTTP tests cover caching/invalidation/retry. Hub still needs a lightweight summary; category/account fan-out, payload/wall-clock measures and Demo CPU optimization remain open. |
+| PERFORMANCE | IN PROGRESS | Live core hydration now makes zero detailed-report requests instead of seven; native HTTP tests cover caching/invalidation/retry. Hub uses one bounded scalar summary. Server/Demo computation, category/account fan-out and representative wall-clock measures remain open. |
 | UX | IN PROGRESS | Shared shell, onboarding, scalable payee selection and focused Insights exist. Report filters are reachable again; missing debt terms open the shared editor. Demand-loaded reports have independent loading/error/retry. Full workflow/accessibility closure remains open. |
 | ACCESSIBILITY | IN PROGRESS | Existing accessibility-sized/dark-mode navigation tests passed at earlier checkpoints. Repeat on changed report screens; audit VoiceOver amounts, charts, controls and custom ordering. |
 | PLATFORM | IN PROGRESS | Xcode 27 Beta and existing iPhone 17 Pro Max/iOS 27 are required. Preserve Simulator data. Release configuration, lifecycle, platform scope and Apple integrations need closure. |
@@ -147,3 +147,20 @@ The generated destination is removed after verification; no existing destination
 This is real PostgreSQL/AES-GCM evidence, not a claim about the unavailable Docker/age envelope.
 Final verification for that checkpoint: full backend **299 passed, zero skips**, including all
 12 PostgreSQL concurrency/recovery cases; focused populated recovery passed; diff checks passed.
+
+Hub summary checkpoint: `/reports/summary` consolidates the four hub payloads into six fields,
+reusing canonical authorized income/net worth/debt/resilience calculations rather than duplicating
+financial definitions. No transaction IDs, chart points, account/category names or counts are
+returned. The fixture response is under 512 bytes; hidden account filters reject, category-scoped
+interest stays private, and balance-dependent fields are null without balance permission. This
+reduces transport and decoding, not yet internal server report computation. Demo derives identical
+observations from its canonical report snapshot. Native cache/request-count coverage confirms a
+single summary route and no detailed income/net-worth payload on hub entry. API tests preserve
+9,007,199,254,740,993 minor units exactly and forward all applicable filters/current credentials.
+Updated server and app must be deployed together for this endpoint; no new migration is introduced.
+Human Live remains unchanged and acceptance remains pending—DO NOT RETEST during this run.
+Verification: focused analytics 57 passed; full backend 300 passed/zero skips with disposable
+PostgreSQL; package 35 BudgetCore + 46 BudgetAPI passed; native 84 passed; three production UI tests
+passed (focused navigation, filter context, Dark Mode/accessibility-sized report reachability).
+Simulator build succeeded; Xcode result finalization was pending after test completion. No human
+acceptance or comprehensive VoiceOver sign-off is claimed.

@@ -1140,6 +1140,25 @@ public struct APIDebtAccount: Identifiable, Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIInsightsSummary: Decodable, Equatable, Sendable {
+    public let currencyCode: String
+    public let netCashFlowMinor: Int64
+    public let netWorthMinor: Int64?
+    public let debtMinor: Int64?
+    public let recordedInterestMonthMinor: Int64?
+    public let expectedMarginMinor: Int64?
+    public init(currencyCode: String, netCashFlowMinor: Int64, netWorthMinor: Int64? = nil, debtMinor: Int64? = nil, recordedInterestMonthMinor: Int64? = nil, expectedMarginMinor: Int64? = nil) {
+        self.currencyCode = currencyCode; self.netCashFlowMinor = netCashFlowMinor
+        self.netWorthMinor = netWorthMinor; self.debtMinor = debtMinor
+        self.recordedInterestMonthMinor = recordedInterestMonthMinor; self.expectedMarginMinor = expectedMarginMinor
+    }
+    enum CodingKeys: String, CodingKey {
+        case currencyCode = "currency_code", netCashFlowMinor = "net_cash_flow_minor"
+        case netWorthMinor = "net_worth_minor", debtMinor = "debt_minor"
+        case recordedInterestMonthMinor = "recorded_interest_month_minor", expectedMarginMinor = "expected_margin_minor"
+    }
+}
+
 public struct APIDebtReport: Decodable, Equatable, Sendable {
     public let startDate: String
     public let endDate: String

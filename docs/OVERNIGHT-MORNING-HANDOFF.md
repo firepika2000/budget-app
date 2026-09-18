@@ -40,8 +40,8 @@ with clean `TEST SUCCEEDED`; all 11 shared strategy vectors remain exact. No mig
 
 - Current branch: `codex/development`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
-- Latest independently verified pushed checkpoint: `f772f1d` (restore key safety)
-- Push status: checkpoints through `f772f1d` are pushed. Later dated entries supersede historical pending notes below.
+- Latest independently verified pushed checkpoint: `b9c852d` (real PostgreSQL/attachment recovery)
+- Push status: checkpoints through `b9c852d` are pushed. Later dated entries supersede historical pending notes below.
 
 Focused report read-contract preparation follows this checkpoint. It preserves existing eager
 hydration while separating report selection and current-credential resolution for upcoming demand
@@ -72,6 +72,14 @@ equality, financial API equality, copied AES-GCM attachment digest, wrong-key/co
 and unchanged source ciphertext. Full backend **299 passed, zero skips**, including 12 PG cases.
 The shared PG fixture now uses temporary attachment roots. Outer age/Docker recovery still requires
 those tools; the new proof does not substitute for it. Human Live was not used.
+
+2026-09-18 summary transport checkpoint: hub entry now uses one bounded `/reports/summary`
+payload rather than four detailed reports. It delegates to canonical authorized report functions;
+internal server/Demo report computation remains open performance work. Full backend 300/300,
+package 35 Core + 46 API, native 84 and three production UI cases passed. Summary requires app and
+server update together, with no additional migration. Existing unapplied human Live migrations
+remain unapplied. Next: representative report computation/fan-out measurement, accessibility
+review, and remaining v0.8 closure before the broader mission backlog. DO NOT RETEST yet.
 - Active mission: [Production readiness ledger](PRODUCTION-READINESS.md); finish v0.8 and continue independent engineering toward an App Store release candidate.
 - Next task: demand-loaded Insights reports, authoritative invalidation, loading/error states and request-count evidence.
 - Human acceptance: **PENDING — DO NOT RETEST** during the autonomous run.

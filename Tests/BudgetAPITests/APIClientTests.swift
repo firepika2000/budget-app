@@ -11,6 +11,26 @@ final class APIClientTests: XCTestCase {
         MockURLProtocol.handler = nil
     }
 
+    func testInsightsSummaryPreservesExactMoneyAndAuthorizedQueryContext() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let transport = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/reports/summary")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated-token")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            for (name, value) in [("start_date", "2026-09-01"), ("end_date", "2026-09-30"), ("account_id", "a1"), ("member_id", "u1"), ("payee", "Cafe"), ("cleared", "true"), ("reconciled", "false"), ("flag", "orange"), ("tag", "qa"), ("include_tracking", "true")] {
+                XCTAssertTrue(query.contains(URLQueryItem(name: name, value: value)))
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(#"{"currency_code":"USD","net_cash_flow_minor":9007199254740993,"net_worth_minor":null,"debt_minor":null,"recorded_interest_month_minor":null,"expected_margin_minor":null}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: transport)
+        let result = try await client.insightsSummary(budgetID: "b1", startDate: "2026-09-01", endDate: "2026-09-30", accountIDs: ["a1"], memberIDs: ["u1"], payees: ["Cafe"], cleared: true, reconciled: false, flags: ["orange"], tags: ["qa"], includeTracking: true, token: "rotated-token")
+        XCTAssertEqual(result.netCashFlowMinor, 9_007_199_254_740_993)
+        XCTAssertNil(result.netWorthMinor)
+        XCTAssertNil(result.debtMinor)
+    }
+
     func testRejectsInsecureRemoteServer() {
         XCTAssertThrowsError(try APIClient(baseURL: URL(string: "http://example.com")!)) { error in
             XCTAssertEqual(error as? APIClientError, .insecureRemoteServer)

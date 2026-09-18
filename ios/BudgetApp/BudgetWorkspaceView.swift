@@ -261,7 +261,7 @@ struct WorkspaceSnapshot {
 }
 
 enum WorkspaceReportKind: CaseIterable, Hashable {
-    case spending, spendingTrends, income, netWorth, debt, planPerformance, resilience
+    case summary, spending, spendingTrends, income, netWorth, debt, planPerformance, resilience
 }
 
 struct WorkspaceReports {
@@ -272,6 +272,7 @@ struct WorkspaceReports {
     var debt: APIDebtReport?
     var planPerformance: APIPlanPerformanceReport?
     var resilience: APIResilienceReport?
+    var summary: APIInsightsSummary?
 }
 
 struct WorkspaceReportQuery: Equatable {
@@ -318,7 +319,11 @@ extension WorkspaceDataSource {
             netWorth: kinds.contains(.netWorth) ? value.netWorth : nil,
             debt: kinds.contains(.debt) ? value.debt : nil,
             planPerformance: kinds.contains(.planPerformance) ? value.planPerformance : nil,
-            resilience: kinds.contains(.resilience) ? value.resilience : nil
+            resilience: kinds.contains(.resilience) ? value.resilience : nil,
+            summary: kinds.contains(.summary) ? APIInsightsSummary(currencyCode: budget.currencyCode,
+                netCashFlowMinor: value.income?.differenceMinor ?? 0, netWorthMinor: value.netWorth?.netWorthMinor,
+                debtMinor: value.debt?.debtMinor, recordedInterestMonthMinor: value.debt?.recordedInterestMonthMinor,
+                expectedMarginMinor: value.resilience?.expectedMarginMinor) : nil
         )
     }
 }
@@ -1094,9 +1099,10 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         async let loadedDebt: APIDebtReport? = kinds.contains(.debt) && budget.can("view_account_balances") ? client.debtReport(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], token: token) : nil
         async let loadedPlanPerformance: APIPlanPerformanceReport? = kinds.contains(.planPerformance) ? client.planPerformanceReport(budgetID: budget.id, startDate: start, endDate: end, token: token) : nil
         async let loadedResilience: APIResilienceReport? = kinds.contains(.resilience) && budget.can("view_account_balances") ? client.resilienceReport(budgetID: budget.id, token: token) : nil
+        async let loadedSummary: APIInsightsSummary? = kinds.contains(.summary) ? client.insightsSummary(budgetID: budget.id, startDate: start, endDate: end, accountIDs: report.accountID.isEmpty ? [] : [report.accountID], memberIDs: report.memberID.isEmpty ? [] : [report.memberID], payees: report.payee.isEmpty ? [] : [report.payee], cleared: cleared, reconciled: reconciled, flags: report.flag.isEmpty ? [] : [report.flag], tags: report.tag.isEmpty ? [] : [report.tag], includeTracking: report.includeTracking, token: token) : nil
         return try await WorkspaceReports(spending: loadedSpending, spendingTrends: loadedSpendingTrends,
             income: loadedIncome, netWorth: loadedNetWorth, debt: loadedDebt,
-            planPerformance: loadedPlanPerformance, resilience: loadedResilience)
+            planPerformance: loadedPlanPerformance, resilience: loadedResilience, summary: loadedSummary)
     }
 
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
@@ -1167,6 +1173,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var debtReport: APIDebtReport?
     @Published var planPerformanceReport: APIPlanPerformanceReport?
     @Published var resilienceReport: APIResilienceReport?
+    @Published var insightsSummary: APIInsightsSummary?
     @Published private(set) var reportRevision = 0
     @Published private(set) var loadedReportKinds: Set<WorkspaceReportKind> = []
     @Published private(set) var reportErrors: [WorkspaceReportKind: String] = [:]
@@ -1321,6 +1328,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 let value = try await task.value
                 guard context == reportContext, loadedReportContext == context else { return }
                 switch kind {
+                case .summary: insightsSummary = value.summary
                 case .spending: spendingReport = value.spending
                 case .spendingTrends: spendingTrendsReport = value.spendingTrends
                 case .income: incomeReport = value.income
@@ -3469,13 +3477,13 @@ private struct LiveInsightsView: View {
     var body: some View {
         List {
             Section("Financial Snapshot") {
-                if let worth = store.netWorthReport { LabeledContent("Net worth", value: store.format(worth.netWorthMinor)) }
-                if let cash = store.incomeReport { LabeledContent("Net cash flow", value: store.format(cash.differenceMinor)) }
+                if let worth = store.insightsSummary?.netWorthMinor { LabeledContent("Net worth", value: store.format(worth)) }
+                if let cash = store.insightsSummary?.netCashFlowMinor { LabeledContent("Net cash flow", value: store.format(cash)) }
                 if let summary = store.summary { LabeledContent("Ready to assign", value: store.format(summary.readyToAssignMinor)) }
-                if let debt = store.debtReport {
-                    LabeledContent("Total debt", value: store.format(debt.debtMinor))
-                    LabeledContent("Recorded interest this month", value: store.format(debt.recordedInterestMonthMinor))
+                if let debt = store.insightsSummary?.debtMinor {
+                    LabeledContent("Total debt", value: store.format(debt))
                 }
+                if let interest = store.insightsSummary?.recordedInterestMonthMinor { LabeledContent("Recorded interest this month", value: store.format(interest)) }
             }
             Section("Reports") {
                 NavigationLink { SpendingIncomeReportView() } label: { reportLink("Spending & Income", "Where money came from and where it went.", "chart.pie") }.accessibilityIdentifier("insights-spending-income")
@@ -3483,8 +3491,8 @@ private struct LiveInsightsView: View {
                 NavigationLink { NetWorthDestinationView() } label: { reportLink("Net Worth", "Assets, liabilities, and change over time.", "chart.line.uptrend.xyaxis") }.accessibilityIdentifier("insights-net-worth")
                 NavigationLink { DebtInterestDestinationView() } label: { reportLink("Debt & Interest", "Balances, recorded interest, and payoff planning.", "creditcard.trianglebadge.exclamationmark") }.accessibilityIdentifier("insights-debt-interest")
             }
-            if let resilience = store.resilienceReport { Section("Looking Ahead") { LabeledContent("Expected 30-day margin", value: store.format(resilience.expectedMarginMinor)); Text("Forecast-only scheduled income and outflows. It does not change money available today.").font(.caption).foregroundStyle(.secondary) } }
-        }.modifier(ReportLoadModifier(kinds: [.netWorth, .income, .debt, .resilience], suspended: showFilters))
+            if let margin = store.insightsSummary?.expectedMarginMinor { Section("Looking Ahead") { LabeledContent("Expected 30-day margin", value: store.format(margin)); Text("Forecast-only scheduled income and outflows. It does not change money available today.").font(.caption).foregroundStyle(.secondary) } }
+        }.modifier(ReportLoadModifier(kinds: [.summary], suspended: showFilters))
         .navigationTitle("Insights").accessibilityIdentifier("insights-hub")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

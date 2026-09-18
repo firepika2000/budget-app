@@ -892,6 +892,15 @@ class DebtAccount(BaseModel):
     recorded_interest_minor: int
 
 
+class InsightsSummaryResponse(BaseModel):
+    currency_code: str
+    net_cash_flow_minor: int
+    net_worth_minor: Optional[int] = None
+    debt_minor: Optional[int] = None
+    recorded_interest_month_minor: Optional[int] = None
+    expected_margin_minor: Optional[int] = None
+
+
 class DebtReportResponse(BaseModel):
     start_date: date
     end_date: date

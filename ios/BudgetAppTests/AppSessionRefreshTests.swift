@@ -130,6 +130,9 @@ final class AppSessionRefreshTests: XCTestCase {
                 }
                 return Self.json(200, #"{"start_date":"2026-09-01","end_date":"2026-09-30","currency_code":"USD","opening_debt_minor":1000,"debt_minor":900,"principal_reduction_minor":100,"recorded_interest_range_minor":0,"recorded_interest_month_minor":0,"recorded_interest_ytd_minor":0,"recorded_interest_trailing_12_minor":0,"interest_tracking_started_on":null,"points":[],"accounts":[]}"#)
             }
+            if path.hasSuffix("/reports/summary") {
+                return Self.json(200, #"{"currency_code":"USD","net_cash_flow_minor":1000,"net_worth_minor":1000,"debt_minor":0,"recorded_interest_month_minor":0,"expected_margin_minor":0}"#)
+            }
             if path.contains("/reports/") { return Self.json(500, "{}") }
             return Self.json(200, "[]")
         }
@@ -170,6 +173,14 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertEqual(requests.paths.filter { $0.contains("/reports/") }.count, 5)
         XCTAssertEqual(requests.authorizations.last, "Bearer A2")
         XCTAssertTrue(requests.paths.filter { $0.contains("/reports/") }.allSatisfy { $0.hasSuffix("/reports/debt") })
+        await store.loadReports([.summary])
+        XCTAssertEqual(store.insightsSummary?.netCashFlowMinor, 1000)
+        XCTAssertEqual(requests.paths.last, "/api/v1/budgets/b1/reports/summary")
+        XCTAssertEqual(requests.paths.filter { $0.contains("/reports/") }.count, 6)
+        await store.loadReports([.summary])
+        XCTAssertEqual(requests.paths.filter { $0.contains("/reports/") }.count, 6)
+        XCTAssertNil(store.incomeReport, "The hub must not fetch detailed report payloads")
+        XCTAssertNil(store.netWorthReport)
     }
 
     @MainActor
