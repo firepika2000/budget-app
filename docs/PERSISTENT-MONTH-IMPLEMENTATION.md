@@ -406,3 +406,25 @@ exact historical and partial-period values. Further tests preserve archived hist
 versus shared account scope, and cross rollover boundaries with a different selected Plan month.
 No user policy setting/default or human-data migration is included. Continue the prospective policy
 command/version/settings work; this report correction does not close the full production mission.
+
+### Prospective owner policy API following `09a8ae6`
+
+The server now has GET/PUT `/api/v1/budgets/{id}/cash-rollover-policy` and bounded GET `/history`
+(`limit` 1...100, optional exclusive `before_version`). Current observation contains `current_month`,
+`current_policy`, `policy_version`, `allocation_version`, and `pending` effective-month/policy/version
+records. History preserves source, actor and timestamp, and returns `next_before_version` when needed.
+Ordinary reads select only the latest revision per effective month rather than load every revision.
+
+PUT takes `policy`, `effective_month`, `expected_policy_version`, `expected_allocation_version`.
+The household owner is required, consistent with creation/settings ownership. It locks the ordinary
+budget row, checks both versions, refuses current/past/non-month-start dates, and appends a real change.
+No-ops preserve tokens/history, but stale no-ops still refuse. A real decision increments the allocation
+token to invalidate pending funding previews, not an allocation or transaction. Candidate projection
+is validated before commit; any supported-range failure rolls back baseline, decision and token.
+No existing historical policy row is overwritten. A missing legacy baseline is recorded as version 0
+with `legacy_migration` provenance and no invented actor only when the first real choice is appended.
+
+Native settings and new-budget defaults are not exposed yet. Implement the same versioned command
+in Demo and the credential-refresh-aware Live application-service path, with production settings
+coverage, before final activation. Human Live remains untouched; this requires the existing 0029
+schema in deployed environments and does not automatically migrate any database.

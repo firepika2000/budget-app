@@ -4,6 +4,36 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Prospective policy API after `09a8ae6`: owner-authorized GET/PUT
+`/api/v1/budgets/{budget_id}/cash-rollover-policy` exposes current policy, current month, both
+policy/allocation versions and the latest choices for future effective months. GET `/history`
+is descending-version cursor-paged (50 default, 100 maximum) with immutable source/actor/timestamp.
+Owner-only authority follows existing budget creation and household settings; even a delegated
+`manage` budget grant does not confer control over household-wide rollover. Nonvisible budgets
+remain 404, visible nonowners 403, unauthenticated requests 401.
+
+PUT requires `policy`, first-day future `effective_month`, `expected_policy_version` and
+`expected_allocation_version`. The ordinary budget lock serializes choices; both tokens are checked
+before no-op handling. Real changes append provenance and increment the allocation token once,
+invalidating assignment/Smart Funding previews without generating financial operations. Revisions
+of a pending month preserve earlier decisions. Crossing the effective boundary changes the observed
+current policy without background posting. Projection/range failure after flush rolls back history
+and tokens together. A previously unstamped legacy budget receives an explicit version-zero legacy
+carry baseline on its first actual selection, not a fabricated user action. Reads do not create it.
+
+**Server selection is now functional for an explicit authorized future choice; native settings and
+new-budget default activation are still pending.** No human database migration or deployment was
+performed; existing public creation still retains legacy behavior. Next implement the provider-neutral
+Swift API/application-service/Demo command path, stale-credential tests and shared owner settings,
+then activate explicit new-budget defaults with legacy-preserving migration/recovery proof.
+Verification: **446 backend PASS, zero skips**, including real PostgreSQL policy concurrency,
+post-flush rollback, exact stale Smart Funding/assignment denial, policy boundary observation,
+owner/cross-budget authorization, immutable revisions and bounded audit paging. Existing populated
+migration and real age-encrypted PostgreSQL recovery suites remain green. `git diff --check` PASS.
+Log `/tmp/budget-rollover-policy-backend-final.log`. No Swift source changes in this checkpoint;
+native/package/UI/build evidence remains the preceding `09a8ae6` verification, not a new native run.
+
+
 Historical Plan Performance correction after `e7959aa`: Demo now reports the requested inclusive
 Gregorian periods independently of the selected Plan month, with exact partial-period carry,
 Assigned/Activity/Available and dated Unassigned. Recorded card-reserve activity affects purpose

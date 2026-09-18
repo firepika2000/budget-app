@@ -14,6 +14,7 @@ from .export_routes import router as export_router
 from .delegated_routes import router as delegated_router
 from .analytics_routes import router as analytics_router
 from .payee_routes import router as payee_router
+from .rollover_routes import router as rollover_router
 from .web_routes import ASSET_ROOT, router as web_router
 from .database import build_session_factory
 from .routes import router
@@ -42,6 +43,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(delegated_router)
     app.include_router(analytics_router)
     app.include_router(payee_router)
+    app.include_router(rollover_router)
     app.include_router(web_router)
     app.mount("/admin-assets", StaticFiles(directory=ASSET_ROOT), name="admin-assets")
     return app

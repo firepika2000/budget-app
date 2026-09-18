@@ -6,6 +6,23 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `09a8ae6`, prospective owner policy GET/PUT and bounded audit history are implemented on the
+server. Real changes append effective provenance under the budget lock, compare policy/allocation
+tokens, and invalidate stale assignment/Smart Funding previews once. No-op/stale/unauthorized and
+current/past/non-month-start requests do not mutate money/history. Pending revisions retain their
+original audit rows; boundary activation is observational. Post-flush projection failure rolls back
+history and version changes together. Existing legacy budgets retain carry until an explicit future
+choice; no new-budget default, native setting or human migration is activated here.
+
+Next: Swift contract/client and provider-neutral application-service integration (including current
+credential resolution), matching Demo command/history, shared owner settings, then explicit creation
+defaults and legacy preservation. Do not call the full rollover product complete yet.
+Verification: **446 backend PASS, zero skips**, including real PostgreSQL concurrency, post-flush
+rollback, stale funding/assignment denial, authorization/audit paging and existing migration/encrypted
+recovery suites. Diff check PASS. Log `/tmp/budget-rollover-policy-backend-final.log`. No Swift/native
+changes here; retain the preceding `09a8ae6` native/package/UI/build evidence without claiming a rerun.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
+
 Following `e7959aa`, Demo Plan Performance now returns the actual requested multi-month/partial-
 month series, including recorded reserve-purpose activity separately from spending, signed refunds,
 archived history, scoped balances and dated RTA. Explicit opening dates bound known history and the
