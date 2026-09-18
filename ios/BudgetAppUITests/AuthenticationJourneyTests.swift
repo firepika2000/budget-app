@@ -1164,6 +1164,31 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(createdPayee.waitForExistence(timeout: 5), "the created identity must persist when management is reopened")
     }
 
+    func testOwnerRemovalRequiresConfirmationAndRetainsRemovedMemberHistory() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo"]
+        app.launch()
+        app.buttons["profile-settings-button"].tap()
+        app.buttons["Household and access"].tap()
+        app.buttons["household-members-lifecycle"].tap()
+        let remove = app.buttons["Remove Alex Rivera from household"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        remove.tap()
+        app.alerts.buttons["Keep Member"].tap()
+        XCTAssertTrue(remove.exists)
+        remove.tap()
+        app.alerts.buttons["Remove Member"].tap()
+        XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
+        let member = app.cells.containing(.staticText, identifier: "alex@example.test").firstMatch
+        XCTAssertTrue(member.staticTexts["Removed"].exists)
+        XCTAssertTrue(member.buttons["Invite to Rejoin"].exists)
+        app.navigationBars["Members"].buttons["Household"].tap()
+        XCTAssertFalse(app.buttons["member-access-alex"].exists)
+        app.buttons["household-members-lifecycle"].tap()
+        XCTAssertTrue(member.staticTexts["Removed"].waitForExistence(timeout: 5))
+        XCTAssertFalse(remove.exists)
+    }
+
     func testInvitationCodeWaitsForCreationSheetDismissalAndCancelDoesNotReopenIt() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo"]

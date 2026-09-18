@@ -4,6 +4,63 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testRemovedDemoMemberCannotReadOrMutateAndCannotReceiveAllowance() async throws {
+        let source = DemoWorkspaceDataSource()
+        let month = BudgetWorkspaceStore.parseDate("2026-09-01")
+        let query = WorkspaceReportQuery(start: month, end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        let before = try await source.snapshot(planMonth: month, report: query)
+        let accounts = source.demo.accounts, transactions = source.demo.transactions
+        let events = source.demo.allocationEvents.map(\.id), version = source.demo.allocationVersion
+        source.demo.persona = .partner
+        do { try await source.removeHouseholdMember(userID: "alex"); XCTFail("Owner-only removal") } catch {}
+        do { _ = try await source.accessProfile(userID: "alex"); XCTFail("Owner-only access administration") } catch {}
+        source.demo.persona = .rey
+        for id in ["demo-owner", "rey", "unknown"] {
+            do { try await source.removeHouseholdMember(userID: id); XCTFail("Cannot remove owner or unknown member") } catch {}
+        }
+        try await source.removeHouseholdMember(userID: "alex")
+        do { try await source.removeHouseholdMember(userID: "alex"); XCTFail("Repeated removal must not duplicate audit") } catch {}
+        let after = try await source.snapshot(planMonth: month, report: query)
+        XCTAssertEqual(after.members.first { $0.userID == "alex" }?.isActive, false)
+        XCTAssertEqual(after.members.first { $0.userID == "alex" }?.authorizationVersion, 2)
+        XCTAssertEqual(after.requests, before.requests)
+        let audit = try await source.householdAccessEvents()
+        XCTAssertEqual(audit.count, 1); XCTAssertEqual(audit[0].eventType, "member_removed")
+        XCTAssertEqual(audit[0].subjectDisplayName, "Alex Rivera")
+        let allowance = try XCTUnwrap(source.demo.allowances.first { $0.member == .alex })
+        do { try await source.issueAllowance(id: allowance.id, issueDate: allowance.nextDate, expectedVersion: version); XCTFail("Removed recipient cannot receive funds") } catch {}
+        do { _ = try await source.accessProfile(userID: "alex"); XCTFail("Removed profile unavailable") } catch {}
+        do { try await source.createCategory(groupID: "", groupName: "Alex", newGroupName: "", name: "Revoked recipient", delegatedUserID: "alex"); XCTFail("Removed member cannot receive new categories") } catch {}
+        XCTAssertFalse(source.demo.categories.contains { $0.name == "Revoked recipient" })
+        _ = try await source.createHouseholdInvitation(.init(email: "alex@example.test", role: "child"))
+        source.demo.persona = .alex
+        do { _ = try await source.snapshot(planMonth: month, report: query); XCTFail("Revoked snapshot") } catch {}
+        do { _ = try await source.searchPayees(query: "", includeArchived: true, limit: 20, cursor: nil); XCTFail("Revoked search") } catch {}
+        do { _ = try await source.downloadTransactionAttachment(transactionID: "t1", attachmentID: "attachment"); XCTFail("Revoked attachment") } catch {}
+        do { try await source.deleteTransaction(id: transactions[0].id); XCTFail("Revoked mutation") } catch {}
+        do { try await source.createRequest(.init(destinationCategoryID: "alexallow", requestedAmountMinor: 1, reason: "Revoked")); XCTFail("Revoked request") } catch {}
+        do { try await source.createGroup(name: "Unauthorized"); XCTFail("Revoked structure") } catch {}
+        do { _ = try await source.allowanceIssuances(id: allowance.id); XCTFail("Revoked history") } catch {}
+        XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+        XCTAssertEqual(source.demo.allocationVersion, version); XCTAssertEqual(source.demo.allocationEvents.map(\.id), events)
+        XCTAssertFalse(source.demo.groupOrder.contains("Unauthorized"))
+        source.demo.persona = .rey
+        let reload = try await source.snapshot(planMonth: month, report: query)
+        XCTAssertEqual(reload.members, after.members, "Invitation alone never reactivates membership")
+    }
+
+    func testEveryDemoRepositoryEntryChecksCurrentMembership() throws {
+        let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let text = try String(contentsOf: path)
+        let start = try XCTUnwrap(text.range(of: "final class DemoWorkspaceDataSource:"))
+        let end = try XCTUnwrap(text.range(of: "private func workspaceRepositoryError"))
+        let lines = text[start.lowerBound..<end.lowerBound].components(separatedBy: "\n")
+        let entries = lines.filter { $0.hasPrefix("    func ") && $0.contains("async throws") }
+        XCTAssertGreaterThan(entries.count, 50)
+        for entry in entries { XCTAssertTrue(entry.contains("{ try requireActiveMembership();"), "Unguarded provider entry: \(entry)") }
+    }
+
+    @MainActor
     func testDemoInvitationsPersistRotateExpireAndEnforceOwnerWithoutMoneyMutation() async throws {
         var clock = BudgetWorkspaceStore.parseDate("2026-09-18")
         let source = DemoWorkspaceDataSource(now: { clock })

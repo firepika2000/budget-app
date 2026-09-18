@@ -778,10 +778,10 @@ final class DemoStoreTests: XCTestCase {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()
         let before = (store.summary?.readyToAssignMinor, store.accounts.map(\.id), store.transactions.map(\.id))
-        let initial = try await store.accessProfile(userID: "demo-member")
+        let initial = try await store.accessProfile(userID: "jordan")
         let capabilities = ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"]
-        _ = try await store.updateAccessProfile(userID: "demo-member", value: .init(capabilities: capabilities, restrictAccounts: true, accountIDs: ["checking"], restrictCategories: false, categoryIDs: [], expectedVersion: initial.version))
-        let reloaded = try await store.accessProfile(userID: "demo-member")
+        _ = try await store.updateAccessProfile(userID: "jordan", value: .init(capabilities: capabilities, restrictAccounts: true, accountIDs: ["checking"], restrictCategories: false, categoryIDs: [], expectedVersion: initial.version))
+        let reloaded = try await store.accessProfile(userID: "jordan")
         XCTAssertTrue(reloaded.restrictAccounts)
         XCTAssertEqual(reloaded.accountIDs, ["checking"])
         XCTAssertEqual((store.summary?.readyToAssignMinor, store.accounts.map(\.id), store.transactions.map(\.id)).0, before.0)

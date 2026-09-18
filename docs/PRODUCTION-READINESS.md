@@ -4,6 +4,28 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo membership revocation after `cc914d8`: removal now retains inactive membership and increments
+its authorization version with one attributed access event. Owner/unknown/duplicate targets refuse;
+non-owners cannot administer membership or access profiles. Every asynchronous Demo repository
+entry checks the current actor's active membership before reads or mutations, including attachments,
+reports and command services. Allowance issuance/reactivation and new category delegation recheck
+the recipient's membership. Existing transactions, categories, allocations and request history are
+not deleted/reallocated; creating a rejoin invitation alone never restores access. Shared removal
+uses an explicit Keep Member / Remove Member alert and retains the removed row after refresh.
+The prior access-profile test used a nonexistent `demo-member`; it now uses the actual Jordan
+membership, while removed/unknown targets refuse. Demo invitation acceptance and full dynamic
+custom-capability parity remain open. This does not claim to solve Live client cached-data eviction
+after remote revocation; repository denial and stale client presentation are separate concerns.
+Verification: **128 native XCTest + 2 production XCUITest PASS**, Xcode 27 Beta build/diff check
+PASS on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`.
+Native tests prove revoked read/write denial, recipient refusal, preserved financial history and
+guard coverage across every current async Demo repository entry. UI proves Keep Member cancels,
+Remove Member persists after navigation, and existing owner access editing still works.
+**20 backend household/allowance reference tests PASS** (collection-confirmed); no server changes,
+so the prior 459 full backend and 48 Core/52 API evidence remain applicable, not rerun here.
+Logs `/tmp/budget-demo-membership-final.log`, `/tmp/budget-demo-membership-reference.log`;
+xcresult `Test-BudgetApp-2026.09.18_18-50-28--0400.xcresult`. No human data/migration changes.
+
 Demo invitation management after `874fa2b`: replaced create/resend/cancel/list/history placeholders
 with workspace-retained records and owner-only commands. Emails normalize, existing members and
 invalid roles refuse, expiry is seven days, resend preserves recipient/role while replacing identity
@@ -29,9 +51,11 @@ password hash selection or per-row name query. Owner authorization, ordering, re
 nullable subject fallback and the 200-event history bound are preserved. This was unnecessary internal
 hydration, not evidence of password hashes appearing in API responses. Invitation-list pagination
 remains a separate open scaling gap; this checkpoint does not claim to bound invitation history.
-Verification: **19 focused household/family tests PASS; 459 full backend tests PASS, zero skips**,
+Verification: **11 focused household/family tests PASS; 459 full backend tests PASS, zero skips**,
 including disposable PostgreSQL races, populated migrations, golden vectors and encrypted recovery.
 Logs `/tmp/budget-household-scope-focused-final.log` and `/tmp/budget-household-scope-backend.log`.
+Focused count corrected against pytest collection (previously miscounted as 19); full-suite total
+was confirmed directly by pytest's 459-PASS summary and is unchanged.
 Diff check PASS. No native code changed after the preceding 125-native/1-UI Beta PASS checkpoint.
 Human Live remains untouched at 0020; no new migration, merge or tag.
 

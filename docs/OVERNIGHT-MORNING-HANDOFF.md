@@ -6,6 +6,18 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `cc914d8`, Demo member removal retains inactive/versioned membership and audit attribution;
+all asynchronous provider entries check active membership. Owner-only access administration rejects
+unknown/removed targets. Existing allowances and new delegated categories cannot fund/target removed
+recipients. Historical money/requests remain intact, and an invitation alone never reactivates access.
+Shared confirmation uses explicit Keep/Remove actions. Full dynamic capability parity, invitation
+acceptance and Live cached-data eviction after remote revocation remain separate open work.
+Verified 128 native + 2 production UI PASS, Beta build/diff PASS; 20 server reference tests PASS.
+`/tmp/budget-demo-membership-final.log` contains removal confirmation/persistence and existing
+owner access-management journeys. Prior full backend 459 and packages 48+52 remain applicable.
+Next: workspace snapshot failures currently retain old authorized observations even on 403/404;
+distinguish definitive authority loss from transient/network failure and test stale async completion.
+
 After `874fa2b`, Demo invitation management retains normalized create/resend/cancel/expiry and
 bounded audit history within the canonical workspace. Owner-only authorization mirrors Live;
 resend rotates code/identity and repeated cancellation is a no-op. Provider clock is now named `now`
@@ -22,7 +34,7 @@ After `9710981`, household invitation/access-event display-name resolution uses 
 joins instead of reading every server user record. A disposable 2,000-unrelated-user regression
 first failed with two unrestricted user scans, then passed. No API/financial/migration semantics
 changed. Invitation-history pagination and Demo membership lifecycle remain open.
-Verification: 19 focused + 459 full backend PASS, zero skips, including real disposable PostgreSQL,
+Verification: 11 focused + 459 full backend PASS, zero skips, including real disposable PostgreSQL,
 migrations, financial vectors and encrypted recovery. `/tmp/budget-household-scope-backend.log`
 completed in 118.97s. Diff check PASS. Native evidence remains the preceding Beta 125+1 PASS;
 no Swift changes in this server checkpoint. Next: implement Demo invitation lifecycle without fake

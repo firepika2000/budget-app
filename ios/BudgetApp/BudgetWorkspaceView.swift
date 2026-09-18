@@ -383,9 +383,18 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     }
     private struct AccessEventRecord {
         let id: String; let kind: String; let detail: String; let date: Date
+        var subject: DemoPersona? = nil
     }
     private var invitationRecords: [InvitationRecord] = []
     private var accessEventRecords: [AccessEventRecord] = []
+    private var removedMembers: Set<DemoPersona> = []
+    private var membershipVersions: [DemoPersona: Int] = [:]
+
+    private func requireActiveMembership() throws {
+        guard !removedMembers.contains(demo.persona) else {
+            throw APIClientError.server(status: 403, message: "Your access to this household has been removed.")
+        }
+    }
     let budget: APIBudget
 
     init(fresh: Bool = false, cashRolloverPolicies: [CashRolloverProjection.Change] = [], now: @escaping () -> Date = Date.init) {
@@ -416,7 +425,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         debtTermsValues["auto"] = .init(termsType: "installment_loan", annualRateBasisPoints: 625, rateType: "fixed", paymentFrequency: "monthly", scheduledPaymentMinor: 41200, dueDay: 1)
     }
 
-    func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
+    func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot { try requireActiveMembership();
         let planningPoints = try planPerformancePoints(start: report.start, end: report.end)
         let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"
         let plan = try demo.planningSnapshot(month: month)
@@ -670,7 +679,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let resilience: APIResilienceReport = try decode(["as_of": demoForecast.asOf, "through": demoForecast.through, "currency_code": budget.currencyCode, "cash_buffer_minor": Money.sumMinorUnits(demoForecast.accounts.filter { cashIDs.contains($0.accountID) }.map(\.actualBalanceMinor)), "current_on_budget_minor": demoForecast.actualTotalOnBudgetMinor, "projected_on_budget_minor": demoForecast.projectedTotalOnBudgetMinor, "lowest_projected_on_budget_minor": demoForecast.lowestProjectedTotalMinor, "scheduled_income_minor": scheduledIncome, "scheduled_outflows_minor": scheduledOutflows, "expected_margin_minor": difference(scheduledIncome, scheduledOutflows), "essential_expense_coverage_days": NSNull(), "emergency_fund_coverage_days": NSNull(), "unavailable_metrics": ["essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.", "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification."]])
         let members: [APIHouseholdMember] = try decode(DemoPersona.allCases.map { persona in
             ["user_id": persona == .rey ? "demo-owner" : persona.rawValue.lowercased(), "email": "\(persona.rawValue.lowercased())@example.test",
-             "display_name": "\(persona.rawValue) Rivera", "role": persona == .rey ? "owner" : persona.isChild ? "child" : "adult", "is_active": true] as [String: Any]
+             "display_name": "\(persona.rawValue) Rivera", "role": persona == .rey ? "owner" : persona.isChild ? "child" : "adult", "is_active": !removedMembers.contains(persona), "authorization_version": membershipVersions[persona] ?? 1] as [String: Any]
         })
         let allowanceRows: [APIAllowancePlan] = try decode(demo.allowances.filter { allowanceVisible($0) }.sorted { ($0.nextDate, $0.id) < ($1.nextDate, $1.id) }.map { plan in
             ["id": plan.id, "delegated_user_id": plan.member.rawValue.lowercased(), "source_category_id": canManageAllowances ? plan.source as Any : NSNull(),
@@ -758,7 +767,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         return points
     }
 
-    func exportReports(report: WorkspaceReportQuery) async throws -> Data {
+    func exportReports(report: WorkspaceReportQuery) async throws -> Data { try requireActiveMembership();
         let value = try await snapshot(planMonth: Date(), report: report)
         func field(_ value: String) -> String {
             let safe = value.first.map { "=+-@".contains($0) } == true ? "'\(value)" : value
@@ -781,7 +790,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         return Data((rows.joined(separator: "\n") + "\n").utf8)
     }
 
-    func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection {
+    func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection { try requireActiveMembership();
         let selected = demo.visibleAccounts.filter {
             ["credit", "loan"].contains($0.kind.rawValue)
                 && (request.accountIDs.isEmpty || request.accountIDs.contains($0.id))
@@ -816,7 +825,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         return try decode(["currency_code": budget.currencyCode, "status": status, "strategy": request.strategy, "rollover": request.rollover, "extra_payment_minor": request.extraPaymentMinor, "payoff_order": result.payoffOrder, "debt_free_date": result.debtFreeDate.map(BudgetWorkspaceStore.dateString) ?? NSNull(), "payment_count": result.paymentCount, "projected_interest_minor": result.projectedInterestMinor, "projected_total_paid_minor": result.projectedTotalPaidMinor, "projected_total_cost_minor": result.projectedTotalCostMinor, "accounts": rows, "incomplete_accounts": []])
     }
 
-    func debtCost(accountIDs: [String]) async throws -> APIDebtCost {
+    func debtCost(accountIDs: [String]) async throws -> APIDebtCost { try requireActiveMembership();
         guard budget.can("view_reports"), budget.can("view_account_balances") else { throw workspaceRepositoryError("You do not have permission to view debt cost.") }
         let visible = demo.visibleAccounts.filter { ["credit", "loan"].contains($0.kind.rawValue) }
         guard Set(accountIDs).isSubset(of: Set(demo.visibleAccounts.map(\.id))) else { throw workspaceRepositoryError("Report resource not found.") }
@@ -857,7 +866,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     private func requireHouseholdOwner() throws {
         guard demo.persona == .rey else { throw workspaceRepositoryError("Household not found.") }
     }
-    func householdInvitations() async throws -> [APIInvitationSummary] {
+    func householdInvitations() async throws -> [APIInvitationSummary] { try requireActiveMembership();
         try requireHouseholdOwner()
         let formatter = ISO8601DateFormatter(), timestamp = now()
         return try decode(invitationRecords.sorted { ($0.createdAt, $0.id) > ($1.createdAt, $1.id) }.map {
@@ -876,18 +885,18 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         accessEventRecords.append(.init(id: UUID().uuidString, kind: event, detail: email, date: timestamp))
         return secret
     }
-    func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret {
+    func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret { try requireActiveMembership();
         try requireHouseholdOwner()
         let email = value.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard (3...320).contains(value.email.count), email.contains("@"), ["adult", "child"].contains(value.role) else {
             throw workspaceRepositoryError("Enter a valid email and household role.")
         }
-        guard !DemoPersona.allCases.contains(where: { "\($0.rawValue.lowercased())@example.test" == email }) else {
+        guard !DemoPersona.allCases.contains(where: { !removedMembers.contains($0) && "\($0.rawValue.lowercased())@example.test" == email }) else {
             throw workspaceRepositoryError("User is already a household member.")
         }
         return try issueInvitation(email: email, role: value.role, event: "invitation_created")
     }
-    func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret {
+    func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret { try requireActiveMembership();
         try requireHouseholdOwner()
         guard let index = invitationRecords.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Invitation not found.") }
         let prior = invitationRecords[index]
@@ -895,20 +904,27 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         invitationRecords[index].canceled = true
         return secret
     }
-    func cancelHouseholdInvitation(id: String) async throws {
+    func cancelHouseholdInvitation(id: String) async throws { try requireActiveMembership();
         try requireHouseholdOwner()
         guard let index = invitationRecords.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Invitation not found.") }
         guard !invitationRecords[index].canceled else { return }
         invitationRecords[index].canceled = true
         accessEventRecords.append(.init(id: UUID().uuidString, kind: "invitation_canceled", detail: invitationRecords[index].email, date: now()))
     }
-    func removeHouseholdMember(userID: String) async throws {}
-    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] {
+    func removeHouseholdMember(userID: String) async throws { try requireActiveMembership();
+        try requireHouseholdOwner()
+        guard userID != "demo-owner", let member = DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == userID }),
+              member != .rey, !removedMembers.contains(member) else { throw workspaceRepositoryError("Active non-owner member not found.") }
+        removedMembers.insert(member)
+        membershipVersions[member] = (membershipVersions[member] ?? 1) + 1
+        accessEventRecords.append(.init(id: UUID().uuidString, kind: "member_removed", detail: "", date: now(), subject: member))
+    }
+    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] { try requireActiveMembership();
         try requireHouseholdOwner()
         let formatter = ISO8601DateFormatter()
         return try decode(accessEventRecords.sorted { ($0.date, $0.id) > ($1.date, $1.id) }.prefix(200).map {
             ["id": $0.id, "event_type": $0.kind, "actor_display_name": "Rey Rivera",
-             "subject_display_name": NSNull(), "detail": $0.detail, "created_at": formatter.string(from: $0.date)] as [String: Any]
+             "subject_display_name": $0.subject.map { "\($0.rawValue) Rivera" } as Any? ?? NSNull(), "detail": $0.detail, "created_at": formatter.string(from: $0.date)] as [String: Any]
         })
     }
     var requestActorID: String { demo.persona == .rey ? "demo-owner" : demo.persona.rawValue.lowercased() }
@@ -956,14 +972,14 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                   $0.id == value.destinationCategoryID && !$0.isHidden && !demo.archivedGroups.contains($0.group)
               }) else { throw workspaceRepositoryError("Invalid or unauthorized request destination or amount.") }
     }
-    func cancelRequest(id: String, version: Int, note: String) async throws {
+    func cancelRequest(id: String, version: Int, note: String) async throws { try requireActiveMembership();
         guard requestCapability("request_money"), let index = demo.requests.firstIndex(where: { $0.id == id && $0.member == demo.persona }) else { throw workspaceRepositoryError("Request not found.") }
         guard !expireRequest(at: index), demo.requests[index].version == version,
               ["Pending", "Changes requested"].contains(demo.requests[index].status), note.count <= 500 else { throw workspaceRepositoryError("Request has already changed or expired.") }
         demo.requests[index].status = "Cancelled"; demo.requests[index].version += 1
         demo.requests[index].appendAction("cancelled", actor: requestActorID, note: note, at: now())
     }
-    func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws {
+    func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws { try requireActiveMembership();
         guard requestCapability("request_money"), let index = demo.requests.firstIndex(where: { $0.id == id && $0.member == demo.persona }) else { throw workspaceRepositoryError("Request not found.") }
         guard !expireRequest(at: index), demo.requests[index].version == version, demo.requests[index].status == "Changes requested" else { throw workspaceRepositoryError("Request has already changed or expired.") }
         try validateRequest(value)
@@ -989,12 +1005,13 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return !demo.isRestricted || ids.isSubset(of: Set(demo.visibleCategories.map(\.id)))
     }
     private func requireAllowanceRecipient(_ plan: DemoAllowance) throws {
+        guard !removedMembers.contains(plan.member) else { throw workspaceRepositoryError("Allowance recipient is no longer an active household member.") }
         if let profile = accessProfiles[plan.member.rawValue.lowercased()], profile.restrictCategories,
            !Set(plan.splits.map { $0.0 }).isSubset(of: Set(profile.categoryIDs)) {
             throw workspaceRepositoryError("Allowance destinations are no longer visible to the recipient.")
         }
     }
-    func createAllowance(_ value: APIAllowancePlanCreate) async throws {
+    func createAllowance(_ value: APIAllowancePlanCreate) async throws { try requireActiveMembership();
         try requireAllowanceManager()
         guard let member = DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == value.delegatedUserID }),
               ["rollover", "use_it_or_lose_it"].contains(value.rolloverPolicy) else { throw workspaceRepositoryError("Invalid allowance recipient or policy.") }
@@ -1004,38 +1021,41 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard allowanceVisible(plan) else { throw workspaceRepositoryError("Allowance categories not found.") }
         try requireAllowanceRecipient(plan); try demo.createAllowance(plan)
     }
-    func setAllowanceActive(id: String, active: Bool) async throws {
+    func setAllowanceActive(id: String, active: Bool) async throws { try requireActiveMembership();
         try requireAllowanceManager()
         guard let plan = demo.allowances.first(where: { $0.id == id }), allowanceVisible(plan, history: true) else { throw workspaceRepositoryError("Allowance not found.") }
         if active { try requireAllowanceRecipient(plan) }
         try demo.setAllowanceActive(id: id, active: active)
     }
-    func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws {
+    func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws { try requireActiveMembership();
         try requireAllowanceManager()
         guard let plan = demo.allowances.first(where: { $0.id == id }), allowanceVisible(plan) else { throw workspaceRepositoryError("Allowance not found.") }
         try requireAllowanceRecipient(plan)
         try demo.issueAllowance(id: id, issueDate: issueDate, expectedVersion: expectedVersion)
     }
-    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] {
+    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] { try requireActiveMembership();
         guard let plan = demo.allowances.first(where: { $0.id == id }), allowanceVisible(plan, history: true) else { throw workspaceRepositoryError("Allowance not found.") }
         return try decode(demo.allowanceHistory.filter { $0.planID == id }.sorted { $0.issuedOn > $1.issuedOn }.map { item in
             ["id": item.id, "plan_id": id, "issued_on": item.issuedOn, "amount_minor": item.amount, "reclaimed_minor": item.reclaimed,
              "actor_user_id": item.actorID, "created_at": item.createdAt, "next_issue_date": plan.nextDate] as [String: Any]
         })
     }
-    func accessProfile(userID: String) async throws -> APIAccessProfile {
+    func accessProfile(userID: String) async throws -> APIAccessProfile { try requireActiveMembership();
+        try requireHouseholdOwner()
+        guard let member = DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == userID }), member != .rey,
+              !removedMembers.contains(member) else { throw workspaceRepositoryError("Active non-owner member not found.") }
         if let profile = accessProfiles[userID] { return profile }
         return try decode(["budget_id": budget.id, "user_id": userID, "capabilities": ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"], "restrict_accounts": false, "account_ids": [], "restrict_categories": false, "category_ids": [], "grant_permission": "view", "is_custom": false, "version": 0, "updated_by_user_id": NSNull(), "updated_by_display_name": NSNull(), "updated_at": NSNull()])
     }
 
-    func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile {
+    func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile { try requireActiveMembership();
         let current = try await accessProfile(userID: userID)
         guard value.expectedVersion == nil || value.expectedVersion == current.version else { throw APIClientError.server(status: 409, message: "Access changed elsewhere. Reload and try again.") }
         let profile: APIAccessProfile = try decode(["budget_id": budget.id, "user_id": userID, "capabilities": value.capabilities, "restrict_accounts": value.restrictAccounts, "account_ids": value.accountIDs, "restrict_categories": value.restrictCategories, "category_ids": value.categoryIDs, "grant_permission": "custom", "is_custom": true, "version": current.version + 1, "updated_by_user_id": "demo-owner", "updated_by_display_name": "Alex Rivera", "updated_at": "2026-09-16T12:00:00Z"])
         accessProfiles[userID] = profile
         return profile
     }
-    func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage {
+    func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try requireActiveMembership();
         var rows = try transactionRows(categoryIDs: Set(demo.visibleCategories.map(\.id)))
         let text = query.search.trimmingCharacters(in: .whitespacesAndNewlines)
         rows = rows.filter { item in
@@ -1080,7 +1100,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         default: return true
         }
     }
-    func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage {
+    func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage { try requireActiveMembership();
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         var values: [APIPayee] = try decode(demo.payees.filter { item in
             (includeArchived || !item.isArchived) && (needle.isEmpty || item.name.localizedCaseInsensitiveContains(needle) || item.aliases.contains { $0.localizedCaseInsensitiveContains(needle) })
@@ -1095,42 +1115,42 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let end = min(start + limit, values.count)
         return APIPayeePage(items: start < end ? Array(values[start..<end]) : [], nextCursor: end < values.count ? String(end) : nil)
     }
-    func createPayee(_ operation: CreatePayeeOperation) async throws {
+    func createPayee(_ operation: CreatePayeeOperation) async throws { try requireActiveMembership();
         let name = operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !demo.payees.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { throw workspaceRepositoryError("A payee with this name already exists.") }
         demo.payees.append(.init(id: DemoStore.payeeID(name), name: name, defaultCategoryID: operation.defaultCategoryID))
     }
-    func updatePayee(_ operation: UpdatePayeeOperation) async throws {
+    func updatePayee(_ operation: UpdatePayeeOperation) async throws { try requireActiveMembership();
         guard let index = demo.payees.firstIndex(where: { $0.id == operation.payeeID }) else { throw workspaceRepositoryError("Payee not found.") }
         let old = demo.payees[index].name; demo.payees[index].name = operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         demo.payees[index].isArchived = operation.isArchived; demo.payees[index].defaultCategoryID = operation.defaultCategoryID
         for transactionIndex in demo.transactions.indices where demo.transactions[transactionIndex].payee == old { demo.transactions[transactionIndex].payee = demo.payees[index].name }
     }
-    func mergePayee(sourceID: String, destinationID: String) async throws {
+    func mergePayee(sourceID: String, destinationID: String) async throws { try requireActiveMembership();
         guard let source = demo.payees.first(where: { $0.id == sourceID }), let destination = demo.payees.first(where: { $0.id == destinationID }) else { throw workspaceRepositoryError("Payee not found.") }
         for index in demo.transactions.indices where demo.transactions[index].payee == source.name { demo.transactions[index].payee = destination.name }
         demo.payees.removeAll { $0.id == sourceID }
     }
-    func createPayeeAlias(payeeID: String, displayName: String) async throws {
+    func createPayeeAlias(payeeID: String, displayName: String) async throws { try requireActiveMembership();
         guard let index = demo.payees.firstIndex(where: { $0.id == payeeID }) else { throw workspaceRepositoryError("Payee not found.") }
         let alias = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !demo.payees.flatMap(\.aliases).contains(where: { $0.caseInsensitiveCompare(alias) == .orderedSame }) else { throw workspaceRepositoryError("This alias is already in use.") }
         demo.payees[index].aliases.append(alias)
     }
-    func deletePayeeAlias(payeeID: String, aliasID: String) async throws {
+    func deletePayeeAlias(payeeID: String, aliasID: String) async throws { try requireActiveMembership();
         guard let index = demo.payees.firstIndex(where: { $0.id == payeeID }), let offset = Int(aliasID.split(separator: "-").last ?? "") else { throw workspaceRepositoryError("Alias not found.") }
         guard demo.payees[index].aliases.indices.contains(offset) else { throw workspaceRepositoryError("Alias not found.") }
         demo.payees[index].aliases.remove(at: offset)
     }
-    func recordTransaction(_ operation: RecordTransactionOperation) async throws {
+    func recordTransaction(_ operation: RecordTransactionOperation) async throws { try requireActiveMembership();
         guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
-    func updateTransaction(id: String, operation: RecordTransactionOperation) async throws {
+    func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { try requireActiveMembership();
         guard demo.updateCanonicalTransaction(id: id, operation: operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
 
-    func deleteTransaction(id: String) async throws { guard demo.deleteTransaction(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
-    func duplicateTransaction(id: String, occurredOn: String) async throws {
+    func deleteTransaction(id: String) async throws { try requireActiveMembership(); guard demo.deleteTransaction(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func duplicateTransaction(id: String, occurredOn: String) async throws { try requireActiveMembership();
         guard let source = demo.transactions.first(where: { $0.id == id }), source.transferID == nil, !source.scheduled else { throw workspaceRepositoryError("This system-linked transaction must be recreated through its specialized workflow") }
         let amounts = demo.canonicalCategoryAmounts(for: source)
         let singleCategory = amounts.count == 1 ? amounts.keys.first : nil
@@ -1138,7 +1158,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let operation = RecordTransactionOperation(accountID: source.accountID, categoryID: singleCategory, amountMinor: source.amount, occurredOn: occurredOn, payeeName: source.payee, payeeID: demo.payees.first(where: { $0.name == source.payee })?.id, memo: source.memo, financialClassification: source.financialClassification, isCleared: false, splits: splits, flag: source.flag, tags: source.tags, attachmentMetadata: [])
         guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
-    func voidTransaction(id: String, reason: String) async throws {
+    func voidTransaction(id: String, reason: String) async throws { try requireActiveMembership();
         guard let source = demo.transactions.first(where: { $0.id == id }), source.status == "posted", source.transferID == nil, !source.reconciled else { throw workspaceRepositoryError("Only an unreconciled posted transaction can be voided") }
         let amounts = demo.canonicalCategoryAmounts(for: source)
         let splits = amounts.count > 1 ? amounts.keys.sorted().map { TransactionSplitOperation(categoryID: $0, amountMinor: -amounts[$0]!, memo: "", financialClassification: source.splitFinancialClassifications[$0]) } : []
@@ -1153,29 +1173,29 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         demo.transactions[originalIndex].voidReason = reason.isEmpty ? nil : reason
         demo.transactions[originalIndex].reversalTransactionID = reversalID
     }
-    func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws {
+    func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws { try requireActiveMembership();
         guard let source = demo.transactions.first(where: { $0.id == id }), source.status == "posted", source.transferID == nil, source.categoryIDs.count <= 1 else { throw workspaceRepositoryError("This transaction cannot be used as a recurring template") }
         demo.schedules.append(.init(id: UUID().uuidString, accountID: source.accountID, destinationAccountID: nil, categoryID: source.categoryIDs.first, name: source.payee, amount: source.amount, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: source.memo, financialClassification: source.financialClassification, isActive: true))
     }
-    func transactionAttachments(id: String) async throws -> [APITransactionAttachment] {
+    func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try requireActiveMembership();
         guard let transaction = demo.transactions.first(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found") }
         guard let name = transaction.attachmentName else { return [] }
         let data = attachmentData[id] ?? Data()
         let contentType = name.lowercased().hasSuffix(".png") ? "image/png" : "application/pdf"
         return [try JSONDecoder().decode(APITransactionAttachment.self, from: JSONSerialization.data(withJSONObject: ["id": "demo-attachment-\(id)", "transaction_id": id, "filename": name, "content_type": contentType, "byte_count": data.count, "sha256": "demo", "created_at": "2026-09-14T00:00:00Z", "detached_at": NSNull()]))]
     }
-    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws {
+    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try requireActiveMembership();
         guard let index = demo.transactions.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found") }
         demo.transactions[index].attachmentName = filename
         attachmentData[id] = data
     }
-    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { attachmentData[transactionID] ?? Data() }
-    func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws {
+    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try requireActiveMembership(); return attachmentData[transactionID] ?? Data() }
+    func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try requireActiveMembership();
         guard let index = demo.transactions.firstIndex(where: { $0.id == transactionID }) else { throw workspaceRepositoryError("Transaction not found") }
         demo.transactions[index].attachmentName = nil
         attachmentData.removeValue(forKey: transactionID)
     }
-    func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
+    func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws { try requireActiveMembership();
         guard update.transactionIDs.allSatisfy({ id in demo.transactions.contains(where: { $0.id == id && !$0.reconciled && $0.transferID == nil && !$0.scheduled && !["Starting Balance", "Reconciliation adjustment"].contains($0.payee) }) }) else { throw workspaceRepositoryError("System-linked or reconciled transactions cannot be changed in bulk") }
         if update.action == "set_cleared" {
             guard let cleared = update.cleared else { throw workspaceRepositoryError("A clearing state is required.") }
@@ -1200,19 +1220,19 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             }
         }
     }
-    func transferMoney(_ operation: TransferMoneyOperation) async throws { guard demo.transfer(amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
-    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { guard demo.updateTransfer(id: id, amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
-    func deleteTransfer(id: String) async throws { guard demo.deleteTransfer(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
-    func reconcileAccount(_ operation: ReconcileAccountOperation) async throws {
+    func transferMoney(_ operation: TransferMoneyOperation) async throws { try requireActiveMembership(); guard demo.transfer(amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { try requireActiveMembership(); guard demo.updateTransfer(id: id, amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func deleteTransfer(id: String) async throws { try requireActiveMembership(); guard demo.deleteTransfer(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { try requireActiveMembership();
         guard budget.can("reconcile_account"), !demo.isRestricted else { throw workspaceRepositoryError("You do not have permission to reconcile this account.") }
         guard demo.reconcile(accountID: operation.accountID, statementBalance: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, reason: operation.reason, expectedClearedBalance: operation.expectedClearedBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
-    func assignMoney(_ operation: AssignMoneyOperation) async throws {
+    func assignMoney(_ operation: AssignMoneyOperation) async throws { try requireActiveMembership();
         guard budget.can("assign_money") else { throw workspaceRepositoryError("You do not have permission to assign money.") }
         try demo.requireAllocationVersion(operation.expectedVersion)
         try demo.replaceAssignment(categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor)
     }
-    func cashRolloverPolicy() async throws -> APICashRolloverPolicyObservation {
+    func cashRolloverPolicy() async throws -> APICashRolloverPolicyObservation { try requireActiveMembership();
         guard demo.persona == .rey else { throw APIClientError.server(status: 403, message: "Only the household owner can manage cash rollover policy.") }
         let ordered = demo.cashRolloverPolicies.sorted { ($0.effectiveMonth, $0.version) < ($1.effectiveMonth, $1.version) }
         var pending: [String: CashRolloverProjection.Change] = [:]
@@ -1222,13 +1242,13 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             "policy_version": demo.cashRolloverPolicyVersion, "allocation_version": demo.allocationVersion,
             "pending": pending.keys.sorted().map { month in ["effective_month": month, "policy": pending[month]!.policy.rawValue, "version": pending[month]!.version] as [String: Any] }])
     }
-    func selectCashRolloverPolicy(_ selection: APICashRolloverPolicySelection) async throws -> APICashRolloverPolicyObservation {
+    func selectCashRolloverPolicy(_ selection: APICashRolloverPolicySelection) async throws -> APICashRolloverPolicyObservation { try requireActiveMembership();
         guard demo.persona == .rey else { throw APIClientError.server(status: 403, message: "Only the household owner can manage cash rollover policy.") }
         try demo.selectCashRolloverPolicy(CashRolloverProjection.Policy(rawValue: selection.policy.rawValue)!, effectiveMonth: selection.effectiveMonth,
             expectedPolicyVersion: selection.expectedPolicyVersion, expectedAllocationVersion: selection.expectedAllocationVersion)
         return try await cashRolloverPolicy()
     }
-    func cashRolloverPolicyHistory(beforeVersion: Int?) async throws -> APICashRolloverPolicyHistory {
+    func cashRolloverPolicyHistory(beforeVersion: Int?) async throws -> APICashRolloverPolicyHistory { try requireActiveMembership();
         guard demo.persona == .rey else { throw APIClientError.server(status: 403, message: "Only the household owner can view cash rollover policy history.") }
         let rows = demo.cashRolloverPolicies.filter { beforeVersion == nil || $0.version < beforeVersion! }.sorted { $0.version > $1.version }
         let items: [[String: Any]] = rows.prefix(50).map { row in
@@ -1238,25 +1258,28 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         }
         return try decode(["items": items, "next_before_version": rows.count > 50 ? rows[49].version as Any : NSNull()])
     }
-    func moveMoney(_ operation: MoveMoneyOperation) async throws {
+    func moveMoney(_ operation: MoveMoneyOperation) async throws { try requireActiveMembership();
         guard budget.can("move_money") else { throw workspaceRepositoryError("You do not have permission to move money.") }
         try demo.requireAllocationVersion(operation.expectedVersion)
         guard demo.move(amount: operation.amountMinor, from: operation.sourceCategoryID, to: operation.destinationCategoryID, occurredOn: operation.occurredOn, note: operation.note) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
-    func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws {
+    func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { try requireActiveMembership();
         let member = delegatedUserID.flatMap { id in DemoPersona.allCases.first { $0.rawValue.lowercased() == id } }
+        if let member, removedMembers.contains(member) {
+            throw workspaceRepositoryError("Delegated user must be an active household member.")
+        }
         guard delegatedUserID == nil || member != nil, !demo.isRestricted || member == nil || member == demo.persona else { throw workspaceRepositoryError("Invalid delegated category recipient.") }
         guard demo.createCategory(name: name, group: groupName.isEmpty ? newGroupName : groupName) else { throw workspaceRepositoryError(demo.errorMessage) }
         if !demo.isRestricted { demo.categories[demo.categories.count - 1].delegatedTo = member }
     }
-    func createGroup(name: String) async throws { if !demo.groupOrder.contains(name) { demo.groupOrder.append(name) } }
-    func createAccount(_ operation: CreateAccountOperation) async throws {
+    func createGroup(name: String) async throws { try requireActiveMembership(); if !demo.groupOrder.contains(name) { demo.groupOrder.append(name) } }
+    func createAccount(_ operation: CreateAccountOperation) async throws { try requireActiveMembership();
         guard demo.createAccount(name: operation.name, type: operation.kind, isOnBudget: operation.isOnBudget, startingBalance: operation.openingBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
-    func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws {
+    func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws { try requireActiveMembership();
         guard demo.updateAccount(id: operation.accountID, name: operation.name, type: operation.kind) else { throw workspaceRepositoryError("Account not found.") }
     }
-    func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? {
+    func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? { try requireActiveMembership();
         guard let value = debtTermsValues[accountID] else { return nil }
         return try decode([
             "account_id": accountID, "budget_id": budget.id, "terms_type": value.termsType,
@@ -1270,15 +1293,15 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             "projection_ready": missingDebtProjectionFields(value).isEmpty, "missing_projection_fields": missingDebtProjectionFields(value), "updated_at": "2026-09-16T12:00:00Z",
         ] as [String: Any])
     }
-    func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms {
+    func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms { try requireActiveMembership();
         debtTermsValues[accountID] = value
         guard let result = try await accountDebtTerms(accountID: accountID) else {
             throw workspaceRepositoryError("Debt terms were not saved.")
         }
         return result
     }
-    func deleteAccountDebtTerms(accountID: String) async throws { debtTermsValues.removeValue(forKey: accountID) }
-    func createRequest(_ value: APIFinancialRequestCreate) async throws {
+    func deleteAccountDebtTerms(accountID: String) async throws { try requireActiveMembership(); debtTermsValues.removeValue(forKey: accountID) }
+    func createRequest(_ value: APIFinancialRequestCreate) async throws { try requireActiveMembership();
         try validateRequest(value)
         var item = DemoRequest(id: UUID().uuidString, member: demo.persona, amount: value.requestedAmountMinor,
             categoryID: value.destinationCategoryID, reason: value.reason, status: "Pending", date: now(), requestType: value.requestType,
@@ -1286,38 +1309,38 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         item.appendAction("submitted", actor: requestActorID, amount: value.requestedAmountMinor, note: value.reason, at: now())
         demo.requests.insert(item, at: 0)
     }
-    func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws {
+    func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws { try requireActiveMembership();
         guard let index = demo.categories.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Category not found.") }
         let targetGroup = groupName ?? demo.categories[index].group
         guard !demo.categories.contains(where: { $0.id != id && $0.group == targetGroup && normalizedCategoryName($0.name) == normalizedCategoryName(value.name) }) else { throw workspaceRepositoryError("A category with this name already exists in the group.") }
         demo.categories[index].name = value.name.trimmingCharacters(in: .whitespacesAndNewlines); demo.categories[index].group = targetGroup; demo.categories[index].isHidden = value.isArchived
     }
-    func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws {
+    func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { try requireActiveMembership();
         guard let currentName else { throw workspaceRepositoryError("Category group not found.") }
         for index in demo.categories.indices where demo.categories[index].group == currentName { demo.categories[index].group = value.name }
         if let index = demo.groupOrder.firstIndex(of: currentName) { demo.groupOrder[index] = value.name; demo.groupOrder.remove(at: index); demo.groupOrder.insert(value.name, at: min(max(value.sortOrder, 0), demo.groupOrder.count)) }
         demo.archivedGroups.remove(currentName); if value.isArchived { demo.archivedGroups.insert(value.name) }
     }
-    func deleteGroup(id: String, currentName: String?) async throws {
+    func deleteGroup(id: String, currentName: String?) async throws { try requireActiveMembership();
         guard let currentName else { throw workspaceRepositoryError("Category group not found.") }
         guard !demo.categories.contains(where: { $0.group == currentName }) else { throw workspaceRepositoryError("Move or archive every category before deleting this group") }
         demo.groupOrder.removeAll { $0 == currentName }
     }
-    func deleteCategory(id: String) async throws { guard !demo.transactions.contains(where: { $0.categoryIDs.contains(id) }) else { throw workspaceRepositoryError("This category has financial history. Archive it to preserve the audit trail") }; demo.categories.removeAll { $0.id == id } }
-    func setCategoryFavorite(id: String, isFavorite: Bool, sortOrder: Int) async throws {
+    func deleteCategory(id: String) async throws { try requireActiveMembership(); guard !demo.transactions.contains(where: { $0.categoryIDs.contains(id) }) else { throw workspaceRepositoryError("This category has financial history. Archive it to preserve the audit trail") }; demo.categories.removeAll { $0.id == id } }
+    func setCategoryFavorite(id: String, isFavorite: Bool, sortOrder: Int) async throws { try requireActiveMembership();
         guard let index = demo.categories.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Category not found.") }
         demo.categories[index].pinned = isFavorite
     }
-    func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws {
+    func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws { try requireActiveMembership();
         guard let index = demo.categories.firstIndex(where: { $0.id == categoryID }) else { throw workspaceRepositoryError("Category not found.") }
         demo.categories[index].target = value.targetAmountMinor; demo.categories[index].targetDate = value.targetDate; demo.categories[index].targetType = value.targetType; demo.categories[index].targetRecurrenceMonths = value.recurrenceMonths; demo.categories[index].targetMinimumContribution = value.minimumContributionMinor; demo.categories[index].targetPriority = value.priority; demo.categories[index].targetIsActive = value.isActive
     }
-    func deleteTarget(categoryID: String) async throws {
+    func deleteTarget(categoryID: String) async throws { try requireActiveMembership();
         guard let index = demo.categories.firstIndex(where: { $0.id == categoryID }) else { throw workspaceRepositoryError("Category not found.") }
         demo.categories[index].targetSnoozedMonths = []
         demo.categories[index].target = nil; demo.categories[index].targetDate = nil; demo.categories[index].targetType = "savings_balance"; demo.categories[index].targetRecurrenceMonths = nil; demo.categories[index].targetMinimumContribution = 0; demo.categories[index].targetPriority = 50; demo.categories[index].targetIsActive = true
     }
-    func setTargetSnoozed(categoryID: String, month: String, isSnoozed: Bool) async throws {
+    func setTargetSnoozed(categoryID: String, month: String, isSnoozed: Bool) async throws { try requireActiveMembership();
         guard budget.can("manage_planning"), !demo.isRestricted else { throw workspaceRepositoryError("Target management is not permitted.") }
         guard month.hasSuffix("-01"), BudgetWorkspaceStore.dateString(BudgetWorkspaceStore.parseDate(month)) == month else {
             throw workspaceRepositoryError("Choose the first day of a valid planning month.")
@@ -1328,13 +1351,13 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         if isSnoozed { demo.categories[index].targetSnoozedMonths.insert(month) }
         else { demo.categories[index].targetSnoozedMonths.remove(month) }
     }
-    func createSchedule(_ operation: ScheduleOperation) async throws { demo.schedules.append(.init(id: UUID().uuidString, accountID: operation.accountID, destinationAccountID: operation.destinationAccountID, categoryID: operation.categoryID, name: operation.name, amount: operation.amountMinor, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: operation.memo, financialClassification: operation.financialClassification, isActive: operation.isActive)) }
-    func updateSchedule(id: String, operation: ScheduleOperation) async throws {
+    func createSchedule(_ operation: ScheduleOperation) async throws { try requireActiveMembership(); demo.schedules.append(.init(id: UUID().uuidString, accountID: operation.accountID, destinationAccountID: operation.destinationAccountID, categoryID: operation.categoryID, name: operation.name, amount: operation.amountMinor, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: operation.memo, financialClassification: operation.financialClassification, isActive: operation.isActive)) }
+    func updateSchedule(id: String, operation: ScheduleOperation) async throws { try requireActiveMembership();
         guard let index = demo.schedules.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Schedule not found.") }
         demo.schedules[index].accountID = operation.accountID; demo.schedules[index].destinationAccountID = operation.destinationAccountID; demo.schedules[index].categoryID = operation.categoryID; demo.schedules[index].name = operation.name; demo.schedules[index].amount = operation.amountMinor; demo.schedules[index].nextDate = operation.nextDate; demo.schedules[index].recurrenceUnit = operation.recurrenceUnit; demo.schedules[index].intervalCount = operation.intervalCount; demo.schedules[index].memo = operation.memo; demo.schedules[index].financialClassification = operation.financialClassification; demo.schedules[index].isActive = operation.isActive
     }
-    func deleteSchedule(id: String) async throws { demo.schedules.removeAll { $0.id == id } }
-    func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation {
+    func deleteSchedule(id: String) async throws { try requireActiveMembership(); demo.schedules.removeAll { $0.id == id } }
+    func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation { try requireActiveMembership();
         guard let index = demo.schedules.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Schedule not found.") }
         let item = demo.schedules[index]; guard item.isActive else { throw workspaceRepositoryError("Scheduled transaction is inactive") }
         let due = BudgetWorkspaceStore.parseDate(item.nextDate); guard Calendar.current.startOfDay(for: due) <= Calendar.current.startOfDay(for: Date()) else { throw workspaceRepositoryError("This scheduled transaction is not due yet") }
@@ -1349,7 +1372,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         demo.schedules[index].lastRealizedOn = item.nextDate; demo.schedules[index].isActive = next != nil; if let next { demo.schedules[index].nextDate = BudgetWorkspaceStore.dateString(next) }
         return ScheduledRealizationObservation(scheduleID: id, transactionIDs: transactionIDs, realizedOn: item.nextDate, nextDate: next.map(BudgetWorkspaceStore.dateString), isActive: next != nil, lastRealizedOn: item.nextDate)
     }
-    func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws {
+    func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws { try requireActiveMembership();
         guard requestCapability("approve_request"), let index = demo.requests.firstIndex(where: { $0.id == id }), requestVisible(demo.requests[index]) else { throw workspaceRepositoryError("Request approval is not permitted.") }
         guard !expireRequest(at: index), version == demo.requests[index].version, demo.requests[index].status == "Pending", note.count <= 500 else {
             throw workspaceRepositoryError("Request has already changed or is unavailable.")
@@ -1369,7 +1392,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             demo.requests[index].appendAction(decision == "reject" ? "rejected" : "changes_requested", actor: requestActorID, note: note, at: now())
         }
     }
-    func smartFundingPreview(month: String) async throws -> APISmartFundingPreview {
+    func smartFundingPreview(month: String) async throws -> APISmartFundingPreview { try requireActiveMembership();
         let plan = try demo.planningSnapshot(month: month)
         let ready = demo.isRestricted ? 0 : plan.readyToAssignMinor
         let fundingLimit = demo.isRestricted ? 0 : plan.fundingLimitMinor
@@ -1409,7 +1432,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let unfundedCount = guidance.filter { $0.1.underfundedMinor > (fundedAmounts[$0.0.id] ?? 0) }.count
         return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": ready, "proposed_minor": proposed, "after_ready_to_assign_minor": ready - proposed, "allocation_version": demo.allocationVersion, "proposals": rows, "remaining_need_minor": totalNeed - proposed, "unfunded_category_count": unfundedCount, "funding_limit_minor": fundingLimit]))
     }
-    func commitSmartFunding(_ preview: APISmartFundingPreview) async throws {
+    func commitSmartFunding(_ preview: APISmartFundingPreview) async throws { try requireActiveMembership();
         guard !demo.isRestricted, budget.can("assign_money") else {
             throw workspaceRepositoryError("Delegated members allocate only from their delegated pool.")
         }
@@ -1419,7 +1442,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         }
         try demo.fundTargets(current.proposals.map { ($0.categoryID, $0.amountMinor) }, month: current.month, expectedVersion: preview.allocationVersion)
     }
-    func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { throw workspaceRepositoryError("Owner policy editing is demonstrated in live mode; use a delegated demo persona to verify the member experience.") }
+    func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { try requireActiveMembership(); throw workspaceRepositoryError("Owner policy editing is demonstrated in live mode; use a delegated demo persona to verify the member experience.") }
 }
 
 private func workspaceRepositoryError(_ message: String?) -> NSError { NSError(domain: "BudgetWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: message ?? "Unable to complete the change."]) }
@@ -5475,7 +5498,8 @@ private struct HouseholdMemberLifecycleView: View {
             pendingInvitationSecret = nil
         }) { HouseholdInvitationCreateView(store: store, recoveredSecret: $pendingInvitationSecret, onCreated: load) }
         .sheet(item: $secret) { value in NavigationStack { Form { Section("Invitation code") { Text(value.invitationToken).textSelection(.enabled).accessibilityIdentifier("invitation-code"); Button("Copy Code") { UIPasteboard.general.string = value.invitationToken } }; Section { Text("Send this code privately to \(value.email). It expires in seven days and can be used once.").font(.footnote).foregroundStyle(.secondary) } }.navigationTitle("Invitation Ready").toolbar { Button("Done") { secret = nil } } } }
-        .confirmationDialog("Remove \(removing?.displayName ?? "member")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
+        .alert("Remove \(removing?.displayName ?? "member")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+            Button("Keep Member", role: .cancel) { removing = nil }
             Button("Remove Member", role: .destructive) { if let member = removing { Task { await remove(member) } } }
         } message: { Text("Their historical activity remains. Current access stops immediately and can be recovered only through a new invitation.") }
         .overlay { if isLoading { ProgressView() } }
