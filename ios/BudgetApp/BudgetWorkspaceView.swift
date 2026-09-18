@@ -1722,6 +1722,9 @@ final class BudgetWorkspaceStore: ObservableObject {
     private var transactionBrowseTask: Task<APITransactionPage, Error>?
     private var transactionBrowseQuery: APITransactionQuery?
     private var transactionBrowseOperationID: UUID?
+    private var snapshotOperationID: UUID?
+    private var authorityRevision = 0
+    @Published private(set) var workspaceAccessDenied = false
     private var privacyPreferenceKey: String?
     private var onboardingPreferencePrefix: String?
 
@@ -1768,13 +1771,17 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     private func loadSnapshot() async {
+        let operationID = UUID()
+        snapshotOperationID = operationID
         isLoading = true
-        defer { isLoading = false }
+        defer { if snapshotOperationID == operationID { isLoading = false } }
         do {
             if let dataSource {
                 let range = reportRange()
                 let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, flag: reportFlag, tag: reportTag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTrackingAccounts)
                 let value = try await dataSource.coreSnapshot(planMonth: planMonth, report: query)
+                guard snapshotOperationID == operationID else { return }
+                workspaceAccessDenied = false
                 accounts = value.accounts; accountBalances = value.accountBalances; categories = value.categories; groups = value.groups; transactions = value.transactions; payees = value.payees
                 summary = value.summary; requests = value.requests; allowances = value.allowances
                 // Preserve report-backed destination identity while new authoritative reports load.
@@ -1786,14 +1793,46 @@ final class BudgetWorkspaceStore: ObservableObject {
                 reportRevision += 1
                 return
             }
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            guard snapshotOperationID == operationID else { return }
+            if case let APIClientError.server(status, _) = error, status == 403 || status == 404 {
+                evictUnauthorizedObservations()
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func evictUnauthorizedObservations() {
+        workspaceAccessDenied = true
+        authorityRevision += 1
+        reportRevision += 1
+        for task in pendingReports.values { task.cancel() }
+        pendingReports = [:]; loadedReportKinds = []; loadedReportContext = nil; reportErrors = [:]
+        transactionBrowseTask?.cancel()
+        transactionBrowseTask = nil; transactionBrowseQuery = nil; transactionBrowseOperationID = nil
+        summary = nil; accounts = []; accountBalances = [:]; payees = []; categories = []; groups = []
+        transactions = []; requests = []; allowances = []; householdMembers = []; delegatedBudgets = []
+        allocationOperations = []; targets = [:]; scheduledTransactions = []; delegatedBudget = nil; forecast = nil
+        spendingReport = nil; spendingTrendsReport = nil; incomeReport = nil; netWorthReport = nil
+        debtReport = nil; planPerformanceReport = nil; resilienceReport = nil; insightsSummary = nil
+        resetReportSelection()
+    }
+
+    private func requireWorkspaceAccess() throws {
+        guard !workspaceAccessDenied else {
+            throw APIClientError.server(status: 403, message: "Budget access is unavailable. Retry or select another budget in Profile & Settings.")
+        }
     }
 
     func refresh() async { await loadSnapshot() }
 
     func fetchReports(query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
+        try requireWorkspaceAccess()
+        let revision = authorityRevision
         guard let dataSource else { throw workspaceRepositoryError("Reports are unavailable.") }
-        return try await dataSource.reports(planMonth: planMonth, query: query, kinds: kinds)
+        let value = try await dataSource.reports(planMonth: planMonth, query: query, kinds: kinds)
+        guard authorityRevision == revision else { throw CancellationError() }
+        return value
     }
 
     var reportContext: WorkspaceReportContext {
@@ -1816,7 +1855,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func loadReports(_ kinds: Set<WorkspaceReportKind>, retry: Bool = false) async {
-        guard let dataSource else { return }
+        guard !workspaceAccessDenied, let dataSource else { return }
         let context = reportContext
         if loadedReportContext != context {
             for task in pendingReports.values { task.cancel() }
@@ -1856,12 +1895,15 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func exportReports() async throws -> URL {
+        try requireWorkspaceAccess()
+        let revision = authorityRevision
         guard budget.can("export_data"), let dataSource else {
             throw APIClientError.server(status: 403, message: "Report export is not available for this budget.")
         }
         let range = reportRange()
         let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, flag: reportFlag, tag: reportTag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTrackingAccounts)
         let data = try await dataSource.exportReports(report: query)
+        guard authorityRevision == revision else { throw CancellationError() }
         let name = "budget-reports-\(Self.dateString(range.0))-\(Self.dateString(range.1)).csv"
         let url = FileManager.default.temporaryDirectory.appending(path: name)
         try data.write(to: url, options: .atomic)
@@ -1869,12 +1911,20 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection {
+        try requireWorkspaceAccess()
+        let revision = authorityRevision
         guard let dataSource else { throw workspaceRepositoryError("Debt payoff scenarios are unavailable.") }
-        return try await dataSource.debtStrategyProjection(request)
+        let value = try await dataSource.debtStrategyProjection(request)
+        guard authorityRevision == revision else { throw CancellationError() }
+        return value
     }
     func debtCost(accountIDs: [String]) async throws -> APIDebtCost {
+        try requireWorkspaceAccess()
+        let revision = authorityRevision
         guard let dataSource else { throw workspaceRepositoryError("Current debt cost is unavailable.") }
-        return try await dataSource.debtCost(accountIDs: accountIDs)
+        let value = try await dataSource.debtCost(accountIDs: accountIDs)
+        guard authorityRevision == revision else { throw CancellationError() }
+        return value
     }
 
     func createTransaction(_ operation: RecordTransactionOperation) async throws {
@@ -1940,8 +1990,12 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func browseTransactions(_ query: APITransactionQuery) async throws -> APITransactionPage {
+        try requireWorkspaceAccess()
+        let revision = authorityRevision
         if transactionBrowseQuery == query, let transactionBrowseTask {
-            return try await transactionBrowseTask.value
+            let value = try await transactionBrowseTask.value
+            guard authorityRevision == revision else { throw CancellationError() }
+            return value
         }
         let service = try services().transactions
         let operationID = UUID()
@@ -1956,7 +2010,9 @@ final class BudgetWorkspaceStore: ObservableObject {
                 transactionBrowseOperationID = nil
             }
         }
-        return try await task.value
+        let value = try await task.value
+        guard authorityRevision == revision else { throw CancellationError() }
+        return value
     }
 
     func createTransfer(_ operation: TransferMoneyOperation) async throws {
@@ -2203,11 +2259,13 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     private func commands() throws -> WorkspaceCommandRepository {
+        try requireWorkspaceAccess()
         guard let commandRepository else { throw workspaceRepositoryError("Workspace repository is not configured.") }
         return commandRepository
     }
 
     private func services() throws -> BudgetApplicationServices {
+        try requireWorkspaceAccess()
         guard let applicationServices else { throw BudgetApplicationError.temporarilyUnavailable("Workspace services are not configured.") }
         return applicationServices
     }
@@ -2332,12 +2390,26 @@ struct BudgetWorkspaceView: View {
     }
 
     var body: some View {
+        Group {
+        if store.workspaceAccessDenied {
+            ContentUnavailableView {
+                Label("Budget access unavailable", systemImage: "lock.shield")
+            } description: {
+                Text("This budget could not be accessed. Previously loaded financial information has been cleared.")
+            } actions: {
+                Button("Retry") { Task { await reload() } }
+                Button("Profile & Settings") { showingSettings = true }
+            }
+            .accessibilityIdentifier("workspace-access-unavailable")
+        } else {
         TabView(selection: tabSelection) {
             NavigationStack { LiveHomeView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
             NavigationStack { LivePlanView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Plan", systemImage: "square.grid.2x2.fill") }.tag(1)
             NavigationStack { LiveActivityView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag(2)
             NavigationStack { LiveAccountsView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Accounts", systemImage: "creditcard.fill") }.tag(3)
             NavigationStack { LiveInsightsView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Insights", systemImage: "chart.xyaxis.line") }.tag(4)
+        }
+        }
         }
         // iOS 27 can change selection without materializing a previously lazy NavigationStack.
         // This is intentional identity replacement at the shell boundary; active editor drafts are
@@ -2381,12 +2453,16 @@ struct BudgetWorkspaceView: View {
             if !didEvaluateOnboarding {
                 didEvaluateOnboarding = true
                 showingOnboarding = !ProcessInfo.processInfo.arguments.contains("--skip-guided-onboarding")
+                    && !store.workspaceAccessDenied
                     && store.isGenuinelyEmptyForOnboarding
                     && !store.onboardingDismissed
                     && !store.onboardingCompleted
             }
         }
-        .alert("Unable to complete request", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
+        .onChange(of: store.workspaceAccessDenied) { _, denied in
+            if denied { showingSettings = false; showingOnboarding = false }
+        }
+        .alert("Unable to complete request", isPresented: Binding(get: { store.errorMessage != nil && !store.workspaceAccessDenied }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("Retry") { Task { await reload() } }; Button("Cancel", role: .cancel) {}
         } message: { Text(store.errorMessage ?? "Unknown error") }
         .sheet(isPresented: $showingSettings) {

@@ -6,6 +6,19 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `7998fec`, Live-shaped regressions proved core 403/404 retained prior balances/reports and a
+late success could resurrect them. Added authoritative eviction, latest-snapshot identity, async
+authority generations and a unified access-unavailable shell. Retry can recover; transient 503
+keeps cached observations and credentials are unchanged. Existing rotation fixture now models
+successful post-command hydration instead of blanket 404 and asserts healthy workspace state.
+No server/auth lifecycle change or existing exported-file deletion is implied.
+Verification: 130 native + 2 production UI, 48 Core + 52 API, and 459 full backend PASS (zero skips).
+`/tmp/budget-workspace-revocation-final.log`, `-package.log`, `-backend.log`; diff PASS.
+Shared-shell production UI retains fresh-tab/profile and accessibility-sized dark Insights behavior.
+Docker and Podman are not installed, so real Compose recovery remains open. Next unblocked work:
+close Demo dynamic authorization/invitation-acceptance gaps and audit remaining retained editor/cache
+state after authorization changes, then continue the import/local-provider mission dependencies.
+
 After `cc914d8`, Demo member removal retains inactive/versioned membership and audit attribution;
 all asynchronous provider entries check active membership. Owner-only access administration rejects
 unknown/removed targets. Existing allowances and new delegated categories cannot fund/target removed

@@ -12,6 +12,102 @@ import UIKit
 /// user-visible "Invalid or expired refresh token" alert even though the winning refresh had already
 /// recovered the session. These tests lock in the single-flight fix and the clean sign-in transition.
 final class AppSessionRefreshTests: XCTestCase {
+    private static func workspaceResponse(_ path: String) -> (Int, Data) {
+        if path.contains("/months/") {
+            return json(200, #"{"month":"2026-09-01","currency_code":"USD","ready_to_assign_minor":42,"total_assigned_minor":0,"total_overspent_minor":0,"allocation_version":0,"categories":[]}"#)
+        }
+        if path.hasSuffix("/accounts") {
+            return json(200, #"[{"id":"private-account","budget_id":"b1","name":"Private account","account_type":"checking","is_on_budget":true,"is_closed":false}]"#)
+        }
+        if path.hasSuffix("/reports/summary") {
+            return json(200, #"{"currency_code":"USD","net_cash_flow_minor":42,"net_worth_minor":42,"debt_minor":0,"recorded_interest_month_minor":0,"expected_margin_minor":0}"#)
+        }
+        return json(200, "[]")
+    }
+
+    @MainActor
+    private func workspaceForRevocationTest() throws -> BudgetWorkspaceStore {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let transport = URLSession(configuration: configuration)
+        return BudgetWorkspaceStore.production(context: .live(
+            budget: APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD"),
+            serverURL: URL(string: "https://budget.example.com")!, token: "current-token"),
+            clientFactory: { try APIClient(baseURL: $0, session: transport) })
+    }
+
+    @MainActor
+    func testLiveWorkspaceAccessDenialEvictsFinancialObservationsButTransientFailureDoesNot() async throws {
+        for deniedStatus in [403, 404] {
+            let phase = Counter()
+            let requests = CredentialRequestRecorder()
+            RefreshMockURLProtocol.handler = { request in
+                requests.append(path: request.url!.path, authorization: "test")
+                if phase.value == 1 { return Self.json(503, #"{"detail":"Temporarily unavailable"}"#) }
+                if phase.value == 2 { return Self.json(deniedStatus, #"{"detail":"Budget not available"}"#) }
+                return Self.workspaceResponse(request.url!.path)
+            }
+            let store = try workspaceForRevocationTest()
+            await store.refresh(); await store.loadReports([.summary])
+            XCTAssertEqual(store.accounts.first?.name, "Private account")
+            XCTAssertEqual(store.summary?.readyToAssignMinor, 42)
+            XCTAssertNotNil(store.insightsSummary)
+            _ = phase.increment(); await store.refresh()
+            XCTAssertEqual(store.summary?.readyToAssignMinor, 42, "Transient outage must not be treated as revocation")
+            XCTAssertEqual(store.accounts.count, 1)
+            _ = phase.increment(); await store.refresh()
+            XCTAssertNil(store.summary, "Definitive authorization failure must evict prior financial observations")
+            XCTAssertTrue(store.accounts.isEmpty)
+            XCTAssertNil(store.insightsSummary)
+            XCTAssertFalse(store.reportsReady([.summary]))
+            XCTAssertNotNil(store.errorMessage)
+            XCTAssertTrue(store.workspaceAccessDenied)
+            let reportCount = requests.paths.filter { $0.contains("/reports/") }.count
+            await store.loadReports([.summary], retry: true)
+            do { _ = try await store.transactionAttachments(id: "forbidden"); XCTFail("Known denial must block repeated service calls") } catch {}
+            XCTAssertEqual(requests.paths.filter { $0.contains("/reports/") }.count, reportCount)
+            XCTAssertFalse(requests.paths.contains { $0.contains("/forbidden/attachments") })
+            XCTAssertTrue(store.usesLiveCredential("current-token"), "Budget denial does not invalidate the authenticated session")
+            _ = phase.increment(); await store.refresh()
+            XCTAssertEqual(store.accounts.count, 1)
+            XCTAssertEqual(store.summary?.readyToAssignMinor, 42)
+            XCTAssertNil(store.errorMessage)
+            XCTAssertFalse(store.workspaceAccessDenied)
+        }
+    }
+
+    @MainActor
+    func testLateSnapshotAndReportCannotRestoreWorkspaceAfterAccessDenial() async throws {
+        let reads = Counter(), snapshotGate = Gate(), reportGate = Gate()
+        defer { snapshotGate.releaseNow(); reportGate.releaseNow() }
+        RefreshMockURLProtocol.handler = { request in
+            let path = request.url!.path
+            if path.contains("/months/") {
+                let read = reads.increment()
+                if read == 2 { snapshotGate.signalArrived(); snapshotGate.waitForRelease() }
+                if read == 3 { return Self.json(403, #"{"detail":"Access removed"}"#) }
+            }
+            if path.hasSuffix("/reports/summary") { reportGate.signalArrived(); reportGate.waitForRelease() }
+            return Self.workspaceResponse(path)
+        }
+        let store = try workspaceForRevocationTest()
+        await store.refresh()
+        XCTAssertNotNil(store.summary)
+        let delayedReport = Task { await store.loadReports([.summary]) }
+        await reportGate.awaitArrival()
+        let delayedSnapshot = Task { await store.refresh() }
+        await snapshotGate.awaitArrival()
+        await store.refresh()
+        snapshotGate.releaseNow(); reportGate.releaseNow()
+        await delayedSnapshot.value; await delayedReport.value
+        XCTAssertNil(store.summary)
+        XCTAssertTrue(store.accounts.isEmpty)
+        XCTAssertNil(store.insightsSummary)
+        XCTAssertFalse(store.reportsReady([.summary]))
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertFalse(store.isLoading)
+    }
+
     override func tearDown() {
         RefreshMockURLProtocol.handler = nil
         super.tearDown()
@@ -218,6 +314,9 @@ final class AppSessionRefreshTests: XCTestCase {
             if request.url?.path.hasSuffix("/access/u2") == true {
                 return Self.json(200, #"{"budget_id":"b1","user_id":"u2","capabilities":["view_budget"],"restrict_accounts":false,"account_ids":[],"restrict_categories":false,"category_ids":[],"grant_permission":"view","is_custom":false,"version":0,"updated_by_user_id":null,"updated_by_display_name":null,"updated_at":null}"#)
             }
+            // A successful command triggers authoritative hydration. Model that healthy read path
+            // rather than accidentally representing revoked access with blanket 404 responses.
+            if request.httpMethod == "GET" { return Self.workspaceResponse(request.url!.path) }
             return Self.json(404, "{}")
         }
         let configuration = URLSessionConfiguration.ephemeral
@@ -251,6 +350,8 @@ final class AppSessionRefreshTests: XCTestCase {
             "/api/v1/budgets/b1/transactions/t1/schedule",
         ])
         XCTAssertTrue(requests.authorizations.dropFirst().allSatisfy { $0 == "Bearer A2" })
+        XCTAssertNil(store.errorMessage)
+        XCTAssertFalse(store.workspaceAccessDenied)
         try await store.setTargetSnoozed(categoryID: "c1", month: "2027-02-01", isSnoozed: true)
         XCTAssertEqual(requests.paths.filter { $0.hasSuffix("/target/snooze/2027-02-01") }.count, 1)
         let policy = try await store.cashRolloverPolicy()

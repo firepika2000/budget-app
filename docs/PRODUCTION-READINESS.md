@@ -4,6 +4,30 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Workspace revocation privacy after `7998fec`: two real Live-repository-composition tests first
+reproduced retained financial observations after 403/404 and late snapshot/report resurrection.
+Core hydration now uses latest-request identity. Definitive core 403/404 clears financial collections,
+reports and selected report filters, cancels pending report/browser tasks and advances authority
+generation. Old async results cannot republish; known-denied service/report calls refuse locally.
+The unified shell replaces financial tabs (and their editors) with an access-unavailable Retry /
+Profile & Settings surface. A later successful authoritative refresh restores access; 503/network
+failure retains cached state rather than pretending it is revocation. No automatic sign-out,
+token-expiration change, server mutation or authentication-lifecycle rewrite.
+
+The first broad test exposed a fixture mismatch: credential-rotation coverage returned blanket
+404s for the successful command's required workspace hydration. It now returns valid read responses
+and additionally asserts no access-denied/error state, preserving all token-rotation assertions.
+Scope is workspace observations/in-flight workspace reads; this is not a claim of secure erasure
+of previously exported/downloaded files or universal authority-loss handling in every local cache.
+Verification: **130 native XCTest + 2 production XCUITest PASS; 48 Core + 52 API PASS;
+459 full backend PASS, zero skips**, including disposable PostgreSQL concurrency, populated
+migrations and encrypted recovery. Production UI covers fresh tabs/global profile and dark-mode
+accessibility-sized Insights after the shared shell change. Logs
+`/tmp/budget-workspace-revocation-{final,package,backend}.log`; backend 125.72s;
+xcresult `Test-BudgetApp-2026.09.18_19-00-32--0400.xcresult`. Diff check PASS. No migration/human-data changes.
+Docker/Podman discovery still returns no executable; real Compose proof remains open, independently
+of the successful real PostgreSQL/encryption recovery tests.
+
 Demo membership revocation after `cc914d8`: removal now retains inactive membership and increments
 its authorization version with one attributed access event. Owner/unknown/duplicate targets refuse;
 non-owners cannot administer membership or access profiles. Every asynchronous Demo repository
@@ -585,11 +609,11 @@ No claim of provider parity from package-only projection tests. See PERSISTENT-M
 
 | Gate | Status | Evidence and remaining work |
 |---|---|---|
-| PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 cadence, monthly snooze, dated provider parity, exact cost presentation, incremental/priority funding and prospective rollover checkpoints are implemented with automated evidence above. Injected clocks, Demo allowance parity, import/local-provider and later mission scope remain open. |
+| PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 planning/rollover and Demo allowance/request/invitation management have automated evidence above. Uniform clocks, Demo invitation acceptance/full dynamic capability parity, import/local-provider and later mission scope remain open. |
 | FINANCIAL | IN PROGRESS | 23 shared single/multi-debt vectors include paid-off parity, horizon/high-APR boundaries, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
-| SECURITY | IN PROGRESS | Proven allocation-history category leakage and structured-export scope bypass corrected in the current checkpoint. Capability plus resource authority is required; full-operation filtering preserves balanced history. Extend adversarial matrix across reports, projections, imports and future providers; no release-wide security PASS yet. |
+| SECURITY | IN PROGRESS | Allocation/export scope, request/allowance authority, household query minimization and Demo membership revocation have focused adversarial evidence. Live core access denial now evicts financial observations and invalidates late workspace results. Extend the matrix across all retained caches, reports, imports and future providers; no release-wide security PASS yet. |
 | DATA | IN PROGRESS | Source head is `0029_cash_rollover_history`; human Live remains at `0020_payee_identity_repair`. Effective policy history now drives canonical projections and owner-authorized prospective settings; no migration silently changes legacy policy. Populated migration/concurrency and real age-encrypted new-destination restore cover canonical equality, snoozes, policy history and encrypted attachment integrity. Real Docker/Compose recovery and production Local Device storage remain open. |
-| RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Existing native/backend suites provide regression evidence; concurrency, offline failures, cancellation and release-wide regression remain open. |
+| RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Native tests distinguish transient failure from definitive access denial and prove late snapshot/report results cannot resurrect denied state. Broader offline, lifecycle, cancellation and release-wide regression remain open. |
 | PERFORMANCE | IN PROGRESS | Live core hydration makes zero detailed-report requests instead of seven; native tests cover caching/invalidation/retry. Hub has a bounded scalar response. Monthly summary now streams historical rows in batches; disposable 10k-transaction/split and 10k-allocation fixtures prove bounded ORM hydration and exact observations. Other report/Demo computation, category/account fan-out and release-scale closure remain open. |
 | UX | IN PROGRESS | Shared shell, onboarding, scalable payee selection and focused Insights exist. Report filters are reachable again; missing debt terms open the shared editor. Demand-loaded reports have independent loading/error/retry. Full workflow/accessibility closure remains open. |
 | ACCESSIBILITY | IN PROGRESS | Historical large-text launch strings were invalid and did not prove the claimed size; corrected tests use UIKit's actual raw value and require the adaptive debt menu. Description/trait audits pass for Cost and debt observations. Full VoiceOver, chart and release-wide accessibility closure remain open. |
