@@ -4,6 +4,22 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Allowance authorization checkpoint after `055c74f`: an adversarial regression reproduced a hidden
+source leak when a resource-restricted member held `manage_allowances`. Capability alone had
+authorized the whole plan. Lists now filter complete destination scope (and manager source scope)
+in SQL before serialization. Create, pause/reactivate, deactivate, issuance and history require the
+same resource boundary. Recipient-only readers still receive no source identity, and cannot see
+partially hidden split totals. Hidden-resource actions return 404 without financial mutation.
+Issuance additionally revalidates active recipient membership, current delegated category ownership,
+nonarchived categories and recipient visibility before appending allocations. Revoked plans cannot
+continue moving money merely because they were authorized when created. Authorized complete-scope
+managers continue to issue normally. Demo allowance implementation remains the next provider gap.
+Verification: **9 focused allowance tests PASS; 454 full backend PASS, zero skips**, including
+PostgreSQL concurrency/migrations/encrypted recovery and financial vectors. Diff check PASS.
+Log `/tmp/budget-allowance-scope-backend.log`. No Swift changes in this security checkpoint;
+the preceding native/package/build evidence remains valid but was not rerun for server-only edits.
+No migration or human-data mutation.
+
 Creation checkpoint after `44a2bc5`: the native new-budget form now recommends Absorb next month
 and offers Carry explicitly. AppSession/API pass the choice to the canonical owner-authorized create
 route. Budget plus version-zero `budget_creation` provenance are committed atomically, attributed

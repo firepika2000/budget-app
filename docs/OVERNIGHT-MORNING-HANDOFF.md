@@ -6,6 +6,22 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Allowance source review after `055c74f` found and reproduced a server scope bypass before starting
+Demo parity. A custom scoped manager could list hidden source data and invoke plan operations based
+on capability alone. Scope now covers list/create/status/deactivate/issue/history, with whole-plan
+destination visibility and manager source visibility. Issuance rechecks current recipient membership,
+delegation, nonarchived categories and category visibility before allocation. Added hidden-source /
+hidden-destination denial-plus-restored-authority tests and membership/visibility/delegation revocation
+tests. No money/version/history is changed on denial. This security checkpoint precedes Demo parity;
+do not reproduce the former server capability-only behavior in the Demo implementation.
+Verification: **9 focused / 454 full backend PASS, zero skips**, including disposable PostgreSQL
+concurrency/migrations/recovery. Diff check PASS; `/tmp/budget-allowance-scope-backend.log`.
+No Swift changes, native rerun, new migration or human-data modification in this checkpoint.
+Demo fixture caution: `seedAllowances` uses display-name splits and human-formatted dates such as
+`Friday · Sep 11`, not canonical category IDs/ISO dates. Alex's seed includes `Giving`, which must
+be checked for delegated ownership before migration. Model canonical identities explicitly instead
+of silently resolving ambiguous names or bypassing the server's recipient/destination rule.
+
 New-budget policy activation after `44a2bc5`: native creation sends an explicit recommended absorb
 or selected carry policy. Server creates version-zero, actor-attributed `budget_creation` history
 in the same transaction as the budget; initial effective date 0001-01-01 covers its complete history.

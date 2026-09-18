@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from .access import find_visible_budget, has_capability
+from .access import find_visible_budget, has_capability, visible_resource_ids
 from .allocation import PostingInput, append_operation, category_available_balance, lock_budget, require_version
 from .database import get_db
 from .dependencies import get_current_user
@@ -29,6 +29,15 @@ from .schemas import (
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/allowances")
+
+
+def require_plan_scope(db, user, budget, plan, *, include_source=True):
+    allowed = visible_resource_ids(db, user, budget, "category")
+    required = {split.destination_category_id for split in plan.splits}
+    if include_source:
+        required.add(plan.source_category_id)
+    if allowed is not None and not required.issubset(allowed):
+        raise HTTPException(status_code=404, detail="Allowance plan not found")
 
 
 def advance_issue_date(value: date, unit: str, interval: int) -> date:
@@ -76,6 +85,11 @@ def list_allowance_plans(
         query = query.where(AllowancePlan.is_active.is_(True))
     if not can_manage:
         query = query.where(AllowancePlan.delegated_user_id == user.id)
+    allowed = visible_resource_ids(db, user, budget, "category")
+    if allowed is not None:
+        query = query.where(~AllowancePlan.splits.any(AllowanceSplit.destination_category_id.not_in(allowed)))
+        if can_manage:
+            query = query.where(AllowancePlan.source_category_id.in_(allowed))
     return [
         serialize_plan(plan, reveal_source=can_manage)
         for plan in db.scalars(query.order_by(AllowancePlan.next_issue_date))
@@ -102,6 +116,9 @@ def create_allowance_plan(
     if member is None:
         raise HTTPException(status_code=422, detail="Delegated user must be an active household member")
     category_ids = [body.source_category_id] + [split.destination_category_id for split in body.splits]
+    allowed = visible_resource_ids(db, user, budget, "category")
+    if allowed is not None and not set(category_ids).issubset(allowed):
+        raise HTTPException(status_code=404, detail="Allowance categories not found")
     categories = {category.id: category for category in db.scalars(select(Category).where(
         Category.budget_id == budget_id,
         Category.id.in_(category_ids),
@@ -161,6 +178,7 @@ def deactivate_allowance_plan(
     plan = db.get(AllowancePlan, plan_id)
     if plan is None or plan.budget_id != budget_id or not plan.is_active:
         raise HTTPException(status_code=404, detail="Allowance plan not found")
+    require_plan_scope(db, user, budget, plan)
     plan.is_active = False
     db.commit()
 
@@ -183,6 +201,7 @@ def update_allowance_status(
     ).with_for_update())
     if plan is None:
         raise HTTPException(status_code=404, detail="Allowance plan not found")
+    require_plan_scope(db, user, budget, plan)
     if body.is_active and not plan.is_active:
         destination_ids = [split.destination_category_id for split in plan.splits]
         conflicting = db.scalar(select(AllowanceSplit.id).join(AllowancePlan).where(
@@ -217,6 +236,7 @@ def issue_allowance(
     ).with_for_update())
     if plan is None or not plan.is_active:
         raise HTTPException(status_code=404, detail="Allowance plan not found")
+    require_plan_scope(db, user, budget, plan)
     if body.issue_date != plan.next_issue_date:
         raise HTTPException(status_code=409, detail="Allowance issue date has changed")
     if body.issue_date > date.today():
@@ -224,6 +244,24 @@ def issue_allowance(
 
     locked_budget = lock_budget(db, budget_id)
     require_version(locked_budget, body.expected_allocation_version)
+    # A saved rule is not lasting authority: recipient access and category ownership may change.
+    member = db.scalar(select(Membership).where(
+        Membership.household_id == budget.household_id,
+        Membership.user_id == plan.delegated_user_id, Membership.is_active.is_(True),
+    ))
+    recipient = db.get(User, plan.delegated_user_id)
+    category_ids = {plan.source_category_id} | {split.destination_category_id for split in plan.splits}
+    categories = {row.id: row for row in db.scalars(select(Category).where(
+        Category.budget_id == budget_id, Category.id.in_(category_ids), Category.is_archived.is_(False),
+    ))}
+    if member is None or recipient is None or set(categories) != category_ids or any(
+        categories[split.destination_category_id].delegated_user_id != plan.delegated_user_id
+        for split in plan.splits
+    ):
+        raise HTTPException(status_code=409, detail="Allowance recipient or categories changed")
+    recipient_allowed = visible_resource_ids(db, recipient, budget, "category")
+    if recipient_allowed is not None and not {split.destination_category_id for split in plan.splits}.issubset(recipient_allowed):
+        raise HTTPException(status_code=409, detail="Allowance destinations are no longer visible to the recipient")
     reclaim_by_category: dict[str, int] = {}
     if plan.rollover_policy == "use_it_or_lose_it":
         reclaim_by_category = {
@@ -317,6 +355,7 @@ def list_allowance_issuances(
         plan.delegated_user_id != user.id and not has_capability(db, user, budget, "manage_allowances")
     ):
         raise HTTPException(status_code=404, detail="Allowance plan not found")
+    require_plan_scope(db, user, budget, plan, include_source=has_capability(db, user, budget, "manage_allowances"))
     issuances = list(db.scalars(select(AllowanceIssuance).where(
         AllowanceIssuance.plan_id == plan_id
     ).order_by(AllowanceIssuance.issued_on.desc())))

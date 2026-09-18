@@ -1,11 +1,43 @@
 from app.allowance_routes import advance_issue_date
 from app.models import AllowanceIssuance, AllocationOperation
 from datetime import date
+import pytest
 
 from .conftest import auth
 from .test_advanced_ledger import add_category, record
 from .test_budgeting_api import create_budget, create_budget_structure
 from .test_delegated_access import add_child, configure_child
+
+
+@pytest.mark.parametrize("hide_destination", [False, True])
+def test_scoped_allowance_manager_cannot_read_or_mutate_hidden_resources(client, owner_token, session_factory, hide_destination):
+    from app.models import CapabilityGrant, ResourceGrant
+    budget, _, token, source, spending, _, plan, version = setup_allowance(client, owner_token, session_factory, "rollover")
+    with session_factory() as db:
+        child_id = plan["delegated_user_id"]
+        db.add(CapabilityGrant(budget_id=budget["id"], user_id=child_id, capability="manage_allowances"))
+        if hide_destination:
+            db.add(ResourceGrant(budget_id=budget["id"], user_id=child_id, resource_type="category", resource_id=source["id"]))
+            db.query(ResourceGrant).filter_by(budget_id=budget["id"], user_id=child_id, resource_type="category", resource_id=spending["id"]).delete()
+        db.commit()
+    root = f"/api/v1/budgets/{budget['id']}/allowances"
+    before = summary_by_id(client, owner_token, budget["id"])
+    assert client.get(root, headers=auth(token)).json() == []
+    assert client.get(root + "?include_inactive=true", headers=auth(token)).json() == []
+    create_body = {key: plan[key] for key in ("delegated_user_id", "source_category_id", "name", "amount_minor", "next_issue_date", "recurrence_unit", "interval_count", "rollover_policy", "splits")}
+    assert client.post(root, headers=auth(token), json=create_body).status_code == 404
+    assert client.get(root + f"/{plan['id']}/issuances", headers=auth(token)).status_code == 404
+    assert client.patch(root + f"/{plan['id']}/status", headers=auth(token), json={"is_active": False}).status_code == 404
+    assert client.delete(root + f"/{plan['id']}", headers=auth(token)).status_code == 404
+    denied = client.post(root + f"/{plan['id']}/issue", headers=auth(token), json={"issue_date": plan["next_issue_date"], "expected_allocation_version": version})
+    assert denied.status_code == 404, denied.text
+    assert summary_by_id(client, owner_token, budget["id"]) == before
+    with session_factory() as db:
+        db.add(ResourceGrant(budget_id=budget["id"], user_id=child_id, resource_type="category",
+            resource_id=spending["id"] if hide_destination else source["id"]))
+        db.commit()
+    assert len(client.get(root, headers=auth(token)).json()) == 1
+    issue(client, token, budget["id"], plan["id"], plan["next_issue_date"], version)
 
 
 def delegated_category(client, owner_token, budget_id, child_id, name):
@@ -84,6 +116,31 @@ def issue(client, owner_token, budget_id, plan_id, issue_date, version):
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+@pytest.mark.parametrize("revocation", ["membership", "visibility", "delegation"])
+def test_allowance_issue_revalidates_recipient_authority(client, owner_token, session_factory, revocation):
+    from app.models import Category, Membership, ResourceGrant
+    budget, _, _, _, spending, _, plan, version = setup_allowance(client, owner_token, session_factory, "rollover")
+    before = summary_by_id(client, owner_token, budget["id"])
+    with session_factory() as db:
+        if revocation == "membership":
+            db.query(Membership).filter_by(user_id=plan["delegated_user_id"]).update({"is_active": False})
+        elif revocation == "visibility":
+            db.query(ResourceGrant).filter_by(budget_id=budget["id"], user_id=plan["delegated_user_id"], resource_type="category", resource_id=spending["id"]).delete()
+        else:
+            db.get(Category, spending["id"]).delegated_user_id = None
+        db.commit()
+    result = client.post(f"/api/v1/budgets/{budget['id']}/allowances/{plan['id']}/issue",
+        headers=auth(owner_token), json={"issue_date": plan["next_issue_date"], "expected_allocation_version": version})
+    assert result.status_code == 409, result.text
+    # Delegation metadata itself changed in one fixture; compare financial observations explicitly.
+    after = summary_by_id(client, owner_token, budget["id"])
+    assert after[0]["allocation_version"] == before[0]["allocation_version"]
+    assert after[0]["ready_to_assign_minor"] == before[0]["ready_to_assign_minor"]
+    assert {key: row["available_minor"] for key, row in after[1].items()} == {key: row["available_minor"] for key, row in before[1].items()}
+    with session_factory() as db:
+        assert db.query(AllowanceIssuance).count() == 0
 
 
 def summary_by_id(client, owner_token, budget_id):
