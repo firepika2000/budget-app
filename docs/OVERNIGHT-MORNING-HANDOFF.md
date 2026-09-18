@@ -6,6 +6,15 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`ac5dd07` is pushed. Next verified checkpoint makes Monthly plan cost checked/explainable and fixes
+proven Double-based currency display loss using exact Decimal formatting. **94 native XCTest + four
+production UI tests pass; 39 Core + 49 API pass**, Beta build/test successful. Backend unchanged
+(356 pass). A new native test briefly changed Demo Hide Amounts; retained hierarchy identified it,
+the exact prior false state was restored, temporary repair code removed, and tests isolated to unique
+privacy identities. No Live financial data changed. Evidence `/tmp/budget-plan-cost-exact-verified.log`.
+Next priority: reproduce cross-month Smart Funding historical-RTA double use; audit Demo/Live future
+assignment semantics. Do not declare planning closure yet. **DO NOT RETEST**.
+
 `f0cb4c1` is pushed (server snooze + migration). Next verified native checkpoint adds shared month-
 labelled snooze/resume, explicit paused Plan rows, Demo month metadata, current-credential Live
 command and authoritative refresh. **39 Core + 49 API; 92 native XCTest + three production UI tests

@@ -2,6 +2,22 @@ import XCTest
 import UIKit
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testProductionPlanCostOverflowRendersValidationInsteadOfCrashing() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=plan", "--demo-plan-cost-overflow"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        let cost = app.descendants(matching: .any).matching(identifier: "monthly-plan-cost").firstMatch
+        XCTAssertTrue(cost.waitForExistence(timeout: 5))
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "Plan cost range-state hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+        XCTAssertTrue(cost.label.contains("Amount exceeds supported range") || String(describing: cost.value).contains("Amount exceeds supported range"))
+        XCTAssertTrue(app.buttons["plan-add-menu"].exists)
+    }
+
     func testProductionTargetSnoozePersistsThroughNavigationAndResumes() {
         continueAfterFailure = false
         let app = XCUIApplication()

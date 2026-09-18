@@ -386,6 +386,16 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             store.groupOrder = []
             store.setUnassigned(0)
         }
+        // Adversarial production-composition fixture: valid per-target amounts whose sum overflows.
+        if ProcessInfo.processInfo.arguments.contains("--demo-plan-cost-overflow") {
+            for index in store.categories.indices {
+                store.categories[index].target = nil
+                if store.categories[index].id == "groceries" || store.categories[index].id == "dining" {
+                    store.categories[index].target = store.categories[index].id == "groceries" ? Int64.max : 1
+                    store.categories[index].targetType = "monthly_funding"
+                }
+            }
+        }
         if let value = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--demo-persona=") })?.split(separator: "=").last,
            let persona = DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == value.lowercased() }) { store.persona = persona }
         demo = store
@@ -1796,9 +1806,19 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func format(_ minor: Int64) -> String {
         guard !hideAmounts else { return "••••" }
-        let formatter = NumberFormatter(); formatter.numberStyle = .currency; formatter.currencyCode = budget.currencyCode
-        let divisor = pow(10.0, Double(formatter.maximumFractionDigits))
-        return formatter.string(from: NSNumber(value: Double(minor) / divisor)) ?? "\(minor)"
+        return CurrencyText.display(minor, currencyCode: budget.currencyCode)
+    }
+
+    func monthlyPlanCostDescription(_ summary: APIMonthSummary) -> String {
+        guard !hideAmounts else { return "••••" }
+        do {
+            let total = try summary.categories.reduce(Money.zero(currencyCode: budget.currencyCode)) { sum, category in
+                try sum.adding(Money(minorUnits: category.recommendedContributionMinor ?? 0, currencyCode: budget.currencyCode))
+            }
+            return format(total.minorUnits)
+        } catch {
+            return "Amount exceeds supported range"
+        }
     }
 
     // Plain-language, server-authoritative overspend explanation: cash overspending "needs
@@ -2496,7 +2516,14 @@ private struct LivePlanView: View {
                 }
             }
             if let summary = store.summary, activation.showsNormalPlan {
-                Section("Month summary") { LabeledContent("Assigned", value: store.format(summary.totalAssignedMinor)); LabeledContent("Overspent", value: store.format(summary.totalOverspentMinor)); LabeledContent("Monthly plan cost", value: store.format(summary.categories.reduce(Int64(0)) { $0 + ($1.recommendedContributionMinor ?? 0) })) }
+                Section {
+                    LabeledContent("Assigned", value: store.format(summary.totalAssignedMinor))
+                    LabeledContent("Overspent", value: store.format(summary.totalOverspentMinor))
+                    LabeledContent("Monthly plan cost", value: store.monthlyPlanCostDescription(summary))
+                        .accessibilityIdentifier("monthly-plan-cost")
+                } header: { Text("Month summary") } footer: {
+                    Text("Monthly plan cost totals active target recommendations for this month, excluding snoozed targets. It is not a forecast of all expenses and does not assign money.")
+                }
             }
             if !activation.showsNormalPlan && !store.isLoading {
                 Section {

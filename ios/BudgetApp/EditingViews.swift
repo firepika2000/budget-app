@@ -505,6 +505,16 @@ struct FundingRequestView: View {
 }
 
 enum CurrencyText {
+    static func display(_ minorUnits: Int64, currencyCode: String, locale: Locale = .current) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.locale = locale
+        formatter.currencyCode = currencyCode
+        let digits = formatter.maximumFractionDigits
+        let amount = NSDecimalNumber(mantissa: minorUnits.magnitude, exponent: -Int16(digits), isNegative: minorUnits < 0).decimalValue
+        return amount.formatted(.currency(code: currencyCode).locale(locale).precision(.fractionLength(digits)))
+    }
+
     static func parseMinorUnits(_ text: String, currencyCode: String) -> Int64? {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal

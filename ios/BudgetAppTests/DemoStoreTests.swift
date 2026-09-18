@@ -6,6 +6,47 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testWorkspaceCurrencyFormattingPreservesEveryMinorUnit() {
+        let store = BudgetWorkspaceStore.demo()
+        let identity = "CurrencyFormattingTest.\(UUID().uuidString)"
+        store.configurePrivacy(userID: identity)
+        defer { UserDefaults.standard.removeObject(forKey: "budget.privacy.hide-amounts.\(identity).\(store.budget.id)") }
+        for minor: Int64 in [9_007_199_254_740_993, .max, .min] {
+            XCTAssertEqual(store.format(minor).filter(\.isNumber), String(minor.magnitude), "Currency labels must not round through binary floating point")
+        }
+        XCTAssertEqual(CurrencyText.display(.max, currencyCode: "USD", locale: Locale(identifier: "en_US")), "$92,233,720,368,547,758.07")
+        XCTAssertEqual(CurrencyText.display(.min, currencyCode: "USD", locale: Locale(identifier: "en_US")), "-$92,233,720,368,547,758.08")
+        XCTAssertEqual(CurrencyText.display(1234, currencyCode: "JPY", locale: Locale(identifier: "en_US")).filter(\.isNumber), "1234")
+        XCTAssertTrue(CurrencyText.display(1234, currencyCode: "KWD", locale: Locale(identifier: "en_US")).contains("1.234"))
+        XCTAssertTrue(CurrencyText.display(123456, currencyCode: "EUR", locale: Locale(identifier: "de_DE")).contains("1.234,56"))
+        store.setHideAmounts(true)
+        XCTAssertEqual(store.format(.max), "••••")
+    }
+
+    @MainActor
+    func testMonthlyPlanCostFailsSafelyAtAggregateLimitAndHonorsSnooze() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        let identity = "PlanCostTest.\(UUID().uuidString)"
+        store.configurePrivacy(userID: identity)
+        defer { UserDefaults.standard.removeObject(forKey: "budget.privacy.hide-amounts.\(identity).\(store.budget.id)") }
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let rows = try XCTUnwrap(store.summary?.categories)
+        for row in rows where row.targetType != nil { try await store.deleteTarget(categoryID: row.categoryID) }
+        try await store.saveTarget(categoryID: "groceries", value: APICategoryTargetUpsert(targetType: "monthly_funding", targetAmountMinor: .max))
+        var summary = try XCTUnwrap(store.summary)
+        XCTAssertEqual(store.monthlyPlanCostDescription(summary), store.format(.max))
+        try await store.saveTarget(categoryID: "dining", value: APICategoryTargetUpsert(targetType: "monthly_funding", targetAmountMinor: 1))
+        summary = try XCTUnwrap(store.summary)
+        XCTAssertTrue(Int64.max.addingReportingOverflow(1).overflow, "The former unchecked reduction cannot represent these individually valid targets")
+        XCTAssertEqual(store.monthlyPlanCostDescription(summary), "Amount exceeds supported range")
+        store.setHideAmounts(true)
+        XCTAssertEqual(store.monthlyPlanCostDescription(summary), "••••")
+        store.setHideAmounts(false)
+        try await store.setTargetSnoozed(categoryID: "dining", month: summary.month, isSnoozed: true)
+        XCTAssertEqual(store.monthlyPlanCostDescription(try XCTUnwrap(store.summary)), store.format(.max))
+    }
+
+    @MainActor
     func testTargetSnoozeSharedStoreRefreshAndMonthIsolationAreMoneyNeutral() async throws {
         let store = BudgetWorkspaceStore.demo()
         store.planMonth = BudgetWorkspaceStore.parseDate("2026-09-01")

@@ -82,6 +82,17 @@ three production UI tests pass**, Beta build/test success. Prior backend **356 p
 includes metadata migration/recovery. No accounting mutation or human data changes. New migration
 0028 remains unapplied to human Live. Next: checked Monthly plan cost aggregation and planning closure.
 
+### Exact monetary presentation checkpoint — 2026-09-18
+
+After `ac5dd07`, Plan cost uses checked Money aggregation with an explicit range state, verified in
+the production workspace with individually valid overflowing targets. The shared currency formatter
+no longer rounds exact Int64 values through Double; native Decimal formatting passes endpoint and
+multi-currency tests. **94 native XCTest + four production UI tests; 39 Core + 49 API pass**, Beta
+build/test successful. Backend unchanged (356 pass). A new test's inadvertent Demo privacy toggle was
+diagnosed from retained hierarchy and restored to its known prior state; tests now use unique identities
+and clean up only their own keys. No Live financial data changes. Next: cross-month funding safety and
+the remaining planning/provider parity audit. Human acceptance remains pending.
+
 ## Human data and migration ledger
 
 Never run migration, destructive, scale or restore tests against human Live. Known unapplied chain:
