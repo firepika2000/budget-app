@@ -826,6 +826,45 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(persistedField.value as? String, "820.00")
     }
 
+    func testProductionPlanKeepsCurrentAndFutureAssignmentsIndependent() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=plan"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        func assignment(expected: String, replacement: String? = nil) {
+            let category = app.buttons["plan-category-groceries"]
+            XCTAssertTrue(category.waitForExistence(timeout: 5))
+            category.tap()
+            app.buttons["Assign money"].tap()
+            let field = app.textFields["Assigned amount"]
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            XCTAssertEqual(field.value as? String, expected)
+            if let replacement {
+                app.buttons["Clear Assigned amount"].tap()
+                field.typeText(replacement)
+                app.buttons["Save"].tap()
+            } else { app.buttons["Cancel"].tap() }
+            XCTAssertTrue(app.navigationBars["Edit Assignment"].waitForNonExistence(timeout: 5))
+            app.navigationBars["Groceries"].buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        }
+        assignment(expected: "720.00", replacement: "820.00")
+        XCTAssertEqual(app.staticTexts["plan-month-label"].label, "September 2026")
+        app.buttons["plan-next-month"].tap()
+        XCTAssertEqual(app.staticTexts["plan-month-label"].label, "October 2026")
+        assignment(expected: "0.00", replacement: "200.00")
+        app.buttons["plan-previous-month"].tap()
+        XCTAssertEqual(app.staticTexts["plan-month-label"].label, "September 2026")
+        assignment(expected: "820.00")
+        app.buttons["plan-next-month"].tap()
+        assignment(expected: "200.00")
+        app.buttons["plan-next-month"].tap()
+        XCTAssertEqual(app.staticTexts["plan-month-label"].label, "November 2026")
+        app.buttons["Today"].tap()
+        XCTAssertEqual(app.staticTexts["plan-month-label"].label, "September 2026")
+        assignment(expected: "820.00")
+    }
+
     func testDeterministicMutationResetsAfterProcessRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=plan"]

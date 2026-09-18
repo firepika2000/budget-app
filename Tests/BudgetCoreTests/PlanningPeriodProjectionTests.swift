@@ -11,7 +11,7 @@ final class PlanningPeriodProjectionTests: XCTestCase {
         let document = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf:
             root.appendingPathComponent("server/tests/financial_vectors/planning-periods-v1.json"))) as? [String: Any])
         let cases = try XCTUnwrap(document["cases"] as? [[String: Any]])
-        XCTAssertEqual(cases.count, 6)
+        XCTAssertEqual(cases.count, 7)
         for vector in cases {
             let name = try string(vector, "id")
             var categories = Set<String>()

@@ -93,7 +93,7 @@ final class DemoStoreTests: XCTestCase {
         ]
         source.demo.categories[0].targetPriority = 10
         source.demo.categories[1].targetPriority = 90
-        source.demo.setUnassigned(30000)
+        source.demo.createAccount(name: "Actual cash", type: "checking", isOnBudget: true, startingBalance: 30000)
         let before = source.demo.categories
         let preview = try await source.smartFundingPreview(month: "2027-02-01")
         XCTAssertEqual(preview.proposals.map(\.categoryID), ["urgent", "large"])
@@ -737,7 +737,7 @@ final class DemoStoreTests: XCTestCase {
     func testSmartFundingUsesMonthlyGuidanceAndRejectsRepeatOrRestrictedCommit() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
         source.demo.categories = [
-            .init(id: "monthly", group: "Goals", name: "Monthly", icon: "target", assigned: 5000, activity: -3000, available: 2000, target: 10000),
+            .init(id: "monthly", group: "Goals", name: "Monthly", icon: "target", assigned: 0, activity: 0, available: 0, target: 10000),
             .init(id: "annual", group: "Goals", name: "Annual", icon: "target", assigned: 0, activity: 0, available: 0, target: 120000, targetDate: "2027-01-31"),
             .init(id: "inactive", group: "Goals", name: "Inactive", icon: "target", assigned: 0, activity: 0, available: 0, target: 999999)
         ]
@@ -745,7 +745,9 @@ final class DemoStoreTests: XCTestCase {
         source.demo.categories[1].targetType = "recurring_expense"
         source.demo.categories[1].targetRecurrenceMonths = 12
         source.demo.categories[2].targetIsActive = false
-        source.demo.setUnassigned(100000)
+        source.demo.createAccount(name: "Actual cash", type: "checking", isOnBudget: true, startingBalance: 105000)
+        try await source.assignMoney(.init(categoryID: "monthly", month: "2027-02-01", assignedMinor: 5000, expectedVersion: 1))
+        XCTAssertTrue(source.demo.recordCanonicalTransaction(.init(accountID: source.demo.accounts[0].id, categoryID: "monthly", amountMinor: -3000, occurredOn: "2026-09-01", payeeName: "Actual expense", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])))
         let before = source.demo.categories
         let preview = try await source.smartFundingPreview(month: "2027-02-01")
         XCTAssertEqual(source.demo.categories, before)
@@ -755,8 +757,10 @@ final class DemoStoreTests: XCTestCase {
         try await source.commitSmartFunding(preview)
         XCTAssertEqual(source.demo.readyToAssign, 85000)
         XCTAssertEqual(source.demo.categories[0].activity, -3000)
-        XCTAssertEqual(source.demo.categories[0].assigned, 10000)
-        XCTAssertEqual(source.demo.categories[1].assigned, 10000)
+        let futurePlan = try source.demo.planningSnapshot(month: "2027-02-01")
+        XCTAssertEqual(futurePlan.categories["monthly"]?.assignedMinor, 10000)
+        XCTAssertEqual(futurePlan.categories["annual"]?.assignedMinor, 10000)
+        XCTAssertEqual(source.demo.categories[0].assigned, 0, "Future assignments do not overwrite current-month Assigned")
         let repeated = try await source.smartFundingPreview(month: "2027-02-01")
         XCTAssertTrue(repeated.proposals.isEmpty)
         do { try await source.commitSmartFunding(preview); XCTFail("Stale confirmation must not assign again") }
@@ -1206,6 +1210,8 @@ final class DemoStoreTests: XCTestCase {
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
         let original = try XCTUnwrap(store.transactions.first(where: { $0.id == "t1" }))
         let balanceBefore = store.accounts.map { ($0.id, store.balance(for: $0)) }
+        let categoryBefore = try XCTUnwrap(store.summary?.categories.first { $0.categoryID == original.categoryID })
+        let readyBefore = store.summary?.readyToAssignMinor
         try await store.createScheduleFromTransaction(id: original.id, operation: .init(recurrenceUnit: "months", intervalCount: 1, nextDate: "2026-10-03"))
         XCTAssertEqual(store.transactions.first(where: { $0.id == original.id })?.amountMinor, original.amountMinor)
         XCTAssertTrue(store.scheduledTransactions.contains { $0.name == original.payeeName && $0.nextDate == "2026-10-03" })
@@ -1217,6 +1223,10 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(reversal.status, "reversal")
         XCTAssertEqual(reversal.amountMinor, -original.amountMinor)
         XCTAssertEqual(voided.reversalTransactionID, reversal.id)
+        let categoryAfter = try XCTUnwrap(store.summary?.categories.first { $0.categoryID == original.categoryID })
+        XCTAssertEqual(categoryAfter.activityMinor, categoryBefore.activityMinor - original.amountMinor)
+        XCTAssertEqual(categoryAfter.availableMinor, categoryBefore.availableMinor - original.amountMinor)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, readyBefore)
     }
 
     @MainActor

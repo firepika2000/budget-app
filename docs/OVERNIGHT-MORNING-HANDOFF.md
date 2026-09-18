@@ -6,6 +6,25 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`9930a7b` is pushed. Next verified checkpoint integrates dated production reads/commands and all
+**15 financial + 7 period scenarios** in the native repository/snapshot runner. Months retain their
+own assignments/activity/carry, future reservations consume existing cash, date edits reproject,
+card funding/refunds are date-scoped, and failed edits restore exact prior state. Void originals
+remain in the ledger with their reversing entries. Last reconciled balance is explicitly nullable.
+Production UI found and fixed Previous/Today/Next automatic List-button co-activation; it now proves
+September/October independent edits, November and Today navigation. Fresh category creation also
+registers its group, preventing the newly exposed snapshot force unwrap.
+Final **396 backend zero skips; 44 Core + 49 API; 101 native XCTest + 4 production UI tests pass**;
+Beta build/test and diff check PASS. `/tmp/budget-period-integration-{backend,package,native-complete}.log`.
+All relevant pre-fix failures are linked in the master ledger. Human data, main and tags untouched.
+Next highest-priority concrete defect: `DemoWorkspaceDataSource.reconcileAccount` drops
+`throughDate`, `createAdjustment`, `reason` and `expectedClearedBalanceMinor`, whereas server
+`budgeting_routes.reconcile_account` validates date-scoped cleared balance and explicit consent.
+Reproduce refusal/date/race semantics before fixing; server voids retain original AND reversal, so
+do not incorrectly filter voided original financial facts from reconciliation or planning.
+Allocation-version parity, calendar-independent clocks, later-reservation explanation, prospective
+rollover and remaining mission gates stay open. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 Starting HEAD for this continuation: `17efbcb` (remote matched, clean). Next verified checkpoint
 replaces disconnected Demo financial seeds with explicit opening observations plus actual dated
 assignments/posted transactions. Ordinary Demo now initializes its September plan through the

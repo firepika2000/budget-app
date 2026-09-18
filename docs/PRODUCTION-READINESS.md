@@ -8,6 +8,24 @@ This ledger tracks engineering evidence separately from release approval. Main r
 `c5494dd`; historical version tags do not establish acceptance for subsequent development.
 Checkpoint completion is followed by the next unblocked engineering task.
 
+Production monthly-provider checkpoint: exact dated facts now drive Demo month summaries,
+assignment replacement, Move Money date guards, Smart Funding and dated card funding/refunds.
+All **15 financial + 7 period scenarios** run through both full adapters. Failed transaction edits
+restore the original reserve events; voids retain original plus reversing postings. Last reconciled
+balance no longer aliases cleared balance. A fresh-category group crash and a real production
+Previous/Today/Next List-button interaction were exposed by stronger integration coverage and fixed.
+Verification: **396 backend (zero skips), 44 Core + 49 API, 101 native XCTest + 4 production UI tests
+pass**, Xcode 27 Beta 27A5252f on preserved iPhone 17 Pro Max/iOS 27
+`3ABD861E-D38D-4AFD-A356-959266051564`; build/test and diff check PASS.
+Logs `/tmp/budget-period-integration-{backend,package,native-complete}.log`.
+Before-fix evidence: `/tmp/budget-period-native-reproduction-values.log`,
+`/tmp/budget-period-ui-month-reproduction.log`, `/tmp/budget-period-void-reproduction.log`.
+No human migration/data reset. This is not v0.9 closure: prospective rollover, allocation-version
+parity, reservation explanation and reconciliation input/date parity remain open. In particular,
+the Demo reconciliation adapter still drops through-date, expected balance and adjustment consent;
+next reproduce and correct it against the canonical server contract. Existing Simulator frame/QoS
+diagnostics were not suppressed or declared resolved by these passing tests.
+
 Deterministic opening-ledger checkpoint: production Demo financial seeds are now derived from
 explicit 2025-10-01 openings, chronological allocations and actual posted transactions, including
 canonical card reserve events. Independent hardcoded category Activity/Available and card reserves

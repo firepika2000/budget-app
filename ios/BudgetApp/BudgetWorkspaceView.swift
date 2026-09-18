@@ -402,11 +402,13 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     }
 
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
+        let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"
+        let plan = try demo.planningSnapshot(month: month)
         let visibleAccounts = demo.visibleAccounts
-        let visibleCategories = demo.visibleCategories
+        let visibleCategories = demo.projectedCategories(in: plan)
         let categoryIDs = Set(visibleCategories.map(\.id))
-        let accountRows: [APIAccount] = try decode(visibleAccounts.map { ["id": $0.id, "budget_id": budget.id, "name": $0.name, "account_type": $0.kind.rawValue, "is_on_budget": $0.isOnBudget, "is_closed": false, "reconciled_balance_minor": $0.cleared, "payment_category_id": NSNull()] })
-        let accountBalanceRows: [APIAccountBalance] = try decode(visibleAccounts.map { ["account_id": $0.id, "currency_code": "USD", "cleared_balance_minor": $0.cleared, "uncleared_balance_minor": $0.balance - $0.cleared, "working_balance_minor": $0.balance, "reconciled_balance_minor": $0.cleared] })
+        let accountRows: [APIAccount] = try decode(visibleAccounts.map { ["id": $0.id, "budget_id": budget.id, "name": $0.name, "account_type": $0.kind.rawValue, "is_on_budget": $0.isOnBudget, "is_closed": false, "reconciled_balance_minor": $0.reconciledBalance as Any? ?? NSNull(), "payment_category_id": NSNull()] })
+        let accountBalanceRows: [APIAccountBalance] = try decode(visibleAccounts.map { ["account_id": $0.id, "currency_code": "USD", "cleared_balance_minor": $0.cleared, "uncleared_balance_minor": $0.balance - $0.cleared, "working_balance_minor": $0.balance, "reconciled_balance_minor": $0.reconciledBalance as Any? ?? NSNull()] })
         let groupNames = demo.isRestricted ? demo.groupOrder.filter { name in visibleCategories.contains { $0.group == name } } : demo.groupOrder
         let groupIDs = Dictionary(uniqueKeysWithValues: groupNames.map { ($0, "demo-group-\($0.lowercased().replacingOccurrences(of: " ", with: "-"))") })
         let groupRows: [APICategoryGroup] = try decode(groupNames.enumerated().map { ["id": groupIDs[$0.element]!, "budget_id": budget.id, "name": $0.element, "sort_order": $0.offset, "is_archived": demo.archivedGroups.contains($0.element)] })
@@ -425,16 +427,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                     "merged_into_payee_id": NSNull(), "default_category_id": item.defaultCategoryID ?? NSNull(),
                     "transaction_count": history.count, "net_amount_minor": history.reduce(Int64(0)) { $0 + $1.amount }, "aliases": item.aliases.enumerated().map { ["id": "\(item.id)-alias-\($0.offset)", "display_name": $0.element] }] as [String: Any]
         })
-        let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"
         // Best-effort credit spend per category from demo transactions on credit-kind accounts,
         // so the demo classifies overspending as cash vs credit like the live server does.
         let creditAccountIDs = Set(demo.accounts.filter { $0.kind == .credit }.map(\.id))
         var creditSpend: [String: Int64] = [:]
-        for item in demo.visibleTransactions where creditAccountIDs.contains(item.accountID) {
-            let ids = item.categoryIDs
-            guard !ids.isEmpty else { continue }
-            let base = item.amount / Int64(ids.count)
-            for id in ids { creditSpend[id, default: 0] += item.categoryAmounts[id] ?? base }
+        for item in demo.visibleTransactions where creditAccountIDs.contains(item.accountID) && String(dateFormatter.string(from: item.date).prefix(7)) == String(month.prefix(7)) {
+            for (id, amount) in demo.canonicalCategoryAmounts(for: item) { creditSpend[id, default: 0] += amount }
         }
         let summaryRows: [[String: Any]] = try visibleCategories.map { item -> [String: Any] in
             let recommended: Int64
@@ -450,9 +448,9 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let overspent = max(-item.available, 0)
             let creditSpent = max(-(creditSpend[item.id] ?? 0), 0)
             let creditOverspent = min(overspent, creditSpent)
-            return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": max(item.available - item.assigned - item.activity, 0), "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": max(creditSpent - creditOverspent, 0), "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "is_target_snoozed": item.targetSnoozedMonths.contains(month), "target_date": effectiveTargetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
+            return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": plan.categories[item.id]?.carriedAvailableMinor ?? 0, "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": max(creditSpent - creditOverspent, 0), "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "is_target_snoozed": item.targetSnoozedMonths.contains(month), "target_date": effectiveTargetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
         }
-        let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.readyToAssign, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": 1, "categories": summaryRows])
+        let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.isRestricted ? 0 : plan.readyToAssignMinor, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": 1, "categories": summaryRows])
         let start = report.start
         let included = demo.visibleTransactions.filter { item in
             item.date >= start && item.date <= report.end
@@ -571,7 +569,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let trailingStart = reportCalendar.date(byAdding: .day, value: -364, to: report.end)!
         func recordedInterest(since value: Date) -> Int64 { classifiedInterest.filter { $0.0.date >= value && $0.0.date <= report.end }.reduce(Int64(0)) { $0 + $1.1 } }
         let debt: APIDebtReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "opening_debt_minor": openingDebt, "debt_minor": endingDebt, "principal_reduction_minor": openingDebt - endingDebt, "recorded_interest_range_minor": recordedInterest(since: start), "recorded_interest_month_minor": recordedInterest(since: monthStart), "recorded_interest_ytd_minor": recordedInterest(since: yearStart), "recorded_interest_trailing_12_minor": recordedInterest(since: trailingStart), "recorded_interest_lifetime_minor": classifiedInterest.reduce(Int64(0)) { $0 + $1.1 }, "interest_tracking_started_on": classifiedInterest.map { $0.0.date }.min().map(dateFormatter.string) ?? NSNull(), "points": debtPoints, "accounts": debtRows])
-        let planPerformance: APIPlanPerformanceReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "points": [["period_start": month, "period_end": dateFormatter.string(from: report.end), "assigned_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.assigned }, "activity_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.activity }, "spending_minor": max(-visibleCategories.reduce(Int64(0)) { $0 + $1.activity }, 0), "carried_available_minor": visibleCategories.reduce(Int64(0)) { $0 + max($1.available - $1.assigned - $1.activity, 0) }, "available_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.available }, "overspent_minor": visibleCategories.reduce(Int64(0)) { $0 + max(-$1.available, 0) }, "ready_to_assign_minor": demo.isRestricted ? 0 : demo.readyToAssign]]])
+        let planPerformance: APIPlanPerformanceReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "points": [["period_start": month, "period_end": dateFormatter.string(from: report.end), "assigned_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.assigned }, "activity_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.activity }, "spending_minor": max(-visibleCategories.reduce(Int64(0)) { $0 + $1.activity }, 0), "carried_available_minor": visibleCategories.reduce(Int64(0)) { $0 + (plan.categories[$1.id]?.carriedAvailableMinor ?? 0) }, "available_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.available }, "overspent_minor": visibleCategories.reduce(Int64(0)) { $0 + max(-$1.available, 0) }, "ready_to_assign_minor": demo.isRestricted ? 0 : plan.readyToAssignMinor]]])
         let delegated: APIDelegatedBudget? = demo.isRestricted ? try decode(["id": "demo-delegated", "budget_id": budget.id, "user_id": demo.persona.rawValue.lowercased(), "pool_category_id": visibleCategories.first?.id ?? "", "authority_minor": demo.delegatedAuthority, "assigned_minor": demo.delegatedAssigned, "available_to_assign_minor": demo.delegatedReadyToAssign, "allow_category_creation": true, "allow_reallocation": true, "rules": []]) : nil
         let requestRows: [APIFinancialRequest] = try decode(demo.requests.filter { !demo.isRestricted || $0.member == demo.persona }.map { item -> [String: Any] in ["id": item.id, "requester_user_id": item.member.rawValue.lowercased(), "request_type": "additional_allocation", "destination_category_id": item.categoryID, "requested_amount_minor": item.amount, "reason": item.reason, "status": item.status.lowercased().replacingOccurrences(of: " ", with: "_"), "version": item.status == "Pending" ? 0 : 1, "approved_amount_minor": item.approvedAmount.map { $0 as Any } ?? NSNull(), "source_category_id": NSNull(), "allocation_operation_id": NSNull(), "actions": []] })
         // Preserve actual command identity/date/actor across reads. Never manufacture movements
@@ -907,11 +905,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func deleteTransfer(id: String) async throws { guard demo.deleteTransfer(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { guard demo.reconcile(accountID: operation.accountID, statementBalance: operation.statementBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func assignMoney(_ operation: AssignMoneyOperation) async throws {
-        guard !demo.isRestricted, let index = demo.categories.firstIndex(where: { $0.id == operation.categoryID }) else { throw workspaceRepositoryError("Delegated members allocate from their own pool by moving money.") }
-        let delta = operation.assignedMinor - demo.categories[index].assigned
-        guard delta <= demo.readyToAssign else { throw workspaceRepositoryError("Not enough real money to assign.") }
-        demo.categories[index].assigned += delta; demo.categories[index].available += delta; demo.setUnassigned(demo.readyToAssign - delta)
-        demo.recordAllocation(amount: delta, to: operation.categoryID, occurredOn: operation.month)
+        try demo.replaceAssignment(categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor)
     }
     func moveMoney(_ operation: MoveMoneyOperation) async throws { guard demo.move(amount: operation.amountMinor, from: operation.sourceCategoryID, to: operation.destinationCategoryID, occurredOn: operation.occurredOn, note: operation.note) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { guard demo.createCategory(name: name, group: groupName.isEmpty ? newGroupName : groupName) else { throw workspaceRepositoryError(demo.errorMessage) } }
@@ -1023,10 +1017,12 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         }
     }
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview {
-        let ready = demo.isRestricted ? 0 : demo.readyToAssign
-        var remaining = max(ready, 0)
+        let plan = try demo.planningSnapshot(month: month)
+        let ready = demo.isRestricted ? 0 : plan.readyToAssignMinor
+        let fundingLimit = demo.isRestricted ? 0 : plan.fundingLimitMinor
+        var remaining = fundingLimit
         var rows: [[String: Any]] = []
-        let guidance = try demo.visibleCategories.compactMap { category -> (DemoCategory, TargetPlanning.Funding)? in
+        let guidance = try demo.projectedCategories(in: plan).compactMap { category -> (DemoCategory, TargetPlanning.Funding)? in
             guard let amount = category.target else { return nil }
             return (category, try TargetPlanning.funding(type: category.targetType, amountMinor: amount,
                 targetDate: category.targetDate, recurrenceMonths: category.targetRecurrenceMonths,
@@ -1056,9 +1052,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             remaining -= amount
             fundedAmounts[category.id] = amount
         }
-        let proposed = max(ready, 0) - remaining
+        let proposed = fundingLimit - remaining
         let unfundedCount = guidance.filter { $0.1.underfundedMinor > (fundedAmounts[$0.0.id] ?? 0) }.count
-        return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": ready, "proposed_minor": proposed, "after_ready_to_assign_minor": ready - proposed, "allocation_version": 1, "proposals": rows, "remaining_need_minor": totalNeed - proposed, "unfunded_category_count": unfundedCount, "funding_limit_minor": max(ready, 0)]))
+        return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": ready, "proposed_minor": proposed, "after_ready_to_assign_minor": ready - proposed, "allocation_version": 1, "proposals": rows, "remaining_need_minor": totalNeed - proposed, "unfunded_category_count": unfundedCount, "funding_limit_minor": fundingLimit]))
     }
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws {
         guard !demo.isRestricted, budget.can("assign_money") else {
@@ -1068,13 +1064,16 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard !current.proposals.isEmpty, current == preview else {
             throw workspaceRepositoryError("Funding recommendations changed. Refresh the preview before confirming.")
         }
+        let projected = try demo.projectedCategories(month: current.month)
         for proposal in current.proposals {
-            guard let category = demo.categories.first(where: { $0.id == proposal.categoryID }),
+            guard let category = projected.first(where: { $0.id == proposal.categoryID }),
                   !category.assigned.addingReportingOverflow(proposal.amountMinor).overflow else {
                 throw workspaceRepositoryError("Target funding exceeds the supported amount range.")
             }
         }
-        for proposal in current.proposals { demo.assign(amount: proposal.amountMinor, to: proposal.categoryID, occurredOn: current.month) }
+        for proposal in current.proposals {
+            guard demo.assign(amount: proposal.amountMinor, to: proposal.categoryID, occurredOn: current.month) else { throw workspaceRepositoryError(demo.errorMessage) }
+        }
     }
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { throw workspaceRepositoryError("Owner policy editing is demonstrated in live mode; use a delegated demo persona to verify the member experience.") }
 }
@@ -2557,7 +2556,19 @@ private struct LivePlanView: View {
             }
             if activation.showsNormalPlan {
                 Section("Plan") {
-                HStack { Button { changeMonth(-1) } label: { Image(systemName: "chevron.left") }; Spacer(); Button("Today") { store.planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year,.month], from: Date()))!; Task { await reload() } }; Text(store.planMonth.formatted(.dateTime.month(.wide).year())).font(.headline); Spacer(); Button { changeMonth(1) } label: { Image(systemName: "chevron.right") } }
+                HStack {
+                    Button { changeMonth(-1) } label: { Image(systemName: "chevron.left") }
+                        .accessibilityLabel("Previous month").accessibilityIdentifier("plan-previous-month")
+                    Spacer()
+                    Button("Today") { store.planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year,.month], from: Date()))!; Task { await reload() } }
+                    Text(store.planMonth.formatted(.dateTime.month(.wide).year())).font(.headline).accessibilityIdentifier("plan-month-label")
+                    Spacer()
+                    Button { changeMonth(1) } label: { Image(systemName: "chevron.right") }
+                        .accessibilityLabel("Next month").accessibilityIdentifier("plan-next-month")
+                }
+                // Multiple automatic List-row buttons can share the row action. Each date control
+                // must activate only its own intent (especially Previous versus Today/Next).
+                .buttonStyle(.borderless)
                 Picker("Focus", selection: $focus) { ForEach(PlanFocus.allCases) { Text($0.rawValue).tag($0) } }
                 }
             }

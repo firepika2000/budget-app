@@ -160,7 +160,7 @@ final class DemoStore: ObservableObject {
                     recordAllocation(amount: amount, to: id, occurredOn: month, note: "Deterministic fixture assignment", id: "fixture-\(month)-\(id)")
                 }
                 for item in activity {
-                    applyCanonicalTransaction(item)
+                    try applyCanonicalTransaction(item)
                     transactions.append(item)
                 }
             }
@@ -176,25 +176,79 @@ final class DemoStore: ObservableObject {
         } catch { preconditionFailure("Invalid deterministic financial fixture: \(error)") }
     }
 
-    /// Dated facts supplied to the shared projection. Command routing is migrated separately;
-    /// this method also proves the production fixture's opening/posted/allocation provenance.
+    /// Fixture proof uses the same dated facts/projection as ordinary production reads and commands.
     func fixturePlanningSnapshot(month: String) throws -> PlanningPeriodProjection.Snapshot {
+        try planningSnapshot(month: month)
+    }
+
+    var currentPlanningMonth: String { String(BudgetWorkspaceStore.dateString(Date()).prefix(7)) + "-01" }
+
+    func planningSnapshot(month: String, through: String? = nil,
+                          additionalAllocations: [PlanningPeriodProjection.Allocation] = []) throws -> PlanningPeriodProjection.Snapshot {
         let allocations = try allocationEvents.map { event in
             try PlanningPeriodProjection.Allocation(occurredOn: event.occurredOn, postings: [
                 .init(categoryID: event.sourceCategoryID, amountMinor: -event.amountMinor),
                 .init(categoryID: event.destinationCategoryID, amountMinor: event.amountMinor),
             ])
         }
-        let activity = try transactions.filter { $0.status != "voided" && !$0.scheduled }.map { item in
-            let account = accounts.first { $0.id == item.accountID }!
+        // Voiding keeps the original financial fact and adds an opposite dated reversal.
+        // Removing the original here would count only the refund and manufacture category money.
+        let activity = try transactions.filter { !$0.scheduled && (through == nil || BudgetWorkspaceStore.dateString($0.date) <= through!) }.map { item in
+            guard let account = accounts.first(where: { $0.id == item.accountID }) else { throw DemoMutationError.accountNotFound }
             let amounts = item.transferID == nil ? canonicalCategoryAmounts(for: item) : [:]
             let cashInflow = item.transferID == nil && amounts.isEmpty && account.isOnBudget && [.checking, .savings, .cash].contains(account.kind)
             return try PlanningPeriodProjection.PostedActivity(occurredOn: BudgetWorkspaceStore.dateString(item.date), categoryAmounts: amounts, unassignedMinor: cashInflow ? item.amount : 0)
         }
-        return try PlanningPeriodProjection.snapshot(month: month, categoryIDs: Set(categories.map(\.id)), opening: fixtureOpening, allocations: allocations, activity: activity)
+        let datedAllocations = (allocations + additionalAllocations).filter { through == nil || $0.occurredOn.iso <= through! }
+        return try PlanningPeriodProjection.snapshot(month: month, categoryIDs: Set(categories.map(\.id)), opening: fixtureOpening, allocations: datedAllocations, activity: activity)
     }
 
-    func setUnassigned(_ value: Int64) { unassignedMinor = value }
+    func projectedCategories(month: String) throws -> [DemoCategory] {
+        projectedCategories(in: try planningSnapshot(month: month))
+    }
+
+    func projectedCategories(in plan: PlanningPeriodProjection.Snapshot) -> [DemoCategory] {
+        return visibleCategories.map { category in
+            var value = category
+            if let row = plan.categories[category.id] {
+                value.assigned = row.assignedMinor; value.activity = row.activityMinor; value.available = row.availableMinor
+            }
+            return value
+        }
+    }
+
+    private func publishPlanning(_ plan: PlanningPeriodProjection.Snapshot) {
+        for index in categories.indices {
+            guard let value = plan.categories[categories[index].id] else { continue }
+            categories[index].assigned = value.assignedMinor
+            categories[index].activity = value.activityMinor
+            categories[index].available = value.availableMinor
+        }
+        unassignedMinor = plan.allDateUnassignedMinor
+    }
+
+    func replaceAssignment(categoryID: String, month: String, assignedMinor: Int64) throws {
+        guard !isRestricted else { throw DemoMutationError.restrictedCategory }
+        guard let category = categories.first(where: { $0.id == categoryID }), !category.isHidden,
+              !archivedGroups.contains(category.group) else { throw DemoMutationError.categoryNotFound }
+        let selected = try planningSnapshot(month: month)
+        guard let allocation = try selected.replacementAssignment(categoryID: categoryID, assignedMinor: assignedMinor) else { return }
+        let current = try planningSnapshot(month: currentPlanningMonth, additionalAllocations: [allocation])
+        recordAllocation(amount: allocation.postings[1].amountMinor, to: categoryID, occurredOn: month)
+        publishPlanning(current)
+    }
+
+    private struct FinancialCheckpoint {
+        let accounts: [DemoAccount]; let categories: [DemoCategory]; let transactions: [DemoTransaction]
+        let reserve: [String: [String: Int64]]; let unassigned: Int64
+    }
+    private func checkpoint() -> FinancialCheckpoint {
+        .init(accounts: accounts, categories: categories, transactions: transactions, reserve: reserveAttribution, unassigned: unassignedMinor)
+    }
+    private func restore(_ value: FinancialCheckpoint) {
+        accounts = value.accounts; categories = value.categories; transactions = value.transactions
+        reserveAttribution = value.reserve; unassignedMinor = value.unassigned
+    }
 
     static func payeeID(_ name: String) -> String { "demo-payee-" + name.lowercased().filter { $0.isLetter || $0.isNumber } }
     private static var seedPayees: [DemoPayee] {
@@ -230,13 +284,20 @@ final class DemoStore: ObservableObject {
         if isRestricted && (categories[source].delegatedTo != persona || categories[destination].delegatedTo != persona) {
             return fail(.restrictedCategory)
         }
-        guard categories[source].available >= amount else { return fail(.insufficientFunds(available: categories[source].available)) }
-        categories[source].assigned -= amount
-        categories[source].available -= amount
-        categories[destination].assigned += amount
-        categories[destination].available += amount
-        recordAllocation(amount: amount, from: sourceID, to: destinationID, occurredOn: occurredOn,
-                         kind: "category_transfer", note: note)
+        guard source != destination, !categories[source].isHidden, !categories[destination].isHidden,
+              !archivedGroups.contains(categories[source].group), !archivedGroups.contains(categories[destination].group) else { return fail(.categoryNotFound) }
+        do {
+            let day = try PlanningPeriodProjection.Day(occurredOn)
+            let available = try planningSnapshot(month: day.month, through: occurredOn).categories[sourceID]?.availableMinor ?? 0
+            guard available >= amount else { return fail(.insufficientFunds(available: available)) }
+            let allocation = try PlanningPeriodProjection.Allocation(occurredOn: occurredOn, postings: [
+                .init(categoryID: sourceID, amountMinor: -amount), .init(categoryID: destinationID, amountMinor: amount),
+            ])
+            let plan = try planningSnapshot(month: currentPlanningMonth, additionalAllocations: [allocation])
+            recordAllocation(amount: amount, from: sourceID, to: destinationID, occurredOn: occurredOn,
+                             kind: "category_transfer", note: note)
+            publishPlanning(plan)
+        } catch { return failMessage(error.localizedDescription) }
         errorMessage = nil
         return true
     }
@@ -319,8 +380,11 @@ final class DemoStore: ObservableObject {
         guard let index = transactions.firstIndex(where: { $0.id == id }) else { return fail(.transactionNotFound) }
         let transaction = transactions[index]
         guard !transaction.reconciled else { return fail(.invalidAmount) }
+        let before = checkpoint()
         reverseCanonicalTransaction(transaction)
         transactions.remove(at: index)
+        do { publishPlanning(try planningSnapshot(month: currentPlanningMonth)) }
+        catch { restore(before); return failMessage(error.localizedDescription) }
         errorMessage = nil
         return true
     }
@@ -396,6 +460,7 @@ final class DemoStore: ObservableObject {
             transactions[0].reconciled = true
         }
         accounts[index].cleared = statementBalance
+        accounts[index].reconciledBalance = statementBalance
         for transactionIndex in transactions.indices where transactions[transactionIndex].accountID == accountID && transactions[transactionIndex].cleared {
             transactions[transactionIndex].reconciled = true
         }
@@ -428,6 +493,7 @@ final class DemoStore: ObservableObject {
             target: nil,
             delegatedTo: isRestricted ? persona : nil
         ))
+        if !groupOrder.contains(targetGroup) { groupOrder.append(targetGroup) }
         if !isRestricted { unassignedMinor -= initialAssignment }
         if !isRestricted, let category = categories.last {
             recordAllocation(amount: initialAssignment, to: category.id, note: "Initial assignment")
@@ -452,14 +518,19 @@ final class DemoStore: ObservableObject {
         }
     }
 
+    @discardableResult
     func assign(amount: Int64, to categoryID: String,
-                occurredOn: String = BudgetWorkspaceStore.dateString(Date())) {
-        guard amount > 0, amount <= unassignedMinor,
-              let destination = categories.firstIndex(where: { $0.id == categoryID }) else { return }
-        unassignedMinor -= amount
-        categories[destination].assigned += amount
-        categories[destination].available += amount
-        recordAllocation(amount: amount, to: categoryID, occurredOn: occurredOn)
+                occurredOn: String = BudgetWorkspaceStore.dateString(Date())) -> Bool {
+        guard amount > 0 else { return fail(.invalidAmount) }
+        do {
+            let month = try PlanningPeriodProjection.Day(occurredOn).month
+            let selected = try planningSnapshot(month: month)
+            guard let category = selected.categories[categoryID] else { return fail(.categoryNotFound) }
+            let total = category.assignedMinor.addingReportingOverflow(amount)
+            guard !total.overflow else { return fail(.invalidAmount) }
+            try replaceAssignment(categoryID: categoryID, month: month, assignedMinor: total.partialValue)
+            return true
+        } catch { return failMessage(error.localizedDescription) }
     }
 
     func addGoal(name: String, amount: Int64, targetDate: String) {
@@ -503,8 +574,12 @@ final class DemoStore: ObservableObject {
                 split.financialClassification.map { (split.categoryID, $0) }
             })
         )
-        applyCanonicalTransaction(transaction)
-        transactions.insert(transaction, at: 0)
+        let before = checkpoint()
+        do {
+            try applyCanonicalTransaction(transaction)
+            transactions.insert(transaction, at: 0)
+            publishPlanning(try planningSnapshot(month: currentPlanningMonth))
+        } catch { restore(before); return failMessage(error.localizedDescription) }
         errorMessage = nil
         return true
     }
@@ -513,28 +588,37 @@ final class DemoStore: ObservableObject {
     func updateCanonicalTransaction(id: String, operation: RecordTransactionOperation) -> Bool {
         guard let index = transactions.firstIndex(where: { $0.id == id }), !transactions[index].reconciled else { return fail(.transactionNotFound) }
         let old = transactions[index]
+        let before = checkpoint()
         reverseCanonicalTransaction(old)
         transactions.remove(at: index)
         guard recordCanonicalTransaction(operation, id: id) else {
-            applyCanonicalTransaction(old)
-            transactions.insert(old, at: index)
+            restore(before)
             return false
         }
         return true
     }
 
-    private func applyCanonicalTransaction(_ transaction: DemoTransaction) {
+    private func applyCanonicalTransaction(_ transaction: DemoTransaction) throws {
         guard let accountIndex = accounts.firstIndex(where: { $0.id == transaction.accountID }) else { return }
         let amounts = canonicalCategoryAmounts(for: transaction)
         var reserve: [String: Int64] = [:]
         if accounts[accountIndex].kind == .credit {
-            var remainingPaymentMoney = max(accounts[accountIndex].paymentReserved, 0)
+            let day = BudgetWorkspaceStore.dateString(transaction.date)
+            let datedPlan = try planningSnapshot(month: String(day.prefix(7)) + "-01", through: day)
+            var datedReserve: Int64 = 0
+            for item in transactions where item.accountID == transaction.accountID && item.date <= transaction.date {
+                let amount = item.transferID != nil ? -item.amount : reserveAttribution[item.id]?.values.reduce(0, +) ?? 0
+                let sum = datedReserve.addingReportingOverflow(amount)
+                guard !sum.overflow else { throw MoneyError.arithmeticOverflow }
+                datedReserve = sum.partialValue
+            }
+            var remainingPaymentMoney = max(datedReserve, 0)
             // Preserve canonical split order when several refund rows compete for the same reserve.
             for categoryID in transaction.categoryIDs {
                 guard let amount = amounts[categoryID] else { continue }
                 guard let categoryIndex = categories.firstIndex(where: { $0.id == categoryID }) else { continue }
                 if amount < 0 {
-                    let availableBefore = categories[categoryIndex].available
+                    let availableBefore = datedPlan.categories[categories[categoryIndex].id]?.availableMinor ?? 0
                     reserve[categoryID] = min(-amount, max(availableBefore, 0))
                 } else if amount > 0 {
                     // Match the server's net, card/category/date-scoped attribution. Earlier refund
@@ -590,7 +674,7 @@ final class DemoStore: ObservableObject {
         }
         let reserve = reserveAttribution.removeValue(forKey: transaction.id)?.values.reduce(0, +) ?? 0
         accounts[accountIndex].paymentReserved -= reserve
-        if transaction.amount < 0 {
+        if accounts[accountIndex].kind == .credit && transaction.amount < 0 {
             accounts[accountIndex].fundedSpending -= reserve
             accounts[accountIndex].unfundedSpending -= -transaction.amount - reserve
         }

@@ -58,6 +58,7 @@ struct DemoAccount: Identifiable, Hashable {
     var minimumPayment: Int64? = nil
     var dueText: String? = nil
     var restrictedFromChildren = true
+    var reconciledBalance: Int64? = nil
 }
 
 struct DemoCategory: Identifiable, Hashable {

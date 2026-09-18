@@ -4,6 +4,24 @@
   "scope": "Persistent dated observations and legacy carry characterization; prospective rollover policy is not implemented by these vectors.",
   "cases": [
     {
+      "id": "future_assignment_cannot_fund_earlier_card_purchase",
+      "as_of": "2026-09-15",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 0},
+        {"op": "create_account", "ref": "card", "name": "Card", "kind": "credit", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "needs", "group": "Needs", "name": "Needs"},
+        {"op": "transaction", "account": "cash", "amount_minor": 20000, "occurred_on": "2026-08-01", "classification": "income"},
+        {"op": "assign", "category": "needs", "month": "2026-10-01", "amount_minor": 10000},
+        {"op": "transaction", "account": "card", "category": "needs", "amount_minor": -5000, "occurred_on": "2026-09-01", "classification": "spending"},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 20000, "funding_limit_minor": 10000, "categories": {"needs": {"assigned_minor": 0, "activity_minor": -5000, "available_minor": -5000}}, "cards": {"card": {"liability_minor": 5000, "reserved_minor": 0, "unfunded_debt_minor": 5000}}}},
+        {"op": "observe", "month": "2026-10-01", "expected": {"unassigned_minor": 10000, "categories": {"needs": {"assigned_minor": 10000, "activity_minor": 0, "carried_available_minor": -5000, "available_minor": 5000}}}},
+        {"op": "assign", "category": "needs", "month": "2026-09-01", "amount_minor": 10000},
+        {"op": "transaction", "account": "card", "category": "needs", "amount_minor": -5000, "occurred_on": "2026-09-02", "classification": "spending"},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 10000, "funding_limit_minor": 0, "accounts": {"cash": 20000, "card": -10000}, "categories": {"needs": {"assigned_minor": 10000, "activity_minor": -10000, "available_minor": 0}}, "cards": {"card": {"liability_minor": 10000, "reserved_minor": 5000, "unfunded_debt_minor": 5000}}, "allocation_postings_sum_minor": 0}},
+        {"op": "observe", "month": "2026-10-01", "expected": {"unassigned_minor": 0, "categories": {"needs": {"assigned_minor": 10000, "carried_available_minor": 0, "available_minor": 10000}}}}
+      ]
+    },
+    {
       "id": "split_refund_and_transfer_keep_period_attribution_exact",
       "as_of": "2026-09-15",
       "operations": [

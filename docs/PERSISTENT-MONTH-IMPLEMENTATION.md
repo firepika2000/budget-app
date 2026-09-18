@@ -1,6 +1,6 @@
 # Persistent monthly planning — next implementation boundary
 
-Status: **ENGINEERING DESIGN / IMPLEMENTATION REQUIRED**. This does not declare v0.9 complete.
+Status: **IN PROGRESS — dated provider routing implemented; closure/rollover work remains**. This does not declare v0.9 complete.
 Authority: PRODUCT-SPECIFICATION.md §§7.1–7.4 and APPLICATION-ARCHITECTURE.md.
 Checkpoint inspected: `aecf712`, `codex/development`. Human acceptance pending; **DO NOT RETEST**.
 
@@ -12,9 +12,9 @@ Checkpoint inspected: `aecf712`, `codex/development`. Human acceptance pending; 
   separates selected-month RTA observations from the real spendable funding limit.
 - Live summaries reconstruct category carry from dated allocations, transactions/splits and card
   reserve events. `aecf712` bounds historical ORM hydration without changing their financial meaning.
-- Demo `assignMoney` still ignores `operation.month`; `DemoStore` mutates global category totals.
-  Its summary still repeats those totals for different planning months. The command-history
-  correction below removes fabricated history, but is not persistent period behavior.
+- Demo assignments and summaries now consume the exact dated projection. Replacement is category
+  AND month scoped, negative carry is preserved, and future assignments consume all-date cash
+  without overwriting current-month Assigned. See the production routing checkpoint below.
 - Demo seed now has explicit account/category opening observations at 2025-10-01, dated allocations
   and chronological posted activity; financial display totals are derived from those facts. The
   command-routing and monthly read migration below is still required. Do not silently reinterpret
@@ -178,6 +178,46 @@ opening boundary. Historical request metadata/action attribution and full comman
 still separate unfinished work; this is not a declaration of full provider parity. Next route all
 month-specific assignments, available-funds guards, summaries and date edits through these dated
 facts, with the six complete provider command vectors and production month-navigation coverage.
+
+## Production dated routing checkpoint
+
+The native production repository and snapshot path now consume all seven shared period command
+scenarios (not just package-level projection fixtures). A seventh scenario proves that October
+funding cannot fund a September card purchase; a later September assignment funds only a later
+purchase. The server adapter verifies the identical expected account/category/reserve observations.
+Both adapters still consume all fifteen original financial scenarios.
+
+Plan summaries, assignment replacement, Move Money date guards and Smart Funding use dated facts.
+Smart Funding keeps historical RTA separate from globally spendable cash. Card purchases evaluate
+category availability on their date; refunds evaluate dated net reserve attribution and payments.
+Transaction date edits reproject affected periods; failed edits restore original accounts/categories,
+transactions and reserve events instead of recalculating the old purchase under changed funding.
+Void/reversal projection explicitly retains both the immutable original and its opposite dated
+posting. A stronger production test caught an incorrect lifecycle filter before this routing
+checkpoint was published; it would have counted only the reversal and overstated category money.
+Regressions now cover both cash/cards across months and subsequent purchase/refund reserve netting.
+Reconciled balance is explicitly nullable until a reconciliation, independent of cleared balance.
+Fresh category creation now records its group metadata, fixing a snapshot force-unwrap crash found
+when the full period adapter first exercised fresh production snapshots.
+
+The production UI regression exposed another genuine defect: Previous/Today/Next were automatic
+buttons in one List row; tapping Previous left the label at October and reopened October's value.
+The controls now use independent native borderless button behavior and accessible labels/IDs.
+The test covers September edit → October edit → September preserved → October preserved → November
+→ Today, not merely an isolated assignment view. Pre-fix evidence is retained in
+`/tmp/budget-period-ui-month-reproduction.log` and `/tmp/budget-period-integration-native-verified.log`.
+
+Remaining closure boundaries are explicit: Demo still reports a fixed allocation version rather
+than complete optimistic-concurrency parity; shared Plan should explain later-month reservations;
+effective-history cash rollover is not implemented. Complete reconciliation input/date/adjustment
+parity and calendar-independent test clocks still require audit. These are not reasons to undo
+dated observations or mark the mission complete. Historical request metadata/action history and
+the production Local Device provider remain separate work. Human Live is not migrated.
+
+Final checkpoint verification: **396 backend tests pass, zero skips; 44 BudgetCore + 49 BudgetAPI;
+101 native XCTest + 4 production XCUITests pass**, Xcode 27 Beta 27A5252f on preserved simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`. Build/test and diff check PASS. Evidence:
+`/tmp/budget-period-integration-{backend,package,native-complete}.log`.
 
 ## Independent work remains available
 
