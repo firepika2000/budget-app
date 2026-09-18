@@ -94,6 +94,23 @@ consolidated later, not a reason to stop independent engineering or request repe
 
 ## Independent work remains available
 
+## Characterization checkpoint — server adapter
+
+`server/tests/financial_vectors/planning-periods-v1.json` now contains six fixed-clock operation
+sequences: independent/future periods and replacement, a transaction date edit, legacy cash carry
+and coverage, mixed card/cash/refund reserve observations, split/refund/transfer attribution, and
+scheduled income before/after realization followed by future funding and reconciliation.
+Accounts describe current authoritative balances; category/RTA observations explicitly select a
+planning month. Funding limit is separate from the dated RTA observation. No report read/reload or
+rejected assignment may change financial tables. The original twelve vectors remain unchanged.
+
+The real server HTTP adapter passes all six; full backend **392 pass, zero skips**, including
+disposable PostgreSQL/concurrency/migration/recovery and the original golden vectors.
+Evidence `/tmp/budget-period-vectors-full.log`. These are characterization fixtures, not a claim
+that Demo supports them yet, and they do not bless missing prospective rollover or the classification
+of carried credit deficits. Next implement the exact dated domain projection needed by the
+deterministic/local repository migration; do not weaken fixture expectations to fit global totals.
+
 Full structured export fidelity, bounded hydration in other reports, actual Docker/Compose recovery,
 Local Device/import dependencies and the remaining roadmap are not closed by the current checkpoints.
 The commercial purchase-model decision is external; this planning work is not blocked on it.

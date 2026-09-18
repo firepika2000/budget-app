@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`4ace09b` is the starting checkpoint for this continuation. Six fixed-clock monthly operation
+vectors now pass through the server adapter, alongside the original twelve. Full backend **392 pass,
+zero skips**, `/tmp/budget-period-vectors-full.log`. Fixture vocabulary includes selected months,
+dated transaction edits, expected insufficient-funds refusal, exact clearing/reconciliation state
+and separate funding limit. Every observation reload and refused assignment preserves financial
+tables. Next: exact dated projection foundation, then production deterministic integration. Demo
+does not yet pass these new period vectors; do not claim parity or rollover completion. **DO NOT RETEST**.
+
 Latest verified implementation is pushed at **`aecf712`**. Working tree/remote equality checked;
 main remains `c5494dd`. `PERSISTENT-MONTH-IMPLEMENTATION.md` now records the next concrete delivery
 boundary, seed-ledger mismatch, dated-versus-spendable cash contract, shared vectors and prospective

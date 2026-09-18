@@ -14,14 +14,16 @@ from pathlib import Path
 import pytest
 from sqlalchemy import func, select
 
-from app.models import AllocationPosting
+from app import budgeting_routes, planning_routes
+from app.models import Account, AllocationOperation, AllocationPosting, CreditCardReserveEvent, Transaction, TransactionSplit
 
-from .conftest import auth
+from .conftest import auth, freeze_today
 from .test_budgeting_api import create_budget
 
 
 VECTOR_PATH = Path(__file__).parent / "financial_vectors" / "v1.json"
 VECTORS = json.loads(VECTOR_PATH.read_text(encoding="utf-8"))
+PERIOD_VECTORS = json.loads((VECTOR_PATH.parent / "planning-periods-v1.json").read_text(encoding="utf-8"))
 
 
 class ServerFinancialVectorRunner:
@@ -37,6 +39,7 @@ class ServerFinancialVectorRunner:
         self.categories: dict[str, dict] = {}
         self.groups: dict[str, dict] = {}
         self.schedules: dict[str, dict] = {}
+        self.transactions: dict[str, dict] = {}
         self.month = date.today().replace(day=1).isoformat()
         self.today = date.today().isoformat()
 
@@ -71,22 +74,35 @@ class ServerFinancialVectorRunner:
 
     def op_assign(self, operation: dict) -> None:
         category_id = self.categories[operation["category"]]["id"]
-        self.request("put", f"/api/v1/budgets/{self.budget_id}/categories/{category_id}/assignment", {
-            "month": self.month, "assigned_minor": operation["amount_minor"]
-        })
+        path = f"/api/v1/budgets/{self.budget_id}/categories/{category_id}/assignment"
+        body = {"month": operation.get("month", self.month), "assigned_minor": operation["amount_minor"]}
+        if operation.get("expected_error"):
+            assert operation["expected_error"] == "insufficient_funds"
+            before = self.financial_state()
+            response = self.client.put(path, headers=self.headers, json=body)
+            assert response.status_code == 409, response.text
+            assert response.json()["detail"] == "Not enough real money to assign"
+            assert self.financial_state() == before
+        else:
+            self.request("put", path, body)
 
     def op_move(self, operation: dict) -> None:
         self.request("post", f"/api/v1/budgets/{self.budget_id}/allocation-transfers", {
             "source_category_id": self.categories[operation["source"]]["id"],
             "destination_category_id": self.categories[operation["destination"]]["id"],
-            "amount_minor": operation["amount_minor"], "occurred_on": self.today,
+            "amount_minor": operation["amount_minor"], "occurred_on": operation.get("occurred_on", self.today),
         })
 
     def op_transaction(self, operation: dict) -> None:
+        result = self.request("post", f"/api/v1/budgets/{self.budget_id}/transactions", self.transaction_body(operation)).json()
+        if operation.get("ref"):
+            self.transactions[operation["ref"]] = result
+
+    def transaction_body(self, operation: dict) -> dict:
         body = {
             "account_id": self.accounts[operation["account"]]["id"],
-            "amount_minor": operation["amount_minor"], "occurred_on": self.today,
-            "payee_name": f"Golden {operation['classification']}", "is_cleared": True,
+            "amount_minor": operation["amount_minor"], "occurred_on": operation.get("occurred_on", self.today),
+            "payee_name": f"Golden {operation['classification']}", "is_cleared": operation.get("cleared", True),
         }
         if operation.get("category"):
             body["category_id"] = self.categories[operation["category"]]["id"]
@@ -95,13 +111,19 @@ class ServerFinancialVectorRunner:
                 {"category_id": self.categories[ref]["id"], "amount_minor": amount}
                 for ref, amount in operation["splits"].items()
             ]
-        self.request("post", f"/api/v1/budgets/{self.budget_id}/transactions", body)
+        return body
+
+    def op_edit_transaction(self, operation: dict) -> None:
+        transaction_id = self.transactions[operation["ref"]]["id"]
+        self.transactions[operation["ref"]] = self.request(
+            "put", f"/api/v1/budgets/{self.budget_id}/transactions/{transaction_id}", self.transaction_body(operation)
+        ).json()
 
     def op_transfer(self, operation: dict) -> None:
         self.request("post", f"/api/v1/budgets/{self.budget_id}/transfers", {
             "source_account_id": self.accounts[operation["source"]]["id"],
             "destination_account_id": self.accounts[operation["destination"]]["id"],
-            "amount_minor": operation["amount_minor"], "occurred_on": self.today,
+            "amount_minor": operation["amount_minor"], "occurred_on": operation.get("occurred_on", self.today),
             "is_cleared": True,
         })
 
@@ -109,7 +131,7 @@ class ServerFinancialVectorRunner:
         account_id = self.accounts[operation["account"]]["id"]
         self.request("post", f"/api/v1/budgets/{self.budget_id}/accounts/{account_id}/reconcile", {
             "statement_balance_minor": operation["statement_minor"],
-            "through_date": self.today,
+            "through_date": operation.get("through_date", self.today),
             "create_adjustment": operation["create_adjustment"],
             "adjustment_reason": "Golden vector explicit adjustment",
         })
@@ -117,7 +139,7 @@ class ServerFinancialVectorRunner:
     def op_schedule(self, operation: dict) -> None:
         body = {
             "account_id": self.accounts[operation["account"]]["id"],
-            "amount_minor": operation["amount_minor"], "next_date": self.today,
+            "amount_minor": operation["amount_minor"], "next_date": operation.get("next_date", self.today),
             "recurrence_unit": operation["recurrence"], "name": "Golden schedule",
         }
         if operation.get("category"):
@@ -131,21 +153,39 @@ class ServerFinancialVectorRunner:
         self.request("post", f"/api/v1/budgets/{self.budget_id}/scheduled-transactions/{schedule_id}/realize")
 
     def op_observe(self, operation: dict) -> None:
-        actual = self.observe(operation["expected"])
+        before = self.financial_state()
+        actual = self.observe(operation["expected"], operation.get("month", self.month))
         assert actual == operation["expected"]
+        assert self.observe(operation["expected"], operation.get("month", self.month)) == actual
+        assert self.financial_state() == before, "Reading/reloading planning periods must not post money"
 
-    def observe(self, expected: dict) -> dict:
+    def financial_state(self) -> dict:
+        with self.session_factory() as db:
+            return {model.__tablename__: sorted(repr(tuple(row)) for row in db.execute(
+                select(model.__table__)
+            )) for model in (Account, AllocationOperation, AllocationPosting, Transaction, TransactionSplit, CreditCardReserveEvent)}
+
+    def observe(self, expected: dict, month: str | None = None) -> dict:
         result: dict = {}
-        summary = self.client.get(
-            f"/api/v1/budgets/{self.budget_id}/months/{self.month}", headers=self.headers
-        ).json()
+        month = month or self.month
+        response = self.client.get(f"/api/v1/budgets/{self.budget_id}/months/{month}", headers=self.headers)
+        assert response.status_code == 200, response.text
+        summary = response.json()
         rows = {row["category_id"]: row for row in summary["categories"]}
-        balances = {
+        account_balances = {
             ref: self.client.get(
                 f"/api/v1/budgets/{self.budget_id}/accounts/{account['id']}/balance", headers=self.headers
-            ).json()["working_balance_minor"]
+            ).json()
             for ref, account in self.accounts.items()
         }
+        balances = {ref: value["working_balance_minor"] for ref, value in account_balances.items()}
+        if "account_balances" in expected:
+            result["account_balances"] = {ref: {key: account_balances[ref][key] for key in fields}
+                                          for ref, fields in expected["account_balances"].items()}
+        if "funding_limit_minor" in expected:
+            response = self.client.get(f"/api/v1/budgets/{self.budget_id}/smart-funding/{month}", headers=self.headers)
+            assert response.status_code == 200, response.text
+            result["funding_limit_minor"] = response.json()["funding_limit_minor"]
         if "accounts" in expected:
             result["accounts"] = {ref: balances[ref] for ref in expected["accounts"]}
         if "unassigned_minor" in expected:
@@ -201,7 +241,7 @@ def test_vector_money_values_are_exact_integer_minor_units():
     def visit(value):
         if isinstance(value, dict):
             for key, child in value.items():
-                if key.endswith("_minor"):
+                if key.endswith("_minor") and child is not None:
                     assert type(child) is int
                 visit(child)
         elif isinstance(value, list):
@@ -209,3 +249,15 @@ def test_vector_money_values_are_exact_integer_minor_units():
                 visit(child)
 
     visit(VECTORS)
+    visit(PERIOD_VECTORS)
+
+
+@pytest.mark.parametrize("vector", PERIOD_VECTORS["cases"], ids=lambda vector: vector["id"])
+def test_server_provider_matches_persistent_month_vectors(client, owner_token, session_factory, monkeypatch, vector):
+    assert PERIOD_VECTORS["format_version"] == 1
+    freeze_today(monkeypatch, date.fromisoformat(vector["as_of"]), budgeting_routes, planning_routes)
+    runner = ServerFinancialVectorRunner(client, owner_token, session_factory, vector["id"])
+    runner.today = vector["as_of"]
+    runner.month = vector["as_of"][:7] + "-01"
+    for operation in vector["operations"]:
+        runner.execute(operation)

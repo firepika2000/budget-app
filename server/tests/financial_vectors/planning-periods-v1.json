@@ -1,0 +1,110 @@
+{
+  "format_version": 1,
+  "currency": "USD",
+  "scope": "Persistent dated observations and legacy carry characterization; prospective rollover policy is not implemented by these vectors.",
+  "cases": [
+    {
+      "id": "split_refund_and_transfer_keep_period_attribution_exact",
+      "as_of": "2026-09-15",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 0},
+        {"op": "create_account", "ref": "savings", "name": "Savings", "kind": "savings", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "food", "group": "Needs", "name": "Food"},
+        {"op": "create_category", "ref": "fuel", "group": "Needs", "name": "Fuel"},
+        {"op": "transaction", "account": "cash", "amount_minor": 50000, "occurred_on": "2026-08-01", "classification": "income"},
+        {"op": "assign", "category": "food", "month": "2026-08-01", "amount_minor": 10000},
+        {"op": "assign", "category": "fuel", "month": "2026-08-01", "amount_minor": 10000},
+        {"op": "transaction", "account": "cash", "amount_minor": -7001, "occurred_on": "2026-08-31", "classification": "spending", "splits": {"food": -4001, "fuel": -3000}},
+        {"op": "transaction", "account": "cash", "amount_minor": 1001, "occurred_on": "2026-09-03", "classification": "refund", "splits": {"food": 501, "fuel": 500}},
+        {"op": "transfer", "source": "cash", "destination": "savings", "amount_minor": 5000, "occurred_on": "2026-09-04"},
+        {"op": "observe", "month": "2026-08-01", "expected": {"unassigned_minor": 30000, "categories": {"food": {"assigned_minor": 10000, "activity_minor": -4001, "available_minor": 5999}, "fuel": {"assigned_minor": 10000, "activity_minor": -3000, "available_minor": 7000}}}},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 30000, "total_budget_cash_minor": 44000, "accounts": {"cash": 39000, "savings": 5000}, "categories": {"food": {"assigned_minor": 0, "activity_minor": 501, "carried_available_minor": 5999, "available_minor": 6500}, "fuel": {"assigned_minor": 0, "activity_minor": 500, "carried_available_minor": 7000, "available_minor": 7500}}, "allocation_postings_sum_minor": 0}}
+      ]
+    },
+    {
+      "id": "independent_periods_and_future_cash_reservations",
+      "as_of": "2026-09-15",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "needs", "group": "Needs", "name": "Needs"},
+        {"op": "transaction", "account": "cash", "amount_minor": 50000, "occurred_on": "2026-09-01", "classification": "income"},
+        {"op": "assign", "category": "needs", "month": "2026-09-01", "amount_minor": 10000},
+        {"op": "assign", "category": "needs", "month": "2026-10-01", "amount_minor": 20000},
+        {"op": "assign", "category": "needs", "month": "2026-11-01", "amount_minor": 10000},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 40000, "funding_limit_minor": 10000, "accounts": {"cash": 50000}, "categories": {"needs": {"assigned_minor": 10000, "activity_minor": 0, "carried_available_minor": 0, "available_minor": 10000}}, "allocation_postings_sum_minor": 0}},
+        {"op": "observe", "month": "2026-10-01", "expected": {"unassigned_minor": 20000, "funding_limit_minor": 10000, "categories": {"needs": {"assigned_minor": 20000, "activity_minor": 0, "carried_available_minor": 10000, "available_minor": 30000}}}},
+        {"op": "observe", "month": "2026-11-01", "expected": {"unassigned_minor": 10000, "categories": {"needs": {"assigned_minor": 10000, "carried_available_minor": 30000, "available_minor": 40000}}}},
+        {"op": "assign", "category": "needs", "month": "2026-09-01", "amount_minor": 20001, "expected_error": "insufficient_funds"},
+        {"op": "assign", "category": "needs", "month": "2026-10-01", "amount_minor": 15000},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 40000, "funding_limit_minor": 15000, "categories": {"needs": {"assigned_minor": 10000, "available_minor": 10000}}}},
+        {"op": "observe", "month": "2026-11-01", "expected": {"unassigned_minor": 15000, "accounts": {"cash": 50000}, "categories": {"needs": {"assigned_minor": 10000, "carried_available_minor": 25000, "available_minor": 35000}}, "allocation_postings_sum_minor": 0}}
+      ]
+    },
+    {
+      "id": "transaction_date_edit_reprojects_only_affected_period_activity",
+      "as_of": "2026-09-15",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "needs", "group": "Needs", "name": "Needs"},
+        {"op": "transaction", "account": "cash", "amount_minor": 50000, "occurred_on": "2026-08-01", "classification": "income"},
+        {"op": "assign", "category": "needs", "month": "2026-08-01", "amount_minor": 20000},
+        {"op": "assign", "category": "needs", "month": "2026-09-01", "amount_minor": 10000},
+        {"op": "transaction", "ref": "purchase", "account": "cash", "category": "needs", "amount_minor": -7500, "occurred_on": "2026-08-20", "classification": "spending", "cleared": false},
+        {"op": "observe", "month": "2026-08-01", "expected": {"unassigned_minor": 30000, "categories": {"needs": {"assigned_minor": 20000, "activity_minor": -7500, "carried_available_minor": 0, "available_minor": 12500}}, "account_balances": {"cash": {"working_balance_minor": 42500, "cleared_balance_minor": 50000, "uncleared_balance_minor": -7500, "reconciled_balance_minor": null}}}},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 20000, "categories": {"needs": {"assigned_minor": 10000, "activity_minor": 0, "carried_available_minor": 12500, "available_minor": 22500}}}},
+        {"op": "edit_transaction", "ref": "purchase", "account": "cash", "category": "needs", "amount_minor": -7500, "occurred_on": "2026-09-05", "classification": "spending", "cleared": false},
+        {"op": "observe", "month": "2026-08-01", "expected": {"unassigned_minor": 30000, "categories": {"needs": {"activity_minor": 0, "available_minor": 20000}}}},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 20000, "categories": {"needs": {"assigned_minor": 10000, "activity_minor": -7500, "carried_available_minor": 20000, "available_minor": 22500}}, "account_balances": {"cash": {"working_balance_minor": 42500, "cleared_balance_minor": 50000, "uncleared_balance_minor": -7500, "reconciled_balance_minor": null}}, "transaction_count": 2, "allocation_postings_sum_minor": 0}}
+      ]
+    },
+    {
+      "id": "legacy_cash_deficit_carries_once_and_can_be_covered",
+      "as_of": "2026-09-15",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "needs", "group": "Needs", "name": "Needs"},
+        {"op": "transaction", "account": "cash", "amount_minor": 50000, "occurred_on": "2026-08-01", "classification": "income"},
+        {"op": "assign", "category": "needs", "month": "2026-08-01", "amount_minor": 10000},
+        {"op": "transaction", "account": "cash", "category": "needs", "amount_minor": -15000, "occurred_on": "2026-08-31", "classification": "spending"},
+        {"op": "observe", "month": "2026-08-01", "expected": {"unassigned_minor": 40000, "accounts": {"cash": 35000}, "categories": {"needs": {"available_minor": -5000, "cash_overspent_minor": 5000, "credit_overspent_minor": 0}}}},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 40000, "categories": {"needs": {"assigned_minor": 0, "activity_minor": 0, "carried_available_minor": -5000, "available_minor": -5000}}}},
+        {"op": "assign", "category": "needs", "month": "2026-09-01", "amount_minor": 5000},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 35000, "accounts": {"cash": 35000}, "categories": {"needs": {"assigned_minor": 5000, "carried_available_minor": -5000, "available_minor": 0}}, "allocation_postings_sum_minor": 0}}
+      ]
+    },
+    {
+      "id": "mixed_credit_cash_and_refund_preserve_reserve_across_periods",
+      "as_of": "2026-09-15",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 0},
+        {"op": "create_account", "ref": "card", "name": "Card", "kind": "credit", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "needs", "group": "Needs", "name": "Needs"},
+        {"op": "transaction", "account": "cash", "amount_minor": 50000, "occurred_on": "2026-08-01", "classification": "income"},
+        {"op": "assign", "category": "needs", "month": "2026-08-01", "amount_minor": 10000},
+        {"op": "transaction", "account": "card", "category": "needs", "amount_minor": -12000, "occurred_on": "2026-08-20", "classification": "spending"},
+        {"op": "transaction", "account": "cash", "category": "needs", "amount_minor": -3000, "occurred_on": "2026-08-21", "classification": "spending"},
+        {"op": "transaction", "account": "card", "category": "needs", "amount_minor": 1000, "occurred_on": "2026-08-25", "classification": "refund"},
+        {"op": "observe", "month": "2026-08-01", "expected": {"unassigned_minor": 40000, "accounts": {"cash": 47000, "card": -11000}, "categories": {"needs": {"assigned_minor": 10000, "activity_minor": -14000, "available_minor": -4000}}, "cards": {"card": {"liability_minor": 11000, "reserved_minor": 9000, "unfunded_debt_minor": 2000}}}},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 40000, "categories": {"needs": {"assigned_minor": 0, "activity_minor": 0, "carried_available_minor": -4000, "available_minor": -4000}}, "cards": {"card": {"liability_minor": 11000, "reserved_minor": 9000, "unfunded_debt_minor": 2000}}, "allocation_postings_sum_minor": 0}}
+      ]
+    },
+    {
+      "id": "scheduled_income_is_unspendable_until_realization_then_can_fund_future",
+      "as_of": "2026-09-15",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "needs", "group": "Needs", "name": "Needs"},
+        {"op": "transaction", "account": "cash", "amount_minor": 10000, "occurred_on": "2026-08-01", "classification": "income"},
+        {"op": "assign", "category": "needs", "month": "2026-09-01", "amount_minor": 10000},
+        {"op": "schedule", "ref": "income", "account": "cash", "amount_minor": 5000, "next_date": "2026-09-10", "recurrence": "once"},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 0, "accounts": {"cash": 10000}, "transaction_count": 1, "categories": {"needs": {"available_minor": 10000}}}},
+        {"op": "assign", "category": "needs", "month": "2026-10-01", "amount_minor": 1, "expected_error": "insufficient_funds"},
+        {"op": "realize", "schedule": "income"},
+        {"op": "assign", "category": "needs", "month": "2026-10-01", "amount_minor": 5000},
+        {"op": "reconcile", "account": "cash", "through_date": "2026-09-15", "statement_minor": 10000, "create_adjustment": false},
+        {"op": "observe", "month": "2026-09-01", "expected": {"unassigned_minor": 5000, "funding_limit_minor": 0, "categories": {"needs": {"assigned_minor": 10000, "available_minor": 10000}}, "account_balances": {"cash": {"working_balance_minor": 15000, "cleared_balance_minor": 10000, "uncleared_balance_minor": 5000, "reconciled_balance_minor": 10000}}}},
+        {"op": "observe", "month": "2026-10-01", "expected": {"unassigned_minor": 0, "categories": {"needs": {"assigned_minor": 5000, "activity_minor": 0, "carried_available_minor": 10000, "available_minor": 15000}}, "transaction_count": 2, "allocation_postings_sum_minor": 0}}
+      ]
+    }
+  ]
+}

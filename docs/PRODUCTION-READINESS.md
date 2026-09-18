@@ -8,6 +8,14 @@ This ledger tracks engineering evidence separately from release approval. Main r
 `c5494dd`; historical version tags do not establish acceptance for subsequent development.
 Checkpoint completion is followed by the next unblocked engineering task.
 
+Current monthly migration characterization: six new provider-neutral, fixed-clock operation vectors
+pass through the real server HTTP adapter, covering independent/future periods, date edits, cash
+carry, credit/refund reserve continuity, splits/transfers and scheduled realization/reconciliation.
+Repeated period reads and rejected assignments preserve every financial row. Full backend **392
+pass, zero skips**, `/tmp/budget-period-vectors-full.log`. Original twelve shared vectors unchanged.
+Demo parity and prospective rollover are still incomplete; this checkpoint establishes the contract
+for the next dated-domain implementation, not release acceptance.
+
 | Gate | Status | Evidence and remaining work |
 |---|---|---|
 | PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 cadence, monthly snooze, exact cost presentation and incremental/priority funding checkpoints are verified. Future-month provider parity, rollover policy history, import/local-provider and later mission scope remain open. |
