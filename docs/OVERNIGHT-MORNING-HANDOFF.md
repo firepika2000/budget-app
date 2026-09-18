@@ -6,6 +6,12 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `2f65812`, fixed the proven legacy Core manager-sharing admission mismatch with the
+owner-only server contract. No existing UI caller/server bypass was found. Regression preserves
+manager editing, owner sharing and hidden-budget behavior. 49 Core + 54 API tests and diff check
+PASS; no server/schema/financial/native-presentation changes. Full dynamic Demo scope enforcement
+remains the next authorization workstream, not closed by these contract corrections.
+
 After `51f65e0`, Demo profile defaults reflect actual seeded manager/delegated scopes. Updates
 validate capability/resource sets and scope flags, preserve the base grant type, sort returned IDs,
 and record actual owner/injected-time/member audit metadata once. No financial mutation. Broader

@@ -80,5 +80,16 @@ final class AuthorizationTests: XCTestCase {
             .notFound
         )
     }
-}
 
+    func testManagerCanEditButOnlyOwnerCanChangeSharing() {
+        let budget = Budget(householdID: householdID, name: "Family")
+        let manager = HouseholdMember(userID: sonID, householdID: householdID, role: .child)
+        let grants = [BudgetGrant(budgetID: budget.id, userID: sonID, permission: .manage)]
+        XCTAssertEqual(authorizer.authorize(member: manager, budget: budget, grants: grants,
+                                            action: .editBudget), .allowed)
+        XCTAssertEqual(authorizer.authorize(member: manager, budget: budget, grants: grants,
+                                            action: .changeSharing), .forbidden)
+        XCTAssertEqual(authorizer.authorize(member: manager, budget: budget, grants: [],
+                                            action: .changeSharing), .notFound)
+    }
+}

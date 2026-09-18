@@ -4,6 +4,16 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Core sharing admission after `2f65812`: a focused test reproduced the legacy standalone
+`BudgetAuthorizer` incorrectly allowing non-owner managers to change sharing. Server grant
+upsert/revoke already require household ownership, and no production UI call currently uses this
+helper. Non-owner sharing now refuses after the visibility check (hidden remains `notFound`),
+while manager budget editing and owner authority remain intact. The helper is explicitly documented
+as budget-level admission, not a substitute for provider resource/custom-capability authorization.
+Full Swift package: 49 Core + 54 API tests PASS; diff check PASS. Reproduction/final logs:
+`/tmp/budget-core-sharing-before.log`, `/tmp/budget-core-sharing-final.log`.
+No server, native presentation, schema or financial changes in this checkpoint.
+
 Demo access-profile contract after `51f65e0`: initial profiles now describe actual seeded manager /
 delegated capabilities and resource scopes instead of presenting every member as unrestricted
 view-only. Updates validate supported/unique capabilities, unique budget-local resource IDs and

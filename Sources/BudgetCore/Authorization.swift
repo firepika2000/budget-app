@@ -24,6 +24,8 @@ public enum AccessDecision: Equatable, Sendable {
     case forbidden
 }
 
+/// Legacy budget-level admission only. Resource scopes and custom capabilities
+/// still require provider authorization; this helper does not replace it.
 public struct BudgetAuthorizer: Sendable {
     public init() {}
 
@@ -49,6 +51,11 @@ public struct BudgetAuthorizer: Sendable {
             return .notFound
         }
 
+        // Sharing is household-owner authority, never an inherited manage grant.
+        if action == .changeSharing {
+            return .forbidden
+        }
+
         return grant.permission >= action.requiredPermission ? .allowed : .forbidden
     }
 
@@ -62,4 +69,3 @@ public struct BudgetAuthorizer: Sendable {
         }
     }
 }
-
