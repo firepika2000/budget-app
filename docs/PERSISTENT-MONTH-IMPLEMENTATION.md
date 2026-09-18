@@ -221,6 +221,40 @@ Final checkpoint verification: **396 backend tests pass, zero skips; 44 BudgetCo
 
 ## Independent work remains available
 
+### Next required planning closure: versioned allocation commands
+
+Source audit after `f686a20` confirms Demo summary/history/Smart Funding still serialize version 1;
+assignment and Move Money ignore their supplied expected version. Live checks the locked budget
+version before assignment delta/no-op evaluation and increments once per appended operation.
+Live Smart Funding creates ONE operation with one Unassigned debit and all category credits.
+Do not implement Demo parity by incrementing a counter once per target in the existing loop.
+
+Required implementation boundary:
+
+- Preserve dated projection and existing fixture provenance. Fresh provider version starts at zero;
+  deterministic fixture operations establish their explicit baseline. Reads never advance a version.
+- Validate expected version at the actual synchronous mutation boundary. A stale no-op also conflicts;
+  a current no-op neither creates history nor advances the version. Preserve resource/capability checks.
+- Represent compound funding as one logical operation with stable identity, actor, date, source, note,
+  balanced postings and ONE version increment. Validate all proposals and the combined prospective
+  projection before publishing any part of the command. Reject the entire operation on failure.
+- History must group the complete operation, not expose a partial compound operation through a
+  visible destination. Its API `allocation_version` is the current budget concurrency token, as in
+  the server contract; do not invent a per-operation historical version field in the public payload.
+- Assignment, moves, Smart Funding and other actual allocation commands must invalidate outstanding
+  previews consistently. Existing legacy test literals `expectedVersion: 1` are not valid evidence:
+  adapters should use the observed token, while new adversarial tests deliberately send stale tokens.
+- Prove one winner from two commands using the same token, refusal after intervening changes even
+  if money returns to the prior values, atomic multi-target funding, no-op semantics, reload/history
+  identity, whole-operation privacy and unchanged account/reconciliation/card observations.
+- Run shared financial/period vectors and actual production month/move/funding UI tests; retain the
+  server's PostgreSQL race proof. No new migration is needed merely for deterministic-provider parity.
+
+Reconciliation input/date/consent parity was corrected in `5be09de`; a bounded authoritative cutoff
+observation for partially visible histories remains separate follow-up. Forecast scope (`bed7c93`)
+and chronological lows (`f686a20`) are now verified. These corrections do not complete prospective
+cash rollover, later-reservation explanation, version parity, clocks or the Local Device provider.
+
 Full structured export fidelity, bounded hydration in other reports, actual Docker/Compose recovery,
 Local Device/import dependencies and the remaining roadmap are not closed by the current checkpoints.
 The commercial purchase-model decision is external; this planning work is not blocked on it.

@@ -6,6 +6,15 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`f686a20` is pushed, clean and remote-matched. Re-reading the v0.9 required contract identifies
+allocation-version parity as the next planning-completion task, rather than declaring hardening
+checkpoints to be milestone closure. `PERSISTENT-MONTH-IMPLEMENTATION.md` now records the concrete
+boundary: observed-token guards, stale/no-op semantics, atomic compound Smart Funding, one version
+increment per logical operation and whole-operation history privacy. Current Demo hardcodes version
+1 and ignores assignment/move tokens; its target-by-target funding loop must not be given partial
+version semantics. Implement the complete bounded contract and test production paths.
+Report arithmetic, uniform clocks, rollover history and the remaining roadmap remain open too.
+
 `bed7c93` pushed forecast privacy. Current chronological projection correction is reproduced against
 the server: 10,000 start, -8,000 bill, neutral transfer, +9,000 income ends 11,000 but reaches 2,000
 in between. Demo previously incorrectly reported 10,000. Sorted occurrences and atomic transfer
