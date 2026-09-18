@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`c08867d` is pushed. Coordinated source capture now requires an explicit Compose project, reads
+recovery material from the running API, pauses that API while copying SQL and objects, and resumes
+it before interactive encryption. Failure cleanup attempts to resume only a source it attempted to
+pause. Focused tests: **31 pass**; full backend: **334 pass, zero skips**. Actual Docker execution
+remains an open gate; command doubles are not runtime proof. External writers must be excluded.
+No human data or Swift changes. Next: recurring-target cadence correctness. **DO NOT RETEST**.
+
 `87e3146` is pushed (real encrypted PostgreSQL recovery). Next verified correction restricts restore
 to a new/schema-only database and empty object store, with bounded locked guards, quiesced recovery
 API, non-root object copying, no object deletion and stopped-on-failure behavior. Real populated-target

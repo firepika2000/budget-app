@@ -49,7 +49,10 @@ The API container applies forward-only database migrations before accepting traf
 
 ## Routine operations
 
-- Run `./scripts/backup.sh --project-name budget-server` on a schedule and copy encrypted files off-host.
+- At regular intervals, run `./scripts/backup.sh --project-name budget-server` interactively and copy
+  encrypted files off-host. It pauses the named API for coordinated capture, resumes it before the
+  passphrase prompt, and requires that no other writers share its database/objects. Unattended
+  recipient-key backup and retention are not yet implemented; a cron entry cannot answer the prompt.
 - Perform a test restore on a separate instance periodically.
 - Monitor `docker compose ps` and the `/api/v1/health` endpoint.
 - Renew the JWT secret only as a deliberate sign-out-all-users operation.

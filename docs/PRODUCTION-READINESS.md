@@ -26,12 +26,22 @@ Checkpoint completion is followed by the next unblocked engineering task.
 
 ## Current execution order
 
-1. Finish v0.8: demand-loaded reports with current credentials, correct cache invalidation and
-   visible loading/retry states; exact projection edge cases; report/privacy/accessibility audit.
-2. Complete broad v0.8 automated closure, including disposable PostgreSQL migrations/recovery.
-3. Reconcile roadmap sequencing with the approved planning/import/local-data mission, preserving
-   the existing normal-user server distribution requirement and financial invariants.
+1. v0.8 automated checkpoint is recorded in V0.8-CLOSURE-AUDIT.md; human acceptance remains pending.
+2. Recovery hardening now includes complete archive validation, real encrypted PostgreSQL recovery,
+   fresh-target guards and coordinated source capture. Actual Docker execution remains open.
+3. Proceed with V0.9-PLANNING-POWER-PLAN.md: reproduce and correct recurring-target cadence, then
+   scoped snooze and planning closure. Preserve the normal-user server distribution requirement.
 4. Continue the highest-priority unblocked engineering gate through release-candidate readiness.
+
+### Coordinated source backup checkpoint — 2026-09-18
+
+Following `c08867d`, backup requires an explicitly named source project and briefly pauses its API
+while capturing the database and attachment objects. Recovery keys are validated before pausing;
+the API resumes before the passphrase prompt, with failure cleanup attempting recovery of running
+state. No zero-downtime or external-writer snapshot guarantee is claimed. Focused script/crypto tests:
+**31 passed**; full backend including disposable PostgreSQL: **334 passed, zero skips**
+(`/tmp/budget-coordinated-backup-full.log`). Docker command sequencing is tested with doubles;
+actual Compose runtime remains unverified. Human Live and Simulator data were not touched.
 
 ## Human data and migration ledger
 

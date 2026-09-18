@@ -95,15 +95,20 @@ def _backup_environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
         """#!/usr/bin/env bash
 printf "%s\\n" "$*" >> "$FAKE_DOCKER_LOG"
 if [[ "$*" == *"exec -T database pg_dump"* ]]; then
+  [[ "${BACKUP_TEST_FAIL_DUMP:-}" != 1 ]] || exit 1
   printf 'CREATE TABLE restored (id integer);\\n'
 elif [[ "$*" == *"SELECT version_num FROM alembic_version"* ]]; then
   printf '0021_scheduled_payee_id\\n'
 elif [[ "$*" == *"cp api:/var/lib/budget-app/attachments/."* ]]; then
+  [[ "${BACKUP_TEST_FAIL_COPY:-}" != 1 ]] || exit 1
   destination="${@: -1}"
   mkdir -p "$destination"
   printf 'encrypted-object' > "${destination%/}/object-1"
 elif [[ "$*" == *"exec -T api sh -c"* ]]; then
+  [[ "${BACKUP_TEST_FAIL_SOURCE:-}" != 1 ]] || exit 1
   printf 'BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=test-key\\n'
+elif [[ "$*" == *"start api"* ]]; then
+  [[ "${BACKUP_TEST_FAIL_START:-}" != 1 ]] || exit 1
 fi
 """
     )
@@ -143,8 +148,13 @@ def test_backup_targets_named_project_and_archives_database_objects_key_and_mani
     )
     assert result.returncode == 0, result.stderr
     calls = log.read_text().splitlines()
-    assert len(calls) == 4
+    assert len(calls) == 6
     assert all("--project-name budget-source" in call for call in calls)
+    assert "exec -T api sh -c" in calls[0]
+    assert "stop api" in calls[1]
+    assert "pg_dump" in calls[2]
+    assert "cp api:" in calls[4]
+    assert "start api" in calls[5]
     archives = list(output.glob("budget-*.tar.gz.age"))
     assert len(archives) == 1
     with tarfile.open(archives[0], "r:gz") as tar:
@@ -373,3 +383,29 @@ def test_failed_api_start_attempts_to_stop_recovery_again(tmp_path):
     assert len([call for call in calls if "stop api" in call]) == 2
     assert "stop api" in calls[-1]
     assert "recovery API remains stopped" in result.stderr
+
+
+def test_backup_requires_explicit_source_before_any_service_action(tmp_path):
+    environment, log = _backup_environment(tmp_path)
+    result = subprocess.run([str(BACKUP), str(tmp_path / "backups")], env=environment, text=True, capture_output=True)
+    assert result.returncode == 2
+    assert not log.exists()
+
+
+@pytest.mark.parametrize("failure", ["DUMP", "COPY", "START", "SOURCE"])
+def test_backup_failure_resumes_only_a_source_it_attempted_to_pause(tmp_path, failure):
+    environment, log = _backup_environment(tmp_path)
+    environment[f"BACKUP_TEST_FAIL_{failure}"] = "1"
+    output = tmp_path / "backups"
+    result = subprocess.run([str(BACKUP), "--project-name", "source", str(output)], env=environment, text=True, capture_output=True)
+    assert result.returncode != 0
+    calls = log.read_text().splitlines()
+    if failure == "SOURCE":
+        assert len(calls) == 1
+    else:
+        assert any("stop api" in call for call in calls)
+        assert "start api" in calls[-1]
+    if failure == "START":
+        assert "Unable to resume the source API" in result.stderr
+    assert list(output.iterdir()) == []
+    assert not any("-delete" in call or " psql --single-transaction" in call for call in calls)

@@ -85,12 +85,21 @@ metadata (including the Alembic revision), and attachment-key recovery material,
 passphrase-encrypts the complete archive with `age`. Its restrictive temporary directory is removed on
 exit. Backups default to `server/backups/`, which is ignored by Git. Store copies away from the server
 and keep the passphrase separately.
+An explicit source project name is required. The source API must already be running: the script
+captures its key configuration, pauses it while dumping SQL and copying objects, and resumes it
+before encryption/passphrase interaction. Plan for that brief maintenance window and ensure no
+separate processes write to the same database/object volume. Failure cleanup attempts to resume
+the source and reports any inability to do so. It never restores SQL or erases source objects.
+This is coordinated single-writer capture, not a zero-downtime distributed snapshot.
 Manifest generation includes every regular payload file, including nested/hidden objects, and refuses
 links or special files. A final backup name is published atomically only after encryption succeeds;
 an existing backup is never overwritten. The backup destination must support same-filesystem hard links.
 On macOS, automatic AppleDouble sidecars are excluded from archive creation without changing source
 attributes. Archives with unmanifested members are rejected rather than silently restored. Preserve
 any rejected older archive unchanged; do not bypass validation or delete the last known backup.
+The current CLI requires a terminal passphrase prompt. Unattended key-recipient backup, retention
+and normal-user scheduling remain separate product work; do not put a passphrase in a shell command
+or invent an unsupported environment-variable bypass.
 
 Restore is intentionally restricted to a **new, empty recovery deployment**, not an in-place
 overwrite of an existing household. Start that deployment so its schema exists, but do not complete
