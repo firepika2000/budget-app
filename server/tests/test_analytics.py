@@ -618,6 +618,19 @@ def test_recorded_interest_is_explicit_split_aware_filterable_and_netted(client,
     assert loan_only["recorded_interest_range_minor"] == 2500
 
 
+def test_all_recorded_interest_includes_prior_years_but_not_future_observations(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    _, category = create_budget_structure(client, owner_token, budget["id"])
+    card = client.post(f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token), json={"name": "Card", "account_type": "credit"}).json()
+    for day, amount in [("2024-06-01", -200), ("2026-08-01", -100), ("2026-09-01", -999)]:
+        record(client, owner_token, budget["id"], account_id=card["id"], category_id=category["id"], amount_minor=amount, occurred_on=day, financial_classification="interest_charge")
+    response = client.get(f"/api/v1/budgets/{budget['id']}/reports/debt?start_date=2026-08-01&end_date=2026-08-31", headers=auth(owner_token))
+    assert response.status_code == 200, response.text
+    assert response.json()["recorded_interest_range_minor"] == 100
+    assert response.json()["recorded_interest_lifetime_minor"] == 300
+    assert response.json()["interest_tracking_started_on"] == "2024-06-01"
+
+
 def test_recorded_interest_respects_category_scope_on_visible_debt_account(client, owner_token, session_factory):
     from .test_delegated_access import add_child, configure_child
 
@@ -658,7 +671,7 @@ def test_recorded_interest_respects_category_scope_on_visible_debt_account(clien
     restricted = client.get(url, headers=auth(child_token))
     assert restricted.status_code == 200, restricted.text
     body = restricted.json()
-    for field in ("recorded_interest_range_minor", "recorded_interest_month_minor", "recorded_interest_ytd_minor", "recorded_interest_trailing_12_minor"):
+    for field in ("recorded_interest_range_minor", "recorded_interest_month_minor", "recorded_interest_ytd_minor", "recorded_interest_trailing_12_minor", "recorded_interest_lifetime_minor"):
         assert body[field] == 1000, field
     assert body["accounts"][0]["recorded_interest_minor"] == 1000
     assert body["interest_tracking_started_on"] == "2026-09-10"

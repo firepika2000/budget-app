@@ -40,8 +40,8 @@ with clean `TEST SUCCEEDED`; all 11 shared strategy vectors remain exact. No mig
 
 - Current branch: `codex/development`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
-- Latest independently verified pushed checkpoint: `b9c852d` (real PostgreSQL/attachment recovery)
-- Push status: checkpoints through `b9c852d` are pushed. Later dated entries supersede historical pending notes below.
+- Latest independently verified pushed checkpoint: `dcc871f` (large-history summary baseline)
+- Push status: checkpoints through `dcc871f` are pushed. Later dated entries supersede historical pending notes below.
 
 Focused report read-contract preparation follows this checkpoint. It preserves existing eager
 hydration while separating report selection and current-credential resolution for upcoming demand
@@ -80,6 +80,12 @@ package 35 Core + 46 API, native 84 and three production UI cases passed. Summar
 server update together, with no additional migration. Existing unapplied human Live migrations
 remain unapplied. Next: representative report computation/fan-out measurement, accessibility
 review, and remaining v0.8 closure before the broader mission backlog. DO NOT RETEST yet.
+
+Debt-report follow-up: all-recorded interest through the observation date, historical Demo coverage
+cutoff, Debt period selector, draft custom dates and money-neutral report-error reset. Full backend
+302/302, package 35+46, final native 85 and three production UI cases passed. No migration. Remaining
+v0.8 review includes broader scenario interaction/accessibility and authorization/golden-vector
+coverage reconciliation; do not mark product or human closure merely from this checkpoint.
 - Active mission: [Production readiness ledger](PRODUCTION-READINESS.md); finish v0.8 and continue independent engineering toward an App Store release candidate.
 - Next task: demand-loaded Insights reports, authoritative invalidation, loading/error states and request-count evidence.
 - Human acceptance: **PENDING — DO NOT RETEST** during the autonomous run.

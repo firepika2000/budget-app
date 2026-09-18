@@ -563,6 +563,7 @@ def debt_report(
         "recorded_interest_month_minor": sum(recorded_interest(item) for item in classified if item.occurred_on >= month_start),
         "recorded_interest_ytd_minor": sum(recorded_interest(item) for item in classified if item.occurred_on >= year_start),
         "recorded_interest_trailing_12_minor": sum(recorded_interest(item) for item in classified if item.occurred_on >= trailing_start),
+        "recorded_interest_lifetime_minor": sum(recorded_interest(item) for item in classified),
         "interest_tracking_started_on": min((item.occurred_on for item in classified), default=None),
         "points": points,
         "accounts": rows,

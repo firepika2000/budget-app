@@ -171,3 +171,16 @@ statements / 0.0193s; 10,000 produced 156 bytes / 82 SQL statements / 0.8025s on
 gates bounded payload and absence of per-transaction SQL fan-out, not elapsed time. Select-in split
 batches explain bounded query growth; no machine-independent latency guarantee or PostgreSQL load
 benchmark is claimed. Source data was synthetic and never written to human Live.
+
+Debt-report completeness correction: the previously listed all-recorded interest metric was
+missing from the contract. It now sums only authorized explicit classifications through the
+selected end date, including prior years; future-to-that-observation rows are excluded. Demo's
+coverage date now respects the same cutoff. The UI labels this “All recorded through [date]” and
+retains the incomplete-history disclosure, not a claim about unrecorded lifetime finance charges.
+Debt Overview/Interest now expose the shared period selector. Custom dates use draft state until
+Apply; period changes load reports without rehydrating unrelated workspace resources. Report
+errors offer an explicit range/filter reset, proven money-neutral, so invalid selections have a
+recovery path. Legacy debt JSON omitting the new field decodes as unknown, never fabricated zero.
+Verification: analytics 58 passed; full backend 302 passed/zero skips (PG enabled); package 35 Core
+and 46 API; final native 85 passed and three production UI cases passed. Xcode finalization remained
+pending after suite completion. No new migration and no human data changes.

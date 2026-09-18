@@ -774,6 +774,7 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(report.debtMinor, 90_001)
         XCTAssertEqual(report.principalReductionMinor, 34_999)
         XCTAssertEqual(report.recordedInterestRangeMinor, 1_234)
+        XCTAssertNil(report.recordedInterestLifetimeMinor, "Older responses must not invent an unreported all-history amount")
         XCTAssertEqual(report.interestTrackingStartedOn, "2026-09-15")
         XCTAssertEqual(report.points.map(\.debtMinor), [125_000, 90_001])
         XCTAssertEqual(report.accounts.first?.accountID, "card")

@@ -912,6 +912,7 @@ class DebtReportResponse(BaseModel):
     recorded_interest_month_minor: int
     recorded_interest_ytd_minor: int
     recorded_interest_trailing_12_minor: int
+    recorded_interest_lifetime_minor: int
     interest_tracking_started_on: Optional[date]
     points: list[DebtPoint]
     accounts: list[DebtAccount]

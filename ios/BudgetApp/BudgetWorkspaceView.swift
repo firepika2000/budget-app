@@ -552,7 +552,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let openingDate = Calendar.current.date(byAdding: .day, value: -1, to: start)!
         let openingDebt = debtAccounts.reduce(Int64(0)) { $0 + max(-balance($1, openingDate), 0) }
         let debtAccountIDs = Set(debtAccounts.map(\.id))
-        let classifiedInterest = demo.visibleTransactions.filter { debtAccountIDs.contains($0.accountID) && $0.transferID == nil }.map { item -> (DemoTransaction, Int64) in
+        let classifiedInterest = demo.visibleTransactions.filter { debtAccountIDs.contains($0.accountID) && $0.transferID == nil && $0.date <= report.end }.map { item -> (DemoTransaction, Int64) in
             let amount = item.categoryIDs.count > 1
                 ? -demo.canonicalCategoryAmounts(for: item).filter { item.splitFinancialClassifications[$0.key] == "interest_charge" }.values.reduce(0, +)
                 : (item.financialClassification == "interest_charge" ? -item.amount : 0)
@@ -569,7 +569,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let yearStart = reportCalendar.date(from: reportCalendar.dateComponents([.year], from: report.end))!
         let trailingStart = reportCalendar.date(byAdding: .day, value: -364, to: report.end)!
         func recordedInterest(since value: Date) -> Int64 { classifiedInterest.filter { $0.0.date >= value && $0.0.date <= report.end }.reduce(Int64(0)) { $0 + $1.1 } }
-        let debt: APIDebtReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "opening_debt_minor": openingDebt, "debt_minor": endingDebt, "principal_reduction_minor": openingDebt - endingDebt, "recorded_interest_range_minor": recordedInterest(since: start), "recorded_interest_month_minor": recordedInterest(since: monthStart), "recorded_interest_ytd_minor": recordedInterest(since: yearStart), "recorded_interest_trailing_12_minor": recordedInterest(since: trailingStart), "interest_tracking_started_on": classifiedInterest.map { $0.0.date }.min().map(dateFormatter.string) ?? NSNull(), "points": debtPoints, "accounts": debtRows])
+        let debt: APIDebtReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "opening_debt_minor": openingDebt, "debt_minor": endingDebt, "principal_reduction_minor": openingDebt - endingDebt, "recorded_interest_range_minor": recordedInterest(since: start), "recorded_interest_month_minor": recordedInterest(since: monthStart), "recorded_interest_ytd_minor": recordedInterest(since: yearStart), "recorded_interest_trailing_12_minor": recordedInterest(since: trailingStart), "recorded_interest_lifetime_minor": classifiedInterest.reduce(Int64(0)) { $0 + $1.1 }, "interest_tracking_started_on": classifiedInterest.map { $0.0.date }.min().map(dateFormatter.string) ?? NSNull(), "points": debtPoints, "accounts": debtRows])
         let planPerformance: APIPlanPerformanceReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "points": [["period_start": month, "period_end": dateFormatter.string(from: report.end), "assigned_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.assigned }, "activity_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.activity }, "spending_minor": max(-visibleCategories.reduce(Int64(0)) { $0 + $1.activity }, 0), "carried_available_minor": visibleCategories.reduce(Int64(0)) { $0 + max($1.available - $1.assigned - $1.activity, 0) }, "available_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.available }, "overspent_minor": visibleCategories.reduce(Int64(0)) { $0 + max(-$1.available, 0) }, "ready_to_assign_minor": demo.isRestricted ? 0 : demo.readyToAssign]]])
         let delegated: APIDelegatedBudget? = demo.isRestricted ? try decode(["id": "demo-delegated", "budget_id": budget.id, "user_id": demo.persona.rawValue.lowercased(), "pool_category_id": visibleCategories.first?.id ?? "", "authority_minor": demo.delegatedAuthority, "assigned_minor": demo.delegatedAssigned, "available_to_assign_minor": demo.delegatedReadyToAssign, "allow_category_creation": true, "allow_reallocation": true, "rules": []]) : nil
         let requestRows: [APIFinancialRequest] = try decode(demo.requests.filter { !demo.isRestricted || $0.member == demo.persona }.map { item -> [String: Any] in ["id": item.id, "requester_user_id": item.member.rawValue.lowercased(), "request_type": "additional_allocation", "destination_category_id": item.categoryID, "requested_amount_minor": item.amount, "reason": item.reason, "status": item.status.lowercased().replacingOccurrences(of: " ", with: "_"), "version": item.status == "Pending" ? 0 : 1, "approved_amount_minor": item.approvedAmount.map { $0 as Any } ?? NSNull(), "source_category_id": NSNull(), "allocation_operation_id": NSNull(), "actions": []] })
@@ -1304,6 +1304,15 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func reportsReady(_ kinds: Set<WorkspaceReportKind>) -> Bool {
         loadedReportContext == reportContext && kinds.isSubset(of: loadedReportKinds)
+    }
+
+    func resetReportSelection() {
+        reportPeriod = "30d"
+        reportAccountID = ""; reportCategoryID = ""; reportCategoryGroup = ""
+        reportPayee = ""; reportMemberID = ""; reportTransactionType = ""
+        reportCleared = "all"; reportFlag = ""; reportTag = ""; includeTrackingAccounts = false
+        let range = reportRange()
+        customReportStart = range.0; customReportEnd = range.1
     }
 
     func loadReports(_ kinds: Set<WorkspaceReportKind>, retry: Bool = false) async {
@@ -3455,6 +3464,7 @@ private struct ReportLoadModifier: ViewModifier {
                             Label("Unable to load report", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
                         } description: { Text(error) } actions: {
                             Button("Retry") { Task { await store.loadReports(kinds, retry: true) } }
+                            Button("Reset range and filters") { store.resetReportSelection() }
                         }
                     } else { ProgressView("Loading report…") }
                 }
@@ -3528,7 +3538,29 @@ private struct LiveInsightsView: View {
 
 private struct ReportPeriodControls: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    var body: some View { Section("Period") { Picker("Period", selection: $store.reportPeriod) { Text("30 Days").tag("30d"); Text("60 Days").tag("60d"); Text("90 Days").tag("90d"); Text("3 Months").tag("3m"); Text("6 Months").tag("6m"); Text("Year to Date").tag("ytd"); Text("1 Year").tag("1y"); Text("Custom").tag("custom") }.onChange(of:store.reportPeriod){_,_ in Task{await store.refresh()}}; if store.reportPeriod=="custom" { DatePicker("From",selection:$store.customReportStart,displayedComponents:.date);DatePicker("Through",selection:$store.customReportEnd,displayedComponents:.date);Button("Apply custom range"){Task{await store.refresh()}} } } }
+    @State private var draftStart = Date()
+    @State private var draftEnd = Date()
+    var body: some View {
+        Section("Period") {
+            Picker("Period", selection: $store.reportPeriod) {
+                Text("30 Days").tag("30d"); Text("60 Days").tag("60d"); Text("90 Days").tag("90d")
+                Text("3 Months").tag("3m"); Text("6 Months").tag("6m")
+                Text("Year to Date").tag("ytd"); Text("1 Year").tag("1y"); Text("Custom").tag("custom")
+            }.accessibilityIdentifier("report-period")
+            if store.reportPeriod == "custom" {
+                DatePicker("From", selection: $draftStart, displayedComponents: .date)
+                DatePicker("Through", selection: $draftEnd, displayedComponents: .date)
+                Button("Apply custom range") {
+                    store.customReportStart = draftStart
+                    store.customReportEnd = draftEnd
+                }
+            }
+        }.onAppear {
+            draftStart = store.customReportStart; draftEnd = store.customReportEnd
+        }
+        .onChange(of: store.customReportStart) { _, value in draftStart = value }
+        .onChange(of: store.customReportEnd) { _, value in draftEnd = value }
+    }
 }
 
 private struct SpendingIncomeReportView: View {
@@ -3563,6 +3595,7 @@ private struct DebtInterestDestinationView: View {
     @State private var editingTermsAccount: APIAccount?
     @State private var termsRevision = 0
     var body: some View { List { Section { Picker("Debt section",selection:$choice){ForEach(SectionChoice.allCases,id:\.self){Text($0.rawValue).tag($0)}}.pickerStyle(.segmented).accessibilityIdentifier("debt-insights-sections") }
+        if choice != .payoff { ReportPeriodControls() }
         if let report=store.debtReport { switch choice { case .overview: DebtOverviewContent(report:report); case .interest: DebtInterestContent(report:report); case .payoff: DebtPayoffContent(report: report, editingTermsAccount: $editingTermsAccount, termsRevision: termsRevision) } }
         else { ContentUnavailableView("No debt",systemImage:"checkmark.circle",description:Text("Credit cards and loans will appear here when visible.")) }
     }.modifier(ReportLoadModifier(kinds: [.debt])).navigationTitle("Debt & Interest")
@@ -3582,6 +3615,10 @@ private struct DebtInterestContent: View {
             LabeledContent("This month", value: store.format(report.recordedInterestMonthMinor))
             LabeledContent("Year to date", value: store.format(report.recordedInterestYTDMinor))
             LabeledContent("Trailing 12 months", value: store.format(report.recordedInterestTrailing12Minor))
+            if let recorded = report.recordedInterestLifetimeMinor {
+                LabeledContent("All recorded through \(report.endDate)", value: store.format(recorded))
+                    .accessibilityIdentifier("recorded-interest-lifetime")
+            }
             Text(report.interestTrackingStartedOn.map { "Recorded since \($0). Earlier interest may not be classified." } ?? "No explicitly classified interest is recorded for this period.").font(.caption).foregroundStyle(.secondary)
         }
         Section("By Account") { ForEach(report.accounts.filter { $0.recordedInterestMinor != 0 }) { row in LabeledContent(row.accountName, value: store.format(row.recordedInterestMinor)) } }

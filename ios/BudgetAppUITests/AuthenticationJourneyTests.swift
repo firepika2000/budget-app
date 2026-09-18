@@ -250,6 +250,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["insights-debt-interest"].tap()
         XCTAssertTrue(app.navigationBars["Debt & Interest"].waitForExistence(timeout: 5))
         app.segmentedControls.buttons["Interest"].tap()
+        XCTAssertTrue(app.buttons["report-period"].exists || app.descendants(matching: .any)["report-period"].exists)
         let recordedInterest = app.staticTexts["Recorded Interest"]
         for _ in 0..<24 where !recordedInterest.exists { app.swipeUp() }
         XCTAssertTrue(recordedInterest.waitForExistence(timeout: 5))
@@ -257,6 +258,9 @@ final class AuthenticationJourneyTests: XCTestCase {
         let range = app.descendants(matching: .any)["recorded-interest-range"]
         XCTAssertTrue(range.exists)
         XCTAssertTrue(range.label.contains("$32.00") || String(describing: range.value).contains("$32.00"))
+        let allRecorded = app.descendants(matching: .any)["recorded-interest-lifetime"]
+        for _ in 0..<6 where !allRecorded.exists { app.swipeUp() }
+        XCTAssertTrue(allRecorded.waitForExistence(timeout: 5))
     }
 
     func testInsightsReportFiltersAreReachableAndPreserveAppliedContext() {

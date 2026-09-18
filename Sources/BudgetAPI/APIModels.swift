@@ -1170,6 +1170,7 @@ public struct APIDebtReport: Decodable, Equatable, Sendable {
     public let recordedInterestMonthMinor: Int64
     public let recordedInterestYTDMinor: Int64
     public let recordedInterestTrailing12Minor: Int64
+    public let recordedInterestLifetimeMinor: Int64?
     public let interestTrackingStartedOn: String?
     public let points: [APIDebtPoint]
     public let accounts: [APIDebtAccount]
@@ -1182,6 +1183,7 @@ public struct APIDebtReport: Decodable, Equatable, Sendable {
         case recordedInterestMonthMinor = "recorded_interest_month_minor"
         case recordedInterestYTDMinor = "recorded_interest_ytd_minor"
         case recordedInterestTrailing12Minor = "recorded_interest_trailing_12_minor"
+        case recordedInterestLifetimeMinor = "recorded_interest_lifetime_minor"
         case interestTrackingStartedOn = "interest_tracking_started_on"
     }
 }

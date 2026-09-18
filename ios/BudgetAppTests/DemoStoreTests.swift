@@ -6,6 +6,29 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testReportSelectionResetRecoversInvalidContextWithoutMoneyMutation() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let balances = store.accountBalances
+        let summary = store.summary
+        store.reportPeriod = "custom"
+        store.customReportStart = BudgetWorkspaceStore.parseDate("1900-01-01")
+        store.reportAccountID = "no-longer-visible"
+        store.reportTag = "stale-filter"
+        store.includeTrackingAccounts = true
+        store.resetReportSelection()
+        XCTAssertEqual(store.reportPeriod, "30d")
+        XCTAssertEqual(store.reportAccountID, "")
+        XCTAssertEqual(store.reportTag, "")
+        XCTAssertFalse(store.includeTrackingAccounts)
+        let range = store.reportRange()
+        XCTAssertEqual(store.customReportStart, range.0)
+        XCTAssertEqual(store.customReportEnd, range.1)
+        XCTAssertEqual(store.summary, summary)
+        XCTAssertEqual(store.accountBalances, balances)
+    }
+
+    @MainActor
     func testDemoDebtStrategyUsesSharedExactEngineWithoutMutation() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()
@@ -57,6 +80,8 @@ final class DemoStoreTests: XCTestCase {
         await store.refresh()
         await store.loadReports([.debt])
         let withoutTracking = try XCTUnwrap(store.debtReport)
+        XCTAssertEqual(withoutTracking.recordedInterestLifetimeMinor, 0)
+        XCTAssertNil(withoutTracking.interestTrackingStartedOn, "Future classified observations must not leak into an earlier coverage date")
         XCTAssertTrue(withoutTracking.accounts.contains(where: { $0.accountID == "auto" }))
         store.includeTrackingAccounts = true
         await store.refresh()
