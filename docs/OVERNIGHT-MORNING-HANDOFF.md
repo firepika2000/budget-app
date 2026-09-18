@@ -6,6 +6,15 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`f0cb4c1` is pushed (server snooze + migration). Next verified native checkpoint adds shared month-
+labelled snooze/resume, explicit paused Plan rows, Demo month metadata, current-credential Live
+command and authoritative refresh. **39 Core + 49 API; 92 native XCTest + three production UI tests
+pass**, Xcode 27 Beta build/test succeeds. Prior backend checkpoint: **356 pass, zero skips**.
+No extra migration. Human Live stays at 0020; do not migrate/retest now. Next: remove the unchecked
+Int64 sum from Monthly plan cost, then remaining focused planning/closure audit. Initial Section
+initializer compile failure was corrected; final evidence `/tmp/budget-snooze-native-verified.log`.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 `ce4cef1` is pushed. Next verified server checkpoint adds month-specific snooze with additive
 `0028_target_snoozes`, exact guidance suppression only, idempotent scoped command, target-row locking,
 and cleanup on target deletion. **356 backend pass, zero skips** including populated migration,

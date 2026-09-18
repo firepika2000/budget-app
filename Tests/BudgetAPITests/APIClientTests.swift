@@ -2,6 +2,22 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testTargetSnoozeUsesMonthScopedMetadataOnlyRequest() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "PUT")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/categories/c1/target/snooze/2027-02-01")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            let body = try JSONSerialization.jsonObject(with: requestBody(request)) as! [String: Bool]
+            XCTAssertEqual(body, ["is_snoozed": true])
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data(#"{"category_id":"c1","month":"2027-02-01","is_snoozed":true}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        try await client.setCategoryTargetSnoozed(budgetID: "b1", categoryID: "c1", month: "2027-02-01", isSnoozed: true, token: "current")
+    }
+
     func testDebtCostUsesAuthorizedAccountFilterAndPreservesUnknownAndExactMoney() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

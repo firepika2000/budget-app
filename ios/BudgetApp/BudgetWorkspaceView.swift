@@ -353,6 +353,7 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
     func setCategoryFavorite(id: String, isFavorite: Bool, sortOrder: Int) async throws
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws
     func deleteTarget(categoryID: String) async throws
+    func setTargetSnoozed(categoryID: String, month: String, isSnoozed: Bool) async throws
     func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws
     func cancelRequest(id: String, version: Int, note: String) async throws
     func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws
@@ -441,7 +442,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             if let target = item.target {
                 let funding = try TargetPlanning.funding(type: item.targetType, amountMinor: target,
                     targetDate: item.targetDate, recurrenceMonths: item.targetRecurrenceMonths,
-                    minimumMinor: item.targetMinimumContribution, isActive: item.targetIsActive,
+                    minimumMinor: item.targetMinimumContribution, isActive: item.targetIsActive && !item.targetSnoozedMonths.contains(month),
                     month: month, assignedMinor: item.assigned, availableMinor: item.available)
                 recommended = funding.recommendedContributionMinor
                 effectiveTargetDate = funding.effectiveTargetDate
@@ -449,7 +450,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let overspent = max(-item.available, 0)
             let creditSpent = max(-(creditSpend[item.id] ?? 0), 0)
             let creditOverspent = min(overspent, creditSpent)
-            return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": max(item.available - item.assigned - item.activity, 0), "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": max(creditSpent - creditOverspent, 0), "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "target_date": effectiveTargetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
+            return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": max(item.available - item.assigned - item.activity, 0), "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": max(creditSpent - creditOverspent, 0), "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "is_target_snoozed": item.targetSnoozedMonths.contains(month), "target_date": effectiveTargetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
         }
         let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.readyToAssign, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": 1, "categories": summaryRows])
         let start = report.start
@@ -968,7 +969,19 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     func deleteTarget(categoryID: String) async throws {
         guard let index = demo.categories.firstIndex(where: { $0.id == categoryID }) else { throw workspaceRepositoryError("Category not found.") }
+        demo.categories[index].targetSnoozedMonths = []
         demo.categories[index].target = nil; demo.categories[index].targetDate = nil; demo.categories[index].targetType = "savings_balance"; demo.categories[index].targetRecurrenceMonths = nil; demo.categories[index].targetMinimumContribution = 0; demo.categories[index].targetPriority = 50; demo.categories[index].targetIsActive = true
+    }
+    func setTargetSnoozed(categoryID: String, month: String, isSnoozed: Bool) async throws {
+        guard budget.can("manage_planning"), !demo.isRestricted else { throw workspaceRepositoryError("Target management is not permitted.") }
+        guard month.hasSuffix("-01"), BudgetWorkspaceStore.dateString(BudgetWorkspaceStore.parseDate(month)) == month else {
+            throw workspaceRepositoryError("Choose the first day of a valid planning month.")
+        }
+        guard let index = demo.categories.firstIndex(where: { $0.id == categoryID }),
+              demo.categories[index].target != nil, !demo.categories[index].isHidden,
+              !demo.archivedGroups.contains(demo.categories[index].group) else { throw workspaceRepositoryError("Target not found.") }
+        if isSnoozed { demo.categories[index].targetSnoozedMonths.insert(month) }
+        else { demo.categories[index].targetSnoozedMonths.remove(month) }
     }
     func createSchedule(_ operation: ScheduleOperation) async throws { demo.schedules.append(.init(id: UUID().uuidString, accountID: operation.accountID, destinationAccountID: operation.destinationAccountID, categoryID: operation.categoryID, name: operation.name, amount: operation.amountMinor, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: operation.memo, financialClassification: operation.financialClassification, isActive: operation.isActive)) }
     func updateSchedule(id: String, operation: ScheduleOperation) async throws {
@@ -1000,7 +1013,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             guard let amount = category.target else { return nil }
             return (category, try TargetPlanning.funding(type: category.targetType, amountMinor: amount,
                 targetDate: category.targetDate, recurrenceMonths: category.targetRecurrenceMonths,
-                minimumMinor: category.targetMinimumContribution, isActive: category.targetIsActive,
+                minimumMinor: category.targetMinimumContribution, isActive: category.targetIsActive && !category.targetSnoozedMonths.contains(month),
                 month: month, assignedMinor: category.assigned, availableMinor: category.available))
         }.sorted { left, right in
             if left.0.targetPriority != right.0.targetPriority { return left.0.targetPriority > right.0.targetPriority }
@@ -1146,6 +1159,10 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func setCategoryFavorite(id: String, isFavorite: Bool, sortOrder: Int) async throws { try await credentials.prepare(); if isFavorite { _ = try await client.favoriteCategory(budgetID: budget.id, categoryID: id, sortOrder: sortOrder, token: token) } else { try await client.unfavoriteCategory(budgetID: budget.id, categoryID: id, token: token) } }
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws { try await credentials.prepare(); _ = try await client.upsertCategoryTarget(budgetID: budget.id, categoryID: categoryID, target: value, token: token) }
     func deleteTarget(categoryID: String) async throws { try await credentials.prepare(); try await client.deleteCategoryTarget(budgetID: budget.id, categoryID: categoryID, token: token) }
+    func setTargetSnoozed(categoryID: String, month: String, isSnoozed: Bool) async throws {
+        try await credentials.prepare()
+        try await client.setCategoryTargetSnoozed(budgetID: budget.id, categoryID: categoryID, month: month, isSnoozed: isSnoozed, token: token)
+    }
     func createSchedule(_ operation: ScheduleOperation) async throws { try await credentials.prepare(); _ = try await client.createScheduledTransaction(budgetID: budget.id, schedule: operation.apiValue, token: token) }
     func updateSchedule(id: String, operation: ScheduleOperation) async throws { try await credentials.prepare(); _ = try await client.updateScheduledTransaction(budgetID: budget.id, scheduleID: id, schedule: operation.apiValue, token: token) }
     func deleteSchedule(id: String) async throws { try await credentials.prepare(); try await client.deleteScheduledTransaction(budgetID: budget.id, scheduleID: id, token: token) }
@@ -1696,6 +1713,10 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws {
         try await commands().saveTarget(categoryID: categoryID, value: value)
+        await refresh()
+    }
+    func setTargetSnoozed(categoryID: String, month: String, isSnoozed: Bool) async throws {
+        try await commands().setTargetSnoozed(categoryID: categoryID, month: month, isSnoozed: isSnoozed)
         await refresh()
     }
     func deleteTarget(categoryID: String) async throws {
@@ -2649,7 +2670,7 @@ private enum PlanFocus: String, CaseIterable, Identifiable { case all = "All", f
 private struct PlanCategoryRow: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let category: APICategoryMonth
-    var body: some View { VStack(alignment: .leading, spacing: 5) { HStack { Text(category.name); Spacer(); Text(store.format(category.availableMinor)).fontWeight(.semibold).foregroundStyle(category.isOverspent ? Theme.danger : .primary) }; HStack { Text("Assigned \(store.format(category.assignedMinor))"); Spacer(); Text("Activity \(store.format(category.activityMinor))") }.font(.caption).foregroundStyle(.secondary); if let overspend = store.overspendSummary(category) { Label(overspend, systemImage: (category.creditOverspentMinor ?? 0) > 0 ? "creditcard.trianglebadge.exclamationmark" : "banknote").font(.caption).foregroundStyle(Theme.danger).accessibilityLabel(overspend) } else if let funded = category.fundedCreditSpendingMinor, funded > 0 { Label("\(store.format(funded)) reserved for card payment", systemImage: "creditcard.and.123").font(.caption).foregroundStyle(Theme.healthy) }; if category.targetType != nil { ProgressView(value: targetProgress).accessibilityLabel("Target progress").accessibilityValue(targetProgress.formatted(.percent)); HStack { Label(status, systemImage: (category.underfundedMinor ?? 0) > 0 ? "target" : "checkmark.circle.fill"); Spacer(); if let needed = category.underfundedMinor, needed > 0 { Text("\(store.format(needed)) needed") } }.font(.caption).foregroundStyle((category.underfundedMinor ?? 0) > 0 ? Theme.attention : Theme.healthy) } } }
+    var body: some View { VStack(alignment: .leading, spacing: 5) { HStack { Text(category.name); Spacer(); Text(store.format(category.availableMinor)).fontWeight(.semibold).foregroundStyle(category.isOverspent ? Theme.danger : .primary) }; HStack { Text("Assigned \(store.format(category.assignedMinor))"); Spacer(); Text("Activity \(store.format(category.activityMinor))") }.font(.caption).foregroundStyle(.secondary); if let overspend = store.overspendSummary(category) { Label(overspend, systemImage: (category.creditOverspentMinor ?? 0) > 0 ? "creditcard.trianglebadge.exclamationmark" : "banknote").font(.caption).foregroundStyle(Theme.danger).accessibilityLabel(overspend) } else if let funded = category.fundedCreditSpendingMinor, funded > 0 { Label("\(store.format(funded)) reserved for card payment", systemImage: "creditcard.and.123").font(.caption).foregroundStyle(Theme.healthy) }; if category.isTargetSnoozed == true { Label("Target snoozed this month", systemImage: "pause.circle").font(.caption).foregroundStyle(.secondary) } else if category.targetType != nil { ProgressView(value: targetProgress).accessibilityLabel("Target progress").accessibilityValue(targetProgress.formatted(.percent)); HStack { Label(status, systemImage: (category.underfundedMinor ?? 0) > 0 ? "target" : "checkmark.circle.fill"); Spacer(); if let needed = category.underfundedMinor, needed > 0 { Text("\(store.format(needed)) needed") } }.font(.caption).foregroundStyle((category.underfundedMinor ?? 0) > 0 ? Theme.attention : Theme.healthy) } } }
     private var targetProgress: Double { let recommendation = category.recommendedContributionMinor ?? 0; guard recommendation > 0 else { return 1 }; return min(Double(max(recommendation - (category.underfundedMinor ?? 0), 0)) / Double(recommendation), 1) }
     private var status: String { category.isOverspent ? "Overspent" : (category.underfundedMinor ?? 0) > 0 ? "Underfunded" : category.targetType == nil ? "Available" : "Funded" }
 }
@@ -2666,7 +2687,47 @@ private struct LivePlanCategoryDetailView: View {
     private var model: APICategory? { store.categories.first { $0.id == categoryID } }
     private var transactions: [APITransaction] { store.transactions.filter { $0.categoryID == categoryID || $0.splits.contains(where: { $0.categoryID == categoryID }) } }
     private var operations: [(APIAllocationOperation, APIAllocationPosting)] { store.allocationOperations.flatMap { operation in operation.postings.filter { $0.categoryID == categoryID }.map { (operation, $0) } } }
-    var body: some View { List { if let row { Section("Plan") { LabeledContent("Available", value: store.format(row.availableMinor)); LabeledContent("Assigned this month", value: store.format(row.assignedMinor)); LabeledContent("Activity this month", value: store.format(row.activityMinor)); LabeledContent("Rollover into month", value: store.format(row.carriedAvailableMinor)); if row.targetType != nil { LabeledContent("Target recommendation", value: store.format(row.recommendedContributionMinor ?? 0)); LabeledContent("Still needed", value: store.format(row.underfundedMinor ?? 0)); if let date = row.targetDate { LabeledContent("Due", value: date) } }; if let overspend = store.overspendSummary(row) { VStack(alignment: .leading, spacing: 2) { Label(overspend, systemImage: (row.creditOverspentMinor ?? 0) > 0 && (row.cashOverspentMinor ?? 0) == 0 ? "creditcard.trianglebadge.exclamationmark" : "exclamationmark.triangle.fill").foregroundStyle(Theme.danger); Text((row.creditOverspentMinor ?? 0) > 0 ? "Unfunded card spending adds to card debt; fund the card payment category to cover it." : "Move available money here or reduce spending to cover the shortfall.").font(.caption).foregroundStyle(.secondary) } } }; Section("Actions") { if store.budget.can("assign_money") { Button("Assign money", action: assign) }; if store.budget.can("move_money") { Button("Move money", action: move) }; if store.budget.can("manage_planning") { Button(store.targets[categoryID] == nil ? "Create target" : "Manage target") { showTarget = true } }; if let model { Button(model.isFavorite ? "Remove from favorites" : "Add to favorites", systemImage: model.isFavorite ? "star.slash" : "star") { Task { do { try await store.setCategoryFavorite(id: categoryID, isFavorite: !model.isFavorite) } catch { errorMessage = error.localizedDescription } } }.accessibilityIdentifier("category-favorite-action"); Button("Edit category", action: manage) } } }; let schedules = store.scheduledTransactions.filter { $0.isActive && $0.categoryID == categoryID }; if !schedules.isEmpty { Section("Upcoming scheduled") { ForEach(schedules) { item in NavigationLink { LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode) } label: { ScheduledTransactionRow(item: item) } } } }; Section("Recent activity") { if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }; ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) } }; Section("Allocation history") { if operations.isEmpty { Text("No allocation movements available").foregroundStyle(.secondary) }; ForEach(Array(operations.enumerated()), id: \.offset) { _, value in VStack(alignment: .leading) { Text(value.0.note.isEmpty ? value.0.kind.replacingOccurrences(of: "_", with: " ").capitalized : value.0.note); HStack { Text(value.0.occurredOn); Spacer(); Text(store.format(value.1.amountMinor)).monospacedDigit() }.font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle(row?.name ?? "Category").sheet(isPresented: $showTarget) { LiveTargetEditor(categoryID: categoryID, categoryName: row?.name ?? "Category", currencyCode: store.budget.currencyCode, existing: store.targets[categoryID]) }.alert("Unable to update favorite", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
+    var body: some View { List { if store.targets[categoryID] != nil { TargetMonthSnoozeSection(categoryID: categoryID) }; if let row { Section("Plan") { LabeledContent("Available", value: store.format(row.availableMinor)); LabeledContent("Assigned this month", value: store.format(row.assignedMinor)); LabeledContent("Activity this month", value: store.format(row.activityMinor)); LabeledContent("Rollover into month", value: store.format(row.carriedAvailableMinor)); if row.targetType != nil { LabeledContent("Target recommendation", value: store.format(row.recommendedContributionMinor ?? 0)); LabeledContent("Still needed", value: store.format(row.underfundedMinor ?? 0)); if let date = row.targetDate { LabeledContent("Due", value: date) } }; if let overspend = store.overspendSummary(row) { VStack(alignment: .leading, spacing: 2) { Label(overspend, systemImage: (row.creditOverspentMinor ?? 0) > 0 && (row.cashOverspentMinor ?? 0) == 0 ? "creditcard.trianglebadge.exclamationmark" : "exclamationmark.triangle.fill").foregroundStyle(Theme.danger); Text((row.creditOverspentMinor ?? 0) > 0 ? "Unfunded card spending adds to card debt; fund the card payment category to cover it." : "Move available money here or reduce spending to cover the shortfall.").font(.caption).foregroundStyle(.secondary) } } }; Section("Actions") { if store.budget.can("assign_money") { Button("Assign money", action: assign) }; if store.budget.can("move_money") { Button("Move money", action: move) }; if store.budget.can("manage_planning") { Button(store.targets[categoryID] == nil ? "Create target" : "Manage target") { showTarget = true } }; if let model { Button(model.isFavorite ? "Remove from favorites" : "Add to favorites", systemImage: model.isFavorite ? "star.slash" : "star") { Task { do { try await store.setCategoryFavorite(id: categoryID, isFavorite: !model.isFavorite) } catch { errorMessage = error.localizedDescription } } }.accessibilityIdentifier("category-favorite-action"); Button("Edit category", action: manage) } } }; let schedules = store.scheduledTransactions.filter { $0.isActive && $0.categoryID == categoryID }; if !schedules.isEmpty { Section("Upcoming scheduled") { ForEach(schedules) { item in NavigationLink { LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode) } label: { ScheduledTransactionRow(item: item) } } } }; Section("Recent activity") { if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }; ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) } }; Section("Allocation history") { if operations.isEmpty { Text("No allocation movements available").foregroundStyle(.secondary) }; ForEach(Array(operations.enumerated()), id: \.offset) { _, value in VStack(alignment: .leading) { Text(value.0.note.isEmpty ? value.0.kind.replacingOccurrences(of: "_", with: " ").capitalized : value.0.note); HStack { Text(value.0.occurredOn); Spacer(); Text(store.format(value.1.amountMinor)).monospacedDigit() }.font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle(row?.name ?? "Category").sheet(isPresented: $showTarget) { LiveTargetEditor(categoryID: categoryID, categoryName: row?.name ?? "Category", currencyCode: store.budget.currencyCode, existing: store.targets[categoryID]) }.alert("Unable to update favorite", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
+}
+
+private struct TargetMonthSnoozeSection: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let categoryID: String
+    @State private var saving = false
+    @State private var errorMessage: String?
+    private var month: String { String(BudgetWorkspaceStore.dateString(store.planMonth).prefix(7)) + "-01" }
+    private var monthName: String { store.planMonth.formatted(.dateTime.month(.wide).year()) }
+    private var snoozed: Bool { store.summary?.categories.first { $0.categoryID == categoryID }?.isTargetSnoozed == true }
+    var body: some View {
+        Section {
+            if snoozed {
+                Label("Snoozed for \(monthName)", systemImage: "pause.circle")
+                    .accessibilityIdentifier("target-month-snoozed-state")
+            }
+            if store.targets[categoryID]?.isActive == false {
+                Text("This target is globally inactive. Manage the target to reactivate it.")
+            } else if !snoozed { Text("Target guidance is active for \(monthName).") }
+            if store.budget.can("manage_planning"), store.targets[categoryID]?.isActive == true {
+                Button(snoozed ? "Resume target for \(monthName)" : "Snooze for \(monthName)") {
+                    let selectedMonth = month
+                    let newValue = !snoozed
+                    saving = true
+                    Task {
+                        defer { saving = false }
+                        do { try await store.setTargetSnoozed(categoryID: categoryID, month: selectedMonth, isSnoozed: newValue) }
+                        catch { errorMessage = error.localizedDescription }
+                    }
+                }.disabled(saving).accessibilityIdentifier("target-month-snooze")
+            }
+        } header: {
+            Text("Target this month")
+        } footer: {
+            Text("Snoozing skips guidance for this month only. Other months and money already assigned are unchanged.")
+        }
+        .alert("Unable to update target guidance", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("OK", role: .cancel) { }
+        } message: { Text(errorMessage ?? "Unknown error") }
+    }
 }
 
 private struct LiveTargetEditor: View {

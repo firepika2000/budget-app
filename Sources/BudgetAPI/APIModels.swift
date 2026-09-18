@@ -749,6 +749,11 @@ public struct APICategoryTarget: Identifiable, Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case id, priority; case categoryID="category_id", targetType="target_type", targetAmountMinor="target_amount_minor", targetDate="target_date", recurrenceMonths="recurrence_months", minimumContributionMinor="minimum_contribution_minor", isActive="is_active" }
 }
 
+struct APITargetSnoozeUpdate: Encodable {
+    let isSnoozed: Bool
+    enum CodingKeys: String, CodingKey { case isSnoozed = "is_snoozed" }
+}
+
 public struct APICategoryTargetUpsert: Encodable, Equatable, Sendable {
     public let targetType: String; public let targetAmountMinor: Int64; public let targetDate: String?; public let recurrenceMonths: Int?; public let minimumContributionMinor: Int64; public let priority: Int; public let isActive: Bool
     public init(targetType: String, targetAmountMinor: Int64, targetDate: String? = nil, recurrenceMonths: Int? = nil, minimumContributionMinor: Int64 = 0, priority: Int = 50, isActive: Bool = true) { self.targetType=targetType;self.targetAmountMinor=targetAmountMinor;self.targetDate=targetDate;self.recurrenceMonths=recurrenceMonths;self.minimumContributionMinor=minimumContributionMinor;self.priority=priority;self.isActive=isActive }
@@ -1377,6 +1382,7 @@ public struct APICategoryMonth: Identifiable, Decodable, Equatable, Sendable {
     public let targetType: String?
     public let targetAmountMinor: Int64?
     public let targetDate: String?
+    public let isTargetSnoozed: Bool?
     public let recommendedContributionMinor: Int64?
     public let underfundedMinor: Int64?
     public let cashOverspentMinor: Int64?
@@ -1392,6 +1398,7 @@ public struct APICategoryMonth: Identifiable, Decodable, Equatable, Sendable {
         case availableMinor = "available_minor"
         case isOverspent = "is_overspent"
         case targetType = "target_type", targetAmountMinor = "target_amount_minor", targetDate = "target_date"
+        case isTargetSnoozed = "is_target_snoozed"
         case recommendedContributionMinor = "recommended_contribution_minor", underfundedMinor = "underfunded_minor"
         case cashOverspentMinor = "cash_overspent_minor", creditOverspentMinor = "credit_overspent_minor", fundedCreditSpendingMinor = "funded_credit_spending_minor"
     }

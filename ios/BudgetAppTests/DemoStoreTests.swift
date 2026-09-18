@@ -6,6 +6,44 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testTargetSnoozeSharedStoreRefreshAndMonthIsolationAreMoneyNeutral() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        store.planMonth = BudgetWorkspaceStore.parseDate("2026-09-01")
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        try await store.saveTarget(categoryID: "groceries", value: APICategoryTargetUpsert(targetType: "monthly_funding", targetAmountMinor: 100000))
+        let before = try XCTUnwrap(store.summary?.categories.first { $0.categoryID == "groceries" })
+        let rta = store.summary?.readyToAssignMinor
+        let balances = store.accounts.map { store.balance(for: $0) }
+        let transactions = store.transactions
+        for _ in 0..<2 {
+            try await store.setTargetSnoozed(categoryID: "groceries", month: "2026-09-01", isSnoozed: true)
+            await store.refresh()
+            let row = try XCTUnwrap(store.summary?.categories.first { $0.categoryID == "groceries" })
+            XCTAssertEqual(row.isTargetSnoozed, true)
+            XCTAssertEqual(row.recommendedContributionMinor, 0)
+            XCTAssertEqual(row.underfundedMinor, 0)
+            XCTAssertEqual(row.assignedMinor, before.assignedMinor)
+            XCTAssertEqual(row.activityMinor, before.activityMinor)
+            XCTAssertEqual(row.availableMinor, before.availableMinor)
+            XCTAssertEqual(store.targets["groceries"]?.isActive, true)
+            let preview = try await store.smartFundingPreview(month: "2026-09-01")
+            XCTAssertFalse(preview.proposals.contains { $0.categoryID == "groceries" })
+        }
+        store.planMonth = BudgetWorkspaceStore.parseDate("2026-10-01")
+        await store.refresh()
+        XCTAssertEqual(store.summary?.categories.first { $0.categoryID == "groceries" }?.isTargetSnoozed, false)
+        XCTAssertEqual(store.summary?.categories.first { $0.categoryID == "groceries" }?.recommendedContributionMinor, 100000)
+        store.planMonth = BudgetWorkspaceStore.parseDate("2026-09-01")
+        await store.refresh()
+        XCTAssertEqual(store.summary?.categories.first { $0.categoryID == "groceries" }?.isTargetSnoozed, true)
+        try await store.setTargetSnoozed(categoryID: "groceries", month: "2026-09-01", isSnoozed: false)
+        XCTAssertEqual(store.summary?.categories.first { $0.categoryID == "groceries" }?.recommendedContributionMinor, before.recommendedContributionMinor)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, rta)
+        XCTAssertEqual(store.accounts.map { store.balance(for: $0) }, balances)
+        XCTAssertEqual(store.transactions, transactions)
+    }
+
+    @MainActor
     func testSmartFundingPriorityShortfallAndOverflowAreExact() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
         source.demo.categories = [

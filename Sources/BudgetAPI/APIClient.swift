@@ -306,6 +306,9 @@ public struct APIClient {
     public func categoryTarget(budgetID: String, categoryID: String, token: String) async throws -> APICategoryTarget? { try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/target", token: token) }
     public func upsertCategoryTarget(budgetID: String, categoryID: String, target: APICategoryTargetUpsert, token: String) async throws -> APICategoryTarget { try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/target", method: "PUT", token: token, body: target) }
     public func deleteCategoryTarget(budgetID: String, categoryID: String, token: String) async throws { let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/target", method: "DELETE", token: token) }
+    public func setCategoryTargetSnoozed(budgetID: String, categoryID: String, month: String, isSnoozed: Bool, token: String) async throws {
+        let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/target/snooze/\(month)", method: "PUT", token: token, body: APITargetSnoozeUpdate(isSnoozed: isSnoozed))
+    }
 
     public func createTransaction(
         budgetID: String,

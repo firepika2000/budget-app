@@ -75,6 +75,7 @@ struct DemoCategory: Identifiable, Hashable {
     var targetMinimumContribution: Int64 = 0
     var targetPriority: Int = 50
     var targetIsActive: Bool = true
+    var targetSnoozedMonths: Set<String> = []
     var note: String = ""
     var pinned = false
     var delegatedTo: DemoPersona? = nil

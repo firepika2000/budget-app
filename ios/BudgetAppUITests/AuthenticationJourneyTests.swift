@@ -2,6 +2,30 @@ import XCTest
 import UIKit
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testProductionTargetSnoozePersistsThroughNavigationAndResumes() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=plan"]
+        app.launch()
+        let groceries = app.buttons["plan-category-groceries"]
+        XCTAssertTrue(groceries.waitForExistence(timeout: 5))
+        groceries.tap()
+        let action = app.buttons["target-month-snooze"]
+        XCTAssertTrue(action.waitForExistence(timeout: 5))
+        XCTAssertTrue(action.label.hasPrefix("Snooze for"))
+        action.tap()
+        let state = app.descendants(matching: .any).matching(identifier: "target-month-snoozed-state").firstMatch
+        XCTAssertTrue(state.waitForExistence(timeout: 5))
+        XCTAssertTrue(action.label.hasPrefix("Resume target for"))
+        app.navigationBars["Groceries"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(groceries.label.contains("Target snoozed this month"), "A snoozed target must not masquerade as fully funded")
+        groceries.tap()
+        XCTAssertTrue(state.waitForExistence(timeout: 5))
+        action.tap()
+        XCTAssertTrue(state.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(action.label.hasPrefix("Snooze for"))
+    }
+
     func testSmartFundingProductionPreviewCancelAndConfirmRefreshes() {
         continueAfterFailure = false
         let app = XCUIApplication()

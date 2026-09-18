@@ -206,6 +206,9 @@ final class AppSessionRefreshTests: XCTestCase {
             if request.url?.path.hasSuffix("/schedule") == true {
                 return Self.json(201, #"{"id":"s1","budget_id":"b1","account_id":"a1","destination_account_id":null,"category_id":"c1","name":"Market","amount_minor":-1200,"next_date":"2026-10-15","recurrence_unit":"months","interval_count":1,"memo":"","is_active":true,"last_realized_on":null}"#)
             }
+            if request.url?.path.hasSuffix("/target/snooze/2027-02-01") == true {
+                return Self.json(200, #"{"category_id":"c1","month":"2027-02-01","is_snoozed":true}"#)
+            }
             if request.url?.path.hasSuffix("/access/u2") == true {
                 return Self.json(200, #"{"budget_id":"b1","user_id":"u2","capabilities":["view_budget"],"restrict_accounts":false,"account_ids":[],"restrict_categories":false,"category_ids":[],"grant_permission":"view","is_custom":false,"version":0,"updated_by_user_id":null,"updated_by_display_name":null,"updated_at":null}"#)
             }
@@ -241,6 +244,9 @@ final class AppSessionRefreshTests: XCTestCase {
             "/api/v1/budgets/b1/access/u2",
             "/api/v1/budgets/b1/transactions/t1/schedule",
         ])
+        XCTAssertTrue(requests.authorizations.dropFirst().allSatisfy { $0 == "Bearer A2" })
+        try await store.setTargetSnoozed(categoryID: "c1", month: "2027-02-01", isSnoozed: true)
+        XCTAssertEqual(requests.paths.filter { $0.hasSuffix("/target/snooze/2027-02-01") }.count, 1)
         XCTAssertTrue(requests.authorizations.dropFirst().allSatisfy { $0 == "Bearer A2" })
     }
 

@@ -74,6 +74,14 @@ pass, zero skips; 47 final focused planning/privacy/golden; 39 Core + 48 API; 91
 production UI test pass**, Beta build/test successful. No migration or human data changes. Next:
 month-specific snooze under the documented planning contract, then remaining planning closure.
 
+### Month-specific snooze native checkpoint — 2026-09-18
+
+Server checkpoint `f0cb4c1` is followed by the shared native month-scoped Snooze/Resume action, explicit
+paused Plan rows, Demo parity and current-credential Live request. **39 Core + 49 API; 92 XCTest +
+three production UI tests pass**, Beta build/test success. Prior backend **356 pass, zero skips**
+includes metadata migration/recovery. No accounting mutation or human data changes. New migration
+0028 remains unapplied to human Live. Next: checked Monthly plan cost aggregation and planning closure.
+
 ## Human data and migration ledger
 
 Never run migration, destructive, scale or restore tests against human Live. Known unapplied chain:
