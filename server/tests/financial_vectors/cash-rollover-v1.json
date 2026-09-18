@@ -1,0 +1,125 @@
+{
+  "format_version": 1,
+  "scope": "Pure derived boundary effects from canonical category and signed unfunded-credit facts. Not application-service, authorization, storage or activation proof.",
+  "cases": [
+    {
+      "id": "current_month_does_not_absorb_its_own_deficit",
+      "through": "2026-09-01",
+      "policies": [["2026-09-01", "absorb_next_month", 0]],
+      "facts": [["2026-09-30", "food", -5000, 0]],
+      "effects": []
+    },
+    {
+      "id": "later_refund_restores_category_without_repeating_absorption",
+      "through": "2026-12-01",
+      "policies": [["2026-09-01", "absorb_next_month", 0]],
+      "facts": [["2026-09-30", "food", -5000, 0], ["2026-10-02", "food", 5000, 0]],
+      "effects": [["2026-10-01", "food", 5000, 0]]
+    },
+    {
+      "id": "cash_absorbed_once_before_next_month_assignment",
+      "through": "2026-12-01",
+      "policies": [["2026-09-01", "absorb_next_month", 0]],
+      "facts": [["2026-09-01", "food", 10000, 0], ["2026-09-30", "food", -15000, 0], ["2026-10-01", "food", 2000, 0]],
+      "effects": [["2026-10-01", "food", 5000, 0]]
+    },
+    {
+      "id": "carry_preserves_cash_deficit",
+      "through": "2027-01-01",
+      "policies": [["0001-01-01", "carry_category_deficit", 0]],
+      "facts": [["2026-09-30", "food", -5000, 0]],
+      "effects": []
+    },
+    {
+      "id": "pure_credit_deficit_is_never_absorbed_as_cash",
+      "through": "2028-01-01",
+      "policies": [["2026-09-01", "absorb_next_month", 0]],
+      "facts": [["2026-09-30", "food", -7000, -7000]],
+      "effects": []
+    },
+    {
+      "id": "prior_credit_debt_and_new_cash_are_distinguished",
+      "through": "2027-01-01",
+      "policies": [["2026-08-01", "absorb_next_month", 0]],
+      "facts": [["2026-08-01", "food", -7000, -7000], ["2026-09-10", "food", -5000, 0]],
+      "effects": [["2026-10-01", "food", 5000, 0]]
+    },
+    {
+      "id": "funded_card_then_cash_and_signed_refund_release",
+      "through": "2026-11-01",
+      "policies": [["2026-09-01", "absorb_next_month", 0]],
+      "facts": [["2026-09-01", "food", 10000, 0], ["2026-09-02", "food", -10000, 0], ["2026-09-03", "food", -10000, 0], ["2026-09-04", "food", 3000, 0]],
+      "effects": [["2026-10-01", "food", 7000, 0]]
+    },
+    {
+      "id": "unfunded_refund_clears_credit_not_cash",
+      "through": "2026-12-01",
+      "policies": [["2026-09-01", "absorb_next_month", 0]],
+      "facts": [["2026-09-01", "food", -10000, -10000], ["2026-09-02", "food", -3000, 0], ["2026-09-03", "food", 5000, 5000]],
+      "effects": [["2026-10-01", "food", 3000, 0]]
+    },
+    {
+      "id": "split_categories_keep_independent_deficits",
+      "through": "2027-01-01",
+      "policies": [["2026-09-01", "absorb_next_month", 0]],
+      "facts": [["2026-09-01", "food", -3001, -2000], ["2026-09-01", "fuel", -4000, -4000], ["2026-09-01", "rent", 2000, 0]],
+      "effects": [["2026-10-01", "food", 1001, 0]]
+    },
+    {
+      "id": "prospective_carry_to_absorb_waits_for_effective_month",
+      "through": "2027-03-01",
+      "policies": [["0001-01-01", "carry_category_deficit", 0], ["2027-02-01", "absorb_next_month", 1]],
+      "facts": [["2026-09-30", "food", -5000, 0]],
+      "effects": [["2027-02-01", "food", 5000, 1]]
+    },
+    {
+      "id": "prospective_absorb_to_carry_does_not_undo_old_effect",
+      "through": "2026-12-01",
+      "policies": [["2026-09-01", "absorb_next_month", 0], ["2026-11-01", "carry_category_deficit", 1]],
+      "facts": [["2026-09-30", "food", -5000, 0], ["2026-10-30", "food", -2000, 0]],
+      "effects": [["2026-10-01", "food", 5000, 0]]
+    },
+    {
+      "id": "pending_month_uses_latest_version_without_erasing_history",
+      "through": "2026-12-01",
+      "policies": [["0001-01-01", "carry_category_deficit", 0], ["2026-10-01", "absorb_next_month", 1], ["2026-10-01", "carry_category_deficit", 2]],
+      "facts": [["2026-09-30", "food", -5000, 0]],
+      "effects": []
+    },
+    {
+      "id": "month_end_and_year_boundary",
+      "through": "2029-02-01",
+      "policies": [["2028-01-01", "absorb_next_month", 0]],
+      "facts": [["2028-02-29", "food", -1, 0], ["2028-12-31", "food", -2, 0]],
+      "effects": [["2028-03-01", "food", 1, 0], ["2029-01-01", "food", 2, 0]]
+    },
+    {
+      "id": "sparse_ten_thousand_year_gap",
+      "through": "9999-12-01",
+      "policies": [["0001-01-01", "carry_category_deficit", 0], ["9999-12-01", "absorb_next_month", 1]],
+      "facts": [["0001-01-31", "food", -2, 0], ["9999-12-31", "food", -3, 0]],
+      "effects": [["9999-12-01", "food", 2, 1]]
+    },
+    {
+      "id": "exact_monthly_cancellation",
+      "through": "2026-10-01",
+      "policies": [["2026-09-01", "absorb_next_month", 0]],
+      "facts": [["2026-09-01", "food", -9223372036854775807, 0], ["2026-09-02", "food", -2, 0], ["2026-09-03", "food", 9223372036854775807, 0]],
+      "effects": [["2026-10-01", "food", 2, 0]]
+    },
+    {
+      "id": "largest_supported_cash_deficit",
+      "through": "2026-10-01",
+      "policies": [["2026-09-01", "absorb_next_month", 0]],
+      "facts": [["2026-09-01", "food", -9223372036854775807, 0]],
+      "effects": [["2026-10-01", "food", 9223372036854775807, 0]]
+    },
+    {
+      "id": "unrepresentable_cash_absorption_is_rejected",
+      "through": "2026-10-01",
+      "policies": [["2026-09-01", "absorb_next_month", 0]],
+      "facts": [["2026-09-01", "food", -9223372036854775808, 0]],
+      "error": "overflow"
+    }
+  ]
+}

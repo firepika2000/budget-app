@@ -5,7 +5,7 @@ import Foundation
 /// posted activity and balanced allocation operations; schedules never enter this input.
 public enum PlanningPeriodProjection {
     public enum InvalidInput: Error, Equatable {
-        case date, month, allocation, beforeOpeningBoundary, insufficientFunds
+        case date, month, allocation, rollover, beforeOpeningBoundary, insufficientFunds
         case unknownCategory(String)
     }
 
@@ -109,7 +109,8 @@ public enum PlanningPeriodProjection {
     }
 
     public static func snapshot<A: Sequence, T: Sequence>(month: String, categoryIDs: Set<String>,
-        opening: Opening? = nil, allocations: A, activity: T) throws -> Snapshot
+        opening: Opening? = nil, allocations: A, activity: T,
+        rolloverEffects: [CashRolloverProjection.Effect] = []) throws -> Snapshot
         where A.Element == Allocation, T.Element == PostedActivity {
         let selected = try Day(month)
         guard selected.month == month else { throw InvalidInput.month }
@@ -147,6 +148,22 @@ public enum PlanningPeriodProjection {
                 guard rows[id] != nil else { throw InvalidInput.unknownCategory(id) }
                 if transaction.occurredOn.month < month { try rows[id]!.carried.add(amount) }
                 else if transaction.occurredOn.month == month { try rows[id]!.activity.add(amount) }
+            }
+        }
+        // Derived policy effects are month-opening carry, never user Assigned or Activity.
+        // Providers must supply one consistent complete effect set to all reads/availability
+        // guards. Future effects reserve existing cash just like future allocation postings.
+        var seenEffects: [String: Set<String>] = [:]
+        for effect in rolloverEffects {
+            let day = try Day(effect.month)
+            try checkBoundary(day)
+            guard day.month == effect.month, effect.amountMinor > 0,
+                  seenEffects[effect.month, default: []].insert(effect.categoryID).inserted else { throw InvalidInput.rollover }
+            guard rows[effect.categoryID] != nil else { throw InvalidInput.unknownCategory(effect.categoryID) }
+            try allDates.add(-effect.amountMinor)
+            if effect.month <= month {
+                try dated.add(-effect.amountMinor)
+                try rows[effect.categoryID]!.carried.add(effect.amountMinor)
             }
         }
         let categories = try rows.mapValues { row in

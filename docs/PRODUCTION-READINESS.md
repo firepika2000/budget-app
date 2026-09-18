@@ -4,6 +4,22 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Rollover projection foundation after `6791157`: Python and Swift consume 17 shared exact vectors
+for derived boundary effects, including legacy carry, cash absorption, cumulative prior credit
+debt, signed funding/refunds, split categories, policy switches/pending revisions, long sparse gaps,
+leap/year limits and integer cancellation/overflow. Effects do not post money. The Swift monthly
+projection applies them to carry and Unassigned separately from user Assigned/Activity and rejects
+duplicate category/month effects. Future effects reserve already-spent cash consistently with
+future allocations, while dated pre-boundary RTA remains unchanged. Historical fact edits recompute
+amounts under the historical policy, not a newly selected current enum.
+**Repository activation is still gated**: Live/Demo normal operations do not supply policy effects
+yet. Every balance guard, report and canonical command must integrate before exposing the setting
+or changing new-budget defaults. These pure/shared-vector tests are not full production rollover
+acceptance, and do not close the financial/product gates. No new migration or human data changes.
+Verification: **433 backend PASS, zero skips; 48 BudgetCore + 50 BudgetAPI; 115 native XCTest;
+2 production Plan/Smart Funding XCUITests PASS**. Xcode Beta build and diff check PASS. Focused
+projection checks: **25 PASS**. Logs `/tmp/budget-rollover-projection-{focused-final,package-final,backend,native,ui}.log`.
+
 Rollover-history persistence foundation after `929a27c` (verified): additive
 `0029_cash_rollover_history` records an explicit legacy carry baseline for each existing budget,
 bounded 500-budget batches, and constrained effective-month/version/source/actor provenance.

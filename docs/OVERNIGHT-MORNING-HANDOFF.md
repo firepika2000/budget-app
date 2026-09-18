@@ -45,17 +45,28 @@ Verification: **408 backend PASS, zero skips**, including a populated 502-budget
 PASS. Logs `/tmp/budget-rollover-history-{focused,batched,backend-final}.log`. No Swift changes;
 retain the preceding native/package evidence rather than claiming a new native run.
 
-Next highest-priority planning closure: canonical effective-history projection and application
-service integration, starting with shared characterization vectors for legacy carry versus
-prospective absorption. Every category/RTA availability guard must use the same derivation as
-summaries/reports; never adjust only Plan or repeatedly post rollover on a read. Preserve historical
-observations/policies, represent each cash deficit once, and preserve credit/reserve distinctions.
-Existing month-summary classification only sees current-month credit events, so explicitly prove
-carried credit deficit, later coverage, mixed cash/card, refunds/splits and historical edits before
-using it as rollover authority. The eventual service must append audited next-period decisions
-under budget locking/version checks; activate new-budget defaults/shared settings only with the
-projection. Fresh budgets created during this gated checkpoint also need explicit legacy baselines
-at activation. See `PERSISTENT-MONTH-IMPLEMENTATION.md`. Uniform clocks/remaining roadmap stay open.
+After `6791157`, Python/Swift pure boundary projections share 17 exact vectors. They use cumulative
+signed credit-category activity plus recorded reserve attribution, not current-month report labels.
+Cash absorption creates a derived carry increase/Unassigned debit once; prospective policy changes,
+later refunds, split attribution, credit carry, sparse long gaps and overflow are tested. The Swift
+period projection accepts a complete effect set separately from user Assigned/Activity and rejects
+duplicate effects. Known future effects reserve already-spent cash without rewriting dated RTA.
+**Normal Live/Demo providers do not supply effects yet; absorption remains inactive.**
+Verification: **433 backend zero skips, 48 Core + 50 API, 115 native, 2 production Plan/Smart
+Funding UI PASS**; Beta build and diff check PASS. Focused projection checks: 25 PASS. Logs
+`/tmp/budget-rollover-projection-{focused-final,package-final,backend,native,ui}.log`.
+
+Next highest-priority planning closure: repository/application-service integration. Build canonical
+dated inputs from allocations, direct/split on-budget transactions, payment-category reserve events,
+and spending-category reserve attribution. Stream/bound history and use a consistent complete
+known-fact horizon (next boundary plus pending policy dates), not the selected screen's month as
+global cash authority. Route `ready_to_assign_balance`, `category_available_balance`, monthly/report
+carry and Demo production commands through the same effects. No fake user allocation or repeated
+posting on read. Prove actual service flows with policies, scopes, refunds/edits, races and unchanged
+account/card/reconciliation state before exposing settings. Then append audited next-period choices
+under budget locking/version checks, activate explicit new-budget absorb defaults, and expose shared
+UI. Fresh budgets created during these gated checkpoints need legacy baselines at activation too.
+See `PERSISTENT-MONTH-IMPLEMENTATION.md`. Uniform clocks/remaining roadmap remain open.
 **HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
 
 `bed7c93` pushed forecast privacy. Current chronological projection correction is reproduced against

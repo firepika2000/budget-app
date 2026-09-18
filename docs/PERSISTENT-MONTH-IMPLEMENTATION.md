@@ -112,6 +112,37 @@ new-budget absorb default with explicit household choice; scoped settings/audit 
 stale/concurrent commands; populated migration/restore and full native production acceptance.
 Do not ship a policy toggle backed only by this table or absorb balances only inside the Plan UI.
 
+#### Boundary projection foundation (activation still gated)
+
+`cash_rollover.project_rollover_effects` and `BudgetCore.CashRolloverProjection` consume canonical
+category deltas and signed unfunded-credit attribution (credit-category activity plus recorded
+reserve funding/release events). They are pure; they do not post financial transactions/allocations.
+Seventeen shared vectors prove cumulative credit carry is not reclassified as cash in later months,
+cash absorption happens once, refund/split treatment, prospective policy changes, pending-version
+selection, leap/year/final-supported-month boundaries, and exact integer cancellation/overflow.
+Sparse event/policy/next-month boundaries avoid iterating thousands of empty calendar months.
+
+At each entering-month boundary, before that month's assignment/activity, cash deficit is
+`max(min(cumulative_unfunded_credit_delta, 0) - category_available, 0)`. This is derived from actual
+funding attribution, not a guessed fraction of negative Available or a current-month-only label.
+An absorb policy yields an equal category carry increase and Unassigned decrease; credit deficit
+is retained under existing card/debt semantics. Carry policy creates no effect. The policy effective
+at that boundary is retained even if a later setting changes. A user edit to an old actual fact can
+recompute the amount under the same historical policy; policy selection does not freeze bad data.
+
+The existing Swift period projection can consume a complete derived effect set separately from
+allocation postings. Effects alter carry/RTA, never user Assigned or Activity, and duplicate
+category/month effects are rejected. Known future effects reserve already-spent cash in all-date
+Unassigned, just like existing future allocations, without changing the historical dated RTA.
+This is explicitly tested; no forecast income funds an effect.
+
+Next integration must choose a consistent complete known-fact horizon (including the next boundary
+and pending policy changes), stream authorized canonical repository inputs, apply the same effects
+to every category/RTA guard and report, and prove full application-service behavior. Neither Live
+nor Demo currently supplies policy effects to normal operations, so absorption remains **inactive**.
+Do not infer production rollover completion from these pure-vector/package tests. No new migration
+is introduced by this projection checkpoint; the policy-history head remains 0029.
+
 ### D. Shared presentation and closure
 
 Production composition tests navigate months, edit an assignment, return, reload, inspect history,
