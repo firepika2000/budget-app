@@ -4,6 +4,24 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Capability contract audit after `1d5d163`: `APIBudget.can` defaulted to true for unlisted capabilities,
+making legacy view-only grants appear eligible for edit/delete/payee/export/own-category actions and
+accepting unknown capability names. Two shared-vector tests reproduced 25 mismatches. Swift now
+uses the exact server legacy view/contribute/manage matrix, preserves explicit custom-capability
+replacement and owner authority for known capabilities, and fails closed for unknown names.
+A shared 21-capability JSON contract is checked against both the Swift implementation and Python
+authorization constants/Pydantic capability vocabulary. Server enforcement was already restrictive;
+this was a client presentation/provider-contract mismatch, not proof of a Live server bypass.
+Native/package verification: **48 Core + 54 API tests PASS; 130 native + 2 production UI PASS**,
+Beta build/diff check PASS. Owner access editing and delegated request cancellation retain their
+shared production paths. Logs `/tmp/budget-capabilities-package.log`, `/tmp/budget-capabilities-native.log`;
+xcresult `Test-BudgetApp-2026.09.18_19-09-34--0400.xcresult`. Eight focused backend contract/privacy
+tests pass. Follow-ups: Demo access-profile attribution/resource validation and the unused Core
+sharing authorizer's manager-versus-owner semantics require correction before provider closure.
+Full verification: **460 backend tests PASS, zero skips**, including PostgreSQL concurrency,
+populated migrations and real encrypted recovery; `/tmp/budget-capabilities-backend.log` (122.97s).
+No server behavior/migration change and no human data changes.
+
 Workspace revocation privacy after `7998fec`: two real Live-repository-composition tests first
 reproduced retained financial observations after 403/404 and late snapshot/report resurrection.
 Core hydration now uses latest-request identity. Definitive core 403/404 clears financial collections,

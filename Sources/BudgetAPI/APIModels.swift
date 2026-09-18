@@ -23,9 +23,27 @@ public enum APIBudgetPermission: String, Decodable, Equatable, Sendable {
 
     public var canContribute: Bool { self != .view }
     public var canManage: Bool { self == .manage || self == .owner }
+
+    /// Compatibility for servers omitting explicit capabilities. Kept in lockstep with
+    /// the server's legacy grants by shared authorization contract vectors.
+    public var legacyCapabilities: Set<String> {
+        switch self {
+        case .view:
+            return ["view_budget", "view_accounts", "view_account_balances", "view_categories",
+                    "view_transactions", "view_reports", "view_allocation_history"]
+        case .contribute:
+            return Self.view.legacyCapabilities.union(["create_transaction", "edit_transaction", "delete_transaction", "request_money"])
+        case .manage:
+            return Self.contribute.legacyCapabilities.union(["assign_money", "move_money", "reconcile_account",
+                "manage_budget_structure", "manage_payees", "manage_planning", "manage_allowances", "approve_request", "export_data"])
+        case .owner:
+            return APIBudget.supportedCapabilities
+        }
+    }
 }
 
 public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
+    public static let supportedCapabilities = APIBudgetPermission.manage.legacyCapabilities.union(["manage_own_categories"])
     public let id: String
     public let householdID: String
     public let name: String
@@ -62,14 +80,10 @@ public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
     }
 
     public func can(_ capability: String) -> Bool {
+        guard Self.supportedCapabilities.contains(capability) else { return false }
         if effectivePermission == .owner { return true }
         if let capabilities { return capabilities.contains(capability) }
-        switch capability {
-        case "create_transaction", "request_money": return effectivePermission.canContribute
-        case "assign_money", "move_money", "reconcile_account", "manage_budget_structure", "manage_planning", "manage_allowances", "approve_request":
-            return effectivePermission.canManage
-        default: return true
-        }
+        return effectivePermission.legacyCapabilities.contains(capability)
     }
 }
 

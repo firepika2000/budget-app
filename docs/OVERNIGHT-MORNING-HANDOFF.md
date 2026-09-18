@@ -6,6 +6,16 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `1d5d163`, authorization audit reproduced 25 Swift/server capability mismatches caused by
+APIBudget's default-true fallback. Replaced it with the exact legacy permission matrix, explicit
+custom override semantics and unknown-capability denial. Shared JSON vectors assert Python
+authorization/schema and Swift parity for all 21 capabilities. Server enforcement is unchanged.
+Native/package verified: 48 Core + 54 API, 130 native + 2 production UI PASS; Beta build/diff PASS.
+`/tmp/budget-capabilities-package.log`, `/tmp/budget-capabilities-native.log`. Eight focused server
+contract/privacy tests PASS. Next confirmed gaps: Demo profile attribution/resource validation,
+and Core's unused sharing authorizer permits managers where server sharing is owner-only.
+Full backend 460 PASS, zero skips (122.97s), `/tmp/budget-capabilities-backend.log`; no migration.
+
 After `7998fec`, Live-shaped regressions proved core 403/404 retained prior balances/reports and a
 late success could resurrect them. Added authoritative eviction, latest-snapshot identity, async
 authority generations and a unified access-unavailable shell. Retry can recover; transient 503
