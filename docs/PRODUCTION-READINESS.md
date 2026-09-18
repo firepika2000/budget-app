@@ -4,6 +4,24 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo Payee privacy after `84b81a2`: search and workspace hydration now share observations built
+from authorized transaction history before matching/counts/page selection. Scoped members cannot
+discover unused/hidden household identities or aliases; inaccessible default categories are
+redacted. Attachments share the same resource-visibility helper. Read-capability removal denies
+search, while snapshots omit payee observations. Exact sums use checked minor-unit accumulation.
+Search validates 1...50 limits, query length and nonnegative cursors; large out-of-range cursors
+return an empty page safely. Stable ordering includes identity as a tie-breaker. A 5,000-payee
+native regression checks bounded/disjoint/repeatable pages, hidden names/alias guesses, correct
+amounts and defaults, snapshot parity, revoked read capability and unchanged financial state.
+This does not close broader Demo summary/report/custom-capability enforcement or persistent storage.
+Initial verification: 134 native tests PASS (including the 5,000-payee test in 0.551s), but the
+existing Payee alias UI test attempted to tap the off-screen Household row without scrolling.
+Both Payee management journeys now wait for Household, scroll until the actual Payees row is
+hittable, and retain their creation/alias/persistence assertions. Final rerun evidence follows.
+Final verification: 134 native + 2 production Payee UI tests PASS, Beta build PASS, diff check
+PASS (`/tmp/budget-demo-payee-scope-final.log`; result `Test-BudgetApp-2026.09.18_19-39-49--0400.xcresult`).
+Latest unchanged server/package baselines remain 461 backend (zero skips), 49 Core + 54 API PASS.
+
 Live Payee privacy after `911b437`: a new adversarial regression reproduced discovery of a private
 salary payee through search despite its uncategorized income being hidden from category-scoped
 transaction search. Payee visibility had treated an empty split set as authorized. Both Payee

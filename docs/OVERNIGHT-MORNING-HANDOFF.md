@@ -6,6 +6,17 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `84b81a2`, aligned Demo Payee search/snapshot privacy: authorized history first, scoped
+identity/alias/default-category filtering, checked totals, stable bounded pages and validated
+cursors. 5,000-payee regression added. Broader Demo summary/report custom-scope enforcement and
+multi-file attachment lifecycle remain open; no Live/Simulator data reset.
+Initial 134 native tests PASS. Payee UI navigation needed bounded scrolling to its off-screen
+Household row; both management tests retain their behavior assertions and are rerun after correction.
+Final rerun PASS: 134 native + 2 production Payee UI tests, Beta build and diff check. Log
+`/tmp/budget-demo-payee-scope-final.log`. Current highest-priority authorization follow-up is Demo
+custom scope/capability enforcement across financial summaries/reports and all commands; attachment
+multi-file/tombstone parity remains open. No release-wide completion or human acceptance claimed.
+
 After `911b437`, reproduced/fixed Live Payee discovery of category-hidden uncategorized income.
 Search/list now use one SQL visibility predicate before aggregation; hidden default-category IDs
 are redacted. Owner observations preserved. Ten focused Payee tests PASS; no schema/financial

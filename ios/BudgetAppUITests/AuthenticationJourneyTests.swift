@@ -1144,6 +1144,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
         app.buttons["Household and access"].tap()
         XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
+        for _ in 0..<6 where !app.buttons["Payees"].isHittable { app.swipeUp() }
+        XCTAssertTrue(app.buttons["Payees"].isHittable)
         app.buttons["Payees"].tap()
         XCTAssertTrue(app.navigationBars["Payees"].waitForExistence(timeout: 5))
         app.buttons["add-payee-action"].tap()
@@ -1314,6 +1316,9 @@ final class AuthenticationJourneyTests: XCTestCase {
 
         app.buttons["profile-settings-button"].tap()
         app.buttons["Household and access"].tap()
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
+        for _ in 0..<6 where !app.buttons["Payees"].isHittable { app.swipeUp() }
+        XCTAssertTrue(app.buttons["Payees"].isHittable)
         app.buttons["Payees"].tap()
         XCTAssertTrue(app.navigationBars["Payees"].waitForExistence(timeout: 5))
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'payee-row-'")).firstMatch.tap()

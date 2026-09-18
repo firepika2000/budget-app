@@ -441,12 +441,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let categoryRows: [APICategory] = try decode(visibleCategories.enumerated().map { index, item in ["id": item.id, "budget_id": budget.id, "group_id": groupIDs[item.group]!, "name": item.name, "sort_order": index, "is_archived": item.isHidden, "system_type": NSNull(), "linked_account_id": NSNull(), "delegated_user_id": item.delegatedTo?.rawValue.lowercased() ?? NSNull(), "is_favorite": item.pinned, "favorite_sort_order": item.pinned ? index : NSNull()] })
         let dateFormatter = DateFormatter(); dateFormatter.locale = Locale(identifier: "en_US_POSIX"); dateFormatter.dateFormat = "yyyy-MM-dd"
         let transactionRows = try transactionRows(categoryIDs: categoryIDs)
-        let payeeRows: [APIPayee] = try decode(demo.payees.filter { !$0.isArchived }.map { item in
-            let history = demo.visibleTransactions.filter { $0.payee == item.name }
-            return ["id": item.id, "household_id": budget.householdID, "display_name": item.name, "is_archived": item.isArchived,
-                    "merged_into_payee_id": NSNull(), "default_category_id": item.defaultCategoryID ?? NSNull(),
-                    "transaction_count": history.count, "net_amount_minor": history.reduce(Int64(0)) { $0 + $1.amount }, "aliases": item.aliases.enumerated().map { ["id": "\(item.id)-alias-\($0.offset)", "display_name": $0.element] }] as [String: Any]
-        })
+        let payeeRows = try payeeObservations(includeArchived: false)
         // Use recorded funding attribution, not a guessed share of today's negative Available.
         // This mirrors Live's signed CreditCardReserveEvent aggregation for the selected month.
         let creditAccountIDs = Set(demo.accounts.filter { $0.kind == .credit && $0.isOnBudget }.map(\.id))
@@ -1120,18 +1115,56 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         default: return true
         }
     }
-    func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage { try requireActiveMembership();
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        var values: [APIPayee] = try decode(demo.payees.filter { item in
-            (includeArchived || !item.isArchived) && (needle.isEmpty || item.name.localizedCaseInsensitiveContains(needle) || item.aliases.contains { $0.localizedCaseInsensitiveContains(needle) })
-        }.map { item in
-            let history = demo.visibleTransactions.filter { $0.payee == item.name }
+    private var actorCapabilities: Set<String> {
+        demo.persona == .rey ? APIBudget.supportedCapabilities :
+            Set(accessProfiles[requestActorID]?.capabilities ?? (demo.isRestricted ? Self.delegatedCapabilities : Array(APIBudgetPermission.manage.legacyCapabilities)))
+    }
+    private var actorCategoryScope: Set<String>? {
+        let delegated = demo.isRestricted ? Set(demo.visibleCategories.map(\.id)) : nil
+        guard demo.persona != .rey, let profile = accessProfiles[requestActorID], profile.restrictCategories else { return delegated }
+        return delegated.map { $0.intersection(profile.categoryIDs) } ?? Set(profile.categoryIDs)
+    }
+    private var actorHasResourceScope: Bool {
+        demo.isRestricted || (demo.persona != .rey && (accessProfiles[requestActorID].map { $0.restrictAccounts || $0.restrictCategories } ?? false))
+    }
+    private var resourceVisibleTransactions: [DemoTransaction] {
+        var accounts = Set(demo.visibleAccounts.map(\.id))
+        if demo.persona != .rey, let profile = accessProfiles[requestActorID], profile.restrictAccounts {
+            accounts.formIntersection(profile.accountIDs)
+        }
+        let categories = actorCategoryScope
+        return demo.visibleTransactions.filter { item in
+            accounts.contains(item.accountID) && (categories.map { !item.categoryIDs.isEmpty && Set(item.categoryIDs).isSubset(of: $0) } ?? true)
+        }
+    }
+    private func payeeObservations(includeArchived: Bool) throws -> [APIPayee] {
+        guard actorCapabilities.contains("view_transactions") else { return [] }
+        let scoped = actorHasResourceScope, categories = actorCategoryScope
+        let histories = Dictionary(grouping: resourceVisibleTransactions, by: \.payee)
+        return try decode(demo.payees.filter { (includeArchived || !$0.isArchived) && (!scoped || histories[$0.name] != nil) }.map { item in
+            let history = histories[item.name] ?? []
+            let defaultID = item.defaultCategoryID.flatMap { id in (categories.map { $0.contains(id) } ?? true) ? id : nil }
             return ["id": item.id, "household_id": budget.householdID, "display_name": item.name, "is_archived": item.isArchived,
-                    "merged_into_payee_id": NSNull(), "default_category_id": item.defaultCategoryID ?? NSNull(),
-                    "transaction_count": history.count, "net_amount_minor": history.reduce(Int64(0)) { $0 + $1.amount }, "aliases": item.aliases.enumerated().map { ["id": "\(item.id)-alias-\($0.offset)", "display_name": $0.element] }] as [String: Any]
+                    "merged_into_payee_id": NSNull(), "default_category_id": defaultID ?? NSNull(),
+                    "transaction_count": history.count, "net_amount_minor": try Money.sumMinorUnits(history.map(\.amount)),
+                    "aliases": (scoped ? [] : item.aliases).enumerated().map { ["id": "\(item.id)-alias-\($0.offset)", "display_name": $0.element] }] as [String: Any]
         })
-        values.sort { lhs, rhs in lhs.transactionCount == rhs.transactionCount ? lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending : lhs.transactionCount > rhs.transactionCount }
-        let start = Int(cursor ?? "") ?? 0
+    }
+    func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage { try requireActiveMembership();
+        guard actorCapabilities.contains("view_transactions") else { throw APIClientError.server(status: 403, message: "Insufficient permission") }
+        guard (1...50).contains(limit), query.count <= 150,
+              cursor == nil || Int(cursor!) != nil, (Int(cursor ?? "0") ?? -1) >= 0 else {
+            throw APIClientError.server(status: 422, message: "Invalid payee search or cursor")
+        }
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        var values = try payeeObservations(includeArchived: includeArchived).filter { item in
+            needle.isEmpty || item.displayName.localizedCaseInsensitiveContains(needle) || item.aliases.contains { $0.displayName.localizedCaseInsensitiveContains(needle) }
+        }
+        values.sort { lhs, rhs in
+            lhs.transactionCount != rhs.transactionCount ? lhs.transactionCount > rhs.transactionCount :
+                (lhs.displayName.lowercased(), lhs.id) < (rhs.displayName.lowercased(), rhs.id)
+        }
+        let start = min(Int(cursor ?? "0")!, values.count)
         let end = min(start + limit, values.count)
         return APIPayeePage(items: start < end ? Array(values[start..<end]) : [], nextCursor: end < values.count ? String(end) : nil)
     }
@@ -1199,26 +1232,12 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     private func attachmentTransaction(id: String, editing: Bool = false) throws -> DemoTransaction {
         let capability = editing ? "edit_transaction" : "view_transactions"
-        let capabilities = demo.persona == .rey ? APIBudget.supportedCapabilities :
-            Set(accessProfiles[requestActorID]?.capabilities ?? (demo.isRestricted ? Self.delegatedCapabilities : Array(APIBudgetPermission.manage.legacyCapabilities)))
+        let capabilities = actorCapabilities
         guard capabilities.contains(capability) else {
             throw APIClientError.server(status: 403, message: "Insufficient permission")
         }
-        guard let transaction = demo.visibleTransactions.first(where: { $0.id == id }),
-              demo.visibleAccounts.contains(where: { $0.id == transaction.accountID }) else {
+        guard let transaction = resourceVisibleTransactions.first(where: { $0.id == id }) else {
             throw APIClientError.server(status: 404, message: "Transaction not found")
-        }
-        if demo.isRestricted {
-            guard !transaction.categoryIDs.isEmpty,
-                  Set(transaction.categoryIDs).isSubset(of: Set(demo.visibleCategories.map(\.id))) else {
-                throw APIClientError.server(status: 404, message: "Transaction not found")
-            }
-        }
-        if demo.persona != .rey, let profile = accessProfiles[requestActorID] {
-            guard (!profile.restrictAccounts || profile.accountIDs.contains(transaction.accountID)),
-                  (!profile.restrictCategories || (!transaction.categoryIDs.isEmpty && Set(transaction.categoryIDs).isSubset(of: Set(profile.categoryIDs)))) else {
-                throw APIClientError.server(status: 404, message: "Transaction not found")
-            }
         }
         guard !editing || transaction.member == demo.persona || capabilities.contains("manage_budget_structure") else {
             throw APIClientError.server(status: 403, message: "You may only change attachments on your own transactions")

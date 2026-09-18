@@ -4,6 +4,59 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoPayeeScopePrecedesSearchAggregationAndPagination() async throws {
+        let source = DemoWorkspaceDataSource()
+        let index = try XCTUnwrap(source.demo.payees.firstIndex { $0.name == "Fresh Market" })
+        let payeeID = source.demo.payees[index].id
+        source.demo.payees[index].aliases = ["Private merchant alias"]
+        source.demo.payees[index].defaultCategoryID = "dining"
+        source.demo.payees.append(contentsOf: (0..<5000).map { .init(id: "scale-\($0)", name: "Scale Merchant \($0)") })
+        let accounts = source.demo.accounts, transactions = source.demo.transactions
+        let first = try await source.searchPayees(query: "Scale", includeArchived: false, limit: 20, cursor: nil)
+        XCTAssertEqual(first.items.count, 20)
+        let second = try await source.searchPayees(query: "Scale", includeArchived: false, limit: 20, cursor: first.nextCursor)
+        XCTAssertEqual(second.items.count, 20)
+        XCTAssertTrue(Set(first.items.map(\.id)).isDisjoint(with: second.items.map(\.id)))
+        let repeated = try await source.searchPayees(query: "Scale", includeArchived: false, limit: 20, cursor: nil)
+        XCTAssertEqual(first.items, repeated.items)
+        for cursor in ["-1", "invalid", String(Int.max)] {
+            if cursor == String(Int.max) {
+                let beyond = try await source.searchPayees(query: "", includeArchived: false, limit: 20, cursor: cursor)
+                XCTAssertTrue(beyond.items.isEmpty)
+            } else {
+                do { _ = try await source.searchPayees(query: "", includeArchived: false, limit: 20, cursor: cursor); XCTFail("Invalid cursor") } catch {}
+            }
+        }
+        for limit in [0, -1, 51, Int.max] {
+            do { _ = try await source.searchPayees(query: "", includeArchived: false, limit: limit, cursor: nil); XCTFail("Invalid page limit") } catch {}
+        }
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_transactions"], restrictAccounts: false, accountIDs: [], restrictCategories: true, categoryIDs: ["groceries"], expectedVersion: 0))
+        source.demo.persona = .partner
+        let scoped = try await source.searchPayees(query: "Fresh", includeArchived: true, limit: 20, cursor: nil)
+        let merchant = try XCTUnwrap(scoped.items.first { $0.id == payeeID })
+        let allowed = transactions.filter { $0.payee == "Fresh Market" && !$0.categoryIDs.isEmpty && Set($0.categoryIDs).isSubset(of: ["groceries"]) }
+        XCTAssertEqual(merchant.transactionCount, allowed.count)
+        XCTAssertEqual(merchant.netAmountMinor, allowed.reduce(0) { $0 + $1.amount })
+        XCTAssertNil(merchant.defaultCategoryID)
+        XCTAssertTrue(merchant.aliases.isEmpty)
+        for query in ["Private merchant alias", "Scale", "Payroll"] {
+            let hidden = try await source.searchPayees(query: query, includeArchived: true, limit: 20, cursor: nil)
+            XCTAssertTrue(hidden.items.isEmpty); XCTAssertNil(hidden.nextCursor)
+        }
+        let month = BudgetWorkspaceStore.parseDate("2026-09-01")
+        let query = WorkspaceReportQuery(start: month, end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        let snapshot = try await source.snapshot(planMonth: month, report: query)
+        XCTAssertFalse(snapshot.payees.contains { $0.displayName.hasPrefix("Scale") })
+        XCTAssertTrue(snapshot.payees.allSatisfy { $0.aliases.isEmpty })
+        XCTAssertNil(snapshot.payees.first { $0.id == payeeID }?.defaultCategoryID)
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: [], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 1))
+        source.demo.persona = .partner
+        do { _ = try await source.searchPayees(query: "", includeArchived: false, limit: 20, cursor: nil); XCTFail("Revoked read capability") } catch {}
+        XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+    }
+
+    @MainActor
     func testDemoTransactionCreatorAndMemberFilterDoNotChangeWithViewer() async throws {
         let source = DemoWorkspaceDataSource()
         let original = source.demo.transactions
