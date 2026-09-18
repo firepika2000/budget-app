@@ -687,9 +687,10 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     }
 
     private func transactionRows(categoryIDs: Set<String>) throws -> [APITransaction] {
+        guard actorCapabilities.contains("view_transactions") else { return [] }
         let dateFormatter = DateFormatter(); dateFormatter.locale = Locale(identifier: "en_US_POSIX"); dateFormatter.dateFormat = "yyyy-MM-dd"
-        return try decode(demo.visibleTransactions.map { item in
-            let ids = item.categoryIDs.filter { categoryIDs.contains($0) }
+        return try decode(resourceVisibleTransactions.map { item in
+            let ids = item.categoryIDs
             let splitBase = ids.isEmpty ? 0 : item.amount / Int64(ids.count)
             var remainder = ids.isEmpty ? 0 : item.amount % Int64(ids.count)
             let splits: [[String: Any]] = ids.count > 1 ? ids.enumerated().map { index, id in let extra: Int64 = remainder == 0 ? 0 : (remainder > 0 ? 1 : -1); if remainder != 0 { remainder -= extra }; return ["id": "\(item.id)-\(index)", "category_id": id, "amount_minor": item.categoryAmounts[id] ?? splitBase + extra, "memo": "", "financial_classification": item.splitFinancialClassifications[id] ?? NSNull()] } : []
@@ -1071,6 +1072,10 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return profile
     }
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try requireActiveMembership();
+        guard actorCapabilities.contains("view_transactions") else { throw APIClientError.server(status: 403, message: "Insufficient permission") }
+        guard (1...200).contains(query.limit), query.search.count <= 150 else {
+            throw APIClientError.server(status: 422, message: "Invalid transaction search or page limit")
+        }
         var rows = try transactionRows(categoryIDs: Set(demo.visibleCategories.map(\.id)))
         let text = query.search.trimmingCharacters(in: .whitespacesAndNewlines)
         rows = rows.filter { item in

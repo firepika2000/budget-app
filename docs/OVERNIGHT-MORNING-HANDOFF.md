@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `c49cb3d`, unified Demo transaction snapshot/browser visibility with Payee/attachment scopes,
+whole-split exclusion before counts, preserved authorized historical split attribution and bounded
+page validation. No financial mutation or Live server change. Next: complete broader Demo financial
+summary/report and mutation authorization without introducing a second accounting engine.
+Verified 135 native + 1 production Activity browser UI test and Beta build PASS;
+`/tmp/budget-demo-browser-scope.log`; diff PASS. Main/human data unchanged.
+
 After `84b81a2`, aligned Demo Payee search/snapshot privacy: authorized history first, scoped
 identity/alias/default-category filtering, checked totals, stable bounded pages and validated
 cursors. 5,000-payee regression added. Broader Demo summary/report custom-scope enforcement and

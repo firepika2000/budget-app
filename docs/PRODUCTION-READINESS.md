@@ -4,6 +4,20 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo transaction observations after `c49cb3d`: snapshot/browser serialization now uses the same
+account/category visibility predicate as Payee and attachment observations. A split containing
+any forbidden category is excluded as a whole before search/counts/pagination, rather than being
+partially serialized. Authorized rows retain their original category/split attribution, including
+historical categories not present in the current active-category picker. Missing read capability
+omits snapshot transactions and denies explicit browsing. Invalid page limits refuse before range
+arithmetic. Regression checks scoped row IDs/counts, hidden mixed splits, exact owner split amounts,
+revoked capability, 422 bounds and unchanged stored transactions. Broader Demo financial summaries,
+reports and mutation capability enforcement remain open; no full dynamic authorization claim.
+Verification: 135 native + 1 production Activity search/filter UI test PASS; Xcode 27 Beta
+27A5252f build PASS on existing iPhone 17 Pro Max/iOS 27 UDID
+`3ABD861E-D38D-4AFD-A356-959266051564`; diff PASS.
+Log: `/tmp/budget-demo-browser-scope.log`. Server/package unchanged from 461 / 49+54 baseline.
+
 Demo Payee privacy after `84b81a2`: search and workspace hydration now share observations built
 from authorized transaction history before matching/counts/page selection. Scoped members cannot
 discover unused/hidden household identities or aliases; inaccessible default categories are

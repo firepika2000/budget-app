@@ -4,6 +4,34 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoTransactionScopePrecedesRowsCountsAndSplitSerialization() async throws {
+        let source = DemoWorkspaceDataSource()
+        source.demo.transactions.append(.init(id: "mixed-scope", date: BudgetWorkspaceStore.parseDate("2026-09-15"), payee: "Private split", memo: "", accountID: "checking", categoryIDs: ["groceries", "dining"], categoryAmounts: ["groceries": -100, "dining": -200], amount: -300, member: .rey, cleared: false))
+        let original = source.demo.transactions
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_transactions"], restrictAccounts: true, accountIDs: ["checking"], restrictCategories: true, categoryIDs: ["groceries"], expectedVersion: 0))
+        source.demo.persona = .partner
+        let page = try await source.browseTransactions(query: .init(limit: 200))
+        let expected = original.filter { $0.accountID == "checking" && !$0.categoryIDs.isEmpty && Set($0.categoryIDs).isSubset(of: ["groceries"]) }
+        XCTAssertEqual(Set(page.items.map(\.id)), Set(expected.map(\.id)))
+        XCTAssertEqual(page.totalCount, expected.count)
+        let hidden = try await source.browseTransactions(query: .init(search: "Private split", limit: 1))
+        XCTAssertEqual(hidden.totalCount, 0); XCTAssertTrue(hidden.items.isEmpty); XCTAssertNil(hidden.nextCursor)
+        for limit in [0, -1, 201, Int.max] {
+            do { _ = try await source.browseTransactions(query: .init(limit: limit)); XCTFail("Invalid page limit") }
+            catch APIClientError.server(let status, _) { XCTAssertEqual(status, 422) }
+        }
+        source.demo.persona = .rey
+        let owner = try await source.browseTransactions(query: .init(search: "Private split"))
+        XCTAssertEqual(owner.items.count, 1)
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: owner.items[0].splits.map { ($0.categoryID, $0.amountMinor) }), ["groceries": -100, "dining": -200])
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: [], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 1))
+        source.demo.persona = .partner
+        do { _ = try await source.browseTransactions(query: .init()); XCTFail("Revoked transaction read") }
+        catch APIClientError.server(let status, _) { XCTAssertEqual(status, 403) }
+        XCTAssertEqual(source.demo.transactions, original)
+    }
+
+    @MainActor
     func testDemoPayeeScopePrecedesSearchAggregationAndPagination() async throws {
         let source = DemoWorkspaceDataSource()
         let index = try XCTUnwrap(source.demo.payees.firstIndex { $0.name == "Fresh Market" })
