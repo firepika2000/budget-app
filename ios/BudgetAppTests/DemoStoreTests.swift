@@ -24,6 +24,7 @@ final class DemoStoreTests: XCTestCase {
     func testMissingDebtTermsRecoverThroughSharedStoreWithoutChangingMoney() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()
+        await store.loadReports([.debt])
         let balances = store.accountBalances
         let summary = store.summary
         let transactions = store.transactions
@@ -54,10 +55,12 @@ final class DemoStoreTests: XCTestCase {
         store.customReportStart = BudgetWorkspaceStore.parseDate("2026-08-01")
         store.customReportEnd = BudgetWorkspaceStore.parseDate("2026-09-01")
         await store.refresh()
+        await store.loadReports([.debt])
         let withoutTracking = try XCTUnwrap(store.debtReport)
         XCTAssertTrue(withoutTracking.accounts.contains(where: { $0.accountID == "auto" }))
         store.includeTrackingAccounts = true
         await store.refresh()
+        await store.loadReports([.debt])
         XCTAssertEqual(store.debtReport, withoutTracking,
                        "Debt balances, historical points and interest must not inherit Net Worth's tracking filter")
     }
@@ -621,6 +624,8 @@ final class DemoStoreTests: XCTestCase {
     func testDemoIncomeSpendingPeriodsReconcileToCanonicalReportWithoutTransfers() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        XCTAssertNil(store.incomeReport, "Core activation must not publish detailed reports")
+        await store.loadReports(Set(WorkspaceReportKind.allCases))
         let report = try XCTUnwrap(store.incomeReport)
         XCTAssertFalse(report.periods.isEmpty)
         XCTAssertEqual(report.periods.reduce(Int64(0)) { $0 + $1.incomeMinor }, report.incomeMinor)

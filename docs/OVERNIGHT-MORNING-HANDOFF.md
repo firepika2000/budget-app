@@ -40,8 +40,8 @@ with clean `TEST SUCCEEDED`; all 11 shared strategy vectors remain exact. No mig
 
 - Current branch: `codex/development`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
-- Latest independently verified pushed checkpoint: `a4aabf0` (focused report read contract)
-- Push status: checkpoints through `a4aabf0` are pushed. Later dated entries supersede historical pending notes below.
+- Latest independently verified pushed checkpoint: `fee9d26` (restored report filter navigation)
+- Push status: checkpoints through `fee9d26` are pushed. Later dated entries supersede historical pending notes below.
 
 Focused report read-contract preparation follows this checkpoint. It preserves existing eager
 hydration while separating report selection and current-credential resolution for upcoming demand
@@ -50,6 +50,14 @@ states and production navigation tests. The following filter-reachability fix re
 toolbar entry to its existing shared filter form and adds a production apply/reopen/reset/chart
 navigation regression. Do not claim the seven-report
 launch fan-out has been removed yet. Human Live migrations and all human data remain untouched.
+
+Subsequent demand-loading activation supersedes that preparation note: Live core activation now
+makes zero detailed-report calls. Selected screens load/cache by query, planning month, workspace
+refresh and credential revision; reports have separate error/retry states. Concurrent reads share
+their in-flight task, and obsolete responses cannot overwrite current reports. Hub entry still
+loads four detailed payloads, so lightweight summary, account/category fan-out and Demo computation
+remain performance work. Next: finish report performance/accessibility and disposable PostgreSQL
+migration/backup closure. No human Live migrations, resets, merge or tags.
 - Active mission: [Production readiness ledger](PRODUCTION-READINESS.md); finish v0.8 and continue independent engineering toward an App Store release candidate.
 - Next task: demand-loaded Insights reports, authoritative invalidation, loading/error states and request-count evidence.
 - Human acceptance: **PENDING — DO NOT RETEST** during the autonomous run.

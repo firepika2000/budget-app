@@ -116,6 +116,63 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testCoreHydrationSkipsReportsAndFocusedReportsCacheRetryAndInvalidate() async throws {
+        let requests = CredentialRequestRecorder()
+        RefreshMockURLProtocol.handler = { request in
+            let path = request.url!.path
+            requests.append(path: path, authorization: request.value(forHTTPHeaderField: "Authorization") ?? "")
+            if path.contains("/months/") {
+                return Self.json(200, #"{"month":"2026-09-01","currency_code":"USD","ready_to_assign_minor":0,"total_assigned_minor":0,"total_overspent_minor":0,"allocation_version":0,"categories":[]}"#)
+            }
+            if path.hasSuffix("/reports/debt") {
+                if requests.paths.filter({ $0.hasSuffix("/reports/debt") }).count == 1 {
+                    return Self.json(503, #"{"detail":"Report temporarily unavailable"}"#)
+                }
+                return Self.json(200, #"{"start_date":"2026-09-01","end_date":"2026-09-30","currency_code":"USD","opening_debt_minor":1000,"debt_minor":900,"principal_reduction_minor":100,"recorded_interest_range_minor":0,"recorded_interest_month_minor":0,"recorded_interest_ytd_minor":0,"recorded_interest_trailing_12_minor":0,"interest_tracking_started_on":null,"points":[],"accounts":[]}"#)
+            }
+            if path.contains("/reports/") { return Self.json(500, "{}") }
+            return Self.json(200, "[]")
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let transport = URLSession(configuration: configuration)
+        let url = URL(string: "https://budget.example.com")!
+        let store = BudgetWorkspaceStore.production(
+            context: .live(budget: APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD"), serverURL: url, token: "A1"),
+            clientFactory: { try APIClient(baseURL: $0, session: transport) }
+        )
+        await store.refresh()
+        XCTAssertNotNil(store.summary)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertFalse(requests.paths.contains { $0.contains("/reports/") })
+        await store.loadReports([.debt])
+        XCTAssertNotNil(store.reportErrors[.debt])
+        XCTAssertNil(store.errorMessage, "Report failures must not fail workspace hydration")
+        await store.loadReports([.debt])
+        XCTAssertEqual(requests.paths.filter { $0.contains("/reports/") }.count, 1, "Do not loop on a known report failure")
+        await store.loadReports([.debt], retry: true)
+        XCTAssertTrue(store.reportsReady([.debt]))
+        XCTAssertEqual(store.debtReport?.debtMinor, 900)
+        await store.loadReports([.debt])
+        XCTAssertEqual(requests.paths.filter { $0.contains("/reports/") }.count, 2)
+        store.reportAccountID = "a1"
+        XCTAssertFalse(store.reportsReady([.debt]))
+        async let firstRead: Void = store.loadReports([.debt])
+        async let secondRead: Void = store.loadReports([.debt])
+        _ = await (firstRead, secondRead)
+        XCTAssertEqual(requests.paths.filter { $0.contains("/reports/") }.count, 3)
+        await store.refresh()
+        XCTAssertFalse(store.reportsReady([.debt]))
+        await store.loadReports([.debt])
+        XCTAssertEqual(requests.paths.filter { $0.contains("/reports/") }.count, 4)
+        store.updateLiveCredentials(serverURL: url, token: "A2")
+        await store.loadReports([.debt])
+        XCTAssertEqual(requests.paths.filter { $0.contains("/reports/") }.count, 5)
+        XCTAssertEqual(requests.authorizations.last, "Bearer A2")
+        XCTAssertTrue(requests.paths.filter { $0.contains("/reports/") }.allSatisfy { $0.hasSuffix("/reports/debt") })
+    }
+
+    @MainActor
     func testLiveWorkspaceAttachmentsAndCommandsUseRotatedCredentialWithoutReconstruction() async throws {
         let requests = CredentialRequestRecorder()
         RefreshMockURLProtocol.handler = { request in

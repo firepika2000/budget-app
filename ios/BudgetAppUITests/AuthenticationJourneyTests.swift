@@ -299,7 +299,9 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["insights-debt-interest"].tap(); XCTAssertTrue(app.navigationBars["Debt & Interest"].waitForExistence(timeout:5)); app.navigationBars.buttons["Insights"].tap()
         app.buttons["insights-debt-interest"].tap()
         app.segmentedControls.buttons["Interest"].tap(); XCTAssertTrue(app.staticTexts["Recorded Interest"].exists)
-        app.segmentedControls.buttons["Payoff"].tap(); XCTAssertTrue(app.staticTexts["Payoff scenarios"].exists)
+        app.segmentedControls.buttons["Payoff"].tap()
+        XCTAssertTrue(app.segmentedControls["debt-payoff-strategy"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.segmentedControls["debt-payoff-strategy"].buttons["Avalanche"].exists)
     }
 
     func testProductionAuthenticationFieldsAcceptContinuousKeyboardInput() {

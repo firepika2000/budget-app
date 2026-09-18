@@ -11,12 +11,12 @@ Checkpoint completion is followed by the next unblocked engineering task.
 | Gate | Status | Evidence and remaining work |
 |---|---|---|
 | PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved in existing acceptance/closure documents. v0.8 terms, interest classification, projections, strategies and payoff UI exist. Complete v0.8 review before planning/import/local-provider work. Reconcile older roadmap numbering with the approved mission explicitly. |
-| FINANCIAL | IN PROGRESS | Shared financial vectors and exact-money server engine exist. `d7a702d`: 10 shared strategy vectors, 18 focused Python tests and 6 Swift projection tests passed. Extreme-input safety, remaining projection vectors and report reconciliation still require closure proof. |
+| FINANCIAL | IN PROGRESS | Eleven shared strategy vectors now include paid-off parity; checked Int64 projection arithmetic and HTTP 422 boundaries passed backend/native/package regressions. Release-wide financial reconciliation and migration/recovery proof remain open. |
 | SECURITY | IN PROGRESS | Server capability/resource guards and regression suites exist. Extend adversarial matrix across reports, projections, imports and future providers; rerun relevant PostgreSQL/privacy gates. |
 | DATA | IN PROGRESS | Source migration chain ends at `0027_interest_class`; human Live remains at `0020_payee_identity_repair`. Repeat populated upgrade and encrypted attachment-inclusive restore into disposable destinations. Production Local Device storage remains open. |
 | RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Existing native/backend suites provide regression evidence; concurrency, offline failures, cancellation and release-wide regression remain open. |
-| PERFORMANCE | IN PROGRESS | Static production call-path audit proves up to seven report requests per owner workspace snapshot plus category/account fan-out. This is a request-count baseline, not a wall-clock or payload measurement. Implement demand loading and instrument request counts/payloads before closure. |
-| UX | IN PROGRESS | Shared production shell, onboarding, scalable payee selection and focused Insights exist. Restore reachable report filters, audit error/loading states, and provide actionable missing-debt-terms navigation. |
+| PERFORMANCE | IN PROGRESS | Live core hydration now makes zero detailed-report requests instead of seven; native HTTP tests cover caching/invalidation/retry. Hub still needs a lightweight summary; category/account fan-out, payload/wall-clock measures and Demo CPU optimization remain open. |
+| UX | IN PROGRESS | Shared shell, onboarding, scalable payee selection and focused Insights exist. Report filters are reachable again; missing debt terms open the shared editor. Demand-loaded reports have independent loading/error/retry. Full workflow/accessibility closure remains open. |
 | ACCESSIBILITY | IN PROGRESS | Existing accessibility-sized/dark-mode navigation tests passed at earlier checkpoints. Repeat on changed report screens; audit VoiceOver amounts, charts, controls and custom ordering. |
 | PLATFORM | IN PROGRESS | Xcode 27 Beta and existing iPhone 17 Pro Max/iOS 27 are required. Preserve Simulator data. Release configuration, lifecycle, platform scope and Apple integrations need closure. |
 | COMMERCIAL | BLOCKED | HUMAN PRODUCT DECISION REQUIRED: paid download versus free Demo plus non-consumable Lifetime Unlock. Preferred documented hypothesis is the latter; it adds restoration/offline/revocation complexity while allowing evaluation. Paid download reduces entitlement complexity but prevents pre-purchase evaluation. No StoreKit implementation before decision. Independent engineering continues. |
@@ -103,3 +103,25 @@ and sheet using the same workspace store. No accounting/filter contract changed.
 XCUITest verifies opening the form, applying a tag, reopening with the same context, resetting,
 and reaching the sector chart through normal navigation. This is automated evidence, not human
 acceptance; human acceptance remains consolidated and pending.
+
+Demand-loading activation (supersedes the preparatory eager-hydration note): core Live workspace
+activation now issues zero detailed report calls. Screens load selected authoritative payloads;
+cache scope includes date/filter query, planning month, core refresh revision and credential
+revision. Concurrent same-kind reads share an in-flight task; results from obsolete contexts are
+not published. A failed report has an explicit retry and cannot block core workspace hydration.
+Report-backed destination identity is retained while its readiness is invalidated after refresh.
+The Insights hub still loads four detailed payloads on entry, and Demo still calculates local
+canonical snapshot reports before selecting its payload. A lightweight summary and Demo CPU
+optimization remain open; no claim of completed performance gate or production readiness.
+Verification: 84 native XCTest cases and three production XCUITests passed on final source
+(hub navigation, filter apply/reopen/reset, and missing-terms editor recovery). An old UI assertion
+still expected the removed payoff placeholder; it now verifies the actual strategy control and
+Avalanche option. Swift package remains 35 BudgetCore + 45 BudgetAPI passed. Filter-sheet typing
+is suspended from report loading; hidden loading content has hit testing disabled. Payoff task
+identity now includes workspace and credential revisions. No financial semantics or migrations
+changed. Xcode result-finalization delays remain separately recorded, not claimed as test failures.
+
+Disposable PostgreSQL closure progress: a newly initialized PostgreSQL 17 cluster on a private
+temporary Unix socket (no TCP listener) passed all 11 concurrency tests, including Alembic migration
+to the current head. No human database connection was used. Full backend with these gates enabled
+and populated restore proof continue separately.

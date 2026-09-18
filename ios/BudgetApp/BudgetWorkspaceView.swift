@@ -282,16 +282,30 @@ struct WorkspaceReportQuery: Equatable {
     let includeTracking: Bool
 }
 
+struct WorkspaceReportContext: Equatable {
+    let query: WorkspaceReportQuery
+    let planMonth: Date
+    let revision: Int
+    let credentialRevision: Int
+}
+
 @MainActor
 protocol WorkspaceDataSource: AnyObject {
     var budget: APIBudget { get }
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot
+    func coreSnapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot
     func reports(planMonth: Date, query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports
     func exportReports(report: WorkspaceReportQuery) async throws -> Data
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection
 }
 
 extension WorkspaceDataSource {
+    func coreSnapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
+        var value = try await snapshot(planMonth: planMonth, report: report)
+        value.spending = nil; value.spendingTrends = nil; value.income = nil
+        value.netWorth = nil; value.debt = nil; value.planPerformance = nil; value.resilience = nil
+        return value
+    }
     // The deterministic adapter computes its reports locally using the same
     // canonical snapshot definitions. Live overrides this with bounded reads.
     func reports(planMonth: Date, query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
@@ -1086,6 +1100,14 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
     }
 
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
+        try await loadSnapshot(planMonth: planMonth, report: report, kinds: Set(WorkspaceReportKind.allCases))
+    }
+
+    func coreSnapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
+        try await loadSnapshot(planMonth: planMonth, report: report, kinds: [])
+    }
+
+    private func loadSnapshot(planMonth: Date, report: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceSnapshot {
         try await credentials.prepare()
         let client = try credentials.client()
         let month = BudgetWorkspaceStore.dateString(planMonth).prefix(7) + "-01"
@@ -1094,7 +1116,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         async let loadedCategories = client.categories(budgetID: budget.id, token: token)
         async let loadedGroups = client.categoryGroups(budgetID: budget.id, token: token)
         async let loadedSummary = client.monthSummary(budgetID: budget.id, month: String(month), token: token)
-        async let loadedReports = self.reports(planMonth: planMonth, query: report, kinds: Set(WorkspaceReportKind.allCases))
+        async let loadedReports = self.reports(planMonth: planMonth, query: report, kinds: kinds)
         let (accounts, transactions, categories, groups, summary, reports) = try await
             (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedReports)
         let spending = reports.spending, spendingTrends = reports.spendingTrends, income = reports.income
@@ -1145,6 +1167,11 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var debtReport: APIDebtReport?
     @Published var planPerformanceReport: APIPlanPerformanceReport?
     @Published var resilienceReport: APIResilienceReport?
+    @Published private(set) var reportRevision = 0
+    @Published private(set) var loadedReportKinds: Set<WorkspaceReportKind> = []
+    @Published private(set) var reportErrors: [WorkspaceReportKind: String] = [:]
+    private var loadedReportContext: WorkspaceReportContext?
+    private var pendingReports: [WorkspaceReportKind: Task<WorkspaceReports, Error>] = [:]
     @Published var delegatedBudget: APIDelegatedBudget?
     @Published var householdMembers: [APIHouseholdMember] = []
     @Published var delegatedBudgets: [APIDelegatedBudget] = []
@@ -1240,13 +1267,16 @@ final class BudgetWorkspaceStore: ObservableObject {
             if let dataSource {
                 let range = reportRange()
                 let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, flag: reportFlag, tag: reportTag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTrackingAccounts)
-                let value = try await dataSource.snapshot(planMonth: planMonth, report: query)
+                let value = try await dataSource.coreSnapshot(planMonth: planMonth, report: query)
                 accounts = value.accounts; accountBalances = value.accountBalances; categories = value.categories; groups = value.groups; transactions = value.transactions; payees = value.payees
-                summary = value.summary; requests = value.requests; allowances = value.allowances; spendingReport = value.spending; spendingTrendsReport = value.spendingTrends
-                incomeReport = value.income; netWorthReport = value.netWorth; debtReport = value.debt; planPerformanceReport = value.planPerformance; resilienceReport = value.resilience; delegatedBudget = value.delegated; forecast = value.forecast
+                summary = value.summary; requests = value.requests; allowances = value.allowances
+                // Preserve report-backed destination identity while new authoritative reports load.
+                // Readiness is invalidated below; report screens never display these as current.
+                delegatedBudget = value.delegated; forecast = value.forecast
                 householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; allocationOperations = value.allocationOperations; errorMessage = nil
                 targets = Dictionary(uniqueKeysWithValues: value.targets.map { ($0.categoryID, $0) })
                 scheduledTransactions = value.schedules
+                reportRevision += 1
                 return
             }
         } catch { errorMessage = error.localizedDescription }
@@ -1257,6 +1287,55 @@ final class BudgetWorkspaceStore: ObservableObject {
     func fetchReports(query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
         guard let dataSource else { throw workspaceRepositoryError("Reports are unavailable.") }
         return try await dataSource.reports(planMonth: planMonth, query: query, kinds: kinds)
+    }
+
+    var reportContext: WorkspaceReportContext {
+        let range = reportRange()
+        let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, flag: reportFlag, tag: reportTag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTrackingAccounts)
+        return WorkspaceReportContext(query: query, planMonth: planMonth, revision: reportRevision, credentialRevision: liveCredentialRevision)
+    }
+
+    func reportsReady(_ kinds: Set<WorkspaceReportKind>) -> Bool {
+        loadedReportContext == reportContext && kinds.isSubset(of: loadedReportKinds)
+    }
+
+    func loadReports(_ kinds: Set<WorkspaceReportKind>, retry: Bool = false) async {
+        guard let dataSource else { return }
+        let context = reportContext
+        if loadedReportContext != context {
+            for task in pendingReports.values { task.cancel() }
+            pendingReports = [:]; loadedReportKinds = []; reportErrors = [:]
+            loadedReportContext = context
+        }
+        for kind in kinds {
+            guard !loadedReportKinds.contains(kind) else { continue }
+            if !retry, reportErrors[kind] != nil { continue }
+            reportErrors[kind] = nil
+            let task: Task<WorkspaceReports, Error>
+            if let existing = pendingReports[kind] { task = existing }
+            else {
+                task = Task { try await dataSource.reports(planMonth: context.planMonth, query: context.query, kinds: [kind]) }
+                pendingReports[kind] = task
+            }
+            do {
+                let value = try await task.value
+                guard context == reportContext, loadedReportContext == context else { return }
+                switch kind {
+                case .spending: spendingReport = value.spending
+                case .spendingTrends: spendingTrendsReport = value.spendingTrends
+                case .income: incomeReport = value.income
+                case .netWorth: netWorthReport = value.netWorth
+                case .debt: debtReport = value.debt
+                case .planPerformance: planPerformanceReport = value.planPerformance
+                case .resilience: resilienceReport = value.resilience
+                }
+                loadedReportKinds.insert(kind)
+            } catch {
+                guard context == reportContext, loadedReportContext == context else { return }
+                reportErrors[kind] = error.localizedDescription
+            }
+            pendingReports[kind] = nil
+        }
     }
 
     func exportReports() async throws -> URL {
@@ -3346,6 +3425,38 @@ private struct LiveReconcileView: View {
     private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await workspace.reconcile(accountID: account.id, statementBalance: parsed, throughDate: BudgetWorkspaceStore.dateString(throughDate), createAdjustment: createAdjustment, reason: reason); dismiss() } catch { errorMessage = error.localizedDescription } }
 }
 
+private struct ReportLoadModifier: ViewModifier {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let kinds: Set<WorkspaceReportKind>
+    var suspended = false
+    private struct LoadKey: Equatable {
+        let context: WorkspaceReportContext
+        let suspended: Bool
+    }
+    func body(content: Content) -> some View {
+        let ready = store.reportsReady(kinds)
+        let errors = kinds.compactMap { store.reportErrors[$0] }
+        content
+            .opacity(ready ? 1 : 0)
+            .allowsHitTesting(ready)
+            .accessibilityHidden(!ready)
+            .overlay {
+                if !ready {
+                    if let error = errors.first {
+                        ContentUnavailableView {
+                            Label("Unable to load report", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                        } description: { Text(error) } actions: {
+                            Button("Retry") { Task { await store.loadReports(kinds, retry: true) } }
+                        }
+                    } else { ProgressView("Loading report…") }
+                }
+            }
+            .task(id: LoadKey(context: store.reportContext, suspended: suspended)) {
+                if !suspended { await store.loadReports(kinds) }
+            }
+    }
+}
+
 private struct LiveInsightsView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var showFilters = false
@@ -3373,7 +3484,8 @@ private struct LiveInsightsView: View {
                 NavigationLink { DebtInterestDestinationView() } label: { reportLink("Debt & Interest", "Balances, recorded interest, and payoff planning.", "creditcard.trianglebadge.exclamationmark") }.accessibilityIdentifier("insights-debt-interest")
             }
             if let resilience = store.resilienceReport { Section("Looking Ahead") { LabeledContent("Expected 30-day margin", value: store.format(resilience.expectedMarginMinor)); Text("Forecast-only scheduled income and outflows. It does not change money available today.").font(.caption).foregroundStyle(.secondary) } }
-        }.navigationTitle("Insights").accessibilityIdentifier("insights-hub")
+        }.modifier(ReportLoadModifier(kinds: [.netWorth, .income, .debt, .resilience], suspended: showFilters))
+        .navigationTitle("Insights").accessibilityIdentifier("insights-hub")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showFilters = true } label: {
@@ -3398,7 +3510,7 @@ private struct LiveInsightsView: View {
         TextField("Flag", text: $store.reportFlag).textInputAutocapitalization(.never)
         TextField("Tag", text: $store.reportTag).textInputAutocapitalization(.never)
         Toggle("Include tracking accounts", isOn: $store.includeTrackingAccounts)
-    }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.reportFlag = ""; store.reportTag = ""; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false; Task { await reload() } } } }.sheet(isPresented: $showReportPayeeSelector) { PayeeSearchSelectionView(title: "Filter by Payee") { store.reportPayee = $0.displayName } } } }
+    }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.reportFlag = ""; store.reportTag = ""; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false } } }.sheet(isPresented: $showReportPayeeSelector) { PayeeSearchSelectionView(title: "Filter by Payee") { store.reportPayee = $0.displayName } } } }
     private func reload() async { await store.refresh() }
     private func prepareExport() async {
         do { exportURL = try await store.exportReports() }
@@ -3423,17 +3535,17 @@ private struct SpendingIncomeReportView: View {
         else { ContentUnavailableView("No spending in this range",systemImage:"chart.pie",description:Text("Try a wider date range.")) }
         if let trends=store.spendingTrendsReport { SpendingTrendsView(report:trends) }
         if store.budget.can("export_data") { Section("Export") { if let exportURL { ShareLink(item:exportURL){Label("Share Report CSV",systemImage:"square.and.arrow.up")}.accessibilityIdentifier("share-report-csv") };Button{Task{do{exportURL=try await store.exportReports()}catch{exportError=error.localizedDescription}}}label:{Label(exportURL == nil ? "Prepare Report CSV":"Refresh Report CSV",systemImage:"tablecells")}.accessibilityIdentifier("prepare-report-csv") } }
-    }.navigationTitle("Spending & Income").navigationDestination(item:$slice){item in if item.mode == .group {LiveReportGroupView(group:item.name)} else if let category=store.spendingReport?.categories.first(where:{$0.categoryID==item.id}){LiveReportCategoryView(category:category)}}.alert("Unable to export reports",isPresented:Binding(get:{exportError != nil},set:{if !$0{exportError=nil}})){Button("OK",role:.cancel){}}message:{Text(exportError ?? "Unknown error")} }
+}.modifier(ReportLoadModifier(kinds: [.spending, .spendingTrends, .income])).navigationTitle("Spending & Income").navigationDestination(item:$slice){item in if item.mode == .group {LiveReportGroupView(group:item.name)} else if let category=store.spendingReport?.categories.first(where:{$0.categoryID==item.id}){LiveReportCategoryView(category:category)}}.alert("Unable to export reports",isPresented:Binding(get:{exportError != nil},set:{if !$0{exportError=nil}})){Button("OK",role:.cancel){}}message:{Text(exportError ?? "Unknown error")} }
 }
 
 private struct PlanPerformanceReportView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    var body: some View { List { ReportPeriodControls(); if let summary=store.summary { BudgetPerformanceInsightsView(summary:summary) }; if let report=store.planPerformanceReport { HistoricalPlanPerformanceView(report:report) } else { ContentUnavailableView("No planning history",systemImage:"target",description:Text("Assignments and category activity will appear here.")) } }.navigationTitle("Plan Performance").accessibilityIdentifier("insights-plan-report") }
+    var body: some View { List { ReportPeriodControls(); if let summary=store.summary { BudgetPerformanceInsightsView(summary:summary) }; if let report=store.planPerformanceReport { HistoricalPlanPerformanceView(report:report) } else { ContentUnavailableView("No planning history",systemImage:"target",description:Text("Assignments and category activity will appear here.")) } }.modifier(ReportLoadModifier(kinds: [.planPerformance])).navigationTitle("Plan Performance").accessibilityIdentifier("insights-plan-report") }
 }
 
 private struct NetWorthDestinationView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    var body: some View { List { ReportPeriodControls(); if let report=store.netWorthReport { NetWorthReportView(report:report) } else { ContentUnavailableView("No account history",systemImage:"chart.line.uptrend.xyaxis",description:Text("Add an account balance or widen the date range.")) } }.navigationTitle("Net Worth") }
+    var body: some View { List { ReportPeriodControls(); if let report=store.netWorthReport { NetWorthReportView(report:report) } else { ContentUnavailableView("No account history",systemImage:"chart.line.uptrend.xyaxis",description:Text("Add an account balance or widen the date range.")) } }.modifier(ReportLoadModifier(kinds: [.netWorth])).navigationTitle("Net Worth") }
 }
 
 private struct DebtInterestDestinationView: View {
@@ -3445,7 +3557,7 @@ private struct DebtInterestDestinationView: View {
     var body: some View { List { Section { Picker("Debt section",selection:$choice){ForEach(SectionChoice.allCases,id:\.self){Text($0.rawValue).tag($0)}}.pickerStyle(.segmented).accessibilityIdentifier("debt-insights-sections") }
         if let report=store.debtReport { switch choice { case .overview: DebtOverviewContent(report:report); case .interest: DebtInterestContent(report:report); case .payoff: DebtPayoffContent(report: report, editingTermsAccount: $editingTermsAccount, termsRevision: termsRevision) } }
         else { ContentUnavailableView("No debt",systemImage:"checkmark.circle",description:Text("Credit cards and loans will appear here when visible.")) }
-    }.navigationTitle("Debt & Interest")
+    }.modifier(ReportLoadModifier(kinds: [.debt])).navigationTitle("Debt & Interest")
         .sheet(item: $editingTermsAccount, onDismiss: { termsRevision += 1 }) { account in
             DebtTermsEditorView(account: account).environmentObject(store)
         }
@@ -3489,7 +3601,7 @@ private struct DebtPayoffContent: View {
         return value
     }
     private var selectedAccountIDs: [String] { store.reportAccountID.isEmpty ? [] : [store.reportAccountID] }
-    private var scenarioKey: String { "\(strategy)|\(rollover)|\(extraPayment.map(String.init) ?? "invalid")|\(customOrder.joined(separator: ","))|\(selectedAccountIDs.joined(separator: ","))|\(termsRevision)" }
+    private var scenarioKey: String { "\(strategy)|\(rollover)|\(extraPayment.map(String.init) ?? "invalid")|\(customOrder.joined(separator: ","))|\(selectedAccountIDs.joined(separator: ","))|\(termsRevision)|\(store.reportRevision)|\(store.liveCredentialRevision)" }
 
     var body: some View {
         Section("Scenario") {
