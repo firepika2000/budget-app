@@ -4,6 +4,20 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Swift policy-service checkpoint after `aeaa298`: typed BudgetAPI read/selection/history contracts
+and provider-neutral planning services now support the server policy API. Every Live operation
+resolves the shared current credential at execution; a retained workspace regression exercises
+read, selection and history after token rotation. Demo implements the same prospective selection,
+optimistic versions, no-op behavior and immutable decision provenance. Candidate projection is
+validated before publication; owner-only checks also reject the full-access partner. The Demo
+budget now identifies that partner as `manage`, not incorrectly as `owner`.
+
+Verification: **122 native XCTest PASS**, **48 BudgetCore + 51 BudgetAPI PASS**, Beta simulator
+test build PASS and diff check PASS. Native log `/tmp/budget-policy-client-native.log`; package
+log `/tmp/budget-policy-client-package.log`. Server remains unchanged from the **446-test** backend
+checkpoint below. Shared owner settings and explicit new-budget default activation remain pending;
+this service checkpoint does not expose a new setting or migrate human data.
+
 Prospective policy API after `09a8ae6`: owner-authorized GET/PUT
 `/api/v1/budgets/{budget_id}/cash-rollover-policy` exposes current policy, current month, both
 policy/allocation versions and the latest choices for future effective months. GET `/history`

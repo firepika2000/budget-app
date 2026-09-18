@@ -23,7 +23,42 @@ final class DemoStore: ObservableObject {
     private(set) var fixtureAccountOpening: [String: Int64] = [:]
     // Repository-loaded effective history. Public policy commands/defaults are integrated
     // separately; an absent history preserves the legacy carry policy.
-    let cashRolloverPolicies: [CashRolloverProjection.Change]
+    private(set) var cashRolloverPolicies: [CashRolloverProjection.Change]
+    private let initialCashRolloverPolicies: [CashRolloverProjection.Change]
+    struct RolloverAuditMetadata {
+        let id: String; let source: String; let actorID: String?; let createdAt: String
+    }
+    private(set) var cashRolloverAudit: [Int: RolloverAuditMetadata] = [:]
+
+    var cashRolloverPolicyVersion: Int { cashRolloverPolicies.map(\.version).max() ?? 0 }
+
+    func selectCashRolloverPolicy(_ policy: CashRolloverProjection.Policy, effectiveMonth: String,
+                                  expectedPolicyVersion: Int, expectedAllocationVersion: Int) throws {
+        guard persona == .rey else { throw DemoMutationError.restrictedCategory }
+        try requireAllocationVersion(expectedAllocationVersion)
+        guard expectedPolicyVersion == cashRolloverPolicyVersion else {
+            throw NSError(domain: "BudgetWorkspace", code: 409, userInfo: [NSLocalizedDescriptionKey: "Cash rollover policy changed. Refresh before trying again."])
+        }
+        let day = try PlanningPeriodProjection.Day(effectiveMonth)
+        guard day.month == effectiveMonth, effectiveMonth > currentPlanningMonth else {
+            throw NSError(domain: "BudgetWorkspace", code: 422, userInfo: [NSLocalizedDescriptionKey: "A policy change must begin on the first day of a future month."])
+        }
+        let ordered = cashRolloverPolicies.sorted { ($0.effectiveMonth, $0.version) < ($1.effectiveMonth, $1.version) }
+        let effective = ordered.last { $0.effectiveMonth.iso <= effectiveMonth }?.policy ?? .carry
+        guard effective != policy else { return }
+        let original = cashRolloverPolicies
+        let version = cashRolloverPolicyVersion + 1
+        if original.isEmpty { cashRolloverPolicies.append(try .init(effectiveMonth: "0001-01-01", policy: .carry, version: 0)) }
+        cashRolloverPolicies.append(try .init(effectiveMonth: effectiveMonth, policy: policy, version: version))
+        let plan: PlanningPeriodProjection.Snapshot
+        do { plan = try planningSnapshot(month: currentPlanningMonth) }
+        catch { cashRolloverPolicies = original; throw error }
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        if original.isEmpty { cashRolloverAudit[0] = .init(id: UUID().uuidString, source: "legacy_migration", actorID: nil, createdAt: stamp) }
+        cashRolloverAudit[version] = .init(id: UUID().uuidString, source: "user_selection", actorID: "demo-owner", createdAt: stamp)
+        allocationVersion += 1
+        publishPlanning(plan)
+    }
 
     struct AllocationEvent {
         let id: String
@@ -91,8 +126,10 @@ final class DemoStore: ObservableObject {
 
     init(fresh: Bool = false, cashRolloverPolicies: [CashRolloverProjection.Change] = []) {
         self.cashRolloverPolicies = cashRolloverPolicies
+        self.initialCashRolloverPolicies = cashRolloverPolicies
         accounts = []; categories = []; transactions = []; payees = []
         schedules = []; requests = []; allowances = []; groupOrder = []
+        resetPolicyAudit()
         if !fresh { installSeedLedger() }
     }
 
@@ -148,7 +185,18 @@ final class DemoStore: ObservableObject {
         persona = .rey
         hideAmounts = false
         archivedGroups = []
+        cashRolloverPolicies = initialCashRolloverPolicies
+        resetPolicyAudit()
         installSeedLedger()
+    }
+
+    private func resetPolicyAudit() {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        cashRolloverAudit = Dictionary(uniqueKeysWithValues: cashRolloverPolicies.map { value in
+            (value.version, RolloverAuditMetadata(id: UUID().uuidString,
+                source: value.version == 0 ? "legacy_migration" : "user_selection",
+                actorID: value.version == 0 ? nil : "demo-owner", createdAt: stamp))
+        })
     }
 
     /// A complete deterministic opening plus chronological fixture commands. No differences

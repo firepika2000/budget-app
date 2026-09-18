@@ -4,6 +4,55 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testProductionPolicyServiceIsProspectiveVersionedAuditedAndOwnerOnly() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        let services = BudgetApplicationServices(repository: source)
+        try await services.accounts.create(.init(name: "Cash", kind: "checking", isOnBudget: true, openingBalanceMinor: 10_000))
+        let cash = try XCTUnwrap(source.demo.accounts.last?.id)
+        XCTAssertTrue(source.demo.createCategory(name: "Needs", group: "Needs"))
+        let category = try XCTUnwrap(source.demo.categories.last?.id)
+        let today = BudgetWorkspaceStore.dateString(Date())
+        try await services.transactions.record(.init(accountID: cash, categoryID: category, amountMinor: -2_000,
+            occurredOn: today, payeeName: "Policy proof", memo: "", isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: []))
+        let month = source.demo.currentPlanningMonth
+        let next = BudgetWorkspaceStore.dateString(Calendar(identifier: .gregorian).date(byAdding: .month, value: 1, to: BudgetWorkspaceStore.parseDate(month))!)
+        let initial = try await services.planning.cashRolloverPolicy()
+        let accounts = source.demo.accounts, transactions = source.demo.transactions
+        let events = source.demo.allocationEvents.map(\.id)
+        let selection = APICashRolloverPolicySelection(policy: .absorbNextMonth, effectiveMonth: next,
+            expectedPolicyVersion: initial.policyVersion, expectedAllocationVersion: initial.allocationVersion)
+        let changed = try await services.planning.selectCashRolloverPolicy(selection)
+        XCTAssertEqual(changed.currentPolicy, .carryCategoryDeficit)
+        XCTAssertEqual(changed.policyVersion, 1)
+        XCTAssertEqual(changed.allocationVersion, initial.allocationVersion + 1)
+        XCTAssertEqual(try source.demo.planningSnapshot(month: month).readyToAssignMinor, 10_000)
+        XCTAssertEqual(try source.demo.planningSnapshot(month: next).readyToAssignMinor, 8_000)
+        do { _ = try await services.planning.selectCashRolloverPolicy(selection); XCTFail("Stale selection must refuse") } catch {}
+        do { try await services.planning.assign(.init(categoryID: category, month: next, assignedMinor: 1_000, expectedVersion: initial.allocationVersion)); XCTFail("Policy invalidates stale assignment previews") } catch {}
+        let noOp = try await services.planning.selectCashRolloverPolicy(.init(policy: .absorbNextMonth, effectiveMonth: next, expectedPolicyVersion: 1, expectedAllocationVersion: changed.allocationVersion))
+        XCTAssertEqual(noOp, changed)
+        let audit = try await services.planning.cashRolloverPolicyHistory()
+        XCTAssertEqual(audit.items.map(\.version), [1, 0])
+        XCTAssertEqual(audit.items.first?.source, "user_selection")
+        XCTAssertNil(audit.items.last?.actorUserID)
+        let reloaded = try await services.planning.cashRolloverPolicyHistory()
+        XCTAssertEqual(reloaded, audit, "Refresh preserves audit identity and timestamp")
+        for persona in [DemoPersona.partner, .alex, .mia] {
+            source.demo.persona = persona
+            do { _ = try await services.planning.cashRolloverPolicy(); XCTFail("Only the owner can read settings") } catch {}
+            do { _ = try await services.planning.selectCashRolloverPolicy(.init(policy: .carryCategoryDeficit, effectiveMonth: next, expectedPolicyVersion: 1, expectedAllocationVersion: changed.allocationVersion)); XCTFail("Nonowner mutation must refuse") } catch {}
+        }
+        source.demo.persona = .rey
+        do { _ = try await services.planning.selectCashRolloverPolicy(.init(policy: .carryCategoryDeficit, effectiveMonth: month, expectedPolicyVersion: 1, expectedAllocationVersion: changed.allocationVersion)); XCTFail("Current month is immutable") } catch {}
+        let revised = try await services.planning.selectCashRolloverPolicy(.init(policy: .carryCategoryDeficit, effectiveMonth: next, expectedPolicyVersion: 1, expectedAllocationVersion: changed.allocationVersion))
+        XCTAssertEqual(revised.policyVersion, 2)
+        XCTAssertEqual(try source.demo.planningSnapshot(month: next).readyToAssignMinor, 10_000)
+        XCTAssertEqual(source.demo.accounts, accounts)
+        XCTAssertEqual(source.demo.transactions, transactions)
+        XCTAssertEqual(source.demo.allocationEvents.map(\.id), events)
+    }
+
+    @MainActor
     func testProductionPlanReportMatchesServerHistoryPartialPeriodsRefundsAndScope() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
         let services = BudgetApplicationServices(repository: source)

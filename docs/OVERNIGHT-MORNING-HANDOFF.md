@@ -6,6 +6,16 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `aeaa298`, Swift API contracts, provider-neutral planning service/store wrappers and matching
+Demo prospective policy commands/history are implemented. Live reads/writes/history resolve the
+current shared credential per request. Retained-workspace rotation regression includes these paths.
+Demo tests cover owner-only access (including partner denial), stale policy/allocation tokens,
+no-op history stability, pending revision, current/future exact balances and unchanged ledger rows.
+Verification: **122 native XCTest**, **48 Core + 51 API**, Beta test build and diff check PASS.
+Logs: `/tmp/budget-policy-client-native.log`, `/tmp/budget-policy-client-package.log`.
+Next: shared owner settings UI and production UI coverage, then explicit new-budget defaults with
+legacy preservation. Human database remains untouched; **HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 After `09a8ae6`, prospective owner policy GET/PUT and bounded audit history are implemented on the
 server. Real changes append effective provenance under the budget lock, compare policy/allocation
 tokens, and invalidate stale assignment/Smart Funding previews once. No-op/stale/unauthorized and

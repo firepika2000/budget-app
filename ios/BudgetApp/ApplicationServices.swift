@@ -195,6 +195,9 @@ protocol AccountCommandRepository: AnyObject {
 protocol PlanningCommandRepository: AnyObject {
     func assignMoney(_ operation: AssignMoneyOperation) async throws
     func moveMoney(_ operation: MoveMoneyOperation) async throws
+    func cashRolloverPolicy() async throws -> APICashRolloverPolicyObservation
+    func selectCashRolloverPolicy(_ selection: APICashRolloverPolicySelection) async throws -> APICashRolloverPolicyObservation
+    func cashRolloverPolicyHistory(beforeVersion: Int?) async throws -> APICashRolloverPolicyHistory
 }
 
 @MainActor
@@ -287,6 +290,21 @@ struct AccountService {
 struct BudgetPlanningService {
     private let repository: any PlanningCommandRepository
     init(repository: any PlanningCommandRepository) { self.repository = repository }
+
+    func cashRolloverPolicy() async throws -> APICashRolloverPolicyObservation {
+        do { return try await repository.cashRolloverPolicy() }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func selectCashRolloverPolicy(_ selection: APICashRolloverPolicySelection) async throws -> APICashRolloverPolicyObservation {
+        do { return try await repository.selectCashRolloverPolicy(selection) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func cashRolloverPolicyHistory(beforeVersion: Int? = nil) async throws -> APICashRolloverPolicyHistory {
+        do { return try await repository.cashRolloverPolicyHistory(beforeVersion: beforeVersion) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
 
     func assign(_ operation: AssignMoneyOperation) async throws {
         do { try await repository.assignMoney(operation) }

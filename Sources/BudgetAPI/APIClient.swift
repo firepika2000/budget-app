@@ -702,6 +702,20 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/smart-funding/\(month)", token: token)
     }
 
+    public func cashRolloverPolicy(budgetID: String, token: String) async throws -> APICashRolloverPolicyObservation {
+        try await send(path: "api/v1/budgets/\(budgetID)/cash-rollover-policy", token: token)
+    }
+
+    public func selectCashRolloverPolicy(budgetID: String, selection: APICashRolloverPolicySelection, token: String) async throws -> APICashRolloverPolicyObservation {
+        try await send(path: "api/v1/budgets/\(budgetID)/cash-rollover-policy", method: "PUT", token: token, body: selection)
+    }
+
+    public func cashRolloverPolicyHistory(budgetID: String, beforeVersion: Int? = nil, limit: Int = 50, token: String) async throws -> APICashRolloverPolicyHistory {
+        var query = [URLQueryItem(name: "limit", value: String(limit))]
+        if let beforeVersion { query.append(URLQueryItem(name: "before_version", value: String(beforeVersion))) }
+        return try await send(path: "api/v1/budgets/\(budgetID)/cash-rollover-policy/history", queryItems: query, token: token)
+    }
+
     public func commitSmartFunding(budgetID: String, month: String, expectedAllocationVersion: Int, token: String) async throws -> APIAllocationOperation {
         try await send(
             path: "api/v1/budgets/\(budgetID)/smart-funding", method: "POST", token: token,

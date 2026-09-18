@@ -2,6 +2,41 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testCashRolloverPolicyContractUsesExactVersionedSelectionAndBoundedHistory() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        var methods: [String] = []
+        MockURLProtocol.handler = { request in
+            methods.append(request.httpMethod!)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            if request.url!.path.hasSuffix("/history") {
+                let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+                XCTAssertEqual(Dictionary(uniqueKeysWithValues: query.map { ($0.name, $0.value!) }), ["limit": "50", "before_version": "3"])
+                return (response, Data(#"{"items":[{"id":"p1","effective_month":"2026-10-01","policy":"absorb_next_month","version":1,"source":"user_selection","actor_user_id":"owner","created_at":"2026-09-18T12:00:00Z"}],"next_before_version":1}"#.utf8))
+            }
+            XCTAssertEqual(request.url!.path, "/api/v1/budgets/b1/cash-rollover-policy")
+            if request.httpMethod == "PUT" {
+                let body = try JSONSerialization.jsonObject(with: requestBody(request)) as! [String: Any]
+                XCTAssertEqual(Set(body.keys), ["policy", "effective_month", "expected_policy_version", "expected_allocation_version"])
+                XCTAssertEqual(body["policy"] as? String, "absorb_next_month")
+                XCTAssertEqual(body["effective_month"] as? String, "2026-10-01")
+                XCTAssertEqual(body["expected_policy_version"] as? Int, 0)
+                XCTAssertEqual(body["expected_allocation_version"] as? Int, 7)
+            }
+            return (response, Data(#"{"current_month":"2026-09-01","current_policy":"carry_category_deficit","policy_version":1,"allocation_version":8,"pending":[{"effective_month":"2026-10-01","policy":"absorb_next_month","version":1}]}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let current = try await client.cashRolloverPolicy(budgetID: "b1", token: "current")
+        XCTAssertEqual(current.currentPolicy, .carryCategoryDeficit)
+        let updated = try await client.selectCashRolloverPolicy(budgetID: "b1", selection: .init(policy: .absorbNextMonth, effectiveMonth: "2026-10-01", expectedPolicyVersion: 0, expectedAllocationVersion: 7), token: "current")
+        XCTAssertEqual(updated.pending.first?.policy, .absorbNextMonth)
+        let history = try await client.cashRolloverPolicyHistory(budgetID: "b1", beforeVersion: 3, token: "current")
+        XCTAssertEqual(history.items.first?.actorUserID, "owner")
+        XCTAssertEqual(history.nextBeforeVersion, 1)
+        XCTAssertEqual(methods, ["GET", "PUT", "GET"])
+    }
+
     func testTargetSnoozeUsesMonthScopedMetadataOnlyRequest() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

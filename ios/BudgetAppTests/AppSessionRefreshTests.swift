@@ -209,6 +209,12 @@ final class AppSessionRefreshTests: XCTestCase {
             if request.url?.path.hasSuffix("/target/snooze/2027-02-01") == true {
                 return Self.json(200, #"{"category_id":"c1","month":"2027-02-01","is_snoozed":true}"#)
             }
+            if request.url?.path.hasSuffix("/cash-rollover-policy") == true {
+                return Self.json(200, #"{"current_month":"2026-09-01","current_policy":"carry_category_deficit","policy_version":1,"allocation_version":1,"pending":[{"effective_month":"2026-10-01","policy":"absorb_next_month","version":1}]}"#)
+            }
+            if request.url?.path.hasSuffix("/cash-rollover-policy/history") == true {
+                return Self.json(200, #"{"items":[],"next_before_version":null}"#)
+            }
             if request.url?.path.hasSuffix("/access/u2") == true {
                 return Self.json(200, #"{"budget_id":"b1","user_id":"u2","capabilities":["view_budget"],"restrict_accounts":false,"account_ids":[],"restrict_categories":false,"category_ids":[],"grant_permission":"view","is_custom":false,"version":0,"updated_by_user_id":null,"updated_by_display_name":null,"updated_at":null}"#)
             }
@@ -247,6 +253,13 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertTrue(requests.authorizations.dropFirst().allSatisfy { $0 == "Bearer A2" })
         try await store.setTargetSnoozed(categoryID: "c1", month: "2027-02-01", isSnoozed: true)
         XCTAssertEqual(requests.paths.filter { $0.hasSuffix("/target/snooze/2027-02-01") }.count, 1)
+        let policy = try await store.cashRolloverPolicy()
+        XCTAssertEqual(policy.currentPolicy, .carryCategoryDeficit)
+        _ = try await store.selectCashRolloverPolicy(.init(policy: .absorbNextMonth, effectiveMonth: "2026-10-01", expectedPolicyVersion: 0, expectedAllocationVersion: 0))
+        let history = try await store.cashRolloverPolicyHistory()
+        XCTAssertTrue(history.items.isEmpty)
+        XCTAssertEqual(requests.paths.filter { $0.hasSuffix("/cash-rollover-policy") }.count, 2, "One read and exactly one mutation")
+        XCTAssertEqual(requests.paths.filter { $0.hasSuffix("/cash-rollover-policy/history") }.count, 1)
         XCTAssertTrue(requests.authorizations.dropFirst().allSatisfy { $0 == "Bearer A2" })
     }
 

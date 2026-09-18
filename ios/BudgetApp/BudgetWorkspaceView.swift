@@ -393,7 +393,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let restricted = store.persona.isChild
         budget = APIBudget(
             id: "demo-budget", householdID: "demo-household", name: "Rivera Household", currencyCode: "USD",
-            effectivePermission: restricted ? .contribute : .owner,
+            effectivePermission: store.persona == .rey ? .owner : (restricted ? .contribute : .manage),
             capabilities: restricted ? ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances", "create_transaction", "edit_transaction", "delete_transaction", "request_money", "move_money", "manage_own_categories"] : nil
         )
         debtTermsValues["visa"] = .init(termsType: "credit_card", annualRateBasisPoints: 2049, rateType: "variable", paymentFrequency: "monthly", minimumPaymentRule: "fixed", minimumPaymentMinor: 4500, dueDay: 18)
@@ -1034,6 +1034,32 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         try demo.requireAllocationVersion(operation.expectedVersion)
         try demo.replaceAssignment(categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor)
     }
+    func cashRolloverPolicy() async throws -> APICashRolloverPolicyObservation {
+        guard demo.persona == .rey else { throw APIClientError.server(status: 403, message: "Only the household owner can manage cash rollover policy.") }
+        let ordered = demo.cashRolloverPolicies.sorted { ($0.effectiveMonth, $0.version) < ($1.effectiveMonth, $1.version) }
+        var pending: [String: CashRolloverProjection.Change] = [:]
+        for change in ordered where change.effectiveMonth.iso > demo.currentPlanningMonth { pending[change.effectiveMonth.iso] = change }
+        return try decode(["current_month": demo.currentPlanningMonth,
+            "current_policy": ordered.last(where: { $0.effectiveMonth.iso <= demo.currentPlanningMonth })?.policy.rawValue ?? "carry_category_deficit",
+            "policy_version": demo.cashRolloverPolicyVersion, "allocation_version": demo.allocationVersion,
+            "pending": pending.keys.sorted().map { month in ["effective_month": month, "policy": pending[month]!.policy.rawValue, "version": pending[month]!.version] as [String: Any] }])
+    }
+    func selectCashRolloverPolicy(_ selection: APICashRolloverPolicySelection) async throws -> APICashRolloverPolicyObservation {
+        guard demo.persona == .rey else { throw APIClientError.server(status: 403, message: "Only the household owner can manage cash rollover policy.") }
+        try demo.selectCashRolloverPolicy(CashRolloverProjection.Policy(rawValue: selection.policy.rawValue)!, effectiveMonth: selection.effectiveMonth,
+            expectedPolicyVersion: selection.expectedPolicyVersion, expectedAllocationVersion: selection.expectedAllocationVersion)
+        return try await cashRolloverPolicy()
+    }
+    func cashRolloverPolicyHistory(beforeVersion: Int?) async throws -> APICashRolloverPolicyHistory {
+        guard demo.persona == .rey else { throw APIClientError.server(status: 403, message: "Only the household owner can view cash rollover policy history.") }
+        let rows = demo.cashRolloverPolicies.filter { beforeVersion == nil || $0.version < beforeVersion! }.sorted { $0.version > $1.version }
+        let items: [[String: Any]] = rows.prefix(50).map { row in
+            let audit = demo.cashRolloverAudit[row.version]!
+            return ["id": audit.id, "effective_month": row.effectiveMonth.iso, "policy": row.policy.rawValue, "version": row.version,
+                "source": audit.source, "actor_user_id": audit.actorID ?? NSNull(), "created_at": audit.createdAt]
+        }
+        return try decode(["items": items, "next_before_version": rows.count > 50 ? rows[49].version as Any : NSNull()])
+    }
     func moveMoney(_ operation: MoveMoneyOperation) async throws {
         guard budget.can("move_money") else { throw workspaceRepositoryError("You do not have permission to move money.") }
         try demo.requireAllocationVersion(operation.expectedVersion)
@@ -1283,6 +1309,9 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func deleteTransfer(id: String) async throws { try await credentials.prepare(); try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { try await credentials.prepare(); _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID, request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason, expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor), token: token) }
     func assignMoney(_ operation: AssignMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.updateAssignment(budgetID: budget.id, categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor, expectedAllocationVersion: operation.expectedVersion, token: token) }
+    func cashRolloverPolicy() async throws -> APICashRolloverPolicyObservation { try await credentials.prepare(); return try await client.cashRolloverPolicy(budgetID: budget.id, token: token) }
+    func selectCashRolloverPolicy(_ selection: APICashRolloverPolicySelection) async throws -> APICashRolloverPolicyObservation { try await credentials.prepare(); return try await client.selectCashRolloverPolicy(budgetID: budget.id, selection: selection, token: token) }
+    func cashRolloverPolicyHistory(beforeVersion: Int?) async throws -> APICashRolloverPolicyHistory { try await credentials.prepare(); return try await client.cashRolloverPolicyHistory(budgetID: budget.id, beforeVersion: beforeVersion, token: token) }
     func moveMoney(_ operation: MoveMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.transferAllocation(budgetID: budget.id, transfer: APIAllocationTransferCreate(sourceCategoryID: operation.sourceCategoryID, destinationCategoryID: operation.destinationCategoryID, amountMinor: operation.amountMinor, occurredOn: operation.occurredOn, note: operation.note, expectedAllocationVersion: operation.expectedVersion), token: token) }
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { try await credentials.prepare(); var targetGroupID = groupID; if !newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { targetGroupID = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: newGroupName), token: token).id }; _ = try await client.createCategory(budgetID: budget.id, category: APICategoryCreate(groupID: targetGroupID, name: name, delegatedUserID: delegatedUserID), token: token) }
     func createGroup(name: String) async throws { try await credentials.prepare(); _ = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: name), token: token) }
@@ -1912,6 +1941,20 @@ final class BudgetWorkspaceStore: ObservableObject {
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws {
         try await commands().commitSmartFunding(preview)
         await refresh()
+    }
+
+    func cashRolloverPolicy() async throws -> APICashRolloverPolicyObservation {
+        try await services().planning.cashRolloverPolicy()
+    }
+
+    func selectCashRolloverPolicy(_ selection: APICashRolloverPolicySelection) async throws -> APICashRolloverPolicyObservation {
+        let value = try await services().planning.selectCashRolloverPolicy(selection)
+        await refresh()
+        return value
+    }
+
+    func cashRolloverPolicyHistory(beforeVersion: Int? = nil) async throws -> APICashRolloverPolicyHistory {
+        try await services().planning.cashRolloverPolicyHistory(beforeVersion: beforeVersion)
     }
 
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws {
