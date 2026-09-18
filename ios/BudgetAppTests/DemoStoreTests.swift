@@ -6,6 +6,30 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testSmartFundingPriorityShortfallAndOverflowAreExact() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        source.demo.categories = [
+            .init(id: "large", group: "Goals", name: "Large", icon: "target", assigned: 0, activity: 0, available: 0, target: 90000),
+            .init(id: "urgent", group: "Goals", name: "Urgent", icon: "target", assigned: 0, activity: 0, available: 0, target: 20000)
+        ]
+        source.demo.categories[0].targetPriority = 10
+        source.demo.categories[1].targetPriority = 90
+        source.demo.setUnassigned(30000)
+        let before = source.demo.categories
+        let preview = try await source.smartFundingPreview(month: "2027-02-01")
+        XCTAssertEqual(preview.proposals.map(\.categoryID), ["urgent", "large"])
+        XCTAssertEqual(preview.proposals.map(\.amountMinor), [20000, 10000])
+        XCTAssertEqual(preview.remainingNeedMinor, 80000)
+        XCTAssertEqual(preview.unfundedCategoryCount, 1)
+        XCTAssertEqual(source.demo.categories, before)
+        XCTAssertEqual(source.demo.readyToAssign, 30000)
+        source.demo.categories[0].target = Int64.max
+        do { _ = try await source.smartFundingPreview(month: "2027-02-01"); XCTFail("Overflow must fail, not wrap or clamp money") }
+        catch { }
+        XCTAssertEqual(source.demo.readyToAssign, 30000)
+    }
+
+    @MainActor
     func testMoneyChartDescriptorKeepsExactLabelsAndFormatsAudioGraphAxes() throws {
         let store = BudgetWorkspaceStore.demo()
         let source = MoneyChartDescriptor(title: "Recorded observations", points: [

@@ -206,6 +206,24 @@ def test_target_management_requires_manage_planning_and_respects_scope(client, o
     assert client.get(target_url(budget["id"], hidden["id"]), headers=auth(member_token)).status_code == 404
     assert client.delete(target_url(budget["id"], hidden["id"]), headers=auth(member_token)).status_code == 404
 
+    # Hidden high-priority needs must not influence counts, amounts or ordering.
+    assert client.put(target_url(budget["id"], hidden["id"]), headers=auth(owner_token),
+                      json={"target_type": "monthly_funding", "target_amount_minor": 900000,
+                            "priority": 100}).status_code == 200
+    preview = client.get(f"/api/v1/budgets/{budget['id']}/smart-funding/2026-09-01", headers=auth(member_token))
+    assert preview.status_code == 403  # manage_planning does not implicitly grant reports
+    grant_scoped_planner(
+        client, owner_token, budget["id"], member_id, account["id"], [visible["id"]],
+        capabilities=["view_budget", "view_accounts", "view_categories", "view_transactions", "manage_planning", "view_reports"],
+    )
+    preview = client.get(f"/api/v1/budgets/{budget['id']}/smart-funding/2026-09-01", headers=auth(member_token))
+    assert preview.status_code == 200
+    assert preview.json()["remaining_need_minor"] == 40000
+    assert preview.json()["unfunded_category_count"] == 1
+    assert preview.json()["before_ready_to_assign_minor"] == 0
+    assert preview.json()["proposals"] == []
+    assert hidden["id"] not in preview.text
+
 
 def test_target_cannot_target_category_from_another_budget(client, owner_token, session_factory):
     budget_a = create_budget(client, owner_token, session_factory, name="A")

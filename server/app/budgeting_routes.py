@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
+from .schemas import MAX_INT64
 from sqlalchemy import String, and_, cast, delete, false, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.exc import IntegrityError
@@ -2247,6 +2248,7 @@ def month_summary(
             target_type=category_target.target_type if category_target else None,
             target_amount_minor=category_target.target_amount_minor if category_target else None,
             target_date=funding.effective_target_date if funding else None,
+            target_priority=category_target.priority if category_target else 50,
             recommended_contribution_minor=funding.recommended_contribution_minor if funding else 0,
             underfunded_minor=funding.underfunded_minor if funding else 0,
             cash_overspent_minor=cash_overspent,
@@ -2268,11 +2270,16 @@ def month_summary(
 
 def build_smart_funding_preview(summary: MonthSummaryResponse) -> dict:
     remaining = max(summary.ready_to_assign_minor, 0)
+    total_need = sum(max(category.underfunded_minor, 0) for category in summary.categories)
+    if total_need > MAX_INT64:
+        raise HTTPException(status_code=422, detail="Combined target need exceeds the supported amount range")
     proposals = []
-    for category in sorted(summary.categories, key=lambda item: (-item.recommended_contribution_minor, item.name, item.category_id)):
+    for category in sorted(summary.categories, key=lambda item: (-getattr(item, "target_priority", 50), -item.recommended_contribution_minor, item.name, item.category_id)):
         requested = min(max(category.underfunded_minor, 0), remaining)
         if requested <= 0:
             continue
+        if category.available_minor + requested > MAX_INT64:
+            raise HTTPException(status_code=422, detail="Target funding exceeds the supported amount range")
         proposals.append({
             "category_id": category.category_id,
             "category_name": category.name,
@@ -2284,6 +2291,7 @@ def build_smart_funding_preview(summary: MonthSummaryResponse) -> dict:
         if remaining == 0:
             break
     proposed = max(summary.ready_to_assign_minor, 0) - remaining
+    amounts = {item["category_id"]: item["amount_minor"] for item in proposals}
     return {
         "month": summary.month,
         "currency_code": summary.currency_code,
@@ -2292,6 +2300,9 @@ def build_smart_funding_preview(summary: MonthSummaryResponse) -> dict:
         "after_ready_to_assign_minor": summary.ready_to_assign_minor - proposed,
         "allocation_version": summary.allocation_version,
         "proposals": proposals,
+        "remaining_need_minor": total_need - proposed,
+        "unfunded_category_count": sum(category.underfunded_minor > amounts.get(category.category_id, 0)
+                                       for category in summary.categories),
     }
 
 

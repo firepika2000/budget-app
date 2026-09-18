@@ -1350,10 +1350,13 @@ public struct APISmartFundingPreview: Decodable, Equatable, Sendable {
     public let month: String; public let currencyCode: String
     public let beforeReadyToAssignMinor: Int64; public let proposedMinor: Int64; public let afterReadyToAssignMinor: Int64
     public let allocationVersion: Int; public let proposals: [APISmartFundingProposal]
+    public let remainingNeedMinor: Int64?
+    public let unfundedCategoryCount: Int?
     enum CodingKeys: String, CodingKey {
         case month, proposals
         case currencyCode = "currency_code", beforeReadyToAssignMinor = "before_ready_to_assign_minor"
         case proposedMinor = "proposed_minor", afterReadyToAssignMinor = "after_ready_to_assign_minor", allocationVersion = "allocation_version"
+        case remainingNeedMinor = "remaining_need_minor", unfundedCategoryCount = "unfunded_category_count"
     }
 }
 

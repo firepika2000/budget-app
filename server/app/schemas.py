@@ -1156,6 +1156,7 @@ class CategoryMonthSummary(BaseModel):
     target_type: Optional[str] = None
     target_amount_minor: Optional[int] = None
     target_date: Optional[date] = None
+    target_priority: int = 50
     recommended_contribution_minor: int = 0
     underfunded_minor: int = 0
     cash_overspent_minor: int = 0
@@ -1189,6 +1190,8 @@ class SmartFundingPreviewResponse(BaseModel):
     after_ready_to_assign_minor: int
     allocation_version: int
     proposals: list[SmartFundingProposal]
+    remaining_need_minor: int = 0
+    unfunded_category_count: int = 0
 
 
 class SmartFundingCommit(BaseModel):

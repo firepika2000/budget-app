@@ -1003,11 +1003,19 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                 minimumMinor: category.targetMinimumContribution, isActive: category.targetIsActive,
                 month: month, assignedMinor: category.assigned, availableMinor: category.available))
         }.sorted { left, right in
+            if left.0.targetPriority != right.0.targetPriority { return left.0.targetPriority > right.0.targetPriority }
             if left.1.recommendedContributionMinor != right.1.recommendedContributionMinor {
                 return left.1.recommendedContributionMinor > right.1.recommendedContributionMinor
             }
             return left.0.name == right.0.name ? left.0.id < right.0.id : left.0.name < right.0.name
         }
+        var totalNeed: Int64 = 0
+        for (_, funding) in guidance {
+            let sum = totalNeed.addingReportingOverflow(funding.underfundedMinor)
+            guard !sum.overflow else { throw workspaceRepositoryError("Combined target need exceeds the supported amount range.") }
+            totalNeed = sum.partialValue
+        }
+        var fundedAmounts: [String: Int64] = [:]
         for (category, funding) in guidance where remaining > 0 {
             let amount = min(funding.underfundedMinor, remaining)
             guard amount > 0 else { continue }
@@ -1016,9 +1024,11 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             rows.append(["category_id": category.id, "category_name": category.name, "amount_minor": amount,
                          "before_available_minor": category.available, "after_available_minor": after.partialValue])
             remaining -= amount
+            fundedAmounts[category.id] = amount
         }
         let proposed = max(ready, 0) - remaining
-        return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": ready, "proposed_minor": proposed, "after_ready_to_assign_minor": ready - proposed, "allocation_version": 1, "proposals": rows]))
+        let unfundedCount = guidance.filter { $0.1.underfundedMinor > (fundedAmounts[$0.0.id] ?? 0) }.count
+        return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": ready, "proposed_minor": proposed, "after_ready_to_assign_minor": ready - proposed, "allocation_version": 1, "proposals": rows, "remaining_need_minor": totalNeed - proposed, "unfunded_category_count": unfundedCount]))
     }
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws {
         guard !demo.isRestricted, budget.can("assign_money") else {
@@ -2688,6 +2698,19 @@ private struct LiveSmartFundingView: View {
                         LabeledContent("After", value: workspace.format(preview.afterReadyToAssignMinor))
                     }
                     Section("Target recommendations") { ForEach(preview.proposals) { proposal in LabeledContent(proposal.categoryName, value: workspace.format(proposal.amountMinor)) } }
+                    if let remaining = preview.remainingNeedMinor {
+                        Section {
+                            if remaining > 0 {
+                                Label("More funding needed", systemImage: "exclamationmark.circle")
+                                Text("After this preview, targets still need \(workspace.format(remaining)) across \(preview.unfundedCategoryCount ?? 0) categories. Available to Assign limits what can be funded now.")
+                                    .accessibilityIdentifier("smart-funding-shortfall")
+                            } else {
+                                Text(preview.proposals.isEmpty ? "Your current target contributions are funded." : "This preview covers all remaining target contributions.")
+                            }
+                        } footer: {
+                            Text("Higher-priority targets are considered first, then larger monthly recommendations. Only existing Available to Assign is used; nothing moves until you confirm.")
+                        }
+                    }
                 } else if !isLoading { ContentUnavailableView("No funding preview", systemImage: "sparkles") }
             }.navigationTitle("Smart Funding").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Confirm"){Task{await commit()}}.disabled(preview?.proposals.isEmpty != false || isLoading)} }

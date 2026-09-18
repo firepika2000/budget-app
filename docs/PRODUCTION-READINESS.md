@@ -10,7 +10,7 @@ Checkpoint completion is followed by the next unblocked engineering task.
 
 | Gate | Status | Evidence and remaining work |
 |---|---|---|
-| PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved in existing acceptance/closure documents. v0.8 terms, interest classification, projections, strategies and payoff UI exist. Complete v0.8 review before planning/import/local-provider work. Reconcile older roadmap numbering with the approved mission explicitly. |
+| PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 cadence, incremental Smart Funding, priority and shortfall corrections are verified. Month-specific snooze, import/local-provider and later mission scope remain open. |
 | FINANCIAL | IN PROGRESS | 23 shared single/multi-debt vectors include paid-off parity, horizon/high-APR boundaries, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
 | SECURITY | IN PROGRESS | Server capability/resource guards and regression suites exist. Extend adversarial matrix across reports, projections, imports and future providers; rerun relevant PostgreSQL/privacy gates. |
 | DATA | IN PROGRESS | Source head is `0027_interest_class`; human Live remains at `0020_payee_identity_repair`. Populated PostgreSQL migration/concurrency and real age-encrypted new-destination restore prove canonical equality and encrypted attachment integrity/wrong-key/tamper handling. Complete manifest preflight passes. Real Docker/Compose recovery and production Local Device storage remain open. |
@@ -63,6 +63,16 @@ Full backend **351 pass, zero skips**; Swift **39 Core + 47 API**; native **90 X
 UI tests pass**, including actual preview/cancel/confirm/reopen. Beta Simulator build succeeds.
 No migration, human data mutation, merge or tag. Planning still needs priority/shortfall UX and snooze;
 broader mission gates remain open and human acceptance remains pending.
+
+### Priority and shortfall checkpoint — 2026-09-18
+
+Following `5a44d93`, reproduced priority inversion is corrected and preview explicitly reports exact
+remaining need and unfunded category count. Authorized categories are selected before aggregation;
+scoped regression proves hidden high-priority needs cannot leak through either new field. Overflow
+fails with validation, not truncation. Older-server Swift decoding remains supported. **352 backend
+pass, zero skips; 47 final focused planning/privacy/golden; 39 Core + 48 API; 91 native XCTest + one
+production UI test pass**, Beta build/test successful. No migration or human data changes. Next:
+month-specific snooze under the documented planning contract, then remaining planning closure.
 
 ## Human data and migration ledger
 

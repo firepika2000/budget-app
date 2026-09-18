@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`5a44d93` is pushed. Next verified checkpoint honors target priority and exposes exact remaining
+need/category count in Smart Funding, with an explicit production shortfall explanation. It rejects
+combined need overflow; API decoding remains compatible with older servers. **352 backend pass,
+zero skips; 47 focused planning/privacy/golden; 39 Core + 48 API; 91 native XCTest + one production
+UI test pass**, Xcode Beta build successful. No migration. Next: month-specific snooze per the
+implementation contract in V0.9-PLANNING-POWER-PLAN.md. Human Live remains at 0020, untouched.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 `627b957` is pushed. Next verified correction fixes reproduced Smart Funding duplicate need:
 after 70000 target funding, preview wrongly proposed another 30000. Live now uses only underfunding;
 Demo uses canonical monthly guidance and denies stale/repeated/restricted commit. Negative RTA

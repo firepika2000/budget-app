@@ -1,5 +1,7 @@
 from datetime import date
 from types import SimpleNamespace
+import pytest
+from fastapi import HTTPException
 
 from app import planning_routes
 from app.budgeting_routes import build_smart_funding_preview
@@ -29,6 +31,26 @@ def test_smart_funding_partial_guidance_and_negative_rta_are_exact():
     assert preview["proposed_minor"] == 0
     assert preview["proposals"] == []
     assert preview["after_ready_to_assign_minor"] == -100
+
+
+def test_smart_funding_honors_priority_and_explains_unfunded_need():
+    categories = [
+        SimpleNamespace(category_id="large", name="Large", available_minor=0,
+                        recommended_contribution_minor=90000, underfunded_minor=90000, target_priority=10),
+        SimpleNamespace(category_id="urgent", name="Urgent", available_minor=0,
+                        recommended_contribution_minor=20000, underfunded_minor=20000, target_priority=90),
+    ]
+    summary = SimpleNamespace(month=date(2027, 2, 1), currency_code="USD", allocation_version=1,
+                              ready_to_assign_minor=30000, categories=categories)
+    preview = build_smart_funding_preview(summary)
+    assert [p["category_id"] for p in preview["proposals"]] == ["urgent", "large"]
+    assert [p["amount_minor"] for p in preview["proposals"]] == [20000, 10000]
+    assert preview["remaining_need_minor"] == 80000
+    assert preview["unfunded_category_count"] == 1
+    categories[0].underfunded_minor = 2**63 - 1
+    with pytest.raises(HTTPException) as error:
+        build_smart_funding_preview(summary)
+    assert error.value.status_code == 422
 
 
 def test_target_recommendation_uses_rollover_without_mutating_allocation(
@@ -174,6 +196,7 @@ def test_smart_funding_preview_is_nonmutating_and_commit_is_atomic(client, owner
         f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)
     ).json()
     assert unchanged["total_assigned_minor"] == 0
+    assert {row["name"]: row["target_priority"] for row in unchanged["categories"]} == {"Groceries": 90, "Dining": 50}
     committed = client.post(
         f"/api/v1/budgets/{budget['id']}/smart-funding", headers=auth(owner_token),
         json={"month": "2026-09-01", "expected_allocation_version": data["allocation_version"]},

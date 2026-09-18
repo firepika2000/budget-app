@@ -17,6 +17,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         let confirm = app.navigationBars["Smart Funding"].buttons["Confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5))
         XCTAssertTrue(confirm.isEnabled)
+        let shortfall = app.staticTexts["smart-funding-shortfall"]
+        XCTAssertTrue(shortfall.exists, "The seeded needs exceed available money and must be explained")
         app.buttons["Cancel"].tap()
         XCTAssertTrue(app.navigationBars["Smart Funding"].waitForNonExistence(timeout: 5))
         openPreview()
@@ -25,6 +27,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Smart Funding"].waitForNonExistence(timeout: 5))
         openPreview()
         XCTAssertFalse(confirm.isEnabled, "The seeded available allocation is exhausted; no repeated commit is offered")
+        XCTAssertTrue(shortfall.exists, "No available money does not mean every target is funded")
         app.buttons["Cancel"].tap()
     }
 
