@@ -43,6 +43,17 @@ state. No zero-downtime or external-writer snapshot guarantee is claimed. Focuse
 (`/tmp/budget-coordinated-backup-full.log`). Docker command sequencing is tested with doubles;
 actual Compose runtime remains unverified. Human Live and Simulator data were not touched.
 
+### Recurring target guidance checkpoint — 2026-09-18
+
+After `431de33`, reproduced annual-target overstatement (120000 rather than 10000 after due month)
+is corrected in server summaries and Demo via a provider-neutral exact helper. Immutable anchor,
+selected-month effective due, leap/clamp/no-drift, skipped cycles and Int64 ceiling cases share
+14 Python/Swift vectors. Live HTTP reload/preview and Demo store tests prove guidance is money-neutral.
+Full backend **350 pass, zero skips**; focused planning/golden **45 pass**; Swift **39 Core + 47 API**;
+native **89 XCTest + one Plan UI test pass**, Beta build/test success. Initial native failure caught
+legacy non-ISO seed dates; corrected fixtures passed the rerun. No migration or human data changes.
+Next proven-source audit: incremental Smart Funding over-proposal and Demo command parity.
+
 ## Human data and migration ledger
 
 Never run migration, destructive, scale or restore tests against human Live. Known unapplied chain:

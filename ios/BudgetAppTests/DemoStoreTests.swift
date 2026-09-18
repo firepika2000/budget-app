@@ -636,6 +636,33 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testRecurringTargetAdvancesGuidanceWithoutChangingAnchorOrMoney() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        store.planMonth = try XCTUnwrap(Calendar.current.date(from: DateComponents(year: 2027, month: 2, day: 1)))
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let category = try XCTUnwrap(store.categories.first { store.targets[$0.id] == nil })
+        let before = try XCTUnwrap(store.summary?.categories.first { $0.categoryID == category.id })
+        let balances = store.accounts.map { store.balance(for: $0) }
+        let rta = store.summary?.readyToAssignMinor
+        try await store.saveTarget(categoryID: category.id, value: APICategoryTargetUpsert(
+            targetType: "recurring_expense", targetAmountMinor: 120000, targetDate: "2027-01-31",
+            recurrenceMonths: 12, minimumContributionMinor: 0, priority: 50, isActive: true))
+        for _ in 0..<2 {
+            await store.refresh()
+            let row = try XCTUnwrap(store.summary?.categories.first { $0.categoryID == category.id })
+            let gap = max(120000 - max(before.availableMinor - before.assignedMinor, 0), 0)
+            XCTAssertEqual(row.recommendedContributionMinor, gap / 12 + (gap % 12 == 0 ? 0 : 1))
+            XCTAssertEqual(row.targetDate, "2028-01-31")
+            XCTAssertEqual(store.targets[category.id]?.targetDate, "2027-01-31")
+            XCTAssertEqual(row.assignedMinor, before.assignedMinor)
+            XCTAssertEqual(row.activityMinor, before.activityMinor)
+            XCTAssertEqual(row.availableMinor, before.availableMinor)
+            XCTAssertEqual(store.accounts.map { store.balance(for: $0) }, balances)
+            XCTAssertEqual(store.summary?.readyToAssignMinor, rta)
+        }
+    }
+
+    @MainActor
     func testTargetMetadataCreateDisableAndDeleteNeverChangesMoney() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

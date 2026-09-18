@@ -2246,7 +2246,7 @@ def month_summary(
             is_overspent=available < 0,
             target_type=category_target.target_type if category_target else None,
             target_amount_minor=category_target.target_amount_minor if category_target else None,
-            target_date=category_target.target_date if category_target else None,
+            target_date=funding.effective_target_date if funding else None,
             recommended_contribution_minor=funding.recommended_contribution_minor if funding else 0,
             underfunded_minor=funding.underfunded_minor if funding else 0,
             cash_overspent_minor=cash_overspent,

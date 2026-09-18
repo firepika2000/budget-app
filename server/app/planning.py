@@ -49,15 +49,32 @@ def occurrences_between(
     return result
 
 
-def months_inclusive(start_month: date, target_date: date) -> int:
-    target_month = target_date.replace(day=1)
-    return max(1, (target_month.year - start_month.year) * 12 + target_month.month - start_month.month + 1)
-
-
 @dataclass(frozen=True)
 class TargetFunding:
     recommended_contribution_minor: int
     underfunded_minor: int
+    effective_target_date: date | None = None
+
+
+def target_occurrence(target: CategoryTarget, month: date) -> tuple[int, date | None]:
+    """Advance from the immutable anchor, by planning month, not elapsed days.
+
+    Beyond the supported date range retain exact period guidance but omit an
+    unrepresentable display date. Never clamp an occurrence to a false deadline.
+    """
+    anchor = target.target_date
+    if anchor is None:
+        return 1, None
+    delta = (month.year - anchor.year) * 12 + month.month - anchor.month
+    offset = 0
+    if target.target_type == "recurring_expense" and delta > 0:
+        cadence = target.recurrence_months
+        if cadence is None or cadence <= 0:
+            raise ValueError("Recurring target requires a positive cadence")
+        offset = ((delta + cadence - 1) // cadence) * cadence
+    periods = max(1, offset - delta + 1)
+    due_year = (anchor.year * 12 + anchor.month - 1 + offset) // 12
+    return periods, add_months(anchor, offset) if due_year <= 9999 else None
 
 
 def target_funding(
@@ -67,8 +84,9 @@ def target_funding(
     assigned_minor: int,
     available_minor: int,
 ) -> TargetFunding:
+    periods, due = target_occurrence(target, month)
     if not target.is_active:
-        return TargetFunding(0, 0)
+        return TargetFunding(0, 0, due)
     if target.target_type == "monthly_funding":
         recommendation = max(target.target_amount_minor, target.minimum_contribution_minor)
     elif target.target_type == "savings_balance":
@@ -78,9 +96,9 @@ def target_funding(
         )
     else:
         gap = max(target.target_amount_minor - max(available_minor - assigned_minor, 0), 0)
-        periods = months_inclusive(month, target.target_date or month)
         recommendation = max((gap + periods - 1) // periods, target.minimum_contribution_minor)
     return TargetFunding(
         recommended_contribution_minor=recommendation,
         underfunded_minor=max(recommendation - max(assigned_minor, 0), 0),
+        effective_target_date=due,
     )

@@ -435,26 +435,21 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let base = item.amount / Int64(ids.count)
             for id in ids { creditSpend[id, default: 0] += item.categoryAmounts[id] ?? base }
         }
-        let summaryRows: [[String: Any]] = visibleCategories.map { item -> [String: Any] in
+        let summaryRows: [[String: Any]] = try visibleCategories.map { item -> [String: Any] in
             let recommended: Int64
-            if let target = item.target, item.targetIsActive {
-                if item.targetType == "monthly_funding" {
-                    recommended = max(target, item.targetMinimumContribution)
-                } else if item.targetType == "savings_balance" {
-                    recommended = max(target - max(item.available - item.assigned, 0), item.targetMinimumContribution)
-                } else {
-                    let due = item.targetDate.flatMap { dateFormatter.date(from: $0) } ?? planMonth
-                    let current = Calendar.current.dateComponents([.year, .month], from: planMonth)
-                    let targetMonth = Calendar.current.dateComponents([.year, .month], from: due)
-                    let periods = max(1, ((targetMonth.year ?? current.year ?? 0) - (current.year ?? 0)) * 12 + (targetMonth.month ?? current.month ?? 1) - (current.month ?? 1) + 1)
-                    let gap = max(target - max(item.available - item.assigned, 0), 0)
-                    recommended = max((gap + Int64(periods) - 1) / Int64(periods), item.targetMinimumContribution)
-                }
+            var effectiveTargetDate = item.targetDate
+            if let target = item.target {
+                let funding = try TargetPlanning.funding(type: item.targetType, amountMinor: target,
+                    targetDate: item.targetDate, recurrenceMonths: item.targetRecurrenceMonths,
+                    minimumMinor: item.targetMinimumContribution, isActive: item.targetIsActive,
+                    month: month, assignedMinor: item.assigned, availableMinor: item.available)
+                recommended = funding.recommendedContributionMinor
+                effectiveTargetDate = funding.effectiveTargetDate
             } else { recommended = 0 }
             let overspent = max(-item.available, 0)
             let creditSpent = max(-(creditSpend[item.id] ?? 0), 0)
             let creditOverspent = min(overspent, creditSpent)
-            return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": max(item.available - item.assigned - item.activity, 0), "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": max(creditSpent - creditOverspent, 0), "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "target_date": item.targetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
+            return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": max(item.available - item.assigned - item.activity, 0), "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": max(creditSpent - creditOverspent, 0), "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "target_date": effectiveTargetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
         }
         let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.readyToAssign, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": 1, "categories": summaryRows])
         let start = report.start

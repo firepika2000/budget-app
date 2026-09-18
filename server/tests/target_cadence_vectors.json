@@ -1,0 +1,16 @@
+[
+  {"name":"annual before due", "month":"2026-02-01", "anchor":"2027-01-31", "cadence":12, "due":"2027-01-31", "recommended":10000},
+  {"name":"annual due month", "month":"2027-01-01", "anchor":"2027-01-31", "cadence":12, "due":"2027-01-31", "recommended":120000},
+  {"name":"annual after due", "month":"2027-02-01", "anchor":"2027-01-31", "cadence":12, "due":"2028-01-31", "recommended":10000},
+  {"name":"skipped annual cycles", "month":"2030-02-01", "anchor":"2027-01-31", "cadence":12, "due":"2031-01-31", "recommended":10000},
+  {"name":"monthly leap clamp", "month":"2028-02-01", "anchor":"2028-01-31", "cadence":1, "due":"2028-02-29", "recommended":120000},
+  {"name":"anchor does not drift", "month":"2028-03-01", "anchor":"2028-01-31", "cadence":1, "due":"2028-03-31", "recommended":120000},
+  {"name":"annual leap anchor", "month":"2029-02-01", "anchor":"2028-02-29", "cadence":12, "due":"2029-02-28", "recommended":120000},
+  {"name":"rollover and current assignment", "month":"2027-02-01", "anchor":"2027-01-31", "cadence":12, "assigned":5000, "available":29000, "due":"2028-01-31", "recommended":8000, "underfunded":3000},
+  {"name":"exact ceiling", "month":"2027-02-01", "anchor":"2027-01-31", "cadence":12, "amount":120001, "due":"2028-01-31", "recommended":10001},
+  {"name":"int64 ceiling", "month":"2027-02-01", "anchor":"2027-01-31", "cadence":12, "amount":9223372036854775807, "due":"2028-01-31", "recommended":768614336404564651},
+  {"name":"inactive", "month":"2027-02-01", "anchor":"2027-01-31", "cadence":12, "active":false, "due":"2028-01-31", "recommended":0},
+  {"name":"minimum", "month":"2027-02-01", "anchor":"2027-01-31", "cadence":12, "minimum":15000, "due":"2028-01-31", "recommended":15000},
+  {"name":"dated remains overdue", "type":"target_by_date", "month":"2027-02-01", "anchor":"2027-01-31", "cadence":12, "due":"2027-01-31", "recommended":120000},
+  {"name":"unrepresentable future date", "month":"9999-02-01", "anchor":"9999-01-31", "cadence":12, "due":null, "recommended":10000}
+]

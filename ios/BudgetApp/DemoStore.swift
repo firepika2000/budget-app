@@ -509,23 +509,23 @@ final class DemoStore: ObservableObject {
         .init(id:"groceries",group:"Food",name:"Groceries",icon:"cart.fill",assigned:72000,activity:-48264,available:23736,target:72000,pinned:true),
         .init(id:"dining",group:"Food",name:"Dining Out",icon:"fork.knife",assigned:22000,activity:-26840,available:-4840,target:22000),
         .init(id:"fuel",group:"Transportation",name:"Fuel",icon:"fuelpump.fill",assigned:28000,activity:-18520,available:9480,target:30000),
-        .init(id:"maintenance",group:"Transportation",name:"Car Maintenance",icon:"wrench.and.screwdriver.fill",assigned:15000,activity:0,available:84500,target:120000,targetDate:"December 2026"),
+        .init(id:"maintenance",group:"Transportation",name:"Car Maintenance",icon:"wrench.and.screwdriver.fill",assigned:15000,activity:0,available:84500,target:120000,targetDate:"2026-12-01"),
         .init(id:"medical",group:"True Expenses",name:"Medical",icon:"cross.case.fill",assigned:10000,activity:-4500,available:35500,target:50000),
         .init(id:"repair",group:"True Expenses",name:"Home Repair",icon:"hammer.fill",assigned:25000,activity:0,available:186000,target:300000),
-        .init(id:"christmas",group:"True Expenses",name:"Christmas",icon:"gift.fill",assigned:35000,activity:0,available:188000,target:300000,targetDate:"December 2026"),
-        .init(id:"subscriptions",group:"True Expenses",name:"Annual Subscriptions",icon:"calendar.badge.clock",assigned:12000,activity:0,available:74000,target:120000,targetDate:"January 2027"),
+        .init(id:"christmas",group:"True Expenses",name:"Christmas",icon:"gift.fill",assigned:35000,activity:0,available:188000,target:300000,targetDate:"2026-12-01"),
+        .init(id:"subscriptions",group:"True Expenses",name:"Annual Subscriptions",icon:"calendar.badge.clock",assigned:12000,activity:0,available:74000,target:120000,targetDate:"2027-01-01"),
         .init(id:"buffer",group:"True Expenses",name:"General Buffer",icon:"tray.full.fill",assigned:35000,activity:0,available:35000,target:35000),
         .init(id:"emergency",group:"Goals",name:"Emergency Fund",icon:"shield.fill",assigned:50000,activity:0,available:1125000,target:1500000,pinned:true),
-        .init(id:"vacation",group:"Goals",name:"Vacation",icon:"airplane",assigned:40000,activity:0,available:385000,target:600000,targetDate:"June 2027"),
-        .init(id:"cnc",group:"Goals",name:"CNC Machine",icon:"gearshape.2.fill",assigned:25000,activity:0,available:64000,target:200000,targetDate:"June 2027",pinned:true),
-        .init(id:"newcar",group:"Goals",name:"New Car",icon:"car.side.fill",assigned:30000,activity:0,available:420000,target:2500000,targetDate:"September 2029"),
+        .init(id:"vacation",group:"Goals",name:"Vacation",icon:"airplane",assigned:40000,activity:0,available:385000,target:600000,targetDate:"2027-06-01"),
+        .init(id:"cnc",group:"Goals",name:"CNC Machine",icon:"gearshape.2.fill",assigned:25000,activity:0,available:64000,target:200000,targetDate:"2027-06-01",pinned:true),
+        .init(id:"newcar",group:"Goals",name:"New Car",icon:"car.side.fill",assigned:30000,activity:0,available:420000,target:2500000,targetDate:"2029-09-01"),
         .init(id:"rey",group:"Personal",name:"Rey Spending",icon:"person.fill",assigned:20000,activity:-8300,available:11700,target:20000),
         .init(id:"partner",group:"Personal",name:"Jordan Spending",icon:"person.fill",assigned:20000,activity:-4200,available:15800,target:20000),
         .init(id:"alexallow",group:"Kids",name:"Alex Allowance",icon:"gamecontroller.fill",assigned:4800,activity:-2200,available:4200,target:4800,delegatedTo:.alex),
-        .init(id:"alexsave",group:"Kids",name:"Alex Savings",icon:"banknote.fill",assigned:2000,activity:0,available:18500,target:50000,targetDate:"March 2027",delegatedTo:.alex),
+        .init(id:"alexsave",group:"Kids",name:"Alex Savings",icon:"banknote.fill",assigned:2000,activity:0,available:18500,target:50000,targetDate:"2027-03-01",delegatedTo:.alex),
         .init(id:"alexgive",group:"Kids",name:"Giving",icon:"heart.fill",assigned:0,activity:0,available:0,target:nil,delegatedTo:.alex),
         .init(id:"miaallow",group:"Kids",name:"Mia Allowance",icon:"paintpalette.fill",assigned:3200,activity:-1200,available:2800,target:3200,delegatedTo:.mia),
-        .init(id:"miabike",group:"Kids",name:"Mia Bike Goal",icon:"bicycle",assigned:1200,activity:0,available:18500,target:50000,targetDate:"May 2027",delegatedTo:.mia)
+        .init(id:"miabike",group:"Kids",name:"Mia Bike Goal",icon:"bicycle",assigned:1200,activity:0,available:18500,target:50000,targetDate:"2027-05-01",delegatedTo:.mia)
     ]
 
     static var seedTransactions: [DemoTransaction] {

@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`431de33` is pushed (coordinated source backup capture). Next verified checkpoint corrects recurring
+target monthly guidance on Live and Demo using immutable anchor/cadence and 14 shared exact vectors.
+Backend **350 pass, zero skips**; focused planning/golden **45 pass**; package **39 Core + 47 API**;
+native **89 XCTest + one Plan XCUITest pass**, Beta build successful. Initial native failure exposed
+non-ISO Demo seed dates; fixtures corrected and full rerun passed, evidence retained. No migration.
+Next: reproduce/fix Smart Funding over-proposal and Demo's separate legacy full-balance calculation.
+Invalid-frame warning on amount clear remains observed, not resolved. **DO NOT RETEST**.
+
 `c08867d` is pushed. Coordinated source capture now requires an explicit Compose project, reads
 recovery material from the running API, pauses that API while copying SQL and objects, and resumes
 it before interactive encryption. Failure cleanup attempts to resume only a source it attempted to
