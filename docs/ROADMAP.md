@@ -97,6 +97,44 @@ Because CI minutes are temporarily exhausted, local verification is serving as t
 
 ## Release sequence
 
+### Approved production-readiness mission sequence (2026-09-18)
+
+The production-readiness mission explicitly expands the pre-v1.0 scope and supersedes the older
+version numbering below. Work occurs on `codex/development`; `main` remains at the approved
+`c5494dd` consolidation. Existing historical tags and human evidence are preserved, not rewritten
+as acceptance for later work. No further merge or release tag is authorized by this sequence.
+
+| Checkpoint | Engineering scope and dependencies |
+|---|---|
+| v0.8 | Debt Cost & Payoff and focused Insights closure. Recorded, estimated and projected values remain separate. |
+| v0.9 | Planning Power: audit the existing targets, future months, focus, Smart Funding and Move Money before filling cadence, snooze and Cost of Plan gaps. |
+| v0.10 | File Import Engine: CSV, OFX/QFX and QIF through bounded parsing, normalization, staging, matching, explicit approval and canonical posting. No adapter becomes an accounting engine. |
+| v0.11 | Mobile Speed / Apple integrations: quick entry, App Intents, Shortcuts and widgets with explicit authorization and privacy. |
+| v0.12 | Financial History / Audit: preserve immutable attribution, explain observations and close history/export gaps. |
+| v0.13 | Bank connectivity architecture and feasible integration after the import engine. Credentials, provider contracts and security review remain real gates; no screen scraping or speculative live-account access. |
+| v0.14 | Data Ownership: production transactional/migratable Local Device storage, encrypted/versioned backup and new-destination restore. Dropbox is a backup destination, not live SQLite sync. |
+| v0.15 | Extended Forecasting: longer horizons and explicit what-if scenarios without making future income spendable. This carries the older v0.8 advanced-forecast expansion rather than silently dropping it. |
+| v0.16 | Explainable Smart Planning; recommendations cannot mutate money without explicit canonical commands. |
+| v0.17 | Household Power: readable scopes, requests/allowances, attribution and adversarial privacy closure. |
+| v0.18 | Platform Expansion in dependency order after the iPhone/provider foundation. |
+| v1.0 | Release hardening, production deployment and App Store candidate gates. External signing, commercial choice and human acceptance stay distinct from engineering completion. |
+
+**Consumer Budget Server distribution remains required.** The earlier v0.9 graphical installer,
+manager, secure pairing and no-Terminal household operating experience below are retained as a
+cross-cutting distribution workstream through v1.0; a developer launcher is not a substitute.
+Local Device and server delivery both require credible recovery. Security, migration preservation,
+accessibility and performance run continuously rather than waiting for a final version number.
+
+Dependency ordering may put recovery or authorization ahead of a feature checkpoint. Version
+boundaries do not authorize stopping the mission or declaring release readiness. The master gate
+ledger is `PRODUCTION-READINESS.md`; every unimplemented requirement must remain open or receive
+an explicit evidence-based deferral, never disappear through renumbering. StoreKit remains blocked
+on the paid-download versus non-consumable Lifetime Unlock decision; independent work continues.
+
+The sections that follow retain the original milestone scope and historical context. References
+to v0.9 distribution or v1.x import in those sections use the old numbering; the table above is the
+current authorized execution sequence. Human acceptance is pending and no retest is requested now.
+
 ### v0.4 — Core Budgeting Stabilization
 
 **Objective:** finish and human-validate the core budgeting workflow before opening another large subsystem.
