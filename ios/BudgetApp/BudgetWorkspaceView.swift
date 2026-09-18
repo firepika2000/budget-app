@@ -7,6 +7,7 @@ import QuickLook
 import PhotosUI
 import AVFoundation
 import UIKit
+import Accessibility
 
 enum Theme {
     static let accent = Color.teal
@@ -3985,15 +3986,20 @@ private struct SpendingTrendsView: View {
                             LineMark(x: .value("Month", dateFormatter.date(from: point.periodStart) ?? .distantPast), y: .value("Spending", point.spendingMinor))
                                 .foregroundStyle(by: .value("Series", series.dimensionName))
                                 .symbol(by: .value("Series", series.dimensionName))
+                                .accessibilityLabel("\(series.dimensionName) spending during \(point.periodStart)")
+                                .accessibilityValue(store.format(point.spendingMinor))
                         }
                     }
                 }
                 .modifier(ReportDateChartAxis(dates: (report.series.first?.points ?? []).compactMap { dateFormatter.date(from: $0.periodStart) }))
                 .frame(minHeight: 240)
                 .modifier(CurrencyChartAxis())
-                .accessibilityIdentifier("spending-trends-chart")
                 .accessibilityLabel("Spending trends by \(dimensionLabel.lowercased()) from \(report.startDate) through \(report.endDate)")
                 .accessibilityValue("Total spending \(store.format(report.totalSpendingMinor)); \(report.series.count) ranked series. Exact values follow the chart.")
+                .modifier(MoneyChartAccessibility(title: "Spending trends", points: report.series.flatMap { series in
+                    series.points.map { MoneyChartPoint(date: $0.periodStart, series: series.dimensionName, label: "\(series.dimensionName) spending during \($0.periodStart)", amountMinor: $0.spendingMinor) }
+                }))
+                .accessibilityIdentifier("spending-trends-chart")
                 ForEach(report.series) { series in destination(for: series) }
             }
         }
@@ -4060,16 +4066,24 @@ private struct HistoricalPlanPerformanceView: View {
                     ForEach(report.points) { point in
                         BarMark(x: .value("Month", dateFormatter.date(from: point.periodStart) ?? .distantPast), y: .value("Amount", point.assignedMinor))
                             .foregroundStyle(by: .value("Plan value", "Assigned"))
+                            .accessibilityLabel("Assigned during \(point.periodStart)")
+                            .accessibilityValue(store.format(point.assignedMinor))
                         BarMark(x: .value("Month", dateFormatter.date(from: point.periodStart) ?? .distantPast), y: .value("Amount", point.spendingMinor))
                             .foregroundStyle(by: .value("Plan value", "Spent"))
+                            .accessibilityLabel("Spent during \(point.periodStart)")
+                            .accessibilityValue(store.format(point.spendingMinor))
                     }
                 }
                 .modifier(ReportDateChartAxis(dates: report.points.compactMap { dateFormatter.date(from: $0.periodStart) }))
                 .frame(minHeight: 230)
                 .modifier(CurrencyChartAxis())
-                .accessibilityIdentifier("plan-performance-history-chart")
                 .accessibilityLabel("Plan performance history from \(report.startDate) through \(report.endDate)")
                 .accessibilityValue("\(report.points.count) monthly observations. Exact values follow the chart.")
+                .modifier(MoneyChartAccessibility(title: "Plan history", points: report.points.flatMap { point in [
+                    MoneyChartPoint(date: point.periodStart, series: "Assigned", label: "Assigned during \(point.periodStart)", amountMinor: point.assignedMinor),
+                    MoneyChartPoint(date: point.periodStart, series: "Spent", label: "Spent during \(point.periodStart)", amountMinor: point.spendingMinor)
+                ] }))
+                .accessibilityIdentifier("plan-performance-history-chart")
                 ForEach(report.points) { point in
                     VStack(alignment: .leading, spacing: 3) {
                         Text(point.periodStart).font(.headline)
@@ -4141,19 +4155,30 @@ private struct NetWorthReportView: View {
                         LineMark(x: .value("Date", dateFormatter.date(from: point.asOf) ?? .distantPast), y: .value("Amount", point.netWorthMinor), series: .value("Series", "Net Worth"))
                             .foregroundStyle(by: .value("Series", "Net Worth"))
                             .symbol(by: .value("Series", "Net Worth"))
+                            .accessibilityLabel("Net worth on \(point.asOf)")
+                            .accessibilityValue(store.format(point.netWorthMinor))
                         LineMark(x: .value("Date", dateFormatter.date(from: point.asOf) ?? .distantPast), y: .value("Amount", point.assetsMinor), series: .value("Series", "Assets"))
                             .foregroundStyle(by: .value("Series", "Assets"))
+                            .accessibilityLabel("Assets on \(point.asOf)")
+                            .accessibilityValue(store.format(point.assetsMinor))
                         LineMark(x: .value("Date", dateFormatter.date(from: point.asOf) ?? .distantPast), y: .value("Amount", point.liabilitiesMinor), series: .value("Series", "Liabilities"))
                             .foregroundStyle(by: .value("Series", "Liabilities"))
+                            .accessibilityLabel("Liabilities on \(point.asOf)")
+                            .accessibilityValue(store.format(point.liabilitiesMinor))
                     }
                 }
                 .modifier(ReportDateChartAxis(dates: report.points.compactMap { dateFormatter.date(from: $0.asOf) }))
                 .chartXSelection(value: $selectedDate)
                 .frame(minHeight: 240)
                 .modifier(CurrencyChartAxis())
-                .accessibilityIdentifier("net-worth-history-chart")
                 .accessibilityLabel("Net worth history from \(report.startDate) through \(report.endDate)")
                 .accessibilityValue("Assets \(store.format(report.assetsMinor)), liabilities \(store.format(report.liabilitiesMinor)), net worth \(store.format(report.netWorthMinor))")
+                .modifier(MoneyChartAccessibility(title: "Net worth history", points: report.points.flatMap { point in [
+                    MoneyChartPoint(date: point.asOf, series: "Net worth", label: "Net worth on \(point.asOf)", amountMinor: point.netWorthMinor),
+                    MoneyChartPoint(date: point.asOf, series: "Assets", label: "Assets on \(point.asOf)", amountMinor: point.assetsMinor),
+                    MoneyChartPoint(date: point.asOf, series: "Liabilities", label: "Liabilities on \(point.asOf)", amountMinor: point.liabilitiesMinor)
+                ] }))
+                .accessibilityIdentifier("net-worth-history-chart")
             }
             LabeledContent("Assets", value: store.format(report.assetsMinor))
             LabeledContent("Liabilities", value: store.format(report.liabilitiesMinor))
@@ -4198,6 +4223,64 @@ private struct CurrencyChartAxis: ViewModifier {
     }
 }
 
+struct MoneyChartPoint {
+    let date: String
+    let series: String
+    let label: String
+    let amountMinor: Int64
+}
+
+// Swift Charts may synthesize a grouped numeric range instead of preserving individual mark
+// labels. Supply both exact navigable values and a currency-aware native audio-graph descriptor.
+struct MoneyChartDescriptor: AXChartDescriptorRepresentable {
+    let title: String
+    let points: [MoneyChartPoint]
+    let format: (Int64) -> String
+
+    func makeChartDescriptor() -> AXChartDescriptor {
+        let values = points.map { Double($0.amountMinor) } // Derived chart geometry only.
+        let y = AXNumericDataAxisDescriptor(title: "Amount", range: min(values.min() ?? 0, 0)...max(values.max() ?? 0, 1), gridlinePositions: []) { value in
+            guard value.isFinite, let minor = Int64(exactly: value.rounded()) else { return "Outside supported amount range" }
+            return format(minor)
+        }
+        let dates = Array(Set(points.map(\.date))).sorted()
+        let names = points.map(\.series).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        return AXChartDescriptor(title: title, summary: "Exact dated currency observations.",
+            xAxis: AXCategoricalDataAxisDescriptor(title: "Date", categoryOrder: dates), yAxis: y,
+            series: names.map { name in
+                AXDataSeriesDescriptor(name: name, isContinuous: true, dataPoints: points.filter { $0.series == name }.map {
+                    AXDataPoint(x: $0.date, y: Double($0.amountMinor), label: "\($0.label), \(format($0.amountMinor))")
+                })
+            })
+    }
+    func updateChartDescriptor(_ descriptor: AXChartDescriptor) {
+        let next = makeChartDescriptor()
+        descriptor.title = next.title
+        descriptor.summary = next.summary
+        descriptor.xAxis = next.xAxis
+        descriptor.yAxis = next.yAxis
+        descriptor.series = next.series
+    }
+}
+
+private struct MoneyChartAccessibility: ViewModifier {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let title: String
+    let points: [MoneyChartPoint]
+    func body(content: Content) -> some View {
+        content
+            .accessibilityChildren {
+                if !store.hideAmounts {
+                    ForEach(Array(points.enumerated()), id: \.offset) { _, point in
+                        Text(point.label).accessibilityValue(store.format(point.amountMinor))
+                    }
+                }
+            }
+            .accessibilityChartDescriptor(MoneyChartDescriptor(title: title, points: store.hideAmounts ? [] : points, format: store.format))
+            .accessibilityHidden(store.hideAmounts)
+    }
+}
+
 private struct ReportDateChartAxis: ViewModifier {
     let dates: [Date]
     private var ticks: [Date] {
@@ -4237,6 +4320,9 @@ private struct DebtHistoryContent: View {
                 .modifier(ReportDateChartAxis(dates: report.points.compactMap { dateFormatter.date(from: $0.asOf) }))
                 .modifier(CurrencyChartAxis())
                 .frame(minHeight: 220)
+                .modifier(MoneyChartAccessibility(title: "Recorded debt history", points: report.points.map {
+                    MoneyChartPoint(date: $0.asOf, series: "Recorded debt", label: "Recorded debt on \($0.asOf)", amountMinor: $0.debtMinor)
+                }))
                 .accessibilityIdentifier("debt-history-chart")
                 .accessibilityLabel("Debt history from \(report.startDate) through \(report.endDate)")
                 .accessibilityValue("Recorded debt as of \(report.endDate): \(store.format(report.debtMinor)), \(report.principalReductionMinor >= 0 ? "net debt decrease" : "net debt increase") \(store.format(abs(report.principalReductionMinor)))")
@@ -4266,17 +4352,25 @@ private struct IncomeSpendingTrendsView: View {
                     ForEach(report.periods) { period in
                         BarMark(x: .value("Month", dateFormatter.date(from: period.periodStart) ?? .distantPast), y: .value("Amount", period.incomeMinor))
                             .foregroundStyle(by: .value("Flow", "Income"))
+                            .accessibilityLabel("Income during \(period.periodStart)")
+                            .accessibilityValue(store.format(period.incomeMinor))
                         BarMark(x: .value("Month", dateFormatter.date(from: period.periodStart) ?? .distantPast), y: .value("Amount", period.spendingMinor))
                             .foregroundStyle(by: .value("Flow", "Spending"))
+                            .accessibilityLabel("Spending during \(period.periodStart)")
+                            .accessibilityValue(store.format(period.spendingMinor))
                     }
                 }
                 .modifier(ReportDateChartAxis(dates: report.periods.compactMap { dateFormatter.date(from: $0.periodStart) }))
                 .modifier(CurrencyChartAxis())
                 .chartXSelection(value: $selectedDate)
                 .frame(minHeight: 220)
-                .accessibilityIdentifier("income-spending-trends-chart")
                 .accessibilityLabel("Income and spending history from \(report.startDate) through \(report.endDate)")
                 .accessibilityValue("Income \(store.format(report.incomeMinor)), spending \(store.format(report.spendingMinor)), net cash flow \(store.format(report.differenceMinor))")
+                .modifier(MoneyChartAccessibility(title: "Income and spending", points: report.periods.flatMap { period in [
+                    MoneyChartPoint(date: period.periodStart, series: "Income", label: "Income during \(period.periodStart)", amountMinor: period.incomeMinor),
+                    MoneyChartPoint(date: period.periodStart, series: "Spending", label: "Spending during \(period.periodStart)", amountMinor: period.spendingMinor)
+                ] }))
+                .accessibilityIdentifier("income-spending-trends-chart")
             }
             LabeledContent("Income", value: store.format(report.incomeMinor))
             LabeledContent("Spending", value: store.format(report.spendingMinor))

@@ -6,6 +6,17 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Latest pushed: `1c70163` (explicit mission/roadmap sequencing), following `43da26f` (partial payoff
+horizon correction). Next verified checkpoint closes raw-minor-unit chart accessibility: all five
+time-series reports now supply currency-aware native audio graphs and exact dated values. Final
+**88 native + two production UI tests PASS**, Beta build TEST SUCCEEDED; full backend **308 passed,
+zero skips**, package remains **38 Core + 47 API**. See `V0.8-CLOSURE-AUDIT.md` for scope/evidence.
+No migration or human data changed. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
+Next priority changed on evidence: a recovery-script preflight test is reproducing acceptance of
+files omitted from the manifest. Fix this data-safety gap before the documented recurring-target
+cadence defect. Neither task requires human Live, Simulator reset or a commercial decision.
+
 `9142cfd` is pushed (production debt chart/accessibility correction). Next verified checkpoint fixes
 payoff horizon presentation: partial bounded totals no longer claim full repayment cost. Unknown
 statuses also fail closed. Twenty-three shared vectors now include the default 1,200-month limit

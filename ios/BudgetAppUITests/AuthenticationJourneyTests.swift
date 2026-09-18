@@ -198,6 +198,38 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(estimated.waitForExistence(timeout: 5))
     }
 
+    func testProductionTimeSeriesMarksExposeCurrencyInsteadOfRawMinorUnits() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+
+        func checkChart(_ identifier: String, labelPrefix: String) {
+            let chart = app.descendants(matching: .any)[identifier]
+            for _ in 0..<12 where !chart.exists { app.swipeUp() }
+            XCTAssertTrue(chart.waitForExistence(timeout: 5))
+            let hierarchy = XCTAttachment(string: chart.debugDescription)
+            hierarchy.name = identifier + " accessibility hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+            let marks = chart.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", labelPrefix))
+            XCTAssertGreaterThan(marks.count, 0, "The actual chart must expose its data points")
+            for mark in marks.allElementsBoundByIndex {
+                XCTAssertTrue((mark.value as? String)?.contains("$") == true, "Expected formatted currency, not integer cents: \(mark.debugDescription)")
+            }
+        }
+        XCTAssertTrue(app.buttons["insights-spending-income"].waitForExistence(timeout: 5))
+        app.buttons["insights-spending-income"].tap()
+        checkChart("income-spending-trends-chart", labelPrefix: "Income during")
+        checkChart("spending-trends-chart", labelPrefix: "Groceries spending during")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["insights-net-worth"].tap()
+        checkChart("net-worth-history-chart", labelPrefix: "Net worth on")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["insights-plan-performance"].tap()
+        checkChart("plan-performance-history-chart", labelPrefix: "Assigned during")
+    }
+
     func testProductionDebtPayoffScenarioIsReadOnlyAndExposesExplicitAssumptions() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=insights"]

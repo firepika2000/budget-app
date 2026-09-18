@@ -11,7 +11,7 @@ Checkpoint completion is followed by the next unblocked engineering task.
 | Gate | Status | Evidence and remaining work |
 |---|---|---|
 | PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved in existing acceptance/closure documents. v0.8 terms, interest classification, projections, strategies and payoff UI exist. Complete v0.8 review before planning/import/local-provider work. Reconcile older roadmap numbering with the approved mission explicitly. |
-| FINANCIAL | IN PROGRESS | 21 shared single/multi-debt vectors include paid-off parity, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
+| FINANCIAL | IN PROGRESS | 23 shared single/multi-debt vectors include paid-off parity, horizon/high-APR boundaries, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
 | SECURITY | IN PROGRESS | Server capability/resource guards and regression suites exist. Extend adversarial matrix across reports, projections, imports and future providers; rerun relevant PostgreSQL/privacy gates. |
 | DATA | IN PROGRESS | Source head is `0027_interest_class`; human Live remains at `0020_payee_identity_repair`. Populated PostgreSQL migration/concurrency and new-destination pg_dump/restore prove canonical equality and encrypted attachment integrity/wrong-key/tamper handling. Outer age/Docker archive proof and production Local Device storage remain open. |
 | RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Existing native/backend suites provide regression evidence; concurrency, offline failures, cancellation and release-wide regression remain open. |
@@ -284,3 +284,17 @@ payoff UI pass and final horizon UI pass/build **TEST SUCCEEDED**. The initial n
 the switch label without toggling it; targeting its native control fixed the test while retaining
 the same value assertion. Existing invalid-frame diagnostics during keyboard focus remain visible
 and unproven, not suppressed. No backend engine, financial persistence, migration or human data changed.
+
+Multi-series chart accessibility follow-up: captured Swift Charts hierarchy proved grouped ranges
+still announced raw minor-unit numbers despite individual mark labels. Native `AXChartDescriptor`
+currency axes plus exact virtual point children now cover all five time-series report families.
+Derived Double values are confined to audio/visual geometry; exact labels use original Int64 values.
+Descriptor tests cover positive/negative values, Int64.max labels, non-finite geometry rejection and
+removing stale data on privacy/context updates. A production UI journey verifies currency values on
+Income, Spending Trends, Net Worth and Plan charts; the debt observation/audit test also passes.
+Final result: **88 native XCTest + two UI tests PASS**, Beta build and TEST SUCCEEDED. Full backend
+closure run: **308 passed, zero skips**, including PostgreSQL recovery/migrations/concurrency. Latest
+package **38 Core + 47 API** remains unchanged. Initial UI failures exposed wrapper identifier scope
+and the test's incorrect report traversal order; corrected tests retain all currency assertions.
+Apple's native [audio graph documentation](https://developer.apple.com/documentation/accessibility/representing-chart-data-as-an-audio-graph)
+and the installed Beta SDK contract informed the descriptors. Human VoiceOver remains pending.

@@ -6,6 +6,28 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testMoneyChartDescriptorKeepsExactLabelsAndFormatsAudioGraphAxes() throws {
+        let store = BudgetWorkspaceStore.demo()
+        let source = MoneyChartDescriptor(title: "Recorded observations", points: [
+            .init(date: "2026-09-01", series: "Assets", label: "Assets on 2026-09-01", amountMinor: 1234),
+            .init(date: "2026-09-01", series: "Liabilities", label: "Liabilities on 2026-09-01", amountMinor: -567),
+            .init(date: "2026-09-30", series: "Assets", label: "Assets on 2026-09-30", amountMinor: Int64.max)
+        ], format: store.format)
+        let descriptor = source.makeChartDescriptor()
+        XCTAssertEqual(descriptor.series.map(\.name), ["Assets", "Liabilities"])
+        XCTAssertEqual(descriptor.series[0].dataPoints[0].label, "Assets on 2026-09-01, \(store.format(1234))")
+        XCTAssertEqual(descriptor.series[0].dataPoints[1].label, "Assets on 2026-09-30, \(store.format(Int64.max))", "Exact labels must not round-trip through chart Double geometry")
+        let y = try XCTUnwrap(descriptor.yAxis)
+        XCTAssertEqual(y.valueDescriptionProvider(1234), store.format(1234))
+        XCTAssertEqual(y.valueDescriptionProvider(-567), store.format(-567))
+        XCTAssertEqual(y.valueDescriptionProvider(.infinity), "Outside supported amount range")
+        let hidden = MoneyChartDescriptor(title: "Amounts hidden", points: [], format: store.format)
+        hidden.updateChartDescriptor(descriptor)
+        XCTAssertTrue(descriptor.series.isEmpty, "Privacy/context changes must remove stale audio graph data")
+        XCTAssertEqual(descriptor.title, "Amounts hidden")
+    }
+
+    @MainActor
     func testCurrentDebtCostIsReadOnlyAndPartialAPRDoesNotRequirePayoffTerms() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()
