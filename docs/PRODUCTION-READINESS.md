@@ -4,6 +4,20 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Rollover-history persistence foundation after `929a27c` (verified): additive
+`0029_cash_rollover_history` records an explicit legacy carry baseline for each existing budget,
+bounded 500-budget batches, and constrained effective-month/version/source/actor provenance.
+502-budget populated SQLite and PostgreSQL upgrades preserve existing rows and financial API
+observations. Baseline-only downgrade/re-upgrade is safe; downgrade refuses to discard real policy
+decisions. Complete PostgreSQL dump/restore and actual age-encrypted new-destination recovery now
+include nonempty policy history in exact row equality, alongside attachment integrity and finances.
+**408 backend PASS, zero skips**; focused migration/constraint tests, one-head/revision-length graph,
+`alembic heads/history` and diff check PASS. Logs `/tmp/budget-rollover-history-{focused,batched,backend-final}.log`.
+No Swift source changes in this checkpoint; native/package evidence remains the preceding verified
+`929a27c` checkpoint. Human Live is NOT migrated. **Absorption/new-budget defaults/settings are NOT
+activated**: canonical effective-history projections, every balance guard/report, command lifecycle
+and shared UI must integrate before this financial policy is exposed. This is not v0.9 closure.
+
 Cash/card reporting prerequisite after `556c8d3`: native reproduction proved a funded 10,000 card
 purchase followed by a 10,000 cash expense was incorrectly reported as unfunded credit in Demo.
 Live's matching production API case correctly reports cash overspending. A 3,000 card refund
@@ -236,7 +250,7 @@ No claim of provider parity from package-only projection tests. See PERSISTENT-M
 | PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 cadence, monthly snooze, exact cost presentation and incremental/priority funding checkpoints are verified. Future-month provider parity, rollover policy history, import/local-provider and later mission scope remain open. |
 | FINANCIAL | IN PROGRESS | 23 shared single/multi-debt vectors include paid-off parity, horizon/high-APR boundaries, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
 | SECURITY | IN PROGRESS | Proven allocation-history category leakage and structured-export scope bypass corrected in the current checkpoint. Capability plus resource authority is required; full-operation filtering preserves balanced history. Extend adversarial matrix across reports, projections, imports and future providers; no release-wide security PASS yet. |
-| DATA | IN PROGRESS | Source head is `0028_target_snoozes`; human Live remains at `0020_payee_identity_repair`. Populated migration/concurrency and real age-encrypted new-destination restore prove canonical equality, snooze metadata and encrypted attachment integrity/wrong-key/tamper handling. Complete manifest preflight passes. Real Docker/Compose recovery and production Local Device storage remain open. |
+| DATA | IN PROGRESS | Source head is `0029_cash_rollover_history`; human Live remains at `0020_payee_identity_repair`. Rollover policy metadata is a non-activated foundation, not changed financial semantics. Populated migration/concurrency and real age-encrypted new-destination restore cover canonical equality, snoozes, policy history and encrypted attachment integrity. Real Docker/Compose recovery and production Local Device storage remain open. |
 | RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Existing native/backend suites provide regression evidence; concurrency, offline failures, cancellation and release-wide regression remain open. |
 | PERFORMANCE | IN PROGRESS | Live core hydration makes zero detailed-report requests instead of seven; native tests cover caching/invalidation/retry. Hub has a bounded scalar response. Monthly summary now streams historical rows in batches; disposable 10k-transaction/split and 10k-allocation fixtures prove bounded ORM hydration and exact observations. Other report/Demo computation, category/account fan-out and release-scale closure remain open. |
 | UX | IN PROGRESS | Shared shell, onboarding, scalable payee selection and focused Insights exist. Report filters are reachable again; missing debt terms open the shared editor. Demand-loaded reports have independent loading/error/retry. Full workflow/accessibility closure remains open. |
@@ -425,7 +439,7 @@ the remaining planning/provider parity audit. Human acceptance remains pending.
 Never run migration, destructive, scale or restore tests against human Live. Known unapplied chain:
 `0021_scheduled_payee_id` → `0022_report_query_indexes` → `0023_category_favorites` →
 `0024_member_lifecycle` → `0025_request_lifecycle` → `0026_debt_terms` → `0027_interest_class` →
-`0028_target_snoozes` (additive month-scoped planning metadata only).
+`0028_target_snoozes` → `0029_cash_rollover_history` (additive policy provenance; absorption not activated).
 Recheck the source graph before migration work. Use disposable populated PostgreSQL databases and
 restore to new destinations. Preserve human attachments, transactions and reconciliation history.
 

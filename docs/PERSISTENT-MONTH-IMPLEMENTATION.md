@@ -83,6 +83,35 @@ Use an additive, short-ID migration with populated legacy-preservation and downg
 The human Live database remains at 0020; autonomous tests use disposable databases only. Extend
 encrypted recovery equality to every new policy/event table. Do not migrate human Live.
 
+#### Persistence foundation: 0029_cash_rollover_history
+
+This additive checkpoint records policy provenance only. It does **not** activate absorption,
+change new-budget defaults, expose a selectable setting, or claim rollover engineering complete.
+Every pre-existing budget receives a version-zero `carry_category_deficit` baseline effective
+0001-01-01, explicitly sourced as `legacy_migration` with no fabricated user actor. The whole
+supported date domain is intentional: imported transactions can predate budget creation. Only
+metadata is inserted; existing financial rows and observations are unchanged. Backfill batches
+are bounded at 500 budgets. Fresh budgets created while this integration gate remains closed keep
+existing behavior; the future activation step must establish their explicit baseline too.
+
+History stores budget, policy, effective month, ordered version, source, actor and timestamp.
+Unique budget/version and first-of-month/policy/source/actor constraints protect stored shape.
+Multiple revisions for the same future month can coexist so changing a pending choice does not
+erase its audit history. The eventual service must lock the budget, compare expected policy version,
+append rather than update/delete, reject past/current effective transitions, and invalidate stale
+allocation previews when a change affects planning. A policy decision is not an allocation.
+
+Baseline-only downgrade preserves all financial rows. Downgrade **refuses** if real policy decisions
+exist, rather than deleting history and silently changing historical meaning. Use compatible
+backup recovery to a new destination for that case. Recovery tests include nonempty policy history
+in complete PostgreSQL row equality and actual age-encrypted backup/restore.
+
+Remaining activation gates: a canonical effective-history projection shared by every balance guard,
+summary/report and provider; mixed cash/credit/refund/split and historical-edit characterization;
+new-budget absorb default with explicit household choice; scoped settings/audit API and shared UI;
+stale/concurrent commands; populated migration/restore and full native production acceptance.
+Do not ship a policy toggle backed only by this table or absorb balances only inside the Plan UI.
+
 ### D. Shared presentation and closure
 
 Production composition tests navigate months, edit an assignment, return, reload, inspect history,

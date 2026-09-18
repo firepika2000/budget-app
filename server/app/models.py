@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, column, extract
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -114,6 +114,29 @@ class Budget(Base):
     name: Mapped[str] = mapped_column(String(100))
     currency_code: Mapped[str] = mapped_column(String(3))
     allocation_version: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class CashRolloverPolicyChange(Base):
+    """Append-only policy provenance; projection activation is a separate integration gate."""
+    __tablename__ = "cash_rollover_policy_changes"
+    __table_args__ = (
+        UniqueConstraint("budget_id", "version", name="uq_cash_rollover_budget_version"),
+        CheckConstraint("version >= 0", name="ck_cash_rollover_version"),
+        CheckConstraint("policy IN ('absorb_next_month', 'carry_category_deficit')", name="ck_cash_rollover_policy"),
+        CheckConstraint("source IN ('legacy_migration', 'budget_creation', 'user_selection')", name="ck_cash_rollover_source"),
+        CheckConstraint("source = 'legacy_migration' OR actor_user_id IS NOT NULL", name="ck_cash_rollover_actor"),
+        CheckConstraint(extract("day", column("effective_month")) == 1, name="ck_cash_rollover_month"),
+        Index("ix_cash_rollover_budget_effective", "budget_id", "effective_month", "version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"))
+    effective_month: Mapped[date] = mapped_column(Date)
+    policy: Mapped[str] = mapped_column(String(30))
+    version: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(30))
+    actor_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 

@@ -34,13 +34,28 @@ Verification: **400 backend zero skips, 115 native, 45 Core + 50 API, 2 producti
 Beta build/test and diff check PASS. Logs `/tmp/budget-credit-classification-{backend,package,native-final,native-verified}.log`.
 Failing native reproduction and passing matching Live scenario are retained under the same prefix.
 
-Next highest-priority planning closure: implement the documented effective-period cash-rollover
-policy boundary, starting with canonical characterization vectors for legacy carry versus
-prospective absorption. Preserve historical observations for existing budgets, record actor/effective
-period, apply cash deficits exactly once, and do not turn credit liability into cash overspending.
-Read `PERSISTENT-MONTH-IMPLEMENTATION.md` and product authority before designing the additive
-migration/application service. Include populated financial preservation and encrypted restore proof
-on disposable destinations only. Uniform clocks and remaining roadmap stay open.
+After `929a27c`, `0029_cash_rollover_history` adds policy provenance only, with a legacy carry
+baseline for existing budgets, effective month/version/source/actor constraints and bounded
+500-budget backfill. Baseline-only downgrade preserves financial rows; downgrade refuses to lose
+real policy decisions. Recovery fixtures now include nonempty policy history in whole-database
+equality, including actual age-encrypted new-destination PostgreSQL restore. **Absorption is NOT
+activated; no public policy toggle/new-budget default changed.** Human Live remains at 0020.
+Verification: **408 backend PASS, zero skips**, including a populated 502-budget PostgreSQL
+0028→0029 backfill and SQLite downgrade/re-upgrade preservation. One short-ID head and diff check
+PASS. Logs `/tmp/budget-rollover-history-{focused,batched,backend-final}.log`. No Swift changes;
+retain the preceding native/package evidence rather than claiming a new native run.
+
+Next highest-priority planning closure: canonical effective-history projection and application
+service integration, starting with shared characterization vectors for legacy carry versus
+prospective absorption. Every category/RTA availability guard must use the same derivation as
+summaries/reports; never adjust only Plan or repeatedly post rollover on a read. Preserve historical
+observations/policies, represent each cash deficit once, and preserve credit/reserve distinctions.
+Existing month-summary classification only sees current-month credit events, so explicitly prove
+carried credit deficit, later coverage, mixed cash/card, refunds/splits and historical edits before
+using it as rollover authority. The eventual service must append audited next-period decisions
+under budget locking/version checks; activate new-budget defaults/shared settings only with the
+projection. Fresh budgets created during this gated checkpoint also need explicit legacy baselines
+at activation. See `PERSISTENT-MONTH-IMPLEMENTATION.md`. Uniform clocks/remaining roadmap stay open.
 **HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
 
 `bed7c93` pushed forecast privacy. Current chronological projection correction is reproduced against
