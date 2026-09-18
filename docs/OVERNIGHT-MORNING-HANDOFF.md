@@ -6,6 +6,18 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `874fa2b`, Demo invitation management retains normalized create/resend/cancel/expiry and
+bounded audit history within the canonical workspace. Owner-only authorization mirrors Live;
+resend rotates code/identity and repeated cancellation is a no-op. Provider clock is now named `now`
+and shared by requests/invitations. Raw simulation codes are not retained in summaries/history.
+No claim of durable storage, Demo invitation acceptance, member revocation or dynamic persona parity.
+Verified: 126 native + 1 production UI PASS, 48 Core + 52 API PASS; Beta build/diff PASS.
+`/tmp/budget-demo-invitations-native-final.log` proves shared create/code-dismiss/reopen/cancel UI;
+`/tmp/budget-demo-invitations-package.log` retains package contracts. Backend remains 459 PASS.
+Next security scope: Demo member removal is still a no-op and requires coordinated membership,
+workspace authorization and allowance-recipient revocation—not just hiding a row. Human acceptance
+remains pending; DO NOT RETEST. Human Live 0020 and existing Simulator data remain untouched.
+
 After `9710981`, household invitation/access-event display-name resolution uses authorized scalar
 joins instead of reading every server user record. A disposable 2,000-unrelated-user regression
 first failed with two unrestricted user scans, then passed. No API/financial/migration semantics

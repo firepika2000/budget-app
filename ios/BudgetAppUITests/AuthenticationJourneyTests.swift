@@ -1187,6 +1187,10 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Invite Member"].waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.navigationBars["Invitation Ready"].exists)
         XCTAssertTrue(app.navigationBars["Members"].exists)
+        let invitation = app.cells.containing(.staticText, identifier: "invitation@example.test").firstMatch
+        XCTAssertTrue(invitation.waitForExistence(timeout: 5))
+        invitation.buttons["Cancel"].tap()
+        XCTAssertTrue(invitation.staticTexts["Canceled"].waitForExistence(timeout: 5))
     }
 
     func testOwnerCanPersistHumanReadableMemberAccessThroughProductionHouseholdFlow() {

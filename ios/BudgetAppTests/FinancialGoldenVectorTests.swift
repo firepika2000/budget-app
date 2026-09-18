@@ -4,9 +4,65 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoInvitationsPersistRotateExpireAndEnforceOwnerWithoutMoneyMutation() async throws {
+        var clock = BudgetWorkspaceStore.parseDate("2026-09-18")
+        let source = DemoWorkspaceDataSource(now: { clock })
+        let accounts = source.demo.accounts, transactions = source.demo.transactions
+        let version = source.demo.allocationVersion
+        let first = try await source.createHouseholdInvitation(.init(email: " New@Example.Test ", role: "child"))
+        XCTAssertEqual(first.email, "new@example.test")
+        var rows = try await source.householdInvitations()
+        let originalID = try XCTUnwrap(rows.first?.id)
+        XCTAssertEqual(rows.count, 1); XCTAssertEqual(rows[0].status, "pending")
+        XCTAssertEqual(rows[0].role, "child")
+        let reread = try await source.householdInvitations()
+        XCTAssertEqual(reread, rows)
+        clock = clock.addingTimeInterval(7 * 24 * 60 * 60)
+        rows = try await source.householdInvitations()
+        XCTAssertEqual(rows[0].status, "expired")
+        let replacement = try await source.resendHouseholdInvitation(id: originalID)
+        XCTAssertNotEqual(replacement.invitationToken, first.invitationToken)
+        XCTAssertEqual(replacement.email, first.email); XCTAssertEqual(replacement.role, first.role)
+        rows = try await source.householdInvitations()
+        XCTAssertEqual(rows.first { $0.id == originalID }?.status, "canceled")
+        let replacementID = try XCTUnwrap(rows.first { $0.status == "pending" }?.id)
+        clock = clock.addingTimeInterval(1)
+        try await source.cancelHouseholdInvitation(id: replacementID)
+        try await source.cancelHouseholdInvitation(id: replacementID)
+        let events = try await source.householdAccessEvents()
+        XCTAssertEqual(events.count, 3)
+        XCTAssertEqual(events.first?.eventType, "invitation_canceled")
+        XCTAssertEqual(Set(events.map(\.eventType)), ["invitation_created", "invitation_resent", "invitation_canceled"])
+        XCTAssertFalse(events.description.contains(first.invitationToken))
+        for persona in [DemoPersona.partner, .alex] {
+            source.demo.persona = persona
+            do { _ = try await source.householdInvitations(); XCTFail("Owner-only invitations") } catch {}
+            do { _ = try await source.householdAccessEvents(); XCTFail("Owner-only history") } catch {}
+            do { _ = try await source.createHouseholdInvitation(.init(email: "hidden@example.test", role: "adult")); XCTFail("Owner-only create") } catch {}
+            do { _ = try await source.resendHouseholdInvitation(id: originalID); XCTFail("Owner-only resend") } catch {}
+            do { try await source.cancelHouseholdInvitation(id: originalID); XCTFail("Owner-only cancel") } catch {}
+        }
+        source.demo.persona = .rey
+        for value in [APIInvitationCreate(email: "invalid", role: "adult"), .init(email: "new@example.test", role: "owner"), .init(email: "alex@example.test", role: "child")] {
+            do { _ = try await source.createHouseholdInvitation(value); XCTFail("Invalid invite") } catch {}
+        }
+        let unchanged = try await source.householdAccessEvents()
+        XCTAssertEqual(unchanged, events)
+        for index in 0..<205 {
+            clock = clock.addingTimeInterval(1)
+            _ = try await source.createHouseholdInvitation(.init(email: "scale-\(index)@example.test", role: "adult"))
+        }
+        let bounded = try await source.householdAccessEvents()
+        XCTAssertEqual(bounded.count, 200)
+        XCTAssertEqual(bounded.first?.detail, "scale-204@example.test")
+        XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+        XCTAssertEqual(source.demo.allocationVersion, version)
+    }
+
+    @MainActor
     func testDemoRequestRevisionCancellationExpiryAndApprovalUseActualVersions() async throws {
         var now = BudgetWorkspaceStore.parseDate("2026-09-18")
-        let source = DemoWorkspaceDataSource(requestNow: { now })
+        let source = DemoWorkspaceDataSource(now: { now })
         let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
         func rows() async throws -> [APIFinancialRequest] { try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query).requests }
         func row(_ id: String) async throws -> APIFinancialRequest { let values = try await rows(); return try XCTUnwrap(values.first { $0.id == id }) }

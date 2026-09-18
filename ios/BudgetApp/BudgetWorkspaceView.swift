@@ -375,11 +375,21 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var attachmentData: [String: Data] = [:]
     private var debtTermsValues: [String: APIAccountDebtTermsUpsert] = [:]
     private var accessProfiles: [String: APIAccessProfile] = [:]
-    private let requestNow: () -> Date
+    private let now: () -> Date
+    private struct InvitationRecord {
+        let id: String; let email: String; let role: String
+        let createdAt: Date; let expiresAt: Date
+        var canceled = false
+    }
+    private struct AccessEventRecord {
+        let id: String; let kind: String; let detail: String; let date: Date
+    }
+    private var invitationRecords: [InvitationRecord] = []
+    private var accessEventRecords: [AccessEventRecord] = []
     let budget: APIBudget
 
-    init(fresh: Bool = false, cashRolloverPolicies: [CashRolloverProjection.Change] = [], requestNow: @escaping () -> Date = Date.init) {
-        self.requestNow = requestNow
+    init(fresh: Bool = false, cashRolloverPolicies: [CashRolloverProjection.Change] = [], now: @escaping () -> Date = Date.init) {
+        self.now = now
         let store = DemoStore(fresh: fresh || ProcessInfo.processInfo.arguments.contains("--demo-fresh-budget"), cashRolloverPolicies: cashRolloverPolicies)
         // Adversarial production-composition fixture: valid per-target amounts whose sum overflows.
         if ProcessInfo.processInfo.arguments.contains("--demo-plan-cost-overflow") {
@@ -844,12 +854,63 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 }
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
-    func householdInvitations() async throws -> [APIInvitationSummary] { [] }
-    func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret { try decode(["invitation_token": "DEMO-INVITATION-CODE", "email": value.email, "role": value.role, "expires_at": "2026-09-23T12:00:00Z"]) }
-    func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret { try decode(["invitation_token": "DEMO-INVITATION-CODE", "email": "member@example.test", "role": "adult", "expires_at": "2026-09-23T12:00:00Z"]) }
-    func cancelHouseholdInvitation(id: String) async throws {}
+    private func requireHouseholdOwner() throws {
+        guard demo.persona == .rey else { throw workspaceRepositoryError("Household not found.") }
+    }
+    func householdInvitations() async throws -> [APIInvitationSummary] {
+        try requireHouseholdOwner()
+        let formatter = ISO8601DateFormatter(), timestamp = now()
+        return try decode(invitationRecords.sorted { ($0.createdAt, $0.id) > ($1.createdAt, $1.id) }.map {
+            ["id": $0.id, "email": $0.email, "role": $0.role,
+             "status": $0.canceled ? "canceled" : $0.expiresAt <= timestamp ? "expired" : "pending",
+             "created_at": formatter.string(from: $0.createdAt), "expires_at": formatter.string(from: $0.expiresAt),
+             "created_by_display_name": "Rey Rivera"]
+        })
+    }
+    private func issueInvitation(email: String, role: String, event: String) throws -> APIInvitationSecret {
+        let timestamp = now(), expiry = now().addingTimeInterval(7 * 24 * 60 * 60)
+        // Simulation-only, one-time presentation: never store the raw code in summary/history.
+        let secret: APIInvitationSecret = try decode(["invitation_token": "DEMO-\(UUID().uuidString)",
+            "email": email, "role": role, "expires_at": ISO8601DateFormatter().string(from: expiry)])
+        invitationRecords.append(.init(id: UUID().uuidString, email: email, role: role, createdAt: timestamp, expiresAt: expiry))
+        accessEventRecords.append(.init(id: UUID().uuidString, kind: event, detail: email, date: timestamp))
+        return secret
+    }
+    func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret {
+        try requireHouseholdOwner()
+        let email = value.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard (3...320).contains(value.email.count), email.contains("@"), ["adult", "child"].contains(value.role) else {
+            throw workspaceRepositoryError("Enter a valid email and household role.")
+        }
+        guard !DemoPersona.allCases.contains(where: { "\($0.rawValue.lowercased())@example.test" == email }) else {
+            throw workspaceRepositoryError("User is already a household member.")
+        }
+        return try issueInvitation(email: email, role: value.role, event: "invitation_created")
+    }
+    func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret {
+        try requireHouseholdOwner()
+        guard let index = invitationRecords.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Invitation not found.") }
+        let prior = invitationRecords[index]
+        let secret = try issueInvitation(email: prior.email, role: prior.role, event: "invitation_resent")
+        invitationRecords[index].canceled = true
+        return secret
+    }
+    func cancelHouseholdInvitation(id: String) async throws {
+        try requireHouseholdOwner()
+        guard let index = invitationRecords.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Invitation not found.") }
+        guard !invitationRecords[index].canceled else { return }
+        invitationRecords[index].canceled = true
+        accessEventRecords.append(.init(id: UUID().uuidString, kind: "invitation_canceled", detail: invitationRecords[index].email, date: now()))
+    }
     func removeHouseholdMember(userID: String) async throws {}
-    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] { [] }
+    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] {
+        try requireHouseholdOwner()
+        let formatter = ISO8601DateFormatter()
+        return try decode(accessEventRecords.sorted { ($0.date, $0.id) > ($1.date, $1.id) }.prefix(200).map {
+            ["id": $0.id, "event_type": $0.kind, "actor_display_name": "Rey Rivera",
+             "subject_display_name": NSNull(), "detail": $0.detail, "created_at": formatter.string(from: $0.date)] as [String: Any]
+        })
+    }
     var requestActorID: String { demo.persona == .rey ? "demo-owner" : demo.persona.rawValue.lowercased() }
     private func requestCapability(_ capability: String) -> Bool {
         if demo.persona == .rey { return true }
@@ -883,9 +944,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     private func expireRequest(at index: Int) -> Bool {
         guard ["Pending", "Changes requested"].contains(demo.requests[index].status),
-              let expiry = demo.requests[index].expiresAt, expiry <= requestNow() else { return false }
+              let expiry = demo.requests[index].expiresAt, expiry <= now() else { return false }
         demo.requests[index].status = "Expired"; demo.requests[index].version += 1
-        demo.requests[index].appendAction("expired", actor: nil, note: "Request expired after 30 days", at: requestNow())
+        demo.requests[index].appendAction("expired", actor: nil, note: "Request expired after 30 days", at: now())
         return true
     }
     private func validateRequest(_ value: APIFinancialRequestCreate) throws {
@@ -900,7 +961,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard !expireRequest(at: index), demo.requests[index].version == version,
               ["Pending", "Changes requested"].contains(demo.requests[index].status), note.count <= 500 else { throw workspaceRepositoryError("Request has already changed or expired.") }
         demo.requests[index].status = "Cancelled"; demo.requests[index].version += 1
-        demo.requests[index].appendAction("cancelled", actor: requestActorID, note: note, at: requestNow())
+        demo.requests[index].appendAction("cancelled", actor: requestActorID, note: note, at: now())
     }
     func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws {
         guard requestCapability("request_money"), let index = demo.requests.firstIndex(where: { $0.id == id && $0.member == demo.persona }) else { throw workspaceRepositoryError("Request not found.") }
@@ -909,8 +970,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         demo.requests[index].amount = value.requestedAmountMinor; demo.requests[index].categoryID = value.destinationCategoryID
         demo.requests[index].reason = value.reason; demo.requests[index].requestType = value.requestType
         demo.requests[index].status = "Pending"; demo.requests[index].version += 1
-        demo.requests[index].expiresAt = requestNow().addingTimeInterval(30 * 24 * 60 * 60)
-        demo.requests[index].appendAction("revised", actor: requestActorID, amount: value.requestedAmountMinor, note: value.reason, at: requestNow())
+        demo.requests[index].expiresAt = now().addingTimeInterval(30 * 24 * 60 * 60)
+        demo.requests[index].appendAction("revised", actor: requestActorID, amount: value.requestedAmountMinor, note: value.reason, at: now())
     }
     private var canManageAllowances: Bool {
         if demo.persona == .rey { return true }
@@ -1220,9 +1281,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func createRequest(_ value: APIFinancialRequestCreate) async throws {
         try validateRequest(value)
         var item = DemoRequest(id: UUID().uuidString, member: demo.persona, amount: value.requestedAmountMinor,
-            categoryID: value.destinationCategoryID, reason: value.reason, status: "Pending", date: requestNow(), requestType: value.requestType,
-            expiresAt: requestNow().addingTimeInterval(30 * 24 * 60 * 60))
-        item.appendAction("submitted", actor: requestActorID, amount: value.requestedAmountMinor, note: value.reason, at: requestNow())
+            categoryID: value.destinationCategoryID, reason: value.reason, status: "Pending", date: now(), requestType: value.requestType,
+            expiresAt: now().addingTimeInterval(30 * 24 * 60 * 60))
+        item.appendAction("submitted", actor: requestActorID, amount: value.requestedAmountMinor, note: value.reason, at: now())
         demo.requests.insert(item, at: 0)
     }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws {
@@ -1296,7 +1357,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         switch decision {
         case "approve":
             guard let amount, let sourceCategoryID, requestCategoryVisible(sourceCategoryID) else { throw workspaceRepositoryError("Choose an authorized approval amount and source category.") }
-            guard demo.approve(id, amount: amount, sourceCategoryID: sourceCategoryID, note: note, at: requestNow()) else { throw workspaceRepositoryError(demo.errorMessage) }
+            guard demo.approve(id, amount: amount, sourceCategoryID: sourceCategoryID, note: note, at: now()) else { throw workspaceRepositoryError(demo.errorMessage) }
         case "reject": demo.requests[index].status = "Rejected"
         case "changes_requested":
             guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw workspaceRepositoryError("Explain the requested changes.") }
@@ -1305,7 +1366,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         }
         if decision != "approve" {
             demo.requests[index].version += 1
-            demo.requests[index].appendAction(decision == "reject" ? "rejected" : "changes_requested", actor: requestActorID, note: note, at: requestNow())
+            demo.requests[index].appendAction(decision == "reject" ? "rejected" : "changes_requested", actor: requestActorID, note: note, at: now())
         }
     }
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview {

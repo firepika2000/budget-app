@@ -4,6 +4,23 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo invitation management after `874fa2b`: replaced create/resend/cancel/list/history placeholders
+with workspace-retained records and owner-only commands. Emails normalize, existing members and
+invalid roles refuse, expiry is seven days, resend preserves recipient/role while replacing identity
+and cancelling the prior invitation, and cancellation is idempotent. Summary/history never retain
+the one-time simulation code. Event history has stable time/ID order and the server's 200-row bound.
+Request and invitation lifecycles share an injectable provider clock; other Demo clocks remain open.
+This is ephemeral Demo-provider state, not durable Local Device storage. Demo invitation acceptance,
+member revocation and dynamic persona authority remain explicitly unfinished; no Live auth bypass.
+Verification: **126 native XCTest + 1 production invitation XCUITest PASS; 48 Core + 52 API PASS**,
+Beta simulator build and diff check PASS. Native regression covers normalization, seven-day expiry,
+resend rotation, idempotent cancel, partner/child denial, invalid input, the 200-event bound and
+unchanged accounts/transactions/allocation version. Production UI now confirms the created row
+survives code dismissal and cancellation changes its visible status. Final logs
+`/tmp/budget-demo-invitations-native-final.log`, `/tmp/budget-demo-invitations-package.log`;
+xcresult `Test-BudgetApp-2026.09.18_18-42-07--0400.xcresult`. Initial compile failed on a missing
+function brace, corrected before this final full run. Server unchanged from 459-PASS checkpoint.
+
 Household query audit after `9710981`: both invitation summaries and access-event history loaded the
 entire server user directory (including unused password-hash columns) merely to resolve names.
 A 2,000-unrelated-user regression reproduced both unrestricted queries. Display names now come
