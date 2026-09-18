@@ -6,6 +6,15 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`bed7c93` pushed forecast privacy. Current chronological projection correction is reproduced against
+the server: 10,000 start, -8,000 bill, neutral transfer, +9,000 income ends 11,000 but reaches 2,000
+in between. Demo previously incorrectly reported 10,000. Sorted occurrences and atomic transfer
+measurement now match the server; exact projection overflow throws without posting. Old recurrences
+no longer silently truncate at 400 iterations. **398 backend zero skips, 111 native, 45 Core +
+49 API, 2 production UI tests PASS**, Beta build/test and diff check PASS, in
+`/tmp/budget-forecast-low-{backend,native,package,ui}.log`. Fixed Demo clock anchor unchanged;
+clock consistency and remaining report arithmetic are not claimed complete. No human retest.
+
 `1c3b162` pushed opening/split safety. The following forecast audit proved a Live category-scope
 leak: a restricted member's list correctly hid schedules but Forecast/Resilience included them.
 Shared scoped SQL now filters before projection; Demo excludes uncategorized schedules for

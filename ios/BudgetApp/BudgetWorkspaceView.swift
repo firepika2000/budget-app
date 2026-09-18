@@ -597,27 +597,49 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         }.map { item in ["id": item.id, "budget_id": budget.id, "account_id": item.accountID, "destination_account_id": item.destinationAccountID.map { $0 as Any } ?? NSNull(), "category_id": item.categoryID.map { $0 as Any } ?? NSNull(), "name": item.name, "amount_minor": item.amount, "next_date": item.nextDate, "recurrence_unit": item.recurrenceUnit, "interval_count": item.intervalCount, "memo": item.memo, "financial_classification": item.financialClassification ?? NSNull(), "is_active": item.isActive, "last_realized_on": item.lastRealizedOn.map { $0 as Any } ?? NSNull()] })
         let forecastStart = Date.demo(monthsAgo: 0, day: 5), forecastThrough = Calendar.current.date(byAdding: .day, value: 90, to: forecastStart)!
         var projected = Dictionary(uniqueKeysWithValues: visibleAccounts.map { ($0.id, $0.balance) })
+        let onBudgetAccounts = visibleAccounts.filter(\.isOnBudget)
+        let actualTotal = try Money.sumMinorUnits(onBudgetAccounts.map(\.balance))
+        var lowestTotal = actualTotal
+        var expanded: [(date: Date, schedule: APIScheduledTransaction)] = []
         var occurrenceRows: [[String: Any]] = []
         for item in scheduleRows where item.isActive {
             var occurrence = BudgetWorkspaceStore.parseDate(item.nextDate)
-            for _ in 0..<400 where occurrence <= forecastThrough {
-                if occurrence >= forecastStart {
-                    if let destination = item.destinationAccountID { projected[item.accountID, default: 0] -= item.amountMinor; projected[destination, default: 0] += item.amountMinor }
-                    else { projected[item.accountID, default: 0] += item.amountMinor }
-                    occurrenceRows.append(["scheduled_transaction_id": item.id, "name": item.name, "occurred_on": BudgetWorkspaceStore.dateString(occurrence), "account_id": item.accountID, "destination_account_id": item.destinationAccountID.map { $0 as Any } ?? NSNull(), "category_id": item.categoryID.map { $0 as Any } ?? NSNull(), "amount_minor": item.amountMinor])
-                }
+            var expandedCount = 0
+            while occurrence <= forecastThrough {
+                guard expandedCount < 1_000 else { throw workspaceRepositoryError("Schedule produces too many forecast occurrences.") }
+                expandedCount += 1
+                if occurrence >= forecastStart { expanded.append((occurrence, item)) }
                 guard let next = BudgetWorkspaceStore.nextScheduledDate(from: occurrence, unit: item.recurrenceUnit, interval: item.intervalCount) else { break }
+                guard next > occurrence else { throw workspaceRepositoryError("Schedule recurrence must advance its date.") }
                 occurrence = next
             }
         }
+        // Match the production server's per-occurrence order and measure after both transfer
+        // legs. Insertion order and a start/end-only minimum can hide an intermediate shortfall.
+        expanded.sort { $0.date == $1.date ? $0.schedule.id < $1.schedule.id : $0.date < $1.date }
+        func difference(_ lhs: Int64, _ rhs: Int64) throws -> Int64 {
+            try Money(minorUnits: lhs, currencyCode: budget.currencyCode)
+                .subtracting(Money(minorUnits: rhs, currencyCode: budget.currencyCode)).minorUnits
+        }
+        for event in expanded {
+            let item = event.schedule
+            guard let source = projected[item.accountID] else { throw workspaceRepositoryError("Forecast account is unavailable.") }
+            if let destination = item.destinationAccountID {
+                guard let destinationBalance = projected[destination] else { throw workspaceRepositoryError("Forecast destination is unavailable.") }
+                projected[item.accountID] = try difference(source, item.amountMinor)
+                projected[destination] = try Money.sumMinorUnits([destinationBalance, item.amountMinor])
+            } else { projected[item.accountID] = try Money.sumMinorUnits([source, item.amountMinor]) }
+            let runningTotal = try Money.sumMinorUnits(onBudgetAccounts.map { projected[$0.id] ?? $0.balance })
+            lowestTotal = min(lowestTotal, runningTotal)
+            occurrenceRows.append(["scheduled_transaction_id": item.id, "name": item.name, "occurred_on": BudgetWorkspaceStore.dateString(event.date), "account_id": item.accountID, "destination_account_id": item.destinationAccountID.map { $0 as Any } ?? NSNull(), "category_id": item.categoryID.map { $0 as Any } ?? NSNull(), "amount_minor": item.amountMinor])
+        }
         let forecastAccounts = visibleAccounts.map { ["account_id": $0.id, "name": $0.name, "actual_balance_minor": $0.balance, "projected_balance_minor": projected[$0.id] ?? $0.balance] as [String: Any] }
-        let onBudgetAccounts = visibleAccounts.filter(\.isOnBudget)
-        let actualTotal = onBudgetAccounts.reduce(Int64(0)) { $0 + $1.balance }, projectedTotal = onBudgetAccounts.reduce(Int64(0)) { $0 + (projected[$1.id] ?? $1.balance) }
-        let demoForecast: APIForecast = try decode(["as_of": BudgetWorkspaceStore.dateString(forecastStart), "through": BudgetWorkspaceStore.dateString(forecastThrough), "currency_code": budget.currencyCode, "actual_total_on_budget_minor": actualTotal, "projected_total_on_budget_minor": projectedTotal, "lowest_projected_total_minor": min(actualTotal, projectedTotal), "accounts": forecastAccounts, "occurrences": occurrenceRows])
-        let scheduledIncome = demoForecast.occurrences.filter { $0.destinationAccountID == nil && $0.amountMinor > 0 }.reduce(Int64(0)) { $0 + $1.amountMinor }
-        let scheduledOutflows = demoForecast.occurrences.filter { $0.destinationAccountID == nil && $0.amountMinor < 0 }.reduce(Int64(0)) { $0 - $1.amountMinor }
+        let projectedTotal = try Money.sumMinorUnits(onBudgetAccounts.map { projected[$0.id] ?? $0.balance })
+        let demoForecast: APIForecast = try decode(["as_of": BudgetWorkspaceStore.dateString(forecastStart), "through": BudgetWorkspaceStore.dateString(forecastThrough), "currency_code": budget.currencyCode, "actual_total_on_budget_minor": actualTotal, "projected_total_on_budget_minor": projectedTotal, "lowest_projected_total_minor": lowestTotal, "accounts": forecastAccounts, "occurrences": occurrenceRows])
+        let scheduledIncome = try Money.sumMinorUnits(demoForecast.occurrences.filter { $0.destinationAccountID == nil && $0.amountMinor > 0 }.map(\.amountMinor))
+        let scheduledOutflows = try difference(0, Money.sumMinorUnits(demoForecast.occurrences.filter { $0.destinationAccountID == nil && $0.amountMinor < 0 }.map(\.amountMinor)))
         let cashIDs = Set(visibleAccounts.filter { $0.isOnBudget && ["checking", "savings", "cash"].contains($0.kind.rawValue) }.map(\.id))
-        let resilience: APIResilienceReport = try decode(["as_of": demoForecast.asOf, "through": demoForecast.through, "currency_code": budget.currencyCode, "cash_buffer_minor": demoForecast.accounts.filter { cashIDs.contains($0.accountID) }.reduce(Int64(0)) { $0 + $1.actualBalanceMinor }, "current_on_budget_minor": demoForecast.actualTotalOnBudgetMinor, "projected_on_budget_minor": demoForecast.projectedTotalOnBudgetMinor, "lowest_projected_on_budget_minor": demoForecast.lowestProjectedTotalMinor, "scheduled_income_minor": scheduledIncome, "scheduled_outflows_minor": scheduledOutflows, "expected_margin_minor": scheduledIncome - scheduledOutflows, "essential_expense_coverage_days": NSNull(), "emergency_fund_coverage_days": NSNull(), "unavailable_metrics": ["essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.", "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification."]])
+        let resilience: APIResilienceReport = try decode(["as_of": demoForecast.asOf, "through": demoForecast.through, "currency_code": budget.currencyCode, "cash_buffer_minor": Money.sumMinorUnits(demoForecast.accounts.filter { cashIDs.contains($0.accountID) }.map(\.actualBalanceMinor)), "current_on_budget_minor": demoForecast.actualTotalOnBudgetMinor, "projected_on_budget_minor": demoForecast.projectedTotalOnBudgetMinor, "lowest_projected_on_budget_minor": demoForecast.lowestProjectedTotalMinor, "scheduled_income_minor": scheduledIncome, "scheduled_outflows_minor": scheduledOutflows, "expected_margin_minor": difference(scheduledIncome, scheduledOutflows), "essential_expense_coverage_days": NSNull(), "emergency_fund_coverage_days": NSNull(), "unavailable_metrics": ["essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.", "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification."]])
         let members: [APIHouseholdMember] = try decode([
             ["user_id": "demo-owner", "email": "alex@example.test", "display_name": "Alex Rivera", "role": "owner", "is_active": true],
             ["user_id": "demo-member", "email": "sam@example.test", "display_name": "Sam Rivera", "role": "adult", "is_active": true]

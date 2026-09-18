@@ -4,6 +4,22 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Chronological forecast correction after pushed `bed7c93` (verified): the same
+outflow/transfer/later-income scenario reproduced a Demo low of 10,000 versus the server's correct
+2,000 minor units. Demo now expands permitted active schedules, sorts occurrences by date/ID like
+the server, applies both transfer legs before measuring totals, and carries the true intermediate
+minimum into Forecast and Resilience. Checked exact arithmetic refuses unrepresentable projection
+amounts without changing actual accounts/transactions/Unassigned. A silent 400-step recurrence
+cutoff is replaced with bounded expansion and explicit failure; a daily schedule started in 2025
+now correctly emits all 91 in-horizon dates, and paused schedules remain excluded.
+Reproduction: `/tmp/budget-forecast-low-reproduction.log`; authoritative matching case:
+`/tmp/budget-forecast-low-server-reference.log`. **398 backend zero skips, 111 native, 45 Core +
+49 API, 2 production XCUITests PASS**; Beta build/test and diff check PASS. UI verifies scheduled
+entry remains distinct from actual activity and Enter Now realizes through the production path.
+Logs `/tmp/budget-forecast-low-{backend,native,package,ui}.log`. No server code or migration changes.
+Demo's fixed September 2026 forecast anchor is deliberately unchanged in this focused correction;
+uniform injected provider/test clocks and unrelated report aggregate overflow remain open.
+
 Forecast privacy correction after pushed `1c3b162` (verified): a new Live-shaped
 regression proved that management listed one permitted bill while Forecast exposed that bill,
 a hidden-category household bill, and uncategorized future salary on the same visible account.

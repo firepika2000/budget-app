@@ -2,9 +2,75 @@ import XCTest
 import SwiftUI
 import UIKit
 import BudgetAPI
+import BudgetCore
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testForecastRejectsOverflowAndExpandsOldRecurrencesWithoutSilentTruncation() async throws {
+        let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-12-04"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        let overflow = DemoWorkspaceDataSource(fresh: true)
+        XCTAssertTrue(overflow.demo.createAccount(name: "Boundary", type: "checking", isOnBudget: true, startingBalance: .max))
+        let accountID = try XCTUnwrap(overflow.demo.accounts.first?.id)
+        try await overflow.createSchedule(.init(accountID: accountID, name: "Beyond range", amountMinor: 1, nextDate: "2026-09-10", recurrenceUnit: "once"))
+        let ids = overflow.demo.transactions.map(\.id)
+        do {
+            _ = try await overflow.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+            XCTFail("Unrepresentable projection must throw, never trap or post money")
+        } catch MoneyError.arithmeticOverflow { }
+        XCTAssertEqual(overflow.demo.accounts.first?.balance, .max)
+        XCTAssertEqual(overflow.demo.transactions.map(\.id), ids)
+        XCTAssertEqual(overflow.demo.unassignedMinor, .max)
+
+        let daily = DemoWorkspaceDataSource(fresh: true)
+        XCTAssertTrue(daily.demo.createAccount(name: "Daily", type: "checking", isOnBudget: true, startingBalance: 1000))
+        let dailyID = try XCTUnwrap(daily.demo.accounts.first?.id)
+        try await daily.createSchedule(.init(accountID: dailyID, name: "Old daily recurrence", amountMinor: -1, nextDate: "2025-09-01", recurrenceUnit: "days"))
+        try await daily.createSchedule(.init(accountID: dailyID, name: "Paused", amountMinor: .max, nextDate: "2026-09-06", recurrenceUnit: "once", isActive: false))
+        let snapshot = try await daily.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+        XCTAssertEqual(snapshot.forecast?.occurrences.count, 91)
+        XCTAssertEqual(snapshot.forecast?.occurrences.last?.occurredOn, "2026-12-04")
+        XCTAssertEqual(snapshot.forecast?.projectedTotalOnBudgetMinor, 909)
+        XCTAssertEqual(snapshot.forecast?.lowestProjectedTotalMinor, 909)
+        XCTAssertEqual(daily.demo.accounts.first?.balance, 1000)
+        XCTAssertEqual(daily.demo.transactions.count, 1)
+    }
+
+    @MainActor
+    func testForecastTracksChronologicalCashLowWithoutPostingOrTransferDoubleCounting() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        XCTAssertTrue(source.demo.createAccount(name: "Checking", type: "checking", isOnBudget: true, startingBalance: 10_000))
+        XCTAssertTrue(source.demo.createAccount(name: "Savings", type: "savings", isOnBudget: true))
+        XCTAssertTrue(source.demo.createCategory(name: "Bills"))
+        let checking = source.demo.accounts[0].id, savings = source.demo.accounts[1].id
+        let category = try XCTUnwrap(source.demo.categories.first?.id)
+        // Deliberately create schedules out of chronological order.
+        try await source.createSchedule(.init(accountID: checking, name: "Later income", amountMinor: 9_000, nextDate: "2026-09-20", recurrenceUnit: "once"))
+        try await source.createSchedule(.init(accountID: checking, categoryID: category, name: "Early bill", amountMinor: -8_000, nextDate: "2026-09-10", recurrenceUnit: "once"))
+        try await source.createSchedule(.init(accountID: checking, destinationAccountID: savings, name: "Internal transfer", amountMinor: 5_000, nextDate: "2026-09-12", recurrenceUnit: "once"))
+        let ids = source.demo.transactions.map(\.id)
+        let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-12-04"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        for _ in 0..<2 {
+            let snapshot = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+            let forecast = try XCTUnwrap(snapshot.forecast)
+            XCTAssertEqual(forecast.actualTotalOnBudgetMinor, 10_000)
+            XCTAssertEqual(forecast.projectedTotalOnBudgetMinor, 11_000)
+            XCTAssertEqual(forecast.lowestProjectedTotalMinor, 2_000)
+            XCTAssertEqual(forecast.occurrences.map(\.name), ["Early bill", "Internal transfer", "Later income"])
+            XCTAssertEqual(forecast.accounts.first { $0.accountID == checking }?.projectedBalanceMinor, 6_000)
+            XCTAssertEqual(forecast.accounts.first { $0.accountID == savings }?.projectedBalanceMinor, 5_000)
+            XCTAssertEqual(snapshot.resilience?.lowestProjectedOnBudgetMinor, 2_000)
+            XCTAssertEqual(snapshot.resilience?.scheduledIncomeMinor, 9_000)
+            XCTAssertEqual(snapshot.resilience?.scheduledOutflowsMinor, 8_000)
+            XCTAssertEqual(source.demo.accounts.map(\.balance), [10_000, 0])
+            XCTAssertEqual(source.demo.transactions.map(\.id), ids)
+            XCTAssertEqual(source.demo.unassignedMinor, 10_000)
+        }
+        for index in source.demo.schedules.indices { source.demo.schedules[index].nextDate = "2026-09-10" }
+        let tied = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+        XCTAssertEqual(tied.forecast?.occurrences.map(\.scheduledTransactionID), source.demo.schedules.map(\.id).sorted(), "Same-day ordering must match the server's stable ID tie-break")
+    }
+
     @MainActor
     func testRestrictedForecastAndResilienceExcludeHiddenAndUncategorizedSchedules() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)

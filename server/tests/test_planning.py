@@ -17,6 +17,43 @@ from .test_budgeting_api import create_budget, create_budget_structure
 FORECAST_AS_OF = date(2026, 9, 1)
 
 
+def test_forecast_tracks_intermediate_low_and_atomic_transfer_without_posting(
+    client, owner_token, session_factory, monkeypatch
+):
+    from app import analytics_routes, budgeting_routes
+    freeze_today(monkeypatch, date(2026, 9, 5), planning_routes, analytics_routes, budgeting_routes)
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    root = f"/api/v1/budgets/{budget['id']}"
+    savings = client.post(f"{root}/accounts", headers=auth(owner_token), json={"name": "Savings", "account_type": "savings"}).json()
+    fund(client, owner_token, budget["id"], checking["id"], amount=10000, occurred_on="2026-09-01")
+    for fields in [
+        {"name": "Later income", "amount_minor": 9000, "next_date": "2026-09-20"},
+        {"name": "Early bill", "amount_minor": -8000, "next_date": "2026-09-10", "category_id": category["id"]},
+        {"name": "Internal transfer", "amount_minor": 5000, "next_date": "2026-09-12", "destination_account_id": savings["id"]},
+    ]:
+        response = client.post(f"{root}/scheduled-transactions", headers=auth(owner_token), json={
+            "account_id": checking["id"], "recurrence_unit": "once", **fields,
+        })
+        assert response.status_code == 201, response.text
+    before = client.get(f"{root}/transactions", headers=auth(owner_token)).json()
+    for _ in range(2):
+        response = client.get(f"{root}/forecast?through=2026-12-04", headers=auth(owner_token))
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["actual_total_on_budget_minor"] == 10000
+        assert body["projected_total_on_budget_minor"] == 11000
+        assert body["lowest_projected_total_minor"] == 2000
+        assert [row["name"] for row in body["occurrences"]] == ["Early bill", "Internal transfer", "Later income"]
+        assert {row["account_id"]: row["projected_balance_minor"] for row in body["accounts"]} == {checking["id"]: 6000, savings["id"]: 5000}
+        resilience = client.get(f"{root}/reports/resilience?horizon_days=90", headers=auth(owner_token)).json()
+        assert resilience["lowest_projected_on_budget_minor"] == 2000
+        assert resilience["scheduled_income_minor"] == 9000
+        assert resilience["scheduled_outflows_minor"] == 8000
+        assert client.get(f"{root}/transactions", headers=auth(owner_token)).json() == before
+        assert client.get(f"{root}/accounts/{checking['id']}/balance", headers=auth(owner_token)).json()["working_balance_minor"] == 10000
+
+
 def test_forecast_and_resilience_apply_schedule_category_scope_before_projection(
     client, owner_token, session_factory, monkeypatch
 ):
