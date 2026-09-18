@@ -4,6 +4,22 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Live Payee privacy after `911b437`: a new adversarial regression reproduced discovery of a private
+salary payee through search despite its uncategorized income being hidden from category-scoped
+transaction search. Payee visibility had treated an empty split set as authorized. Both Payee
+search and legacy list now share SQL visibility conditions requiring at least one split with
+every category allowed, or an allowed direct category; uncategorized rows remain hidden for
+category-restricted users. Filtering happens before counts/ranking/hydration. Responses redact
+inaccessible default-category IDs using the caller's category scope, computed once per result page.
+Regression covers private identity, visible merchant counts/net amounts, default-category privacy,
+canonical transaction-search agreement and unchanged unrestricted owner observations.
+No financial storage, migrations or authentication lifecycle changes. Reproduction:
+`/tmp/budget-payee-category-scope-before.log`; focused Payee suite: 10 tests PASS.
+Full backend: 461 PASS, zero skips, 122.71s, including disposable PostgreSQL concurrency,
+migration and encrypted recovery checks (`/tmp/budget-payee-category-scope-backend.log`).
+Swift package: 49 Core + 54 API PASS (`/tmp/budget-payee-category-scope-package.log`);
+diff check PASS. Last native evidence remains 133 PASS; no Swift changed for this server fix.
+
 Transaction attribution audit after `613a478`: Demo API transaction serialization used the current
 viewer as creator, causing member filters to attribute every visible transaction to whichever
 persona was browsing. Serialization now uses the stored transaction member, with the canonical
@@ -681,7 +697,7 @@ No claim of provider parity from package-only projection tests. See PERSISTENT-M
 |---|---|---|
 | PRODUCT | IN PROGRESS | v0.4–v0.7 history is preserved; v0.8 automated closure and mission sequencing are documented. v0.9 planning/rollover and Demo allowance/request/invitation management have automated evidence above. Uniform clocks, Demo invitation acceptance/full dynamic capability parity, import/local-provider and later mission scope remain open. |
 | FINANCIAL | IN PROGRESS | 23 shared single/multi-debt vectors include paid-off parity, horizon/high-APR boundaries, explicit rate transitions and calendar rounding; checked Int64 arithmetic and HTTP 422 boundaries pass. Current-cost estimates remain distinct from recorded and projected values. Release-wide invariant review remains open. |
-| SECURITY | IN PROGRESS | Allocation/export scope, request/allowance authority, household query minimization and Demo membership revocation have focused adversarial evidence. Live core access denial now evicts financial observations and invalidates late workspace results. Extend the matrix across all retained caches, reports, imports and future providers; no release-wide security PASS yet. |
+| SECURITY | IN PROGRESS | Allocation/export scope, request/allowance authority, household query minimization and Demo membership revocation have focused adversarial evidence. Swift/server capability contracts, owner-only Core sharing and Demo attachment scope/identity now have regressions. Live Payee visibility excludes category-hidden income before ranking/counts and redacts hidden default-category IDs. Live core access denial evicts financial observations and invalidates late workspace results. Extend the matrix across all retained caches, reports, imports and future providers; no release-wide security PASS yet. |
 | DATA | IN PROGRESS | Source head is `0029_cash_rollover_history`; human Live remains at `0020_payee_identity_repair`. Effective policy history now drives canonical projections and owner-authorized prospective settings; no migration silently changes legacy policy. Populated migration/concurrency and real age-encrypted new-destination restore cover canonical equality, snoozes, policy history and encrypted attachment integrity. Real Docker/Compose recovery and production Local Device storage remain open. |
 | RELIABILITY | IN PROGRESS | Credential authority is shared by long-lived Live services. Native tests distinguish transient failure from definitive access denial and prove late snapshot/report results cannot resurrect denied state. Broader offline, lifecycle, cancellation and release-wide regression remain open. |
 | PERFORMANCE | IN PROGRESS | Live core hydration makes zero detailed-report requests instead of seven; native tests cover caching/invalidation/retry. Hub has a bounded scalar response. Monthly summary now streams historical rows in batches; disposable 10k-transaction/split and 10k-allocation fixtures prove bounded ORM hydration and exact observations. Other report/Demo computation, category/account fan-out and release-scale closure remain open. |

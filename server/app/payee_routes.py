@@ -36,15 +36,9 @@ def _preference(db: Session, budget_id: str, payee_id: str) -> PayeeBudgetPrefer
 
 
 def _visible_transactions(db: Session, user: User, budget: Budget) -> list[Transaction]:
-    accounts = visible_resource_ids(db, user, budget, "account")
-    categories = visible_resource_ids(db, user, budget, "category")
-    rows = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(Transaction.budget_id == budget.id)))
-    return [row for row in rows if
-            (accounts is None or row.account_id in accounts) and
-            (categories is None or
-             (row.category_id is not None and row.category_id in categories) or
-             (not row.splits and row.category_id is None) or
-             (bool(row.splits) and all(split.category_id in categories for split in row.splits)))]
+    return list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
+        *_visible_transaction_conditions(user, budget, db),
+    )))
 
 
 def _response(
@@ -53,6 +47,7 @@ def _response(
     payee: Payee,
     visible: list[Transaction],
     *,
+    visible_category_ids: set[str] | None,
     include_aliases: bool = True,
 ) -> dict:
     rows = [row for row in visible if row.payee_id == payee.id]
@@ -60,7 +55,9 @@ def _response(
     return {
         "id": payee.id, "household_id": payee.household_id, "display_name": payee.display_name,
         "is_archived": payee.is_archived, "merged_into_payee_id": payee.merged_into_payee_id,
-        "default_category_id": preference.default_category_id if preference else None,
+        "default_category_id": preference.default_category_id
+        if preference and (visible_category_ids is None or preference.default_category_id in visible_category_ids)
+        else None,
         "transaction_count": len(rows), "net_amount_minor": sum(row.amount_minor for row in rows),
         "aliases": list(db.scalars(select(PayeeAlias).where(PayeeAlias.payee_id == payee.id).order_by(PayeeAlias.display_name)))
         if include_aliases else [],
@@ -97,7 +94,7 @@ def _visible_transaction_conditions(user: User, budget: Budget, db: Session) -> 
         ))
         conditions.append(or_(
             Transaction.category_id.in_(categories),
-            and_(Transaction.category_id.is_(None), ~disallowed_split),
+            and_(Transaction.category_id.is_(None), Transaction.splits.any(), ~disallowed_split),
         ))
     return conditions
 
@@ -127,7 +124,8 @@ def search_payees(
     query = select(Payee).where(Payee.household_id == budget.household_id)
     if not include_archived:
         query = query.where(Payee.is_archived.is_(False), Payee.merged_into_payee_id.is_(None))
-    scoped = visible_resource_ids(db, user, budget, "account") is not None or visible_resource_ids(db, user, budget, "category") is not None
+    category_scope = visible_resource_ids(db, user, budget, "category")
+    scoped = visible_resource_ids(db, user, budget, "account") is not None or category_scope is not None
     if scoped:
         query = query.where(visible_count > 0)
     key = normalized_payee_name(q)
@@ -154,7 +152,7 @@ def search_payees(
     if has_more:
         next_cursor = base64.urlsafe_b64encode(str(offset + limit).encode("ascii")).decode("ascii")
     return PayeePageResponse(
-        items=[_response(db, budget, item, visible, include_aliases=not scoped) for item in page],
+        items=[_response(db, budget, item, visible, visible_category_ids=category_scope, include_aliases=not scoped) for item in page],
         next_cursor=next_cursor,
     )
 
@@ -168,11 +166,12 @@ def list_payees(budget_id: str, include_archived: bool = False, user: User = Dep
         query = query.where(Payee.is_archived.is_(False), Payee.merged_into_payee_id.is_(None))
     payees = list(db.scalars(query.order_by(Payee.display_name, Payee.id)))
     # A scoped member may discover a payee only through a transaction they can already see.
-    scoped = visible_resource_ids(db, user, budget, "account") is not None or visible_resource_ids(db, user, budget, "category") is not None
+    category_scope = visible_resource_ids(db, user, budget, "category")
+    scoped = visible_resource_ids(db, user, budget, "account") is not None or category_scope is not None
     if scoped:
         visible_ids = {row.payee_id for row in visible if row.payee_id is not None}
         payees = [item for item in payees if item.id in visible_ids]
-    return [_response(db, budget, item, visible, include_aliases=not scoped) for item in payees]
+    return [_response(db, budget, item, visible, visible_category_ids=category_scope, include_aliases=not scoped) for item in payees]
 
 
 def _set_preference(db: Session, budget: Budget, payee: Payee, category_id: str | None, user: User) -> None:
@@ -210,7 +209,7 @@ def create_payee(budget_id: str, body: PayeeCreate, user: User = Depends(get_cur
         db.rollback()
         raise HTTPException(status_code=409, detail="A payee with this name already exists")
     visible = _visible_transactions(db, user, budget)
-    return _response(db, budget, payee, visible)
+    return _response(db, budget, payee, visible, visible_category_ids=visible_resource_ids(db, user, budget, "category"))
 
 
 @router.put("/payees/{payee_id}", response_model=PayeeResponse)
@@ -246,7 +245,7 @@ def update_payee(budget_id: str, payee_id: str, body: PayeeUpdate, user: User = 
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="A payee with this name already exists")
-    return _response(db, budget, payee, _visible_transactions(db, user, budget))
+    return _response(db, budget, payee, _visible_transactions(db, user, budget), visible_category_ids=visible_resource_ids(db, user, budget, "category"))
 
 
 @router.post("/payees/{payee_id}/aliases", response_model=PayeeAliasResponse, status_code=status.HTTP_201_CREATED)
@@ -312,4 +311,4 @@ def merge_payee(budget_id: str, payee_id: str, body: PayeeMerge, user: User = De
     source.is_archived = True
     source.name_key = None
     db.commit()
-    return _response(db, budget, destination, _visible_transactions(db, user, budget))
+    return _response(db, budget, destination, _visible_transactions(db, user, budget), visible_category_ids=visible_resource_ids(db, user, budget, "category"))

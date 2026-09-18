@@ -231,6 +231,53 @@ def test_scoped_payee_search_does_not_disclose_alias_metadata(client, owner_toke
     assert by_alias.json() == {"items": [], "next_cursor": None}
 
 
+def test_category_scoped_payees_exclude_uncategorized_income_and_private_defaults(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    root = f"/api/v1/budgets/{budget['id']}"
+    group = client.post(f"{root}/category-groups", headers=auth(owner_token), json={"name": "Private"}).json()
+    hidden = client.post(f"{root}/categories", headers=auth(owner_token), json={"group_id": group["id"], "name": "Private"}).json()
+    visible_payee = client.post(f"{root}/payees", headers=auth(owner_token), json={
+        "display_name": "Shared Merchant", "default_category_id": hidden["id"],
+    }).json()
+    private_payee = client.post(f"{root}/payees", headers=auth(owner_token), json={"display_name": "Private Salary"}).json()
+    for payee, category_id, amount in [(visible_payee, category["id"], -100), (visible_payee, None, 50000), (private_payee, None, 90000)]:
+        response = client.post(f"{root}/transactions", headers=auth(owner_token), json={
+            "account_id": account["id"], "category_id": category_id, "payee_id": payee["id"],
+            "amount_minor": amount, "occurred_on": "2026-09-15",
+        })
+        assert response.status_code == 201, response.text
+    with session_factory() as db:
+        household = db.query(Household).one()
+        member = User(email="category-payee-scope@example.com", display_name="Scoped", password_hash=hash_password("password long enough"))
+        db.add(member); db.flush()
+        db.add(Membership(household_id=household.id, user_id=member.id, role="adult")); db.commit()
+        member_id = member.id
+    token = create_access_token(member_id, client.app.state.settings)
+    assert client.put(f"{root}/grants", headers=auth(owner_token), json={"user_id": member_id, "permission": "view"}).status_code == 200
+    assert client.put(f"{root}/access/{member_id}", headers=auth(owner_token), json={
+        "capabilities": ["view_budget", "view_transactions"], "restrict_accounts": False, "account_ids": [],
+        "restrict_categories": True, "category_ids": [category["id"]],
+    }).status_code == 200
+    transactions = client.get(f"{root}/transactions/search", headers=auth(token))
+    assert transactions.status_code == 200
+    assert transactions.json()["total_count"] == 1
+    for path in ["payees/search", "payees"]:
+        response = client.get(f"{root}/{path}", headers=auth(token))
+        assert response.status_code == 200
+        rows = response.json()["items"] if path.endswith("search") else response.json()
+        assert [row["id"] for row in rows] == [visible_payee["id"]]
+        assert rows[0]["transaction_count"] == 1
+        assert rows[0]["net_amount_minor"] == -100
+        assert rows[0]["default_category_id"] is None
+    assert client.get(f"{root}/payees/search?q=Private", headers=auth(token)).json() == {"items": [], "next_cursor": None}
+    owner_rows = client.get(f"{root}/payees/search", headers=auth(owner_token)).json()["items"]
+    owner_payee = next(row for row in owner_rows if row["id"] == visible_payee["id"])
+    assert owner_payee["transaction_count"] == 2
+    assert owner_payee["net_amount_minor"] == 49900
+    assert owner_payee["default_category_id"] == hidden["id"]
+
+
 def test_free_text_does_not_resurrect_archived_payee(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])

@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `911b437`, reproduced/fixed Live Payee discovery of category-hidden uncategorized income.
+Search/list now use one SQL visibility predicate before aggregation; hidden default-category IDs
+are redacted. Owner observations preserved. Ten focused Payee tests PASS; no schema/financial
+change. Full backend/disposable PostgreSQL verification is recorded in the master ledger.
+Verified: 461 backend PASS, zero skips (122.71s); 49 Core + 54 API PASS; diff PASS.
+Human Live remains at 0020; source migration head remains 0029. Production readiness remains
+IN PROGRESS and HUMAN ACCEPTANCE PENDING — DO NOT RETEST.
+
 After `613a478`, corrected Demo transaction creator observations/member filters to use stored
 transaction membership, not the current viewer. Owner identity is consistently `demo-owner`.
 Financial state unchanged; broader dynamic authorization and attachment lifecycle remain open.
