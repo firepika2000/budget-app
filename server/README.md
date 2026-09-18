@@ -91,8 +91,13 @@ Restore is intentionally explicit because it replaces current database contents:
 ./scripts/restore.sh --yes --project-name budget-server /path/to/budget-YYYYMMDDTHHMMSSZ.tar.gz.age
 ```
 
-Before changing the target, restore verifies archive completeness, every manifest digest, and the
-supported archive format version. The restore command requires the exact Docker Compose project name so it cannot silently select an
+Before changing the target, restore verifies archive completeness, every manifest digest, the
+supported archive format version, and an exact match between archived attachment-key configuration
+and the destination API's active configuration. Configure the new recovery deployment with the
+same `BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY` (or original `BUDGET_APP_JWT_SECRET` when no dedicated
+key was used) first. A mismatch refuses restore before database/object mutation; secrets are not
+printed or sourced as shell code. SQL restoration uses a single transaction with stop-on-error.
+The restore command requires the exact Docker Compose project name so it cannot silently select an
 implicit target. For a recovery drill, create a separate Compose project (for example,
 `budget-server-recovery`) and name that project explicitly. Test recovery periodically on a
 non-production instance. The complete archive contains the attachment-key recovery material inside its

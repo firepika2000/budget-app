@@ -125,3 +125,15 @@ Disposable PostgreSQL closure progress: a newly initialized PostgreSQL 17 cluste
 temporary Unix socket (no TCP listener) passed all 11 concurrency tests, including Alembic migration
 to the current head. No human database connection was used. Full backend with these gates enabled
 and populated restore proof continue separately.
+
+Restore key-safety correction: a failing regression proved the script previously accepted a
+destination with a different attachment key and mutated data before its misleading post-restart
+warning. Restore now compares validated recovery configuration to the explicit destination before
+SQL/object writes, never sources/prints secret material, and refuses a mismatch. SQL runs in one
+transaction with stop-on-error. Matching dedicated and legacy JWT-derived configurations remain
+supported. Focused script tests: 7 passed, including malformed material and mismatch/no-write.
+Full backend after the correction: 296 passed, zero skips with disposable PostgreSQL enabled;
+two further test-only recovery cases passed in the focused rerun. Shell syntax and diff checks
+passed. Docker and age are not installed in this environment: real encrypted Compose recovery
+remains unproven; fake-tool script tests are not represented as end-to-end encryption proof.
+The earlier full backend before this correction also passed all 295 tests, zero skips.

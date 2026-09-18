@@ -15,6 +15,7 @@ RESTORE = SERVER_ROOT / "scripts" / "restore.sh"
 def _archive(
     tmp_path: Path, *, corrupt: bool = False, omit_key: bool = False,
     format_version: int = 1,
+    recovery_key: str = "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=test-key\n",
 ) -> Path:
     contents = tmp_path / "contents"
     attachments = contents / "attachments"
@@ -26,7 +27,7 @@ def _archive(
     )
     if not omit_key:
         (contents / "attachment-key-recovery.env").write_text(
-            "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=test-key\n"
+            recovery_key
         )
     (attachments / "object-1").write_bytes(b"encrypted-object")
     files = [contents / "BACKUP-METADATA", contents / "database.sql", attachments / "object-1"]
@@ -54,7 +55,10 @@ def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
     age.write_text('#!/usr/bin/env bash\ncat "${@: -1}"\n')
     docker = tools / "docker"
     docker.write_text(
-        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$FAKE_DOCKER_LOG"\ncat >/dev/null\n'
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$FAKE_DOCKER_LOG"\n'
+        'if [[ "$*" == *BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY* ]]; then\n'
+        '  printf "%s\\n" "${RESTORE_TEST_KEY:-BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=test-key}"\n'
+        'else cat >/dev/null; fi\n'
     )
     age.chmod(0o755)
     docker.chmod(0o755)
@@ -138,9 +142,10 @@ def test_restore_verifies_archive_before_addressing_explicit_target(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     calls = log.read_text().splitlines()
-    assert len(calls) == 4
+    assert len(calls) == 5
     assert all("--project-name budget-recovery" in call for call in calls)
-    assert "exec -T database psql --set ON_ERROR_STOP=on" in calls[0]
+    assert "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY" in calls[0]
+    assert "exec -T database psql --single-transaction --set ON_ERROR_STOP=on" in calls[1]
     assert "restart api" in calls[-1]
 
 
@@ -157,3 +162,46 @@ def test_corrupt_or_incomplete_backup_never_reaches_restore_target(tmp_path):
         )
         assert result.returncode != 0
     assert not log.exists(), "integrity and completeness checks must run before Docker mutation"
+
+
+def test_restore_refuses_wrong_destination_key_before_mutating_database_or_objects(tmp_path):
+    archive = _archive(tmp_path)
+    environment, log = _environment(tmp_path)
+    environment["RESTORE_TEST_KEY"] = "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=wrong-destination-secret"
+    result = subprocess.run(
+        [str(RESTORE), "--yes", "--project-name", "budget-recovery", str(archive)],
+        env=environment, text=True, capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "key does not match" in result.stderr
+    assert "wrong-destination-secret" not in result.stderr + result.stdout
+    calls = log.read_text().splitlines()
+    assert len(calls) == 1
+    assert "psql" not in calls[0]
+    assert "restart" not in calls[0]
+
+
+def test_restore_rejects_invalid_recovery_material_without_addressing_target(tmp_path):
+    environment, log = _environment(tmp_path)
+    for index, value in enumerate(("BUDGET_APP_JWT_SECRET=\n", "OTHER_KEY=secret\n", "BUDGET_APP_JWT_SECRET=secret\nUNEXPECTED=value\n")):
+        archive = _archive(tmp_path / str(index), recovery_key=value)
+        result = subprocess.run(
+            [str(RESTORE), "--yes", "--project-name", "budget-recovery", str(archive)],
+            env=environment, text=True, capture_output=True,
+        )
+        assert result.returncode != 0
+        assert "recovery material is invalid" in result.stderr
+    assert not log.exists()
+
+
+def test_restore_accepts_matching_legacy_secret_without_exposing_it(tmp_path):
+    key = "BUDGET_APP_JWT_SECRET=legacy-recovery-secret"
+    archive = _archive(tmp_path, recovery_key=key + "\n")
+    environment, _ = _environment(tmp_path)
+    environment["RESTORE_TEST_KEY"] = key
+    result = subprocess.run(
+        [str(RESTORE), "--yes", "--project-name", "budget-recovery", str(archive)],
+        env=environment, text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "legacy-recovery-secret" not in result.stdout + result.stderr

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 server_dir="$(cd "$script_dir/.." && pwd)"
@@ -35,11 +36,26 @@ format_version="$(sed -n 's/^format_version=//p' "$work_dir/BACKUP-METADATA")"
   exit 1
 }
 compose=(docker compose --project-directory "$server_dir" --project-name "$project_name")
+# Never source recovery material or print secrets. A readable archive is not enough:
+# replacing objects with ciphertext for another key would make attachments unreadable.
+backup_key="$(<"$work_dir/attachment-key-recovery.env")"
+if [[ ! "$backup_key" =~ ^BUDGET_APP_(ATTACHMENT_ENCRYPTION_KEY|JWT_SECRET)=.+$ || "$backup_key" == *$'\n'* ]]; then
+  echo "Backup attachment key recovery material is invalid; no destination data changed" >&2
+  exit 1
+fi
+destination_key="$("${compose[@]}" exec -T api sh -c \
+  'if [ -n "${BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY:-}" ]; then printf "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=%s\\n" "$BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY"; else printf "BUDGET_APP_JWT_SECRET=%s\\n" "$BUDGET_APP_JWT_SECRET"; fi')"
+if [[ "$destination_key" != "$backup_key" ]]; then
+  echo "Destination attachment key does not match backup; no destination data changed" >&2
+  echo "Configure the explicit recovery deployment with the backup attachment encryption secret, then retry." >&2
+  exit 1
+fi
+unset backup_key destination_key
 "${compose[@]}" exec -T database \
-  psql --set ON_ERROR_STOP=on -U budget -d budget < "$work_dir/database.sql"
+  psql --single-transaction --set ON_ERROR_STOP=on -U budget -d budget < "$work_dir/database.sql"
 "${compose[@]}" exec -T api sh -c 'find /var/lib/budget-app/attachments -mindepth 1 -maxdepth 1 -type f -delete'
 "${compose[@]}" cp "$work_dir/attachments/." api:/var/lib/budget-app/attachments/
 
 echo "Restore complete. Restarting the API."
 "${compose[@]}" restart api
-echo "Attachment encryption recovery material is inside the encrypted archive. Compare attachment-key-recovery.env with deployment secrets before restart."
+echo "The destination attachment encryption configuration matched the verified backup before restore."
