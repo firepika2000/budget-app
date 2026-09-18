@@ -118,7 +118,10 @@ public enum DebtProjectionEngine {
             let statement = try checkedAdd(principal, interest)
             let base = try plannedPayment(statement: statement, terms: terms)
             let planned = try checkedAdd(base, extraPaymentMinor)
-            if planned <= interest { return .init(status: .nonAmortizing, payoffDate: nil, projectedInterestMinor: interestTotal, projectedTotalCostMinor: paid, points: points) }
+            let upcomingRateChange = terms.promotionalRateBasisPoints != nil
+                && terms.promotionalEndsOn.map { date <= $0 } == true
+                && terms.promotionalRateBasisPoints != terms.annualRateBasisPoints
+            if planned <= interest && !upcomingRateChange { return .init(status: .nonAmortizing, payoffDate: nil, projectedInterestMinor: interestTotal, projectedTotalCostMinor: paid, points: points) }
             let payment = min(planned, statement), ending = statement - payment
             points.append(.init(paymentNumber: number, paymentDate: date, startingPrincipalMinor: principal, interestMinor: interest, paymentMinor: payment, endingPrincipalMinor: ending))
             interestTotal = try checkedAdd(interestTotal, interest); paid = try checkedAdd(paid, payment)
@@ -228,6 +231,7 @@ public enum DebtProjectionEngine {
             if balances.values.allSatisfy({ $0 == 0 }) { return try result(status: .paidOff, date: paymentDate, count: number) }
             let upcomingRateChange = debts.contains { debt in
                 balances[debt.debtID]! > 0 && debt.promotionalEndsOn.map { paymentDate <= $0 } == true
+                    && debt.promotionalRateBasisPoints != debt.annualRateBasisPoints
             }
             if try balances.values.reduce(0, checkedAdd) >= startingTotal && newlyPaid.isEmpty && !upcomingRateChange {
                 return try result(status: .nonAmortizing, date: nil, count: number)

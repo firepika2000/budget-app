@@ -2,6 +2,11 @@
   "format_version": 1,
   "cases": [
     {
+      "id": "temporary_interest_only_before_explicit_rate_drop", "principal_minor": 100, "first_payment_on": "2026-01-31",
+      "terms": {"annual_rate_basis_points": 0, "payment_frequency": "monthly", "scheduled_payment_minor": 10, "promotional_rate_basis_points": 12000, "promotional_ends_on": "2026-01-31"},
+      "expected": {"status": "paid_off", "payoff_date": "2026-11-28", "payment_count": 11, "projected_interest_minor": 10, "projected_total_cost_minor": 110, "payment_dates": ["2026-01-31", "2026-02-28", "2026-03-28", "2026-04-28", "2026-05-28", "2026-06-28", "2026-07-28", "2026-08-28", "2026-09-28", "2026-10-28", "2026-11-28"], "interest_minor": [10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "payments_minor": [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10], "ending_principal_minor": [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0]}
+    },
+    {
       "id": "monthly_leap_final_partial", "principal_minor": 2501, "first_payment_on": "2028-01-31",
       "terms": {"annual_rate_basis_points": 0, "payment_frequency": "monthly", "scheduled_payment_minor": 1000},
       "expected": {"status": "paid_off", "payoff_date": "2028-03-29", "payment_count": 3, "projected_interest_minor": 0, "projected_total_cost_minor": 2501, "payment_dates": ["2028-01-31", "2028-02-29", "2028-03-29"], "interest_minor": [0, 0, 0], "payments_minor": [1000, 1000, 501], "ending_principal_minor": [1501, 501, 0]}

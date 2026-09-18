@@ -196,7 +196,11 @@ def project_debt(
         interest = _round_ratio_half_up(principal * rate, 10_000 * periods)
         statement = _money(principal + interest)
         planned = _money(_planned_payment(terms, statement) + extra_payment_minor)
-        if planned <= interest:
+        upcoming_rate_change = (terms.promotional_rate_basis_points is not None
+                                and terms.promotional_ends_on is not None
+                                and payment_date <= terms.promotional_ends_on
+                                and terms.promotional_rate_basis_points != terms.annual_rate_basis_points)
+        if planned <= interest and not upcoming_rate_change:
             return ProjectionResult("non_amortizing", None, number - 1, total_interest, total_paid, tuple(points))
         payment = min(planned, statement)
         ending = statement - payment
@@ -337,7 +341,8 @@ def project_debt_strategy(
         # budget cannot amortize this scenario. Return an explicit typed result
         # instead of manufacturing a debt-free date.
         upcoming_rate_change = any(balances[item.debt_id] > 0 and item.promotional_ends_on is not None
-                                   and payment_date <= item.promotional_ends_on for item in debts)
+                                   and payment_date <= item.promotional_ends_on
+                                   and item.promotional_rate_basis_points != item.annual_rate_basis_points for item in debts)
         if _money(sum(balances.values())) >= starting_total and not newly_paid and not upcoming_rate_change:
             results = tuple(
                 StrategyDebtResult(item, payoff_dates.get(item), payoff_months.get(item), interest_by_id[item], paid_by_id[item])

@@ -227,3 +227,11 @@ is retained, not retroactively reported as a green broad run. Two preference-cha
 excluded to preserve human state. A temporary test-process idle-sleep assertion changes no permanent
 power settings. QuartzCore diagnostics remain visible; this sleep correlation does not establish a
 new application defect or a blanket explanation for every runtime warning.
+
+Single-debt rate-transition follow-up: a new shared fixture first reproduced a premature permanent
+`non_amortizing` result while an explicit saved rate drop would permit repayment. Both engines now
+continue through a known rate transition, retaining the 1,200-period bound; unchanged-rate insufficient
+payments still return non-amortizing. The 21st shared vector asserts every date, payment, interest and
+remaining balance. Verification: 23 focused Python tests, full backend **305 passed / zero skips**,
+Swift **37 Core + 46 API**, native **86 XCTest**, Simulator build and **TEST SUCCEEDED**. No UI,
+schema, migration, authorization or posted accounting behavior changed in this follow-up.

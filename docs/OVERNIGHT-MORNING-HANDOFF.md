@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`9964f24` is pushed: promotional strategy terms, Demo normalization/readiness, dated debt labels,
+explicit scenario assumptions and verified UI recovery. The immediately following single-debt
+rate-transition correction adds the 21st shared vector after reproducing premature non-amortization.
+Full verification remains green: 305 backend / zero skips, 37 Core + 46 API, 86 native XCTest and
+Beta Simulator build. No migration or human data change. Next: estimated current debt cost and
+remaining v0.8 accessibility/closure review.
+
 Latest pushed checkpoint: `a5216c2` on `codex/development` (projection privacy/revocation coverage),
 following `65c7704` (17 shared single/multi-debt exact vector cases) and `315d5f7` (all-recorded
 interest/date recovery). Current full backend: **303 passed, zero skips**, including disposable
