@@ -6,6 +6,12 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Latest verified implementation is pushed at **`aecf712`**. Working tree/remote equality checked;
+main remains `c5494dd`. `PERSISTENT-MONTH-IMPLEMENTATION.md` now records the next concrete delivery
+boundary, seed-ledger mismatch, dated-versus-spendable cash contract, shared vectors and prospective
+rollover requirements. Start with characterization at the canonical service boundary, not a Demo-only
+date dictionary or the quarantined calculator. This design is not implementation/acceptance closure.
+
 `53ecc7f` is pushed. Next verified performance checkpoint streams monthly Plan history in 500-row
 batches and uses scalar allocation rows. Disposable 10k transactions + 10k splits: peak ORM objects
 **20,011 → 1,506** with identical exact financial observations. Adding 10k allocation operations /
