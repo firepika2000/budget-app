@@ -19,6 +19,29 @@ final class DemoStore: ObservableObject {
     @Published var errorMessage: String?
     private var reserveAttribution: [String: [String: Int64]] = [:]
 
+    struct AllocationEvent {
+        let id: String
+        let occurredOn: String
+        let kind: String
+        let actor: String
+        let note: String
+        let sourceCategoryID: String?
+        let destinationCategoryID: String
+        let amountMinor: Int64
+    }
+    // Command history only. Seed opening observations are not invented historical operations.
+    private(set) var allocationEvents: [AllocationEvent] = []
+
+    func recordAllocation(amount: Int64, from source: String? = nil, to destination: String,
+                          occurredOn: String = BudgetWorkspaceStore.dateString(Date()),
+                          kind: String = "assignment", note: String = "") {
+        guard amount != 0 else { return }
+        allocationEvents.append(.init(id: UUID().uuidString, occurredOn: occurredOn, kind: kind,
+                                     actor: persona.rawValue.lowercased(), note: note,
+                                     sourceCategoryID: source, destinationCategoryID: destination,
+                                     amountMinor: amount))
+    }
+
     let incomeHistory: [Int64] = [725000, 738000, 725000, 760000, 742000, 750000]
     let spendingHistory: [Int64] = [594000, 621000, 609000, 642000, 598000, 634000]
     let netWorthHistory: [Int64] = [12840000, 12976000, 13112000, 13200000, 13358000, 13593000]
@@ -71,7 +94,9 @@ final class DemoStore: ObservableObject {
                                          unfundedDebtMinor: max(liability - account.paymentReserved, 0))
         }
         let budgetCash = accounts.filter { $0.isOnBudget && [.checking, .savings, .cash].contains($0.kind) }.reduce(Int64(0)) { $0 + $1.balance }
-        let allocationDifference = unassignedMinor + categories.reduce(Int64(0)) { $0 + $1.assigned } - budgetCash
+        let allocationDifference = allocationEvents.reduce(Int64(0)) { total, event in
+            total + (-event.amountMinor + event.amountMinor)
+        }
         return FinancialObservation(accounts: accountValues, categories: categoryValues, cards: cards,
                                     unassignedMinor: unassignedMinor, totalBudgetCashMinor: budgetCash,
                                     netWorthMinor: netWorth, transactionCount: transactions.count,
@@ -94,6 +119,7 @@ final class DemoStore: ObservableObject {
         archivedGroups = []
         unassignedMinor = 320000
         reserveAttribution = [:]
+        allocationEvents = []
     }
 
     func setUnassigned(_ value: Int64) { unassignedMinor = value }
@@ -124,7 +150,8 @@ final class DemoStore: ObservableObject {
     }
 
     @discardableResult
-    func move(amount: Int64, from sourceID: String, to destinationID: String) -> Bool {
+    func move(amount: Int64, from sourceID: String, to destinationID: String,
+              occurredOn: String = BudgetWorkspaceStore.dateString(Date()), note: String = "") -> Bool {
         guard amount > 0 else { return fail(.invalidAmount) }
         guard let source = categories.firstIndex(where: { $0.id == sourceID }),
               let destination = categories.firstIndex(where: { $0.id == destinationID }) else { return fail(.categoryNotFound) }
@@ -136,6 +163,8 @@ final class DemoStore: ObservableObject {
         categories[source].available -= amount
         categories[destination].assigned += amount
         categories[destination].available += amount
+        recordAllocation(amount: amount, from: sourceID, to: destinationID, occurredOn: occurredOn,
+                         kind: "category_transfer", note: note)
         errorMessage = nil
         return true
     }
@@ -151,6 +180,8 @@ final class DemoStore: ObservableObject {
         if let category = categories.firstIndex(where: { $0.id == requests[index].categoryID }) {
             categories[category].assigned += amount
             categories[category].available += amount
+            recordAllocation(amount: amount, from: categories[source].id, to: categories[category].id,
+                             kind: "category_transfer", note: "Approved funding request")
         }
     }
 
@@ -309,6 +340,9 @@ final class DemoStore: ObservableObject {
             delegatedTo: isRestricted ? persona : nil
         ))
         if !isRestricted { unassignedMinor -= initialAssignment }
+        if !isRestricted, let category = categories.last {
+            recordAllocation(amount: initialAssignment, to: category.id, note: "Initial assignment")
+        }
         errorMessage = nil
         return true
     }
@@ -323,16 +357,20 @@ final class DemoStore: ObservableObject {
             if let index = categories.firstIndex(where: { $0.name == split.0 }) {
                 categories[index].assigned += split.1
                 categories[index].available += split.1
+                recordAllocation(amount: split.1, from: categories[source].id, to: categories[index].id,
+                                 kind: "category_transfer", note: "Allowance")
             }
         }
     }
 
-    func assign(amount: Int64, to categoryID: String) {
+    func assign(amount: Int64, to categoryID: String,
+                occurredOn: String = BudgetWorkspaceStore.dateString(Date())) {
         guard amount > 0, amount <= unassignedMinor,
               let destination = categories.firstIndex(where: { $0.id == categoryID }) else { return }
         unassignedMinor -= amount
         categories[destination].assigned += amount
         categories[destination].available += amount
+        recordAllocation(amount: amount, to: categoryID, occurredOn: occurredOn)
     }
 
     func addGoal(name: String, amount: Int64, targetDate: String) {

@@ -584,17 +584,18 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let planPerformance: APIPlanPerformanceReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "points": [["period_start": month, "period_end": dateFormatter.string(from: report.end), "assigned_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.assigned }, "activity_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.activity }, "spending_minor": max(-visibleCategories.reduce(Int64(0)) { $0 + $1.activity }, 0), "carried_available_minor": visibleCategories.reduce(Int64(0)) { $0 + max($1.available - $1.assigned - $1.activity, 0) }, "available_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.available }, "overspent_minor": visibleCategories.reduce(Int64(0)) { $0 + max(-$1.available, 0) }, "ready_to_assign_minor": demo.isRestricted ? 0 : demo.readyToAssign]]])
         let delegated: APIDelegatedBudget? = demo.isRestricted ? try decode(["id": "demo-delegated", "budget_id": budget.id, "user_id": demo.persona.rawValue.lowercased(), "pool_category_id": visibleCategories.first?.id ?? "", "authority_minor": demo.delegatedAuthority, "assigned_minor": demo.delegatedAssigned, "available_to_assign_minor": demo.delegatedReadyToAssign, "allow_category_creation": true, "allow_reallocation": true, "rules": []]) : nil
         let requestRows: [APIFinancialRequest] = try decode(demo.requests.filter { !demo.isRestricted || $0.member == demo.persona }.map { item -> [String: Any] in ["id": item.id, "requester_user_id": item.member.rawValue.lowercased(), "request_type": "additional_allocation", "destination_category_id": item.categoryID, "requested_amount_minor": item.amount, "reason": item.reason, "status": item.status.lowercased().replacingOccurrences(of: " ", with: "_"), "version": item.status == "Pending" ? 0 : 1, "approved_amount_minor": item.approvedAmount.map { $0 as Any } ?? NSNull(), "source_category_id": NSNull(), "allocation_operation_id": NSNull(), "actions": []] })
-        // Deterministic allocation history so the same production category-detail view shows
-        // realistic movements (assignment, move in, move out) in demo mode. Same DTO shape as live.
-        let actor = demo.persona.rawValue.lowercased()
-        var allocationRows: [[String: Any]] = []
-        for item in visibleCategories where item.assigned != 0 {
-            allocationRows.append(["id": "demo-alloc-\(item.id)", "budget_id": budget.id, "occurred_on": month, "kind": "assignment", "actor_user_id": actor, "note": "Assigned \(item.name)", "source": "manual", "allocation_version": 1, "postings": [["bucket": "ready_to_assign", "category_id": NSNull(), "amount_minor": -item.assigned], ["bucket": "category", "category_id": item.id, "amount_minor": item.assigned]]])
-        }
-        if visibleCategories.count >= 2 {
-            let source = visibleCategories[0], destination = visibleCategories[1]
-            let moveAmount: Int64 = 5000
-            allocationRows.append(["id": "demo-move", "budget_id": budget.id, "occurred_on": dateFormatter.string(from: report.end), "kind": "category_transfer", "actor_user_id": actor, "note": demo.isRestricted ? "Delegated move within your budget" : "Moved money between categories", "source": "manual", "allocation_version": 1, "postings": [["bucket": "category", "category_id": source.id, "amount_minor": -moveAmount], ["bucket": "category", "category_id": destination.id, "amount_minor": moveAmount]]])
+        // Preserve actual command identity/date/actor across reads. Never manufacture movements
+        // from opening fixture totals, and never expose half of a restricted operation.
+        let allocationRows: [[String: Any]] = demo.allocationEvents.filter { event in
+            categoryIDs.contains(event.destinationCategoryID)
+                && (event.sourceCategoryID.map(categoryIDs.contains) ?? !demo.isRestricted)
+        }.map { event in
+            ["id": event.id, "budget_id": budget.id, "occurred_on": event.occurredOn,
+             "kind": event.kind, "actor_user_id": event.actor, "note": event.note,
+             "source": "manual", "allocation_version": 1,
+             "postings": [["bucket": event.sourceCategoryID == nil ? "ready_to_assign" : "category",
+                           "category_id": event.sourceCategoryID as Any? ?? NSNull(), "amount_minor": -event.amountMinor],
+                          ["bucket": "category", "category_id": event.destinationCategoryID, "amount_minor": event.amountMinor]]]
         }
         let allocationOperations: [APIAllocationOperation] = try decode(allocationRows)
         let targetRows = visibleCategories.compactMap { item -> APICategoryTarget? in
@@ -920,8 +921,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let delta = operation.assignedMinor - demo.categories[index].assigned
         guard delta <= demo.readyToAssign else { throw workspaceRepositoryError("Not enough real money to assign.") }
         demo.categories[index].assigned += delta; demo.categories[index].available += delta; demo.setUnassigned(demo.readyToAssign - delta)
+        demo.recordAllocation(amount: delta, to: operation.categoryID, occurredOn: operation.month)
     }
-    func moveMoney(_ operation: MoveMoneyOperation) async throws { guard demo.move(amount: operation.amountMinor, from: operation.sourceCategoryID, to: operation.destinationCategoryID) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    func moveMoney(_ operation: MoveMoneyOperation) async throws { guard demo.move(amount: operation.amountMinor, from: operation.sourceCategoryID, to: operation.destinationCategoryID, occurredOn: operation.occurredOn, note: operation.note) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { guard demo.createCategory(name: name, group: groupName.isEmpty ? newGroupName : groupName) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func createGroup(name: String) async throws { if !demo.groupOrder.contains(name) { demo.groupOrder.append(name) } }
     func createAccount(_ operation: CreateAccountOperation) async throws { demo.createAccount(name: operation.name, type: operation.kind, isOnBudget: operation.isOnBudget, startingBalance: operation.openingBalanceMinor) }
@@ -1067,7 +1069,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                 throw workspaceRepositoryError("Target funding exceeds the supported amount range.")
             }
         }
-        for proposal in current.proposals { demo.assign(amount: proposal.amountMinor, to: proposal.categoryID) }
+        for proposal in current.proposals { demo.assign(amount: proposal.amountMinor, to: proposal.categoryID, occurredOn: current.month) }
     }
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { throw workspaceRepositoryError("Owner policy editing is demonstrated in live mode; use a delegated demo persona to verify the member experience.") }
 }

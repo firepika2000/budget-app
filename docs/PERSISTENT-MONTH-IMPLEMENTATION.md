@@ -13,8 +13,8 @@ Checkpoint inspected: `aecf712`, `codex/development`. Human acceptance pending; 
 - Live summaries reconstruct category carry from dated allocations, transactions/splits and card
   reserve events. `aecf712` bounds historical ORM hydration without changing their financial meaning.
 - Demo `assignMoney` still ignores `operation.month`; `DemoStore` mutates global category totals.
-  Its snapshot repeats those totals for different planning months and manufactures allocation-history
-  presentation rows for the selected month. That is not persistent period behavior.
+  Its summary still repeats those totals for different planning months. The command-history
+  correction below removes fabricated history, but is not persistent period behavior.
 - Demo seed account/category observations are not a complete dated transaction/allocation ledger.
   The visible seeded transactions alone cannot reconstruct all seeded balances. Do not silently
   reinterpret an arbitrary difference as real income or a real historical transaction.
@@ -132,6 +132,26 @@ Logs `/tmp/budget-dated-projection-package-verified.log`, `/tmp/budget-dated-pro
 Backend unchanged since **392 pass**. Next related correctness investigation: Demo refund attribution
 currently sums positive events across all cards and ignores earlier releases; reproduce with shared
 server/native command vectors before migrating that data into dated observations.
+
+## Related corrections before provider migration
+
+`bdfa497` fixes that refund investigation's three proven defects: cross-card attribution, repeated
+release and split refunds exceeding remaining reserve. All 15 shared command vectors pass through
+server and native adapters; **395 backend pass, zero skips**. Full dated/seed parity remains open.
+
+The allocation-history correction records actual command deltas, dates, actors and IDs instead of
+recreating assignments from category totals on every snapshot or inventing a $50 transfer. Opening
+fixture observations are deliberately not presented as user history. Assignment replacement, moves,
+Smart Funding, initial owner assignments and existing request/allowance mutation helpers record their
+actual movements. Whole-operation visibility prevents exposing a private source through one visible
+destination. Reads preserve history identity and dates regardless of selected month/persona.
+
+This journal is a migration dependency, **not** an event-sourced provider or a claim of monthly
+planning completion. Global category totals still drive current financial commands, seed account/card
+provenance remains incomplete, and the existing allocation-version/concurrency model still needs
+provider parity. Do not feed this command-only history into the dated projection as if it included
+all fixture opening balances. The financial golden observation now checks balanced command postings,
+not an invalid identity equating assignment totals with cash after spending.
 
 ## Independent work remains available
 

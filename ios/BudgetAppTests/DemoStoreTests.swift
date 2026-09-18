@@ -1016,7 +1016,17 @@ final class DemoStoreTests: XCTestCase {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
         // The same production category-detail view reads store.allocationOperations for demo and live.
-        XCTAssertFalse(store.allocationOperations.isEmpty, "demo must emit allocation history like live")
+        XCTAssertTrue(store.allocationOperations.isEmpty, "opening fixtures must not manufacture historical assignments or moves")
+        let groceries = try XCTUnwrap(store.categories.first { $0.id == "groceries" })
+        try await store.updateAssignment(categoryID: groceries.id, month: "2026-09-01", assignedMinor: 73_000, expectedVersion: 1)
+        try await store.moveAllocation(.init(sourceCategoryID: groceries.id, destinationCategoryID: "dining", amountMinor: 123, occurredOn: "2026-09-03", note: "Actual move", expectedVersion: 1))
+        XCTAssertEqual(store.allocationOperations.count, 2)
+        XCTAssertEqual(store.allocationOperations[0].postings.last?.amountMinor, 1_000)
+        XCTAssertEqual(store.allocationOperations[1].postings.last?.amountMinor, 123)
+        XCTAssertEqual(store.allocationOperations.map(\.occurredOn), ["2026-09-01", "2026-09-03"])
+        let recordedIDs = store.allocationOperations.map(\.id)
+        await store.refresh()
+        XCTAssertEqual(store.allocationOperations.map(\.id), recordedIDs)
         // Every operation balances to zero, exactly like the server allocation ledger.
         for operation in store.allocationOperations {
             XCTAssertEqual(operation.postings.reduce(Int64(0)) { $0 + $1.amountMinor }, 0)
@@ -1029,6 +1039,34 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(store.allocationOperations.contains { operation in
             operation.postings.contains { $0.categoryID.map(categoryIDs.contains) == true }
         })
+    }
+
+    @MainActor
+    func testDemoAllocationHistoryPreservesDatesActorsAndWholeOperationPrivacy() async throws {
+        let source = DemoWorkspaceDataSource()
+        let report = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        func history(_ month: String) async throws -> [APIAllocationOperation] {
+            try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate(month), report: report).allocationOperations
+        }
+        let initial = try await history("2026-09-01")
+        XCTAssertTrue(initial.isEmpty)
+        try await source.assignMoney(.init(categoryID: "groceries", month: "2026-09-01", assignedMinor: 73_000, expectedVersion: 1))
+        XCTAssertTrue(source.demo.move(amount: 100, from: "buffer", to: "alexallow", occurredOn: "2026-09-02", note: "Private source"))
+        source.demo.persona = .alex
+        XCTAssertTrue(source.demo.move(amount: 123, from: "alexallow", to: "alexsave", occurredOn: "2026-09-03", note: "My move"))
+        let restricted = try await history("2026-09-01")
+        XCTAssertEqual(restricted.count, 1, "Hide the entire operation when its source is private")
+        XCTAssertEqual(restricted.first?.note, "My move")
+        XCTAssertEqual(restricted.first?.actorUserID, "alex")
+        source.demo.persona = .rey
+        let september = try await history("2026-09-01")
+        let october = try await history("2026-10-01")
+        XCTAssertEqual(september.count, 3)
+        XCTAssertEqual(october.map(\.id), september.map(\.id))
+        XCTAssertEqual(october.map(\.occurredOn), ["2026-09-01", "2026-09-02", "2026-09-03"])
+        XCTAssertEqual(october.map(\.actorUserID), ["rey", "rey", "alex"])
+        source.demo.reset()
+        XCTAssertTrue(source.demo.allocationEvents.isEmpty)
     }
 
     @MainActor

@@ -8,6 +8,13 @@ This ledger tracks engineering evidence separately from release approval. Main r
 `c5494dd`; historical version tags do not establish acceptance for subsequent development.
 Checkpoint completion is followed by the next unblocked engineering task.
 
+Allocation-history checkpoint: Demo no longer invents assignment rows from global totals or a $50
+transfer on every read. Actual command events preserve identity/date/actor; whole-operation scope
+prevents private-source disclosure. Opening fixtures remain separate from user history. **95 native
+XCTest + 2 production assignment/Move Money UI tests pass**, Beta build/test and diff check PASS;
+`/tmp/budget-allocation-journal-native-verified.log`. Package/backend unchanged from the verified
+counts below. This does not close dated provider parity or make incomplete seeds a complete ledger.
+
 Refund parity checkpoint: three new shared command vectors prove and correct Demo cross-card
 reserve attribution, repeated refund release, and split-refund over-release (previously producing
 a negative reserve). Attribution now nets prior releases within the same card/category/date scope;

@@ -58,6 +58,8 @@ final class FinancialGoldenVectorTests: XCTestCase {
                 case "observe":
                     let expected = try XCTUnwrap(operation["expected"] as? [String: Any])
                     assert(expected, equals: source.demo.financialObservation(accountReferences: accountRefs, categoryReferences: categoryRefs), vectorID: vectorID)
+                    XCTAssertEqual(source.demo.financialObservation(accountReferences: accountRefs, categoryReferences: categoryRefs).allocationPostingsSumMinor, 0,
+                                   "Allocation journal remains balanced after spending/refunds/transfers in \(vectorID)")
                 default:
                     XCTFail("Unsupported operation \(kind) in \(vectorID)")
                 }

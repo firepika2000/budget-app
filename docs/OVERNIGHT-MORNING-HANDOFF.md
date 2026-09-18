@@ -6,6 +6,18 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`bdfa497` is pushed. The next verified correction replaces fabricated Demo allocation-history rows
+with actual command events. Refresh/month/persona changes preserve operation IDs, dates and original
+actors; restricted visibility filters entire operations. Seed observations are not invented history.
+Native **95 XCTest + 2 production assignment/Move Money XCUITests pass**, Beta build/test PASS:
+`/tmp/budget-allocation-journal-native-verified.log`. Shared golden assertions now check balanced
+allocation postings after every observation, including spending/refunds. Latest package **44 Core +
+49 API** and unchanged backend **395 pass, zero skips** remain current. Diff check PASS.
+This does not implement monthly assignment persistence, seed reconstruction or optimistic-version
+parity. See the explicit boundary in PERSISTENT-MONTH-IMPLEMENTATION.md. No Live migration/data reset.
+Next: complete dated deterministic provider inputs/opening fixture before routing the projection.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 `33c6c1f` is pushed. The next focused correction reproduces and fixes three Demo card-refund
 defects against the unchanged production server: cross-card attribution, repeated release of
 previously refunded attribution, and split refunds releasing more than the remaining payment reserve.
