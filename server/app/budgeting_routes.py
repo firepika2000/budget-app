@@ -12,6 +12,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from .schemas import MAX_INT64
+from .calendar_dates import month_end
 from sqlalchemy import String, and_, cast, delete, false, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.exc import IntegrityError
@@ -1006,11 +1007,7 @@ def upsert_assignment(
     # all-date RTA guard below reserves only existing cash, never forecast income.
     budget = lock_budget(db, budget_id)
     require_version(budget, body.expected_allocation_version)
-    next_month = date(
-        body.month.year + (body.month.month == 12),
-        1 if body.month.month == 12 else body.month.month + 1,
-        1,
-    )
+    through = month_end(body.month)
     current_assigned = int(db.scalar(
         select(func.coalesce(func.sum(AllocationPosting.amount_minor), 0))
         .join(AllocationOperation, AllocationOperation.id == AllocationPosting.operation_id)
@@ -1018,7 +1015,7 @@ def upsert_assignment(
             AllocationPosting.budget_id == budget_id,
             AllocationPosting.category_id == category_id,
             AllocationOperation.occurred_on >= body.month,
-            AllocationOperation.occurred_on < next_month,
+            AllocationOperation.occurred_on <= through,
         )
     ) or 0)
     delta = body.assigned_minor - current_assigned
@@ -2136,7 +2133,7 @@ def month_summary(
     budget = require_budget_capability(db, user, budget_id, "view_reports")
     if month.day != 1:
         raise HTTPException(status_code=422, detail="Month must be the first day of a month")
-    next_month = date(month.year + (month.month == 12), 1 if month.month == 12 else month.month + 1, 1)
+    through = month_end(month)
     archived_group_ids = select(CategoryGroup.id).where(
         CategoryGroup.budget_id == budget_id,
         CategoryGroup.is_archived.is_(True),
@@ -2165,14 +2162,14 @@ def month_summary(
         .join(AllocationOperation, AllocationOperation.id == AllocationPosting.operation_id)
         .where(
             AllocationPosting.budget_id == budget_id,
-            AllocationOperation.occurred_on < next_month,
+            AllocationOperation.occurred_on <= through,
         )
     ).all()
     transactions = list(db.scalars(select(Transaction).options(
         selectinload(Transaction.splits)
     ).where(
         Transaction.budget_id == budget_id,
-        Transaction.occurred_on < next_month,
+        Transaction.occurred_on <= through,
     )))
     visible_accounts = visible_resource_ids(db, user, budget, "account")
     if visible_accounts is not None:
@@ -2231,7 +2228,7 @@ def month_summary(
 
     reserve_events = list(db.scalars(select(CreditCardReserveEvent).where(
         CreditCardReserveEvent.budget_id == budget_id,
-        CreditCardReserveEvent.occurred_on < next_month,
+        CreditCardReserveEvent.occurred_on <= through,
     )))
     funded_credit_current: dict[str, int] = {}
     for event in reserve_events:

@@ -13,6 +13,7 @@ from starlette.responses import Response
 
 from .access import has_capability, is_household_owner, visible_resource_ids
 from .budgeting_routes import account_working_balances, require_budget_capability
+from .calendar_dates import month_periods
 from .debt_projection import estimated_monthly_interest
 from .database import get_db
 from .dependencies import get_current_user
@@ -84,11 +85,6 @@ def _csv_text(value: object) -> object:
     if isinstance(value, str) and value.startswith(("=", "+", "-", "@")):
         return f"'{value}"
     return value
-
-
-def _month_end(value: date) -> date:
-    next_month = date(value.year + (value.month == 12), 1 if value.month == 12 else value.month + 1, 1)
-    return next_month - timedelta(days=1)
 
 
 def _income_spending_values(transactions: list[Transaction]) -> tuple[int, int, list[str], list[str]]:
@@ -293,9 +289,7 @@ def income_spending_report(
     income_minor, spending_minor, income_ids, spending_ids = _income_spending_values(included)
     difference = income_minor - spending_minor
     periods = []
-    cursor = date(start_date.year, start_date.month, 1)
-    while cursor <= end_date:
-        period_start, period_end = max(cursor, start_date), min(_month_end(cursor), end_date)
+    for period_start, period_end in month_periods(start_date, end_date):
         period_transactions = [item for item in included if period_start <= item.occurred_on <= period_end]
         period_income, period_spending, period_income_ids, period_spending_ids = _income_spending_values(period_transactions)
         bounded_income_ids, income_truncated = _bounded_ids(period_income_ids)
@@ -309,7 +303,6 @@ def income_spending_report(
             "income_transaction_ids_truncated": income_truncated,
             "spending_transaction_ids_truncated": spending_truncated,
         })
-        cursor = _month_end(cursor) + timedelta(days=1)
     bounded_income_ids, income_truncated = _bounded_ids(income_ids)
     bounded_spending_ids, spending_truncated = _bounded_ids(spending_ids)
     return {
@@ -352,11 +345,7 @@ def spending_trends_report(
     )
     categories = {item.id: item for item in db.scalars(select(Category).where(Category.budget_id == budget_id))}
     groups = {item.id: item.name for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))}
-    periods = []
-    cursor = date(start_date.year, start_date.month, 1)
-    while cursor <= end_date:
-        periods.append((max(cursor, start_date), min(_month_end(cursor), end_date)))
-        cursor = _month_end(cursor) + timedelta(days=1)
+    periods = list(month_periods(start_date, end_date))
 
     totals: dict[str, int] = defaultdict(int)
     names: dict[str, tuple[str, Optional[str]]] = {}
@@ -459,11 +448,7 @@ def net_worth_report(
     # budgets. Snapshots retain identical exact/cumulative semantics while aggregation is O(months +
     # transactions); response serialization remains intentionally explicit for drill-through.
     points = []
-    cursor = date(start_date.year, start_date.month, 1)
-    observation_dates = []
-    while cursor <= end_date:
-        observation_dates.append(min(_month_end(cursor), end_date))
-        cursor = _month_end(cursor) + timedelta(days=1)
+    observation_dates = [through for _, through in month_periods(start_date, end_date)]
     balances = {value: 0 for value in account_ids}
     contributing_ids: list[str] = []
     transaction_index = 0
@@ -544,11 +529,7 @@ def debt_report(
         index += 1
     opening_debt = sum(max(-value, 0) for value in balances.values())
 
-    observation_dates = []
-    cursor = date(start_date.year, start_date.month, 1)
-    while cursor <= end_date:
-        observation_dates.append(min(_month_end(cursor), end_date))
-        cursor = _month_end(cursor) + timedelta(days=1)
+    observation_dates = [through for _, through in month_periods(start_date, end_date)]
     points = []
     for as_of in observation_dates:
         while index < len(transactions) and transactions[index].occurred_on <= as_of:
@@ -577,7 +558,7 @@ def debt_report(
     range_interest = sum(recorded_interest(item) for item in classified if item.occurred_on >= start_date)
     month_start = date(end_date.year, end_date.month, 1)
     year_start = date(end_date.year, 1, 1)
-    trailing_start = end_date - timedelta(days=364)
+    trailing_start = end_date - timedelta(days=min(364, (end_date - date.min).days))
     account_interest = {
         account_id_value: sum(
             recorded_interest(item) for item in classified
@@ -693,9 +674,7 @@ def plan_performance_report(
         apply_reserve(reserve_events[reserve_index]); reserve_index += 1
 
     points = []
-    cursor = date(start_date.year, start_date.month, 1)
-    while cursor <= end_date:
-        period_start, period_end = max(cursor, start_date), min(_month_end(cursor), end_date)
+    for period_start, period_end in month_periods(start_date, end_date):
         carried = sum(category_balances.values())
         assigned = activity = transaction_activity = 0
         while allocation_index < len(allocation_rows) and allocation_rows[allocation_index][1].occurred_on <= period_end:
@@ -717,7 +696,6 @@ def plan_performance_report(
             "overspent_minor": sum(max(-value, 0) for value in category_balances.values()),
             "ready_to_assign_minor": 0 if visible_categories is not None else unassigned_cash + ready_postings,
         })
-        cursor = _month_end(cursor) + timedelta(days=1)
     return {"start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code, "points": points}
 
 

@@ -65,6 +65,22 @@ diff check passes. Next reliability audit: month-boundary arithmetic constructs 
 valid December 9999 input, and report loops advance after their terminal month. Reproduce before
 changing the shared calendar behavior.
 
+Calendar endpoint reproduction found seven actual exceptions: all five monthly report families
+overflowed at December 9999, debt's trailing window underflowed at January 0001, and future
+assignment constructed year 10000. A shared inclusive Gregorian month-period helper now clips
+partial periods and stops at the requested end without stepping past it. Planning uses inclusive
+month-end comparisons, preserving prior date-only semantics without requiring next year's January.
+The trailing-interest window clips at the earliest representable date. No money formula changes.
+Regressions cover both calendar endpoints, leap/non-leap century years, partial months, year
+transition, reversed ranges and exact assignment/Smart Funding through the last supported month.
+The first expanded funding test omitted the required optimistic version; its request was corrected,
+not the server validation. Reproduction: `/tmp/budget-calendar-boundary-reproduction.log`.
+Final full backend **384 passed, zero skips**, including disposable PostgreSQL, financial vectors,
+migration/recovery and privacy cases. Focused calendar/report/allocation rerun passes; diff check
+passes. `/tmp/budget-calendar-boundary-{focused-final,full}.log`. No Swift or migration changes.
+Next performance audit: monthly summary currently materializes all historical transactions and
+allocation rows. Measure a disposable large history and bound hydration without changing exact sums.
+
 1. v0.8 automated checkpoint is recorded in V0.8-CLOSURE-AUDIT.md; human acceptance remains pending.
 2. Recovery hardening now includes complete archive validation, real encrypted PostgreSQL recovery,
    fresh-target guards and coordinated source capture. Actual Docker execution remains open.

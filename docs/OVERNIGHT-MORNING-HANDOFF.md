@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`a83a9b2` is pushed. Next verified reliability checkpoint removes calendar overflow/underflow in
+monthly planning and all five monthly report families. Shared inclusive periods preserve partial
+months, Gregorian leap rules and exact money; final-month funding still requires its version.
+**384 backend pass, zero skips**, `/tmp/budget-calendar-boundary-full.log`; focused rerun passes.
+No Swift or migration changes. Next: measure/bound monthly-summary hydration on a large disposable
+history. Persistent-month Demo parity and rollover policy history remain open. **DO NOT RETEST**.
+
 `323afa2` is pushed. Next verified ledger checkpoint rejects allocations into/out of categories
 whose parent group is archived. Individual category archival was already protected centrally; the
 reproduction refined the diagnosis, and the fix extends that same shared service with one group
