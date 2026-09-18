@@ -5349,6 +5349,7 @@ private struct HouseholdMemberLifecycleView: View {
     @State private var events: [APIHouseholdAccessEvent] = []
     @State private var showInvite = false
     @State private var secret: APIInvitationSecret?
+    @State private var pendingInvitationSecret: APIInvitationSecret?
     @State private var removing: APIHouseholdMember?
     @State private var isLoading = true
     @State private var errorMessage: String?
@@ -5406,7 +5407,12 @@ private struct HouseholdMemberLifecycleView: View {
         .navigationTitle("Members")
         .toolbar { Button("Invite", systemImage: "person.badge.plus") { showInvite = true }.accessibilityIdentifier("invite-household-member") }
         .task { await load() }
-        .sheet(isPresented: $showInvite) { HouseholdInvitationCreateView(store: store, recoveredSecret: $secret, onCreated: load) }
+        .sheet(isPresented: $showInvite, onDismiss: {
+            // Present the one-time code only after the creation sheet has actually dismissed.
+            // Completing an async reload is not a presentation-completion signal.
+            secret = pendingInvitationSecret
+            pendingInvitationSecret = nil
+        }) { HouseholdInvitationCreateView(store: store, recoveredSecret: $pendingInvitationSecret, onCreated: load) }
         .sheet(item: $secret) { value in NavigationStack { Form { Section("Invitation code") { Text(value.invitationToken).textSelection(.enabled).accessibilityIdentifier("invitation-code"); Button("Copy Code") { UIPasteboard.general.string = value.invitationToken } }; Section { Text("Send this code privately to \(value.email). It expires in seven days and can be used once.").font(.footnote).foregroundStyle(.secondary) } }.navigationTitle("Invitation Ready").toolbar { Button("Done") { secret = nil } } } }
         .confirmationDialog("Remove \(removing?.displayName ?? "member")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
             Button("Remove Member", role: .destructive) { if let member = removing { Task { await remove(member) } } }
@@ -5441,8 +5447,44 @@ private struct HouseholdInvitationCreateView: View {
     @State private var role = "adult"
     @State private var isSaving = false
     @State private var errorMessage: String?
-    var body: some View { NavigationStack { Form { TextField("Email", text: $email).textContentType(.emailAddress).textInputAutocapitalization(.never).keyboardType(.emailAddress); Picker("Household role", selection: $role) { Text("Adult").tag("adult"); Text("Child").tag("child") }; Section { Text("An invitation creates membership only after the recipient accepts its private code. Budget access is then configured separately.").font(.footnote).foregroundStyle(.secondary) } }.navigationTitle("Invite Member").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Create") { Task { await create() } }.disabled(isSaving || !email.contains("@")) } }.alert("Unable to create invitation", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } } }
-    private func create() async { isSaving = true; defer { isSaving = false }; do { let value = try await store.createHouseholdInvitation(.init(email: email, role: role)); dismiss(); await onCreated(); recoveredSecret = value } catch { errorMessage = error.localizedDescription } }
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Email", text: $email).textContentType(.emailAddress)
+                    .textInputAutocapitalization(.never).keyboardType(.emailAddress)
+                Picker("Household role", selection: $role) {
+                    Text("Adult").tag("adult"); Text("Child").tag("child")
+                }
+                Section {
+                    Text("An invitation creates membership only after the recipient accepts its private code. Budget access is then configured separately.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .disabled(isSaving)
+            .navigationTitle("Invite Member")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(isSaving) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") { Task { await create() } }.disabled(isSaving || !email.contains("@"))
+                }
+            }
+            .alert("Unable to create invitation", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(errorMessage ?? "Unknown error") }
+        }
+        .interactiveDismissDisabled(isSaving)
+    }
+    private func create() async {
+        guard !isSaving else { return }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let value = try await store.createHouseholdInvitation(.init(email: email, role: role))
+            recoveredSecret = value
+            await onCreated()
+            dismiss()
+        } catch { errorMessage = error.localizedDescription }
+    }
 }
 
 private enum MemberAccessPreset: String, CaseIterable, Identifiable {

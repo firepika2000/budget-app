@@ -4,6 +4,27 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Household presentation audit after `e45e4d7`: invitation creation previously called `dismiss()`,
+awaited a reload, then set a second sheet binding. Network completion did not establish that the
+first presentation had finished dismissing. The one-time code now waits in parent state until
+SwiftUI's `onDismiss` callback. Creation cannot be interactively dismissed/cancelled while saving,
+and duplicate create callbacks are guarded. No arbitrary delay or additional network request.
+Demo invitation persistence is still a separate open provider gap; this is shared presentation work.
+Final verification: **125 native XCTest + 1 production invitation XCUITest PASS**, Beta simulator
+build and diff check PASS, `/tmp/budget-invitation-presentation-final.log`. The UI journey creates,
+opens the code only after creation closes, dismisses it, then cancels a second creation without
+reopening the previous code. No backend/package source changes; preceding package/backend evidence
+retained. An overlapping-presentation warning remains in the separate hosted authentication-form
+native test (`testProductionDemoToLiveAuthenticationFormRetainsContinuousInputAndFocus`); this
+checkpoint does not claim to eliminate all presentation diagnostics or confirm a platform cause.
+
+Allocation-version investigation corrected a backlog assumption: the Live allocation-list route
+intentionally returns the budget's CURRENT optimistic concurrency token on each response, not a
+historical operation version. The existing compound-funding contract test caught an attempted Demo
+reinterpretation. That experiment was fully withdrawn; no financial/source change was retained.
+A future immutable operation-version feature must define a separate contract and migration rather
+than silently repurpose `allocation_version`. Operation IDs/postings/dates remain historical.
+
 Demo request lifecycle after `d1ac8f5`: create/revise/cancel/decision now store actual request type,
 version, expiry and ordered action provenance rather than deriving version from status or returning
 success without mutation. Requester ownership, current destination scope, stale versions, terminal

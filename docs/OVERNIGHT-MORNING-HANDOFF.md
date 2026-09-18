@@ -6,6 +6,18 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After request checkpoint `e45e4d7`, shared invitation code presentation now waits for the creation
+sheet's actual dismissal callback, with pending-secret state and in-flight dismissal/duplicate guards.
+No Demo persistence claim: invitation/member lifecycle still needs implementation. Allocation-version
+audit corrected the earlier backlog: Live exposes a current concurrency token, not a historical
+operation version. A proposed reinterpretation was rejected by the existing native contract test
+and fully withdrawn; preserve that contract. A separate historical version would require design.
+Final invitation verification: 125 native + 1 production UI PASS, Beta build/diff PASS;
+`/tmp/budget-invitation-presentation-final.log`, xcresult `Test-BudgetApp-2026.09.18_18-33-04--0400`.
+Unrelated hosted auth-form test still emits an overlap warning; do not claim universal diagnostic
+closure. Next server audit found global user hydration in household invitation/access-event lists;
+scope display-name resolution to authorized rows. No human retest during this run.
+
 Demo request lifecycle implementation after `d1ac8f5`: added real request versions/type/expiry/action
 history and implemented revise/cancel, validated creation and decisions. Approval keeps canonical
 financial preflight, stores allocation identity, and writes its decision action once. Request clock
