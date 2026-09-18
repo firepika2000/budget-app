@@ -58,6 +58,25 @@ def test_cash_purchase_reports_cash_overspending_only(client, owner_token, sessi
     assert rows["Groceries"]["funded_credit_spending_minor"] == 0
 
 
+def test_funded_card_then_cash_deficit_retains_reserve_classification(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    card = create_credit_card(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], checking["id"], amount=50000)
+    response = client.put(f"/api/v1/budgets/{budget['id']}/categories/{category['id']}/assignment",
+                          headers=auth(owner_token), json={"month": "2026-09-01", "assigned_minor": 10000})
+    assert response.status_code == 200
+    for account, amount, day in [(card, -10000, "2026-09-01"), (checking, -10000, "2026-09-02")]:
+        record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=amount, occurred_on=day)
+    _, rows = category_rows(client, owner_token, budget["id"])
+    row = rows["Groceries"]
+    assert (row["available_minor"], row["funded_credit_spending_minor"], row["credit_overspent_minor"], row["cash_overspent_minor"]) == (-10000, 10000, 0, 10000)
+    record(client, owner_token, budget["id"], account_id=card["id"], category_id=category["id"], amount_minor=3000, occurred_on="2026-09-03")
+    _, rows = category_rows(client, owner_token, budget["id"])
+    row = rows["Groceries"]
+    assert (row["available_minor"], row["funded_credit_spending_minor"], row["credit_overspent_minor"], row["cash_overspent_minor"]) == (-7000, 7000, 0, 7000)
+
+
 def test_unfunded_card_purchase_reports_credit_debt_only(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     _, groceries = create_budget_structure(client, owner_token, budget["id"])

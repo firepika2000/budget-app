@@ -272,6 +272,17 @@ not falsely name the difference “future reservations”: later actual inflows 
 This changes no assignment permissions, transaction accounting or manual-command semantics.
 No migration; server restart and app rebuild required when eventually adopting. No human retest.
 
+### Cash/card classification prerequisite
+
+Native reproduction after `556c8d3` proved that Demo's `min(overspent, creditSpent)` heuristic
+classified a cash deficit as credit debt after an earlier fully funded card purchase. A matching
+server test uses real reserve events and correctly reports cash overspending, including a later
+partial refund. Demo now reads the category attribution already recorded by its canonical posting
+path, aggregates signed selected-month reserve changes, and matches Live's net credit/funded/cash
+classification. It does not alter account balances, reserves, transaction posting or rollover.
+Regression covers refunds, refund deletion, edits, void/reversal, and mixed-funded splits.
+This fixes a classification prerequisite, not prospective rollover policy or uniform clocks.
+
 Full structured export fidelity, bounded hydration in other reports, actual Docker/Compose recovery,
 Local Device/import dependencies and the remaining roadmap are not closed by the current checkpoints.
 The commercial purchase-model decision is external; this planning work is not blocked on it.

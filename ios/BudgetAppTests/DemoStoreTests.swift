@@ -7,6 +7,65 @@ import BudgetCore
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testFundedCardPurchaseDoesNotRelabelLaterCashDeficitAsCreditDebt() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        XCTAssertTrue(source.demo.createAccount(name: "Cash", type: "checking", isOnBudget: true, startingBalance: 50000))
+        XCTAssertTrue(source.demo.createAccount(name: "Card", type: "credit", isOnBudget: true))
+        XCTAssertTrue(source.demo.createCategory(name: "Needs", group: "Plan"))
+        let category = source.demo.categories[0].id
+        try await source.assignMoney(.init(categoryID: category, month: "2026-09-01", assignedMinor: 10000, expectedVersion: 0))
+        func record(account: String, amount: Int64, day: String) async throws {
+            try await source.recordTransaction(.init(accountID: account, categoryID: category, amountMinor: amount, occurredOn: day, payeeName: "Mixed spending", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: []))
+        }
+        try await record(account: source.demo.accounts[1].id, amount: -10000, day: "2026-09-01")
+        let purchaseID = try XCTUnwrap(source.demo.transactions.first?.id)
+        try await record(account: source.demo.accounts[0].id, amount: -10000, day: "2026-09-02")
+        let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        func row() async throws -> APICategoryMonth {
+            let snapshot = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+            return try XCTUnwrap(snapshot.summary?.categories.first { $0.categoryID == category })
+        }
+        let mixed = try await row()
+        XCTAssertEqual(mixed.availableMinor, -10000)
+        XCTAssertEqual(mixed.fundedCreditSpendingMinor, 10000)
+        XCTAssertEqual(mixed.creditOverspentMinor, 0)
+        XCTAssertEqual(mixed.cashOverspentMinor, 10000)
+        XCTAssertEqual(source.demo.accounts[1].paymentReserved, 10000)
+        try await record(account: source.demo.accounts[1].id, amount: 3000, day: "2026-09-03")
+        let refunded = try await row()
+        XCTAssertEqual(refunded.availableMinor, -7000)
+        XCTAssertEqual(refunded.fundedCreditSpendingMinor, 7000)
+        XCTAssertEqual(refunded.creditOverspentMinor, 0)
+        XCTAssertEqual(refunded.cashOverspentMinor, 7000)
+        XCTAssertEqual(source.demo.accounts[1].paymentReserved, 7000)
+        try await source.deleteTransaction(id: try XCTUnwrap(source.demo.transactions.first?.id))
+        try await source.updateTransaction(id: purchaseID, operation: .init(accountID: source.demo.accounts[1].id, categoryID: category, amountMinor: -8000, occurredOn: "2026-09-01", payeeName: "Edited card purchase", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: []))
+        let edited = try await row()
+        XCTAssertEqual(edited.fundedCreditSpendingMinor, 8000)
+        XCTAssertEqual(edited.creditOverspentMinor, 0)
+        XCTAssertEqual(edited.cashOverspentMinor, 8000)
+        try await source.voidTransaction(id: purchaseID, reason: "Classification reversal")
+        let voided = try await row()
+        XCTAssertEqual(voided.fundedCreditSpendingMinor, 0)
+        XCTAssertEqual(voided.creditOverspentMinor, 0)
+        XCTAssertEqual(voided.cashOverspentMinor, 0)
+        XCTAssertEqual(source.demo.accounts[1].paymentReserved, 0)
+        XCTAssertTrue(source.demo.createCategory(name: "Unfunded", group: "Plan"))
+        let second = source.demo.categories[1].id
+        try await source.assignMoney(.init(categoryID: category, month: "2026-09-01", assignedMinor: 15000, expectedVersion: source.demo.allocationVersion))
+        try await source.recordTransaction(.init(accountID: source.demo.accounts[1].id, categoryID: nil, amountMinor: -7000, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Mixed funded split", memo: "", isCleared: true, splits: [.init(categoryID: category, amountMinor: -3000, memo: ""), .init(categoryID: second, amountMinor: -4000, memo: "")], flag: nil, tags: [], attachmentMetadata: []))
+        let split = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+        let fundedRow = try XCTUnwrap(split.summary?.categories.first { $0.categoryID == category })
+        let unfundedRow = try XCTUnwrap(split.summary?.categories.first { $0.categoryID == second })
+        XCTAssertEqual(fundedRow.fundedCreditSpendingMinor, 3000)
+        XCTAssertEqual(fundedRow.creditOverspentMinor, 0)
+        XCTAssertEqual(unfundedRow.fundedCreditSpendingMinor, 0)
+        XCTAssertEqual(unfundedRow.creditOverspentMinor, 4000)
+        XCTAssertEqual(unfundedRow.cashOverspentMinor, 0)
+        XCTAssertEqual(source.demo.accounts[1].paymentReserved, 3000)
+    }
+
+    @MainActor
     func testMonthSummaryExplainsFutureReservationsWithoutChangingDatedMoney() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
         XCTAssertTrue(source.demo.createAccount(name: "Cash", type: "checking", isOnBudget: true, startingBalance: 50000))

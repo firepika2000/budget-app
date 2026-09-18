@@ -427,12 +427,19 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                     "merged_into_payee_id": NSNull(), "default_category_id": item.defaultCategoryID ?? NSNull(),
                     "transaction_count": history.count, "net_amount_minor": history.reduce(Int64(0)) { $0 + $1.amount }, "aliases": item.aliases.enumerated().map { ["id": "\(item.id)-alias-\($0.offset)", "display_name": $0.element] }] as [String: Any]
         })
-        // Best-effort credit spend per category from demo transactions on credit-kind accounts,
-        // so the demo classifies overspending as cash vs credit like the live server does.
-        let creditAccountIDs = Set(demo.accounts.filter { $0.kind == .credit }.map(\.id))
-        var creditSpend: [String: Int64] = [:]
+        // Use recorded funding attribution, not a guessed share of today's negative Available.
+        // This mirrors Live's signed CreditCardReserveEvent aggregation for the selected month.
+        let creditAccountIDs = Set(demo.accounts.filter { $0.kind == .credit && $0.isOnBudget }.map(\.id))
+        var creditAmounts: [String: [Int64]] = [:]
+        var reserveAmounts: [String: [Int64]] = [:]
         for item in demo.visibleTransactions where creditAccountIDs.contains(item.accountID) && String(dateFormatter.string(from: item.date).prefix(7)) == String(month.prefix(7)) {
-            for (id, amount) in demo.canonicalCategoryAmounts(for: item) { creditSpend[id, default: 0] += amount }
+            for (id, amount) in demo.canonicalCategoryAmounts(for: item) where categoryIDs.contains(id) { creditAmounts[id, default: []].append(amount) }
+            for (id, amount) in demo.recordedReserveAmounts(transactionID: item.id) where categoryIDs.contains(id) { reserveAmounts[id, default: []].append(amount) }
+        }
+        let creditActivity = try creditAmounts.mapValues { try Money.sumMinorUnits($0) }
+        let fundedCredit = try reserveAmounts.mapValues { max(try Money.sumMinorUnits($0), 0) }
+        func deficit(_ amount: Int64) throws -> Int64 {
+            amount < 0 ? try Money(minorUnits: amount, currencyCode: budget.currencyCode).negated().minorUnits : 0
         }
         let summaryRows: [[String: Any]] = try visibleCategories.map { item -> [String: Any] in
             let recommended: Int64
@@ -445,10 +452,10 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                 recommended = funding.recommendedContributionMinor
                 effectiveTargetDate = funding.effectiveTargetDate
             } else { recommended = 0 }
-            let overspent = max(-item.available, 0)
-            let creditSpent = max(-(creditSpend[item.id] ?? 0), 0)
-            let creditOverspent = min(overspent, creditSpent)
-            return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": plan.categories[item.id]?.carriedAvailableMinor ?? 0, "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": overspent - creditOverspent, "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": max(creditSpent - creditOverspent, 0), "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "is_target_snoozed": item.targetSnoozedMonths.contains(month), "target_date": effectiveTargetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
+            let overspent = try deficit(item.available)
+            let funded = fundedCredit[item.id] ?? 0
+            let creditOverspent = try deficit(Money.sumMinorUnits([creditActivity[item.id] ?? 0, funded]))
+            return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": plan.categories[item.id]?.carriedAvailableMinor ?? 0, "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": max(overspent - creditOverspent, 0), "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": funded, "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "is_target_snoozed": item.targetSnoozedMonths.contains(month), "target_date": effectiveTargetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
         }
         let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.isRestricted ? 0 : plan.readyToAssignMinor, "all_date_unassigned_minor": demo.isRestricted ? NSNull() : plan.allDateUnassignedMinor as Any, "funding_limit_minor": demo.isRestricted ? NSNull() : plan.fundingLimitMinor as Any, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": demo.allocationVersion, "categories": summaryRows])
         let start = report.start

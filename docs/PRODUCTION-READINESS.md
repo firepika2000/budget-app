@@ -4,6 +4,22 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Cash/card reporting prerequisite after `556c8d3`: native reproduction proved a funded 10,000 card
+purchase followed by a 10,000 cash expense was incorrectly reported as unfunded credit in Demo.
+Live's matching production API case correctly reports cash overspending. A 3,000 card refund
+preserved the same Demo mismatch. The estimate is replaced by visible selected-month transaction
+activity plus signed reserve attribution recorded by the canonical posting path. Exact accumulation
+and checked deficit conversion avoid introducing trap-prone reporting arithmetic. No posting,
+reserve movement, allocation or policy semantics changed. Coverage includes refund deletion,
+purchase edit, void/reversal and a split with both funded and unfunded categories.
+Reproduction: `/tmp/budget-credit-classification-reproduction.log`; Live reference:
+`/tmp/budget-credit-classification-server-reference.log`. This is a prerequisite to prospective
+cash rollover, not implementation or acceptance of that remaining policy work.
+Verification: **400 backend zero skips, 115 native XCTest, 45 Core + 50 API, 2 production UI PASS**;
+Beta build/test and diff check PASS. UI covers Home attention → category resolution and canonical
+Make Recurring → void/reversal. Logs `/tmp/budget-credit-classification-{backend,package,native-final,native-verified}.log`.
+No new migration/server-code changes in this classification checkpoint; human data untouched.
+
 Dated/current funding explanation after pushed `f42f262` (verified): monthly responses expose
 optional canonical all-date Unassigned and the existing Smart Funding limit without changing dated
 RTA or assignment semantics. Shared Plan distinguishes these values and explains later allocations,

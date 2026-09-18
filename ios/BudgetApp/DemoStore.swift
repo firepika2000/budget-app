@@ -766,6 +766,12 @@ final class DemoStore: ObservableObject {
         return splitAmounts(total: transaction.amount, categoryIDs: transaction.categoryIDs)
     }
 
+    /// Immutable observation of reserve changes recorded when the transaction posted.
+    /// Refunds/reversals retain their signed release; edits/deletes replace/remove attribution.
+    func recordedReserveAmounts(transactionID: String) -> [String: Int64] {
+        reserveAttribution[transactionID] ?? [:]
+    }
+
     private func splitAmounts(total: Int64, categoryIDs: [String]) -> [String: Int64] {
         let ids = Set(categoryIDs).sorted()
         guard !ids.isEmpty else { return [:] }

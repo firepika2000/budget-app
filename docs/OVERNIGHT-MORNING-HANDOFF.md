@@ -26,13 +26,22 @@ available now. No migration; adoption eventually requires server restart and app
 Verification: **399 backend zero skips, 114 native, 45 Core + 50 API, 2 production UI PASS**;
 Beta build/test and diff check PASS. Logs `/tmp/budget-month-funding-{focused,backend,package,native-final}.log`.
 
-Next highest-priority planning closure: reproduce and correct Demo's cash/card overspending
-classification before implementing prospective rollover. Source audit finds Demo still uses
-`min(overspent, creditSpent)` while Live uses recorded category/card reserve events. Example to
-prove against both providers: fully funded card purchase followed by a cash expense in the same
-category must not relabel the cash deficit as unfunded credit. Include refund/split/void/edit paths
-and preserve historical reserve attribution. Then continue the documented effective-period cash
-rollover policy, uniform clocks and remaining roadmap. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
+After pushed `556c8d3`, the classification discrepancy was reproduced: a funded card purchase plus
+cash deficit was mislabeled unfunded credit in Demo, while the matching Live case correctly reported
+cash. Demo now aggregates signed recorded reserve attribution by selected month/visible category,
+not `min(overspent, creditSpent)`. Refund/delete/edit/void/split regressions preserve actual reserves.
+Verification: **400 backend zero skips, 115 native, 45 Core + 50 API, 2 production UI PASS**;
+Beta build/test and diff check PASS. Logs `/tmp/budget-credit-classification-{backend,package,native-final,native-verified}.log`.
+Failing native reproduction and passing matching Live scenario are retained under the same prefix.
+
+Next highest-priority planning closure: implement the documented effective-period cash-rollover
+policy boundary, starting with canonical characterization vectors for legacy carry versus
+prospective absorption. Preserve historical observations for existing budgets, record actor/effective
+period, apply cash deficits exactly once, and do not turn credit liability into cash overspending.
+Read `PERSISTENT-MONTH-IMPLEMENTATION.md` and product authority before designing the additive
+migration/application service. Include populated financial preservation and encrypted restore proof
+on disposable destinations only. Uniform clocks and remaining roadmap stay open.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
 
 `bed7c93` pushed forecast privacy. Current chronological projection correction is reproduced against
 the server: 10,000 start, -8,000 bill, neutral transfer, +9,000 income ends 11,000 but reaches 2,000
