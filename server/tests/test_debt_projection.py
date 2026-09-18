@@ -51,6 +51,41 @@ def test_zero_apr_and_final_partial_payment_are_exact():
     assert [point.payment_minor for point in result.points] == [1000, 1000, 501]
 
 
+def test_projection_int64_boundaries_are_explicit_and_provider_compatible():
+    maximum = (1 << 63) - 1
+    with pytest.raises(ValueError, match="exact-money"):
+        project_debt(100, date(2026, 1, 1), loan(payment=1), extra_payment_minor=maximum)
+    with pytest.raises(ValueError, match="exact-money"):
+        project_debt(maximum, date(2026, 1, 1), loan(rate=100_000, payment=maximum))
+    with pytest.raises(ValueError, match="exact-money"):
+        project_debt_strategy(
+            [StrategyDebt("one", maximum, 0, 1), StrategyDebt("two", 1, 0, 1)],
+            date(2026, 1, 1), strategy="avalanche", rollover=False,
+        )
+    exact = project_debt(maximum, date(2026, 1, 1), loan(payment=maximum))
+    assert exact.projected_total_cost_minor == maximum
+    assert exact.payment_count == 1
+    ignored = project_debt_strategy(
+        [StrategyDebt("one", 100, 0, 100)], date(2026, 1, 1),
+        strategy="avalanche", rollover=False, custom_order=["ignored", "ignored"],
+    )
+    assert ignored.status == "paid_off"
+
+
+def test_live_projection_extreme_input_returns_validation_without_mutation(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account = create_strategy_card(client, owner_token, budget["id"], "Card", 100, 0, 1)
+    base = f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}"
+    before = client.get(f"{base}/balance", headers=auth(owner_token))
+    assert before.status_code == 200
+    response = client.post(f"{base}/debt-projection", headers=auth(owner_token), json={
+        "first_payment_on": "2026-01-01", "extra_payment_minor": (1 << 63) - 1,
+    })
+    assert response.status_code == 422, response.text
+    assert "supported money or date range" in response.json()["detail"]
+    assert client.get(f"{base}/balance", headers=auth(owner_token)).json() == before.json()
+
+
 def test_interest_rounds_half_up_each_period_without_float_accumulation():
     # $100.00 at 12% APR accrues exactly $1.00 for the first monthly period.
     result = project_debt(10_000, date(2026, 2, 28), loan(rate=1200, payment=5000))

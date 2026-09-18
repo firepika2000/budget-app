@@ -75,26 +75,29 @@ public enum DebtProjectionEngine {
 
     public static func project(principalMinor: Int64, firstPaymentOn: Date, terms: DebtProjectionTerms, extraPaymentMinor: Int64 = 0, maximumPeriods: Int = maximumPeriods, calendar: Calendar = Calendar(identifier: .gregorian)) throws -> DebtProjectionResult {
         guard principalMinor >= 0, extraPaymentMinor >= 0, (0...100_000).contains(terms.annualRateBasisPoints), (1...self.maximumPeriods).contains(maximumPeriods) else { throw ProjectionError.invalidInput }
+        guard (terms.scheduledPaymentMinor ?? 0) >= 0, (terms.minimumPaymentMinor ?? 0) >= 0,
+              (0...10_000).contains(terms.minimumRateBasisPoints ?? 0),
+              (0...100_000).contains(terms.promotionalRateBasisPoints ?? 0) else { throw ProjectionError.invalidInput }
         if principalMinor == 0 { return .init(status: .paidOff, payoffDate: firstPaymentOn, projectedInterestMinor: 0, projectedTotalCostMinor: 0, points: []) }
         let periods: Int64 = terms.frequency == .weekly ? 52 : terms.frequency == .biweekly ? 26 : 12
         var principal = principalMinor, date = firstPaymentOn, interestTotal: Int64 = 0, paid: Int64 = 0
         var points: [DebtProjectionPoint] = []
         for number in 1...maximumPeriods {
             let rate = terms.promotionalRateBasisPoints != nil && terms.promotionalEndsOn != nil && date <= terms.promotionalEndsOn! ? terms.promotionalRateBasisPoints! : terms.annualRateBasisPoints
-            let interest = multipliedAndRounded(principal, by: rate, dividedBy: 10_000 * periods)
-            let statement = principal + interest
-            let percentage = multipliedAndRounded(statement, by: terms.minimumRateBasisPoints ?? 0, dividedBy: 10_000)
+            let interest = try multipliedAndRounded(principal, by: rate, dividedBy: 10_000 * periods)
+            let statement = try checkedAdd(principal, interest)
+            let percentage = try multipliedAndRounded(statement, by: terms.minimumRateBasisPoints ?? 0, dividedBy: 10_000)
             let base: Int64
             if let scheduled = terms.scheduledPaymentMinor { base = scheduled }
             else if terms.minimumRule == .fixed { base = terms.minimumPaymentMinor ?? 0 }
             else if terms.minimumRule == .percentage { base = percentage }
             else if terms.minimumRule == .greaterOf { base = max(terms.minimumPaymentMinor ?? 0, percentage) }
             else { throw ProjectionError.missingPaymentRule }
-            let planned = base + extraPaymentMinor
+            let planned = try checkedAdd(base, extraPaymentMinor)
             if planned <= interest { return .init(status: .nonAmortizing, payoffDate: nil, projectedInterestMinor: interestTotal, projectedTotalCostMinor: paid, points: points) }
             let payment = min(planned, statement), ending = statement - payment
             points.append(.init(paymentNumber: number, paymentDate: date, startingPrincipalMinor: principal, interestMinor: interest, paymentMinor: payment, endingPrincipalMinor: ending))
-            interestTotal += interest; paid += payment
+            interestTotal = try checkedAdd(interestTotal, interest); paid = try checkedAdd(paid, payment)
             if ending == 0 { return .init(status: .paidOff, payoffDate: date, projectedInterestMinor: interestTotal, projectedTotalCostMinor: paid, points: points) }
             principal = ending
             let component: Calendar.Component = terms.frequency == .monthly ? .month : .day
@@ -131,7 +134,8 @@ public enum DebtProjectionEngine {
         var rolloverPool: Int64 = 0
 
         func priority(_ active: [String]) -> [String] {
-            let positions = Dictionary(uniqueKeysWithValues: customOrder.enumerated().map { ($0.element, $0.offset) })
+            // Non-custom strategies ignore customOrder, including duplicate values.
+            let positions = strategy == .custom ? Dictionary(uniqueKeysWithValues: customOrder.enumerated().map { ($0.element, $0.offset) }) : [:]
             return active.sorted { lhs, rhs in
                 switch strategy {
                 case .avalanche:
@@ -149,8 +153,8 @@ public enum DebtProjectionEngine {
         func accountResults() -> [DebtStrategyAccountResult] {
             ids.map { .init(debtID: $0, payoffDate: payoffDates[$0], payoffMonth: payoffMonths[$0], projectedInterestMinor: interestByID[$0]!, projectedTotalPaidMinor: paidByID[$0]!) }
         }
-        func result(status: DebtProjectionStatus, date: Date?, count: Int) -> DebtStrategyProjectionResult {
-            let interest = interestByID.values.reduce(0, +), paid = paidByID.values.reduce(0, +)
+        func result(status: DebtProjectionStatus, date: Date?, count: Int) throws -> DebtStrategyProjectionResult {
+            let interest = try interestByID.values.reduce(0, checkedAdd), paid = try paidByID.values.reduce(0, checkedAdd)
             return .init(status: status, strategy: strategy, rollover: rollover, payoffOrder: payoffOrder, debtFreeDate: date, paymentCount: count, projectedInterestMinor: interest, projectedTotalPaidMinor: paid, projectedTotalCostMinor: paid, debts: accountResults())
         }
 
@@ -159,21 +163,22 @@ public enum DebtProjectionEngine {
         }
         for number in 1...maximumPeriods {
             let active = ids.filter { balances[$0]! > 0 }
-            if active.isEmpty { return result(status: .paidOff, date: paymentDate, count: number - 1) }
-            let startingTotal = active.reduce(Int64(0)) { $0 + balances[$1]! }
+            if active.isEmpty { return try result(status: .paidOff, date: paymentDate, count: number - 1) }
+            let startingTotal = try active.reduce(Int64(0)) { try checkedAdd($0, balances[$1]!) }
             var remaining: [String: Int64] = [:]
             for id in active {
-                let interest = multipliedAndRounded(balances[id]!, by: rates[id]!, dividedBy: 120_000)
-                interestByID[id]! += interest; remaining[id] = balances[id]! + interest
+                let interest = try multipliedAndRounded(balances[id]!, by: rates[id]!, dividedBy: 120_000)
+                interestByID[id] = try checkedAdd(interestByID[id]!, interest)
+                remaining[id] = try checkedAdd(balances[id]!, interest)
             }
             for id in active {
                 let payment = min(payments[id]!, remaining[id]!)
-                remaining[id]! -= payment; paidByID[id]! += payment
+                remaining[id]! -= payment; paidByID[id] = try checkedAdd(paidByID[id]!, payment)
             }
-            var strategyMoney = extraPaymentMinor + (rollover ? rolloverPool : 0)
+            var strategyMoney = try checkedAdd(extraPaymentMinor, rollover ? rolloverPool : 0)
             for id in priority(active.filter { remaining[$0]! > 0 }) {
                 let payment = min(strategyMoney, remaining[id]!)
-                remaining[id]! -= payment; paidByID[id]! += payment; strategyMoney -= payment
+                remaining[id]! -= payment; paidByID[id] = try checkedAdd(paidByID[id]!, payment); strategyMoney -= payment
                 if strategyMoney == 0 { break }
             }
             var newlyPaid: [String] = []
@@ -185,20 +190,38 @@ public enum DebtProjectionEngine {
             }
             for id in priority(newlyPaid) {
                 payoffOrder.append(id)
-                if rollover { rolloverPool += payments[id]! }
+                if rollover { rolloverPool = try checkedAdd(rolloverPool, payments[id]!) }
             }
-            if balances.values.allSatisfy({ $0 == 0 }) { return result(status: .paidOff, date: paymentDate, count: number) }
-            if balances.values.reduce(0, +) >= startingTotal && newlyPaid.isEmpty {
-                return result(status: .nonAmortizing, date: nil, count: number)
+            if balances.values.allSatisfy({ $0 == 0 }) { return try result(status: .paidOff, date: paymentDate, count: number) }
+            if try balances.values.reduce(0, checkedAdd) >= startingTotal && newlyPaid.isEmpty {
+                return try result(status: .nonAmortizing, date: nil, count: number)
             }
             paymentDate = calendar.date(byAdding: .month, value: 1, to: paymentDate)!
         }
-        return result(status: .iterationLimit, date: nil, count: maximumPeriods)
+        return try result(status: .iterationLimit, date: nil, count: maximumPeriods)
     }
 
-    private static func multipliedAndRounded(_ value: Int64, by multiplier: Int64, dividedBy denominator: Int64) -> Int64 {
+    private static func multipliedAndRounded(_ value: Int64, by multiplier: Int64, dividedBy denominator: Int64) throws -> Int64 {
         let quotient = value / denominator, remainder = value % denominator
-        return quotient * multiplier + (remainder * multiplier + denominator / 2) / denominator
+        let (whole, overflow) = quotient.multipliedReportingOverflow(by: multiplier)
+        guard !overflow else { throw ProjectionError.amountOutOfRange }
+        // Validated rates and denominators bound the remainder product below Int64.max.
+        return try checkedAdd(whole, (remainder * multiplier + denominator / 2) / denominator)
     }
-    public enum ProjectionError: Error { case invalidInput, missingPaymentRule, invalidCustomOrder }
+    private static func checkedAdd(_ lhs: Int64, _ rhs: Int64) throws -> Int64 {
+        let (value, overflow) = lhs.addingReportingOverflow(rhs)
+        guard !overflow else { throw ProjectionError.amountOutOfRange }
+        return value
+    }
+    public enum ProjectionError: LocalizedError {
+        case invalidInput, missingPaymentRule, invalidCustomOrder, amountOutOfRange
+        public var errorDescription: String? {
+            switch self {
+            case .amountOutOfRange: "Projection amounts exceed the supported exact-money range. Reduce the scenario amounts."
+            case .invalidInput: "Review the projection amounts and rates."
+            case .missingPaymentRule: "Add a payment rule in Debt Terms."
+            case .invalidCustomOrder: "Include each selected debt once in the custom order."
+            }
+        }
+    }
 }

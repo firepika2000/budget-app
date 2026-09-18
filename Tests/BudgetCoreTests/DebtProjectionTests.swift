@@ -134,4 +134,36 @@ final class DebtProjectionTests: XCTestCase {
             XCTAssertEqual(result.projectedTotalPaidMinor, vector.expected.projectedTotalPaidMinor, vector.id)
         }
     }
+
+    func testExtremeMoneyFailsWithoutTrappingOrRounding() throws {
+        XCTAssertThrowsError(try DebtProjectionEngine.project(
+            principalMinor: 100, firstPaymentOn: date("2026-01-01"),
+            terms: .init(annualRateBasisPoints: 0, frequency: .monthly, scheduledPaymentMinor: 1),
+            extraPaymentMinor: .max
+        ))
+        XCTAssertThrowsError(try DebtProjectionEngine.project(
+            principalMinor: .max, firstPaymentOn: date("2026-01-01"),
+            terms: .init(annualRateBasisPoints: 100_000, frequency: .monthly, scheduledPaymentMinor: .max)
+        ))
+        XCTAssertThrowsError(try DebtProjectionEngine.projectStrategy(
+            debts: [.init(debtID: "one", principalMinor: .max, annualRateBasisPoints: 0, plannedPaymentMinor: 1),
+                    .init(debtID: "two", principalMinor: 1, annualRateBasisPoints: 0, plannedPaymentMinor: 1)],
+            firstPaymentOn: date("2026-01-01"), strategy: .avalanche, rollover: false
+        ))
+        let exact = try DebtProjectionEngine.project(
+            principalMinor: .max, firstPaymentOn: date("2026-01-01"),
+            terms: .init(annualRateBasisPoints: 0, frequency: .monthly, scheduledPaymentMinor: .max)
+        )
+        XCTAssertEqual(exact.projectedTotalCostMinor, .max)
+        XCTAssertEqual(exact.paymentCount, 1)
+    }
+
+    func testUnusedDuplicateCustomOrderDoesNotCrashOtherStrategies() throws {
+        let result = try DebtProjectionEngine.projectStrategy(
+            debts: [.init(debtID: "one", principalMinor: 100, annualRateBasisPoints: 0, plannedPaymentMinor: 100)],
+            firstPaymentOn: date("2026-01-01"), strategy: .avalanche, rollover: false,
+            customOrder: ["ignored", "ignored"]
+        )
+        XCTAssertEqual(result.status, .paidOff)
+    }
 }

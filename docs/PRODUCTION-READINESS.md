@@ -74,3 +74,11 @@ regardless of that toggle, matching Live. Native XCTest: 82 passed, including mo
 recovery and tracking parity; production recovery XCUITest: 1 passed; Swift package: 33 BudgetCore
 and 45 BudgetAPI passed. Simulator test builds succeeded with Xcode 27.0 (`27A5252f`) on the preserved
 iOS 27 iPhone 17 Pro Max. Human acceptance remains pending. No migration required.
+
+Projection input-hardening checkpoint: checked Swift arithmetic now rejects overflowing statements,
+payments, accumulated totals and rollover pools with a localized error. Python enforces the same
+Int64 money boundary and the Live API returns 422 without mutation. Maximum-value zero-rate payoff
+remains exact. Duplicate unused custom-order values no longer trap the non-custom Swift strategies.
+Verification: 20 focused backend projection/vector tests; full backend 284 passed, 11 PostgreSQL-only
+skips (295 collected); full package 35 BudgetCore + 45 BudgetAPI passed; native 82 passed with Xcode
+`TEST SUCCEEDED`; diff whitespace check passed. No migration or human data changes.

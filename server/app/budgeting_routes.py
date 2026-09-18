@@ -513,11 +513,14 @@ def debt_projection(
     }
     if missing:
         return base | {"status": "incomplete", "missing_projection_fields": missing}
-    result = project_debt(
-        principal, body.first_payment_on,
-        projection_terms(terms),
-        extra_payment_minor=body.extra_payment_minor,
-    )
+    try:
+        result = project_debt(
+            principal, body.first_payment_on,
+            projection_terms(terms),
+            extra_payment_minor=body.extra_payment_minor,
+        )
+    except (ValueError, OverflowError) as error:
+        raise HTTPException(status_code=422, detail="Projection inputs exceed the supported money or date range") from error
     return base | {
         "status": result.status, "missing_projection_fields": [], "payoff_date": result.payoff_date,
         "payment_count": result.payment_count, "projected_interest_minor": result.projected_interest_minor,
@@ -584,14 +587,17 @@ def debt_strategy_projection(
     }
     if incomplete:
         return base | {"status": "incomplete", "incomplete_accounts": incomplete}
-    result = project_debt_strategy(
-        strategy_debts,
-        body.first_payment_on,
-        strategy=body.strategy,
-        rollover=body.rollover,
-        extra_payment_minor=body.extra_payment_minor,
-        custom_order=body.custom_order,
-    )
+    try:
+        result = project_debt_strategy(
+            strategy_debts,
+            body.first_payment_on,
+            strategy=body.strategy,
+            rollover=body.rollover,
+            extra_payment_minor=body.extra_payment_minor,
+            custom_order=body.custom_order,
+        )
+    except (ValueError, OverflowError) as error:
+        raise HTTPException(status_code=422, detail="Projection inputs exceed the supported money or date range") from error
     return base | {
         "status": result.status,
         "payoff_order": list(result.payoff_order),

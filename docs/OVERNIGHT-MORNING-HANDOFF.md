@@ -32,6 +32,12 @@ Net Worth's tracking-account toggle, aligning loan visibility with Live. Native 
 production terms-recovery XCUITest pass, as do 33 BudgetCore and 45 BudgetAPI tests. Xcode 27 Beta
 `27A5252f`, existing Simulator `3ABD861E-D38D-4AFD-A356-959266051564`; no reset or Live data changes.
 
+`98f2a01` publishes that native recovery checkpoint. Subsequent projection hardening guards Int64
+overflow in both engines, returns Live 422 validation without mutation, and prevents a Swift dictionary
+trap on duplicate custom-order values when a non-custom strategy is chosen. Verification: full backend
+284 passed / 11 PostgreSQL-only skips; package 35 BudgetCore + 45 BudgetAPI passed; native 82 passed
+with clean `TEST SUCCEEDED`; all 11 shared strategy vectors remain exact. No migration added.
+
 - Current branch: `codex/development`
 - Overnight starting HEAD: `f44c38f9a163e32133f3ca4c7108ad488db2f836`
 - Latest independently verified pushed checkpoint: `e3f2922` (v0.8 strategy parity and hydration baseline)

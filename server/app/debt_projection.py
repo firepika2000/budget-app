@@ -20,6 +20,13 @@ from typing import Literal
 Frequency = Literal["weekly", "biweekly", "monthly"]
 PaymentRule = Literal["fixed", "percentage", "greater_of"]
 Strategy = Literal["avalanche", "snowball", "custom"]
+MAX_MONEY = (1 << 63) - 1
+
+
+def _money(value: int) -> int:
+    if not 0 <= value <= MAX_MONEY:
+        raise ValueError("Projection amounts exceed the supported exact-money range")
+    return value
 
 
 @dataclass(frozen=True)
@@ -52,6 +59,10 @@ class ProjectionResult:
     projected_interest_minor: int
     projected_total_cost_minor: int
     points: tuple[ProjectionPoint, ...]
+
+    def __post_init__(self):
+        _money(self.projected_interest_minor)
+        _money(self.projected_total_cost_minor)
 
 
 @dataclass(frozen=True)
@@ -89,6 +100,10 @@ class StrategyProjectionResult:
     projected_total_paid_minor: int
     projected_total_cost_minor: int
     debts: tuple[StrategyDebtResult, ...]
+
+    def __post_init__(self):
+        _money(self.projected_interest_minor)
+        _money(self.projected_total_paid_minor)
 
 
 MAX_PROJECTION_PERIODS = 1_200
@@ -152,6 +167,12 @@ def project_debt(
     extra_payment_minor: int = 0,
     max_periods: int = MAX_PROJECTION_PERIODS,
 ) -> ProjectionResult:
+    _money(principal_minor)
+    _money(extra_payment_minor)
+    _money(terms.scheduled_payment_minor or 0)
+    _money(terms.minimum_payment_minor or 0)
+    if not 0 <= (terms.minimum_payment_rate_basis_points or 0) <= 10_000 or not 0 <= (terms.promotional_rate_basis_points or 0) <= 100_000:
+        raise ValueError("invalid projection rate")
     if principal_minor < 0 or extra_payment_minor < 0 or not 0 <= terms.annual_rate_basis_points <= 100_000:
         raise ValueError("invalid projection input")
     if max_periods < 1 or max_periods > MAX_PROJECTION_PERIODS:
@@ -171,8 +192,8 @@ def project_debt(
         if terms.promotional_rate_basis_points is not None and terms.promotional_ends_on is not None and payment_date <= terms.promotional_ends_on:
             rate = terms.promotional_rate_basis_points
         interest = _round_ratio_half_up(principal * rate, 10_000 * periods)
-        statement = principal + interest
-        planned = _planned_payment(terms, statement) + extra_payment_minor
+        statement = _money(principal + interest)
+        planned = _money(_planned_payment(terms, statement) + extra_payment_minor)
         if planned <= interest:
             return ProjectionResult("non_amortizing", None, number - 1, total_interest, total_paid, tuple(points))
         payment = min(planned, statement)
@@ -209,6 +230,10 @@ def project_debt_strategy(
 
     if strategy not in {"avalanche", "snowball", "custom"} or not debts or extra_payment_minor < 0 or not 1 <= max_periods <= MAX_PROJECTION_PERIODS:
         raise ValueError("invalid strategy projection input")
+    _money(extra_payment_minor)
+    for debt in debts:
+        _money(debt.principal_minor)
+        _money(debt.planned_payment_minor)
     ids = [item.debt_id for item in debts]
     if any(not item.debt_id or item.principal_minor < 0 or item.planned_payment_minor < 0 or not 0 <= item.annual_rate_basis_points <= 100_000 for item in debts):
         raise ValueError("invalid strategy debt")
@@ -253,12 +278,12 @@ def project_debt_strategy(
         active = [item for item in ids if balances[item] > 0]
         if not active:
             break
-        starting_total = sum(balances[item] for item in active)
+        starting_total = _money(sum(balances[item] for item in active))
         statements: dict[str, int] = {}
         for item in active:
             interest = _round_ratio_half_up(balances[item] * rates[item], 10_000 * 12)
             interest_by_id[item] += interest
-            statements[item] = balances[item] + interest
+            statements[item] = _money(balances[item] + interest)
 
         # Existing planned payments remain assigned to their debts. Rollover is
         # added only after a debt is gone, never while it still has a balance.
@@ -268,7 +293,7 @@ def project_debt_strategy(
             remaining[item] -= payment
             paid_by_id[item] += payment
 
-        strategy_money = extra_payment_minor + (rollover_pool if rollover else 0)
+        strategy_money = _money(extra_payment_minor + (rollover_pool if rollover else 0))
         for item in priority([value for value in active if remaining[value] > 0]):
             payment = min(strategy_money, remaining[item])
             remaining[item] -= payment
@@ -287,7 +312,7 @@ def project_debt_strategy(
         for item in priority(newly_paid):
             payoff_order.append(item)
             if rollover:
-                rollover_pool += payments[item]
+                rollover_pool = _money(rollover_pool + payments[item])
 
         if all(value == 0 for value in balances.values()):
             results = tuple(
@@ -301,7 +326,7 @@ def project_debt_strategy(
         # If aggregate principal did not decline, the fixed household payment
         # budget cannot amortize this scenario. Return an explicit typed result
         # instead of manufacturing a debt-free date.
-        if sum(balances.values()) >= starting_total and not newly_paid:
+        if _money(sum(balances.values())) >= starting_total and not newly_paid:
             results = tuple(
                 StrategyDebtResult(item, payoff_dates.get(item), payoff_months.get(item), interest_by_id[item], paid_by_id[item])
                 for item in ids
