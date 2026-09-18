@@ -6,6 +6,21 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Demo request lifecycle implementation after `d1ac8f5`: added real request versions/type/expiry/action
+history and implemented revise/cancel, validated creation and decisions. Approval keeps canonical
+financial preflight, stores allocation identity, and writes its decision action once. Request clock
+is injectable; batch expiry processes all visible due requests once and legacy fixtures remain
+explicitly unstamped/null-expiry. Shared provider actor identity makes requester actions reachable
+without a fake Demo session. Home includes changes-requested cases and links to a shared history list.
+Cancel uses a native confirmation alert. The first ownership implementation's Demo downcast was
+caught by the architecture test and replaced with the common WorkspaceDataSource protocol property.
+Verified: 125 native + 1 production XCUITest, 48 Core + 52 API, 14 backend request reference tests,
+all PASS; Beta simulator build and diff check PASS. Native evidence
+`/tmp/budget-demo-request-journey.log` (xcresult `Test-BudgetApp-2026.09.18_18-21-57--0400.xcresult`).
+No human data/migration changes. Remaining provider gaps include membership/invitation no-ops,
+dynamic child capability parity and historical allocation-version provenance. HUMAN ACCEPTANCE
+PENDING — DO NOT RETEST.
+
 Server request contract audit after `e80d2b8` reproduced hidden-destination request access for scoped
 approvers and batch expiry stopping at its first due row. Fixed destination SQL/decision scoping and
 per-row source redaction. Expiry now locks/reloads only due rows and evaluates every visible request;

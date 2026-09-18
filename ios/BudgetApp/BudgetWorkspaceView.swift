@@ -294,6 +294,7 @@ struct WorkspaceReportContext: Equatable {
 @MainActor
 protocol WorkspaceDataSource: AnyObject {
     var budget: APIBudget { get }
+    var actorUserID: String? { get }
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot
     func coreSnapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot
     func reports(planMonth: Date, query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports
@@ -303,6 +304,7 @@ protocol WorkspaceDataSource: AnyObject {
 }
 
 extension WorkspaceDataSource {
+    var actorUserID: String? { nil }
     func debtCost(accountIDs: [String]) async throws -> APIDebtCost {
         throw workspaceRepositoryError("Current debt cost is unavailable from this provider.")
     }
@@ -369,12 +371,15 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
 @MainActor
 final class DemoWorkspaceDataSource: WorkspaceDataSource {
     let demo: DemoStore
+    var actorUserID: String? { requestActorID }
     private var attachmentData: [String: Data] = [:]
     private var debtTermsValues: [String: APIAccountDebtTermsUpsert] = [:]
     private var accessProfiles: [String: APIAccessProfile] = [:]
+    private let requestNow: () -> Date
     let budget: APIBudget
 
-    init(fresh: Bool = false, cashRolloverPolicies: [CashRolloverProjection.Change] = []) {
+    init(fresh: Bool = false, cashRolloverPolicies: [CashRolloverProjection.Change] = [], requestNow: @escaping () -> Date = Date.init) {
+        self.requestNow = requestNow
         let store = DemoStore(fresh: fresh || ProcessInfo.processInfo.arguments.contains("--demo-fresh-budget"), cashRolloverPolicies: cashRolloverPolicies)
         // Adversarial production-composition fixture: valid per-target amounts whose sum overflows.
         if ProcessInfo.processInfo.arguments.contains("--demo-plan-cost-overflow") {
@@ -573,7 +578,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let debt: APIDebtReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "opening_debt_minor": openingDebt, "debt_minor": endingDebt, "principal_reduction_minor": openingDebt - endingDebt, "recorded_interest_range_minor": recordedInterest(since: start), "recorded_interest_month_minor": recordedInterest(since: monthStart), "recorded_interest_ytd_minor": recordedInterest(since: yearStart), "recorded_interest_trailing_12_minor": recordedInterest(since: trailingStart), "recorded_interest_lifetime_minor": classifiedInterest.reduce(Int64(0)) { $0 + $1.1 }, "interest_tracking_started_on": classifiedInterest.map { $0.0.date }.min().map(dateFormatter.string) ?? NSNull(), "points": debtPoints, "accounts": debtRows])
         let planPerformance: APIPlanPerformanceReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "points": planningPoints])
         let delegated: APIDelegatedBudget? = demo.isRestricted ? try decode(["id": "demo-delegated", "budget_id": budget.id, "user_id": demo.persona.rawValue.lowercased(), "pool_category_id": visibleCategories.first?.id ?? "", "authority_minor": demo.delegatedAuthority, "assigned_minor": demo.delegatedAssigned, "available_to_assign_minor": demo.delegatedReadyToAssign, "allow_category_creation": true, "allow_reallocation": true, "rules": []]) : nil
-        let requestRows: [APIFinancialRequest] = try decode(demo.requests.filter { !demo.isRestricted || $0.member == demo.persona }.map { item -> [String: Any] in ["id": item.id, "requester_user_id": item.member.rawValue.lowercased(), "request_type": "additional_allocation", "destination_category_id": item.categoryID, "requested_amount_minor": item.amount, "reason": item.reason, "status": item.status.lowercased().replacingOccurrences(of: " ", with: "_"), "version": item.status == "Pending" ? 0 : 1, "approved_amount_minor": item.approvedAmount.map { $0 as Any } ?? NSNull(), "source_category_id": NSNull(), "allocation_operation_id": NSNull(), "actions": []] })
+        let requestRows = try requestObservations()
         // Preserve actual command identity/date/actor across reads. Never manufacture movements
         // from opening fixture totals, and never expose half of a restricted operation.
         let operations = Dictionary(grouping: demo.allocationEvents, by: \.operationID)
@@ -845,8 +850,68 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func cancelHouseholdInvitation(id: String) async throws {}
     func removeHouseholdMember(userID: String) async throws {}
     func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] { [] }
-    func cancelRequest(id: String, version: Int, note: String) async throws {}
-    func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws {}
+    var requestActorID: String { demo.persona == .rey ? "demo-owner" : demo.persona.rawValue.lowercased() }
+    private func requestCapability(_ capability: String) -> Bool {
+        if demo.persona == .rey { return true }
+        if let profile = accessProfiles[requestActorID] { return profile.capabilities.contains(capability) && (capability != "approve_request" || !demo.isRestricted) }
+        return capability == "request_money" || !demo.isRestricted
+    }
+    private func requestCategoryVisible(_ id: String) -> Bool {
+        if demo.isRestricted && !demo.categories.contains(where: { $0.id == id && $0.delegatedTo == demo.persona }) { return false }
+        if let profile = accessProfiles[requestActorID], profile.restrictCategories { return profile.categoryIDs.contains(id) }
+        return true
+    }
+    private func requestVisible(_ value: DemoRequest) -> Bool {
+        (requestCapability("approve_request") || (requestCapability("request_money") && value.member == demo.persona)) && requestCategoryVisible(value.categoryID)
+    }
+    private func requestObservations() throws -> [APIFinancialRequest] {
+        for index in demo.requests.indices where requestVisible(demo.requests[index]) { _ = expireRequest(at: index) }
+        let formatter = ISO8601DateFormatter()
+        return try decode(demo.requests.filter { requestVisible($0) }.map { item -> [String: Any] in
+            let revealSource = requestCapability("approve_request") && (item.sourceCategoryID.map(requestCategoryVisible) ?? false)
+            return ["id": item.id, "requester_user_id": item.member == .rey ? "demo-owner" : item.member.rawValue.lowercased(),
+                "request_type": item.requestType, "destination_category_id": item.categoryID, "requested_amount_minor": item.amount,
+                "reason": item.reason, "status": item.status.lowercased().replacingOccurrences(of: " ", with: "_"), "version": item.version,
+                "approved_amount_minor": item.approvedAmount as Any? ?? NSNull(),
+                "source_category_id": revealSource ? item.sourceCategoryID as Any? ?? NSNull() : NSNull(),
+                "allocation_operation_id": item.allocationOperationID as Any? ?? NSNull(),
+                "expires_at": item.expiresAt.map(formatter.string) as Any? ?? NSNull(),
+                "actions": item.actions.map { action in ["id": action.id, "actor_user_id": action.actorID as Any? ?? NSNull(),
+                    "action": action.action, "amount_minor": action.amount as Any? ?? NSNull(), "note": action.note,
+                    "created_at": formatter.string(from: action.date)] as [String: Any] }]
+        })
+    }
+    private func expireRequest(at index: Int) -> Bool {
+        guard ["Pending", "Changes requested"].contains(demo.requests[index].status),
+              let expiry = demo.requests[index].expiresAt, expiry <= requestNow() else { return false }
+        demo.requests[index].status = "Expired"; demo.requests[index].version += 1
+        demo.requests[index].appendAction("expired", actor: nil, note: "Request expired after 30 days", at: requestNow())
+        return true
+    }
+    private func validateRequest(_ value: APIFinancialRequestCreate) throws {
+        guard requestCapability("request_money"), value.requestedAmountMinor > 0, value.reason.count <= 500,
+              ["additional_allocation", "purchase_approval", "savings_withdrawal", "category_transfer", "large_purchase", "allowance_exception"].contains(value.requestType),
+              requestCategoryVisible(value.destinationCategoryID), demo.categories.contains(where: {
+                  $0.id == value.destinationCategoryID && !$0.isHidden && !demo.archivedGroups.contains($0.group)
+              }) else { throw workspaceRepositoryError("Invalid or unauthorized request destination or amount.") }
+    }
+    func cancelRequest(id: String, version: Int, note: String) async throws {
+        guard requestCapability("request_money"), let index = demo.requests.firstIndex(where: { $0.id == id && $0.member == demo.persona }) else { throw workspaceRepositoryError("Request not found.") }
+        guard !expireRequest(at: index), demo.requests[index].version == version,
+              ["Pending", "Changes requested"].contains(demo.requests[index].status), note.count <= 500 else { throw workspaceRepositoryError("Request has already changed or expired.") }
+        demo.requests[index].status = "Cancelled"; demo.requests[index].version += 1
+        demo.requests[index].appendAction("cancelled", actor: requestActorID, note: note, at: requestNow())
+    }
+    func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws {
+        guard requestCapability("request_money"), let index = demo.requests.firstIndex(where: { $0.id == id && $0.member == demo.persona }) else { throw workspaceRepositoryError("Request not found.") }
+        guard !expireRequest(at: index), demo.requests[index].version == version, demo.requests[index].status == "Changes requested" else { throw workspaceRepositoryError("Request has already changed or expired.") }
+        try validateRequest(value)
+        demo.requests[index].amount = value.requestedAmountMinor; demo.requests[index].categoryID = value.destinationCategoryID
+        demo.requests[index].reason = value.reason; demo.requests[index].requestType = value.requestType
+        demo.requests[index].status = "Pending"; demo.requests[index].version += 1
+        demo.requests[index].expiresAt = requestNow().addingTimeInterval(30 * 24 * 60 * 60)
+        demo.requests[index].appendAction("revised", actor: requestActorID, amount: value.requestedAmountMinor, note: value.reason, at: requestNow())
+    }
     private var canManageAllowances: Bool {
         if demo.persona == .rey { return true }
         if let profile = accessProfiles[demo.persona.rawValue.lowercased()] { return !demo.isRestricted && profile.capabilities.contains("manage_allowances") }
@@ -1152,7 +1217,14 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return result
     }
     func deleteAccountDebtTerms(accountID: String) async throws { debtTermsValues.removeValue(forKey: accountID) }
-    func createRequest(_ value: APIFinancialRequestCreate) async throws { demo.requests.insert(.init(id: UUID().uuidString, member: demo.persona, amount: value.requestedAmountMinor, categoryID: value.destinationCategoryID, reason: value.reason, status: "Pending", date: .demo(monthsAgo: 0, day: 30)), at: 0) }
+    func createRequest(_ value: APIFinancialRequestCreate) async throws {
+        try validateRequest(value)
+        var item = DemoRequest(id: UUID().uuidString, member: demo.persona, amount: value.requestedAmountMinor,
+            categoryID: value.destinationCategoryID, reason: value.reason, status: "Pending", date: requestNow(), requestType: value.requestType,
+            expiresAt: requestNow().addingTimeInterval(30 * 24 * 60 * 60))
+        item.appendAction("submitted", actor: requestActorID, amount: value.requestedAmountMinor, note: value.reason, at: requestNow())
+        demo.requests.insert(item, at: 0)
+    }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws {
         guard let index = demo.categories.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Category not found.") }
         let targetGroup = groupName ?? demo.categories[index].group
@@ -1217,19 +1289,23 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return ScheduledRealizationObservation(scheduleID: id, transactionIDs: transactionIDs, realizedOn: item.nextDate, nextDate: next.map(BudgetWorkspaceStore.dateString), isActive: next != nil, lastRealizedOn: item.nextDate)
     }
     func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws {
-        guard !demo.isRestricted, budget.can("approve_request") else { throw workspaceRepositoryError("Request approval is not permitted.") }
-        guard version == 0, let index = demo.requests.firstIndex(where: { $0.id == id }), demo.requests[index].status == "Pending" else {
+        guard requestCapability("approve_request"), let index = demo.requests.firstIndex(where: { $0.id == id }), requestVisible(demo.requests[index]) else { throw workspaceRepositoryError("Request approval is not permitted.") }
+        guard !expireRequest(at: index), version == demo.requests[index].version, demo.requests[index].status == "Pending", note.count <= 500 else {
             throw workspaceRepositoryError("Request has already changed or is unavailable.")
         }
         switch decision {
         case "approve":
-            guard let amount, let sourceCategoryID else { throw workspaceRepositoryError("Choose an approval amount and source category.") }
-            guard demo.approve(id, amount: amount, sourceCategoryID: sourceCategoryID, note: note) else { throw workspaceRepositoryError(demo.errorMessage) }
+            guard let amount, let sourceCategoryID, requestCategoryVisible(sourceCategoryID) else { throw workspaceRepositoryError("Choose an authorized approval amount and source category.") }
+            guard demo.approve(id, amount: amount, sourceCategoryID: sourceCategoryID, note: note, at: requestNow()) else { throw workspaceRepositoryError(demo.errorMessage) }
         case "reject": demo.requests[index].status = "Rejected"
         case "changes_requested":
             guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw workspaceRepositoryError("Explain the requested changes.") }
             demo.requests[index].status = "Changes requested"
         default: throw workspaceRepositoryError("Unsupported request decision.")
+        }
+        if decision != "approve" {
+            demo.requests[index].version += 1
+            demo.requests[index].appendAction(decision == "reject" ? "rejected" : "changes_requested", actor: requestActorID, note: note, at: requestNow())
         }
     }
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview {
@@ -2022,6 +2098,9 @@ final class BudgetWorkspaceStore: ObservableObject {
     func accessProfile(userID: String) async throws -> APIAccessProfile { try await commands().accessProfile(userID: userID) }
 
     func cancelRequest(id: String, version: Int, note: String) async throws { try await commands().cancelRequest(id: id, version: version, note: note); await refresh() }
+    func isRequestOwner(_ requesterID: String, authenticatedUserID: String?) -> Bool {
+        requesterID == (dataSource?.actorUserID ?? authenticatedUserID)
+    }
     func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws { try await commands().reviseRequest(id: id, version: version, value: value); await refresh() }
     func createAllowance(_ value: APIAllowancePlanCreate) async throws { try await commands().createAllowance(value); await refresh() }
     func setAllowanceActive(id: String, active: Bool) async throws { try await commands().setAllowanceActive(id: id, active: active); await refresh() }
@@ -2593,7 +2672,7 @@ private struct LiveHomeView: View {
     @State private var movePresentation: MoveMoneyPresentation?
     @State private var managingCategory: APICategory?
     private var planRows: [APICategoryMonth] { store.summary?.categories ?? [] }
-    private var pendingRequests: [APIFinancialRequest] { store.requests.filter { $0.status == "pending" } }
+    private var pendingRequests: [APIFinancialRequest] { store.requests.filter { ["pending", "changes_requested"].contains($0.status) } }
     private var activeSchedules: [APIScheduledTransaction] {
         store.scheduledTransactions.filter(\.isActive).sorted { $0.nextDate < $1.nextDate }
     }
@@ -2661,7 +2740,13 @@ private struct LiveHomeView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(pendingRequests) { request in NavigationLink { LiveRequestDetailView(requestID: request.id) } label: { Label("Request pending · \(store.format(request.requestedAmountMinor))", systemImage: "hand.raised.fill") } }
+                    ForEach(pendingRequests) { request in NavigationLink { LiveRequestDetailView(requestID: request.id) } label: { Label("\(request.status == "changes_requested" ? "Changes requested" : "Request pending") · \(store.format(request.requestedAmountMinor))", systemImage: "hand.raised.fill") }.accessibilityIdentifier("home-request-\(request.id)") }
+                }
+            }
+            if !store.requests.isEmpty {
+                Section("Requests") {
+                    NavigationLink("View all requests") { LiveRequestsView() }
+                        .accessibilityIdentifier("all-funding-requests")
                 }
             }
             if !store.isLoading {
@@ -2762,6 +2847,31 @@ private struct LiveForecastView: View {
     var body: some View { List { if let forecast = store.forecast { Section { Text("Projected values include schedules but are not spendable until entered.").font(.footnote).foregroundStyle(.secondary) }; Section("Household cash") { LabeledContent("Today", value: store.format(forecast.actualTotalOnBudgetMinor)); LabeledContent("At \(forecast.through)", value: store.format(forecast.projectedTotalOnBudgetMinor)); LabeledContent("Lowest", value: store.format(forecast.lowestProjectedTotalMinor)) }; Section("Accounts") { ForEach(forecast.accounts) { account in VStack(alignment: .leading) { Text(account.name); HStack { Text("Now \(store.format(account.actualBalanceMinor))"); Spacer(); Text("Projected \(store.format(account.projectedBalanceMinor))") }.font(.caption).foregroundStyle(.secondary) } } }; Section("Scheduled activity") { if forecast.occurrences.isEmpty { Text("No scheduled transactions in this period").foregroundStyle(.secondary) }; ForEach(forecast.occurrences) { item in if let schedule = store.scheduledTransactions.first(where: { $0.id == item.scheduledTransactionID }) { NavigationLink { LiveScheduledTransactionEditor(schedule: schedule, currencyCode: store.budget.currencyCode) } label: { ScheduledActivityPresentation(name: item.name, amountMinor: item.amountMinor, occurrenceDate: item.occurredOn, context: item.categoryID.flatMap { id in store.categories.first(where: { $0.id == id })?.name }) } } else { ScheduledActivityPresentation(name: item.name, amountMinor: item.amountMinor, occurrenceDate: item.occurredOn, context: nil) } } } } }.navigationTitle("Forecast") }
 }
 
+private struct LiveRequestsView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    var body: some View {
+        List {
+            Section("Active") {
+                ForEach(store.requests.filter { ["pending", "changes_requested"].contains($0.status) }) { row($0) }
+            }
+            Section("History") {
+                ForEach(store.requests.filter { !["pending", "changes_requested"].contains($0.status) }) { row($0) }
+            }
+        }
+        .navigationTitle("Requests")
+        .refreshable { await store.refresh() }
+        .overlay { if store.requests.isEmpty { ContentUnavailableView("No requests", systemImage: "hand.raised", description: Text("Requests you are authorized to view appear here.")) } }
+    }
+    private func row(_ request: APIFinancialRequest) -> some View {
+        NavigationLink { LiveRequestDetailView(requestID: request.id) } label: {
+            VStack(alignment: .leading) {
+                Text("\(request.status.replacingOccurrences(of: "_", with: " ").capitalized) · \(store.format(request.requestedAmountMinor))")
+                if !request.reason.isEmpty { Text(request.reason).font(.caption).foregroundStyle(.secondary) }
+            }
+        }.accessibilityIdentifier("funding-request-\(request.id)")
+    }
+}
+
 private struct LiveRequestDetailView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
@@ -2795,7 +2905,7 @@ private struct LiveRequestDetailView: View {
                         Button("Reject", role: .destructive) { Task { await decide("reject") } }.disabled(isSaving)
                     }
                 }
-                if request.requesterUserID == session.profile?.id && ["pending", "changes_requested"].contains(request.status) {
+                if store.isRequestOwner(request.requesterUserID, authenticatedUserID: session.profile?.id) && ["pending", "changes_requested"].contains(request.status) {
                     Section("Your request") {
                         if request.status == "changes_requested" { Button("Revise and Resubmit") { showRevise = true } }
                         Button("Cancel Request", role: .destructive) { confirmCancel = true }
@@ -2823,7 +2933,10 @@ private struct LiveRequestDetailView: View {
             Button("OK", role: .cancel) {}
         } message: { Text(errorMessage ?? "Unknown error") }
         .sheet(isPresented: $showRevise) { if let request { FundingRequestView(budget: store.budget, categories: store.categories, request: request, onSaved: store.refresh) } }
-        .confirmationDialog("Cancel this request?", isPresented: $confirmCancel, titleVisibility: .visible) { Button("Cancel Request", role: .destructive) { Task { await cancel() } } } message: { Text("The request and its decision history remain visible, but it can no longer be approved.") }
+        .alert("Cancel this request?", isPresented: $confirmCancel) {
+            Button("Keep Request", role: .cancel) {}
+            Button("Cancel Request", role: .destructive) { Task { await cancel() } }
+        } message: { Text("The request and its decision history remain visible, but it can no longer be approved.") }
     }
     private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: store.budget.currencyCode), value > 0, value <= (request?.requestedAmountMinor ?? 0) else { return nil }; return value }
     private func requesterName(_ id: String) -> String { store.householdMembers.first(where: { $0.userID == id })?.displayName ?? id.capitalized }

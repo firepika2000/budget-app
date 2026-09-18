@@ -1198,6 +1198,32 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(app.switches["member-access-restrict-accounts"].value as? String, "1")
     }
 
+    func testDelegatedRequestCancellationIsReachableConfirmedAndRetainedInHistory() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-persona=Alex", "--demo-screen=home"]
+        app.launch()
+        let pending = app.buttons["home-request-request-game"]
+        for _ in 0..<7 where !pending.exists { app.swipeUp() }
+        XCTAssertTrue(pending.waitForExistence(timeout: 5)); pending.tap()
+        XCTAssertTrue(app.navigationBars["Funding Request"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Approve"].exists)
+        app.buttons["Cancel Request"].tap()
+        app.alerts.buttons["Keep Request"].tap()
+        XCTAssertTrue(app.buttons["Cancel Request"].exists)
+        app.buttons["Cancel Request"].tap()
+        app.alerts.buttons["Cancel Request"].tap()
+        XCTAssertTrue(app.buttons["Cancel Request"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(identifier: "Cancelled").firstMatch.waitForExistence(timeout: 5))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let history = app.buttons["all-funding-requests"]
+        for _ in 0..<7 where !history.exists { app.swipeUp() }
+        XCTAssertTrue(history.waitForExistence(timeout: 5)); history.tap()
+        app.buttons["funding-request-request-game"].tap()
+        XCTAssertTrue(app.navigationBars["Funding Request"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Cancel Request"].exists)
+        XCTAssertTrue(app.staticTexts.matching(identifier: "Cancelled").firstMatch.exists)
+    }
+
     func testProductionDemoAllowanceIssuePauseAndReopenUsesSharedHouseholdFlow() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=home"]

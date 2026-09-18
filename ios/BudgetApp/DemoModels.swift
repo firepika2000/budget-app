@@ -212,6 +212,20 @@ struct DemoRequest: Identifiable, Hashable {
     var reason: String
     var status: String
     var date: Date
+    var version = 0
+    var requestType = "additional_allocation"
+    var expiresAt: Date?
+    var sourceCategoryID: String?
+    var allocationOperationID: String?
+    var actions: [DemoRequestAction] = []
+
+    mutating func appendAction(_ action: String, actor: String?, amount: Int64? = nil, note: String, at: Date) {
+        actions.append(.init(id: UUID().uuidString, actorID: actor, action: action, amount: amount, note: note, date: at))
+    }
+}
+
+struct DemoRequestAction: Hashable {
+    let id: String; let actorID: String?; let action: String; let amount: Int64?; let note: String; let date: Date
 }
 
 struct DemoAllowance: Identifiable, Hashable {

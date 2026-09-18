@@ -459,7 +459,7 @@ final class DemoStore: ObservableObject {
     }
 
     @discardableResult
-    func approve(_ requestID: String, amount: Int64, sourceCategoryID: String = "buffer", note: String = "") -> Bool {
+    func approve(_ requestID: String, amount: Int64, sourceCategoryID: String = "buffer", note: String = "", at now: Date = Date()) -> Bool {
         guard !isRestricted else { return fail(.restrictedCategory) }
         guard let index = requests.firstIndex(where: { $0.id == requestID }), requests[index].status == "Pending" else {
             return failMessage("Request has already changed or is unavailable.")
@@ -473,8 +473,8 @@ final class DemoStore: ObservableObject {
             return fail(.categoryNotFound)
         }
         do {
-            let day = BudgetWorkspaceStore.dateString(Date())
-            let available = try planningSnapshot(month: currentPlanningMonth, through: day).categories[sourceCategoryID]?.availableMinor ?? 0
+            let day = BudgetWorkspaceStore.dateString(now)
+            let available = try planningSnapshot(month: String(day.prefix(7)) + "-01", through: day).categories[sourceCategoryID]?.availableMinor ?? 0
             guard available >= amount else { return fail(.insufficientFunds(available: available)) }
             let allocation = try PlanningPeriodProjection.Allocation(occurredOn: day, postings: [
                 .init(categoryID: categories[source].id, amountMinor: -amount),
@@ -486,6 +486,11 @@ final class DemoStore: ObservableObject {
             publishPlanning(plan)
             requests[index].approvedAmount = amount
             requests[index].status = amount < requests[index].amount ? "Partially approved" : "Approved"
+            requests[index].version += 1
+            requests[index].sourceCategoryID = sourceCategoryID
+            requests[index].allocationOperationID = allocationEvents.last?.operationID
+            requests[index].appendAction(amount < requests[index].amount ? "partially_approved" : "approved",
+                actor: persona == .rey ? "demo-owner" : persona.rawValue.lowercased(), amount: amount, note: note, at: now)
         } catch { return failMessage(error.localizedDescription) }
         errorMessage = nil
         return true

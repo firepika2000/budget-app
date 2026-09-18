@@ -4,6 +4,73 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoRequestRevisionCancellationExpiryAndApprovalUseActualVersions() async throws {
+        var now = BudgetWorkspaceStore.parseDate("2026-09-18")
+        let source = DemoWorkspaceDataSource(requestNow: { now })
+        let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        func rows() async throws -> [APIFinancialRequest] { try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query).requests }
+        func row(_ id: String) async throws -> APIFinancialRequest { let values = try await rows(); return try XCTUnwrap(values.first { $0.id == id }) }
+        let accounts = source.demo.accounts, transactions = source.demo.transactions
+        let original = try source.demo.planningSnapshot(month: "2026-09-01")
+        let allocationVersion = source.demo.allocationVersion
+        source.demo.persona = .alex
+        try await source.createRequest(.init(destinationCategoryID: "alexallow", requestedAmountMinor: 2_500, reason: "Original"))
+        let id = try XCTUnwrap(source.demo.requests.first?.id)
+        var request = try await row(id)
+        XCTAssertEqual(request.version, 0); XCTAssertEqual(request.actions.map(\.action), ["submitted"])
+        XCTAssertNotNil(request.expiresAt)
+        source.demo.persona = .rey
+        do { try await source.cancelRequest(id: id, version: 0, note: "Not mine"); XCTFail("Owner cannot impersonate requester") } catch {}
+        try await source.decideRequest(id: id, decision: "changes_requested", version: 0, amount: nil, sourceCategoryID: nil, note: "Explain the purchase")
+        source.demo.persona = .alex
+        let revision = APIFinancialRequestCreate(requestType: "purchase_approval", destinationCategoryID: "alexallow", requestedAmountMinor: 2_000, reason: "School supplies")
+        do { try await source.reviseRequest(id: id, version: 0, value: revision); XCTFail("Stale revision") } catch {}
+        do { try await source.reviseRequest(id: id, version: 1, value: .init(destinationCategoryID: "miaallow", requestedAmountMinor: 2_000, reason: "Hidden")); XCTFail("Sibling category") } catch {}
+        try await source.reviseRequest(id: id, version: 1, value: revision)
+        request = try await row(id)
+        XCTAssertEqual(request.version, 2); XCTAssertEqual(request.requestType, "purchase_approval")
+        XCTAssertEqual(request.actions.map(\.action), ["submitted", "changes_requested", "revised"])
+        XCTAssertEqual(source.demo.allocationVersion, allocationVersion)
+        source.demo.persona = .rey
+        try await source.decideRequest(id: id, decision: "approve", version: 2, amount: 1_000, sourceCategoryID: "buffer", note: "Partial")
+        request = try await row(id)
+        XCTAssertEqual(request.version, 3); XCTAssertEqual(request.status, "partially_approved")
+        XCTAssertEqual(request.sourceCategoryID, "buffer"); XCTAssertNotNil(request.allocationOperationID)
+        XCTAssertEqual(request.actions.last?.amountMinor, 1_000)
+        do { try await source.decideRequest(id: id, decision: "approve", version: 3, amount: 1_000, sourceCategoryID: "buffer", note: "Duplicate"); XCTFail("Terminal request") } catch {}
+        let funded = try source.demo.planningSnapshot(month: "2026-09-01")
+        XCTAssertEqual(funded.readyToAssignMinor, original.readyToAssignMinor)
+        XCTAssertEqual(funded.categories["buffer"]?.availableMinor, (original.categories["buffer"]?.availableMinor ?? 0) - 1_000)
+        XCTAssertEqual(funded.categories["alexallow"]?.availableMinor, (original.categories["alexallow"]?.availableMinor ?? 0) + 1_000)
+        source.demo.persona = .alex
+        request = try await row(id)
+        XCTAssertNil(request.sourceCategoryID)
+        try await source.createRequest(.init(destinationCategoryID: "alexsave", requestedAmountMinor: 100, reason: "Cancel"))
+        let cancelID = try XCTUnwrap(source.demo.requests.first?.id)
+        try await source.cancelRequest(id: cancelID, version: 0, note: "Changed my mind")
+        do { try await source.cancelRequest(id: cancelID, version: 1, note: "Again"); XCTFail("Duplicate cancellation") } catch {}
+        XCTAssertEqual(source.demo.requests.first?.actions.map(\.action), ["submitted", "cancelled"])
+        var expiredIDs: [String] = []
+        for _ in 0..<3 {
+            try await source.createRequest(.init(destinationCategoryID: "alexallow", requestedAmountMinor: 100, reason: "Expires"))
+            expiredIDs.append(try XCTUnwrap(source.demo.requests.first?.id))
+        }
+        now = now.addingTimeInterval(31 * 24 * 60 * 60)
+        let expired = try await rows().filter { expiredIDs.contains($0.id) }
+        XCTAssertEqual(expired.count, 3)
+        XCTAssertTrue(expired.allSatisfy { $0.status == "expired" && $0.version == 1 && $0.actions.count == 2 && $0.actions.last?.actorUserID == nil })
+        let repeated = try await rows().filter { expiredIDs.contains($0.id) }
+        XCTAssertEqual(repeated, expired)
+        source.demo.persona = .mia
+        let siblingRows = try await rows()
+        XCTAssertFalse(siblingRows.contains { $0.id == id || $0.id == cancelID || expiredIDs.contains($0.id) })
+        source.demo.persona = .rey
+        do { try await source.decideRequest(id: expiredIDs[0], decision: "approve", version: 1, amount: 100, sourceCategoryID: "buffer", note: "Expired"); XCTFail("Expired approval") } catch {}
+        XCTAssertEqual(source.demo.allocationVersion, allocationVersion + 1)
+        XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+    }
+
+    @MainActor
     func testProductionDemoAllowanceIssuanceIsAtomicVersionedAndMatchesServerRollover() async throws {
         for policy in ["rollover", "use_it_or_lose_it"] {
             let source = DemoWorkspaceDataSource(fresh: true)

@@ -4,6 +4,31 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo request lifecycle after `d1ac8f5`: create/revise/cancel/decision now store actual request type,
+version, expiry and ordered action provenance rather than deriving version from status or returning
+success without mutation. Requester ownership, current destination scope, stale versions, terminal
+states and validation are checked before transitions. Approval still uses the canonical dated
+allocation projection, recording its operation/source and one version increment. Nonfinancial
+transitions never change allocations/accounts/transactions. Visible due requests expire exactly
+once under an injected request clock; legacy seed requests explicitly retain nullable expiry.
+
+Shared UI ownership now resolves optional actor identity through the provider contract, falling back
+to the authenticated Live profile. There is no Demo-specific screen or downcast. Cancel/Revise were
+previously unreachable in Demo because they required a Live profile. Home now includes requests
+requiring changes, and a shared Active/History list keeps completed request provenance reachable.
+Cancellation requires a native confirmation alert with explicit Keep/Cancel actions.
+
+Verification: **125 native XCTest + 1 production request-navigation XCUITest PASS**, using Xcode
+27.0 Beta (27A5252f), existing iPhone 17 Pro Max / iOS 27 device
+`3ABD861E-D38D-4AFD-A356-959266051564`. The UI journey cancels dismissal, confirms cancellation,
+then reopens the retained history entry. Financial regression covers revision, stale versions,
+partial approval, duplicate rejection, scope, batch expiry and unchanged actual balances.
+**48 BudgetCore + 52 BudgetAPI tests PASS; 14 backend request reference tests PASS**.
+Evidence: `/tmp/budget-demo-request-journey.log`, `/tmp/budget-demo-request-package.log`,
+`/tmp/budget-demo-request-reference.log`; diff check PASS. No backend or migration change in this
+checkpoint; prior full backend remains 458 passed. Dynamic child custom-approver parity remains
+open: Demo conservatively denies that role. Human acceptance remains pending; do not retest.
+
 Request lifecycle hardening after `e80d2b8`: two new regressions first reproduced a resource-scope
 leak and short-circuited expiry. `approve_request` alone previously exposed requests targeting hidden
 categories and allowed reject/change decisions on those requests. Destination scope now filters SQL
