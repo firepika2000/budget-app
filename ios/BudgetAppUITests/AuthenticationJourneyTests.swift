@@ -2,6 +2,32 @@ import XCTest
 import UIKit
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testSmartFundingProductionPreviewCancelAndConfirmRefreshes() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=plan"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        func openPreview() {
+            app.buttons["plan-add-menu"].tap()
+            app.buttons["Smart Funding"].tap()
+            XCTAssertTrue(app.navigationBars["Smart Funding"].waitForExistence(timeout: 5))
+        }
+        openPreview()
+        let confirm = app.navigationBars["Smart Funding"].buttons["Confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        XCTAssertTrue(confirm.isEnabled)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Smart Funding"].waitForNonExistence(timeout: 5))
+        openPreview()
+        XCTAssertTrue(confirm.isEnabled, "Cancelling must not consume the available allocation")
+        confirm.tap()
+        XCTAssertTrue(app.navigationBars["Smart Funding"].waitForNonExistence(timeout: 5))
+        openPreview()
+        XCTAssertFalse(confirm.isEnabled, "The seeded available allocation is exhausted; no repeated commit is offered")
+        app.buttons["Cancel"].tap()
+    }
+
     func testProductionDebtOverviewActuallyRendersHistoryAndExactObservations() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

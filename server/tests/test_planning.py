@@ -1,6 +1,8 @@
 from datetime import date
+from types import SimpleNamespace
 
 from app import planning_routes
+from app.budgeting_routes import build_smart_funding_preview
 
 from .conftest import auth, freeze_today
 from .test_advanced_ledger import add_category, record
@@ -11,6 +13,22 @@ from .test_budgeting_api import create_budget, create_budget_structure
 # fixed occurrence dates, so they pin the anchor to a stable reference (the start
 # of the budget month under test) instead of the real wall clock.
 FORECAST_AS_OF = date(2026, 9, 1)
+
+
+def test_smart_funding_partial_guidance_and_negative_rta_are_exact():
+    category = SimpleNamespace(category_id="category", name="Target", available_minor=2000,
+                               recommended_contribution_minor=10000, underfunded_minor=5000)
+    summary = SimpleNamespace(month=date(2027, 2, 1), currency_code="USD", allocation_version=1,
+                              ready_to_assign_minor=100000, categories=[category])
+    preview = build_smart_funding_preview(summary)
+    assert preview["proposed_minor"] == 5000
+    assert preview["proposals"][0]["after_available_minor"] == 7000
+    assert preview["after_ready_to_assign_minor"] == 95000
+    summary.ready_to_assign_minor = -100
+    preview = build_smart_funding_preview(summary)
+    assert preview["proposed_minor"] == 0
+    assert preview["proposals"] == []
+    assert preview["after_ready_to_assign_minor"] == -100
 
 
 def test_target_recommendation_uses_rollover_without_mutating_allocation(
@@ -168,3 +186,11 @@ def test_smart_funding_preview_is_nonmutating_and_commit_is_atomic(client, owner
     ).json()
     assert summary["ready_to_assign_minor"] == 30000
     assert summary["total_assigned_minor"] == 70000
+
+    # A fresh preview must not request the same monthly contribution a second time.
+    repeat = client.get(
+        f"/api/v1/budgets/{budget['id']}/smart-funding/2026-09-01", headers=auth(owner_token)
+    )
+    assert repeat.status_code == 200
+    assert repeat.json()["proposals"] == []
+    assert repeat.json()["proposed_minor"] == 0

@@ -636,6 +636,45 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSmartFundingUsesMonthlyGuidanceAndRejectsRepeatOrRestrictedCommit() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        source.demo.categories = [
+            .init(id: "monthly", group: "Goals", name: "Monthly", icon: "target", assigned: 5000, activity: -3000, available: 2000, target: 10000),
+            .init(id: "annual", group: "Goals", name: "Annual", icon: "target", assigned: 0, activity: 0, available: 0, target: 120000, targetDate: "2027-01-31"),
+            .init(id: "inactive", group: "Goals", name: "Inactive", icon: "target", assigned: 0, activity: 0, available: 0, target: 999999)
+        ]
+        source.demo.categories[0].targetType = "monthly_funding"
+        source.demo.categories[1].targetType = "recurring_expense"
+        source.demo.categories[1].targetRecurrenceMonths = 12
+        source.demo.categories[2].targetIsActive = false
+        source.demo.setUnassigned(100000)
+        let before = source.demo.categories
+        let preview = try await source.smartFundingPreview(month: "2027-02-01")
+        XCTAssertEqual(source.demo.categories, before)
+        XCTAssertEqual(preview.proposals.map(\.categoryID), ["annual", "monthly"])
+        XCTAssertEqual(preview.proposals.map(\.amountMinor), [10000, 5000])
+        XCTAssertEqual(preview.proposedMinor, 15000)
+        try await source.commitSmartFunding(preview)
+        XCTAssertEqual(source.demo.readyToAssign, 85000)
+        XCTAssertEqual(source.demo.categories[0].activity, -3000)
+        XCTAssertEqual(source.demo.categories[0].assigned, 10000)
+        XCTAssertEqual(source.demo.categories[1].assigned, 10000)
+        let repeated = try await source.smartFundingPreview(month: "2027-02-01")
+        XCTAssertTrue(repeated.proposals.isEmpty)
+        do { try await source.commitSmartFunding(preview); XCTFail("Stale confirmation must not assign again") }
+        catch { }
+        XCTAssertEqual(source.demo.readyToAssign, 85000)
+        source.demo.persona = .alex
+        let restricted = try await source.smartFundingPreview(month: "2027-02-01")
+        XCTAssertEqual(restricted.beforeReadyToAssignMinor, 0)
+        XCTAssertTrue(restricted.proposals.isEmpty)
+        do { try await source.commitSmartFunding(preview); XCTFail("Restricted confirmation must be denied") }
+        catch { }
+        source.demo.persona = .rey
+        XCTAssertEqual(source.demo.readyToAssign, 85000)
+    }
+
+    @MainActor
     func testRecurringTargetAdvancesGuidanceWithoutChangingAnchorOrMoney() async throws {
         let store = BudgetWorkspaceStore.demo()
         store.planMonth = try XCTUnwrap(Calendar.current.date(from: DateComponents(year: 2027, month: 2, day: 1)))

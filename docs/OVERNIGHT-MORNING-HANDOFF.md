@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`627b957` is pushed. Next verified correction fixes reproduced Smart Funding duplicate need:
+after 70000 target funding, preview wrongly proposed another 30000. Live now uses only underfunding;
+Demo uses canonical monthly guidance and denies stale/repeated/restricted commit. Negative RTA
+remains negative; previews never manufacture money. **351 backend pass, zero skips; 39 Core + 47 API;
+90 native XCTest + two production UI tests pass**, Beta build successful. No migration/Live changes.
+Next: target priority and insufficient-funding explanation, followed by month-specific snooze.
+Keep **HUMAN ACCEPTANCE PENDING — DO NOT RETEST**; production readiness remains in progress.
+
 `431de33` is pushed (coordinated source backup capture). Next verified checkpoint corrects recurring
 target monthly guidance on Live and Demo using immutable anchor/cadence and 14 shared exact vectors.
 Backend **350 pass, zero skips**; focused planning/golden **45 pass**; package **39 Core + 47 API**;

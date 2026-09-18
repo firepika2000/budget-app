@@ -2269,8 +2269,8 @@ def month_summary(
 def build_smart_funding_preview(summary: MonthSummaryResponse) -> dict:
     remaining = max(summary.ready_to_assign_minor, 0)
     proposals = []
-    for category in sorted(summary.categories, key=lambda item: (-item.recommended_contribution_minor, item.name)):
-        requested = min(max(category.underfunded_minor, category.recommended_contribution_minor), remaining)
+    for category in sorted(summary.categories, key=lambda item: (-item.recommended_contribution_minor, item.name, item.category_id)):
+        requested = min(max(category.underfunded_minor, 0), remaining)
         if requested <= 0:
             continue
         proposals.append({
@@ -2283,13 +2283,13 @@ def build_smart_funding_preview(summary: MonthSummaryResponse) -> dict:
         remaining -= requested
         if remaining == 0:
             break
-    proposed = summary.ready_to_assign_minor - remaining
+    proposed = max(summary.ready_to_assign_minor, 0) - remaining
     return {
         "month": summary.month,
         "currency_code": summary.currency_code,
         "before_ready_to_assign_minor": summary.ready_to_assign_minor,
         "proposed_minor": proposed,
-        "after_ready_to_assign_minor": remaining,
+        "after_ready_to_assign_minor": summary.ready_to_assign_minor - proposed,
         "allocation_version": summary.allocation_version,
         "proposals": proposals,
     }

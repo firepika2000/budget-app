@@ -54,6 +54,16 @@ native **89 XCTest + one Plan UI test pass**, Beta build/test success. Initial n
 legacy non-ISO seed dates; corrected fixtures passed the rerun. No migration or human data changes.
 Next proven-source audit: incremental Smart Funding over-proposal and Demo command parity.
 
+### Incremental Smart Funding checkpoint — 2026-09-18
+
+Following `627b957`, a failing HTTP repeat-preview regression proved already-funded monthly amounts
+were proposed again. Fixed to use underfunding only; negative RTA remains intact and stable tie ordering
+is deterministic. Demo consumes canonical target guidance and rejects stale/repeated/restricted commits.
+Full backend **351 pass, zero skips**; Swift **39 Core + 47 API**; native **90 XCTest + two production
+UI tests pass**, including actual preview/cancel/confirm/reopen. Beta Simulator build succeeds.
+No migration, human data mutation, merge or tag. Planning still needs priority/shortfall UX and snooze;
+broader mission gates remain open and human acceptance remains pending.
+
 ## Human data and migration ledger
 
 Never run migration, destructive, scale or restore tests against human Live. Known unapplied chain:

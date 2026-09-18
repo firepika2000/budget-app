@@ -993,12 +993,49 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws { if decision == "approve", let amount { demo.approve(id, amount: amount) } else if let index = demo.requests.firstIndex(where: { $0.id == id }) { demo.requests[index].status = decision == "reject" ? "Rejected" : "Changes requested" } }
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview {
-        var remaining = max(demo.readyToAssign, 0); var rows: [[String: Any]] = []
-        for category in demo.visibleCategories where remaining > 0 { let needed = max((category.target ?? 0) - category.available, 0); let amount = min(needed, remaining); if amount > 0 { rows.append(["category_id": category.id, "category_name": category.name, "amount_minor": amount, "before_available_minor": category.available, "after_available_minor": category.available + amount]); remaining -= amount } }
-        let proposed = max(demo.readyToAssign, 0) - remaining
-        return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": demo.readyToAssign, "proposed_minor": proposed, "after_ready_to_assign_minor": demo.readyToAssign - proposed, "allocation_version": 1, "proposals": rows]))
+        let ready = demo.isRestricted ? 0 : demo.readyToAssign
+        var remaining = max(ready, 0)
+        var rows: [[String: Any]] = []
+        let guidance = try demo.visibleCategories.compactMap { category -> (DemoCategory, TargetPlanning.Funding)? in
+            guard let amount = category.target else { return nil }
+            return (category, try TargetPlanning.funding(type: category.targetType, amountMinor: amount,
+                targetDate: category.targetDate, recurrenceMonths: category.targetRecurrenceMonths,
+                minimumMinor: category.targetMinimumContribution, isActive: category.targetIsActive,
+                month: month, assignedMinor: category.assigned, availableMinor: category.available))
+        }.sorted { left, right in
+            if left.1.recommendedContributionMinor != right.1.recommendedContributionMinor {
+                return left.1.recommendedContributionMinor > right.1.recommendedContributionMinor
+            }
+            return left.0.name == right.0.name ? left.0.id < right.0.id : left.0.name < right.0.name
+        }
+        for (category, funding) in guidance where remaining > 0 {
+            let amount = min(funding.underfundedMinor, remaining)
+            guard amount > 0 else { continue }
+            let after = category.available.addingReportingOverflow(amount)
+            guard !after.overflow else { throw workspaceRepositoryError("Target funding exceeds the supported amount range.") }
+            rows.append(["category_id": category.id, "category_name": category.name, "amount_minor": amount,
+                         "before_available_minor": category.available, "after_available_minor": after.partialValue])
+            remaining -= amount
+        }
+        let proposed = max(ready, 0) - remaining
+        return try JSONDecoder().decode(APISmartFundingPreview.self, from: JSONSerialization.data(withJSONObject: ["month": month, "currency_code": "USD", "before_ready_to_assign_minor": ready, "proposed_minor": proposed, "after_ready_to_assign_minor": ready - proposed, "allocation_version": 1, "proposals": rows]))
     }
-    func commitSmartFunding(_ preview: APISmartFundingPreview) async throws { for proposal in preview.proposals { demo.assign(amount: proposal.amountMinor, to: proposal.categoryID) } }
+    func commitSmartFunding(_ preview: APISmartFundingPreview) async throws {
+        guard !demo.isRestricted, budget.can("assign_money") else {
+            throw workspaceRepositoryError("Delegated members allocate only from their delegated pool.")
+        }
+        let current = try await smartFundingPreview(month: preview.month)
+        guard !current.proposals.isEmpty, current == preview else {
+            throw workspaceRepositoryError("Funding recommendations changed. Refresh the preview before confirming.")
+        }
+        for proposal in current.proposals {
+            guard let category = demo.categories.first(where: { $0.id == proposal.categoryID }),
+                  !category.assigned.addingReportingOverflow(proposal.amountMinor).overflow else {
+                throw workspaceRepositoryError("Target funding exceeds the supported amount range.")
+            }
+        }
+        for proposal in current.proposals { demo.assign(amount: proposal.amountMinor, to: proposal.categoryID) }
+    }
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { throw workspaceRepositoryError("Owner policy editing is demonstrated in live mode; use a delegated demo persona to verify the member experience.") }
 }
 
