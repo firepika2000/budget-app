@@ -4,6 +4,19 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo bulk command authorization after `8d44511`: the repository previously relied on UI admission
+and fixed persona checks, allowing custom-permission/ownership bypass and voided/reversal bulk
+mutation through a direct call. Bulk preflight now checks current edit capability, unique bounded
+selection, whole-resource visibility, posted lifecycle and creator-or-manager authority for every
+selected row before any mutation. Existing reconciliation/system-link checks and checked/idempotent
+cleared-balance updates remain. Regression asserts precise 403/404/409/422 refusals, whole-batch
+atomicity, unchanged accounts/transactions and idempotent authorized clearing. Other command families
+still require the same ongoing audit; this is not a blanket Demo authorization PASS.
+Verification: 136 native + 2 production register-clearing/Activity-bulk UI tests PASS; Beta build
+and diff PASS (`/tmp/budget-demo-bulk-authorization.log`). All 5 backend bulk/clearing reference
+tests PASS (`/tmp/budget-demo-bulk-reference.log`). Latest full server/package baselines remain
+461 backend, zero skips, and 49 Core + 54 API; neither server nor package source changed here.
+
 Demo transaction observations after `c49cb3d`: snapshot/browser serialization now uses the same
 account/category visibility predicate as Payee and attachment observations. A split containing
 any forbidden category is excluded as a whole before search/counts/pagination, rather than being

@@ -4,6 +4,48 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoBulkMutationRechecksCapabilityScopeOwnershipAndLifecycleAtomically() async throws {
+        let source = DemoWorkspaceDataSource()
+        let original = source.demo.transactions, accounts = source.demo.accounts
+        func refused(_ ids: [String], status: Int) async throws {
+            let before = source.demo.transactions
+            do { try await source.bulkUpdateTransactions(.init(transactionIDs: ids, action: "set_cleared", cleared: true)); XCTFail("Unauthorized bulk mutation") }
+            catch APIClientError.server(let actual, _) { XCTAssertEqual(actual, status) }
+            XCTAssertEqual(source.demo.transactions, before)
+            XCTAssertEqual(source.demo.accounts, accounts)
+        }
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_transactions"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 0))
+        source.demo.persona = .partner
+        try await refused(["t1"], status: 403)
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["edit_transaction", "manage_budget_structure"], restrictAccounts: true, accountIDs: ["checking"], restrictCategories: false, categoryIDs: [], expectedVersion: 1))
+        source.demo.persona = .partner
+        try await refused(["t1"], status: 404)
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["edit_transaction"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 2))
+        source.demo.persona = .partner
+        try await refused(["t1"], status: 403)
+        source.demo.persona = .rey
+        try await refused(["t1", "missing"], status: 404)
+        try await refused(["t1", "t1"], status: 422)
+        try await refused([], status: 422)
+        try await refused((0..<201).map { "id-\($0)" }, status: 422)
+        let index = try XCTUnwrap(source.demo.transactions.firstIndex { $0.id == "t1" })
+        for status in ["voided", "reversal"] {
+            source.demo.transactions[index].status = status
+            try await refused(["t1"], status: 409)
+        }
+        source.demo.transactions[index].status = "posted"
+        XCTAssertEqual(source.demo.transactions, original)
+        try await source.bulkUpdateTransactions(.init(transactionIDs: ["t1"], action: "set_cleared", cleared: true))
+        XCTAssertTrue(source.demo.transactions[index].cleared)
+        XCTAssertEqual(source.demo.accounts.map(\.balance), accounts.map(\.balance))
+        let clearedAccounts = source.demo.accounts
+        try await source.bulkUpdateTransactions(.init(transactionIDs: ["t1"], action: "set_cleared", cleared: true))
+        XCTAssertEqual(source.demo.accounts, clearedAccounts)
+    }
+
+    @MainActor
     func testDemoTransactionScopePrecedesRowsCountsAndSplitSerialization() async throws {
         let source = DemoWorkspaceDataSource()
         source.demo.transactions.append(.init(id: "mixed-scope", date: BudgetWorkspaceStore.parseDate("2026-09-15"), payee: "Private split", memo: "", accountID: "checking", categoryIDs: ["groceries", "dining"], categoryAmounts: ["groceries": -100, "dining": -200], amount: -300, member: .rey, cleared: false))

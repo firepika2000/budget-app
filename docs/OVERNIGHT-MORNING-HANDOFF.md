@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `8d44511`, bulk mutations recheck current edit capability, scoped resources, ownership,
+posted lifecycle and bounded unique selection before changing any row/account. Void/reversal and
+custom-profile bypass regressions added; reconciliation/system protections retained. Other command
+families plus summary/report scopes remain the next authorization work, not claimed complete.
+Verified 136 native + 2 production clearing/bulk UI tests, Beta build and diff PASS; 5 server
+reference tests PASS. Logs `/tmp/budget-demo-bulk-{authorization,reference}.log`. No migration,
+merge, tag, human data reset or release-wide completion claim.
+
 After `c49cb3d`, unified Demo transaction snapshot/browser visibility with Payee/attachment scopes,
 whole-split exclusion before counts, preserved authorized historical split attribution and bounded
 page validation. No financial mutation or Live server change. Next: complete broader Demo financial

@@ -1281,6 +1281,18 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         attachmentData.removeValue(forKey: transactionID)
     }
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws { try requireActiveMembership();
+        guard actorCapabilities.contains("edit_transaction") else { throw APIClientError.server(status: 403, message: "Insufficient permission") }
+        guard (1...200).contains(update.transactionIDs.count), Set(update.transactionIDs).count == update.transactionIDs.count else {
+            throw APIClientError.server(status: 422, message: "Select 1 through 200 unique transactions")
+        }
+        let visible = Dictionary(uniqueKeysWithValues: resourceVisibleTransactions.map { ($0.id, $0) })
+        for id in update.transactionIDs {
+            guard let transaction = visible[id] else { throw APIClientError.server(status: 404, message: "One or more transactions were not found") }
+            guard transaction.status == "posted" else { throw APIClientError.server(status: 409, message: "Voided and reversal transactions are immutable") }
+            guard transaction.member == demo.persona || actorCapabilities.contains("manage_budget_structure") else {
+                throw APIClientError.server(status: 403, message: "You may only edit your own transactions")
+            }
+        }
         guard update.transactionIDs.allSatisfy({ id in demo.transactions.contains(where: { $0.id == id && !$0.reconciled && $0.transferID == nil && !$0.scheduled && !["Starting Balance", "Reconciliation adjustment"].contains($0.payee) }) }) else { throw workspaceRepositoryError("System-linked or reconciled transactions cannot be changed in bulk") }
         if update.action == "set_cleared" {
             guard let cleared = update.cleared else { throw workspaceRepositoryError("A clearing state is required.") }
