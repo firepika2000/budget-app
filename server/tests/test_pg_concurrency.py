@@ -441,6 +441,32 @@ def test_concurrent_partial_approvals_move_money_once(pg):
     _assert_single_approval(pg, budget, req["id"])
 
 
+@pytest.mark.parametrize("competing_decision", [False, True])
+def test_concurrent_request_expiry_is_once_and_never_funds_expired_request(pg, competing_decision):
+    from datetime import datetime, timedelta, timezone
+    from app.models import RequestAction
+    from app.request_routes import list_requests
+    budget, source, dest, req = _request_setup(pg)
+    ids = [req["id"]]
+    for _ in range(2):
+        ids.append(pg.client.post(f"/api/v1/budgets/{budget['id']}/requests", headers=auth(pg.token),
+            json={"destination_category_id": dest["id"], "requested_amount_minor": 100}).json()["id"])
+    with pg.factory() as db:
+        for request_id in ids:
+            db.get(FinancialRequest, request_id).expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db.commit()
+    read = lambda db, user: list_requests(budget_id=budget["id"], user=user, db=db)
+    other = _approve_call(budget["id"], req["id"], source["id"], 5000) if competing_decision else read
+    results = run_race([route_attempt(pg.factory, pg.owner_id, read), route_attempt(pg.factory, pg.owner_id, other)])
+    assert outcomes(results) == (["conflict", "ok"] if competing_decision else ["ok", "ok"]), results
+    if competing_decision:
+        assert results[1] == ("conflict", 409)
+    with pg.factory() as db:
+        assert all(db.get(FinancialRequest, request_id).status == "expired" and db.get(FinancialRequest, request_id).version == 1 for request_id in ids)
+        assert db.scalar(select(func.count()).select_from(RequestAction).where(RequestAction.request_id.in_(ids), RequestAction.action == "expired")) == 3
+        assert db.scalar(select(func.count()).select_from(AllocationOperation).where(AllocationOperation.kind == "request_approval")) == 0
+
+
 # ---------------------------------------------------------------------------
 # 3. Delegated-authority boundary race
 # ---------------------------------------------------------------------------

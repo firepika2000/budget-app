@@ -4,6 +4,25 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Request lifecycle hardening after `e80d2b8`: two new regressions first reproduced a resource-scope
+leak and short-circuited expiry. `approve_request` alone previously exposed requests targeting hidden
+categories and allowed reject/change decisions on those requests. Destination scope now filters SQL
+before loading and guards every decision; an otherwise readable request never reveals a funding
+source outside the approver's category scope. Hidden decisions return 404 without audit/version change.
+
+Batch expiry previously used `any(generator)`, leaving all due rows after the first untouched.
+Every due visible row is now processed. Only due rows are locked/reloaded before rechecking expiry,
+so concurrent listing/decision cannot duplicate expiry or fund an expired request, without locking
+the whole historical browser. Legacy requests with no expiration retain their existing semantics.
+New PostgreSQL races cover concurrent listings and listing versus approval. Demo request revision /
+cancellation still require implementation against this corrected contract; no claim of that closure.
+Verification: **14 focused delegated/request tests PASS; 458 full backend tests PASS, zero skips**,
+including the final due-row-only locking races on real disposable PostgreSQL, golden financial
+vectors, populated migrations and encrypted recovery. Diff check PASS.
+Final log `/tmp/budget-request-lifecycle-backend-final.log`; focused log
+`/tmp/budget-request-lifecycle-focused.log`. No Swift changes or native rerun in this checkpoint.
+Human Live/Simulator remain untouched; no migration, merge or tag.
+
 Demo allowance lifecycle after `465f20b`: canonical create/pause/reactivate/issue/history commands
 replace silent no-ops. Plans use stable category IDs, ISO issue dates and explicit cadence; the
 shared household list now uses the actual Rey/Jordan/Alex/Mia identities. Category creation respects

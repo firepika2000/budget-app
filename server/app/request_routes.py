@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .access import can_access_resource, find_visible_budget, has_capability
+from .access import can_access_resource, find_visible_budget, has_capability, visible_resource_ids
 from .allocation import PostingInput, append_operation, category_available_balance, lock_budget
 from .database import get_db
 from .dependencies import get_current_user
@@ -58,13 +58,17 @@ def serialize_request(db: Session, item: FinancialRequest, *, reveal_source: boo
     }
 
 
-def expire_if_due(db: Session, item: FinancialRequest) -> bool:
+def expiry_due(item: FinancialRequest) -> bool:
     if item.status not in ("pending", "changes_requested") or item.expires_at is None:
         return False
     expires_at = item.expires_at
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at > datetime.now(timezone.utc):
+    return expires_at <= datetime.now(timezone.utc)
+
+
+def expire_if_due(db: Session, item: FinancialRequest) -> bool:
+    if not expiry_due(item):
         return False
     item.status = "expired"
     item.version += 1
@@ -126,10 +130,23 @@ def list_requests(
         if not has_capability(db, user, budget, "request_money"):
             raise HTTPException(status_code=403, detail="Insufficient capability")
         query = query.where(FinancialRequest.requester_user_id == user.id)
-    items = list(db.scalars(query.order_by(FinancialRequest.created_at.desc())))
-    if any(expire_if_due(db, item) for item in items):
+    allowed = visible_resource_ids(db, user, budget, "category")
+    if allowed is not None:
+        query = query.where(FinancialRequest.destination_category_id.in_(allowed))
+    # Expiry mutates audit/version state: serialize with concurrent decisions, and do not
+    # short-circuit after the first expired request in a batch.
+    items = list(db.scalars(query.order_by(FinancialRequest.created_at.desc(), FinancialRequest.id)))
+    expired = False
+    for item in items:
+        if expiry_due(item):
+            # Lock/reload only due rows, not the entire historical request browser.
+            db.refresh(item, with_for_update=True)
+            expired = expire_if_due(db, item) or expired
+    if expired:
         db.commit()
-    return [serialize_request(db, item, reveal_source=can_approve) for item in items]
+    return [serialize_request(db, item, reveal_source=can_approve and (
+        allowed is None or item.source_category_id in allowed
+    )) for item in items]
 
 
 @router.post("/{request_id}/decision", response_model=FinancialRequestResponse)
@@ -146,6 +163,8 @@ def decide_request(
         FinancialRequest.budget_id == budget_id,
     ).with_for_update())
     if item is None:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if not can_access_resource(db, user, budget, "category", item.destination_category_id):
         raise HTTPException(status_code=404, detail="Request not found")
     if expire_if_due(db, item):
         db.commit()

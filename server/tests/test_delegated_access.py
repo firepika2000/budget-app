@@ -342,6 +342,58 @@ def test_changes_requested_can_be_revised_and_pending_request_expires(
     ).status_code == 409
 
 
+def test_request_listing_expires_every_due_row_once(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    _, category = create_budget_structure(client, owner_token, budget["id"])
+    root = f"/api/v1/budgets/{budget['id']}/requests"
+    ids = [client.post(root, headers=auth(owner_token), json={"destination_category_id": category["id"], "requested_amount_minor": 100}).json()["id"] for _ in range(3)]
+    with session_factory() as db:
+        db.query(FinancialRequest).filter(FinancialRequest.id.in_(ids)).update({"expires_at": datetime.now(timezone.utc) - timedelta(seconds=1)})
+        db.commit()
+    first = client.get(root, headers=auth(owner_token)).json()
+    assert len(first) == 3 and all(row["status"] == "expired" and row["version"] == 1 for row in first)
+    assert all([action["action"] for action in row["actions"]] == ["submitted", "expired"] for row in first)
+    second = client.get(root, headers=auth(owner_token)).json()
+    # SQLite drops timezone metadata on reload; compare the same UTC instant, not its suffix.
+    for rows in (first, second):
+        for row in rows:
+            row["resolved_at"] = datetime.fromisoformat(row["resolved_at"].replace("Z", "+00:00")).replace(tzinfo=timezone.utc).isoformat()
+    assert second == first
+
+
+def test_request_approval_capability_does_not_reveal_or_change_hidden_requests(client, owner_token, session_factory):
+    from app.models import CapabilityGrant
+    budget = create_budget(client, owner_token, session_factory)
+    checking, hidden = create_budget_structure(client, owner_token, budget["id"])
+    visible = add_category(client, owner_token, budget["id"], "Child", "Visible")
+    child_id, token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, checking["id"], visible["id"])
+    root = f"/api/v1/budgets/{budget['id']}/requests"
+    request = client.post(root, headers=auth(owner_token), json={"destination_category_id": hidden["id"], "requested_amount_minor": 100}).json()
+    with session_factory() as db:
+        db.add(CapabilityGrant(budget_id=budget["id"], user_id=child_id, capability="approve_request"))
+        db.commit()
+    assert client.get(root, headers=auth(token)).json() == []
+    for decision in ["reject", "changes_requested"]:
+        result = client.post(root + f"/{request['id']}/decision", headers=auth(token), json={"decision": decision, "expected_request_version": 0, "note": "Hidden"})
+        assert result.status_code == 404, result.text
+    with session_factory() as db:
+        assert db.get(FinancialRequest, request["id"]).version == 0
+        assert db.query(RequestAction).filter_by(request_id=request["id"]).count() == 1
+    # Approval rights do not reveal a source outside the approver's resource grant.
+    own = client.post(root, headers=auth(token), json={"destination_category_id": visible["id"], "requested_amount_minor": 100}).json()
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=1000, occurred_on="2026-01-01")
+    assigned = client.put(f"/api/v1/budgets/{budget['id']}/categories/{hidden['id']}/assignment",
+        headers=auth(owner_token), json={"month": "2026-01-01", "assigned_minor": 1000})
+    assert assigned.status_code == 200, assigned.text
+    approved = client.post(root + f"/{own['id']}/decision", headers=auth(owner_token), json={
+        "decision": "approve", "expected_request_version": 0, "approved_amount_minor": 100, "source_category_id": hidden["id"]})
+    assert approved.status_code == 200, approved.text
+    listed = client.get(root, headers=auth(token)).json()
+    assert len(listed) == 1 and listed[0]["id"] == own["id"]
+    assert listed[0]["source_category_id"] is None and listed[0]["approved_amount_minor"] == 100
+
+
 def test_delegated_member_can_create_only_own_scoped_category(
     client, owner_token, session_factory
 ):

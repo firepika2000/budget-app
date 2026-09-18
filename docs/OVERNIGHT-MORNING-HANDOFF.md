@@ -6,6 +6,20 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Server request contract audit after `e80d2b8` reproduced hidden-destination request access for scoped
+approvers and batch expiry stopping at its first due row. Fixed destination SQL/decision scoping and
+per-row source redaction. Expiry now locks/reloads only due rows and evaluates every visible request;
+concurrent read/read and read/approval have PostgreSQL regression coverage. No schema/Swift change.
+Demo cancel/revise remain no-ops: add explicit request version/type/expiry/action provenance to
+`DemoRequest`, reuse canonical approval projection, and serialize actual versions/actions instead
+of deriving version 0/1 from status. New request expiry should be test-clock driven; existing seed
+requests may retain explicit legacy nullable expiry rather than inventing historical events.
+Verification: **14 focused tests and 458 full backend tests PASS, zero skips**. Final full run includes
+the due-row-only lock implementation, PostgreSQL races, migrations/recovery and financial vectors.
+Log `/tmp/budget-request-lifecycle-backend-final.log`; diff check PASS. Swift/native sources unchanged,
+so retain `e80d2b8` native evidence without claiming a new build. **DO NOT RETEST**; no human data was
+accessed or migrated. Next remains canonical Demo request create/revise/cancel/decision provenance.
+
 Demo allowance parity implementation after `465f20b`: canonical plan lifecycle and history replace
 the four no-op methods. Identity/date fixtures are repaired, household membership includes real
 personas, and category creation preserves delegated identity. Issuance preflights exact balanced
