@@ -8,6 +8,15 @@ This ledger tracks engineering evidence separately from release approval. Main r
 `c5494dd`; historical version tags do not establish acceptance for subsequent development.
 Checkpoint completion is followed by the next unblocked engineering task.
 
+Refund parity checkpoint: three new shared command vectors prove and correct Demo cross-card
+reserve attribution, repeated refund release, and split-refund over-release (previously producing
+a negative reserve). Attribution now nets prior releases within the same card/category/date scope;
+ordered refund splits share one reserve cap. Server behavior remains unchanged. **395 backend,
+44 Core + 49 API, 94 native XCTest + 2 production UI tests pass**, Beta build/test PASS.
+Evidence: `/tmp/budget-refund-attribution-{full,package,native-verified}.log`; pre-fix failures in
+`/tmp/budget-refund-attribution-native-reproduction-expanded.log`. No migration or human-data change.
+Full dated provider/seed reserve parity remains open; this is a focused financial correction.
+
 Current monthly migration characterization: six new provider-neutral, fixed-clock operation vectors
 pass through the real server HTTP adapter, covering independent/future periods, date edits, cash
 carry, credit/refund reserve continuity, splits/transfers and scheduled realization/reconciliation.

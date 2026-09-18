@@ -368,7 +368,7 @@ final class DemoStore: ObservableObject {
               account.isOnBudget || amounts.isEmpty else { return fail(.invalidAmount) }
         let transaction = DemoTransaction(
             id: id, date: occurredOn, payee: operation.payeeName, memo: operation.memo,
-            accountID: operation.accountID, categoryIDs: Array(amounts.keys).sorted(), categoryAmounts: amounts,
+            accountID: operation.accountID, categoryIDs: operation.categoryID.map { [$0] } ?? operation.splits.map(\.categoryID), categoryAmounts: amounts,
             amount: operation.amountMinor, member: persona, cleared: operation.isCleared, flag: operation.flag,
             attachmentName: operation.attachmentMetadata.first?["name"], tags: operation.tags,
             financialClassification: operation.financialClassification,
@@ -401,14 +401,23 @@ final class DemoStore: ObservableObject {
         let amounts = canonicalCategoryAmounts(for: transaction)
         var reserve: [String: Int64] = [:]
         if accounts[accountIndex].kind == .credit {
-            for (categoryID, amount) in amounts {
+            var remainingPaymentMoney = max(accounts[accountIndex].paymentReserved, 0)
+            // Preserve canonical split order when several refund rows compete for the same reserve.
+            for categoryID in transaction.categoryIDs {
+                guard let amount = amounts[categoryID] else { continue }
                 guard let categoryIndex = categories.firstIndex(where: { $0.id == categoryID }) else { continue }
                 if amount < 0 {
                     let availableBefore = categories[categoryIndex].available
                     reserve[categoryID] = min(-amount, max(availableBefore, 0))
                 } else if amount > 0 {
-                    let attributed = reserveAttribution.values.reduce(Int64(0)) { $0 + max($1[categoryID] ?? 0, 0) }
-                    reserve[categoryID] = -min(amount, attributed, max(accounts[accountIndex].paymentReserved, 0))
+                    // Match the server's net, card/category/date-scoped attribution. Earlier refund
+                    // releases reduce that attribution; another card's purchases cannot fund it.
+                    let attributed = transactions.lazy.filter {
+                        $0.accountID == transaction.accountID && $0.date <= transaction.date
+                    }.reduce(Int64(0)) { $0 + (reserveAttribution[$1.id]?[categoryID] ?? 0) }
+                    let released = min(amount, max(attributed, 0), remainingPaymentMoney)
+                    reserve[categoryID] = -released
+                    remainingPaymentMoney -= released
                 }
             }
         }

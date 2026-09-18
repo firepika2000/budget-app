@@ -9,7 +9,7 @@ final class FinancialGoldenVectorTests: XCTestCase {
         let url = repositoryRoot.appendingPathComponent("server/tests/financial_vectors/v1.json")
         let document = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         let cases = try XCTUnwrap(document["cases"] as? [[String: Any]])
-        XCTAssertEqual(cases.count, 12, "the native suite must consume the complete shared vector file")
+        XCTAssertEqual(cases.count, 15, "the native suite must consume the complete shared vector file")
 
         for vector in cases {
             let vectorID = try XCTUnwrap(vector["id"] as? String)
@@ -40,6 +40,9 @@ final class FinancialGoldenVectorTests: XCTestCase {
                     }
                     let category = (operation["category"] as? String).flatMap { categoryRefs[$0] }
                     try await services.transactions.record(.init(accountID: try XCTUnwrap(accountRefs[string(operation, "account")]), categoryID: category, amountMinor: integer(operation, "amount_minor"), occurredOn: "2026-09-01", payeeName: "Vector transaction", memo: "", isCleared: true, splits: splits, flag: nil, tags: [], attachmentMetadata: []))
+                    if !splits.isEmpty {
+                        XCTAssertEqual(source.demo.transactions.first?.categoryIDs, splits.map(\.categoryID), "Preserve canonical split order in \(vectorID)")
+                    }
                 case "transfer":
                     try await services.transactions.transfer(.init(sourceAccountID: try XCTUnwrap(accountRefs[string(operation, "source")]), destinationAccountID: try XCTUnwrap(accountRefs[string(operation, "destination")]), amountMinor: integer(operation, "amount_minor"), occurredOn: "2026-09-01", memo: "vector", isCleared: true))
                 case "reconcile":

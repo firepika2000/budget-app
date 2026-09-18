@@ -6,6 +6,18 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`33c6c1f` is pushed. The next focused correction reproduces and fixes three Demo card-refund
+defects against the unchanged production server: cross-card attribution, repeated release of
+previously refunded attribution, and split refunds releasing more than the remaining payment reserve.
+Refund attribution is now net, card/category/date scoped; splits share one remaining-reserve cap
+and retain command order. Shared command vectors increase from 12 to 15. Pre-fix native failures
+are retained in `/tmp/budget-refund-attribution-native-reproduction-expanded.log`.
+Final verification: **395 backend (zero skips), 44 Core + 49 API, 94 native XCTest + 2 production
+XCUITests pass**, Beta simulator build/test PASS; `/tmp/budget-refund-attribution-{full,package,native-verified}.log`.
+No backend production code, migrations, Live data or Simulator reset. Dated Demo integration and
+seed attribution remain incomplete; these targeted fixes do not claim complete monthly parity.
+Next: continue the complete dated provider/seed migration. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
+
 `c47b709` is pushed (six dated server operation vectors, backend 392 pass). Next verified foundation
 adds exact BudgetCore dated projection, snapshot-bound replacement assignment intent and explicit
 opening boundaries. **44 Core + 49 API; 94 native XCTest pass**, final Beta build/test succeeds.

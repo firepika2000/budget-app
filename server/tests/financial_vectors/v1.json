@@ -3,6 +3,58 @@
   "currency": "USD",
   "cases": [
     {
+      "id": "split_credit_refund_cannot_release_more_than_remaining_payment_money",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
+        {"op": "create_account", "ref": "card", "name": "Card", "kind": "credit", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "needs", "group": "Needs", "name": "Needs"},
+        {"op": "create_category", "ref": "other", "group": "Needs", "name": "Other"},
+        {"op": "assign", "category": "needs", "amount_minor": 5000},
+        {"op": "assign", "category": "other", "amount_minor": 5000},
+        {"op": "transaction", "account": "card", "category": "needs", "amount_minor": -5000, "classification": "spending"},
+        {"op": "transaction", "account": "card", "category": "other", "amount_minor": -5000, "classification": "spending"},
+        {"op": "transfer", "source": "cash", "destination": "card", "amount_minor": 9500},
+        {"op": "transaction", "account": "card", "amount_minor": 2000, "classification": "refund", "splits": {"needs": 1000, "other": 1000}},
+        {"op": "observe", "expected": {"accounts": {"cash": 90500, "card": 1500}, "unassigned_minor": 90000, "categories": {"needs": {"available_minor": 1000}, "other": {"available_minor": 1000}}, "cards": {"card": {"liability_minor": 0, "reserved_minor": 0, "unfunded_debt_minor": 0}}}}
+      ]
+    },
+    {
+      "id": "credit_refund_cannot_release_another_cards_attribution",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
+        {"op": "create_account", "ref": "card_a", "name": "Card A", "kind": "credit", "on_budget": true, "opening_minor": 0},
+        {"op": "create_account", "ref": "card_b", "name": "Card B", "kind": "credit", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "needs", "group": "Needs", "name": "Needs"},
+        {"op": "create_category", "ref": "other", "group": "Needs", "name": "Other"},
+        {"op": "assign", "category": "needs", "amount_minor": 10000},
+        {"op": "assign", "category": "other", "amount_minor": 10000},
+        {"op": "transaction", "account": "card_a", "category": "needs", "amount_minor": -10000, "classification": "spending"},
+        {"op": "transaction", "account": "card_b", "category": "needs", "amount_minor": -5000, "classification": "spending"},
+        {"op": "transaction", "account": "card_b", "category": "other", "amount_minor": -10000, "classification": "spending"},
+        {"op": "transaction", "account": "card_b", "category": "needs", "amount_minor": 5000, "classification": "refund"},
+        {"op": "observe", "expected": {"accounts": {"cash": 100000, "card_a": -10000, "card_b": -10000}, "unassigned_minor": 80000, "categories": {"needs": {"available_minor": 0}, "other": {"available_minor": 0}}, "cards": {"card_a": {"liability_minor": 10000, "reserved_minor": 10000, "unfunded_debt_minor": 0}, "card_b": {"liability_minor": 10000, "reserved_minor": 10000, "unfunded_debt_minor": 0}}}}
+      ]
+    },
+    {
+      "id": "credit_refund_nets_prior_releases_before_releasing_again",
+      "operations": [
+        {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
+        {"op": "create_account", "ref": "card", "name": "Card", "kind": "credit", "on_budget": true, "opening_minor": 0},
+        {"op": "create_category", "ref": "needs", "group": "Needs", "name": "Needs"},
+        {"op": "create_category", "ref": "other", "group": "Needs", "name": "Other"},
+        {"op": "assign", "category": "needs", "amount_minor": 10000},
+        {"op": "assign", "category": "other", "amount_minor": 10000},
+        {"op": "transaction", "account": "card", "category": "needs", "amount_minor": -10000, "classification": "spending"},
+        {"op": "transaction", "account": "card", "category": "other", "amount_minor": -10000, "classification": "spending"},
+        {"op": "transaction", "account": "card", "category": "needs", "amount_minor": 10000, "classification": "refund"},
+        {"op": "observe", "expected": {"cards": {"card": {"liability_minor": 10000, "reserved_minor": 10000, "unfunded_debt_minor": 0}}}},
+        {"op": "transaction", "account": "cash", "category": "needs", "amount_minor": -10000, "classification": "spending"},
+        {"op": "transaction", "account": "card", "category": "needs", "amount_minor": -5000, "classification": "spending"},
+        {"op": "transaction", "account": "card", "category": "needs", "amount_minor": 5000, "classification": "refund"},
+        {"op": "observe", "expected": {"accounts": {"cash": 90000, "card": -10000}, "unassigned_minor": 80000, "categories": {"needs": {"available_minor": 0}, "other": {"available_minor": 0}}, "cards": {"card": {"liability_minor": 10000, "reserved_minor": 10000, "unfunded_debt_minor": 0}}}}
+      ]
+    },
+    {
       "id": "opening_balances",
       "operations": [
         {"op": "create_account", "ref": "cash", "name": "Checking", "kind": "checking", "on_budget": true, "opening_minor": 100000},
