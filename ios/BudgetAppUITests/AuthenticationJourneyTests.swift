@@ -222,6 +222,42 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(readOnly.waitForExistence(timeout: 5))
     }
 
+    func testPayoffHorizonShowsPartialResultsInsteadOfCompleteCost() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+        let debt = app.buttons["insights-debt-interest"]
+        XCTAssertTrue(debt.waitForExistence(timeout: 5))
+        debt.tap()
+        app.segmentedControls.buttons["Payoff"].tap()
+        let rollover = app.switches["debt-payoff-rollover"]
+        XCTAssertTrue(rollover.waitForExistence(timeout: 5))
+        rollover.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(rollover.value as? String, "0")
+        let terms = app.buttons["payoff-debt-terms-auto"]
+        for _ in 0..<10 where !terms.isHittable { app.swipeUp() }
+        XCTAssertTrue(terms.isHittable)
+        terms.tap()
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForExistence(timeout: 5))
+        let apr = app.textFields["debt-apr"]
+        XCTAssertEqual(apr.value as? String, "6.25")
+        apr.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+        apr.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4) + "0")
+        app.buttons["Clear Payment"].tap()
+        app.textFields["debt-payment"].typeText("0.01")
+        app.buttons["save-debt-terms"].tap()
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForNonExistence(timeout: 5))
+        let horizon = app.descendants(matching: .any)["debt-payoff-horizon"]
+        for _ in 0..<10 where !horizon.exists { app.swipeDown() }
+        XCTAssertTrue(horizon.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Interest within modeled horizon"].exists)
+        XCTAssertTrue(app.staticTexts["Payments within modeled horizon"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["debt-payoff-outcome"].exists)
+        XCTAssertFalse(app.staticTexts["Total projected cost"].exists)
+        XCTAssertFalse(app.staticTexts["Projected interest avoided"].exists)
+    }
+
     func testPayoffMissingTermsOpensSharedEditorAndRecalculatesAfterSave() {
         continueAfterFailure = false
         let app = XCUIApplication()

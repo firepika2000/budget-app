@@ -6,6 +6,15 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`9142cfd` is pushed (production debt chart/accessibility correction). Next verified checkpoint fixes
+payoff horizon presentation: partial bounded totals no longer claim full repayment cost. Unknown
+statuses also fail closed. Twenty-three shared vectors now include the default 1,200-month limit
+and high-valid-APR exact final payment. Focused Python 23, package 38 Core + 47 API, native 87 and
+both ordinary-payoff/horizon UI cases pass; final focused run TEST SUCCEEDED. The horizon UI uses
+the real terms editor, not a test-only result. No migration or human data change. **DO NOT RETEST**.
+Next: reconcile approved roadmap sequencing and remaining v0.8 closure gaps, then continue the
+highest-priority independent production-readiness work.
+
 Latest pushed: `d9a64cd` (estimated current cost). The next verified checkpoint restores recorded
 debt history in the actual Overview rather than its unused predecessor. Five time-series reports
 now format monetary axes as currency and select bounded ticks from real observation dates. Debt

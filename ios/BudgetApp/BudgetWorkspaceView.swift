@@ -3903,7 +3903,17 @@ private struct DebtPayoffContent: View {
                 Label("Current planned payments do not reduce total principal under these assumptions.", systemImage: "exclamationmark.triangle")
                 Text("Increase the projected payment or review saved APR and payment terms. No fictional debt-free date is shown.").font(.caption).foregroundStyle(.secondary)
             }
-        } else {
+        } else if value.status == "iteration_limit" {
+            Section("Projection horizon reached") {
+                Label("Debt remains after the modeled horizon", systemImage: "clock.badge.exclamationmark")
+                Text("These are partial results, not the full cost of becoming debt-free. Increase the projected payment or review Debt Terms to explore a shorter payoff scenario.")
+                    .font(.caption).foregroundStyle(.secondary)
+                LabeledContent("Months modeled", value: "\(value.paymentCount)")
+                LabeledContent("Interest within modeled horizon", value: store.format(value.projectedInterestMinor))
+                LabeledContent("Payments within modeled horizon", value: store.format(value.projectedTotalCostMinor))
+            }
+            .accessibilityIdentifier("debt-payoff-horizon")
+        } else if value.status == "paid_off" {
             Section("Projected outcome") {
                 LabeledContent("Projected debt-free date", value: value.debtFreeDate ?? "Beyond projection range")
                 LabeledContent("Projected remaining interest", value: store.format(value.projectedInterestMinor))
@@ -3921,6 +3931,10 @@ private struct DebtPayoffContent: View {
                 ForEach(Array(value.payoffOrder.enumerated()), id: \.element) { index, id in
                     LabeledContent(accountName(id), value: "\(index + 1)")
                 }
+            }
+        } else {
+            Section("Projection unavailable") {
+                Text("This projection result is not supported by this app version. No complete payoff estimate is available.")
             }
         }
     }

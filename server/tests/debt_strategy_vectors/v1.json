@@ -3,6 +3,18 @@
   "first_payment_on": "2026-01-31",
   "cases": [
     {
+      "id": "high_valid_apr_exact_final_payment",
+      "strategy": "avalanche", "rollover": true, "extra_payment_minor": 0,
+      "debts": [{"id": "solo", "principal_minor": 10000, "annual_rate_basis_points": 100000, "planned_payment_minor": 20000}],
+      "expected": {"status": "paid_off", "payoff_order": ["solo"], "debt_free_date": "2026-01-31", "payment_count": 1, "projected_interest_minor": 8333, "projected_total_paid_minor": 18333}
+    },
+    {
+      "id": "horizon_limit_is_partial_not_payoff",
+      "strategy": "avalanche", "rollover": false, "extra_payment_minor": 0,
+      "debts": [{"id": "solo", "principal_minor": 1201, "annual_rate_basis_points": 0, "planned_payment_minor": 1}],
+      "expected": {"status": "iteration_limit", "payoff_order": [], "debt_free_date": null, "payment_count": 1200, "projected_interest_minor": 0, "projected_total_paid_minor": 1200}
+    },
+    {
       "id": "promotional_expiry_exact_boundary",
       "strategy": "avalanche", "rollover": false, "extra_payment_minor": 0,
       "debts": [{"id": "promo", "principal_minor": 10000, "annual_rate_basis_points": 1200, "planned_payment_minor": 5000, "promotional_rate_basis_points": 0, "promotional_ends_on": "2026-01-31"}],

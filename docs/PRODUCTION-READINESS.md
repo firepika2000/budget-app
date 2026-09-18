@@ -272,3 +272,15 @@ Home and Insights tests, which pass without weakening reachability assertions. T
 uses a native menu at accessibility sizes. An ancestor DisclosureGroup identifier also masked
 individual observation identifiers in XCTest; removing it restores distinct exact-row targets.
 These are automated results, not human VoiceOver acceptance. **DO NOT RETEST** remains in effect.
+
+Payoff boundary review proved `iteration_limit` fell through to the completed-payoff UI, mislabelling
+partial payments as total payoff cost. It now has an explicit horizon-reached section with only
+modeled-period interest/payments and no full-payoff date or savings comparison. Unknown future statuses
+also fail closed rather than looking complete. A production UI regression edits real Demo terms to
+zero APR / one-cent payment, disables rollover and verifies this state. A shared 1,201-cent horizon
+vector and a high-valid-APR exact final-payment vector bring the shared fixture total to **23**.
+Focused Python **23 pass**, Swift **38 Core + 47 API pass**, native **87 XCTest pass**, ordinary
+payoff UI pass and final horizon UI pass/build **TEST SUCCEEDED**. The initial new UI attempt tapped
+the switch label without toggling it; targeting its native control fixed the test while retaining
+the same value assertion. Existing invalid-frame diagnostics during keyboard focus remain visible
+and unproven, not suppressed. No backend engine, financial persistence, migration or human data changed.
