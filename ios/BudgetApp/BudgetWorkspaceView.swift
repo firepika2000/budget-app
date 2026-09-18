@@ -2207,6 +2207,7 @@ private struct WorkspaceProfileView: View {
     @State private var showConnection = false
     @State private var showCreate = false
     @State private var showAppearance = false
+    @State private var showRollover = false
 
     var body: some View {
         NavigationStack {
@@ -2242,6 +2243,12 @@ private struct WorkspaceProfileView: View {
                         }
                     }
                 }
+                if store.budget.effectivePermission == .owner {
+                    Section("Planning") {
+                        Button("Cash Rollover", systemImage: "calendar.badge.clock") { showRollover = true }
+                            .accessibilityIdentifier("cash-rollover-settings")
+                    }
+                }
                 Section("Household") { Button("Household and access", systemImage: "person.3") { showHousehold = true } }
                 Section("Help & Education") {
                     Button(store.onboardingCompleted ? "Restart Guided Tour" : "Continue Guided Tour", systemImage: "graduationcap") {
@@ -2263,10 +2270,133 @@ private struct WorkspaceProfileView: View {
             .navigationDestination(isPresented: $showHousehold) { LiveHouseholdView(session: session, store: store) }
             .navigationDestination(isPresented: $showConnection) { ServerConnectionSettingsView() }
             .navigationDestination(isPresented: $showAppearance) { AppearanceSettingsView() }
+            .navigationDestination(isPresented: $showRollover) { CashRolloverSettingsView(store: store) }
             .sheet(isPresented: $showCreate) {
                 BudgetCreationView(households: session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? [])
             }
         }
+    }
+}
+
+private struct CashRolloverSettingsView: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    @State private var observation: APICashRolloverPolicyObservation?
+    @State private var history: [APICashRolloverPolicyAudit] = []
+    @State private var nextBeforeVersion: Int?
+    @State private var selection: APICashRolloverPolicy = .carryCategoryDeficit
+    @State private var effectiveMonth = ""
+    @State private var busy = false
+    @State private var error: String?
+    @State private var confirm = false
+
+    private func title(_ policy: APICashRolloverPolicy) -> String {
+        policy == .absorbNextMonth ? "Absorb next month" : "Carry category deficit"
+    }
+    // Month choices are based on the repository's authoritative current month, not the device clock.
+    private var months: [String] {
+        guard let current = observation?.currentMonth else { return [] }
+        let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let start = formatter.date(from: current) else { return [] }
+        return (1...24).compactMap { offset in
+            formatter.calendar.date(byAdding: .month, value: offset, to: start).map { formatter.string(from: $0) }
+        }
+    }
+    var body: some View {
+        Form {
+            if let observation {
+                Section("Current policy") {
+                    LabeledContent("Cash overspending", value: title(observation.currentPolicy))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Current cash rollover policy")
+                        .accessibilityValue(title(observation.currentPolicy))
+                        .accessibilityIdentifier("current-cash-rollover-policy")
+                    Text("Absorb next month clears a cash category deficit at the next month boundary and reduces Unassigned once. Carry category deficit keeps it in the category. Credit-card debt is handled separately.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Future change") {
+                    Picker("Policy", selection: $selection) {
+                        ForEach(APICashRolloverPolicy.allCases, id: \.self) { Text(title($0)).tag($0) }
+                    }.pickerStyle(.inline)
+                    Picker("Effective month", selection: $effectiveMonth) {
+                        ForEach(months, id: \.self) { Text(String($0.prefix(7))).tag($0) }
+                    }
+                    Text("Applies prospectively on the first day of the selected month. Earlier policy decisions and transaction history are preserved.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Button("Review Change") { confirm = true }
+                        .disabled(effectiveMonth.isEmpty)
+                        .accessibilityIdentifier("review-rollover-change")
+                }
+                if !observation.pending.isEmpty {
+                    Section("Scheduled policies") {
+                        ForEach(observation.pending, id: \.effectiveMonth) { pending in
+                            LabeledContent(String(pending.effectiveMonth.prefix(7)), value: title(pending.policy))
+                        }
+                    }.accessibilityIdentifier("pending-rollover-policies")
+                }
+                Section("Decision history") {
+                    if history.isEmpty { Text("No policy changes recorded.").foregroundStyle(.secondary) }
+                    ForEach(history) { row in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(title(row.policy))
+                            Text("Effective \(row.effectiveMonth) · Version \(row.version)").font(.caption)
+                            Text(row.source == "legacy_migration" ? "Preserved legacy policy" : "\(row.source == "budget_creation" ? "Budget creation" : "Owner selection") · \(row.createdAt)")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if let cursor = nextBeforeVersion {
+                        Button("Load earlier decisions") { Task { await loadHistory(before: cursor) } }
+                    }
+                }
+            } else if busy { ProgressView("Loading policy…") }
+            if let error {
+                Section {
+                    Text(error).foregroundStyle(.red)
+                    Button("Reload Policy") { Task { await reload() } }
+                }
+            }
+        }
+        .disabled(busy)
+        .navigationTitle("Cash Rollover")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await reload() }
+        .alert("Change Cash Rollover?", isPresented: $confirm) {
+            Button("Schedule Policy Change") { Task { await save() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(title(selection)) starting \(effectiveMonth). This changes future cash-deficit handling, not account balances or posted transactions.")
+        }
+    }
+    private func reload() async {
+        busy = true; error = nil
+        defer { busy = false }
+        do {
+            let value = try await store.cashRolloverPolicy()
+            let page = try await store.cashRolloverPolicyHistory()
+            observation = value; history = page.items; nextBeforeVersion = page.nextBeforeVersion
+            effectiveMonth = months.first ?? ""
+            selection = value.pending.first(where: { $0.effectiveMonth == effectiveMonth })?.policy ?? value.currentPolicy
+        } catch { self.error = error.localizedDescription }
+    }
+    private func loadHistory(before: Int) async {
+        busy = true; error = nil
+        defer { busy = false }
+        do {
+            let page = try await store.cashRolloverPolicyHistory(beforeVersion: before)
+            history += page.items.filter { row in !history.contains(where: { $0.id == row.id }) }
+            nextBeforeVersion = page.nextBeforeVersion
+        } catch { self.error = error.localizedDescription }
+    }
+    private func save() async {
+        guard let observation, !busy else { return }
+        busy = true; error = nil
+        do {
+            _ = try await store.selectCashRolloverPolicy(.init(policy: selection, effectiveMonth: effectiveMonth,
+                expectedPolicyVersion: observation.policyVersion, expectedAllocationVersion: observation.allocationVersion))
+            await reload()
+        } catch { self.error = error.localizedDescription }
+        busy = false
     }
 }
 

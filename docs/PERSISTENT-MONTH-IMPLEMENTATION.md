@@ -424,7 +424,13 @@ is validated before commit; any supported-range failure rolls back baseline, dec
 No existing historical policy row is overwritten. A missing legacy baseline is recorded as version 0
 with `legacy_migration` provenance and no invented actor only when the first real choice is appended.
 
-Native settings and new-budget defaults are not exposed yet. Implement the same versioned command
-in Demo and the credential-refresh-aware Live application-service path, with production settings
-coverage, before final activation. Human Live remains untouched; this requires the existing 0029
-schema in deployed environments and does not automatically migrate any database.
+Swift service integration is now committed in `5fd6d8f`, including matching Demo commands/history
+and request-time Live credential resolution. Shared owner settings use this service through the
+existing workspace store. The settings screen explains both policies, offers the next 24 months
+from the repository's current month, requires explicit confirmation, and exposes pending choices
+and version-paged decision history. Failed/stale writes require a reload rather than silently
+rebasing the user's decision. Cancel never calls the mutation. Current policy remains distinct
+from pending choices. Full-access nonowner members cannot open or call this owner-only operation.
+
+New-budget default activation remains separate and pending. Human Live remains untouched; these
+operations require the existing 0029 schema and do not automatically migrate any database.

@@ -4,6 +4,20 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Shared settings checkpoint after `5fd6d8f`: Profile & Settings now exposes owner-only Cash Rollover
+through the same workspace store in Live and Demo. It explains cash versus card consequences,
+separates current and pending policies, offers the next 24 authoritative months and requires an
+explicit native alert confirmation. History loads 50 decisions per page; stale/error paths offer
+reload rather than silently changing concurrency tokens. Production XCUITest proves Cancel has
+no pending effect, confirmed selection persists across reopening, and current policy stays carry.
+Initial UI proof found the confirmation-dialog Cancel absent from accessibility; the final native
+alert provides both actions. The current-policy observation now has an explicit VoiceOver value.
+
+Final verification: **122 native XCTest + 1 production XCUITest PASS**, Xcode 27 Beta build PASS,
+diff check PASS. Log `/tmp/budget-policy-settings-verified.log`. Existing package evidence is
+**48 Core + 51 API PASS**; server unchanged from **446 backend PASS**. New-budget default activation
+is the next uncompleted policy gate. No human database migration, reset, merge or tag occurred.
+
 Swift policy-service checkpoint after `aeaa298`: typed BudgetAPI read/selection/history contracts
 and provider-neutral planning services now support the server policy API. Every Live operation
 resolves the shared current credential at execution; a retained workspace regression exercises

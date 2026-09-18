@@ -6,6 +6,20 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Shared owner Cash Rollover settings now follow service checkpoint `5fd6d8f`. Profile navigation
+passes the existing store explicitly. Future-month changes require an explicit Cancel/Schedule
+alert; current policy, pending decisions, versioned history and error/reload states stay separate.
+The month picker offers 24 future months based on repository time, and history loads 50 rows/page.
+Production UI proof covers cancel, confirm, navigate back/reopen and unchanged current policy.
+Final **122 native + 1 UI PASS**, Beta build/diff check PASS:
+`/tmp/budget-policy-settings-verified.log`;
+`/tmp/budget-focused-report-final/Logs/Test/Test-BudgetApp-2026.09.18_17-30-31--0400.xcresult`.
+Xcode `/Users/firepika/Downloads/Xcode-beta.app`, 27.0 / 27A5252f;
+iPhone 17 Pro Max / iOS 27, `3ABD861E-D38D-4AFD-A356-959266051564`.
+Next: explicit new-budget policy selection/default and legacy-preserving creation/migration proof.
+Current creation remains legacy carry. Do not claim full rollover/product closure.
+**HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
+
 After `aeaa298`, Swift API contracts, provider-neutral planning service/store wrappers and matching
 Demo prospective policy commands/history are implemented. Live reads/writes/history resolve the
 current shared credential per request. Retained-workspace rotation regression includes these paths.

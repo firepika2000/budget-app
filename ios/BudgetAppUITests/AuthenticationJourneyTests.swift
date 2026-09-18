@@ -150,6 +150,37 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["System"].isSelected || app.buttons["System"].value as? String == "1")
     }
 
+    func testProductionRolloverSettingsCancelAndSchedulePreserveCurrentPolicy() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=home"]
+        app.launch()
+        app.buttons["profile-settings-button"].tap()
+        let entry = app.buttons["cash-rollover-settings"]
+        for _ in 0..<4 where !entry.isHittable { app.swipeUp() }
+        XCTAssertTrue(entry.waitForExistence(timeout: 5)); entry.tap()
+        XCTAssertTrue(app.navigationBars["Cash Rollover"].waitForExistence(timeout: 5))
+        let absorb = app.buttons["Absorb next month"]
+        XCTAssertTrue(absorb.waitForExistence(timeout: 5)); absorb.tap()
+        let review = app.buttons["review-rollover-change"]
+        for _ in 0..<4 where !review.isHittable { app.swipeUp() }
+        review.tap()
+        XCTAssertTrue(app.buttons["Schedule Policy Change"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].tap()
+        XCTAssertFalse(app.staticTexts["Scheduled policies"].exists)
+        review.tap(); app.buttons["Schedule Policy Change"].tap()
+        let scheduled = app.staticTexts["Scheduled policies"]
+        for _ in 0..<4 where !scheduled.exists { app.swipeUp() }
+        XCTAssertTrue(scheduled.waitForExistence(timeout: 5))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        entry.tap()
+        XCTAssertTrue(app.navigationBars["Cash Rollover"].waitForExistence(timeout: 5))
+        for _ in 0..<4 where !scheduled.exists { app.swipeUp() }
+        XCTAssertTrue(scheduled.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !app.staticTexts["Current policy"].exists { app.swipeDown() }
+        let current = app.descendants(matching: .any)["current-cash-rollover-policy"].firstMatch
+        XCTAssertEqual(current.value as? String, "Carry category deficit")
+    }
+
     func testHomeQuickActionsOpenCanonicalProductionEditors() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=home"]
