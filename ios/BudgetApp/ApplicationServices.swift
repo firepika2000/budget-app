@@ -1,4 +1,5 @@
 import BudgetAPI
+import BudgetCore
 import Foundation
 
 func normalizedCategoryName(_ value: String) -> String {
@@ -394,15 +395,20 @@ struct TransactionService {
         }
     }
 
-    private func validate(_ operation: RecordTransactionOperation) throws {
+    func validate(_ operation: RecordTransactionOperation) throws {
         guard operation.amountMinor != 0 else {
             throw BudgetApplicationError.invalidOperation("Transaction amount must not be zero.")
         }
         guard operation.categoryID == nil || operation.splits.isEmpty else {
             throw BudgetApplicationError.invalidOperation("Use either one category or transaction splits.")
         }
-        if !operation.splits.isEmpty, operation.splits.reduce(Int64(0), { $0 + $1.amountMinor }) != operation.amountMinor {
-            throw BudgetApplicationError.invalidOperation("Split amounts must equal the transaction amount.")
+        if !operation.splits.isEmpty {
+            guard Set(operation.splits.map(\.categoryID)).count == operation.splits.count else {
+                throw BudgetApplicationError.invalidOperation("Each split must use a different category.")
+            }
+            guard let total = try? Money.sumMinorUnits(operation.splits.map(\.amountMinor)), total == operation.amountMinor else {
+                throw BudgetApplicationError.invalidOperation("Split amounts must equal the transaction amount and fit the supported amount range.")
+            }
         }
     }
 }

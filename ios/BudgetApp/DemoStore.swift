@@ -573,9 +573,10 @@ final class DemoStore: ObservableObject {
               let account = accounts.first(where: { $0.id == operation.accountID }) else { return fail(.invalidAmount) }
         let occurredOn = BudgetWorkspaceStore.parseDate(operation.occurredOn)
         guard Calendar.current.startOfDay(for: occurredOn) <= Calendar.current.startOfDay(for: Date()) else { return fail(.invalidAmount) }
+        guard Set(operation.splits.map(\.categoryID)).count == operation.splits.count else { return fail(.invalidAmount) }
         let amounts = operation.categoryID.map { [$0: operation.amountMinor] }
             ?? Dictionary(uniqueKeysWithValues: operation.splits.map { ($0.categoryID, $0.amountMinor) })
-        guard amounts.values.reduce(0, +) == (amounts.isEmpty ? 0 : operation.amountMinor),
+        guard (try? Money.sumMinorUnits(amounts.values)) == (amounts.isEmpty ? 0 : operation.amountMinor),
               amounts.keys.allSatisfy({ id in categories.contains { $0.id == id } }),
               account.isOnBudget || amounts.isEmpty else { return fail(.invalidAmount) }
         let transaction = DemoTransaction(

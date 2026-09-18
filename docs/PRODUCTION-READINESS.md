@@ -4,6 +4,19 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Transaction input hardening after pushed `5be09de`: the shared application service previously
+summed split amounts with trapping Int64 addition, and the Demo adapter constructed a unique-key
+dictionary before rejecting duplicate categories. Both malformed inputs now produce validation
+errors without mutation. The exact two-word accumulator already used by dated planning is reused
+through `Money.sumMinorUnits`; valid mixed-sign cancellation is preserved, not rejected merely
+because an intermediate Int64 sum overflows. Core boundary/cancellation tests, shared-service
+rejection and direct-provider guards are covered. **45 Core + 49 API, 104 native, 3 focused backend
+split tests PASS**; no server changes. Native build and strengthened direct-provider test rerun
+PASS. Logs `/tmp/budget-split-validation-{package,native,backend,native-focused}.log`.
+This is input-boundary hardening, not a claim that every provider mutation/report accumulator is
+overflow-safe. Demo posting/reversal, transfer and forecast arithmetic remain the next exact-money
+audit surface; preserve rollback and financial invariants when correcting them.
+
 Reconciliation continuation (verified): Demo now forwards and enforces cutoff,
 expected cleared observation, explicit adjustment consent and restricted-persona refusal. Only
 cleared postings through the cutoff are locked; later cleared/uncleared postings remain unchanged.

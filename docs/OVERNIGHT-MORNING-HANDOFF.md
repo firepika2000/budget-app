@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`5be09de` pushed reconciliation/clearing corrections. Following checkpoint hardens split validation
+against overflowing totals and duplicate category dictionary traps. Reuses the dated projection's
+exact accumulator, preserving legitimate mixed-sign cancellation. **45 Core + 49 API, 104 native,
+3 focused server split tests PASS**, no server changes; final focused provider rerun PASS.
+Logs `/tmp/budget-split-validation-{package,native,backend,native-focused}.log`.
+Next: unchecked Demo posting/reversal/transfer/forecast accumulation remains a crash-risk audit,
+alongside the broader production-readiness backlog. Do not infer all-money-arithmetic closure.
+
 Reconciliation checkpoint verified from `27b16e5`: date/consent/stale-observation/permission
 inputs now reach Demo; only cutoff-eligible cleared entries lock, explicit adjustments retain their
 date/reason, and later account activity remains intact. Shared Live/Demo cutoff estimate no longer

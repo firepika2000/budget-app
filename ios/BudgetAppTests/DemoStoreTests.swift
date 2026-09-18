@@ -6,6 +6,30 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testTransactionServiceRejectsOverflowingAndDuplicateSplitsBeforeMutation() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        let service = TransactionService(repository: source)
+        source.demo.createAccount(name: "Validation", type: "checking", isOnBudget: true)
+        let accountID = try XCTUnwrap(source.demo.accounts.first?.id)
+        func operation(_ amounts: [Int64], total: Int64, duplicate: Bool = false) -> RecordTransactionOperation {
+            .init(accountID: accountID, categoryID: nil, amountMinor: total, occurredOn: "2026-09-01", payeeName: "", memo: "", isCleared: false,
+                  splits: amounts.enumerated().map { .init(categoryID: duplicate ? "same" : "c\($0.offset)", amountMinor: $0.element, memo: "") }, flag: nil, tags: [], attachmentMetadata: [])
+        }
+        // These previously trapped in Int64 reduce, or later in Dictionary(uniqueKeysWithValues:).
+        for invalid in [operation([.max, 1], total: .max), operation([.min, -1], total: .min), operation([1, 2], total: 3, duplicate: true)] {
+            do { try await service.record(invalid); XCTFail("Invalid split request must not reach a provider") }
+            catch BudgetApplicationError.invalidOperation { }
+            catch { XCTFail("Expected shared command validation, got \(error)") }
+            XCTAssertTrue(source.demo.transactions.isEmpty)
+            XCTAssertEqual(source.demo.accounts.first?.balance, 0)
+            XCTAssertFalse(source.demo.recordCanonicalTransaction(invalid))
+        }
+        // Valid mixed-sign cancellation has the same exact semantics as the server sum.
+        XCTAssertNoThrow(try service.validate(operation([.max, 1, -1], total: .max)))
+        XCTAssertNoThrow(try service.validate(operation([.min, -1, 1], total: .min)))
+    }
+
+    @MainActor
     func testWorkspaceReconciliationUsesDateScopedObservationIncludingOpening() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

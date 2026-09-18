@@ -174,20 +174,5 @@ public enum PlanningPeriodProjection {
 
     /// Two-word signed accumulation permits exact cancellation independent of input order.
     /// Final API observations must fit Int64. No Double/Decimal rounding or silent saturation.
-    private struct ExactSum {
-        var high: Int64 = 0
-        var low: UInt64 = 0
-        mutating func add(_ value: Int64) throws {
-            let addition = low.addingReportingOverflow(UInt64(bitPattern: value))
-            let highDelta: Int64 = (value < 0 ? -1 : 0) + (addition.overflow ? 1 : 0)
-            let upper = high.addingReportingOverflow(highDelta)
-            guard !upper.overflow else { throw MoneyError.arithmeticOverflow }
-            low = addition.partialValue; high = upper.partialValue
-        }
-        func value() throws -> Int64 {
-            if high == 0, low <= UInt64(Int64.max) { return Int64(low) }
-            if high == -1, low >= UInt64(1) << 63 { return Int64(bitPattern: low) }
-            throw MoneyError.arithmeticOverflow
-        }
-    }
+    private typealias ExactSum = ExactMinorUnitSum
 }
