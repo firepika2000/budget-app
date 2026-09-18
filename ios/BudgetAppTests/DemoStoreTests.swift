@@ -1391,8 +1391,12 @@ final class DemoStoreTests: XCTestCase {
             store.accounts.contains { $0.id == account.accountID && ["credit", "loan"].contains($0.accountType) }
         })
         let plan = try XCTUnwrap(store.planPerformanceReport)
-        XCTAssertEqual(plan.points.last?.availableMinor, store.summary?.categories.reduce(Int64(0)) { $0 + $1.availableMinor })
-        XCTAssertEqual(plan.points.last?.readyToAssignMinor, store.summary?.readyToAssignMinor)
+        for point in plan.points {
+            XCTAssertEqual(point.availableMinor, point.carriedAvailableMinor + point.assignedMinor + point.activityMinor)
+        }
+        let ending = try XCTUnwrap(plan.points.last)
+        let cutoff = try DemoStore().planningSnapshot(month: String(ending.periodEnd.prefix(7)) + "-01", through: ending.periodEnd)
+        XCTAssertEqual(ending.readyToAssignMinor, cutoff.readyToAssignMinor, "Report cutoff is not the selected Plan month's end")
         let resilience = try XCTUnwrap(store.resilienceReport)
         XCTAssertEqual(resilience.expectedMarginMinor, resilience.scheduledIncomeMinor - resilience.scheduledOutflowsMinor)
         XCTAssertNil(resilience.essentialExpenseCoverageDays)

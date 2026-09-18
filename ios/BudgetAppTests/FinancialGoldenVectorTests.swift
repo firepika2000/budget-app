@@ -1,7 +1,79 @@
 import XCTest
+import BudgetAPI
 @testable import Budget_App
 
 final class FinancialGoldenVectorTests: XCTestCase {
+    @MainActor
+    func testProductionPlanReportMatchesServerHistoryPartialPeriodsRefundsAndScope() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        let services = BudgetApplicationServices(repository: source)
+        try await services.accounts.create(.init(name: "Cash", kind: "checking", isOnBudget: true, openingBalanceMinor: 0))
+        let cash = try XCTUnwrap(source.demo.accounts.last?.id)
+        try await services.accounts.create(.init(name: "Card", kind: "credit", isOnBudget: true, openingBalanceMinor: 0))
+        let card = try XCTUnwrap(source.demo.accounts.last?.id)
+        XCTAssertTrue(source.demo.createCategory(name: "Groceries", group: "Needs"))
+        let groceries = try XCTUnwrap(source.demo.categories.last?.id)
+        XCTAssertTrue(source.demo.createCategory(name: "Dining", group: "Needs"))
+        let dining = try XCTUnwrap(source.demo.categories.last?.id)
+        func record(_ amount: Int64, account: String, category: String?, day: String, splits: [TransactionSplitOperation] = []) async throws {
+            try await services.transactions.record(.init(accountID: account, categoryID: category, amountMinor: amount,
+                occurredOn: day, payeeName: "Report proof", memo: "", isCleared: false, splits: splits, flag: nil, tags: [], attachmentMetadata: []))
+        }
+        try await record(100_000, account: cash, category: nil, day: "2026-06-30")
+        for (category, amount) in [(groceries, Int64(30_000)), (dining, 10_000)] {
+            try await services.planning.assign(.init(categoryID: category, month: "2026-07-01", assignedMinor: amount, expectedVersion: source.demo.allocationVersion))
+        }
+        try await record(-12_000, account: cash, category: nil, day: "2026-07-15", splits: [
+            .init(categoryID: groceries, amountMinor: -8_000, memo: ""), .init(categoryID: dining, amountMinor: -4_000, memo: "")])
+        try await services.planning.move(.init(sourceCategoryID: groceries, destinationCategoryID: dining, amountMinor: 5_000, occurredOn: "2026-08-01", note: "Move", expectedVersion: source.demo.allocationVersion))
+        try await record(-4_000, account: card, category: dining, day: "2026-08-02")
+        try await record(2_000, account: cash, category: groceries, day: "2026-08-03")
+        func report(_ start: String, _ end: String) async throws -> APIPlanPerformanceReport {
+            let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate(start), end: BudgetWorkspaceStore.parseDate(end), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+            let value = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+            return try XCTUnwrap(value.planPerformance)
+        }
+        let before = source.demo.financialObservation(accountReferences: ["cash": cash, "card": card], categoryReferences: ["groceries": groceries, "dining": dining])
+        let full = try await report("2026-07-01", "2026-08-31")
+        XCTAssertEqual(full.points.map(\.periodStart), ["2026-07-01", "2026-08-01"])
+        XCTAssertEqual(full.points.map(\.periodEnd), ["2026-07-31", "2026-08-31"])
+        // Exact matching scenario is tested through FastAPI in test_analytics.py.
+        XCTAssertEqual(full.points.map(\.assignedMinor), [40_000, 0])
+        XCTAssertEqual(full.points.map(\.activityMinor), [-12_000, 2_000])
+        XCTAssertEqual(full.points.map(\.spendingMinor), [12_000, 2_000])
+        XCTAssertEqual(full.points.map(\.carriedAvailableMinor), [0, 28_000])
+        XCTAssertEqual(full.points.map(\.availableMinor), [28_000, 30_000])
+        XCTAssertEqual(full.points.map(\.readyToAssignMinor), [60_000, 60_000])
+        let partial = try await report("2026-07-16", "2026-08-02")
+        XCTAssertEqual(partial.points.map(\.periodStart), ["2026-07-16", "2026-08-01"])
+        XCTAssertEqual(partial.points.map(\.periodEnd), ["2026-07-31", "2026-08-02"])
+        XCTAssertEqual(partial.points.map(\.activityMinor), [0, 0])
+        XCTAssertEqual(partial.points.map(\.spendingMinor), [0, 4_000])
+        XCTAssertEqual(partial.points.map(\.carriedAvailableMinor), [28_000, 28_000])
+        XCTAssertEqual(partial.points.map(\.availableMinor), [28_000, 28_000])
+        let refund = try await report("2026-08-03", "2026-08-03")
+        XCTAssertEqual(refund.points.first?.spendingMinor, -2_000)
+        XCTAssertEqual(refund.points.first?.carriedAvailableMinor, 28_000)
+        let index = try XCTUnwrap(source.demo.categories.firstIndex { $0.id == groceries })
+        source.demo.categories[index].isHidden = true
+        let archived = try await report("2026-07-01", "2026-08-31")
+        XCTAssertEqual(archived, full, "Archival cannot erase report history")
+        source.demo.categories[index].isHidden = false
+        XCTAssertEqual(source.demo.financialObservation(accountReferences: ["cash": cash, "card": card], categoryReferences: ["groceries": groceries, "dining": dining]), before)
+        source.demo.categories[index].delegatedTo = .alex
+        source.demo.persona = .alex
+        let restricted = try await report("2026-07-01", "2026-08-31")
+        XCTAssertEqual(restricted.points.map(\.readyToAssignMinor), [0, 0])
+        XCTAssertEqual(restricted.points.map(\.availableMinor), [30_000, 25_000], "Hidden account activity must not leak")
+        XCTAssertEqual(restricted.points.map(\.spendingMinor), [0, 0])
+        let cashIndex = try XCTUnwrap(source.demo.accounts.firstIndex { $0.id == cash })
+        source.demo.accounts[cashIndex].restrictedFromChildren = false
+        let shared = try await report("2026-07-01", "2026-08-31")
+        XCTAssertEqual(shared.points.map(\.readyToAssignMinor), [0, 0])
+        XCTAssertEqual(shared.points.map(\.availableMinor), [22_000, 19_000])
+        XCTAssertEqual(shared.points.map(\.spendingMinor), [8_000, -2_000])
+    }
+
     @MainActor
     func testProductionDemoRolloverUsesActualCommandsAndPreservesHistory() async throws {
         let source = DemoWorkspaceDataSource(fresh: true, cashRolloverPolicies: [try .init(effectiveMonth: "2026-09-01", policy: .absorb, version: 1)])
@@ -34,6 +106,11 @@ final class FinancialGoldenVectorTests: XCTestCase {
             XCTAssertEqual(snapshot.summary?.readyToAssignMinor, 35_000)
             XCTAssertEqual(snapshot.summary?.categories.first?.availableMinor, 0)
             XCTAssertEqual(snapshot.planPerformance?.points.first?.readyToAssignMinor, 35_000)
+            let ranged = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-08-15"), end: BudgetWorkspaceStore.parseDate("2026-09-15"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+            let history = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-10-01"), report: ranged)
+            XCTAssertEqual(history.planPerformance?.points.map(\.carriedAvailableMinor), [-5_000, 0])
+            XCTAssertEqual(history.planPerformance?.points.map(\.activityMinor), [0, 0])
+            XCTAssertEqual(history.planPerformance?.points.map(\.readyToAssignMinor), [40_000, 35_000])
         }
         do {
             try await services.planning.assign(.init(categoryID: category, month: "2026-09-01", assignedMinor: 35_001, expectedVersion: source.demo.allocationVersion))
@@ -79,6 +156,24 @@ final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
     func testDeterministicAdapterRunsEverySharedFinancialVectorExactly() async throws {
         try await runVectors(fileName: "v1.json", count: 15)
+    }
+
+    @MainActor
+    func testProductionPlanReportBoundsAndExplicitOpeningDoNotInventEarlierHistory() async throws {
+        let source = DemoWorkspaceDataSource()
+        func snapshot(_ start: String, _ end: String) async throws -> WorkspaceSnapshot {
+            let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate(start), end: BudgetWorkspaceStore.parseDate(end), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+            return try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+        }
+        let crossing = try await snapshot("2025-09-01", "2025-10-15")
+        XCTAssertEqual(crossing.planPerformance?.points.map(\.periodStart), ["2025-10-01"])
+        XCTAssertEqual(crossing.planPerformance?.points.map(\.periodEnd), ["2025-10-15"])
+        let unsupported = try await snapshot("2025-09-01", "2025-09-30")
+        XCTAssertTrue(try XCTUnwrap(unsupported.planPerformance).points.isEmpty)
+        for (start, end) in [("2026-09-02", "2026-09-01"), ("1900-01-01", "2026-09-01")] {
+            do { _ = try await snapshot(start, end); XCTFail("Invalid report range must be rejected before expensive projection") }
+            catch {}
+        }
     }
 
     @MainActor

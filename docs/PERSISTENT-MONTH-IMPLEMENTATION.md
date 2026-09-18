@@ -385,3 +385,24 @@ Full historical reporting parity remains open: Demo Plan Performance currently b
 selected-month point, independent of the requested report range. Replace that with exact partial-
 period observations before exposing policy settings. Retain private/scoped observations and do not
 claim historical series acceptance from single-month summary tests.
+
+### Historical Plan report correction following `e7959aa`
+
+The recorded Demo historical-report gap is now implemented: report periods come from the requested
+inclusive start/end range, not selected Plan month. Partial-month carry includes activity/allocations
+before the first reported day, and absorption remains a month-boundary effect rather than Activity.
+Purpose totals include recorded card funding/releases/payments, while spending excludes those reserve
+changes and retains signed refunds. Archived purposes remain historical facts. Restricted categories
+and accounts are scoped before aggregation and household Unassigned is hidden.
+
+Each request prepares its dated ledger once, then reuses those immutable inputs for period snapshots;
+date parsing/fact hydration/rollover derivation are not repeated per month. Range validation mirrors
+the server's ordered 600-month limit. Demo's explicit opening is the earliest supported history, so
+unsupported older months do not acquire invented balances. Transaction browsing no longer creates
+an unrelated 200-year report to map DTOs; it uses the same scoped mapper directly.
+
+Native and FastAPI contract coverage uses the same concrete split/move/card/refund scenario with
+exact historical and partial-period values. Further tests preserve archived history, prove hidden
+versus shared account scope, and cross rollover boundaries with a different selected Plan month.
+No user policy setting/default or human-data migration is included. Continue the prospective policy
+command/version/settings work; this report correction does not close the full production mission.

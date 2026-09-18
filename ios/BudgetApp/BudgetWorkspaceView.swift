@@ -402,6 +402,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     }
 
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
+        let planningPoints = try planPerformancePoints(start: report.start, end: report.end)
         let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"
         let plan = try demo.planningSnapshot(month: month)
         let visibleAccounts = demo.visibleAccounts
@@ -414,13 +415,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let groupRows: [APICategoryGroup] = try decode(groupNames.enumerated().map { ["id": groupIDs[$0.element]!, "budget_id": budget.id, "name": $0.element, "sort_order": $0.offset, "is_archived": demo.archivedGroups.contains($0.element)] })
         let categoryRows: [APICategory] = try decode(visibleCategories.enumerated().map { index, item in ["id": item.id, "budget_id": budget.id, "group_id": groupIDs[item.group]!, "name": item.name, "sort_order": index, "is_archived": item.isHidden, "system_type": NSNull(), "linked_account_id": NSNull(), "delegated_user_id": item.delegatedTo?.rawValue.lowercased() ?? NSNull(), "is_favorite": item.pinned, "favorite_sort_order": item.pinned ? index : NSNull()] })
         let dateFormatter = DateFormatter(); dateFormatter.locale = Locale(identifier: "en_US_POSIX"); dateFormatter.dateFormat = "yyyy-MM-dd"
-        let transactionRows: [APITransaction] = try decode(demo.visibleTransactions.map { item in
-            let ids = item.categoryIDs.filter { categoryIDs.contains($0) }
-            let splitBase = ids.isEmpty ? 0 : item.amount / Int64(ids.count)
-            var remainder = ids.isEmpty ? 0 : item.amount % Int64(ids.count)
-            let splits: [[String: Any]] = ids.count > 1 ? ids.enumerated().map { index, id in let extra: Int64 = remainder == 0 ? 0 : (remainder > 0 ? 1 : -1); if remainder != 0 { remainder -= extra }; return ["id": "\(item.id)-\(index)", "category_id": id, "amount_minor": item.categoryAmounts[id] ?? splitBase + extra, "memo": "", "financial_classification": item.splitFinancialClassifications[id] ?? NSNull()] } : []
-            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "payee_id": demo.payees.first(where: { $0.name == item.payee })?.id ?? NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "financial_classification": item.financialClassification ?? NSNull(), "is_cleared": item.cleared, "is_reconciled": item.reconciled, "created_by_user_id": demo.persona.rawValue.lowercased(), "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "scheduled_transaction_id": NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "status": item.status, "void_reason": item.voidReason ?? NSNull(), "reversal_of_transaction_id": item.reversalOfTransactionID ?? NSNull(), "reversal_transaction_id": item.reversalTransactionID ?? NSNull(), "splits": splits]
-        })
+        let transactionRows = try transactionRows(categoryIDs: categoryIDs)
         let payeeRows: [APIPayee] = try decode(demo.payees.filter { !$0.isArchived }.map { item in
             let history = demo.visibleTransactions.filter { $0.payee == item.name }
             return ["id": item.id, "household_id": budget.householdID, "display_name": item.name, "is_archived": item.isArchived,
@@ -576,7 +571,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let trailingStart = reportCalendar.date(byAdding: .day, value: -364, to: report.end)!
         func recordedInterest(since value: Date) -> Int64 { classifiedInterest.filter { $0.0.date >= value && $0.0.date <= report.end }.reduce(Int64(0)) { $0 + $1.1 } }
         let debt: APIDebtReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "opening_debt_minor": openingDebt, "debt_minor": endingDebt, "principal_reduction_minor": openingDebt - endingDebt, "recorded_interest_range_minor": recordedInterest(since: start), "recorded_interest_month_minor": recordedInterest(since: monthStart), "recorded_interest_ytd_minor": recordedInterest(since: yearStart), "recorded_interest_trailing_12_minor": recordedInterest(since: trailingStart), "recorded_interest_lifetime_minor": classifiedInterest.reduce(Int64(0)) { $0 + $1.1 }, "interest_tracking_started_on": classifiedInterest.map { $0.0.date }.min().map(dateFormatter.string) ?? NSNull(), "points": debtPoints, "accounts": debtRows])
-        let planPerformance: APIPlanPerformanceReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "points": [["period_start": month, "period_end": dateFormatter.string(from: report.end), "assigned_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.assigned }, "activity_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.activity }, "spending_minor": max(-visibleCategories.reduce(Int64(0)) { $0 + $1.activity }, 0), "carried_available_minor": visibleCategories.reduce(Int64(0)) { $0 + (plan.categories[$1.id]?.carriedAvailableMinor ?? 0) }, "available_minor": visibleCategories.reduce(Int64(0)) { $0 + $1.available }, "overspent_minor": visibleCategories.reduce(Int64(0)) { $0 + max(-$1.available, 0) }, "ready_to_assign_minor": demo.isRestricted ? 0 : plan.readyToAssignMinor]]])
+        let planPerformance: APIPlanPerformanceReport = try decode(["start_date": dateFormatter.string(from: start), "end_date": dateFormatter.string(from: report.end), "currency_code": "USD", "points": planningPoints])
         let delegated: APIDelegatedBudget? = demo.isRestricted ? try decode(["id": "demo-delegated", "budget_id": budget.id, "user_id": demo.persona.rawValue.lowercased(), "pool_category_id": visibleCategories.first?.id ?? "", "authority_minor": demo.delegatedAuthority, "assigned_minor": demo.delegatedAssigned, "available_to_assign_minor": demo.delegatedReadyToAssign, "allow_category_creation": true, "allow_reallocation": true, "rules": []]) : nil
         let requestRows: [APIFinancialRequest] = try decode(demo.requests.filter { !demo.isRestricted || $0.member == demo.persona }.map { item -> [String: Any] in ["id": item.id, "requester_user_id": item.member.rawValue.lowercased(), "request_type": "additional_allocation", "destination_category_id": item.categoryID, "requested_amount_minor": item.amount, "reason": item.reason, "status": item.status.lowercased().replacingOccurrences(of: " ", with: "_"), "version": item.status == "Pending" ? 0 : 1, "approved_amount_minor": item.approvedAmount.map { $0 as Any } ?? NSNull(), "source_category_id": NSNull(), "allocation_operation_id": NSNull(), "actions": []] })
         // Preserve actual command identity/date/actor across reads. Never manufacture movements
@@ -663,6 +658,83 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             ["user_id": "demo-member", "email": "sam@example.test", "display_name": "Sam Rivera", "role": "adult", "is_active": true]
         ])
         return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: [], spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: demoForecast, members: members, delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
+    }
+
+    private func transactionRows(categoryIDs: Set<String>) throws -> [APITransaction] {
+        let dateFormatter = DateFormatter(); dateFormatter.locale = Locale(identifier: "en_US_POSIX"); dateFormatter.dateFormat = "yyyy-MM-dd"
+        return try decode(demo.visibleTransactions.map { item in
+            let ids = item.categoryIDs.filter { categoryIDs.contains($0) }
+            let splitBase = ids.isEmpty ? 0 : item.amount / Int64(ids.count)
+            var remainder = ids.isEmpty ? 0 : item.amount % Int64(ids.count)
+            let splits: [[String: Any]] = ids.count > 1 ? ids.enumerated().map { index, id in let extra: Int64 = remainder == 0 ? 0 : (remainder > 0 ? 1 : -1); if remainder != 0 { remainder -= extra }; return ["id": "\(item.id)-\(index)", "category_id": id, "amount_minor": item.categoryAmounts[id] ?? splitBase + extra, "memo": "", "financial_classification": item.splitFinancialClassifications[id] ?? NSNull()] } : []
+            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "payee_id": demo.payees.first(where: { $0.name == item.payee })?.id ?? NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "financial_classification": item.financialClassification ?? NSNull(), "is_cleared": item.cleared, "is_reconciled": item.reconciled, "created_by_user_id": demo.persona.rawValue.lowercased(), "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "scheduled_transaction_id": NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "status": item.status, "void_reason": item.voidReason ?? NSNull(), "reversal_of_transaction_id": item.reversalOfTransactionID ?? NSNull(), "reversal_transaction_id": item.reversalTransactionID ?? NSNull(), "splits": splits]
+        })
+    }
+
+    private func planPerformancePoints(start: Date, end: Date) throws -> [[String: Any]] {
+        let first = try PlanningPeriodProjection.Day(BudgetWorkspaceStore.dateString(start))
+        let last = try PlanningPeriodProjection.Day(BudgetWorkspaceStore.dateString(end))
+        let months = (Int(last.iso.prefix(4))! - Int(first.iso.prefix(4))!) * 12
+            + Int(last.iso.dropFirst(5).prefix(2))! - Int(first.iso.dropFirst(5).prefix(2))! + 1
+        guard first <= last, months <= 600 else { throw workspaceRepositoryError("Report range must be ordered and no longer than 600 calendar months.") }
+        let calendar = Calendar(identifier: .gregorian)
+        // Archived purposes retain their historical money. Child scope is applied before totals.
+        let ids = Set(demo.categories.filter { !demo.isRestricted || $0.delegatedTo == demo.persona }.map(\.id))
+        let accounts = Dictionary(uniqueKeysWithValues: demo.visibleAccounts.map { ($0.id, $0) })
+        let accountScope = Set(accounts.keys)
+        let inputs = try demo.planningInputs(through: last.iso, accountScope: accountScope)
+        let transactions = demo.transactions.filter { !$0.scheduled && accounts[$0.accountID]?.isOnBudget == true }.map {
+            (item: $0, day: BudgetWorkspaceStore.dateString($0.date))
+        }
+        var reserveChanges: [(day: String, amount: Int64, accountID: String)] = []
+        if !demo.isRestricted {
+            for (item, day) in transactions where accounts[item.accountID]?.kind == .credit {
+                let value = try item.transferID == nil
+                    ? Money.sumMinorUnits(demo.recordedReserveAmounts(transactionID: item.id).values)
+                    : Money(minorUnits: item.amount, currencyCode: "USD").negated().minorUnits
+                reserveChanges.append((day, value, item.accountID))
+            }
+        }
+        var cursor = max(first.iso, demo.fixtureOpening?.month.iso ?? first.iso)
+        var points: [[String: Any]] = []
+        while cursor <= last.iso {
+            let date = BudgetWorkspaceStore.parseDate(cursor)
+            let day = try PlanningPeriodProjection.Day(cursor)
+            let finalDay = calendar.range(of: .day, in: .month, for: date)!.count
+            let through = min(String(cursor.prefix(8)) + String(format: "%02d", finalDay), last.iso)
+            let after = try inputs.snapshot(month: day.month, through: through)
+            let before = cursor == day.month ? nil : try inputs.snapshot(month: day.month,
+                through: BudgetWorkspaceStore.dateString(calendar.date(byAdding: .day, value: -1, to: date)!))
+            let rows = after.categories.filter { ids.contains($0.key) }
+            let carry = try Money.sumMinorUnits(rows.flatMap { id, row in
+                [row.carriedAvailableMinor, before?.categories[id]?.assignedMinor ?? 0, before?.categories[id]?.activityMinor ?? 0]
+            } + reserveChanges.filter { $0.day < cursor }.map(\.amount))
+            var assigned: [Int64] = []
+            for event in demo.allocationEvents where event.occurredOn >= cursor && event.occurredOn <= through {
+                if let source = event.sourceCategoryID, ids.contains(source) { assigned.append(-event.amountMinor) }
+                if ids.contains(event.destinationCategoryID) { assigned.append(event.amountMinor) }
+            }
+            let transactionAmounts = transactions.filter {
+                $0.item.transferID == nil && $0.day >= cursor && $0.day <= through
+            }.flatMap { demo.canonicalCategoryAmounts(for: $0.item).filter { ids.contains($0.key) }.values }
+            let transactionActivity = try Money.sumMinorUnits(transactionAmounts)
+            let activity = try Money.sumMinorUnits(Array(transactionAmounts) + reserveChanges.filter { $0.day >= cursor && $0.day <= through }.map(\.amount))
+            let available = try Money.sumMinorUnits(rows.values.map(\.availableMinor) + reserveChanges.filter { $0.day <= through }.map(\.amount))
+            let reserveBalances = try Dictionary(grouping: reserveChanges.filter { $0.day <= through }, by: \.accountID).values.map {
+                try Money.sumMinorUnits($0.map(\.amount))
+            }
+            let overspent = try Money.sumMinorUnits((rows.values.map(\.availableMinor) + reserveBalances).filter { $0 < 0 }.map {
+                try Money(minorUnits: $0, currencyCode: "USD").negated().minorUnits
+            })
+            points.append(["period_start": cursor, "period_end": through,
+                "assigned_minor": try Money.sumMinorUnits(assigned), "activity_minor": activity,
+                "spending_minor": try Money(minorUnits: transactionActivity, currencyCode: "USD").negated().minorUnits,
+                "carried_available_minor": carry, "available_minor": available, "overspent_minor": overspent,
+                "ready_to_assign_minor": demo.isRestricted ? 0 : after.readyToAssignMinor])
+            if through == last.iso { break }
+            cursor = BudgetWorkspaceStore.dateString(calendar.date(byAdding: .day, value: 1, to: BudgetWorkspaceStore.parseDate(through))!)
+        }
+        return points
     }
 
     func exportReports(report: WorkspaceReportQuery) async throws -> Data {
@@ -786,9 +858,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return profile
     }
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage {
-        let calendar = Calendar.current
-        let report = WorkspaceReportQuery(start: calendar.date(byAdding: .year, value: -100, to: Date())!, end: calendar.date(byAdding: .year, value: 100, to: Date())!, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
-        var rows = try await snapshot(planMonth: Date(), report: report).transactions
+        var rows = try transactionRows(categoryIDs: Set(demo.visibleCategories.map(\.id)))
         let text = query.search.trimmingCharacters(in: .whitespacesAndNewlines)
         rows = rows.filter { item in
             let categoryIDs = Set(([item.categoryID].compactMap { $0 }) + item.splits.map(\.categoryID))

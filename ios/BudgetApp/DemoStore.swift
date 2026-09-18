@@ -229,7 +229,31 @@ final class DemoStore: ObservableObject {
     var currentPlanningMonth: String { String(BudgetWorkspaceStore.dateString(Date()).prefix(7)) + "-01" }
 
     func planningSnapshot(month: String, through: String? = nil,
-                          additionalAllocations: [PlanningPeriodProjection.Allocation] = []) throws -> PlanningPeriodProjection.Snapshot {
+                          additionalAllocations: [PlanningPeriodProjection.Allocation] = [],
+                          accountScope: Set<String>? = nil) throws -> PlanningPeriodProjection.Snapshot {
+        try planningInputs(through: through, additionalAllocations: additionalAllocations, accountScope: accountScope).snapshot(month: month)
+    }
+
+    struct PlanningInputs {
+        let opening: PlanningPeriodProjection.Opening?
+        let categoryIDs: Set<String>
+        let allocations: [PlanningPeriodProjection.Allocation]
+        let activity: [PlanningPeriodProjection.PostedActivity]
+        let effects: [CashRolloverProjection.Effect]
+
+        func snapshot(month: String, through: String? = nil) throws -> PlanningPeriodProjection.Snapshot {
+            try PlanningPeriodProjection.snapshot(month: month, categoryIDs: categoryIDs, opening: opening,
+                allocations: allocations.lazy.filter { through == nil || $0.occurredOn.iso <= through! },
+                activity: activity.lazy.filter { through == nil || $0.occurredOn.iso <= through! },
+                rolloverEffects: effects.filter { through == nil || $0.month <= String(through!.prefix(7)) + "-01" })
+        }
+    }
+
+    // A report reuses one prepared ledger across its periods instead of repeatedly formatting
+    // dates, hydrating facts and deriving rollover on the main actor for every month.
+    func planningInputs(through: String? = nil,
+                        additionalAllocations: [PlanningPeriodProjection.Allocation] = [],
+                        accountScope: Set<String>? = nil) throws -> PlanningInputs {
         let allocations = try allocationEvents.map { event in
             try PlanningPeriodProjection.Allocation(occurredOn: event.occurredOn, postings: [
                 .init(categoryID: event.sourceCategoryID, amountMinor: -event.amountMinor),
@@ -238,7 +262,7 @@ final class DemoStore: ObservableObject {
         }
         // Voiding keeps the original financial fact and adds an opposite dated reversal.
         // Removing the original here would count only the refund and manufacture category money.
-        let activity = try transactions.filter { !$0.scheduled && (through == nil || BudgetWorkspaceStore.dateString($0.date) <= through!) }.map { item in
+        let activity = try transactions.filter { !$0.scheduled && (accountScope == nil || accountScope!.contains($0.accountID)) && (through == nil || BudgetWorkspaceStore.dateString($0.date) <= through!) }.map { item in
             guard let account = accounts.first(where: { $0.id == item.accountID }) else { throw DemoMutationError.accountNotFound }
             let amounts = item.transferID == nil && account.isOnBudget ? canonicalCategoryAmounts(for: item) : [:]
             let cashInflow = item.transferID == nil && amounts.isEmpty && account.isOnBudget && [.checking, .savings, .cash].contains(account.kind)
@@ -263,7 +287,7 @@ final class DemoStore: ObservableObject {
             let accountByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
             for item in transactions where !item.scheduled && item.transferID == nil {
                 let day = BudgetWorkspaceStore.dateString(item.date)
-                guard through == nil || day <= through!, let account = accountByID[item.accountID], account.isOnBudget else { continue }
+                guard through == nil || day <= through!, accountScope == nil || accountScope!.contains(item.accountID), let account = accountByID[item.accountID], account.isOnBudget else { continue }
                 for (categoryID, amount) in canonicalCategoryAmounts(for: item) {
                     facts.append(try .init(occurredOn: day, categoryID: categoryID, availableDeltaMinor: amount,
                                            unfundedCreditDeltaMinor: account.kind == .credit ? amount : 0))
@@ -277,7 +301,7 @@ final class DemoStore: ObservableObject {
             effects = try CashRolloverProjection.effects(throughMonth: through.map { String($0.prefix(7)) + "-01" } ?? "9999-12-01",
                                                         policies: cashRolloverPolicies, facts: facts)
         }
-        return try PlanningPeriodProjection.snapshot(month: month, categoryIDs: Set(categories.map(\.id)), opening: fixtureOpening, allocations: datedAllocations, activity: activity, rolloverEffects: effects)
+        return PlanningInputs(opening: fixtureOpening, categoryIDs: Set(categories.map(\.id)), allocations: datedAllocations, activity: activity, effects: effects)
     }
 
     func projectedCategories(month: String) throws -> [DemoCategory] {

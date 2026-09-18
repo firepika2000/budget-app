@@ -6,6 +6,23 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+Following `e7959aa`, Demo Plan Performance now returns the actual requested multi-month/partial-
+month series, including recorded reserve-purpose activity separately from spending, signed refunds,
+archived history, scoped balances and dated RTA. Explicit opening dates bound known history and the
+server's ordered 600-month limit is enforced. The production service tests match the FastAPI ledger
+fixture and cover rollover boundaries independently of selected Plan month. Prepared immutable facts
+are reused across months. Full native checks caught transaction browsing constructing an unrelated
+200-year report; that is removed in favor of the shared scoped transaction DTO mapper.
+
+Next work: prospective rollover policy commands with locking/preview invalidation, shared settings,
+and explicit new-budget defaults after parity verification. No setting/default activation or human
+database migration here. **HUMAN ACCEPTANCE PENDING — DO NOT RETEST.**
+Verification: **439 backend zero skips, 121 native XCTest, 48 Core + 50 API, 2 production UI
+PASS**; Beta build/diff check PASS. UI covers six distinct historical Plan periods and currency
+accessibility across report charts. Logs `/tmp/budget-plan-history-{server-reference,backend,native-final,package,ui}.log`.
+Toolchain/device unchanged: Xcode Beta 27.0 `27A5252f`, existing iOS 27 iPhone 17 Pro Max
+`3ABD861E-D38D-4AFD-A356-959266051564`. No Simulator/human Live data reset or migration.
+
 Following `de9ebd3`, Demo's actual period projection now consumes repository-supplied effective
 rollover history, including exact opening/allocation/transaction/split and recorded-credit facts.
 Commands and card funding share that projection; request approvals now preflight a dated balanced

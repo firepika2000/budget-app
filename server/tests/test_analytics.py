@@ -926,6 +926,35 @@ def test_plan_performance_history_reconciles_assignments_activity_rollover_and_c
     assert current["total_assigned_minor"] == august["assigned_minor"]
     assert sum(row["activity_minor"] for row in current["categories"]) == august["activity_minor"]
     assert sum(row["available_minor"] for row in current["categories"]) == august["available_minor"]
+    # Native production composition exercises this same ledger and exact partial-period values.
+    partial = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/plan-performance"
+        "?start_date=2026-07-16&end_date=2026-08-02", headers=auth(owner_token),
+    )
+    assert partial.status_code == 200, partial.text
+    assert [(point["period_start"], point["period_end"], point["carried_available_minor"],
+             point["activity_minor"], point["spending_minor"], point["available_minor"])
+            for point in partial.json()["points"]] == [
+        ("2026-07-16", "2026-07-31", 28000, 0, 0, 28000),
+        ("2026-08-01", "2026-08-02", 28000, 0, 4000, 28000),
+    ]
+    refund = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/plan-performance"
+        "?start_date=2026-08-03&end_date=2026-08-03", headers=auth(owner_token),
+    )
+    assert refund.status_code == 200, refund.text
+    assert refund.json()["points"][0]["spending_minor"] == -2000
+    assert refund.json()["points"][0]["carried_available_minor"] == 28000
+    from app.models import Category
+    with session_factory() as db:
+        db.get(Category, groceries["id"]).is_archived = True
+        db.commit()
+    archived = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/plan-performance"
+        "?start_date=2026-07-01&end_date=2026-08-31", headers=auth(owner_token),
+    )
+    assert archived.status_code == 200, archived.text
+    assert archived.json() == response.json()
 
 
 def test_plan_performance_restricted_scope_cannot_leak_hidden_plan_values(

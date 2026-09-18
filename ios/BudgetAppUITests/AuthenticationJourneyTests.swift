@@ -299,6 +299,27 @@ final class AuthenticationJourneyTests: XCTestCase {
         checkChart("plan-performance-history-chart", labelPrefix: "Assigned during")
     }
 
+    func testProductionPlanHistoryRendersRequestedMultiMonthSeries() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+        XCTAssertTrue(app.buttons["insights-plan-performance"].waitForExistence(timeout: 5))
+        app.buttons["insights-plan-performance"].tap()
+        let period = app.buttons["report-period"]
+        XCTAssertTrue(period.waitForExistence(timeout: 5))
+        period.tap()
+        app.buttons["6 Months"].tap()
+        let chart = app.descendants(matching: .any)["plan-performance-history-chart"]
+        for _ in 0..<12 where !chart.exists { app.swipeUp() }
+        XCTAssertTrue(chart.waitForExistence(timeout: 5))
+        let marks = chart.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Assigned during"))
+        let loaded = expectation(for: NSPredicate { _, _ in marks.count >= 6 }, evaluatedWith: app)
+        wait(for: [loaded], timeout: 8)
+        XCTAssertGreaterThanOrEqual(Set(marks.allElementsBoundByIndex.map(\.label)).count, 6,
+                                   "The production chart must contain distinct historical periods, not one selected Plan month")
+    }
+
     func testProductionDebtPayoffScenarioIsReadOnlyAndExposesExplicitAssumptions() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=insights"]

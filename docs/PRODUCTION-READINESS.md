@@ -4,6 +4,37 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Historical Plan Performance correction after `e7959aa`: Demo now reports the requested inclusive
+Gregorian periods independently of the selected Plan month, with exact partial-period carry,
+Assigned/Activity/Available and dated Unassigned. Recorded card-reserve activity affects purpose
+availability but not spending; refund-only spending remains negative rather than clamped to zero.
+Archived category history remains included. Account/category scope applies before totals and
+restricted Unassigned remains zero. The explicit Demo opening bounds available history; earlier
+periods are omitted, not fabricated. Ordered ranges are limited to the server's 600-calendar-month
+contract before projection. Prepared ledger inputs and ISO dates are reused across periods.
+
+Native service tests and the matching FastAPI reference fixture prove split spending, moves,
+funded credit, refunds, partial start/end days, archive preservation, hidden/shared accounts and
+category privacy. Rollover tests now cross a partial historical report boundary independently of
+the selected Plan month. Empty/pre-opening and invalid/oversized ranges are covered.
+This exposed an existing coupling: Demo transaction browsing built a 200-year complete report to
+get transaction DTOs. Browsing now shares the same scoped transaction mapper directly with workspace
+loading; no report-range workaround or weakened validation. The old report test comparing a cutoff
+report to month-end category totals was replaced by cutoff/RTA and carry+assignment+activity checks,
+with exact server-shaped expected monetary observations in the new production-service regression.
+
+Next: prospective policy command lifecycle, locking/version invalidation and shared settings, then
+explicit new-budget defaults. No public policy setting is activated by this checkpoint. Broad server
+report hydration, Demo allowance issuance, clocks, Local Device and other mission gates remain open.
+Verification: **439 backend PASS, zero skips; 121 native XCTest; 48 BudgetCore + 50 BudgetAPI;
+2 production report XCUITests PASS**. UI verifies at least six distinct historical chart periods
+and currency accessibility across Income/Spending, Net Worth and Plan. Beta build and diff check
+PASS. Xcode 27.0 `27A5252f` at `/Users/firepika/Downloads/Xcode-beta.app/Contents/Developer`, existing
+iPhone 17 Pro Max/iOS 27 `3ABD861E-D38D-4AFD-A356-959266051564`; no reset or human data changes.
+Logs `/tmp/budget-plan-history-{server-reference,backend,native-final,package,ui}.log`. Earlier
+`focused.log`/`native.log` preserve the scope-fixture and 200-year-browser failures addressed above.
+
+
 Demo rollover integration after `de9ebd3`: the actual Demo repository accepts effective policy
 history (default remains legacy carry) and supplies dated opening, allocation, on-budget direct/
 split activity and signed recorded credit attribution to the shared boundary engine. Period reads,
