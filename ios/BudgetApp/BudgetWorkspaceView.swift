@@ -925,7 +925,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func moveMoney(_ operation: MoveMoneyOperation) async throws { guard demo.move(amount: operation.amountMinor, from: operation.sourceCategoryID, to: operation.destinationCategoryID, occurredOn: operation.occurredOn, note: operation.note) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { guard demo.createCategory(name: name, group: groupName.isEmpty ? newGroupName : groupName) else { throw workspaceRepositoryError(demo.errorMessage) } }
     func createGroup(name: String) async throws { if !demo.groupOrder.contains(name) { demo.groupOrder.append(name) } }
-    func createAccount(_ operation: CreateAccountOperation) async throws { demo.createAccount(name: operation.name, type: operation.kind, isOnBudget: operation.isOnBudget, startingBalance: operation.openingBalanceMinor) }
+    func createAccount(_ operation: CreateAccountOperation) async throws {
+        guard demo.createAccount(name: operation.name, type: operation.kind, isOnBudget: operation.isOnBudget, startingBalance: operation.openingBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
+    }
     func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws {
         guard demo.updateAccount(id: operation.accountID, name: operation.name, type: operation.kind) else { throw workspaceRepositoryError("Account not found.") }
     }

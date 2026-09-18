@@ -4,6 +4,20 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Opening/legacy-split hardening after pushed `75226d5` (verified): account creation
+checks the resulting Unassigned balance before inserting either account or opening transaction,
+and the production Demo repository propagates refusal. Legacy split attribution uses signed
+quotient/remainder arithmetic instead of `abs`, supporting Int64.min without a trap and conserving
+the total even for repeated legacy category references. Legacy write helpers reject duplicate
+category selections. Tests exercise both opening limits, valid cancellation/retry, signed extrema,
+deterministic remainder order, uncategorized minimum-value entry, and refusal of duplicate edits.
+No server or migration changes. Report/forecast aggregation remains a separate open crash-risk
+surface; this checkpoint does not establish safe rendering for all extreme-value datasets.
+Evidence: `/tmp/budget-opening-split-{native-final,backend}.log`.
+**108 native XCTest + 1 fresh-account production XCUITest + 5 focused backend account tests PASS**;
+Beta build/test and diff check PASS. Shared package code unchanged from 45 Core + 49 API PASS.
+The UI creates a $2,000 account and preserves its balance across rename and safe type editing.
+
 Transfer arithmetic continuation after pushed `a1656ab` (verified): creation, editing
 and deletion stage both account legs and cleared/card-reserve deltas before publication. Edits
 accumulate old/new legs together with exact wide sums, so a valid final result is not rejected

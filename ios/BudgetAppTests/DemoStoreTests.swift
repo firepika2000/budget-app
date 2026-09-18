@@ -6,6 +6,57 @@ import BudgetAPI
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testAccountOpeningOverflowIsRejectedBeforeAccountOrTransactionCreation() async throws {
+        for (opening, extra) in [(Int64.max, Int64(1)), (Int64.min, Int64(-1))] {
+            let source = DemoWorkspaceDataSource(fresh: true)
+            let service = BudgetApplicationServices(repository: source).accounts
+            try await service.create(.init(name: "Opening", kind: "checking", isOnBudget: true, openingBalanceMinor: opening))
+            let accountIDs = source.demo.accounts.map(\.id), transactionIDs = source.demo.transactions.map(\.id)
+            do {
+                try await service.create(.init(name: "Overflow", kind: "savings", isOnBudget: true, openingBalanceMinor: extra))
+                XCTFail("Unrepresentable opening aggregate must be refused")
+            } catch { }
+            XCTAssertEqual(source.demo.accounts.map(\.id), accountIDs)
+            XCTAssertEqual(source.demo.transactions.map(\.id), transactionIDs)
+            XCTAssertEqual(source.demo.unassignedMinor, opening)
+            XCTAssertEqual(source.demo.accounts.first?.balance, opening)
+            try await service.create(.init(name: "Cancellation", kind: "cash", isOnBudget: true, openingBalanceMinor: -extra))
+            XCTAssertEqual(source.demo.unassignedMinor, opening - extra)
+            XCTAssertEqual(source.demo.accounts.count, 2)
+        }
+    }
+
+    @MainActor
+    func testLegacyCategoryAttributionPreservesSignedExtremesWithoutAbsoluteValueTrap() throws {
+        let demo = DemoStore(fresh: true)
+        for amount: Int64 in [.min, .max, -5, 5, 0] {
+            for ids in [["a"], ["c", "a", "b"], ["a", "a", "b"]] {
+                let transaction = DemoTransaction(id: "legacy", date: Date(), payee: "", memo: "", accountID: "account", categoryIDs: ids, amount: amount, member: .rey, cleared: false)
+                let attributed = demo.canonicalCategoryAmounts(for: transaction)
+                XCTAssertEqual(attributed.values.reduce(Int64(0), +), amount)
+                XCTAssertEqual(Set(attributed.keys), Set(ids))
+                if amount == -5 && ids.count == 3 && Set(ids).count == 3 { XCTAssertEqual(attributed, ["a": -2, "b": -2, "c": -1]) }
+            }
+        }
+        XCTAssertTrue(demo.createAccount(name: "Cash", type: "checking", isOnBudget: true))
+        demo.addTransaction(payee: "Boundary", amount: .min, accountID: try XCTUnwrap(demo.accounts.first?.id), categoryIDs: [], memo: "", attachment: false)
+        XCTAssertEqual(demo.transactions.first?.amount, .min)
+        XCTAssertEqual(demo.accounts.first?.balance, .min)
+        XCTAssertEqual(demo.unassignedMinor, .min)
+
+        let duplicate = DemoStore(fresh: true)
+        XCTAssertTrue(duplicate.createAccount(name: "Cash", type: "checking", isOnBudget: true))
+        XCTAssertTrue(duplicate.createCategory(name: "Needs"))
+        let accountID = try XCTUnwrap(duplicate.accounts.first?.id)
+        let categoryID = try XCTUnwrap(duplicate.categories.first?.id)
+        duplicate.addTransaction(payee: "Original", amount: 1, accountID: accountID, categoryIDs: [categoryID], memo: "", attachment: false)
+        let original = try XCTUnwrap(duplicate.transactions.first)
+        XCTAssertFalse(duplicate.updateTransaction(id: original.id, payee: "Invalid edit", amount: 1, accountID: accountID, categoryIDs: [categoryID, categoryID], memo: "", cleared: false, flag: nil))
+        XCTAssertEqual(duplicate.transactions.first, original)
+        XCTAssertEqual(duplicate.accounts.first?.balance, -1)
+    }
+
+    @MainActor
     func testTransferOverflowIsAtomicAndEditCancellationUsesFinalBalances() throws {
         let demo = DemoStore(fresh: true)
         demo.createAccount(name: "Source", type: "asset", isOnBudget: false)

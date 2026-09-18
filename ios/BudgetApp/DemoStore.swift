@@ -256,13 +256,18 @@ final class DemoStore: ObservableObject {
         return Array(Set(seedTransactions.map(\.payee))).filter { !system.contains($0.lowercased()) }.sorted().map { DemoPayee(id: payeeID($0), name: $0) }
     }
 
-    func createAccount(name: String, type: String, isOnBudget: Bool, startingBalance: Int64 = 0) {
+    @discardableResult
+    func createAccount(name: String, type: String, isOnBudget: Bool, startingBalance: Int64 = 0) -> Bool {
+        let cashOpening = isOnBudget && ["checking", "savings", "cash"].contains(type) ? startingBalance : 0
+        guard let nextUnassigned = try? Money.sumMinorUnits([unassignedMinor, cashOpening]) else { return fail(.invalidAmount) }
         let id = UUID().uuidString
         accounts.append(.init(id: id, name: name, kind: DemoAccountKind(rawValue: type) ?? (isOnBudget ? .checking : .asset), balance: startingBalance, cleared: startingBalance, isOnBudget: isOnBudget))
         if startingBalance != 0 {
             transactions.insert(.init(id: UUID().uuidString, date: Date(), payee: "Starting Balance", memo: "Balance when account was added", accountID: id, categoryIDs: [], amount: startingBalance, member: persona, cleared: true), at: 0)
-            if isOnBudget && ["checking", "savings", "cash"].contains(type) { unassignedMinor += startingBalance }
         }
+        unassignedMinor = nextUnassigned
+        errorMessage = nil
+        return true
     }
 
     @discardableResult
@@ -336,8 +341,9 @@ final class DemoStore: ObservableObject {
     }
 
     func addTransaction(payee: String, amount: Int64, accountID: String, categoryIDs: [String], memo: String, attachment: Bool) {
-        let signed = -abs(amount)
-        let amounts = Dictionary(uniqueKeysWithValues: splitAmounts(total: abs(amount), categoryIDs: categoryIDs).map { ($0.key, -$0.value) })
+        guard Set(categoryIDs).count == categoryIDs.count else { _ = fail(.invalidAmount); return }
+        let signed = amount > 0 ? -amount : amount
+        let amounts = splitAmounts(total: signed, categoryIDs: categoryIDs)
         _ = recordCanonicalTransaction(.init(accountID: accountID, categoryID: categoryIDs.count == 1 ? categoryIDs[0] : nil, amountMinor: signed, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: payee, memo: memo, isCleared: false, splits: categoryIDs.count > 1 ? amounts.map { .init(categoryID: $0.key, amountMinor: $0.value, memo: "") } : [], flag: "New", tags: [], attachmentMetadata: attachment ? [["name": "receipt.jpg"]] : []))
     }
 
@@ -357,7 +363,7 @@ final class DemoStore: ObservableObject {
         cleared: Bool,
         flag: String?
     ) -> Bool {
-        guard amount > 0 else { return fail(.invalidAmount) }
+        guard amount > 0, Set(categoryIDs).count == categoryIDs.count else { return fail(.invalidAmount) }
         guard accounts.contains(where: { $0.id == accountID }) else { return fail(.accountNotFound) }
         let values = splitAmounts(total: amount, categoryIDs: categoryIDs)
         return updateCanonicalTransaction(id: id, operation: .init(
@@ -719,17 +725,17 @@ final class DemoStore: ObservableObject {
     func canonicalCategoryAmounts(for transaction: DemoTransaction) -> [String: Int64] {
         if !transaction.categoryAmounts.isEmpty { return transaction.categoryAmounts }
         guard !transaction.categoryIDs.isEmpty else { return [:] }
-        let magnitude = splitAmounts(total: abs(transaction.amount), categoryIDs: transaction.categoryIDs)
-        return magnitude.mapValues { transaction.amount < 0 ? -$0 : $0 }
+        return splitAmounts(total: transaction.amount, categoryIDs: transaction.categoryIDs)
     }
 
     private func splitAmounts(total: Int64, categoryIDs: [String]) -> [String: Int64] {
-        guard !categoryIDs.isEmpty else { return [:] }
-        let base = total / Int64(categoryIDs.count)
-        var remainder = total % Int64(categoryIDs.count)
+        let ids = Set(categoryIDs).sorted()
+        guard !ids.isEmpty else { return [:] }
+        let base = total / Int64(ids.count)
+        var remainder = total % Int64(ids.count)
         var result: [String: Int64] = [:]
-        for id in categoryIDs.sorted() {
-            let extra: Int64 = remainder > 0 ? 1 : 0
+        for id in ids {
+            let extra: Int64 = remainder > 0 ? 1 : (remainder < 0 ? -1 : 0)
             result[id] = base + extra
             remainder -= extra
         }

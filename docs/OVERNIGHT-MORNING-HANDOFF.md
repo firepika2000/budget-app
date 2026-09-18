@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+`75226d5` pushed transfer hardening. Current opening/legacy-split checkpoint validates aggregate
+cash opening before creation, propagates failures through the repository, replaces absolute-value
+splitting with signed exact quotient/remainder, and rejects repeated category selections on legacy
+writes. **108 native + 1 fresh-account production UI + 5 focused backend account tests PASS**;
+Beta build/test and diff check PASS. `/tmp/budget-opening-split-{native-final,backend}.log`.
+Remaining report/forecast aggregations still contain unchecked operations; do not claim complete
+extreme-value rendering or overall production readiness. Human acceptance pending; do not retest.
+
 `a1656ab` pushed posting/reversal rollback. Next transfer checkpoint stages full account deltas,
 including combined reversal/replacement on edit, with exact overflow checks before publication.
 Failed creation/deletion preserve both sides; valid final edit cancellation remains possible at
