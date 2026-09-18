@@ -184,3 +184,12 @@ recovery path. Legacy debt JSON omitting the new field decodes as unknown, never
 Verification: analytics 58 passed; full backend 302 passed/zero skips (PG enabled); package 35 Core
 and 46 API; final native 85 passed and three production UI cases passed. Xcode finalization remained
 pending after suite completion. No new migration and no human data changes.
+
+Projection parity expanded with six hand-calculated single-debt vectors consumed directly by
+Python and BudgetCore: monthly leap-day/final partial payment, weekly and biweekly leap crossings,
+explicit promotional expiry, half-cent rounding, and payment-equals-interest non-amortization.
+Every payment date, interest amount, payment amount and remaining principal is asserted, alongside
+totals/status. Together with the 11 strategy vectors this gives 17 shared cases. Focused Python
+projection/vector tests: 21 passed; full Swift package: 36 Core + 46 API passed. No engine semantics
+changed. Broader production UI suite is running separately and its failures are not hidden by this
+financial-test checkpoint.
