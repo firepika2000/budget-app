@@ -624,7 +624,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             return APICategoryTarget(id: "demo-\(item.id)", categoryID: item.id, targetType: item.targetType, targetAmountMinor: amount, targetDate: item.targetDate, recurrenceMonths: item.targetRecurrenceMonths, minimumContributionMinor: item.targetMinimumContribution, priority: item.targetPriority, isActive: item.targetIsActive)
         }
         let scheduleRows: [APIScheduledTransaction] = try decode(demo.schedules.filter { item in
-            visibleAccounts.contains { $0.id == item.accountID }
+            scheduleVisible(item) && visibleAccounts.contains { $0.id == item.accountID }
                 && (item.destinationAccountID == nil || visibleAccounts.contains { $0.id == item.destinationAccountID })
                 && (item.categoryID.map(categoryIDs.contains) ?? !demo.isRestricted)
         }.map { item in ["id": item.id, "budget_id": budget.id, "account_id": item.accountID, "destination_account_id": item.destinationAccountID.map { $0 as Any } ?? NSNull(), "category_id": item.categoryID.map { $0 as Any } ?? NSNull(), "name": item.name, "amount_minor": item.amount, "next_date": item.nextDate, "recurrence_unit": item.recurrenceUnit, "interval_count": item.intervalCount, "memo": item.memo, "financial_classification": item.financialClassification ?? NSNull(), "is_active": item.isActive, "last_realized_on": item.lastRealizedOn.map { $0 as Any } ?? NSNull()] })
@@ -1132,11 +1132,15 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     private var actorHasResourceScope: Bool {
         demo.isRestricted || (demo.persona != .rey && (accessProfiles[requestActorID].map { $0.restrictAccounts || $0.restrictCategories } ?? false))
     }
-    private var resourceVisibleTransactions: [DemoTransaction] {
+    private var actorAccountIDs: Set<String> {
         var accounts = Set(demo.visibleAccounts.map(\.id))
         if demo.persona != .rey, let profile = accessProfiles[requestActorID], profile.restrictAccounts {
             accounts.formIntersection(profile.accountIDs)
         }
+        return accounts
+    }
+    private var resourceVisibleTransactions: [DemoTransaction] {
+        let accounts = actorAccountIDs
         let categories = actorCategoryScope
         return demo.visibleTransactions.filter { item in
             accounts.contains(item.accountID) && (categories.map { !item.categoryIDs.isEmpty && Set(item.categoryIDs).isSubset(of: $0) } ?? true)
@@ -1500,16 +1504,47 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         if isSnoozed { demo.categories[index].targetSnoozedMonths.insert(month) }
         else { demo.categories[index].targetSnoozedMonths.remove(month) }
     }
-    func createSchedule(_ operation: ScheduleOperation) async throws { try requireActiveMembership(); demo.schedules.append(.init(id: UUID().uuidString, accountID: operation.accountID, destinationAccountID: operation.destinationAccountID, categoryID: operation.categoryID, name: operation.name, amount: operation.amountMinor, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: operation.memo, financialClassification: operation.financialClassification, isActive: operation.isActive)) }
+    private func scheduleVisible(_ item: DemoSchedule) -> Bool {
+        let accounts = actorAccountIDs
+        return accounts.contains(item.accountID) && (item.destinationAccountID.map(accounts.contains) ?? true)
+            && (actorCategoryScope.map { allowed in item.categoryID.map(allowed.contains) ?? false } ?? true)
+    }
+    private func scheduleCommandSource(id: String, capability: String) throws -> Int {
+        try requireTransactionCapability(capability)
+        guard let index = demo.schedules.firstIndex(where: { $0.id == id && scheduleVisible($0) }) else {
+            throw APIClientError.server(status: 404, message: "Scheduled transaction not found")
+        }
+        return index
+    }
+    private func validateScheduleResources(accountID: String, destinationID: String?, categoryID: String?) throws {
+        let accounts = actorAccountIDs
+        guard accounts.contains(accountID), destinationID.map(accounts.contains) ?? true else {
+            throw APIClientError.server(status: 422, message: "Invalid scheduled account")
+        }
+        guard actorCategoryScope.map({ allowed in categoryID.map(allowed.contains) ?? false }) ?? true,
+              categoryID.map({ id in demo.categories.contains { $0.id == id && !$0.isHidden && !demo.archivedGroups.contains($0.group) } }) ?? true else {
+            throw APIClientError.server(status: 422, message: "Invalid scheduled category")
+        }
+    }
+    func createSchedule(_ operation: ScheduleOperation) async throws { try requireActiveMembership();
+        try requireTransactionCapability("manage_planning")
+        try validateScheduleResources(accountID: operation.accountID, destinationID: operation.destinationAccountID, categoryID: operation.categoryID)
+        demo.schedules.append(.init(id: UUID().uuidString, accountID: operation.accountID, destinationAccountID: operation.destinationAccountID, categoryID: operation.categoryID, name: operation.name, amount: operation.amountMinor, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: operation.memo, financialClassification: operation.financialClassification, isActive: operation.isActive))
+    }
     func updateSchedule(id: String, operation: ScheduleOperation) async throws { try requireActiveMembership();
-        guard let index = demo.schedules.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Schedule not found.") }
+        let index = try scheduleCommandSource(id: id, capability: "manage_planning")
+        try validateScheduleResources(accountID: operation.accountID, destinationID: operation.destinationAccountID, categoryID: operation.categoryID)
         demo.schedules[index].accountID = operation.accountID; demo.schedules[index].destinationAccountID = operation.destinationAccountID; demo.schedules[index].categoryID = operation.categoryID; demo.schedules[index].name = operation.name; demo.schedules[index].amount = operation.amountMinor; demo.schedules[index].nextDate = operation.nextDate; demo.schedules[index].recurrenceUnit = operation.recurrenceUnit; demo.schedules[index].intervalCount = operation.intervalCount; demo.schedules[index].memo = operation.memo; demo.schedules[index].financialClassification = operation.financialClassification; demo.schedules[index].isActive = operation.isActive
     }
-    func deleteSchedule(id: String) async throws { try requireActiveMembership(); demo.schedules.removeAll { $0.id == id } }
+    func deleteSchedule(id: String) async throws { try requireActiveMembership();
+        let index = try scheduleCommandSource(id: id, capability: "manage_planning")
+        demo.schedules.remove(at: index)
+    }
     func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation { try requireActiveMembership();
-        guard let index = demo.schedules.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Schedule not found.") }
+        let index = try scheduleCommandSource(id: id, capability: "create_transaction")
         let item = demo.schedules[index]; guard item.isActive else { throw workspaceRepositoryError("Scheduled transaction is inactive") }
-        let due = BudgetWorkspaceStore.parseDate(item.nextDate); guard Calendar.current.startOfDay(for: due) <= Calendar.current.startOfDay(for: Date()) else { throw workspaceRepositoryError("This scheduled transaction is not due yet") }
+        try validateScheduleResources(accountID: item.accountID, destinationID: item.destinationAccountID, categoryID: item.categoryID)
+        let due = BudgetWorkspaceStore.parseDate(item.nextDate); guard Calendar.current.startOfDay(for: due) <= Calendar.current.startOfDay(for: now()) else { throw workspaceRepositoryError("This scheduled transaction is not due yet") }
         let before = Set(demo.transactions.map(\.id))
         if let destination = item.destinationAccountID { guard demo.transfer(amount: item.amount, from: item.accountID, to: destination, memo: item.memo, cleared: false, date: due) else { throw workspaceRepositoryError(demo.errorMessage) } }
         else {

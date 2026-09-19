@@ -4,6 +4,47 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoSchedulesRecheckCurrentCapabilitiesAndBothResourceScopesBeforeRealization() async throws {
+        let source = DemoWorkspaceDataSource(now: { BudgetWorkspaceStore.parseDate("2026-09-15") })
+        let expense = ScheduleOperation(accountID: "checking", categoryID: "groceries", name: "Scope guard", amountMinor: -100, nextDate: "2026-09-01", recurrenceUnit: "once")
+        let transfer = ScheduleOperation(accountID: "checking", destinationAccountID: "savings", name: "Private transfer", amountMinor: 100, nextDate: "2026-09-01", recurrenceUnit: "once")
+        let accounts = source.demo.accounts, transactions = source.demo.transactions
+        try await source.createSchedule(expense)
+        let id = try XCTUnwrap(source.demo.schedules.last?.id)
+        try await source.createSchedule(transfer)
+        let transferID = try XCTUnwrap(source.demo.schedules.last?.id)
+        func refused(_ status: Int, action: () async throws -> Void) async throws {
+            let schedules = source.demo.schedules
+            do { try await action(); XCTFail("Unauthorized schedule operation") }
+            catch APIClientError.server(let actual, _) { XCTAssertEqual(actual, status) }
+            XCTAssertEqual(source.demo.schedules, schedules)
+            XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+        }
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_transactions"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 0))
+        source.demo.persona = .partner
+        try await refused(403) { try await source.createSchedule(expense) }
+        try await refused(403) { try await source.updateSchedule(id: id, operation: expense) }
+        try await refused(403) { try await source.deleteSchedule(id: id) }
+        try await refused(403) { _ = try await source.realizeSchedule(id: id) }
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["manage_planning", "create_transaction"], restrictAccounts: true, accountIDs: ["checking"], restrictCategories: true, categoryIDs: ["dining"], expectedVersion: 1))
+        source.demo.persona = .partner
+        try await refused(404) { _ = try await source.realizeSchedule(id: id) }
+        try await refused(404) { try await source.updateSchedule(id: id, operation: expense) }
+        try await refused(404) { try await source.deleteSchedule(id: transferID) }
+        try await refused(422) { try await source.createSchedule(expense) }
+        try await refused(422) { try await source.createSchedule(transfer) }
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["create_transaction"], restrictAccounts: true, accountIDs: ["checking"], restrictCategories: true, categoryIDs: ["groceries"], expectedVersion: 2))
+        source.demo.persona = .partner
+        let result = try await source.realizeSchedule(id: id)
+        XCTAssertFalse(result.isActive); XCTAssertEqual(result.transactionIDs.count, 1)
+        XCTAssertEqual(source.demo.transactions.count, transactions.count + 1)
+        XCTAssertEqual(source.demo.accounts.first { $0.id == "checking" }?.balance, accounts.first { $0.id == "checking" }!.balance - 100)
+        XCTAssertEqual(source.demo.schedules.first { $0.id == transferID }?.isActive, true)
+    }
+
+    @MainActor
     func testDemoLifecycleCommandsRecheckAuthorityAndRefuseReversalOverflowAtomically() async throws {
         let source = DemoWorkspaceDataSource(now: { BudgetWorkspaceStore.parseDate("2026-09-15") })
         let recurrence = MakeRecurringOperation(recurrenceUnit: "month", intervalCount: 1, nextDate: "2027-01-01")

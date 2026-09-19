@@ -4,6 +4,20 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo schedule authority after `1489c63`: create/update/delete require current planning capability;
+realization requires current create-transaction capability, matching Live rather than assuming the
+original schedule creator's authority. Existing and new account/destination/category scopes are
+rechecked before mutation; absent/hidden schedule IDs refuse rather than silently deleting nothing.
+Category-restricted users cannot realize uncategorized schedules. Scoped schedule rows are filtered
+before forecast expansion. Realization due-date checks use the injected clock and continue through
+the existing canonical posting/transfer engine. Regression covers revoked capability, changed
+category scope, hidden destination, whole-state refusal and authorized realization without granting
+planning authority. Broader summary/report scope and full schedule-shape validation remain open.
+Verification: 139 native tests PASS (`/tmp/budget-demo-schedule-authority.log`), production
+Enter Now → posted Activity UI test PASS (`/tmp/budget-demo-schedule-authority-ui.log`), Beta
+builds/diff PASS. All 18 server scheduled-contract tests PASS (`/tmp/budget-demo-schedule-reference.log`).
+No server/schema change; last full backend/package baselines remain 461 / 49+54 PASS.
+
 Demo lifecycle authority after `773a9f9`: duplicate requires current create authority and visible
 source/destination resources; void requires delete authority and original creator-or-manager access;
 Make Recurring requires planning authority and a visible eligible source. System-linked and

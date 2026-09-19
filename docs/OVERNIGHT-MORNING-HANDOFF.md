@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `1489c63`, scheduled CRUD requires current planning capability; realization requires current
+transaction-creation capability. Both accounts/category rechecked before mutations, hidden schedules
+filtered before forecast expansion, and due checks use injected time. Broader summaries/reports,
+transfer commands and complete schedule-shape validation remain open.
+Verified 139 native tests, production Enter Now → posted Activity UI, Beta builds/diff and all
+18 server schedule-contract tests PASS. Logs `/tmp/budget-demo-schedule-{authority,authority-ui,reference}.log`.
+No migration, main merge, tag, Simulator reset or Live-data changes. HUMAN ACCEPTANCE PENDING — DO NOT RETEST.
+
 After `773a9f9`, duplicate/void/Make Recurring recheck current capability and source scope;
 void additionally enforces creator/manager authority. Duplicate rejects non-posted/system sources.
 Reversal negation is checked before mutation and uses the injected clock. Remaining authority audit:
