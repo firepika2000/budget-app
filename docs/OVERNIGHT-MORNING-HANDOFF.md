@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `2983d3e`, implemented internal staging create/read/cancel services with current authority,
+owner isolation, input checks and optimistic cancellation. Six focused tests PASS; staging remains
+money-neutral. Approval/replay, full format support and native UI remain open. Source head remains
+0030; human Live remains untouched at 0020.
+Full backend 510 PASS, zero skips, 116.47s; `/tmp/budget-import-staging-service.log`.
+Diff check PASS. HUMAN ACCEPTANCE PENDING — DO NOT RETEST.
+
 After `69bdd0d`, repository migration head advances to `0030_import_staging` (parent `0029`),
 adding owned/versioned money-neutral review batches. Populated downgrade refuses data loss.
 No endpoint or financial mutation introduced. Human Live remains at `0020_payee_identity_repair`;

@@ -124,3 +124,21 @@ Downgrade refuses populated staging to avoid silently losing review/history. Emp
 be downgraded. Populated PostgreSQL upgrade proof compares every preexisting table and financial
 month observation, then inserts money-neutral staging and verifies populated downgrade refusal.
 Human Live remains `0020_payee_identity_repair`; this migration is tested only on disposable data.
+
+### Staging lifecycle service after `2983d3e`
+
+`import_staging` accepts validated normalized candidates through an internal application service,
+not an HTTP file-upload endpoint. It requires current view/create transaction authority, an open
+visible account in the budget, exact matching currency code, known source format and 1...10,000
+well-formed unique source rows with Int64 amounts. Parsing adapters must still establish the
+authoritative decimal scale before producing minor units; this service does not accept a scale.
+
+Persistence is caller-owned commit/rollback. Retrieval first resolves owner/budget/account metadata,
+rechecks current permissions, then hydrates candidate text. Even other household managers cannot
+read another actor's unapproved import file data by guessing its batch ID. Cancellation uses a
+conditional status/version update; stale/repeated cancellation returns conflict without posting.
+Review data is retained, not destructively deleted. Approval, replay protection and cancellation
+concurrency on PostgreSQL remain additional verification/implementation work.
+
+Six focused staging/review tests PASS: reopen persistence, owner isolation, account-scope revocation,
+cancel/version conflict, malformed/overflow/currency refusal and unchanged financial observations.

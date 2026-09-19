@@ -4,6 +4,14 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Import staging service after `2983d3e`: validates normalized candidates, current view/create
+authority and open account scope; persists review data without financial writes. Owner-only reads
+check current account authority before loading candidate text. Conditional versioned cancellation
+retains history and rejects stale repeats. Six focused staging/review tests PASS including revoked
+scope and unchanged month/transaction/payee/audit state. No endpoint/approval yet; no new migration.
+Full backend: 510 PASS, zero skips, 116.47s with disposable PostgreSQL gates enabled;
+`/tmp/budget-import-staging-service.log`. Diff check PASS; no native changes.
+
 Import staging schema after `69bdd0d`: new source head `0030_import_staging` adds money-neutral
 owned/versioned review batches; no financial backfill or endpoint. Populated downgrade refuses
 history loss. Ordered migration ledger now appends `0029_cash_rollover_history` →
