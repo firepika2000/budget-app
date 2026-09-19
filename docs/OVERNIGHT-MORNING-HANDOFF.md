@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `8a72030`, canonical creation supports caller-owned commit/rollback without copying accounting
+logic. HTTP route behavior remains unchanged. Regression proved a SQLite legacy-savepoint leak
+of a newly resolved payee, now fixed by ensuring a real outer transaction before the savepoint.
+Focused creation/card tests: 21 PASS. Import staging/approval/idempotency still open.
+Full backend: 497 PASS, zero skips, 116.78s; `/tmp/budget-canonical-unit-backend.log`.
+Diff check PASS. HUMAN ACCEPTANCE PENDING — DO NOT RETEST.
+
 After `61f029c`, expanded money-neutral CSV mapping for explicit date order, delimiters and separate
 debit/credit columns. Thirty-five focused tests PASS. No automatic date/locale guessing or rounding.
 Posting, staging, matching, other formats and native import remain open; no human data touched.

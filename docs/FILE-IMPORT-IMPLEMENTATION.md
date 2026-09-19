@@ -32,10 +32,10 @@ any later spreadsheet export still requires its own formula-injection defenses.
    candidates remain explicitly reviewable; no silent merge or payee creation.
 5. Explicit approval with idempotent canonical transaction commands, concurrent replay protection,
    audit attribution and unchanged reconciliation/transfer/credit-reserve protections.
-   Current `budgeting_routes.create_transaction` owns authorization, payee resolution, reserve
-   events, audit and its own commit. Extract/reuse that canonical operation with deliberate
-   transaction ownership before implementing batch approval; do not copy it into an import adapter
-   or assume looping the route provides atomic batch approval.
+   `budgeting_routes.create_transaction_in_session` now owns authorization, payee resolution,
+   reserve events and audit without committing; the existing HTTP route commits the returned
+   transaction. Reuse this operation with deliberate caller commit/rollback rather than copying
+   accounting logic or looping auto-committing routes. Durable idempotency and approval remain open.
 6. Native mapping/preview/review/history UX, cancellation, partial-error policy and authorized undo.
 7. Live/Demo/Local Device adapters through the same application-service boundary, full privacy,
    migration/recovery and financial-observation tests before claiming workflow completion.
@@ -54,3 +54,17 @@ credit adds using exact integer arithmetic. Unsupported separators, conflicting 
 negative debit/credit values, invalid leap dates and overprecision fail before returning candidates.
 Thirty-five focused tests cover these contracts. Grouping separators, decimal-comma amounts and
 additional date formats remain explicit mapping work, not silently guessed behavior.
+
+### Canonical creation transaction boundary
+
+After `8a72030`, the HTTP route delegates to a caller-controlled unit of work. Request DTOs are
+deep-copied before identity resolution so retry input is not mutated. A regression creates a
+transaction, fails a second operation and rolls back: transaction, payee and audit counts must
+return to baseline. It also proves two successful operations can commit together and share one
+payee. Existing accounting tests continue exercising the same canonical code through HTTP.
+
+The rollback regression initially failed because sqlite3 legacy mode released a payee savepoint
+before an outer database transaction began. The resolver now explicitly begins only when the
+SQLite driver reports no active transaction; PostgreSQL is untouched. This behavior is documented
+by [SQLAlchemy's SQLite transaction guidance](https://docs.sqlalchemy.org/en/20/dialects/sqlite.html).
+This does not claim the complete import approval/concurrency workflow is implemented.

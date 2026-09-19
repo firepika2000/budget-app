@@ -1433,6 +1433,21 @@ def create_transaction(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Transaction:
+    transaction = create_transaction_in_session(budget_id, body, user=user, db=db)
+    db.commit()
+    db.refresh(transaction)
+    return transaction
+
+
+def create_transaction_in_session(
+    budget_id: str, body: TransactionCreate, *, user: User, db: Session,
+) -> Transaction:
+    """Canonical creation; caller owns commit/rollback, never authorization bypass.
+
+    Keep reserve events, identity resolution and audit in the same transaction.
+    A caller must roll back the unit of work if any operation fails.
+    """
+    body = body.model_copy(deep=True)
     budget = require_budget_capability(db, user, budget_id, "create_transaction")
     if body.occurred_on > date.today():
         raise HTTPException(status_code=422, detail="Future transactions belong in the planning layer")
@@ -1486,8 +1501,7 @@ def create_transaction(
         actor=user,
     )
     record_transaction_change(db, transaction, user, "created", after=transaction_snapshot(transaction))
-    db.commit()
-    db.refresh(transaction)
+    db.flush()
     return transaction
 
 

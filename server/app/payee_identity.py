@@ -67,6 +67,11 @@ def resolve_payee(
     if not create:
         return None, name
 
+    # sqlite3 legacy mode does not BEGIN for reads or SAVEPOINT. Releasing
+    # the first savepoint otherwise commits the payee outside caller rollback.
+    connection = db.connection()
+    if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
+        connection.exec_driver_sql("BEGIN")
     try:
         with db.begin_nested():
             payee = Payee(

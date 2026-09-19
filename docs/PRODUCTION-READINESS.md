@@ -4,6 +4,14 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Canonical posting prerequisite after `8a72030`: extracted non-committing transaction creation
+inside the existing canonical module; HTTP still commits as before. Same authorization, payee,
+reserve and audit path; input DTO is no longer mutated. New rollback test exposed and corrected
+SQLite payee savepoint escaping outer rollback. Twenty-one focused creation/card tests PASS.
+Import approval/idempotency remains open; no schema, native or human-data changes.
+Full backend regression: 497 PASS, zero skips, 116.78s with disposable PostgreSQL gates
+(`/tmp/budget-canonical-unit-backend.log`); diff check PASS.
+
 CSV mapping after `61f029c`: explicit ISO/MDY/DMY dates, comma/semicolon/tab delimiters and signed
 versus separate debit/credit columns. Ambiguous dual amounts and malformed maps fail atomically;
 35 focused tests PASS. No routes, posting, schema or native behavior changed. Remaining full import
