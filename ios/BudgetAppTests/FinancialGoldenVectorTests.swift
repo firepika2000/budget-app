@@ -4,6 +4,57 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoScheduleShapeValidationIsAtomicForCreateUpdateAndStoredRealization() async throws {
+        let source = DemoWorkspaceDataSource(now: { BudgetWorkspaceStore.parseDate("2026-09-15") })
+        func value(account: String = "checking", destination: String? = nil, category: String? = nil,
+                   payee: String? = nil, name: String = "Validation", amount: Int64 = -100,
+                   date: String = "2026-09-01", unit: String = "once", interval: Int = 1,
+                   memo: String = "", classification: String? = nil) -> ScheduleOperation {
+            .init(accountID: account, destinationAccountID: destination, categoryID: category, payeeID: payee,
+                  name: name, amountMinor: amount, nextDate: date, recurrenceUnit: unit, intervalCount: interval,
+                  memo: memo, financialClassification: classification)
+        }
+        try await source.createSchedule(value())
+        let id = try XCTUnwrap(source.demo.schedules.last?.id)
+        let accounts = source.demo.accounts, transactions = source.demo.transactions, schedules = source.demo.schedules
+        let invalid = [value(amount: 0), value(date: "not-a-date"), value(date: "2026-02-30"),
+                       value(date: "2026-9-1"), value(date: "0000-01-01"), value(unit: "month"),
+                       value(unit: "weeks", interval: .max), value(interval: 0), value(interval: -1), value(interval: 366),
+                       value(name: ""), value(name: String(repeating: "n", count: 151)), value(memo: String(repeating: "m", count: 501)),
+                       value(destination: "checking", amount: 100), value(destination: "savings", amount: -100),
+                       value(destination: "savings", category: "groceries", amount: 100), value(destination: "savings", payee: "payee", amount: 100),
+                       value(classification: "interest_charge"), value(classification: "unknown"),
+                       value(account: "visa", amount: 100, classification: "interest_charge"), value(account: "auto", category: "groceries")]
+        for operation in invalid {
+            do { try await source.createSchedule(operation); XCTFail("Invalid creation: \(operation)") }
+            catch APIClientError.server(let status, _) { XCTAssertEqual(status, 422) }
+            do { try await source.updateSchedule(id: id, operation: operation); XCTFail("Invalid update") }
+            catch APIClientError.server(let status, _) { XCTAssertEqual(status, 422) }
+            XCTAssertEqual(source.demo.schedules, schedules)
+            XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+        }
+        let index = try XCTUnwrap(source.demo.schedules.firstIndex { $0.id == id })
+        source.demo.schedules[index].recurrenceUnit = "weeks"
+        source.demo.schedules[index].intervalCount = .max
+        let malformed = source.demo.schedules
+        do { _ = try await source.realizeSchedule(id: id); XCTFail("Malformed stored recurrence must not post") }
+        catch APIClientError.server(let status, _) { XCTAssertEqual(status, 422) }
+        let month = BudgetWorkspaceStore.parseDate("2026-09-01")
+        let query = WorkspaceReportQuery(start: month, end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        do { _ = try await source.snapshot(planMonth: month, report: query); XCTFail("Malformed recurrence must not enter forecast expansion") }
+        catch APIClientError.server(let status, _) { XCTAssertEqual(status, 422) }
+        XCTAssertEqual(source.demo.schedules, malformed)
+        XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+        source.demo.schedules = schedules
+        for unit in ["once", "days", "weeks", "months", "years"] {
+            try await source.createSchedule(value(date: "2028-02-29", unit: unit, interval: 365))
+        }
+        do { try await source.createScheduleFromTransaction(id: "t1", operation: .init(recurrenceUnit: "once", intervalCount: 1, nextDate: "2027-01-01")); XCTFail("Make Recurring must recur") }
+        catch APIClientError.server(let status, _) { XCTAssertEqual(status, 422) }
+        XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+    }
+
+    @MainActor
     func testDemoSchedulesRecheckCurrentCapabilitiesAndBothResourceScopesBeforeRealization() async throws {
         let source = DemoWorkspaceDataSource(now: { BudgetWorkspaceStore.parseDate("2026-09-15") })
         let expense = ScheduleOperation(accountID: "checking", categoryID: "groceries", name: "Scope guard", amountMinor: -100, nextDate: "2026-09-01", recurrenceUnit: "once")
@@ -47,7 +98,7 @@ final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
     func testDemoLifecycleCommandsRecheckAuthorityAndRefuseReversalOverflowAtomically() async throws {
         let source = DemoWorkspaceDataSource(now: { BudgetWorkspaceStore.parseDate("2026-09-15") })
-        let recurrence = MakeRecurringOperation(recurrenceUnit: "month", intervalCount: 1, nextDate: "2027-01-01")
+        let recurrence = MakeRecurringOperation(recurrenceUnit: "months", intervalCount: 1, nextDate: "2027-01-01")
         let actions: [() async throws -> Void] = [
             { try await source.duplicateTransaction(id: "t1", occurredOn: "2026-09-15") },
             { try await source.voidTransaction(id: "t1", reason: "Denied") },

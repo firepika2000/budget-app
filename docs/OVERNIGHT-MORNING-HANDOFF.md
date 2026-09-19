@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `3d28428`, Demo schedule shape validation now runs before create/update/realization and forecast expansion, removing
+invalid-date fallback and unchecked recurrence interval hazards. Make Recurring shares validation
+and refuses once. Past-date advancement, provider-wide clocks/identity and broader authorization
+remain open; financial semantics/storage are unchanged.
+Final validation PASS: 140 native + 2 production scheduling/lifecycle UI tests, Beta build/diff,
+29 backend reference tests. Logs `/tmp/budget-demo-schedule-validation-{final,reference}.log`.
+No migration, merge/tag or human-data reset; HUMAN ACCEPTANCE PENDING — DO NOT RETEST.
+
 After `1489c63`, scheduled CRUD requires current planning capability; realization requires current
 transaction-creation capability. Both accounts/category rechecked before mutations, hidden schedules
 filtered before forecast expansion, and due checks use injected time. Broader summaries/reports,

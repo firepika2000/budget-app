@@ -4,6 +4,20 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo schedule input contract after `3d28428`: create/update, stored realization and active forecast expansion validate
+cadence vocabulary, 1...365 interval, nonzero amount, bounded name/memo, exact calendar-date
+round-trip, transfer shape and debt-interest classification before mutation. Invalid dates no longer
+fall back to today during realization, and an unbounded week interval cannot reach integer
+multiplication. Tracking accounts cannot receive categorized schedules. Make Recurring rejects
+once and delegates to the same creation validator. Regression covers malformed dates/intervals,
+transfer/payee/category conflicts, classification, atomic create/update refusal, malformed stored
+realization/forecast refusal and valid leap-day/cadence bounds. Make Recurring's past-date advancement and broader
+provider clock/identity parity still require audit; no complete scheduling parity claim.
+Final verification: 140 native + 2 production realization/Make Recurring UI tests PASS;
+Beta build/diff PASS (`/tmp/budget-demo-schedule-validation-final.log`). All 29 backend
+scheduling/lifecycle reference tests PASS (`/tmp/budget-demo-schedule-validation-reference.log`).
+No server/schema change; latest full backend/package baselines remain 461 / 49+54 PASS.
+
 Demo schedule authority after `1489c63`: create/update/delete require current planning capability;
 realization requires current create-transaction capability, matching Live rather than assuming the
 original schedule creator's authority. Existing and new account/destination/category scopes are

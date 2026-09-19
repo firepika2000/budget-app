@@ -636,7 +636,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         var expanded: [(date: Date, schedule: APIScheduledTransaction)] = []
         var occurrenceRows: [[String: Any]] = []
         for item in scheduleRows where item.isActive {
-            var occurrence = BudgetWorkspaceStore.parseDate(item.nextDate)
+            var occurrence = try validateScheduleShape(.init(accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amountMinor: item.amountMinor, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: item.intervalCount, memo: item.memo, financialClassification: item.financialClassification, isActive: item.isActive))
             var expandedCount = 0
             while occurrence <= forecastThrough {
                 guard expandedCount < 1_000 else { throw workspaceRepositoryError("Schedule produces too many forecast occurrences.") }
@@ -1289,7 +1289,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let source = try transactionCommandSource(id: id, capability: "manage_planning", requiresCreator: false)
         guard source.status == "posted", source.transferID == nil, source.categoryIDs.count <= 1,
               !["Starting Balance", "Reconciliation adjustment"].contains(source.payee) else { throw workspaceRepositoryError("This transaction cannot be used as a recurring template") }
-        demo.schedules.append(.init(id: UUID().uuidString, accountID: source.accountID, destinationAccountID: nil, categoryID: source.categoryIDs.first, name: source.payee, amount: source.amount, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: source.memo, financialClassification: source.financialClassification, isActive: true))
+        guard operation.recurrenceUnit != "once" else { throw APIClientError.server(status: 422, message: "Choose a recurring cadence") }
+        try await createSchedule(.init(accountID: source.accountID, categoryID: source.categoryIDs.first, name: source.payee, amountMinor: source.amount, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: source.memo, financialClassification: source.financialClassification))
     }
     private func attachmentTransaction(id: String, editing: Bool = false) throws -> DemoTransaction {
         let capability = editing ? "edit_transaction" : "view_transactions"
@@ -1526,13 +1527,45 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             throw APIClientError.server(status: 422, message: "Invalid scheduled category")
         }
     }
+    @discardableResult
+    private func validateScheduleShape(_ operation: ScheduleOperation) throws -> Date {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"; formatter.isLenient = false
+        guard ["once", "days", "weeks", "months", "years"].contains(operation.recurrenceUnit),
+              (1...365).contains(operation.intervalCount), operation.amountMinor != 0,
+              (1...150).contains(operation.name.unicodeScalars.count), operation.memo.unicodeScalars.count <= 500,
+              operation.nextDate.range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression) != nil,
+              let date = formatter.date(from: operation.nextDate), formatter.string(from: date) == operation.nextDate else {
+            throw APIClientError.server(status: 422, message: "Invalid scheduled date, cadence or amount")
+        }
+        if let destination = operation.destinationAccountID {
+            guard destination != operation.accountID, operation.amountMinor > 0,
+                  operation.categoryID == nil, operation.payeeID == nil else {
+                throw APIClientError.server(status: 422, message: "Scheduled transfers require different accounts, a positive amount and no category or payee")
+            }
+        }
+        if let classification = operation.financialClassification {
+            guard classification == "interest_charge", operation.amountMinor < 0,
+                  demo.accounts.contains(where: { $0.id == operation.accountID && [.credit, .loan].contains($0.kind) }) else {
+                throw APIClientError.server(status: 422, message: "Interest charges require a debt-account outflow")
+            }
+        }
+        guard operation.categoryID == nil || demo.accounts.contains(where: { $0.id == operation.accountID && $0.isOnBudget }) else {
+            throw APIClientError.server(status: 422, message: "Tracking accounts cannot affect budget categories")
+        }
+        return date
+    }
     func createSchedule(_ operation: ScheduleOperation) async throws { try requireActiveMembership();
         try requireTransactionCapability("manage_planning")
+        try validateScheduleShape(operation)
         try validateScheduleResources(accountID: operation.accountID, destinationID: operation.destinationAccountID, categoryID: operation.categoryID)
         demo.schedules.append(.init(id: UUID().uuidString, accountID: operation.accountID, destinationAccountID: operation.destinationAccountID, categoryID: operation.categoryID, name: operation.name, amount: operation.amountMinor, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: operation.memo, financialClassification: operation.financialClassification, isActive: operation.isActive))
     }
     func updateSchedule(id: String, operation: ScheduleOperation) async throws { try requireActiveMembership();
         let index = try scheduleCommandSource(id: id, capability: "manage_planning")
+        try validateScheduleShape(operation)
         try validateScheduleResources(accountID: operation.accountID, destinationID: operation.destinationAccountID, categoryID: operation.categoryID)
         demo.schedules[index].accountID = operation.accountID; demo.schedules[index].destinationAccountID = operation.destinationAccountID; demo.schedules[index].categoryID = operation.categoryID; demo.schedules[index].name = operation.name; demo.schedules[index].amount = operation.amountMinor; demo.schedules[index].nextDate = operation.nextDate; demo.schedules[index].recurrenceUnit = operation.recurrenceUnit; demo.schedules[index].intervalCount = operation.intervalCount; demo.schedules[index].memo = operation.memo; demo.schedules[index].financialClassification = operation.financialClassification; demo.schedules[index].isActive = operation.isActive
     }
@@ -1543,8 +1576,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation { try requireActiveMembership();
         let index = try scheduleCommandSource(id: id, capability: "create_transaction")
         let item = demo.schedules[index]; guard item.isActive else { throw workspaceRepositoryError("Scheduled transaction is inactive") }
+        let due = try validateScheduleShape(.init(accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amountMinor: item.amount, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: item.intervalCount, memo: item.memo, financialClassification: item.financialClassification, isActive: item.isActive))
         try validateScheduleResources(accountID: item.accountID, destinationID: item.destinationAccountID, categoryID: item.categoryID)
-        let due = BudgetWorkspaceStore.parseDate(item.nextDate); guard Calendar.current.startOfDay(for: due) <= Calendar.current.startOfDay(for: now()) else { throw workspaceRepositoryError("This scheduled transaction is not due yet") }
+        guard Calendar.current.startOfDay(for: due) <= Calendar.current.startOfDay(for: now()) else { throw workspaceRepositoryError("This scheduled transaction is not due yet") }
         let before = Set(demo.transactions.map(\.id))
         if let destination = item.destinationAccountID { guard demo.transfer(amount: item.amount, from: item.accountID, to: destination, memo: item.memo, cleared: false, date: due) else { throw workspaceRepositoryError(demo.errorMessage) } }
         else {
