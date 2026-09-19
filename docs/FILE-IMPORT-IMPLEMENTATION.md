@@ -25,13 +25,17 @@ any later spreadsheet export still requires its own formula-injection defenses.
 
 ## Required next dependencies
 
-1. Date/amount mapping options and adapters for OFX/QFX/QIF with bounded, safe parsing.
+1. Further date/amount mapping options and adapters for OFX/QFX/QIF with bounded, safe parsing.
 2. Provider-neutral staged batch/candidate contracts; durable staging must remain money-neutral.
 3. Current resource authorization before matching, suggestions, duplicate counts or preview.
 4. Stable external identity/fingerprints and bounded canonical-transaction matching. Ambiguous
    candidates remain explicitly reviewable; no silent merge or payee creation.
 5. Explicit approval with idempotent canonical transaction commands, concurrent replay protection,
    audit attribution and unchanged reconciliation/transfer/credit-reserve protections.
+   Current `budgeting_routes.create_transaction` owns authorization, payee resolution, reserve
+   events, audit and its own commit. Extract/reuse that canonical operation with deliberate
+   transaction ownership before implementing batch approval; do not copy it into an import adapter
+   or assume looping the route provides atomic batch approval.
 6. Native mapping/preview/review/history UX, cancellation, partial-error policy and authorized undo.
 7. Live/Demo/Local Device adapters through the same application-service boundary, full privacy,
    migration/recovery and financial-observation tests before claiming workflow completion.
@@ -39,3 +43,14 @@ any later spreadsheet export still requires its own formula-injection defenses.
 Verification: 22 focused parser tests cover quoted/BOM inputs, refunds, currency scales, exact
 limits, ambiguous/overflow amounts, malformed dates/records, private-content-safe errors and
 10,000-row bounded output. These tests prove parsing only, not authorized posting or full import.
+
+### Explicit bank CSV mapping
+
+After `61f029c`, mapping supports comma, semicolon or tab separators; ISO yyyy-mm-dd or explicitly
+selected m/d/yyyy and d/m/yyyy dates; and either one signed amount or separate debit/credit columns.
+No date-order sniffing occurs. Split amount columns must be nonnegative and cannot both be nonzero;
+blank plus a valid opposite column is supported, while both blank is invalid. Debit subtracts and
+credit adds using exact integer arithmetic. Unsupported separators, conflicting column modes,
+negative debit/credit values, invalid leap dates and overprecision fail before returning candidates.
+Thirty-five focused tests cover these contracts. Grouping separators, decimal-comma amounts and
+additional date formats remain explicit mapping work, not silently guessed behavior.

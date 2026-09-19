@@ -26,9 +26,23 @@ class ImportValidationError(ValueError):
 @dataclass(frozen=True)
 class CSVMapping:
     date_column: str
-    amount_column: str
+    amount_column: str | None
     payee_column: str
     memo_column: str | None = None
+    debit_column: str | None = None
+    credit_column: str | None = None
+    date_order: str = "ymd"
+    delimiter: str = ","
+
+    def validate(self) -> None:
+        signed = self.amount_column is not None
+        split = self.debit_column is not None and self.credit_column is not None
+        if signed == split or (signed and (self.debit_column is not None or self.credit_column is not None)):
+            raise ImportValidationError("Select one signed amount column or both debit and credit columns")
+        if self.date_order not in {"ymd", "mdy", "dmy"}:
+            raise ImportValidationError("Unsupported date order")
+        if self.delimiter not in {",", ";", "\t"}:
+            raise ImportValidationError("Unsupported delimiter")
 
 
 @dataclass(frozen=True)
@@ -61,6 +75,7 @@ def parse_minor_units(value: str, *, scale: int) -> int:
 def parse_csv_candidates(data: bytes, mapping: CSVMapping, *, scale: int) -> list[ImportCandidate]:
     # Validate even empty inputs; no global csv.field_size_limit mutation.
     parse_minor_units("0", scale=scale)
+    mapping.validate()
     if len(data) > MAX_FILE_BYTES:
         raise ImportValidationError("File exceeds 10 MB")
     try:
@@ -69,13 +84,14 @@ def parse_csv_candidates(data: bytes, mapping: CSVMapping, *, scale: int) -> lis
         raise ImportValidationError("CSV must use UTF-8 encoding") from None
     if "\x00" in text:
         raise ImportValidationError("CSV contains an unsupported control character")
-    reader = csv.reader(io.StringIO(text, newline=""), strict=True)
+    reader = csv.reader(io.StringIO(text, newline=""), strict=True, delimiter=mapping.delimiter)
     candidates = []
     try:
         header = next(reader, [])
         if not header or len(header) > MAX_COLUMNS or any(not h or len(h) > MAX_FIELD_CHARS for h in header) or len(set(header)) != len(header):
             raise ImportValidationError("CSV requires unique nonempty column names")
-        selected = [mapping.date_column, mapping.amount_column, mapping.payee_column]
+        selected = [mapping.date_column, mapping.payee_column]
+        selected.extend(name for name in [mapping.amount_column, mapping.debit_column, mapping.credit_column] if name is not None)
         if mapping.memo_column is not None:
             selected.append(mapping.memo_column)
         if len(set(selected)) != len(selected) or any(name not in header for name in selected):
@@ -88,10 +104,28 @@ def parse_csv_candidates(data: bytes, mapping: CSVMapping, *, scale: int) -> lis
                 raise ImportValidationError(f"Invalid column count or field size at row {row_number}")
             raw_date = row[indexes[mapping.date_column]].strip()
             try:
-                if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw_date):
-                    raise ValueError()
-                occurred_on = date.fromisoformat(raw_date)
-                amount = parse_minor_units(row[indexes[mapping.amount_column]], scale=scale)
+                if mapping.date_order == "ymd":
+                    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw_date):
+                        raise ValueError()
+                    occurred_on = date.fromisoformat(raw_date)
+                else:
+                    if not re.fullmatch(r"[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}", raw_date):
+                        raise ValueError()
+                    first, second, year = map(int, raw_date.split("/"))
+                    month, day = (first, second) if mapping.date_order == "mdy" else (second, first)
+                    occurred_on = date(year, month, day)
+                if mapping.amount_column is not None:
+                    amount = parse_minor_units(row[indexes[mapping.amount_column]], scale=scale)
+                else:
+                    debit_text = row[indexes[mapping.debit_column]].strip()
+                    credit_text = row[indexes[mapping.credit_column]].strip()
+                    if not debit_text and not credit_text:
+                        raise ValueError()
+                    debit = parse_minor_units(debit_text or "0", scale=scale)
+                    credit = parse_minor_units(credit_text or "0", scale=scale)
+                    if debit < 0 or credit < 0 or (debit and credit):
+                        raise ValueError()
+                    amount = credit - debit
             except ValueError:
                 raise ImportValidationError(f"Invalid date or amount at row {row_number}") from None
             payee = row[indexes[mapping.payee_column]].strip()

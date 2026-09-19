@@ -4,6 +4,13 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+CSV mapping after `61f029c`: explicit ISO/MDY/DMY dates, comma/semicolon/tab delimiters and signed
+versus separate debit/credit columns. Ambiguous dual amounts and malformed maps fail atomically;
+35 focused tests PASS. No routes, posting, schema or native behavior changed. Remaining full import
+scope and authoritative currency-scale contract stay open in `FILE-IMPORT-IMPLEMENTATION.md`.
+Full backend regression: 496 PASS, zero skips, 116.60s with disposable PostgreSQL enabled
+(`/tmp/budget-import-mapping-backend.log`); diff check PASS. No native changes.
+
 File import foundation after `b3257e1`: added bounded, explicitly mapped CSV-to-candidate parsing
 with strict dates and exact signed Int64 amounts. No routes, database writes, payee creation or
 accounting mutations. Twenty-two focused tests PASS including 10,000 records and malformed input.

@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `61f029c`, expanded money-neutral CSV mapping for explicit date order, delimiters and separate
+debit/credit columns. Thirty-five focused tests PASS. No automatic date/locale guessing or rounding.
+Posting, staging, matching, other formats and native import remain open; no human data touched.
+Full backend: 496 PASS, zero skips, 116.60s; `/tmp/budget-import-mapping-backend.log`.
+Diff check PASS. Next integration dependency: reuse canonical posting with explicit batch
+transaction ownership, not duplicated accounting logic or a loop of auto-committing routes.
+
 After `b3257e1`, advanced the missing import foundation: bounded CSV mapping to money-neutral
 candidates, strict dates, exact integer currency parsing and safe validation errors. Focused tests:
 22 PASS. No endpoint or posting behavior exposed. See `FILE-IMPORT-IMPLEMENTATION.md` for remaining
