@@ -4,6 +4,11 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Funded-card unit-of-work verification after `2e9f532`: new test proves actual reserve events are
+created then fully rolled back after a subsequent invalid operation. Complete month observations
+and posted register equal their pre-operation values. Thirteen focused unit/card tests PASS; diff
+check PASS. Test/docs-only change; latest full backend baseline remains 497 PASS. Import remains open.
+
 Canonical posting prerequisite after `8a72030`: extracted non-committing transaction creation
 inside the existing canonical module; HTTP still commits as before. Same authorization, payee,
 reserve and audit path; input DTO is no longer mutated. New rollback test exposed and corrected

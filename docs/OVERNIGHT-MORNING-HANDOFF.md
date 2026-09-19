@@ -6,6 +6,11 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `2e9f532`, added funded-card rollback proof for canonical caller-owned transaction creation.
+Real reserve events must exist before failure; rollback restores all affected counts, complete
+month summary and register. Thirteen focused tests/diff PASS. No production/schema/native changes.
+Next: durable import staging/matching/approval; complete import is not claimed.
+
 After `8a72030`, canonical creation supports caller-owned commit/rollback without copying accounting
 logic. HTTP route behavior remains unchanged. Regression proved a SQLite legacy-savepoint leak
 of a newly resolved payee, now fixed by ensuring a real outer transaction before the savepoint.

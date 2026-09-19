@@ -68,3 +68,9 @@ before an outer database transaction began. The resolver now explicitly begins o
 SQLite driver reports no active transaction; PostgreSQL is untouched. This behavior is documented
 by [SQLAlchemy's SQLite transaction guidance](https://docs.sqlalchemy.org/en/20/dialects/sqlite.html).
 This does not claim the complete import approval/concurrency workflow is implemented.
+
+Additional funded-card verification after `2e9f532`: a funded card purchase creates real reserve
+events inside the caller-owned unit, then a later invalid-category operation fails. Rollback must
+restore transaction/payee/audit/reserve counts, the complete month summary and posted register
+exactly. Thirteen unit-of-work/card tests PASS. This strengthens atomic approval prerequisites;
+durable batch identity, concurrency, matching and user approval are still not implemented.
