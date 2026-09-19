@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `fdaa419`, Demo transfer commands check current capability, both original/new accounts,
+creator/manager authority and reconciliation protection before changing either leg. Invalid/future
+dates refuse using injected time; canonical balance/reserve engine unchanged. Planning/reconciliation
+authority and broader summary/report scope remain the next audit boundaries.
+Verified 141 native + production transfer create/edit/delete UI, Beta build/diff and 5 backend
+transfer reference tests PASS; `/tmp/budget-demo-transfer-{authority,reference}.log`.
+HUMAN ACCEPTANCE PENDING — DO NOT RETEST; no Live migration or data reset.
+
 After `3d28428`, Demo schedule shape validation now runs before create/update/realization and forecast expansion, removing
 invalid-date fallback and unchecked recurrence interval hazards. Make Recurring shares validation
 and refuses once. Past-date advancement, provider-wide clocks/identity and broader authorization

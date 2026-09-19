@@ -1374,9 +1374,47 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             }
         }
     }
-    func transferMoney(_ operation: TransferMoneyOperation) async throws { try requireActiveMembership(); guard demo.transfer(amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
-    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { try requireActiveMembership(); guard demo.updateTransfer(id: id, amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: BudgetWorkspaceStore.parseDate(operation.occurredOn)) else { throw workspaceRepositoryError(demo.errorMessage) } }
-    func deleteTransfer(id: String) async throws { try requireActiveMembership(); guard demo.deleteTransfer(id: id) else { throw workspaceRepositoryError(demo.errorMessage) } }
+    private func validateTransfer(_ operation: TransferMoneyOperation) throws -> Date {
+        let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"; formatter.isLenient = false
+        guard operation.amountMinor > 0, operation.sourceAccountID != operation.destinationAccountID,
+              actorAccountIDs.contains(operation.sourceAccountID), actorAccountIDs.contains(operation.destinationAccountID),
+              operation.occurredOn.range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression) != nil,
+              let date = formatter.date(from: operation.occurredOn), formatter.string(from: date) == operation.occurredOn,
+              Calendar.current.startOfDay(for: date) <= Calendar.current.startOfDay(for: now()) else {
+            throw APIClientError.server(status: 422, message: "Invalid transfer account, date or amount; future transfers belong in planning")
+        }
+        return date
+    }
+    private func authorizeTransfer(id: String, capability: String) throws {
+        try requireTransactionCapability(capability)
+        let legs = demo.transactions.filter { $0.transferID == id }
+        guard legs.count == 2, legs.contains(where: { $0.amount < 0 }), legs.contains(where: { $0.amount > 0 }),
+              (try? Money.sumMinorUnits(legs.map(\.amount))) == 0,
+              legs.allSatisfy({ actorAccountIDs.contains($0.accountID) }) else {
+            throw APIClientError.server(status: 404, message: "Transfer not found")
+        }
+        guard legs.allSatisfy({ $0.member == demo.persona }) || actorCapabilities.contains("manage_budget_structure") else {
+            throw APIClientError.server(status: 403, message: "You may only change your own transfers")
+        }
+        guard legs.allSatisfy({ !$0.reconciled && $0.status == "posted" }) else {
+            throw APIClientError.server(status: 409, message: "Reconciled or non-posted transfers cannot be changed")
+        }
+    }
+    func transferMoney(_ operation: TransferMoneyOperation) async throws { try requireActiveMembership();
+        try requireTransactionCapability("create_transaction")
+        let date = try validateTransfer(operation)
+        guard demo.transfer(amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: date) else { throw workspaceRepositoryError(demo.errorMessage) }
+    }
+    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { try requireActiveMembership();
+        try authorizeTransfer(id: id, capability: "edit_transaction")
+        let date = try validateTransfer(operation)
+        guard demo.updateTransfer(id: id, amount: operation.amountMinor, from: operation.sourceAccountID, to: operation.destinationAccountID, memo: operation.memo, cleared: operation.isCleared, date: date) else { throw workspaceRepositoryError(demo.errorMessage) }
+    }
+    func deleteTransfer(id: String) async throws { try requireActiveMembership();
+        try authorizeTransfer(id: id, capability: "delete_transaction")
+        guard demo.deleteTransfer(id: id) else { throw workspaceRepositoryError(demo.errorMessage) }
+    }
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { try requireActiveMembership();
         guard budget.can("reconcile_account"), !demo.isRestricted else { throw workspaceRepositoryError("You do not have permission to reconcile this account.") }
         guard demo.reconcile(accountID: operation.accountID, statementBalance: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, reason: operation.reason, expectedClearedBalance: operation.expectedClearedBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }

@@ -4,6 +4,51 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoTransferAuthorityCoversBothLegsAndRefusesInvalidDatesAtomically() async throws {
+        let source = DemoWorkspaceDataSource(now: { BudgetWorkspaceStore.parseDate("2026-09-15") })
+        func operation(destination: String = "savings", date: String = "2026-09-01") -> TransferMoneyOperation {
+            .init(sourceAccountID: "checking", destinationAccountID: destination, amountMinor: 100, occurredOn: date, memo: "Scope proof", isCleared: false)
+        }
+        let opening = source.demo.accounts
+        try await source.transferMoney(operation())
+        let id = try XCTUnwrap(source.demo.transactions.first?.transferID)
+        func refused(_ status: Int, action: () async throws -> Void) async throws {
+            let accounts = source.demo.accounts, transactions = source.demo.transactions
+            do { try await action(); XCTFail("Unauthorized transfer mutation") }
+            catch APIClientError.server(let actual, _) { XCTAssertEqual(actual, status) }
+            XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+        }
+        for date in ["invalid", "2026-02-30", "2026-09-16"] {
+            try await refused(422) { try await source.transferMoney(operation(date: date)) }
+            try await refused(422) { try await source.updateTransfer(id: id, operation: operation(date: date)) }
+        }
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_transactions"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 0))
+        source.demo.persona = .partner
+        try await refused(403) { try await source.transferMoney(operation()) }
+        try await refused(403) { try await source.updateTransfer(id: id, operation: operation()) }
+        try await refused(403) { try await source.deleteTransfer(id: id) }
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["create_transaction", "edit_transaction", "delete_transaction", "manage_budget_structure"], restrictAccounts: true, accountIDs: ["checking"], restrictCategories: false, categoryIDs: [], expectedVersion: 1))
+        source.demo.persona = .partner
+        try await refused(422) { try await source.transferMoney(operation()) }
+        try await refused(404) { try await source.updateTransfer(id: id, operation: operation()) }
+        try await refused(404) { try await source.deleteTransfer(id: id) }
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["edit_transaction", "delete_transaction"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 2))
+        source.demo.persona = .partner
+        try await refused(403) { try await source.updateTransfer(id: id, operation: operation()) }
+        try await refused(403) { try await source.deleteTransfer(id: id) }
+        source.demo.persona = .rey
+        let index = try XCTUnwrap(source.demo.transactions.firstIndex { $0.transferID == id })
+        source.demo.transactions[index].reconciled = true
+        try await refused(409) { try await source.deleteTransfer(id: id) }
+        source.demo.transactions[index].reconciled = false
+        try await source.deleteTransfer(id: id)
+        XCTAssertEqual(source.demo.accounts, opening)
+        XCTAssertFalse(source.demo.transactions.contains { $0.transferID == id })
+    }
+
+    @MainActor
     func testDemoScheduleShapeValidationIsAtomicForCreateUpdateAndStoredRealization() async throws {
         let source = DemoWorkspaceDataSource(now: { BudgetWorkspaceStore.parseDate("2026-09-15") })
         func value(account: String = "checking", destination: String? = nil, category: String? = nil,

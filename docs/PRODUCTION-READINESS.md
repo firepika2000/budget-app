@@ -4,6 +4,20 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo transfer authority after `fdaa419`: create/edit/delete now require the corresponding current
+transaction capability. Existing linked pairs must be balanced, visible on both accounts, owned
+by the actor (or explicitly manageable), posted and unreconciled before mutation. New source and
+destination accounts are scoped; amounts must be positive and accounts distinct. Strict date
+round-trip and injected-today checks reject malformed/future dates instead of defaulting to actual
+money today. Existing atomic transfer/credit-reserve engine is unchanged. Regression covers current
+capability revocation, hidden destination, non-owner mutation, reconciled refusal, invalid dates,
+whole-state atomic refusal and authorized deletion restoring original balances. Planning/report
+scope and other authority gaps remain open; no blanket provider authorization claim.
+Verification: 141 native + production register transfer create/edit/delete UI test PASS;
+Beta build/diff PASS (`/tmp/budget-demo-transfer-authority.log`). Five backend transfer/card-reserve/
+scope reference tests PASS (`/tmp/budget-demo-transfer-reference.log`). No server/schema change;
+last full backend/package baselines remain 461 / 49+54 PASS. Human data/main unchanged.
+
 Demo schedule input contract after `3d28428`: create/update, stored realization and active forecast expansion validate
 cadence vocabulary, 1...365 interval, nonzero amount, bounded name/memo, exact calendar-date
 round-trip, transfer shape and debt-interest classification before mutation. Invalid dates no longer
