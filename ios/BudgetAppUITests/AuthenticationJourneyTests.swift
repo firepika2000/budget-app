@@ -351,6 +351,26 @@ final class AuthenticationJourneyTests: XCTestCase {
                                    "The production chart must contain distinct historical periods, not one selected Plan month")
     }
 
+    func testDebtProjectionFailureDismissalDoesNotImmediatelyRepresent() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights", "--ui-test-debt-projection-failure"]
+        app.launch()
+        let debt = app.buttons["insights-debt-interest"]
+        for _ in 0..<8 where !debt.isHittable { app.swipeUp() }
+        XCTAssertTrue(debt.waitForExistence(timeout: 5))
+        debt.tap()
+        XCTAssertTrue(app.navigationBars["Debt & Interest"].waitForExistence(timeout: 5))
+        app.segmentedControls.buttons["Payoff"].tap()
+        let alert = app.alerts["Unable to calculate payoff"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 8))
+        XCTAssertEqual(app.alerts.count, 1)
+        alert.buttons["OK"].tap()
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 5))
+        app.segmentedControls.buttons["Overview"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.waitForExistence(timeout: 2))
+        XCTAssertTrue(app.navigationBars["Debt & Interest"].exists)
+    }
+
     func testProductionDebtPayoffScenarioIsReadOnlyAndExposesExplicitAssumptions() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=insights"]

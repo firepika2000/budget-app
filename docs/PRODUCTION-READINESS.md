@@ -4,6 +4,17 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+## STOP FEATURE EXPANSION — human Live Debt P0
+
+Human reports repeated PlatformAlertController presentation conflicts followed by code-9 debugger
+termination despite successful report/projection HTTP responses. P0 remains OPEN. Import/roadmap
+expansion is paused until Debt stabilization and human-visible product audit address P0/P1 defects.
+Priority is P0 crash/data-loss/security/accounting, P1 broken primary workflows, P2 severe UX,
+P3 missing user-visible functionality, P4 backend/architecture. Do not prioritize P4 over P0/P1.
+See `DEBT-P0-INVESTIGATION.md` for verified evidence/hypotheses and
+`HUMAN-VISIBLE-PRODUCT-AUDIT.md` for the incomplete audit inventory. Initial Demo production UI
+success and injected-failure dismissal tests PASS but do not reproduce or disprove the Live failure.
+
 Import staging service after `2983d3e`: validates normalized candidates, current view/create
 authority and open account scope; persists review data without financial writes. Owner-only reads
 check current account authority before loading candidate text. Conditional versioned cancellation

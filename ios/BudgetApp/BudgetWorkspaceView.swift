@@ -2170,6 +2170,12 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection {
         try requireWorkspaceAccess()
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ui-test-debt-projection-failure") {
+            print("DEBT_ALERT source=projection-test event=failure")
+            throw APIClientError.server(status: 503, message: "Test projection service unavailable")
+        }
+#endif
         let revision = authorityRevision
         guard let dataSource else { throw workspaceRepositoryError("Debt payoff scenarios are unavailable.") }
         let value = try await dataSource.debtStrategyProjection(request)
