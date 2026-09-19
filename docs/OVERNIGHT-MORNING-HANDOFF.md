@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `773a9f9`, duplicate/void/Make Recurring recheck current capability and source scope;
+void additionally enforces creator/manager authority. Duplicate rejects non-posted/system sources.
+Reversal negation is checked before mutation and uses the injected clock. Remaining authority audit:
+schedule CRUD/realization, transfers, planning commands and summary/report scope parity.
+Verified 138 native + 2 production lifecycle UI tests, Beta build/diff and 11 backend reference
+tests PASS. Evidence `/tmp/budget-demo-lifecycle-{authority,reference}.log`. Human data preserved;
+HUMAN ACCEPTANCE PENDING — DO NOT RETEST.
+
 After `ff04f33`, ordinary Demo create/edit/delete enforce current capabilities, original resource
 visibility/ownership and destination scope before mutation. Canonical edits preserve original
 creator identity. Active attachments block direct deletion. Duplicate/void/Make Recurring, other

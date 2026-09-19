@@ -1250,18 +1250,27 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard demo.deleteTransaction(id: id) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
     func duplicateTransaction(id: String, occurredOn: String) async throws { try requireActiveMembership();
-        guard let source = demo.transactions.first(where: { $0.id == id }), source.transferID == nil, !source.scheduled else { throw workspaceRepositoryError("This system-linked transaction must be recreated through its specialized workflow") }
+        let source = try transactionCommandSource(id: id, capability: "create_transaction", requiresCreator: false)
+        guard source.status == "posted", source.transferID == nil, !source.scheduled,
+              !["Starting Balance", "Reconciliation adjustment"].contains(source.payee) else { throw workspaceRepositoryError("This system-linked transaction must be recreated through its specialized workflow") }
         let amounts = demo.canonicalCategoryAmounts(for: source)
         let singleCategory = amounts.count == 1 ? amounts.keys.first : nil
         let splits = amounts.count > 1 ? amounts.keys.sorted().map { TransactionSplitOperation(categoryID: $0, amountMinor: amounts[$0]!, memo: "", financialClassification: source.splitFinancialClassifications[$0]) } : []
         let operation = RecordTransactionOperation(accountID: source.accountID, categoryID: singleCategory, amountMinor: source.amount, occurredOn: occurredOn, payeeName: source.payee, payeeID: demo.payees.first(where: { $0.name == source.payee })?.id, memo: source.memo, financialClassification: source.financialClassification, isCleared: false, splits: splits, flag: source.flag, tags: source.tags, attachmentMetadata: [])
+        try validateTransactionTarget(operation)
         guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
     func voidTransaction(id: String, reason: String) async throws { try requireActiveMembership();
-        guard let source = demo.transactions.first(where: { $0.id == id }), source.status == "posted", source.transferID == nil, !source.reconciled else { throw workspaceRepositoryError("Only an unreconciled posted transaction can be voided") }
+        let source = try transactionCommandSource(id: id, capability: "delete_transaction", requiresCreator: true)
+        guard source.status == "posted", source.transferID == nil, !source.reconciled else { throw workspaceRepositoryError("Only an unreconciled posted transaction can be voided") }
         let amounts = demo.canonicalCategoryAmounts(for: source)
-        let splits = amounts.count > 1 ? amounts.keys.sorted().map { TransactionSplitOperation(categoryID: $0, amountMinor: -amounts[$0]!, memo: "", financialClassification: source.splitFinancialClassifications[$0]) } : []
-        let operation = RecordTransactionOperation(accountID: source.accountID, categoryID: amounts.count == 1 ? amounts.keys.first : nil, amountMinor: -source.amount, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Reversal: \(source.payee)", memo: reason.isEmpty ? "Void reversal." : "Void reversal. \(reason)", financialClassification: source.financialClassification, isCleared: false, splits: splits, flag: source.flag, tags: source.tags, attachmentMetadata: [])
+        func reversed(_ amount: Int64) throws -> Int64 {
+            let result = Int64(0).subtractingReportingOverflow(amount)
+            guard !result.overflow else { throw workspaceRepositoryError("Reversal exceeds the supported amount range") }
+            return result.partialValue
+        }
+        let splits = amounts.count > 1 ? try amounts.keys.sorted().map { TransactionSplitOperation(categoryID: $0, amountMinor: try reversed(amounts[$0]!), memo: "", financialClassification: source.splitFinancialClassifications[$0]) } : []
+        let operation = RecordTransactionOperation(accountID: source.accountID, categoryID: amounts.count == 1 ? amounts.keys.first : nil, amountMinor: try reversed(source.amount), occurredOn: BudgetWorkspaceStore.dateString(now()), payeeName: "Reversal: \(source.payee)", memo: reason.isEmpty ? "Void reversal." : "Void reversal. \(reason)", financialClassification: source.financialClassification, isCleared: false, splits: splits, flag: source.flag, tags: source.tags, attachmentMetadata: [])
         let reversalID = UUID().uuidString
         guard demo.recordCanonicalTransaction(operation, id: reversalID),
               let reversalIndex = demo.transactions.firstIndex(where: { $0.id == reversalID }),
@@ -1273,7 +1282,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         demo.transactions[originalIndex].reversalTransactionID = reversalID
     }
     func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws { try requireActiveMembership();
-        guard let source = demo.transactions.first(where: { $0.id == id }), source.status == "posted", source.transferID == nil, source.categoryIDs.count <= 1 else { throw workspaceRepositoryError("This transaction cannot be used as a recurring template") }
+        let source = try transactionCommandSource(id: id, capability: "manage_planning", requiresCreator: false)
+        guard source.status == "posted", source.transferID == nil, source.categoryIDs.count <= 1,
+              !["Starting Balance", "Reconciliation adjustment"].contains(source.payee) else { throw workspaceRepositoryError("This transaction cannot be used as a recurring template") }
         demo.schedules.append(.init(id: UUID().uuidString, accountID: source.accountID, destinationAccountID: nil, categoryID: source.categoryIDs.first, name: source.payee, amount: source.amount, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, memo: source.memo, financialClassification: source.financialClassification, isActive: true))
     }
     private func attachmentTransaction(id: String, editing: Bool = false) throws -> DemoTransaction {

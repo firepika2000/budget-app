@@ -4,6 +4,47 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoLifecycleCommandsRecheckAuthorityAndRefuseReversalOverflowAtomically() async throws {
+        let source = DemoWorkspaceDataSource(now: { BudgetWorkspaceStore.parseDate("2026-09-15") })
+        let recurrence = MakeRecurringOperation(recurrenceUnit: "month", intervalCount: 1, nextDate: "2027-01-01")
+        let actions: [() async throws -> Void] = [
+            { try await source.duplicateTransaction(id: "t1", occurredOn: "2026-09-15") },
+            { try await source.voidTransaction(id: "t1", reason: "Denied") },
+            { try await source.createScheduleFromTransaction(id: "t1", operation: recurrence) }
+        ]
+        let original = source.demo.transactions, accounts = source.demo.accounts, schedules = source.demo.schedules
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_transactions"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 0))
+        source.demo.persona = .partner
+        for action in actions {
+            do { try await action(); XCTFail("Missing command capability") }
+            catch APIClientError.server(let status, _) { XCTAssertEqual(status, 403) }
+        }
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["create_transaction", "delete_transaction", "manage_planning", "manage_budget_structure"], restrictAccounts: true, accountIDs: ["checking"], restrictCategories: false, categoryIDs: [], expectedVersion: 1))
+        source.demo.persona = .partner
+        for action in actions {
+            do { try await action(); XCTFail("Hidden source") }
+            catch APIClientError.server(let status, _) { XCTAssertEqual(status, 404) }
+        }
+        XCTAssertEqual(source.demo.transactions, original); XCTAssertEqual(source.demo.accounts, accounts)
+        XCTAssertEqual(source.demo.schedules, schedules)
+        source.demo.persona = .rey
+        let index = try XCTUnwrap(source.demo.transactions.firstIndex { $0.id == "t1" })
+        source.demo.transactions[index].amount = .min
+        let before = source.demo.transactions
+        do { try await source.voidTransaction(id: "t1", reason: "Overflow"); XCTFail("Unrepresentable reversal") } catch {}
+        XCTAssertEqual(source.demo.transactions, before); XCTAssertEqual(source.demo.accounts, accounts)
+        source.demo.transactions = original
+        try await source.voidTransaction(id: "t1", reason: "Authorized correction")
+        let reversal = try XCTUnwrap(source.demo.transactions.first { $0.reversalOfTransactionID == "t1" })
+        XCTAssertEqual(BudgetWorkspaceStore.dateString(reversal.date), "2026-09-15")
+        XCTAssertEqual(reversal.amount, 12500)
+        let after = source.demo.transactions
+        do { try await source.duplicateTransaction(id: "t1", occurredOn: "2026-09-15"); XCTFail("Voided duplication") } catch {}
+        XCTAssertEqual(source.demo.transactions, after)
+    }
+
+    @MainActor
     func testDemoTransactionCommandsEnforceCurrentAuthorityAndPreserveOriginalCreator() async throws {
         let source = DemoWorkspaceDataSource()
         func operation(account: String = "checking", category: String = "groceries", amount: Int64 = -100) -> RecordTransactionOperation {

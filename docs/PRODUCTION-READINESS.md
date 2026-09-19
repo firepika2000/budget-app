@@ -4,6 +4,19 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo lifecycle authority after `773a9f9`: duplicate requires current create authority and visible
+source/destination resources; void requires delete authority and original creator-or-manager access;
+Make Recurring requires planning authority and a visible eligible source. System-linked and
+non-posted templates refuse as in Live. Reversal amount/split negation uses checked subtraction,
+refusing unrepresentable Int64 values before ledger mutation, and reversal dates use the injected
+clock. Regression covers denied capabilities, hidden sources, unchanged money/schedules, overflow
+refusal, exact authorized reversal/date and refusal to duplicate the voided original. Other schedule,
+transfer, planning and report scope paths remain open; no blanket provider authorization claim.
+Verification: 138 native + 2 production duplicate/recurring/reversal UI tests PASS; Beta build
+and diff PASS (`/tmp/budget-demo-lifecycle-authority.log`). Eleven server lifecycle/attachment
+reference tests PASS (`/tmp/budget-demo-lifecycle-reference.log`). No server/schema changes;
+latest full backend/package evidence remains 461 / 49+54 PASS.
+
 Demo ordinary transaction commands after `ff04f33`: create/edit/delete now check current operation
 capability before canonical mutation. Existing-row edit/delete enforce full visibility and original
 creator-or-manager authority; new destination accounts/categories are scoped and inactive categories
