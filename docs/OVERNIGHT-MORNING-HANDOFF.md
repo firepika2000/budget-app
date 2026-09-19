@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `b3257e1`, advanced the missing import foundation: bounded CSV mapping to money-neutral
+candidates, strict dates, exact integer currency parsing and safe validation errors. Focused tests:
+22 PASS. No endpoint or posting behavior exposed. See `FILE-IMPORT-IMPLEMENTATION.md` for remaining
+format adapters, durable staging, authorization/matching, idempotent approval and native workflow.
+Human data/schema/Simulator unchanged; HUMAN ACCEPTANCE PENDING — DO NOT RETEST.
+Full backend verification: 483 PASS, zero skips, 120.37s (disposable PostgreSQL enabled),
+`/tmp/budget-import-foundation-backend.log`; diff check PASS. No native changes in this checkpoint.
+
 After `2559863`, reconciliation consults current capability/account scope rather than the initial
 budget grant. Denied attempts cannot lock transactions or alter reconciled balances; the canonical
 engine and existing delegated-persona restriction remain. Broader planning/observation authorization

@@ -4,6 +4,14 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+File import foundation after `b3257e1`: added bounded, explicitly mapped CSV-to-candidate parsing
+with strict dates and exact signed Int64 amounts. No routes, database writes, payee creation or
+accounting mutations. Twenty-two focused tests PASS including 10,000 records and malformed input.
+`FILE-IMPORT-IMPLEMENTATION.md` tracks remaining adapters, staging/matching, explicit canonical
+approval and native UX. Import remains IN PROGRESS; this is not a completed product workflow.
+Full backend regression: 483 PASS, zero skips, 120.37s including disposable PostgreSQL gates
+(`/tmp/budget-import-foundation-backend.log`). Diff check PASS. No Swift/schema changes.
+
 Demo reconciliation authority after `2559863`: the command used the budget capability captured at
 workspace construction, so a changed custom profile could still reconcile. It now checks current
 reconciliation authority and current account scope before calling the unchanged reconciliation
