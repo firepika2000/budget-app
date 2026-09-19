@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `8de36b5`, added bounded import-review matching with exact signed money, explicit date window,
+canonical name normalization, deterministic ordering and duplicate warnings. Forty focused import
+tests PASS, including 10,000-by-50,000 scale. No API/mutation; authorization-filtered retrieval and
+durable staging/approval are still required before product exposure. Human data unchanged.
+Full backend 503 PASS, zero skips, 117.34s; `/tmp/budget-import-matching-backend.log`.
+Diff check PASS. HUMAN ACCEPTANCE PENDING — DO NOT RETEST.
+
 After `2e9f532`, added funded-card rollback proof for canonical caller-owned transaction creation.
 Real reserve events must exist before failure; rollback restores all affected counts, complete
 month summary and register. Thirteen focused tests/diff PASS. No production/schema/native changes.

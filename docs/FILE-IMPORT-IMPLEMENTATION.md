@@ -74,3 +74,24 @@ events inside the caller-owned unit, then a later invalid-category operation fai
 restore transaction/payee/audit/reserve counts, the complete month summary and posted register
 exactly. Thirteen unit-of-work/card tests PASS. This strengthens atomic approval prerequisites;
 durable batch identity, concurrency, matching and user approval are still not implemented.
+
+### Matching foundation after `8de36b5`
+
+`import_matching.py` produces review suggestions only. Same exact signed amount/date/normalized
+payee yields an exact suggestion, never automatic approval. Same amount in an explicitly selected
+zero-to-seven-day window yields possible suggestions. Debit and refund directions remain distinct.
+Name normalization reuses the canonical payee normalization; alias/first-class identity integration
+is still open. Repeated identical candidate date/amount/name/memo flags the first source record;
+neither candidate is discarded because identical legitimate purchases can exist.
+
+Inputs are capped at 10,000 candidates and 50,000 observations. Amount/date/name indexes avoid
+candidate-by-history scanning; each indexed bucket retains 20 IDs and count information. Output
+has at most 20 exact plus 20 possible IDs per candidate and an explicit truncation flag. Ordering
+is deterministic by date distance, prior before following date, then ID. Forty import tests PASS,
+including the full 10,000-by-50,000 repeated-data case.
+
+This module has no database access or security authority. Before exposing it, an application
+service MUST select only currently authorized observations for the chosen budget/account, before
+indexing/counting/ranking. That service must also recheck authority during approval. No API currently
+exposes this matcher, and no complete authorization/matching workflow is claimed. Durable staging,
+external IDs, pagination/refinement for truncated matches, transfer matching and approval remain open.

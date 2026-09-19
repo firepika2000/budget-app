@@ -4,6 +4,14 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Import matching foundation after `8de36b5`: bounded deterministic exact/possible suggestions and
+in-file duplicate warnings, with no automatic consumption or mutation. Forty focused import tests
+PASS including 10,000 candidates/50,000 observations. Current code is a pure algorithm, not an
+authorized API: scoped observation retrieval, durable staging, approval, identities and native UX
+remain open. See `FILE-IMPORT-IMPLEMENTATION.md`; no production completion claim.
+Full backend: 503 PASS, zero skips, 117.34s with disposable PostgreSQL gates enabled;
+`/tmp/budget-import-matching-backend.log`. Diff check PASS; no native/schema changes.
+
 Funded-card unit-of-work verification after `2e9f532`: new test proves actual reserve events are
 created then fully rolled back after a subsequent invalid operation. Complete month observations
 and posted register equal their pre-operation values. Thirteen focused unit/card tests PASS; diff
