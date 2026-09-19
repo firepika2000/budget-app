@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `69bdd0d`, repository migration head advances to `0030_import_staging` (parent `0029`),
+adding owned/versioned money-neutral review batches. Populated downgrade refuses data loss.
+No endpoint or financial mutation introduced. Human Live remains at `0020_payee_identity_repair`;
+never apply autonomous migrations there. Pending: staging service, approval/idempotency, native UX.
+Final full backend 505 PASS, zero skips, 118.63s; `/tmp/budget-import-staging-final.log`.
+Includes populated migration/downgrade safety and current-head encrypted recovery. Diff PASS.
+HUMAN ACCEPTANCE PENDING — DO NOT RETEST.
+
 After `04dfefa`, import matching gains authorized bounded database observation retrieval using
 the production browser's extracted SQL visibility predicate. Fourteen focused tests PASS; hidden
 category/salary/mixed-split privacy verified. No endpoint, posting or schema change. Staging,

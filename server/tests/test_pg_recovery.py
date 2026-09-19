@@ -111,7 +111,7 @@ def test_real_dump_restore_preserves_rows_finances_and_encrypted_attachments(pg,
         payload.mkdir()
         shutil.copyfile(dump, payload / "database.sql")
         shutil.copytree(restored_objects, payload / "attachments")
-        (payload / "BACKUP-METADATA").write_text("format_version=1\ncreated_at=2026-09-18T00:00:00Z\ndatabase_revision=0029_cash_rollover_history\n")
+        (payload / "BACKUP-METADATA").write_text("format_version=1\ncreated_at=2026-09-18T00:00:00Z\ndatabase_revision=0030_import_staging\n")
         (payload / "attachment-key-recovery.env").write_text(f"BUDGET_APP_JWT_SECRET={source_settings.jwt_secret}\n")
         subprocess.run([sys.executable, str(ARCHIVE_TOOL), "create-manifest", str(payload)], check=True, capture_output=True)
         plain_archive = tmp_path / "backup.tar.gz"
@@ -137,7 +137,7 @@ def test_real_dump_restore_preserves_rows_finances_and_encrypted_attachments(pg,
         subprocess.run(["psql", "--single-transaction", "--set", "ON_ERROR_STOP=on", "--dbname", destination_name], input=EMPTY_GUARD.read_bytes() + b"\n" + dump.read_bytes(), env=environment, check=True, capture_output=True)
         assert _rows(restored_engine) == expected
         with restored_engine.connect() as connection:
-            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0029_cash_rollover_history"
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0030_import_staging"
         restored_app = create_app(Settings(database_url=destination_url.render_as_string(hide_password=False), jwt_secret=source_settings.jwt_secret, attachment_storage_path=str(restored_objects)))
         restored_app.state.session_factory = sessionmaker(bind=restored_engine, expire_on_commit=False)
         with TestClient(restored_app) as client:

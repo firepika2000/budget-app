@@ -110,3 +110,17 @@ transactions, uncategorized salary and mixed-visible/private splits before produ
 it also checks date filtering and hidden/missing account denial. Current capability checks happen
 on every invocation, but approval must independently recheck them. Durable staging, integration,
 format coverage, approval/replay and native UX remain required.
+
+### Durable staging schema after `69bdd0d`
+
+Revision `0030_import_staging`, following `0029_cash_rollover_history`, adds `import_batches`:
+budget/account/actor ownership, review/approved/cancelled status, optimistic version, bounded
+candidate count, normalized candidate JSON, source format and creation timestamp. It does not
+store original uploaded files or write financial tables. Service validation must enforce candidate
+shape/count consistency, account-budget ownership and current authority; table fields alone are
+not a security boundary. No staging creation or approval endpoint is exposed yet.
+
+Downgrade refuses populated staging to avoid silently losing review/history. Empty staging can
+be downgraded. Populated PostgreSQL upgrade proof compares every preexisting table and financial
+month observation, then inserts money-neutral staging and verifies populated downgrade refusal.
+Human Live remains `0020_payee_identity_repair`; this migration is tested only on disposable data.

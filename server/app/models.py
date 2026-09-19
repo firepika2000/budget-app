@@ -29,6 +29,27 @@ class BudgetPermission(str, Enum):
     MANAGE = "manage"
 
 
+class ImportBatch(Base):
+    """Money-neutral review data; only canonical approval can post transactions."""
+    __tablename__ = "import_batches"
+    __table_args__ = (
+        CheckConstraint("status IN ('review', 'approved', 'cancelled')", name="ck_import_batch_status"),
+        CheckConstraint("version >= 0", name="ck_import_batch_version"),
+        CheckConstraint("candidate_count >= 0 AND candidate_count <= 10000", name="ck_import_batch_count"),
+        Index("ix_import_batch_budget_actor", "budget_id", "created_by_user_id", "created_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="RESTRICT"))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    status: Mapped[str] = mapped_column(String(20), default="review")
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    candidate_count: Mapped[int] = mapped_column(Integer)
+    candidates: Mapped[list[dict]] = mapped_column(JSON)
+    source_format: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 class SetupState(Base):
     __tablename__ = "setup_state"
 
