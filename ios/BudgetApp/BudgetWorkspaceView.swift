@@ -1416,7 +1416,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard demo.deleteTransfer(id: id) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { try requireActiveMembership();
-        guard budget.can("reconcile_account"), !demo.isRestricted else { throw workspaceRepositoryError("You do not have permission to reconcile this account.") }
+        try requireTransactionCapability("reconcile_account")
+        guard !demo.isRestricted else { throw APIClientError.server(status: 403, message: "You do not have permission to reconcile this account") }
+        guard actorAccountIDs.contains(operation.accountID) else { throw APIClientError.server(status: 404, message: "Account not found") }
         guard demo.reconcile(accountID: operation.accountID, statementBalance: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, reason: operation.reason, expectedClearedBalance: operation.expectedClearedBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
     func assignMoney(_ operation: AssignMoneyOperation) async throws { try requireActiveMembership();

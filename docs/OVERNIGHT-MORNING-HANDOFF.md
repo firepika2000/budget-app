@@ -6,6 +6,14 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `2559863`, reconciliation consults current capability/account scope rather than the initial
+budget grant. Denied attempts cannot lock transactions or alter reconciled balances; the canonical
+engine and existing delegated-persona restriction remain. Broader planning/observation authorization
+and full dynamic role parity are still open.
+Verified 142 native tests + production register clearing/reconciled-lockout UI, Beta build/diff,
+and nine backend reconciliation/balance reference tests PASS. Logs:
+`/tmp/budget-demo-reconcile-{authority,reference}.log`. Human data/main unchanged.
+
 After `fdaa419`, Demo transfer commands check current capability, both original/new accounts,
 creator/manager authority and reconciliation protection before changing either leg. Invalid/future
 dates refuse using injected time; canonical balance/reserve engine unchanged. Planning/reconciliation

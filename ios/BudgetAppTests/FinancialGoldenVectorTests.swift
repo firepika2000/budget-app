@@ -4,6 +4,33 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testDemoReconciliationUsesCurrentCapabilityAndAccountScopeWithoutPartialLocks() async throws {
+        let source = DemoWorkspaceDataSource()
+        let checking = try XCTUnwrap(source.demo.accounts.first { $0.id == "checking" })
+        let operation = ReconcileAccountOperation(accountID: checking.id, statementBalanceMinor: checking.cleared, throughDate: "2099-12-31", createAdjustment: false, reason: "", expectedClearedBalanceMinor: checking.cleared)
+        let accounts = source.demo.accounts, transactions = source.demo.transactions
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["view_accounts"], restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: 0))
+        source.demo.persona = .partner
+        do { try await source.reconcileAccount(operation); XCTFail("Revoked reconciliation capability") }
+        catch APIClientError.server(let status, _) { XCTAssertEqual(status, 403) }
+        XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["reconcile_account"], restrictAccounts: true, accountIDs: ["savings"], restrictCategories: false, categoryIDs: [], expectedVersion: 1))
+        source.demo.persona = .partner
+        do { try await source.reconcileAccount(operation); XCTFail("Hidden account reconciliation") }
+        catch APIClientError.server(let status, _) { XCTAssertEqual(status, 404) }
+        XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(capabilities: ["reconcile_account"], restrictAccounts: true, accountIDs: ["checking"], restrictCategories: false, categoryIDs: [], expectedVersion: 2))
+        source.demo.persona = .partner
+        try await source.reconcileAccount(operation)
+        XCTAssertEqual(source.demo.accounts.map(\.balance), accounts.map(\.balance))
+        XCTAssertEqual(source.demo.accounts.first { $0.id == checking.id }?.reconciledBalance, checking.cleared)
+        XCTAssertTrue(source.demo.transactions.filter { $0.accountID == checking.id && $0.cleared }.allSatisfy(\.reconciled))
+        XCTAssertEqual(source.demo.transactions.filter { $0.accountID != checking.id }, transactions.filter { $0.accountID != checking.id })
+    }
+
+    @MainActor
     func testDemoTransferAuthorityCoversBothLegsAndRefusesInvalidDatesAtomically() async throws {
         let source = DemoWorkspaceDataSource(now: { BudgetWorkspaceStore.parseDate("2026-09-15") })
         func operation(destination: String = "savings", date: String = "2026-09-01") -> TransferMoneyOperation {

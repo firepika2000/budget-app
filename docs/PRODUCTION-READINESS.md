@@ -4,6 +4,18 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Demo reconciliation authority after `2559863`: the command used the budget capability captured at
+workspace construction, so a changed custom profile could still reconcile. It now checks current
+reconciliation authority and current account scope before calling the unchanged reconciliation
+engine. Regression proves capability revocation and hidden-account refusal leave balances,
+transactions and reconciliation flags unchanged, then proves restored scoped authority reconciles
+only the selected account without altering working balances. Existing delegated-persona restrictions
+remain; complete role/capability parity, broader observations and planning authorization remain open.
+Verification: 142 native tests + production register quick-clearing/reconciled-lockout UI PASS;
+Beta Simulator build and diff check PASS (`/tmp/budget-demo-reconcile-authority.log`). Nine backend
+reconciliation/balance reference tests PASS (`/tmp/budget-demo-reconcile-reference.log`). No server
+or schema changes; latest full backend/package baselines remain 461 / 49+54 PASS.
+
 Demo transfer authority after `fdaa419`: create/edit/delete now require the corresponding current
 transaction capability. Existing linked pairs must be balanced, visible on both accounts, owned
 by the actor (or explicitly manageable), posted and unreconciled before mutation. New source and
