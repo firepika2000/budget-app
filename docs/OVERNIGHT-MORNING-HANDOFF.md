@@ -6,6 +6,13 @@ tag, or release.
 
 ## 2026-09-18 — current production-readiness continuation
 
+After `04dfefa`, import matching gains authorized bounded database observation retrieval using
+the production browser's extracted SQL visibility predicate. Fourteen focused tests PASS; hidden
+category/salary/mixed-split privacy verified. No endpoint, posting or schema change. Staging,
+approval/replay and native UI remain open. Human data unchanged.
+Full backend 504 PASS, zero skips, 117.74s; `/tmp/budget-import-review-backend.log`.
+Diff check PASS. HUMAN ACCEPTANCE PENDING — DO NOT RETEST.
+
 After `8de36b5`, added bounded import-review matching with exact signed money, explicit date window,
 canonical name normalization, deterministic ordering and duplicate warnings. Forty focused import
 tests PASS, including 10,000-by-50,000 scale. No API/mutation; authorization-filtered retrieval and

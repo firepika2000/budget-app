@@ -1180,6 +1180,22 @@ def transfer_allocation(
     }
 
 
+def transaction_visibility_conditions(db: Session, user: User, budget: Budget) -> list:
+    """SQL privacy boundary shared by browsing and import observation retrieval."""
+    conditions = [Transaction.budget_id == budget.id]
+    accounts = visible_resource_ids(db, user, budget, "account")
+    categories = visible_resource_ids(db, user, budget, "category")
+    if accounts is not None:
+        conditions.append(Transaction.account_id.in_(accounts) if accounts else false())
+    if categories is not None:
+        conditions.append(or_(
+            Transaction.category_id.in_(categories),
+            and_(Transaction.category_id.is_(None), Transaction.splits.any(),
+                 ~Transaction.splits.any(~TransactionSplit.category_id.in_(categories))),
+        ) if categories else false())
+    return conditions
+
+
 def _visible_transactions(db: Session, user: User, budget: Budget) -> list[Transaction]:
     transactions = list(db.scalars(select(Transaction).options(
         selectinload(Transaction.splits)
@@ -1253,23 +1269,7 @@ def search_transactions(
 
     search_text = q.strip().casefold()
 
-    conditions = [Transaction.budget_id == budget.id]
-    visible_accounts = visible_resource_ids(db, user, budget, "account")
-    visible_categories = visible_resource_ids(db, user, budget, "category")
-    if visible_accounts is not None:
-        conditions.append(Transaction.account_id.in_(visible_accounts) if visible_accounts else false())
-    if visible_categories is not None:
-        if visible_categories:
-            conditions.append(or_(
-                Transaction.category_id.in_(visible_categories),
-                and_(
-                    Transaction.category_id.is_(None),
-                    Transaction.splits.any(),
-                    ~Transaction.splits.any(~TransactionSplit.category_id.in_(visible_categories)),
-                ),
-            ))
-        else:
-            conditions.append(false())
+    conditions = transaction_visibility_conditions(db, user, budget)
     if search_text:
         pattern = f"%{search_text}%"
         conditions.append(or_(

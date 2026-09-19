@@ -95,3 +95,18 @@ service MUST select only currently authorized observations for the chosen budget
 indexing/counting/ranking. That service must also recheck authority during approval. No API currently
 exposes this matcher, and no complete authorization/matching workflow is claimed. Durable staging,
 external IDs, pagination/refinement for truncated matches, transfer matching and approval remain open.
+
+### Authorized observation retrieval after `04dfefa`
+
+`import_review.load_match_observations` checks current view/create transaction capabilities, target
+account visibility and budget ownership, then applies the same SQL account/category/split predicate
+as the production transaction browser before retrieving scalar observations. Only posted rows in
+the selected account/date range are returned. At most 50,001 rows are read; the extra row causes an
+explicit narrow-range error rather than silently incomplete matching. No payees/splits/attachments
+are hydrated for matching. No HTTP endpoint exposes this service yet.
+
+Fourteen focused review/browser/matcher tests PASS. Review regression excludes hidden-category
+transactions, uncategorized salary and mixed-visible/private splits before producing observations;
+it also checks date filtering and hidden/missing account denial. Current capability checks happen
+on every invocation, but approval must independently recheck them. Durable staging, integration,
+format coverage, approval/replay and native UX remain required.

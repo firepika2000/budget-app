@@ -4,6 +4,14 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Import observation service after `04dfefa`: production transaction search and import retrieval
+share SQL resource-visibility predicates. Review checks current view/create capabilities and
+budget/account visibility before bounded posted-row scalar retrieval. Hidden categories, salary
+and mixed splits stay out of observations. Fourteen focused review/browser/matcher tests PASS.
+No import endpoint/approval yet; full import and broader production readiness remain IN PROGRESS.
+Full backend: 504 PASS, zero skips, 117.74s with disposable PostgreSQL enabled;
+`/tmp/budget-import-review-backend.log`. Diff check PASS. No native/schema changes.
+
 Import matching foundation after `8de36b5`: bounded deterministic exact/possible suggestions and
 in-file duplicate warnings, with no automatic consumption or mutation. Forty focused import tests
 PASS including 10,000 candidates/50,000 observations. Current code is a pure algorithm, not an
