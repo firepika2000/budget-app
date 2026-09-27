@@ -33,6 +33,7 @@ Commands:
   migrate  Bootstrap dependencies and upgrade the database to Alembic head
   test     Bootstrap dependencies and run the backend test suite
   storage  Publish/fetch encrypted backups using local or Dropbox destinations
+  portable-export  Create an encrypted provider-neutral budget archive
   help     Show this help
 
 Optional overrides:
@@ -45,6 +46,8 @@ Storage examples:
   ./budget storage publish --destination local --directory /Volumes/Backups BACKUP.age
   ./budget storage publish --destination dropbox BACKUP.age
   ./budget storage fetch-dropbox /Backups/BACKUP.age ./BACKUP.age
+  BUDGET_APP_ACCESS_TOKEN=... ./budget portable-export \
+    --server-url http://127.0.0.1:8000 --budget-id UUID --output-directory ./exports
 
 Personal local-server examples:
   ./budget local
@@ -286,6 +289,12 @@ run_storage() {
     python3 "$SERVER_DIR/scripts/backup_destination.py" "$@"
 }
 
+run_portable_export() {
+    bootstrap_dependencies || return $?
+    shift
+    "$VENV_PYTHON" "$SERVER_DIR/scripts/portable_archive.py" "$@"
+}
+
 run_local() {
     bootstrap_dependencies || return $?
     shift
@@ -302,6 +311,7 @@ case "$command_name" in
     migrate) run_migrate_command ;;
     test) run_tests ;;
     storage) run_storage "$@" ;;
+    portable-export) run_portable_export "$@" ;;
     help|--help|-h) usage ;;
     *) fail "Unknown command: $command_name"; printf '\n' >&2; usage >&2; exit 2 ;;
 esac

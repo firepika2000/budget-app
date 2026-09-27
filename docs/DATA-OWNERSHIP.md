@@ -158,6 +158,30 @@ Downloading does not weaken restore safety: age authentication, archive hashes, 
 schema compatibility, destination emptiness, and attachment-key compatibility are still verified
 before the recovery deployment is changed.
 
+## Provider-neutral encrypted export
+
+An owner can create an open, provider-neutral archive through the authenticated production API:
+
+```sh
+export BUDGET_APP_ACCESS_TOKEN='short-lived-owner-access-token'
+export BUDGET_APP_BACKUP_AGE_RECIPIENT='age1...'
+./budget portable-export \
+  --server-url http://127.0.0.1:8000 \
+  --budget-id BUDGET-UUID \
+  --output-directory ./exports
+```
+
+The access token is accepted only through the environment and is never written into the archive.
+Plain HTTP is accepted only for loopback servers; remote exports require HTTPS. The tool validates
+the structured export's per-section manifest, downloads every active attachment through the same
+authorized application-service route used by the app, checks its exact byte count and SHA-256, and
+then encrypts the data and attachment payloads with `age`. Detached attachment lifecycle metadata is
+preserved, but tombstoned payload bytes remain an operational-backup concern.
+
+This portable archive is not yet importable and is not a substitute for the full-authority backup:
+the next portability gate is validate-then-commit import into a brand-new destination followed by
+canonical financial-observation comparison.
+
 ## Remaining implementation sequence
 
 1. Add the production `LocalDeviceRepository` adapter above `BudgetStorage` and route every mutation

@@ -2,7 +2,7 @@ import csv
 from io import StringIO
 import pytest
 
-from app.models import Household
+from app.models import Household, Payee
 from .test_delegated_access import add_child
 
 from .conftest import auth
@@ -109,8 +109,16 @@ def test_structured_export_contains_reconstructable_audit_data_and_requires_capa
     }).json()
     client.post(f"{path}/transactions", headers=auth(owner_token), json={
         "account_id": account["id"], "amount_minor": 5000,
-        "occurred_on": "2026-09-04", "is_cleared": True,
+        "occurred_on": "2026-09-04", "is_cleared": True, "payee_name": "Payroll",
     })
+    with session_factory() as db:
+        household = db.get(Household, household_id)
+        db.add(Payee(
+            household_id=household_id, display_name="Archived historical payee",
+            name_key="archived historical payee", is_archived=True,
+            created_by_user_id=household.owner_user_id,
+        ))
+        db.commit()
     client.put(
         f"{path}/categories/{category['id']}/assignment",
         headers=auth(owner_token),
@@ -130,6 +138,9 @@ def test_structured_export_contains_reconstructable_audit_data_and_requires_capa
     assert sections["budget"]["id"] == budget["id"]
     assert sections["accounts"][0]["id"] == account["id"]
     assert sections["transactions"][0]["amount_minor"] == 5000
+    payees_by_name = {item["display_name"]: item for item in sections["payees"]}
+    assert payees_by_name["Archived historical payee"]["is_archived"] is True
+    assert sections["transactions"][0]["payee_id"] == payees_by_name["Payroll"]["id"]
     assert len(sections["allocation_operations"]) == 1
     assert sum(item["amount_minor"] for item in sections["allocation_postings"]) == 0
     from app.portable_data import validate_section_manifest

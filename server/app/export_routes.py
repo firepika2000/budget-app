@@ -96,15 +96,11 @@ def export_budget_json(
     payee_preferences = list(db.scalars(select(PayeeBudgetPreference).where(
         PayeeBudgetPreference.budget_id == budget_id
     )))
-    payee_ids = {item.payee_id for item in payee_preferences}
-    payee_ids.update(item.payee_id for item in transactions if item.payee_id is not None)
-    payee_ids.update(
-        item.payee_id for item in db.scalars(select(ScheduledTransaction).where(
-            ScheduledTransaction.budget_id == budget_id,
-            ScheduledTransaction.payee_id.is_not(None),
-        ))
-    )
-    payees = list(db.scalars(select(Payee).where(Payee.id.in_(payee_ids)))) if payee_ids else []
+    # Payees are household-scoped first-class identities. Preserve the full household directory,
+    # including archived/unreferenced identities and aliases, so a move does not silently discard
+    # rename/merge history merely because this budget has not used a payee recently.
+    payees = list(db.scalars(select(Payee).where(Payee.household_id == budget.household_id)))
+    payee_ids = {item.id for item in payees}
 
     sections = {
         # Version 2 is the first completeness-audited contract. It remains a JSON data export;
@@ -156,9 +152,14 @@ def export_budget_json(
         "transaction_changes": [row_data(item) for item in db.scalars(select(TransactionChange).where(
             TransactionChange.budget_id == budget_id
         ))],
-        "transaction_attachments": [row_data(item) for item in db.scalars(select(TransactionAttachment).where(
-            TransactionAttachment.budget_id == budget_id
-        ))],
+        # storage_key is a provider implementation detail. Portable archives address decrypted,
+        # integrity-checked payloads by stable attachment ID instead.
+        "transaction_attachments": [
+            {key: value for key, value in row_data(item).items() if key != "storage_key"}
+            for item in db.scalars(select(TransactionAttachment).where(
+                TransactionAttachment.budget_id == budget_id
+            ))
+        ],
         "import_batches": [row_data(item) for item in db.scalars(select(ImportBatch).where(
             ImportBatch.budget_id == budget_id
         ))],
