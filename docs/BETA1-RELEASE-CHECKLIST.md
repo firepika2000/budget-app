@@ -35,6 +35,10 @@ The prepared Beta description, test focus and known boundaries are in
 [BETA1-TESTER-NOTES.md](BETA1-TESTER-NOTES.md). Contact details and public URLs intentionally remain
 owner-provided values rather than invented placeholders.
 
+A factual implementation-based privacy draft is available in
+[BETA1-PRIVACY-DISCLOSURE.md](BETA1-PRIVACY-DISCLOSURE.md). It requires owner/legal review, contact
+details and public hosting before use; it must not be published as-is with placeholders.
+
 ## Minimal human acceptance flow
 
 Use disposable Beta data; do not reset the existing human Live database.
