@@ -22,9 +22,9 @@ navigation after Debt stabilization, retaining prior human evidence without dema
 | Area | GOOD | FIX BEFORE BETA | CAN WAIT |
 |---|---|---|---|
 | Home | GOOD: quick actions open canonical transaction/move/schedule editors | Full clean-user financial journey still pending | Advanced dashboard expansion |
-| Plan | GOOD: fresh empty state and Create Category Group reachable | Full assign/move journey still pending | Additional advanced planning |
-| Activity | Walk pending | Add/edit/search/clear/schedules walkthrough | Further metadata expansion |
-| Accounts | GOOD: fresh empty state and Add Account reachable | Starting balance/register/transfer/reconcile journey pending | Advanced debt strategies if unstable |
+| Plan | GOOD: fresh group/category creation and exact assignment editing pass in production composition | Move-money journey still pending | Additional advanced planning |
+| Activity | GOOD: shared clear/unclear interaction and scheduled realization pass | Add/edit/search walkthrough still pending | Further metadata expansion |
+| Accounts | GOOD: fresh account creation, starting balance, metadata edit, register clearing and reconciliation lockout pass | Transfer journey still pending | Advanced debt strategies if unstable |
 | Insights | GOOD: friendly hub destinations navigate; chart regression passes | Human Live Debt retest and code-9 cause remain | Additional report types |
 | Household | Walk pending | Basic access/settings clarity and privacy | Advanced allowance/delegation expansion |
 | Settings | GOOD: profile opens; guided-tour resume moved directly below Profile and regression passes | Appearance/feedback/release build pass pending | Elaborate feedback backend |
@@ -41,6 +41,14 @@ Not yet completed in this Beta pass. Human financial data must not be used for d
 - Distant roadmap expansion and exhaustive advanced strategy/household edge workflows.
 - Commercial distribution decisions remain explicit external gates, not guessed implementation.
 
+## Beta presentation
+
+- Added an original production AppIcon asset; the Release build now emits compiled icon variants
+  instead of installing with the iOS placeholder grid.
+- Release-configuration Xcode Beta simulator build passes with the asset catalog compiled.
+- App Store metadata, screenshots, privacy declarations and signing/archive validation remain a
+  later release-candidate checkpoint.
+
 ## Verification policy
 
 Focused tests/build/diff per change. Broad suites at Debt stabilization, complete core journey and
@@ -49,7 +57,7 @@ release-candidate checkpoints—not after every small UI edit. No test-count tar
 ## Current delivery constraints
 
 - Branch `codex/development`; no merge/tag.
-- Debt fix committed locally as `0b625fe`; its push is pending because GitHub was unreachable.
+- Local Beta checkpoints `0b625fe` and `a536712` are pending push because GitHub is unreachable.
 - Human Live remains unmigrated by this agent. No Simulator reset.
 - Xcode Beta 27.0 / 27A5252f; existing iPhone 17 Pro Max / iOS 27,
   `3ABD861E-D38D-4AFD-A356-959266051564`.

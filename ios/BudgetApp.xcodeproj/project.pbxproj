@@ -24,6 +24,7 @@
 		CC0000010000000000000001 /* AuthenticationJourneyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD0000010000000000000001 /* AuthenticationJourneyTests.swift */; };
 		AA0000130000000000000013 /* AppearancePreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000130000000000000013 /* AppearancePreference.swift */; };
 		AA0000140000000000000014 /* AppearancePreferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000140000000000000014 /* AppearancePreferenceTests.swift */; };
+		AA0000160000000000000016 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BB0000160000000000000016 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -63,6 +64,7 @@
 		DD0000020000000000000002 /* BudgetAppUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = BudgetAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BB0000130000000000000013 /* AppearancePreference.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearancePreference.swift; sourceTree = "<group>"; };
 		BB0000140000000000000014 /* AppearancePreferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearancePreferenceTests.swift; sourceTree = "<group>"; };
+		BB0000160000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -135,6 +137,7 @@
 		E7B3E1F17E00FB7963AA3BF8 /* BudgetApp */ = {
 			isa = PBXGroup;
 			children = (
+				BB0000160000000000000016 /* Assets.xcassets */,
 				B10F6752E4E2DAAB5F30C155 /* AppSession.swift */,
 				BB0000110000000000000011 /* ApplicationServices.swift */,
 				345B8B1D2F7640B5BD488CC5 /* BudgetApp.swift */,
@@ -192,6 +195,7 @@
 			buildPhases = (
 				99EB62D84F2C312B4DC5C0BC /* Sources */,
 				32B48C46C55E631622718C8B /* Frameworks */,
+				AA0000170000000000000017 /* Resources */,
 				AA0000100000000000000010 /* Inject Runtime Identity */,
 			);
 			buildRules = (
@@ -245,6 +249,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA0000170000000000000017 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000160000000000000016 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		AA0000100000000000000010 /* Inject Runtime Identity */ = {
