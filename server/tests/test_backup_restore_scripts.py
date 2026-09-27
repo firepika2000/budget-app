@@ -60,7 +60,11 @@ def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
     tools.mkdir()
     log = tmp_path / "docker.log"
     age = tools / "age"
-    age.write_text('#!/usr/bin/env bash\ncat "${@: -1}"\n')
+    age.write_text(
+        '#!/usr/bin/env bash\n'
+        '[[ -z "${FAKE_AGE_LOG:-}" ]] || printf "%s\\n" "$*" >> "$FAKE_AGE_LOG"\n'
+        'cat "${@: -1}"\n'
+    )
     docker = tools / "docker"
     docker.write_text(
         '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$FAKE_DOCKER_LOG"\n'
@@ -114,6 +118,7 @@ fi
     )
     (tools / "age").write_text(
         """#!/usr/bin/env bash
+[[ -z "${FAKE_AGE_LOG:-}" ]] || printf "%s\\n" "$*" >> "$FAKE_AGE_LOG"
 while [[ $# -gt 0 ]]; do
   if [[ "$1" == "--output" ]]; then output="$2"; shift 2; else shift; fi
 done
@@ -165,6 +170,33 @@ def test_backup_targets_named_project_and_archives_database_objects_key_and_mani
     assert verification.returncode == 0, verification.stderr
 
 
+def test_backup_recipient_mode_is_noninteractive_and_destination_configuration_fails_closed(tmp_path):
+    environment, log = _backup_environment(tmp_path)
+    age_log = tmp_path / "age.log"
+    environment["FAKE_AGE_LOG"] = str(age_log)
+    environment["BUDGET_APP_BACKUP_AGE_RECIPIENT"] = "age1testrecipient"
+    result = subprocess.run(
+        [str(BACKUP), "--project-name", "budget-source", str(tmp_path / "backups")],
+        env=environment, text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--recipient age1testrecipient" in age_log.read_text()
+    assert "--passphrase" not in age_log.read_text()
+    assert "no passphrase prompt" in result.stdout
+
+    invalid_environment = dict(environment)
+    invalid_environment["BUDGET_APP_BACKUP_DESTINATION"] = "local"
+    invalid_environment.pop("BUDGET_APP_BACKUP_LOCAL_DIRECTORY", None)
+    log.unlink()
+    result = subprocess.run(
+        [str(BACKUP), "--project-name", "budget-source", str(tmp_path / "invalid")],
+        env=invalid_environment, text=True, capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "BUDGET_APP_BACKUP_LOCAL_DIRECTORY is required" in result.stderr
+    assert not log.exists(), "invalid destination configuration must fail before contacting the source"
+
+
 def test_restore_verifies_archive_before_addressing_explicit_target(tmp_path):
     archive = _archive(tmp_path)
     environment, log = _environment(tmp_path)
@@ -183,6 +215,23 @@ def test_restore_verifies_archive_before_addressing_explicit_target(tmp_path):
     assert "psql --single-transaction --set ON_ERROR_STOP=on" in calls[6]
     assert "start api" in calls[-1]
     assert not any("-delete" in call for call in calls)
+
+
+def test_restore_uses_configured_age_identity_without_passphrase_prompt(tmp_path):
+    archive = _archive(tmp_path)
+    environment, _ = _environment(tmp_path)
+    identity = tmp_path / "recovery-identity.txt"
+    identity.write_text("AGE-SECRET-KEY-test")
+    age_log = tmp_path / "age.log"
+    environment["BUDGET_APP_BACKUP_AGE_IDENTITY"] = str(identity)
+    environment["FAKE_AGE_LOG"] = str(age_log)
+    result = subprocess.run(
+        [str(RESTORE), "--yes", "--project-name", "budget-recovery", str(archive)],
+        env=environment, text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"--decrypt --identity {identity}" in age_log.read_text()
+    assert "prompted" not in result.stdout
 
 
 def test_corrupt_or_incomplete_backup_never_reaches_restore_target(tmp_path):

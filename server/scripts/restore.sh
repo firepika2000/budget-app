@@ -36,8 +36,15 @@ trap cleanup EXIT
 
 echo "Restoring $backup_file into the Budget App database."
 echo "Target Docker Compose project: $project_name"
-echo "You will be prompted for the backup passphrase by age."
-age --decrypt "$backup_file" > "$work_dir/archive.tar.gz"
+age_arguments=(--decrypt)
+if [[ -n "${BUDGET_APP_BACKUP_AGE_IDENTITY:-}" ]]; then
+  [[ -f "$BUDGET_APP_BACKUP_AGE_IDENTITY" ]] || { echo "Configured age identity file was not found" >&2; exit 1; }
+  age_arguments+=(--identity "$BUDGET_APP_BACKUP_AGE_IDENTITY")
+  echo "Decrypting with the configured age identity."
+else
+  echo "You will be prompted for the backup passphrase by age."
+fi
+age "${age_arguments[@]}" "$backup_file" > "$work_dir/archive.tar.gz"
 python3 "$script_dir/backup_archive.py" extract-verified "$work_dir/archive.tar.gz" "$restore_dir"
 compose=(docker compose --project-directory "$server_dir" --project-name "$project_name")
 # Never source recovery material or print secrets. A readable archive is not enough:

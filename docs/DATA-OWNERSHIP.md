@@ -66,6 +66,23 @@ server/scripts/backup.sh --project-name budget-server
   server/backups/budget-YYYYMMDDTHHMMSSZ.tar.gz.age
 ```
 
+For unattended jobs, configure an owner-controlled age recipient and a destination. The coordinated
+backup then encrypts without a terminal prompt, publishes only after the complete source capture is
+available, and leaves the local encrypted generation intact if off-device publication fails:
+
+```sh
+export BUDGET_APP_BACKUP_AGE_RECIPIENT='age1...'
+export BUDGET_APP_BACKUP_DESTINATION='local' # or dropbox
+export BUDGET_APP_BACKUP_LOCAL_DIRECTORY='/Volumes/Household-Backups'
+export BUDGET_APP_BACKUP_RETENTION='10'
+
+server/scripts/backup.sh --project-name budget-server
+```
+
+For recipient-encrypted recovery, set `BUDGET_APP_BACKUP_AGE_IDENTITY` to the private identity-file
+path before invoking `restore.sh`. Keep that identity outside the repository and separately from the
+backup destination. Losing the only identity means losing access to those encrypted generations.
+
 For Dropbox, create a least-privilege app-folder Dropbox application. Configure either a temporary
 access token or, for durable operation, its refresh credentials outside the repository:
 

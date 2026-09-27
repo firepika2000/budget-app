@@ -51,8 +51,10 @@ The API container applies forward-only database migrations before accepting traf
 
 - At regular intervals, run `./scripts/backup.sh --project-name budget-server` interactively and copy
   encrypted files off-host. It pauses the named API for coordinated capture, resumes it before the
-  passphrase prompt, and requires that no other writers share its database/objects. Unattended
-  recipient-key backup and retention are not yet implemented; a cron entry cannot answer the prompt.
+  passphrase prompt, and requires that no other writers share its database/objects. For unattended
+  operation, configure `BUDGET_APP_BACKUP_AGE_RECIPIENT`, a local or Dropbox
+  `BUDGET_APP_BACKUP_DESTINATION`, and retention as described in
+  [Data ownership](DATA-OWNERSHIP.md). Keep the recipient identity off-host and test it.
 - Perform a test restore on a separate instance periodically.
 - Publish the encrypted artifact to an owner-controlled local directory or Dropbox with
   `./budget storage`; see [Data ownership, local operation, and backup destinations](DATA-OWNERSHIP.md).

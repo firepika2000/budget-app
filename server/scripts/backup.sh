@@ -20,6 +20,19 @@ if [[ -n "$project_name" ]]; then
 fi
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 output_file="$backup_dir/budget-$timestamp.tar.gz.age"
+backup_recipient="${BUDGET_APP_BACKUP_AGE_RECIPIENT:-}"
+backup_destination="${BUDGET_APP_BACKUP_DESTINATION:-}"
+backup_retention="${BUDGET_APP_BACKUP_RETENTION:-10}"
+
+[[ "$backup_retention" =~ ^[1-9][0-9]*$ ]] || { echo "BUDGET_APP_BACKUP_RETENTION must be a positive integer" >&2; exit 2; }
+case "$backup_destination" in
+  ""|local|dropbox) ;;
+  *) echo "BUDGET_APP_BACKUP_DESTINATION must be local, dropbox, or empty" >&2; exit 2 ;;
+esac
+if [[ "$backup_destination" == local && -z "${BUDGET_APP_BACKUP_LOCAL_DIRECTORY:-}" ]]; then
+  echo "BUDGET_APP_BACKUP_LOCAL_DIRECTORY is required for the local backup destination" >&2
+  exit 2
+fi
 
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
 command -v age >/dev/null || { echo "age is required (https://age-encryption.org)" >&2; exit 1; }
@@ -44,7 +57,11 @@ trap cleanup EXIT
 archive_dir="$(mktemp -d "$backup_dir/.budget-staging.XXXXXX")"
 
 echo "Creating an encrypted backup at $output_file"
-echo "You will be prompted for a backup passphrase by age."
+if [[ -n "$backup_recipient" ]]; then
+  echo "Encrypting for the configured age recipient; no passphrase prompt is required."
+else
+  echo "You will be prompted for a backup passphrase by age."
+fi
 echo "The named API will pause while the database and objects are captured, then resume before encryption."
 # Successful exec establishes that the source container was running before we coordinate a pause.
 "${compose[@]}" exec -T api sh -c \
@@ -71,11 +88,22 @@ resume_api=false
 python3 "$script_dir/backup_archive.py" create-manifest "$work_dir"
 # macOS tar otherwise manufactures unhashed AppleDouble sidecars for extended attributes.
 # Backup payloads deliberately contain only the regular files covered by the manifest.
+age_arguments=(--passphrase)
+if [[ -n "$backup_recipient" ]]; then age_arguments=(--recipient "$backup_recipient"); fi
 COPYFILE_DISABLE=1 tar -C "$work_dir" -czf - BACKUP-METADATA database.sql attachments attachment-key-recovery.env MANIFEST.sha256 \
-  | age --passphrase --output "$archive_dir/complete.age"
+  | age "${age_arguments[@]}" --output "$archive_dir/complete.age"
 # Same-filesystem publication is atomic and refuses to overwrite an existing backup. A failed
 # tar/encryption operation leaves only private staging, removed by the exit trap.
 ln "$archive_dir/complete.age" "$output_file"
 
 echo "Backup complete: $output_file"
-echo "Test restoring this file regularly and store its passphrase separately."
+if [[ "$backup_destination" == local ]]; then
+  python3 "$script_dir/backup_destination.py" publish \
+    --destination local --directory "$BUDGET_APP_BACKUP_LOCAL_DIRECTORY" \
+    --keep "$backup_retention" "$output_file"
+elif [[ "$backup_destination" == dropbox ]]; then
+  python3 "$script_dir/backup_destination.py" publish \
+    --destination dropbox --dropbox-folder "${BUDGET_APP_DROPBOX_FOLDER:-/Backups}" \
+    --keep "$backup_retention" "$output_file"
+fi
+echo "Test restoring this file regularly and store its recovery identity or passphrase separately."
