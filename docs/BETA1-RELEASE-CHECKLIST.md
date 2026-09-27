@@ -31,6 +31,10 @@ It does not replace the product audit or broader production-readiness history.
 - [ ] Create a signed archive, run Xcode validation, then upload to closed TestFlight.
 - [ ] Add internal testers and verify install, launch, server connection and feedback path.
 
+The prepared Beta description, test focus and known boundaries are in
+[BETA1-TESTER-NOTES.md](BETA1-TESTER-NOTES.md). Contact details and public URLs intentionally remain
+owner-provided values rather than invented placeholders.
+
 ## Minimal human acceptance flow
 
 Use disposable Beta data; do not reset the existing human Live database.
