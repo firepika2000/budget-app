@@ -41,6 +41,9 @@ def test_local_destination_atomically_publishes_verifies_and_retains_generations
     final = LocalDirectoryDestination(destination, keep=2).publish(third)
     assert sorted(item.name for item in destination.glob("budget-*.tar.gz.age")) == [second.name, third.name]
     assert final["removed_generations"] == [source.name]
+    listed = LocalDirectoryDestination(destination).list_generations()
+    assert [item["name"] for item in listed] == [third.name, second.name]
+    assert listed[0]["sha256"] == sha256_file(third)
 
 
 def test_local_destination_refuses_plaintext_empty_and_overwrite(tmp_path):
@@ -91,8 +94,9 @@ class FakeDropbox:
         if endpoint == "files/list_folder":
             entries = [
                 {"name": Path(path).name, "path_display": path, "path_lower": path.lower(),
-                 "server_modified": self.modified.get(path, "2026-09-27T12:00:00Z")}
-                for path in self.files if path.startswith(str(payload["path"]) + "/")
+                 "server_modified": self.modified.get(path, "2026-09-27T12:00:00Z"),
+                 "size": len(body), "content_hash": hashlib.sha256(body).hexdigest(), ".tag": "file"}
+                for path, body in self.files.items() if path.startswith(str(payload["path"]) + "/")
             ]
             return {"entries": entries, "has_more": False}
         if endpoint == "files/delete_v2":
@@ -152,6 +156,10 @@ def test_dropbox_destination_uses_bounded_session_verifies_then_promotes_and_dow
     assert len(upload_calls) >= 2
     assert all(len(call[2] or b"") <= DROPBOX_UPLOAD_CHUNK_SIZE for call in upload_calls)
     assert [call[0] for call in transport.calls].index("files/get_metadata") < [call[0] for call in transport.calls].index("files/move_v2")
+
+    listed = destination.list_generations()
+    assert [item["path"] for item in listed] == [remote_path]
+    assert listed[0]["size"] == source.stat().st_size
 
     output = tmp_path / "retrieved" / source.name
     fetched = destination.fetch(remote_path, output)

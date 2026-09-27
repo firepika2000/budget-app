@@ -48,6 +48,8 @@ Storage examples:
   ./budget storage publish --destination local --directory /Volumes/Backups BACKUP.age
   ./budget storage publish --destination dropbox BACKUP.age
   ./budget storage fetch-dropbox /Backups/BACKUP.age ./BACKUP.age
+  ./budget storage list --destination local --directory /Volumes/Backups
+  ./budget storage list --destination dropbox --dropbox-folder /Backups
   BUDGET_APP_ACCESS_TOKEN=... ./budget portable-export \
     --server-url http://127.0.0.1:8000 --budget-id UUID --output-directory ./exports
 

@@ -156,6 +156,8 @@ Retrieve a generation into a new local path before passing it to the existing is
 workflow:
 
 ```sh
+./budget storage list --destination dropbox --dropbox-folder /Backups
+
 ./budget storage fetch-dropbox \
   /Backups/budget-YYYYMMDDTHHMMSSZ.tar.gz.age \
   /private/path/budget-restore.tar.gz.age

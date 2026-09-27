@@ -123,6 +123,24 @@ class LocalDirectoryDestination:
             removed.append(expired.name)
         return removed
 
+    def list_generations(self) -> list[dict[str, object]]:
+        if not self.directory.exists():
+            return []
+        if not self.directory.is_dir() or self.directory.is_symlink():
+            raise DestinationError("Local backup destination is not a safe directory")
+        generations = sorted(
+            (item for item in self.directory.glob("budget-*.tar.gz.age") if item.is_file() and not item.is_symlink()),
+            key=lambda item: (item.stat().st_mtime_ns, item.name),
+            reverse=True,
+        )
+        return [{
+            "name": item.name,
+            "path": str(item),
+            "size": item.stat().st_size,
+            "modified_at": int(item.stat().st_mtime),
+            "sha256": sha256_file(item),
+        } for item in generations]
+
 
 class DropboxTransport(Protocol):
     def rpc(self, endpoint: str, payload: dict[str, object]) -> dict[str, object]: ...
@@ -302,17 +320,38 @@ class DropboxDestination:
                 if "conflict" not in str(failure).lower():
                     raise
 
-    def _apply_retention(self) -> list[str]:
+    def _list_folder_entries(self) -> list[dict[str, object]]:
         response = self.transport.rpc("files/list_folder", {"path": self.folder, "recursive": False, "limit": 100})
         entries = list(response.get("entries", []))
         while response.get("has_more"):
             response = self.transport.rpc("files/list_folder/continue", {"cursor": response["cursor"]})
             entries.extend(response.get("entries", []))
+        return entries
+
+    def _generation_entries(self) -> list[dict[str, object]]:
+        entries = self._list_folder_entries()
         generations = sorted(
-            (entry for entry in entries if str(entry.get("name", "")).startswith("budget-") and str(entry.get("name", "")).endswith(".tar.gz.age")),
+            (entry for entry in entries
+             if str(entry.get("name", "")).startswith("budget-")
+             and str(entry.get("name", "")).endswith(".tar.gz.age")
+             and entry.get(".tag", "file") == "file"),
             key=lambda entry: (str(entry.get("server_modified", "")), str(entry.get("name", ""))),
             reverse=True,
         )
+        return generations
+
+    def list_generations(self) -> list[dict[str, object]]:
+        self._ensure_folder()
+        return [{
+            "name": str(entry["name"]),
+            "path": str(entry.get("path_display") or entry.get("path_lower")),
+            "size": int(entry.get("size", 0)),
+            "modified_at": str(entry.get("server_modified", "")),
+            "content_hash": str(entry.get("content_hash", "")),
+        } for entry in self._generation_entries()]
+
+    def _apply_retention(self) -> list[str]:
+        generations = self._generation_entries()
         removed: list[str] = []
         for expired in generations[self.keep :]:
             path = str(expired.get("path_lower") or expired.get("path_display"))
@@ -358,20 +397,30 @@ def _parser() -> argparse.ArgumentParser:
     fetch.add_argument("remote_path")
     fetch.add_argument("output", type=Path)
     fetch.add_argument("--dropbox-folder", default="/Backups")
+    listing = subparsers.add_parser("list")
+    listing.add_argument("--destination", choices=("local", "dropbox"), required=True)
+    listing.add_argument("--directory", type=Path)
+    listing.add_argument("--dropbox-folder", default="/Backups")
     return parser
 
 
 def main(arguments: list[str] | None = None) -> int:
     args = _parser().parse_args(arguments)
     try:
-        if args.command == "publish" and args.destination == "local":
+        if args.command in {"publish", "list"} and args.destination == "local":
             if args.directory is None:
                 raise DestinationError("--directory is required for a local destination")
-            result = LocalDirectoryDestination(args.directory, args.keep).publish(args.backup)
+            destination = LocalDirectoryDestination(args.directory, getattr(args, "keep", 10))
+            result = destination.publish(args.backup) if args.command == "publish" else destination.list_generations()
         else:
             transport = DropboxHTTPTransport(dropbox_access_token())
             destination = DropboxDestination(transport, args.dropbox_folder, getattr(args, "keep", 10))
-            result = destination.publish(args.backup) if args.command == "publish" else destination.fetch(args.remote_path, args.output)
+            if args.command == "publish":
+                result = destination.publish(args.backup)
+            elif args.command == "list":
+                result = destination.list_generations()
+            else:
+                result = destination.fetch(args.remote_path, args.output)
         print(json.dumps(result, sort_keys=True))
         return 0
     except DestinationError as failure:
