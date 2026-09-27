@@ -78,6 +78,10 @@ health in the authority's `backup-status.json`. `./budget local backup-status` r
 generation's timestamp, location, exact size/SHA-256, and publication destination. If local capture
 succeeds but off-device publication fails, the state is `publication_failed`, the retained local
 generation remains identified, and the failure is visible rather than being reported as healthy.
+Successful operational restore and portable import also record a private `recovery-status.json` with
+the verification time, source-provider kind, source ciphertext SHA-256, database integrity result,
+and foreign-key result. `backup-status` includes this as `last_restore_verification`, even before the
+new authority has produced its first backup.
 
 The same `BUDGET_APP_BACKUP_DESTINATION`, retention, Dropbox, and age recipient/identity settings used
 by shared-server operations apply to `./budget local backup`. Thus a local authority can keep verified

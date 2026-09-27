@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.database import Base
 from app.main import create_app
-from scripts.local_server import LocalServerConfiguration, migrate
+from scripts.local_server import LocalServerConfiguration, backup_status, migrate
 from scripts.portable_archive import stage_portable_payload
 from scripts.portable_import import import_payload, import_portable_archive
 from scripts.portable_import import SECTION_TABLE_ORDER
@@ -140,6 +140,8 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
     )
 
     assert imported.data_directory == published
+    imported_status = backup_status(imported)
+    assert imported_status["last_restore_verification"]["source_provider"] == "portable_archive"
     with sqlite3.connect(imported.database_path) as database:
         assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert database.execute("PRAGMA foreign_key_check").fetchall() == []

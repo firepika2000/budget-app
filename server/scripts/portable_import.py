@@ -23,6 +23,7 @@ from app.database import Base, build_session_factory
 from app.security import hash_password
 from scripts.local_server import (
     LocalServerConfiguration, LocalServerError, exclusive_server_lock, migrate,
+    record_restore_verification,
 )
 from scripts.portable_archive import PortableArchiveError, extract_and_validate_archive, _decrypt
 
@@ -219,6 +220,7 @@ def import_portable_archive(
         engine = build_session_factory(configuration.environment()["BUDGET_APP_DATABASE_URL"]).kw["bind"]
         if before != _financial_observations_from_database(engine):
             raise PortableImportError("Portable financial data changed during import")
+        record_restore_verification(configuration, encrypted, "portable_archive")
         os.rename(authority, destination)
     return LocalServerConfiguration.load_or_create(destination)
 

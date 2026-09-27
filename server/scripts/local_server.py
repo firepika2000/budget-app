@@ -83,6 +83,10 @@ class LocalServerConfiguration:
     def backup_status_path(self) -> Path:
         return self.data_directory / "backup-status.json"
 
+    @property
+    def recovery_status_path(self) -> Path:
+        return self.data_directory / "recovery-status.json"
+
     @classmethod
     def load_or_create(cls, data_directory: Path) -> "LocalServerConfiguration":
         data_directory = data_directory.expanduser().resolve()
@@ -328,14 +332,43 @@ def _write_backup_status(
 
 def backup_status(configuration: LocalServerConfiguration) -> dict[str, object]:
     if not configuration.backup_status_path.is_file():
-        return {"state": "never", "message": "No completed local backup has been recorded"}
-    try:
-        value = json.loads(configuration.backup_status_path.read_text())
-    except (OSError, ValueError) as failure:
-        raise LocalServerError("Local backup status is unreadable") from failure
-    if not isinstance(value, dict) or value.get("state") not in {"healthy", "publication_failed"}:
-        raise LocalServerError("Local backup status is invalid")
+        value: dict[str, object] = {
+            "state": "never", "message": "No completed local backup has been recorded"
+        }
+    else:
+        try:
+            value = json.loads(configuration.backup_status_path.read_text())
+        except (OSError, ValueError) as failure:
+            raise LocalServerError("Local backup status is unreadable") from failure
+        if not isinstance(value, dict) or value.get("state") not in {"healthy", "publication_failed"}:
+            raise LocalServerError("Local backup status is invalid")
+    if configuration.recovery_status_path.is_file():
+        try:
+            recovery = json.loads(configuration.recovery_status_path.read_text())
+        except (OSError, ValueError) as failure:
+            raise LocalServerError("Local recovery status is unreadable") from failure
+        if not isinstance(recovery, dict) or recovery.get("state") != "verified":
+            raise LocalServerError("Local recovery status is invalid")
+        value["last_restore_verification"] = recovery
     return value
+
+
+def record_restore_verification(
+    configuration: LocalServerConfiguration, source: Path, source_provider: str,
+) -> None:
+    payload: dict[str, object] = {
+        "state": "verified",
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "source_provider": source_provider,
+        "source_archive_sha256": sha256_file(source),
+        "database_integrity": "ok",
+        "foreign_keys": "ok",
+    }
+    status = configuration.recovery_status_path
+    temporary = status.with_name(f".{status.name}.{secrets.token_hex(8)}.tmp")
+    temporary.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, status)
 
 
 def backup_local(
@@ -443,6 +476,7 @@ def restore_local(backup: Path, data_directory: Path, server_directory: Path) ->
         with exclusive_server_lock(configuration):
             migrate(configuration, server_directory)
         _validate_sqlite_snapshot(configuration.database_path)
+        record_restore_verification(configuration, backup, "local_server_sqlite")
         os.rename(staged_authority, data_directory)
         return LocalServerConfiguration.load_or_create(data_directory)
 

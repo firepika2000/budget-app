@@ -120,6 +120,12 @@ cp "$input" "$output"
         assert database.execute("SELECT display_name FROM users WHERE id='owner'").fetchone() == ("Owner",)
         assert database.execute("SELECT COUNT(*) FROM refresh_sessions").fetchone() == (0,)
         assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    restored_status = backup_status(restored)
+    assert restored_status["state"] == "never"
+    assert restored_status["last_restore_verification"]["state"] == "verified"
+    assert restored_status["last_restore_verification"]["source_provider"] == "local_server_sqlite"
+    assert len(restored_status["last_restore_verification"]["source_archive_sha256"]) == 64
+    assert restored.recovery_status_path.stat().st_mode & 0o777 == 0o600
     with pytest.raises(LocalServerError, match="new, empty"):
         restore_local(backup, destination_path, SERVER_ROOT)
 
