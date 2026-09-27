@@ -2827,11 +2827,11 @@ private struct WorkspaceProfileView: View {
                 }
                 Section("About & Support") {
                     LabeledContent("Version", value: "\(appVersion) (\(appBuild))")
-                    ShareLink(item: diagnosticSummary) {
-                        Label("Share Diagnostic Details", systemImage: "square.and.arrow.up")
+                    ShareLink(item: betaFeedbackTemplate) {
+                        Label("Share Beta Feedback", systemImage: "square.and.arrow.up")
                     }
-                    .accessibilityIdentifier("share-diagnostic-details")
-                    Text("Diagnostic details include only the app version, build, data source, and connection status—never balances or transactions.")
+                    .accessibilityIdentifier("share-beta-feedback")
+                    Text("The feedback template includes only the app version, build, data source, and connection status—never balances or transactions.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -2859,12 +2859,18 @@ private struct WorkspaceProfileView: View {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
     }
 
-    private var diagnosticSummary: String {
+    private var betaFeedbackTemplate: String {
         """
-        Budget App diagnostics
+        Budget App Beta feedback
         Version: \(appVersion) (\(appBuild))
         Data source: \(session.sourceMode.title)
         Connection: \(session.connectionStatus.title)
+
+        What I was trying to do:
+
+        What happened:
+
+        What I expected:
         """
     }
 }

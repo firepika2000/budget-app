@@ -48,8 +48,8 @@ Not yet completed in this Beta pass. Human financial data must not be used for d
 
 - Added an original production AppIcon asset; the Release build now emits compiled icon variants
   instead of installing with the iOS placeholder grid.
-- Profile & Settings exposes the installed version/build and a native share action for a deliberately
-  privacy-safe diagnostic summary (version, provider and connection state; no financial data).
+- Profile & Settings exposes the installed version/build and a native Beta feedback template with
+  deliberately privacy-safe diagnostics (version, provider and connection state; no financial data).
 - Added the app privacy manifest required for app-local `UserDefaults` preferences (`CA92.1`), with
   tracking disabled, no tracking domains and no developer-collected data declared. The XcodeGen
   source also retains the existing camera-purpose string so project regeneration cannot drop it.
