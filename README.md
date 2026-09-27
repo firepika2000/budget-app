@@ -32,6 +32,12 @@ The launcher prepares the Python environment, applies safe forward migrations, a
 
 On macOS, you can instead double-click `Start Budget Server.command` in Finder. Run `./budget doctor` for non-destructive setup diagnostics or `./budget help` for all commands.
 
+For a self-contained personal backend that does not require a separately managed PostgreSQL server,
+run `./budget local`. It creates private SQLite database, attachment, and secret storage in the
+platform application-data directory, applies the same Alembic graph, and runs the same production
+API on loopback. This desktop-local mode is single-user and is not the future on-iPhone Local Device
+provider or Dropbox synchronization. See [Data ownership](docs/DATA-OWNERSHIP.md).
+
 ## Run the tests
 
 ```sh

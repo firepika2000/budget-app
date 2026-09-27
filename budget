@@ -28,6 +28,7 @@ Usage: ./budget [command]
 
 Commands:
   server   Bootstrap, migrate, and run the development server (default)
+  local    Run a self-contained personal server with private SQLite storage
   doctor   Diagnose the local development environment without changing it
   migrate  Bootstrap dependencies and upgrade the database to Alembic head
   test     Bootstrap dependencies and run the backend test suite
@@ -279,9 +280,18 @@ run_storage() {
     python3 "$SERVER_DIR/scripts/backup_destination.py" "$@"
 }
 
+run_local() {
+    bootstrap_dependencies || return $?
+    shift
+    python_arguments=("$SERVER_DIR/scripts/local_server.py")
+    if [ "$#" -gt 0 ]; then python_arguments+=("$@"); fi
+    "$VENV_PYTHON" "${python_arguments[@]}"
+}
+
 command_name="${1:-server}"
 case "$command_name" in
     server) run_server ;;
+    local) run_local "$@" ;;
     doctor) run_doctor ;;
     migrate) run_migrate_command ;;
     test) run_tests ;;

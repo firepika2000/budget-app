@@ -37,6 +37,25 @@ persistence. They also prove atomic rollback and verified snapshot reopen. This 
 infrastructure, not yet a selectable product provider: it deliberately does not duplicate server or
 Demo accounting calculations.
 
+## Implemented personal desktop-local backend
+
+`./budget local` now provides a self-contained local authority for personal/development use through
+the same production FastAPI routes consumed by the iPhone app. It creates a private SQLite database,
+encrypted attachment key, JWT secret, attachment directory, and exclusive writer lock in the platform
+application-data directory; applies the complete Alembic graph; and starts on loopback. `init`,
+`migrate`, and `doctor` subcommands accept `--data-directory` for explicit installations and tests.
+
+This mode is not Demo, does not require a separately administered PostgreSQL database, and persists
+across server/app relaunch. It remains distinct from:
+
+- the future on-iPhone `LocalDeviceRepository` (no desktop process required);
+- shared-household PostgreSQL server deployments with multi-writer concurrency;
+- Dropbox, which stores encrypted immutable generations rather than an open SQLite file.
+
+Non-loopback binding fails closed unless the operator explicitly supplies allowed hosts. Consumer
+pairing/TLS/discovery and a graphical manager remain required before presenting LAN operation as a
+normal-user workflow.
+
 ## Implemented destination foundation
 
 `server/scripts/backup_destination.py` publishes only existing encrypted
