@@ -10,7 +10,8 @@ import pytest
 
 from app.portable_data import FORMAT_NAME, FORMAT_VERSION, section_manifest
 from scripts.portable_archive import (
-    APITransport, PortableArchiveError, create_portable_archive, stage_portable_payload,
+    APITransport, PortableArchiveError, create_portable_archive, extract_and_validate_archive,
+    stage_portable_payload,
 )
 
 
@@ -109,3 +110,33 @@ def test_detached_attachment_metadata_is_preserved_without_downloading_payload(t
 
     assert transport.downloads == []
     assert not (tmp_path / "payload" / "attachments" / "attachment-1").exists()
+
+
+def test_extracted_archive_requires_exact_payload_coverage_and_validates_all_hashes(tmp_path):
+    content = b"\xff\xd8\xffreceipt"
+    root = tmp_path / "payload"
+    stage_portable_payload(
+        FakeTransport(payload_for(content), {"attachment-1": content}), "budget-1", root
+    )
+    archive = tmp_path / "portable.tar.gz"
+    with tarfile.open(archive, "w:gz") as output:
+        output.add(root / "manifest.json", arcname="manifest.json", recursive=False)
+        output.add(root / "data.json", arcname="data.json", recursive=False)
+        output.add(root / "attachments", arcname="attachments", recursive=True)
+
+    payload = extract_and_validate_archive(archive, tmp_path / "verified")
+
+    assert payload["budget"]["id"] == "budget-1"
+    assert (tmp_path / "verified" / "attachments" / "attachment-1").read_bytes() == content
+
+
+def test_archive_extraction_rejects_unsafe_member_before_writing_outside_staging(tmp_path):
+    source = tmp_path / "secret"
+    source.write_text("must stay contained")
+    archive = tmp_path / "unsafe.tar.gz"
+    with tarfile.open(archive, "w:gz") as output:
+        output.add(source, arcname="../outside")
+
+    with pytest.raises(PortableArchiveError, match="unsafe member"):
+        extract_and_validate_archive(archive, tmp_path / "verified")
+    assert not (tmp_path / "outside").exists()

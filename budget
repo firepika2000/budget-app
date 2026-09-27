@@ -34,6 +34,7 @@ Commands:
   test     Bootstrap dependencies and run the backend test suite
   storage  Publish/fetch encrypted backups using local or Dropbox destinations
   portable-export  Create an encrypted provider-neutral budget archive
+  portable-verify  Decrypt and validate a portable archive without importing it
   help     Show this help
 
 Optional overrides:
@@ -292,7 +293,13 @@ run_storage() {
 run_portable_export() {
     bootstrap_dependencies || return $?
     shift
-    "$VENV_PYTHON" "$SERVER_DIR/scripts/portable_archive.py" "$@"
+    "$VENV_PYTHON" "$SERVER_DIR/scripts/portable_archive.py" export "$@"
+}
+
+run_portable_verify() {
+    bootstrap_dependencies || return $?
+    shift
+    "$VENV_PYTHON" "$SERVER_DIR/scripts/portable_archive.py" verify "$@"
 }
 
 run_local() {
@@ -312,6 +319,7 @@ case "$command_name" in
     test) run_tests ;;
     storage) run_storage "$@" ;;
     portable-export) run_portable_export "$@" ;;
+    portable-verify) run_portable_verify "$@" ;;
     help|--help|-h) usage ;;
     *) fail "Unknown command: $command_name"; printf '\n' >&2; usage >&2; exit 2 ;;
 esac

@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 import shutil
 import subprocess
 import tarfile
@@ -20,6 +21,7 @@ from app.portable_data import FORMAT_NAME, FORMAT_VERSION, canonical_json, valid
 
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 25_000
 METADATA_KEYS = {
     "format", "schema_version", "exported_at", "attachment_payloads_included", "section_manifest"
 }
@@ -149,6 +151,126 @@ def _encrypt(source: Path, destination: Path) -> None:
         raise PortableArchiveError("Portable archive encryption failed")
 
 
+def _decrypt(source: Path, destination: Path) -> None:
+    executable = shutil.which("age")
+    if not executable:
+        raise PortableArchiveError("age is required for encrypted portable archives")
+    command = [executable, "--decrypt"]
+    identity = os.environ.get("BUDGET_APP_BACKUP_AGE_IDENTITY", "").strip()
+    if identity:
+        identity_path = Path(identity).expanduser().resolve()
+        if not identity_path.is_file():
+            raise PortableArchiveError("Configured age identity file was not found")
+        command += ["--identity", str(identity_path)]
+    command += ["--output", str(destination), str(source)]
+    if subprocess.run(command).returncode != 0:
+        raise PortableArchiveError("Portable archive decryption failed")
+
+
+def _valid_archive_name(name: str, directory: bool) -> str:
+    normalized = name.rstrip("/") if directory else name
+    path = PurePosixPath(normalized)
+    if (not normalized or path.is_absolute() or ".." in path.parts or normalized != str(path)
+            or "\\" in normalized or any(ord(character) < 32 for character in normalized)):
+        raise PortableArchiveError("Portable archive contains an unsafe member name")
+    if directory:
+        allowed = normalized == "attachments"
+    else:
+        allowed = normalized in {"data.json", "manifest.json"} or (
+            len(path.parts) == 2 and path.parts[0] == "attachments" and _safe_id(path.parts[1]) == path.parts[1]
+        )
+    if not allowed:
+        raise PortableArchiveError("Portable archive contains an unexpected member")
+    return normalized
+
+
+def extract_and_validate_archive(archive: Path, destination: Path) -> dict:
+    destination.mkdir(mode=0o700, parents=True, exist_ok=False)
+    with tarfile.open(archive, "r:gz") as source:
+        members: dict[str, tarfile.TarInfo] = {}
+        for member in source:
+            if member.size < 0 or not (member.isfile() or member.isdir()):
+                raise PortableArchiveError("Portable archive contains an unsafe member type")
+            name = _valid_archive_name(member.name, member.isdir())
+            if name in members:
+                raise PortableArchiveError("Portable archive contains a duplicate member")
+            members[name] = member
+            if len(members) > MAX_ARCHIVE_MEMBERS:
+                raise PortableArchiveError("Portable archive contains too many members")
+        if not {"manifest.json", "data.json", "attachments"} <= set(members):
+            raise PortableArchiveError("Portable archive is incomplete")
+        for name, member in members.items():
+            path = destination / name
+            if member.isdir():
+                path.mkdir(mode=0o700, parents=True, exist_ok=True)
+                continue
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with source.extractfile(member) as incoming, path.open("xb") as output:
+                remaining_limit = 256 * 1024 * 1024 if name in {"data.json", "manifest.json"} else MAX_ATTACHMENT_BYTES
+                copied = 0
+                for chunk in iter(lambda: incoming.read(1024 * 1024), b""):
+                    copied += len(chunk)
+                    if copied > remaining_limit:
+                        raise PortableArchiveError("Portable archive member exceeds its supported size")
+                    output.write(chunk)
+            os.chmod(path, 0o600)
+
+    try:
+        manifest = json.loads((destination / "manifest.json").read_text())
+        payload = json.loads((destination / "data.json").read_text())
+    except (UnicodeDecodeError, json.JSONDecodeError) as failure:
+        raise PortableArchiveError("Portable archive metadata is invalid") from failure
+    if manifest.get("format") != "budget-app-portable-archive" or manifest.get("format_version") != 1:
+        raise PortableArchiveError("Portable archive version is unsupported")
+    data_bytes = (destination / "data.json").read_bytes()
+    if hashlib.sha256(data_bytes).hexdigest() != manifest.get("data_sha256"):
+        raise PortableArchiveError("Portable archive data failed integrity validation")
+    if payload.get("format") != FORMAT_NAME or payload.get("schema_version") != FORMAT_VERSION:
+        raise PortableArchiveError("Portable data version is unsupported")
+    sections = {key: value for key, value in payload.items() if key not in METADATA_KEYS}
+    try:
+        validate_section_manifest(sections, payload.get("section_manifest", {}))
+    except ValueError as failure:
+        raise PortableArchiveError(str(failure)) from failure
+    expected: dict[str, dict] = {}
+    for item in sections.get("transaction_attachments", []):
+        if isinstance(item, dict) and item.get("detached_at") is None:
+            expected[_safe_id(item.get("id"))] = item
+    attachment_manifest = manifest.get("attachments")
+    if not isinstance(attachment_manifest, dict) or set(attachment_manifest) != set(expected):
+        raise PortableArchiveError("Portable archive attachment manifest is incomplete")
+    actual_files = {item.name for item in (destination / "attachments").iterdir() if item.is_file()}
+    if actual_files != set(expected):
+        raise PortableArchiveError("Portable archive attachment payload coverage is incomplete")
+    for attachment_id, item in expected.items():
+        path = destination / "attachments" / attachment_id
+        entry = attachment_manifest[attachment_id]
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if (path.stat().st_size != item.get("byte_count") or digest != item.get("sha256")
+                or entry.get("byte_count") != item.get("byte_count") or entry.get("sha256") != digest):
+            raise PortableArchiveError(f"Portable attachment failed integrity validation: {attachment_id}")
+    return payload
+
+
+def validate_portable_archive(encrypted: Path) -> dict[str, object]:
+    encrypted = encrypted.expanduser().resolve()
+    if not encrypted.is_file() or encrypted.is_symlink():
+        raise PortableArchiveError("Encrypted portable archive was not found")
+    with tempfile.TemporaryDirectory(prefix=".budget-portable-verify-", dir=encrypted.parent) as name:
+        temporary = Path(name)
+        archive = temporary / "portable.tar.gz"
+        _decrypt(encrypted, archive)
+        payload = extract_and_validate_archive(archive, temporary / "verified")
+        return {
+            "budget_id": payload["budget"]["id"],
+            "transactions": len(payload.get("transactions", [])),
+            "attachments": len([
+                item for item in payload.get("transaction_attachments", [])
+                if item.get("detached_at") is None
+            ]),
+        }
+
+
 def create_portable_archive(
     transport: PortableTransport, budget_id: str, output_directory: Path
 ) -> Path:
@@ -177,14 +299,26 @@ def create_portable_archive(
 def main(arguments: list[str] | None = None) -> int:
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--server-url", required=True)
-    parser.add_argument("--budget-id", required=True)
-    parser.add_argument("--output-directory", type=Path, required=True)
+    subparsers = parser.add_subparsers(dest="operation", required=True)
+    export = subparsers.add_parser("export", help="create an encrypted archive")
+    export.add_argument("--server-url", required=True)
+    export.add_argument("--budget-id", required=True)
+    export.add_argument("--output-directory", type=Path, required=True)
+    verify = subparsers.add_parser("verify", help="decrypt and validate without importing")
+    verify.add_argument("archive", type=Path)
     args = parser.parse_args(arguments)
     try:
-        transport = APITransport(args.server_url, os.environ.get("BUDGET_APP_ACCESS_TOKEN", ""))
-        result = create_portable_archive(transport, args.budget_id, args.output_directory)
-        print(f"Encrypted portable archive complete: {result}")
+        if args.operation == "verify":
+            result = validate_portable_archive(args.archive)
+            print(
+                "Portable archive verified: "
+                f"budget={result['budget_id']} transactions={result['transactions']} "
+                f"attachments={result['attachments']}"
+            )
+        else:
+            transport = APITransport(args.server_url, os.environ.get("BUDGET_APP_ACCESS_TOKEN", ""))
+            result = create_portable_archive(transport, args.budget_id, args.output_directory)
+            print(f"Encrypted portable archive complete: {result}")
         return 0
     except (OSError, PortableArchiveError, tarfile.TarError) as failure:
         print(f"Portable archive error: {failure}", file=os.sys.stderr)

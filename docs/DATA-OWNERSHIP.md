@@ -178,6 +178,17 @@ authorized application-service route used by the app, checks its exact byte coun
 then encrypts the data and attachment payloads with `age`. Detached attachment lifecycle metadata is
 preserved, but tombstoned payload bytes remain an operational-backup concern.
 
+Verify a generation before retaining or transferring it:
+
+```sh
+export BUDGET_APP_BACKUP_AGE_IDENTITY=/private/path/to/age-identity.txt
+./budget portable-verify ./exports/budget-portable-YYYYMMDDTHHMMSSZ.tar.gz.age
+```
+
+Verification decrypts only into private temporary staging, rejects links, traversal, unexpected or
+duplicate members and oversized payloads, then checks the archive manifest, v2 section manifest,
+and exact active-attachment coverage/hashes. It does not write any application authority.
+
 This portable archive is not yet importable and is not a substitute for the full-authority backup:
 the next portability gate is validate-then-commit import into a brand-new destination followed by
 canonical financial-observation comparison.
