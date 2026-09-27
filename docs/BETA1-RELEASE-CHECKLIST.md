@@ -49,5 +49,17 @@ Use disposable Beta data; do not reset the existing human Live database.
 
 **ENGINEERING PACKAGE:** archiveable, not yet release-candidate accepted.
 
-**TESTFLIGHT READY:** NO — human Debt/core-flow acceptance, intentional versioning, signing and
-App Store Connect metadata remain open.
+**TESTFLIGHT READY:** NO — human Debt/core-flow acceptance, signing and App Store Connect metadata
+remain open.
+
+## Signing handoff
+
+The 2026-09-27 local inspection found `0 valid identities` and no `DEVELOPMENT_TEAM` in the
+Release settings. In Xcode Beta:
+
+1. Open **Xcode > Settings > Accounts** and sign in to the enrolled Apple Developer account.
+2. Open `ios/BudgetApp.xcodeproj`, select **BudgetApp > Signing & Capabilities**, and choose the
+   intended team for Release.
+3. Confirm that the registered App ID should be `com.firepika.BudgetApp` before allowing Xcode to
+   create/download signing assets.
+4. Re-run the signed archive and Xcode validation; never commit a personal provisioning profile.
