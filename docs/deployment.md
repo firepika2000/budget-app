@@ -54,6 +54,9 @@ The API container applies forward-only database migrations before accepting traf
   passphrase prompt, and requires that no other writers share its database/objects. Unattended
   recipient-key backup and retention are not yet implemented; a cron entry cannot answer the prompt.
 - Perform a test restore on a separate instance periodically.
+- Publish the encrypted artifact to an owner-controlled local directory or Dropbox with
+  `./budget storage`; see [Data ownership, local operation, and backup destinations](DATA-OWNERSHIP.md).
+  Dropbox stores immutable encrypted generations and is not the live database.
 - Monitor `docker compose ps` and the `/api/v1/health` endpoint.
 - Renew the JWT secret only as a deliberate sign-out-all-users operation.
 - Apply host OS, Docker, Caddy, and Budget App updates promptly.

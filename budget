@@ -31,6 +31,7 @@ Commands:
   doctor   Diagnose the local development environment without changing it
   migrate  Bootstrap dependencies and upgrade the database to Alembic head
   test     Bootstrap dependencies and run the backend test suite
+  storage  Publish/fetch encrypted backups using local or Dropbox destinations
   help     Show this help
 
 Optional overrides:
@@ -38,6 +39,14 @@ Optional overrides:
 
 Development configuration belongs in server/.env.development.
 Copy server/.env.development.example to get started.
+
+Storage examples:
+  ./budget storage publish --destination local --directory /Volumes/Backups BACKUP.age
+  ./budget storage publish --destination dropbox BACKUP.age
+  ./budget storage fetch-dropbox /Backups/BACKUP.age ./BACKUP.age
+
+Dropbox credentials are read from BUDGET_APP_DROPBOX_ACCESS_TOKEN or the refresh-token,
+app-key, and app-secret environment variables. Tokens are never accepted as command arguments.
 EOF
 }
 
@@ -260,12 +269,23 @@ run_tests() {
     "$VENV_PYTHON" -m pytest
 }
 
+run_storage() {
+    require_python || return $?
+    shift
+    if [ "$#" -eq 0 ]; then
+        python3 "$SERVER_DIR/scripts/backup_destination.py" --help
+        return
+    fi
+    python3 "$SERVER_DIR/scripts/backup_destination.py" "$@"
+}
+
 command_name="${1:-server}"
 case "$command_name" in
     server) run_server ;;
     doctor) run_doctor ;;
     migrate) run_migrate_command ;;
     test) run_tests ;;
+    storage) run_storage "$@" ;;
     help|--help|-h) usage ;;
     *) fail "Unknown command: $command_name"; printf '\n' >&2; usage >&2; exit 2 ;;
 esac
