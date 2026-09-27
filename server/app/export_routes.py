@@ -16,24 +16,38 @@ from .models import (
     AllowanceIssuance,
     AllowancePlan,
     AllowanceSplit,
+    BudgetGrant,
     BudgetAccessProfile,
+    CashRolloverPolicyChange,
     CapabilityGrant,
     Category,
+    CategoryFavorite,
     CategoryGroup,
     CategoryTarget,
+    CategoryTargetSnooze,
     CreditCardReserveEvent,
+    DelegatedBudgetPolicy,
+    DelegatedCategoryRule,
     FinancialRequest,
+    Household,
     HouseholdAccessEvent,
+    ImportBatch,
     Invitation,
     MonthlyAssignment,
     Membership,
+    Payee,
+    PayeeAlias,
+    PayeeBudgetPreference,
     RequestAction,
     ResourceGrant,
     ScheduledTransaction,
     Transaction,
+    TransactionAttachment,
+    TransactionChange,
     TransactionSplit,
     User,
 )
+from .portable_data import FORMAT_NAME, FORMAT_VERSION, section_manifest
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
@@ -73,11 +87,31 @@ def export_budget_json(
     request_ids = [item.id for item in requests]
     plans = list(db.scalars(select(AllowancePlan).where(AllowancePlan.budget_id == budget_id)))
     plan_ids = [item.id for item in plans]
+    targets = list(db.scalars(select(CategoryTarget).where(CategoryTarget.budget_id == budget_id)))
+    target_ids = [item.id for item in targets]
+    policies = list(db.scalars(select(DelegatedBudgetPolicy).where(
+        DelegatedBudgetPolicy.budget_id == budget_id
+    )))
+    policy_ids = [item.id for item in policies]
+    payee_preferences = list(db.scalars(select(PayeeBudgetPreference).where(
+        PayeeBudgetPreference.budget_id == budget_id
+    )))
+    payee_ids = {item.payee_id for item in payee_preferences}
+    payee_ids.update(item.payee_id for item in transactions if item.payee_id is not None)
+    payee_ids.update(
+        item.payee_id for item in db.scalars(select(ScheduledTransaction).where(
+            ScheduledTransaction.budget_id == budget_id,
+            ScheduledTransaction.payee_id.is_not(None),
+        ))
+    )
+    payees = list(db.scalars(select(Payee).where(Payee.id.in_(payee_ids)))) if payee_ids else []
 
-    payload = {
-        "schema_version": 1,
-        "exported_at": datetime.now(timezone.utc),
+    sections = {
+        # Version 2 is the first completeness-audited contract. It remains a JSON data export;
+        # attachment ciphertext is carried by the encrypted operational backup until the portable
+        # archive container/importer is introduced.
         "budget": row_data(budget),
+        "household": row_data(db.get(Household, budget.household_id)),
         "household_members": [row_data(item) for item in db.scalars(select(Membership).where(
             Membership.household_id == budget.household_id
         ))],
@@ -97,14 +131,37 @@ def export_budget_json(
         ))))],
         "accounts": [row_data(item) for item in db.scalars(select(Account).where(Account.budget_id == budget_id))],
         "account_debt_terms": [row_data(item) for item in db.scalars(select(AccountDebtTerms).where(AccountDebtTerms.budget_id == budget_id))],
+        "cash_rollover_policy_changes": [row_data(item) for item in db.scalars(select(CashRolloverPolicyChange).where(CashRolloverPolicyChange.budget_id == budget_id))],
         "category_groups": [row_data(item) for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))],
         "categories": [row_data(item) for item in db.scalars(select(Category).where(Category.budget_id == budget_id))],
-        "targets": [row_data(item) for item in db.scalars(select(CategoryTarget).where(CategoryTarget.budget_id == budget_id))],
+        "category_favorites": [row_data(item) for item in db.scalars(select(CategoryFavorite).where(CategoryFavorite.budget_id == budget_id))],
+        "delegated_budget_policies": [row_data(item) for item in policies],
+        "delegated_category_rules": [row_data(item) for item in db.scalars(select(DelegatedCategoryRule).where(
+            DelegatedCategoryRule.policy_id.in_(policy_ids)
+        ))] if policy_ids else [],
+        "targets": [row_data(item) for item in targets],
+        "target_snoozes": [row_data(item) for item in db.scalars(select(CategoryTargetSnooze).where(
+            CategoryTargetSnooze.target_id.in_(target_ids)
+        ))] if target_ids else [],
         "scheduled_transactions": [row_data(item) for item in db.scalars(select(ScheduledTransaction).where(ScheduledTransaction.budget_id == budget_id))],
+        "payees": [row_data(item) for item in payees],
+        "payee_aliases": [row_data(item) for item in db.scalars(select(PayeeAlias).where(
+            PayeeAlias.payee_id.in_(payee_ids)
+        ))] if payee_ids else [],
+        "payee_budget_preferences": [row_data(item) for item in payee_preferences],
         "transactions": [row_data(item) for item in transactions],
         "transaction_splits": [row_data(item) for item in db.scalars(select(TransactionSplit).where(
             TransactionSplit.transaction_id.in_(transaction_ids)
         ))] if transaction_ids else [],
+        "transaction_changes": [row_data(item) for item in db.scalars(select(TransactionChange).where(
+            TransactionChange.budget_id == budget_id
+        ))],
+        "transaction_attachments": [row_data(item) for item in db.scalars(select(TransactionAttachment).where(
+            TransactionAttachment.budget_id == budget_id
+        ))],
+        "import_batches": [row_data(item) for item in db.scalars(select(ImportBatch).where(
+            ImportBatch.budget_id == budget_id
+        ))],
         "allocation_operations": [row_data(item) for item in operations],
         "allocation_postings": [row_data(item) for item in db.scalars(select(AllocationPosting).where(
             AllocationPosting.operation_id.in_(operation_ids)
@@ -126,6 +183,9 @@ def export_budget_json(
         "legacy_monthly_assignments": [row_data(item) for item in db.scalars(select(MonthlyAssignment).where(
             MonthlyAssignment.budget_id == budget_id
         ))],
+        "budget_grants": [row_data(item) for item in db.scalars(select(BudgetGrant).where(
+            BudgetGrant.budget_id == budget_id
+        ))],
         "access_profiles": [row_data(item) for item in db.scalars(select(BudgetAccessProfile).where(
             BudgetAccessProfile.budget_id == budget_id
         ))],
@@ -135,5 +195,14 @@ def export_budget_json(
         "resource_grants": [row_data(item) for item in db.scalars(select(ResourceGrant).where(
             ResourceGrant.budget_id == budget_id
         ))],
+    }
+    payload = {
+        "format": FORMAT_NAME,
+        "schema_version": FORMAT_VERSION,
+        "exported_at": datetime.now(timezone.utc),
+        "attachment_payloads_included": False,
+        "section_manifest": section_manifest(sections),
+        # Keep data sections top-level for backward compatibility with the v1 audit export.
+        **sections,
     }
     return jsonable_encoder(payload)

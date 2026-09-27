@@ -164,8 +164,10 @@ before the recovery deployment is changed.
    through the shared accounting-command boundary.
 2. Prove account, category, assignment, expense/refund, transfer, reconciliation, schedule, payee,
    attachment, and audit persistence after every repository/service object is destroyed and reopened.
-3. Define the provider-neutral portable archive/import schema so Local Device and Budget Server can
-   transfer without depending on PostgreSQL SQL or SQLite internals.
+3. Wrap the now completeness-audited, provider-neutral JSON data contract and attachment payloads in
+   a versioned portable archive. Structured export v2 includes stable IDs, every persistent domain
+   record, exact integer minor units, and a per-section count/SHA-256 manifest; it deliberately says
+   that attachment payload bytes are not included yet.
 4. Add validate-then-commit import into a new destination, preserve stable IDs and attribution, and
    compare canonical financial observations before cutover.
 5. Add automatic schedules, visible destination/retention/failure/restore-verification health, and a

@@ -120,16 +120,59 @@ def test_structured_export_contains_reconstructable_audit_data_and_requires_capa
     exported = client.get(f"{path}/export.json", headers=auth(owner_token))
     assert exported.status_code == 200, exported.text
     data = exported.json()
-    assert data["schema_version"] == 1
-    assert data["budget"]["id"] == budget["id"]
-    assert data["accounts"][0]["id"] == account["id"]
-    assert data["transactions"][0]["amount_minor"] == 5000
-    assert len(data["allocation_operations"]) == 1
-    assert sum(item["amount_minor"] for item in data["allocation_postings"]) == 0
+    assert data["schema_version"] == 2
+    assert data["format"] == "budget-app-portable-data"
+    assert data["attachment_payloads_included"] is False
+    sections = {
+        key: value for key, value in data.items()
+        if key not in {"format", "schema_version", "exported_at", "attachment_payloads_included", "section_manifest"}
+    }
+    assert sections["budget"]["id"] == budget["id"]
+    assert sections["accounts"][0]["id"] == account["id"]
+    assert sections["transactions"][0]["amount_minor"] == 5000
+    assert len(sections["allocation_operations"]) == 1
+    assert sum(item["amount_minor"] for item in sections["allocation_postings"]) == 0
+    from app.portable_data import validate_section_manifest
+    validate_section_manifest(sections, data["section_manifest"])
     assert "password_hash" not in exported.text
+    assert "token_hash" not in exported.text
 
     child_id, child_token = add_child(session_factory, client)
     client.put(f"{path}/grants", headers=auth(owner_token), json={
         "user_id": child_id, "permission": "contribute",
     })
     assert client.get(f"{path}/export.json", headers=auth(child_token)).status_code == 403
+
+
+def test_structured_export_contract_covers_every_persistent_domain_model():
+    """A new persistence model must be deliberately exported or deliberately excluded."""
+    from app.database import Base
+
+    exported_tables = {
+        "households", "memberships", "invitations", "household_access_events", "users",
+        "budgets", "cash_rollover_policy_changes", "payees", "payee_aliases",
+        "payee_budget_preferences", "budget_grants", "budget_access_profiles",
+        "capability_grants", "resource_grants", "accounts", "account_debt_terms",
+        "category_groups", "categories", "category_favorites", "delegated_budget_policies",
+        "delegated_category_rules", "category_targets", "category_target_snoozes",
+        "scheduled_transactions", "monthly_assignments", "allocation_operations",
+        "allocation_postings", "transactions", "transaction_splits", "transaction_changes",
+        "transaction_attachments", "credit_card_reserve_events", "allowance_plans",
+        "allowance_splits", "allowance_issuances", "financial_requests", "request_actions",
+        "import_batches",
+    }
+    deliberately_deployment_local = {"setup_state", "refresh_sessions"}
+
+    assert set(Base.metadata.tables) == exported_tables | deliberately_deployment_local
+
+
+def test_portable_data_manifest_rejects_tampering():
+    from app.portable_data import section_manifest, validate_section_manifest
+
+    sections = {"transactions": [{"id": "transaction-1", "amount_minor": -123}]}
+    manifest = section_manifest(sections)
+    validate_section_manifest(sections, manifest)
+
+    sections["transactions"][0]["amount_minor"] = -124
+    with pytest.raises(ValueError, match="transactions"):
+        validate_section_manifest(sections, manifest)
