@@ -45,6 +45,8 @@ Not yet completed in this Beta pass. Human financial data must not be used for d
 
 - Added an original production AppIcon asset; the Release build now emits compiled icon variants
   instead of installing with the iOS placeholder grid.
+- Profile & Settings exposes the installed version/build and a native share action for a deliberately
+  privacy-safe diagnostic summary (version, provider and connection state; no financial data).
 - Release-configuration Xcode Beta simulator build passes with the asset catalog compiled.
 - App Store metadata, screenshots, privacy declarations and signing/archive validation remain a
   later release-candidate checkpoint.

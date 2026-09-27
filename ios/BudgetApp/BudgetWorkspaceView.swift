@@ -2825,6 +2825,16 @@ private struct WorkspaceProfileView: View {
                     LabeledContent("Status", value: session.connectionStatus.title)
                     Button("Server and data source", systemImage: "server.rack") { showConnection = true }
                 }
+                Section("About & Support") {
+                    LabeledContent("Version", value: "\(appVersion) (\(appBuild))")
+                    ShareLink(item: diagnosticSummary) {
+                        Label("Share Diagnostic Details", systemImage: "square.and.arrow.up")
+                    }
+                    .accessibilityIdentifier("share-diagnostic-details")
+                    Text("Diagnostic details include only the app version, build, data source, and connection status—never balances or transactions.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
                 if session.sourceMode == .liveServer {
                     Section { Button("Sign Out", role: .destructive) { session.signOut(); dismiss() } }
                 }
@@ -2839,6 +2849,23 @@ private struct WorkspaceProfileView: View {
                 BudgetCreationView(households: session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? [])
             }
         }
+    }
+
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+    }
+
+    private var appBuild: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
+    }
+
+    private var diagnosticSummary: String {
+        """
+        Budget App diagnostics
+        Version: \(appVersion) (\(appBuild))
+        Data source: \(session.sourceMode.title)
+        Connection: \(session.connectionStatus.title)
+        """
     }
 }
 
