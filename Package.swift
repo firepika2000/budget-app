@@ -9,12 +9,15 @@ let package = Package(
     ],
     products: [
         .library(name: "BudgetCore", targets: ["BudgetCore"]),
-        .library(name: "BudgetAPI", targets: ["BudgetAPI"])
+        .library(name: "BudgetAPI", targets: ["BudgetAPI"]),
+        .library(name: "BudgetStorage", targets: ["BudgetStorage"])
     ],
     targets: [
         .target(name: "BudgetCore"),
         .target(name: "BudgetAPI"),
+        .target(name: "BudgetStorage", linkerSettings: [.linkedLibrary("sqlite3")]),
         .testTarget(name: "BudgetCoreTests", dependencies: ["BudgetCore"]),
-        .testTarget(name: "BudgetAPITests", dependencies: ["BudgetAPI"])
+        .testTarget(name: "BudgetAPITests", dependencies: ["BudgetAPI"]),
+        .testTarget(name: "BudgetStorageTests", dependencies: ["BudgetStorage"])
     ]
 )

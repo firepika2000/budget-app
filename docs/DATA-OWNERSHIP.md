@@ -17,6 +17,26 @@ claim that incomplete providers are production-ready.
 This keeps the canonical application, money semantics, and repository contracts independent from
 where a verified backup generation is stored.
 
+## Implemented Local Device persistence foundation
+
+The `BudgetStorage` package now owns the low-level private SQLite boundary:
+
+- an explicit versioned migration ledger and Budget-specific SQLite application identity;
+- WAL journaling, full synchronous durability, foreign-key enforcement, bounded lock waiting, and
+  serialized actor access;
+- normalized identity, account, category, payee, transaction/split, allocation, reconciliation,
+  target, schedule, and attachment-metadata tables;
+- signed SQLite `INTEGER` values for exact `Int64` minor units;
+- atomic multi-statement transactions with rollback on constraint failure;
+- private file permissions and iOS file protection;
+- SQLite online backup snapshots, verified with integrity/application-identity checks and protected
+  from overwriting a known-good generation.
+
+Focused tests destroy every repository object, reopen the file, and prove exact money/relationship
+persistence. They also prove atomic rollback and verified snapshot reopen. This is storage
+infrastructure, not yet a selectable product provider: it deliberately does not duplicate server or
+Demo accounting calculations.
+
 ## Implemented destination foundation
 
 `server/scripts/backup_destination.py` publishes only existing encrypted
@@ -83,8 +103,8 @@ before the recovery deployment is changed.
 
 ## Remaining implementation sequence
 
-1. Add a durable production `LocalDeviceRepository` over private SQLite with an explicit migration
-   table and the shared accounting-command boundary.
+1. Add the production `LocalDeviceRepository` adapter above `BudgetStorage` and route every mutation
+   through the shared accounting-command boundary.
 2. Prove account, category, assignment, expense/refund, transfer, reconciliation, schedule, payee,
    attachment, and audit persistence after every repository/service object is destroyed and reopened.
 3. Define the provider-neutral portable archive/import schema so Local Device and Budget Server can

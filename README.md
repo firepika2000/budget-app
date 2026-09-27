@@ -45,6 +45,7 @@ swift test
 - [Architecture direction](docs/architecture.md)
 - [Architecture review and financial-engine evolution](docs/architecture-review.md)
 - [Self-hosting guide](docs/deployment.md)
+- [Data ownership and backup destinations](docs/DATA-OWNERSHIP.md)
 - [Foundation release checklist](docs/release-checklist.md)
 - [v0.4 simulator demo](docs/simulator-demo.md)
 - [Delegated-budget architecture](docs/delegated-budget-architecture.md)
