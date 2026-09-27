@@ -21,8 +21,7 @@ It does not replace the product audit or broader production-readiness history.
 
 ## App Store Connect gate
 
-- [ ] Choose the Beta marketing version. The current archive reports `0.4.0` build `1`; do not
-  upload until this intentionally matches the App Store Connect version.
+- [x] Beta release identity is intentionally set to `0.8.0` build `1` for the first upload.
 - [ ] Select the Apple Developer team and confirm `com.firepika.BudgetApp` is the intended App ID.
 - [ ] Increment the build number for every upload.
 - [ ] Confirm export-compliance answers for the app's use of Apple-provided HTTPS/Keychain APIs.
