@@ -10,6 +10,8 @@ It does not replace the product audit or broader production-readiness history.
 - [x] Camera and local-network purpose strings are present in the archived app.
 - [x] Privacy-safe version/provider diagnostics can be shared from Profile & Settings.
 - [x] Unsigned arm64 generic-device archive succeeds with Xcode 27 Beta.
+- [x] Release configuration installs and launches on the preserved iPhone 17 Pro Max / iOS 27
+  Simulator; the production icon renders and existing provider/authentication state survives install.
 - [x] Focused production UI checks pass for onboarding, fresh account/category setup,
   assignment editing, clearing/reconciliation, scheduling, Home, Insights and Debt failure handling.
 - [ ] Human Live retest confirms Debt navigation no longer repeats alerts or terminates.

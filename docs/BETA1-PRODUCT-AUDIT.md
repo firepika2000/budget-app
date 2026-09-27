@@ -51,6 +51,8 @@ Not yet completed in this Beta pass. Human financial data must not be used for d
   tracking disabled, no tracking domains and no developer-collected data declared. The XcodeGen
   source also retains the existing camera-purpose string so project regeneration cannot drop it.
 - Release-configuration Xcode Beta simulator build passes with the asset catalog compiled.
+- The Release build installs and launches on the existing Simulator without clearing its data; the
+  icon renders on the Home Screen and the prior Live-provider/authentication route remains intact.
 - App Store metadata, screenshots, privacy declarations and signing/archive validation remain a
   later release-candidate checkpoint.
 
