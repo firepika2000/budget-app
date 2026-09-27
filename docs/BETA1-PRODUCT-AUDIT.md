@@ -66,3 +66,5 @@ release-candidate checkpoints—not after every small UI edit. No test-count tar
 - Human Live remains unmigrated by this agent. No Simulator reset.
 - Xcode Beta 27.0 / 27A5252f; existing iPhone 17 Pro Max / iOS 27,
   `3ABD861E-D38D-4AFD-A356-959266051564`.
+- The concise launch gate and remaining human flow are maintained in
+  [BETA1-RELEASE-CHECKLIST.md](BETA1-RELEASE-CHECKLIST.md).
