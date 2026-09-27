@@ -21,7 +21,7 @@ navigation after Debt stabilization, retaining prior human evidence without dema
 
 | Area | GOOD | FIX BEFORE BETA | CAN WAIT |
 |---|---|---|---|
-| Home | GOOD: quick actions open canonical transaction/move/schedule editors | Full clean-user financial journey still pending | Advanced dashboard expansion |
+| Home | GOOD: quick actions open canonical editors; fresh owners get direct account/category setup guidance | Full clean-user financial journey still pending | Advanced dashboard expansion |
 | Plan | GOOD: fresh group/category creation and exact assignment editing pass in production composition | Move-money journey still pending | Additional advanced planning |
 | Activity | GOOD: shared clear/unclear interaction and scheduled realization pass | Add/edit/search walkthrough still pending | Further metadata expansion |
 | Accounts | GOOD: fresh account creation, starting balance, metadata edit, register clearing and reconciliation lockout pass | Transfer journey still pending | Advanced debt strategies if unstable |

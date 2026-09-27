@@ -651,8 +651,10 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         // legs. Insertion order and a start/end-only minimum can hide an intermediate shortfall.
         expanded.sort { $0.date == $1.date ? $0.schedule.id < $1.schedule.id : $0.date < $1.date }
         func difference(_ lhs: Int64, _ rhs: Int64) throws -> Int64 {
-            return try Money(minorUnits: lhs, currencyCode: budget.currencyCode)
-                .subtracting(Money(minorUnits: rhs, currencyCode: budget.currencyCode)).minorUnits
+            let left = Money(minorUnits: lhs, currencyCode: budget.currencyCode)
+            let right = Money(minorUnits: rhs, currencyCode: budget.currencyCode)
+            let result = try left.subtracting(right)
+            return result.minorUnits
         }
         for event in expanded {
             let item = event.schedule
@@ -2671,7 +2673,13 @@ struct BudgetWorkspaceView: View {
             .accessibilityIdentifier("workspace-access-unavailable")
         } else {
         TabView(selection: tabSelection) {
-            NavigationStack { LiveHomeView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
+            NavigationStack {
+                LiveHomeView(
+                    showPlanTab: { tabSelection.wrappedValue = 1 },
+                    showAccountsTab: { tabSelection.wrappedValue = 3 }
+                )
+                .workspaceProfileToolbar { showingSettings = true }
+            }.tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
             NavigationStack { LivePlanView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Plan", systemImage: "square.grid.2x2.fill") }.tag(1)
             NavigationStack { LiveActivityView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag(2)
             NavigationStack { LiveAccountsView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Accounts", systemImage: "creditcard.fill") }.tag(3)
@@ -3125,6 +3133,8 @@ private extension View {
 
 private struct LiveHomeView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
+    let showPlanTab: () -> Void
+    let showAccountsTab: () -> Void
     @State private var showTransaction = false
     @State private var showMoveMoney = false
     @State private var showSchedule = false
@@ -3149,6 +3159,8 @@ private struct LiveHomeView: View {
             }
     }
     private var canMoveMoney: Bool { store.budget.can("move_money") && planRows.contains(where: { $0.availableMinor > 0 }) && planRows.count > 1 }
+    private var activeAccounts: [APIAccount] { store.accounts.filter { !$0.isClosed } }
+    private var needsCategoryStructure: Bool { store.groups.isEmpty || store.categories.filter({ !$0.isArchived }).isEmpty }
     private var hasQuickActions: Bool {
         (store.budget.can("create_transaction") && !store.accounts.filter({ !$0.isClosed }).isEmpty)
             || canMoveMoney || store.budget.can("manage_planning") || store.budget.can("request_money")
@@ -3161,6 +3173,43 @@ private struct LiveHomeView: View {
                     Text(store.format(store.delegatedBudget?.availableToAssignMinor ?? store.summary?.readyToAssignMinor ?? 0)).font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
                     Text(store.delegatedBudget == nil ? "Real money waiting for a purpose" : "Delegated money you control but have not categorized").foregroundStyle(.secondary)
                 }.padding(.vertical, 10)
+            }
+            if !store.isLoading && (activeAccounts.isEmpty || needsCategoryStructure) {
+                Section("Get started") {
+                    if activeAccounts.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("Add where your money lives", systemImage: "building.columns")
+                                .font(.headline)
+                            Text("Create an account with its current balance before entering transactions.")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                            if store.budget.can("manage_budget_structure") {
+                                Button("Add your first account", systemImage: "arrow.right.circle.fill", action: showAccountsTab)
+                                    .buttonStyle(.borderedProminent)
+                                    .accessibilityIdentifier("home-get-started-accounts")
+                            } else {
+                                Text("A household owner needs to share an account with you.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("home-awaiting-account-access")
+                            }
+                        }.padding(.vertical, 4)
+                    } else if needsCategoryStructure {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("Decide what your money is for", systemImage: "square.grid.2x2")
+                                .font(.headline)
+                            Text("Create a category group and category, then assign money in Plan.")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                            if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") {
+                                Button("Set up categories", systemImage: "arrow.right.circle.fill", action: showPlanTab)
+                                    .buttonStyle(.borderedProminent)
+                                    .accessibilityIdentifier("home-get-started-plan")
+                            } else {
+                                Text("A household owner needs to share categories with you.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("home-awaiting-category-access")
+                            }
+                        }.padding(.vertical, 4)
+                    }
+                }
             }
             if hasQuickActions {
                 Section("Quick actions") {

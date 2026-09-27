@@ -221,8 +221,15 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.descendants(matching: .any)["home-upcoming-empty"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["home-recent-empty"].exists)
         XCTAssertFalse(app.staticTexts["Needs attention"].exists)
+        XCTAssertTrue(app.buttons["home-get-started-accounts"].exists)
+        app.swipeUp()
+        XCTAssertTrue(app.descendants(matching: .any)["home-recent-empty"].waitForExistence(timeout: 5))
+        app.swipeDown()
+        XCTAssertTrue(app.buttons["home-get-started-accounts"].waitForExistence(timeout: 5))
+        app.buttons["home-get-started-accounts"].tap()
+        XCTAssertTrue(app.navigationBars["Accounts"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["add-account-cta"].exists)
     }
 
     func testHomeActionsAndAttentionRemainReachableInDarkAccessibilityText() {
