@@ -2780,6 +2780,12 @@ private struct WorkspaceProfileView: View {
                     LabeledContent("User", value: session.profile?.displayName ?? "Demo household owner")
                     LabeledContent("Active budget", value: store.budget.name)
                 }
+                Section("Help & Education") {
+                    Button(store.onboardingCompleted ? "Restart Guided Tour" : "Continue Guided Tour", systemImage: "graduationcap") {
+                        dismiss(); startOnboarding()
+                    }
+                    Text("Learn with your real budget. The guide never creates accounts, balances, allocations, or transactions for you.").font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("Privacy") {
                     Toggle("Hide Amounts", isOn: $store.hideAmounts)
                     .accessibilityIdentifier("hide-amounts-toggle")
@@ -2814,12 +2820,6 @@ private struct WorkspaceProfileView: View {
                     }
                 }
                 Section("Household") { Button("Household and access", systemImage: "person.3") { showHousehold = true } }
-                Section("Help & Education") {
-                    Button(store.onboardingCompleted ? "Restart Guided Tour" : "Continue Guided Tour", systemImage: "graduationcap") {
-                        dismiss(); startOnboarding()
-                    }
-                    Text("Learn with your real budget. The guide never creates accounts, balances, allocations, or transactions for you.").font(.footnote).foregroundStyle(.secondary)
-                }
                 Section("Connection") {
                     LabeledContent("Source", value: session.sourceMode.title)
                     LabeledContent("Status", value: session.connectionStatus.title)

@@ -1,5 +1,20 @@
 # Production readiness mission ledger
 
+## Immediate mission override — Beta 1 (2026-09-27)
+
+The user's Beta 1 Production Sample Mission supersedes exhaustive roadmap completion for the
+current run. Prioritize Debt P0 stabilization, the visible clean-user budgeting journey, discoverable
+core workflows and proportionate verification. Preserve import/advanced work but defer completion
+to post-beta where unnecessary. `BETA1-PRODUCT-AUDIT.md` is the concise active product checklist.
+Do not interpret older full-roadmap gates below as prerequisites to every Beta 1 checkpoint.
+No feature freeze or Beta/TestFlight readiness is declared yet.
+
+First Beta walkthrough checkpoint: focused production UI navigation confirms Home quick actions,
+fresh Plan/Accounts actions, global Profile & Settings and the Insights hub. Guided-tour resume was
+buried below multiple settings sections; Help & Education now follows Profile and its skip/resume/
+route test passes. Core financial journey, Household, Activity, release configuration and human
+Live Debt retest remain open. Testing is proportionate; no full universe rerun for this layout edit.
+
 Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
