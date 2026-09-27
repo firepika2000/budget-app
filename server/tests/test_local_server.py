@@ -8,7 +8,7 @@ import sqlite3
 import pytest
 
 from scripts.local_server import (
-    LocalServerConfiguration, LocalServerError, backup_local, exclusive_server_lock,
+    LocalServerConfiguration, LocalServerError, backup_local, backup_status, exclusive_server_lock,
     migrate, migration_state, restore_local, run,
 )
 
@@ -104,6 +104,13 @@ cp "$input" "$output"
 
     backup = backup_local(source, SERVER_ROOT, tmp_path / "backups")
     assert backup.is_file()
+    status = backup_status(source)
+    assert status["state"] == "healthy"
+    assert status["archive"] == str(backup)
+    assert status["size"] == backup.stat().st_size
+    assert len(status["sha256"]) == 64
+    assert status["destination"]["destination"] == "local_generation"
+    assert source.backup_status_path.stat().st_mode & 0o777 == 0o600
     destination_path = tmp_path / "restored"
     restored = restore_local(backup, destination_path, SERVER_ROOT)
     assert restored.attachment_encryption_key == source.attachment_encryption_key

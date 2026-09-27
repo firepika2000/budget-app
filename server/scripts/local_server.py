@@ -30,13 +30,13 @@ try:
     from .backup_archive import create_manifest, extract_verified
     from .backup_destination import (
         DestinationError, DropboxDestination, DropboxHTTPTransport,
-        LocalDirectoryDestination, dropbox_access_token,
+        LocalDirectoryDestination, dropbox_access_token, sha256_file,
     )
 except ImportError:  # Direct script execution places this directory on sys.path.
     from backup_archive import create_manifest, extract_verified
     from backup_destination import (
         DestinationError, DropboxDestination, DropboxHTTPTransport,
-        LocalDirectoryDestination, dropbox_access_token,
+        LocalDirectoryDestination, dropbox_access_token, sha256_file,
     )
 
 
@@ -78,6 +78,10 @@ class LocalServerConfiguration:
     @property
     def lock_path(self) -> Path:
         return self.data_directory / "server.lock"
+
+    @property
+    def backup_status_path(self) -> Path:
+        return self.data_directory / "backup-status.json"
 
     @classmethod
     def load_or_create(cls, data_directory: Path) -> "LocalServerConfiguration":
@@ -312,6 +316,28 @@ def _publish_configured_backup(path: Path) -> dict[str, object] | None:
     raise LocalServerError("BUDGET_APP_BACKUP_DESTINATION must be local, dropbox, or empty")
 
 
+def _write_backup_status(
+    configuration: LocalServerConfiguration, payload: dict[str, object],
+) -> None:
+    status = configuration.backup_status_path
+    temporary = status.with_name(f".{status.name}.{secrets.token_hex(8)}.tmp")
+    temporary.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, status)
+
+
+def backup_status(configuration: LocalServerConfiguration) -> dict[str, object]:
+    if not configuration.backup_status_path.is_file():
+        return {"state": "never", "message": "No completed local backup has been recorded"}
+    try:
+        value = json.loads(configuration.backup_status_path.read_text())
+    except (OSError, ValueError) as failure:
+        raise LocalServerError("Local backup status is unreadable") from failure
+    if not isinstance(value, dict) or value.get("state") not in {"healthy", "publication_failed"}:
+        raise LocalServerError("Local backup status is invalid")
+    return value
+
+
 def backup_local(
     configuration: LocalServerConfiguration, server_directory: Path, output_directory: Path,
 ) -> Path:
@@ -352,7 +378,24 @@ def backup_local(
         _age_encrypt(archive, encrypted)
         os.link(encrypted, final)
         os.chmod(final, 0o600)
-    _publish_configured_backup(final)
+    base_status: dict[str, object] = {
+        "archive": str(final),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "sha256": sha256_file(final),
+        "size": final.stat().st_size,
+    }
+    try:
+        publication = _publish_configured_backup(final)
+    except LocalServerError as failure:
+        _write_backup_status(configuration, {
+            **base_status, "state": "publication_failed", "error": str(failure),
+        })
+        raise
+    _write_backup_status(configuration, {
+        **base_status,
+        "state": "healthy",
+        "destination": publication or {"destination": "local_generation", "path": str(final)},
+    })
     return final
 
 
@@ -433,7 +476,7 @@ def run(
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="Manage the single-user desktop-local Budget Server")
-    value.add_argument("command", choices=("init", "migrate", "doctor", "run", "backup", "restore"), nargs="?", default="run")
+    value.add_argument("command", choices=("init", "migrate", "doctor", "run", "backup", "backup-status", "restore"), nargs="?", default="run")
     value.add_argument("backup_file", type=Path, nargs="?")
     value.add_argument("--data-directory", type=Path, default=default_data_directory())
     value.add_argument("--output-directory", type=Path)
@@ -470,6 +513,8 @@ def main(arguments: list[str] | None = None) -> int:
             output = args.output_directory or (configuration.data_directory / "backups")
             result = backup_local(configuration, server_directory, output)
             print(f"Encrypted local backup complete: {result}")
+        elif args.command == "backup-status":
+            print(json.dumps(backup_status(configuration), sort_keys=True, indent=2))
         else:
             return run(configuration, server_directory, args.host, args.port, args.allowed_hosts)
         return 0

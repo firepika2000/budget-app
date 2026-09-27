@@ -60,6 +60,7 @@ The local server has its own application-consistent backup/restore path:
 
 ```sh
 ./budget local backup --output-directory /private/path
+./budget local backup-status
 ./budget local restore /private/path/budget-YYYYMMDDTHHMMSSZ.tar.gz.age \
   --data-directory /private/new-local-authority
 ```
@@ -71,6 +72,12 @@ staging, checks the SQLite snapshot, builds and migrates a separate authority, a
 publishes the new data directory. It refuses an existing destination. A new JWT secret deliberately
 requires clients to reauthorize, while the attachment key is preserved so recovered objects remain
 readable.
+
+Every attempt that produces a complete encrypted local generation records private, machine-readable
+health in the authority's `backup-status.json`. `./budget local backup-status` reports the last
+generation's timestamp, location, exact size/SHA-256, and publication destination. If local capture
+succeeds but off-device publication fails, the state is `publication_failed`, the retained local
+generation remains identified, and the failure is visible rather than being reported as healthy.
 
 The same `BUDGET_APP_BACKUP_DESTINATION`, retention, Dropbox, and age recipient/identity settings used
 by shared-server operations apply to `./budget local backup`. Thus a local authority can keep verified
