@@ -7,7 +7,10 @@ import sqlite3
 
 import pytest
 
-from scripts.local_server import LocalServerConfiguration, LocalServerError, exclusive_server_lock, migrate, migration_state, run
+from scripts.local_server import (
+    LocalServerConfiguration, LocalServerError, backup_local, exclusive_server_lock,
+    migrate, migration_state, restore_local, run,
+)
 
 
 SERVER_ROOT = Path(__file__).parents[1]
@@ -65,3 +68,65 @@ def test_local_mode_runs_full_migration_graph_and_preserves_populated_database(t
     migrate(configuration, SERVER_ROOT)
     with sqlite3.connect(configuration.database_path) as database:
         assert database.execute("SELECT display_name FROM users WHERE id='owner'").fetchone() == ("Owner",)
+
+
+def test_local_backup_restore_preserves_database_attachments_and_key_in_new_authority(tmp_path, monkeypatch):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    age = tools / "age"
+    age.write_text(
+        """#!/usr/bin/env bash
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--output" ]]; then output="$2"; shift 2
+  elif [[ "$1" == "--recipient" || "$1" == "--identity" ]]; then shift 2
+  elif [[ "$1" == "--passphrase" || "$1" == "--decrypt" ]]; then shift
+  else input="$1"; shift
+  fi
+done
+cp "$input" "$output"
+"""
+    )
+    age.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tools}:{os.environ['PATH']}")
+    monkeypatch.setenv("BUDGET_APP_BACKUP_AGE_RECIPIENT", "age1test")
+
+    source = LocalServerConfiguration.load_or_create(tmp_path / "source")
+    migrate(source, SERVER_ROOT)
+    with sqlite3.connect(source.database_path) as database:
+        database.execute("INSERT INTO users(id,email,password_hash,display_name,created_at) VALUES (?,?,?,?,?)",
+                         ("owner", "owner@example.test", "hash", "Owner", "2026-09-27 00:00:00"))
+        database.execute(
+            "INSERT INTO refresh_sessions(id,user_id,token_hash,expires_at,created_at,revoked_at) VALUES (?,?,?,?,?,?)",
+            ("session", "owner", "hash", "2030-01-01 00:00:00", "2026-09-27 00:00:00", None),
+        )
+        database.commit()
+    (source.attachment_path / "encrypted-object").write_bytes(b"ciphertext")
+
+    backup = backup_local(source, SERVER_ROOT, tmp_path / "backups")
+    assert backup.is_file()
+    destination_path = tmp_path / "restored"
+    restored = restore_local(backup, destination_path, SERVER_ROOT)
+    assert restored.attachment_encryption_key == source.attachment_encryption_key
+    assert restored.jwt_secret != source.jwt_secret
+    assert (restored.attachment_path / "encrypted-object").read_bytes() == b"ciphertext"
+    with sqlite3.connect(restored.database_path) as database:
+        assert database.execute("SELECT display_name FROM users WHERE id='owner'").fetchone() == ("Owner",)
+        assert database.execute("SELECT COUNT(*) FROM refresh_sessions").fetchone() == (0,)
+        assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    with pytest.raises(LocalServerError, match="new, empty"):
+        restore_local(backup, destination_path, SERVER_ROOT)
+
+
+def test_corrupt_local_backup_never_creates_destination(tmp_path, monkeypatch):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    age = tools / "age"
+    age.write_text('#!/usr/bin/env bash\nwhile [[ $# -gt 0 ]]; do if [[ "$1" == "--output" ]]; then output="$2"; shift 2; else input="$1"; shift; fi; done\ncp "$input" "$output"\n')
+    age.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tools}:{os.environ['PATH']}")
+    corrupt = tmp_path / "corrupt.tar.gz.age"
+    corrupt.write_bytes(b"not an archive")
+    destination = tmp_path / "must-not-exist"
+    with pytest.raises(LocalServerError, match="validation failed"):
+        restore_local(corrupt, destination, SERVER_ROOT)
+    assert not destination.exists()

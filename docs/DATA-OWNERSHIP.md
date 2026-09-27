@@ -56,6 +56,27 @@ Non-loopback binding fails closed unless the operator explicitly supplies allowe
 pairing/TLS/discovery and a graphical manager remain required before presenting LAN operation as a
 normal-user workflow.
 
+The local server has its own application-consistent backup/restore path:
+
+```sh
+./budget local backup --output-directory /private/path
+./budget local restore /private/path/budget-YYYYMMDDTHHMMSSZ.tar.gz.age \
+  --data-directory /private/new-local-authority
+```
+
+Backup takes an online SQLite snapshot while holding the authority lock, checks SQLite integrity and
+foreign keys, captures encrypted attachments plus their recovery key, covers every payload with the
+archive manifest, then applies age encryption. Restore authenticates/decrypts and validates in private
+staging, checks the SQLite snapshot, builds and migrates a separate authority, and only then atomically
+publishes the new data directory. It refuses an existing destination. A new JWT secret deliberately
+requires clients to reauthorize, while the attachment key is preserved so recovered objects remain
+readable.
+
+The same `BUDGET_APP_BACKUP_DESTINATION`, retention, Dropbox, and age recipient/identity settings used
+by shared-server operations apply to `./budget local backup`. Thus a local authority can keep verified
+generations on local/external storage or Dropbox without ever running its SQLite file from the cloud
+folder.
+
 ## Implemented destination foundation
 
 `server/scripts/backup_destination.py` publishes only existing encrypted

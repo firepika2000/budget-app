@@ -249,6 +249,43 @@ def test_corrupt_or_incomplete_backup_never_reaches_restore_target(tmp_path):
     assert not log.exists(), "integrity and completeness checks must run before Docker mutation"
 
 
+def test_archive_validator_accepts_local_sqlite_layout_and_rejects_mixed_provider_payload(tmp_path):
+    contents = tmp_path / "local-contents"
+    (contents / "attachments").mkdir(parents=True)
+    (contents / "BACKUP-METADATA").write_text(
+        "format_version=2\nsource_provider=local_server_sqlite\n"
+        "created_at=2026-09-27T00:00:00Z\ndatabase_revision=0030_import_staging\n"
+    )
+    (contents / "database.sqlite3").write_bytes(b"sqlite snapshot")
+    (contents / "attachment-key-recovery.env").write_text(
+        "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=test-key\n"
+    )
+    create = subprocess.run(
+        [sys.executable, str(ARCHIVE_TOOL), "create-manifest", str(contents)],
+        text=True, capture_output=True,
+    )
+    assert create.returncode == 0, create.stderr
+    archive = tmp_path / "local.tar.gz"
+    with tarfile.open(archive, "w:gz") as output:
+        for item in contents.iterdir():
+            output.add(item, arcname=item.name)
+    verified = tmp_path / "verified-local"
+    extract = subprocess.run(
+        [sys.executable, str(ARCHIVE_TOOL), "extract-verified", str(archive), str(verified)],
+        text=True, capture_output=True,
+    )
+    assert extract.returncode == 0, extract.stderr
+    assert (verified / "database.sqlite3").read_bytes() == b"sqlite snapshot"
+
+    (contents / "database.sql").write_text("SELECT 1;")
+    mixed = subprocess.run(
+        [sys.executable, str(ARCHIVE_TOOL), "create-manifest", str(contents)],
+        text=True, capture_output=True,
+    )
+    assert mixed.returncode != 0
+    assert "another provider" in mixed.stderr
+
+
 def test_restore_refuses_wrong_destination_key_before_mutating_database_or_objects(tmp_path):
     archive = _archive(tmp_path)
     environment, log = _environment(tmp_path)

@@ -46,6 +46,12 @@ Storage examples:
   ./budget storage publish --destination dropbox BACKUP.age
   ./budget storage fetch-dropbox /Backups/BACKUP.age ./BACKUP.age
 
+Personal local-server examples:
+  ./budget local
+  ./budget local doctor
+  ./budget local backup --output-directory /private/path
+  ./budget local restore /private/path/BACKUP.age --data-directory /private/new-authority
+
 Dropbox credentials are read from BUDGET_APP_DROPBOX_ACCESS_TOKEN or the refresh-token,
 app-key, and app-secret environment variables. Tokens are never accepted as command arguments.
 EOF

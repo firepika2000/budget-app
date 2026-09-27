@@ -12,6 +12,7 @@ import time
 import pytest
 
 from .test_backup_restore_scripts import ARCHIVE_TOOL, BACKUP, RESTORE, _backup_environment, _environment
+from scripts.local_server import LocalServerConfiguration, migrate
 
 pytestmark = pytest.mark.skipif(not shutil.which("age") or os.name != "posix", reason="Real age and a POSIX terminal are required")
 PASSPHRASE = "disposable-test-backup-passphrase-not-a-user-secret"
@@ -122,3 +123,37 @@ def test_real_age_failure_never_contacts_recovery_target(tmp_path, failure):
     )
     assert status != 0, transcript
     assert not log.exists(), "Authentication/integrity failure must precede any destination contact"
+
+
+def test_real_age_local_sqlite_backup_restores_into_new_authority(tmp_path):
+    server_root = Path(__file__).parents[1]
+    source = LocalServerConfiguration.load_or_create(tmp_path / "local-source")
+    migrate(source, server_root)
+    output = tmp_path / "backups"
+    offsite = tmp_path / "offsite"
+    local_tool = server_root / "scripts" / "local_server.py"
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("BUDGET_APP_BACKUP_")}
+    environment["BUDGET_APP_BACKUP_DESTINATION"] = "local"
+    environment["BUDGET_APP_BACKUP_LOCAL_DIRECTORY"] = str(offsite)
+    environment["BUDGET_APP_BACKUP_RETENTION"] = "3"
+    status, transcript = run_with_passphrase(
+        [sys.executable, str(local_tool), "backup", "--data-directory", str(source.data_directory),
+         "--output-directory", str(output)],
+        environment,
+    )
+    assert status == 0, transcript
+    archives = list(output.glob("*.age"))
+    assert len(archives) == 1
+    assert archives[0].read_bytes().startswith(b"age-encryption.org/v1\n")
+    assert (offsite / archives[0].name).read_bytes() == archives[0].read_bytes()
+
+    restored_path = tmp_path / "local-restored"
+    status, transcript = run_with_passphrase(
+        [sys.executable, str(local_tool), "restore", str(archives[0]),
+         "--data-directory", str(restored_path)],
+        environment,
+    )
+    assert status == 0, transcript
+    restored = LocalServerConfiguration.load_or_create(restored_path)
+    assert restored.attachment_encryption_key == source.attachment_encryption_key
+    assert restored.jwt_secret != source.jwt_secret

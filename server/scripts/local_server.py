@@ -18,9 +18,26 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shutil
+import sqlite3
 import subprocess
 import sys
+import tarfile
+import tempfile
 from typing import Iterator
+
+try:
+    from .backup_archive import create_manifest, extract_verified
+    from .backup_destination import (
+        DestinationError, DropboxDestination, DropboxHTTPTransport,
+        LocalDirectoryDestination, dropbox_access_token,
+    )
+except ImportError:  # Direct script execution places this directory on sys.path.
+    from backup_archive import create_manifest, extract_verified
+    from backup_destination import (
+        DestinationError, DropboxDestination, DropboxHTTPTransport,
+        LocalDirectoryDestination, dropbox_access_token,
+    )
 
 
 CONFIG_VERSION = 1
@@ -84,6 +101,11 @@ class LocalServerConfiguration:
             configuration.validate()
             os.chmod(path, 0o600)
         else:
+            existing = [item for item in data_directory.iterdir() if item.name != "server.lock"]
+            if existing:
+                raise LocalServerError(
+                    "Local data exists without valid configuration; it was not reset or adopted"
+                )
             configuration = cls(
                 data_directory=data_directory,
                 jwt_secret=secrets.token_urlsafe(48),
@@ -106,6 +128,33 @@ class LocalServerConfiguration:
                 temporary.unlink(missing_ok=True)
         configuration.attachment_path.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(configuration.attachment_path, 0o700)
+        return configuration
+
+    @classmethod
+    def create_with_attachment_key(
+        cls, data_directory: Path, attachment_encryption_key: str,
+    ) -> "LocalServerConfiguration":
+        data_directory = data_directory.expanduser().resolve()
+        if data_directory.exists() and any(data_directory.iterdir()):
+            raise LocalServerError("Restore requires a new, empty local data directory")
+        data_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        configuration = cls(
+            data_directory=data_directory,
+            jwt_secret=secrets.token_urlsafe(48),
+            attachment_encryption_key=attachment_encryption_key,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        configuration.validate()
+        path = configuration.config_path
+        path.write_text(json.dumps({
+            "format_version": CONFIG_VERSION,
+            "created_at": configuration.created_at,
+            "jwt_secret": configuration.jwt_secret,
+            "attachment_encryption_key": configuration.attachment_encryption_key,
+        }, sort_keys=True, indent=2) + "\n")
+        os.chmod(path, 0o600)
+        configuration.attachment_path.mkdir(mode=0o700)
+        os.chmod(configuration.data_directory, 0o700)
         return configuration
 
     def validate(self) -> None:
@@ -178,6 +227,183 @@ def migration_state(configuration: LocalServerConfiguration, server_directory: P
     return result.stdout.strip()
 
 
+def _copy_attachment_tree(source: Path, destination: Path) -> None:
+    destination.mkdir(mode=0o700, parents=True, exist_ok=False)
+    for item in source.iterdir():
+        if item.is_symlink() or not item.is_file():
+            raise LocalServerError("Attachment storage contains an unsupported entry")
+        target = destination / item.name
+        with item.open("rb") as incoming, target.open("xb") as outgoing:
+            shutil.copyfileobj(incoming, outgoing, length=1024 * 1024)
+        os.chmod(target, 0o600)
+
+
+def _age_executable() -> str:
+    value = shutil.which("age")
+    if not value:
+        raise LocalServerError("age is required for encrypted local backups")
+    return value
+
+
+def _age_encrypt(source: Path, destination: Path) -> None:
+    command = [_age_executable()]
+    recipient = os.environ.get("BUDGET_APP_BACKUP_AGE_RECIPIENT", "").strip()
+    if recipient:
+        command += ["--recipient", recipient]
+    else:
+        command += ["--passphrase"]
+    command += ["--output", str(destination), str(source)]
+    if subprocess.run(command).returncode != 0:
+        raise LocalServerError("Local backup encryption failed")
+
+
+def _age_decrypt(source: Path, destination: Path) -> None:
+    command = [_age_executable(), "--decrypt"]
+    identity = os.environ.get("BUDGET_APP_BACKUP_AGE_IDENTITY", "").strip()
+    if identity:
+        identity_path = Path(identity).expanduser().resolve()
+        if not identity_path.is_file():
+            raise LocalServerError("Configured age identity file was not found")
+        command += ["--identity", str(identity_path)]
+    command += ["--output", str(destination), str(source)]
+    if subprocess.run(command).returncode != 0:
+        raise LocalServerError("Local backup decryption failed")
+
+
+def _validate_sqlite_snapshot(path: Path) -> None:
+    uri = f"file:{path}?mode=ro"
+    try:
+        with sqlite3.connect(uri, uri=True) as database:
+            if database.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+                raise LocalServerError("Local backup database integrity check failed")
+            if database.execute("PRAGMA foreign_key_check").fetchall():
+                raise LocalServerError("Local backup database foreign-key check failed")
+            revision = database.execute("SELECT version_num FROM alembic_version").fetchone()
+            if not revision or not revision[0]:
+                raise LocalServerError("Local backup database has no migration revision")
+    except sqlite3.Error as failure:
+        raise LocalServerError("Local backup database is unreadable") from failure
+
+
+def _publish_configured_backup(path: Path) -> dict[str, object] | None:
+    selected = os.environ.get("BUDGET_APP_BACKUP_DESTINATION", "").strip()
+    keep_text = os.environ.get("BUDGET_APP_BACKUP_RETENTION", "10")
+    try:
+        keep = int(keep_text)
+    except ValueError as failure:
+        raise LocalServerError("BUDGET_APP_BACKUP_RETENTION must be a positive integer") from failure
+    if keep < 1:
+        raise LocalServerError("BUDGET_APP_BACKUP_RETENTION must be a positive integer")
+    if not selected:
+        return None
+    try:
+        if selected == "local":
+            directory = os.environ.get("BUDGET_APP_BACKUP_LOCAL_DIRECTORY", "").strip()
+            if not directory:
+                raise LocalServerError("BUDGET_APP_BACKUP_LOCAL_DIRECTORY is required")
+            return LocalDirectoryDestination(Path(directory), keep).publish(path)
+        if selected == "dropbox":
+            transport = DropboxHTTPTransport(dropbox_access_token())
+            return DropboxDestination(
+                transport, os.environ.get("BUDGET_APP_DROPBOX_FOLDER", "/Backups"), keep
+            ).publish(path)
+    except DestinationError as failure:
+        raise LocalServerError(f"Encrypted backup was retained locally, but publication failed: {failure}") from failure
+    raise LocalServerError("BUDGET_APP_BACKUP_DESTINATION must be local, dropbox, or empty")
+
+
+def backup_local(
+    configuration: LocalServerConfiguration, server_directory: Path, output_directory: Path,
+) -> Path:
+    output_directory = output_directory.expanduser().resolve()
+    output_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    final = output_directory / f"budget-{timestamp}.tar.gz.age"
+    if final.exists():
+        raise LocalServerError("A local backup generation with this timestamp already exists")
+    with exclusive_server_lock(configuration), tempfile.TemporaryDirectory(
+        prefix=".budget-local-backup-", dir=output_directory
+    ) as temporary_name:
+        migrate(configuration, server_directory)
+        root = Path(temporary_name) / "payload"
+        root.mkdir(mode=0o700)
+        snapshot = root / "database.sqlite3"
+        with sqlite3.connect(configuration.database_path) as source, sqlite3.connect(snapshot) as destination:
+            source.backup(destination)
+        _validate_sqlite_snapshot(snapshot)
+        _copy_attachment_tree(configuration.attachment_path, root / "attachments")
+        revision = migration_state(configuration, server_directory)
+        (root / "BACKUP-METADATA").write_text(
+            "format_version=2\n"
+            "source_provider=local_server_sqlite\n"
+            f"created_at={datetime.now(timezone.utc).isoformat()}\n"
+            f"database_revision={revision}\n"
+        )
+        (root / "attachment-key-recovery.env").write_text(
+            f"BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY={configuration.attachment_encryption_key}\n"
+        )
+        os.chmod(root / "attachment-key-recovery.env", 0o600)
+        create_manifest(root)
+        archive = Path(temporary_name) / "backup.tar.gz"
+        with tarfile.open(archive, "w:gz") as output:
+            for name in ("BACKUP-METADATA", "database.sqlite3", "attachment-key-recovery.env", "MANIFEST.sha256", "attachments"):
+                output.add(root / name, arcname=name, recursive=True)
+        encrypted = Path(temporary_name) / "complete.age"
+        _age_encrypt(archive, encrypted)
+        os.link(encrypted, final)
+        os.chmod(final, 0o600)
+    _publish_configured_backup(final)
+    return final
+
+
+def restore_local(backup: Path, data_directory: Path, server_directory: Path) -> LocalServerConfiguration:
+    backup = backup.expanduser().resolve()
+    if not backup.is_file():
+        raise LocalServerError("Encrypted local backup was not found")
+    data_directory = data_directory.expanduser().resolve()
+    if data_directory.exists():
+        raise LocalServerError("Restore requires a new, empty local data directory")
+    data_directory.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".budget-local-restore-", dir=data_directory.parent) as temporary_name:
+        temporary = Path(temporary_name)
+        archive = temporary / "backup.tar.gz"
+        _age_decrypt(backup, archive)
+        verified = temporary / "verified"
+        try:
+            extract_verified(archive, verified)
+        except (OSError, ValueError, tarfile.TarError) as failure:
+            raise LocalServerError("Encrypted local backup validation failed") from failure
+        metadata = (verified / "BACKUP-METADATA").read_text().splitlines()
+        if "format_version=2" not in metadata or "source_provider=local_server_sqlite" not in metadata:
+            raise LocalServerError("Backup is not a personal local-server generation")
+        key_line = (verified / "attachment-key-recovery.env").read_text().splitlines()
+        prefix = "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY="
+        if len(key_line) != 1 or not key_line[0].startswith(prefix):
+            raise LocalServerError("Backup attachment recovery key is invalid")
+        attachment_key = key_line[0][len(prefix):]
+        _validate_sqlite_snapshot(verified / "database.sqlite3")
+        staged_authority = temporary / "authority"
+        configuration = LocalServerConfiguration.create_with_attachment_key(staged_authority, attachment_key)
+        shutil.copy2(verified / "database.sqlite3", configuration.database_path)
+        os.chmod(configuration.database_path, 0o600)
+        # Recovery rotates the deployment signing secret. Revoke persisted refresh credentials too,
+        # so an old device cannot mint a token under the replacement authority without reauthenticating.
+        with sqlite3.connect(configuration.database_path) as recovered_database:
+            recovered_database.execute("DELETE FROM refresh_sessions")
+            recovered_database.commit()
+        for item in (verified / "attachments").iterdir():
+            if item.is_symlink() or not item.is_file():
+                raise LocalServerError("Backup attachment payload is invalid")
+            target = configuration.attachment_path / item.name
+            shutil.copy2(item, target)
+            os.chmod(target, 0o600)
+        with exclusive_server_lock(configuration):
+            migrate(configuration, server_directory)
+        _validate_sqlite_snapshot(configuration.database_path)
+        os.rename(staged_authority, data_directory)
+        return LocalServerConfiguration.load_or_create(data_directory)
+
+
 def run(
     configuration: LocalServerConfiguration, server_directory: Path,
     host: str, port: int, allowed_hosts: str,
@@ -207,8 +433,10 @@ def run(
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="Manage the single-user desktop-local Budget Server")
-    value.add_argument("command", choices=("init", "migrate", "doctor", "run"), nargs="?", default="run")
+    value.add_argument("command", choices=("init", "migrate", "doctor", "run", "backup", "restore"), nargs="?", default="run")
+    value.add_argument("backup_file", type=Path, nargs="?")
     value.add_argument("--data-directory", type=Path, default=default_data_directory())
+    value.add_argument("--output-directory", type=Path)
     value.add_argument("--host", default=os.environ.get("BUDGET_HOST", "127.0.0.1"))
     value.add_argument("--port", type=int, default=int(os.environ.get("BUDGET_PORT", "8000")))
     value.add_argument("--allowed-hosts", default="localhost,127.0.0.1")
@@ -219,6 +447,12 @@ def main(arguments: list[str] | None = None) -> int:
     args = parser().parse_args(arguments)
     server_directory = Path(__file__).resolve().parents[1]
     try:
+        if args.command == "restore":
+            if args.backup_file is None:
+                raise LocalServerError("restore requires an encrypted backup path")
+            configuration = restore_local(args.backup_file, args.data_directory, server_directory)
+            print(f"Local backup restored into new authority at {configuration.data_directory}")
+            return 0
         configuration = LocalServerConfiguration.load_or_create(args.data_directory)
         if args.command == "init":
             print(f"Local Budget Server initialized at {configuration.data_directory}")
@@ -232,6 +466,10 @@ def main(arguments: list[str] | None = None) -> int:
             print(f"Configuration: valid and private")
             print(f"Database: {state}")
             print(f"Attachments: {configuration.attachment_path}")
+        elif args.command == "backup":
+            output = args.output_directory or (configuration.data_directory / "backups")
+            result = backup_local(configuration, server_directory, output)
+            print(f"Encrypted local backup complete: {result}")
         else:
             return run(configuration, server_directory, args.host, args.port, args.allowed_hosts)
         return 0

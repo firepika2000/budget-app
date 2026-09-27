@@ -11,7 +11,9 @@ import shutil
 import stat
 import tarfile
 
-REQUIRED = {"BACKUP-METADATA", "database.sql", "attachment-key-recovery.env", "MANIFEST.sha256"}
+REQUIRED_COMMON = {"BACKUP-METADATA", "attachment-key-recovery.env", "MANIFEST.sha256"}
+DATABASE_FILES = {"database.sql", "database.sqlite3"}
+ALLOWED_FILES = REQUIRED_COMMON | DATABASE_FILES
 MAX_MEMBERS = 250_000
 MAX_MANIFEST_BYTES = 64 * 1024 * 1024
 
@@ -26,7 +28,7 @@ def valid_name(name: str, *, directory: bool) -> str:
     if directory:
         allowed = normalized == "attachments" or normalized.startswith("attachments/")
     else:
-        allowed = normalized in REQUIRED or normalized.startswith("attachments/")
+        allowed = normalized in ALLOWED_FILES or normalized.startswith("attachments/")
     if not allowed:
         raise ValueError("Unexpected backup member")
     return normalized
@@ -37,6 +39,18 @@ def digest(stream) -> str:
     for chunk in iter(lambda: stream.read(1024 * 1024), b""):
         value.update(chunk)
     return value.hexdigest()
+
+
+def expected_files_for_metadata(metadata: list[str]) -> set[str]:
+    versions = [line for line in metadata if line.startswith("format_version=")]
+    if versions == ["format_version=1"]:
+        return REQUIRED_COMMON | {"database.sql"}
+    if versions == ["format_version=2"]:
+        providers = [line for line in metadata if line.startswith("source_provider=")]
+        if providers != ["source_provider=local_server_sqlite"]:
+            raise ValueError("Unsupported backup source provider")
+        return REQUIRED_COMMON | {"database.sqlite3"}
+    raise ValueError("Unsupported backup format version")
 
 
 def create_manifest(root: Path) -> None:
@@ -50,8 +64,14 @@ def create_manifest(root: Path) -> None:
             relative = valid_name(path.relative_to(root).as_posix(), directory=stat.S_ISDIR(mode))
             if stat.S_ISREG(mode) and relative != "MANIFEST.sha256":
                 files[relative] = path
-    if not (REQUIRED - {"MANIFEST.sha256"}) <= files.keys() or not (root / "attachments").is_dir():
+    metadata_path = root / "BACKUP-METADATA"
+    if not metadata_path.is_file():
         raise ValueError("Backup is incomplete")
+    expected_files = expected_files_for_metadata(metadata_path.read_text(encoding="utf-8").splitlines())
+    if not (expected_files - {"MANIFEST.sha256"}) <= files.keys() or not (root / "attachments").is_dir():
+        raise ValueError("Backup is incomplete")
+    if files.keys() & (DATABASE_FILES - expected_files):
+        raise ValueError("Backup contains a database payload for another provider")
     if len(files) > MAX_MEMBERS:
         raise ValueError("Backup contains too many files")
     lines = []
@@ -81,7 +101,7 @@ def extract_verified(archive: Path, destination: Path) -> None:
             if len(members) > MAX_MEMBERS:
                 raise ValueError("Backup contains too many members")
         files = {name for name, member in members.items() if member.isfile()}
-        if not REQUIRED <= files or "attachments" not in members or not members["attachments"].isdir():
+        if not REQUIRED_COMMON <= files or not files & DATABASE_FILES or "attachments" not in members or not members["attachments"].isdir():
             raise ValueError("Backup is incomplete")
         for name in members:
             if any(str(parent) in files for parent in PurePosixPath(name).parents):
@@ -120,9 +140,9 @@ def extract_verified(archive: Path, destination: Path) -> None:
             if name != "MANIFEST.sha256" and value.hexdigest() != expected[name]:
                 raise ValueError("Backup checksum verification failed")
         metadata = (destination / "BACKUP-METADATA").read_text(encoding="utf-8").splitlines()
-        versions = [line for line in metadata if line.startswith("format_version=")]
-        if versions != ["format_version=1"]:
-            raise ValueError("Unsupported backup format version")
+        expected_files = expected_files_for_metadata(metadata)
+        if not expected_files <= files or files & (DATABASE_FILES - expected_files):
+            raise ValueError("Backup database payload does not match its format/provider")
 
 
 def main() -> None:
