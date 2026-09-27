@@ -35,6 +35,7 @@ Commands:
   storage  Publish/fetch encrypted backups using local or Dropbox destinations
   portable-export  Create an encrypted provider-neutral budget archive
   portable-verify  Decrypt and validate a portable archive without importing it
+  portable-import  Restore a portable archive into a new personal local authority
   help     Show this help
 
 Optional overrides:
@@ -302,6 +303,12 @@ run_portable_verify() {
     "$VENV_PYTHON" "$SERVER_DIR/scripts/portable_archive.py" verify "$@"
 }
 
+run_portable_import() {
+    bootstrap_dependencies || return $?
+    shift
+    "$VENV_PYTHON" "$SERVER_DIR/scripts/portable_import.py" "$@"
+}
+
 run_local() {
     bootstrap_dependencies || return $?
     shift
@@ -320,6 +327,7 @@ case "$command_name" in
     storage) run_storage "$@" ;;
     portable-export) run_portable_export "$@" ;;
     portable-verify) run_portable_verify "$@" ;;
+    portable-import) run_portable_import "$@" ;;
     help|--help|-h) usage ;;
     *) fail "Unknown command: $command_name"; printf '\n' >&2; usage >&2; exit 2 ;;
 esac

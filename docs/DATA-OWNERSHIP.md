@@ -189,9 +189,27 @@ Verification decrypts only into private temporary staging, rejects links, traver
 duplicate members and oversized payloads, then checks the archive manifest, v2 section manifest,
 and exact active-attachment coverage/hashes. It does not write any application authority.
 
-This portable archive is not yet importable and is not a substitute for the full-authority backup:
-the next portability gate is validate-then-commit import into a brand-new destination followed by
-canonical financial-observation comparison.
+Import into a **new path only** (the destination must not exist):
+
+```sh
+export BUDGET_APP_BACKUP_AGE_IDENTITY=/private/path/to/age-identity.txt
+./budget portable-import \
+  ./exports/budget-portable-YYYYMMDDTHHMMSSZ.tar.gz.age \
+  --data-directory "$HOME/Library/Application Support/Budget App Imported"
+```
+
+The importer prompts twice for a new owner password; passwords and tokens are never accepted on the
+command line or copied from the source. It validates and decrypts in private staging, migrates a
+separate SQLite authority to the current schema, preserves stable household/financial/audit IDs and
+exact integer minor units, gives non-owner accounts new unusable credentials pending reauthorization,
+re-encrypts active attachments under the new authority key, checks database integrity and foreign
+keys, compares transaction/allocation/card-reserve observations, and atomically publishes the new
+directory only after all gates pass. The source authority is never modified.
+
+Portable import currently targets the personal desktop-local Budget Server authority. Import into
+the on-device iPhone authority remains gated on the production `LocalDeviceRepository`; the archive
+is not a substitute for same-provider operational backup because detached tombstone payload bytes
+and deployment configuration remain intentionally provider-local.
 
 ## Remaining implementation sequence
 
@@ -203,8 +221,8 @@ canonical financial-observation comparison.
    a versioned portable archive. Structured export v2 includes stable IDs, every persistent domain
    record, exact integer minor units, and a per-section count/SHA-256 manifest; it deliberately says
    that attachment payload bytes are not included yet.
-4. Add validate-then-commit import into a new destination, preserve stable IDs and attribution, and
-   compare canonical financial observations before cutover.
+4. Extend the implemented validate-then-commit desktop-local import to the production on-device
+   repository, and compare the complete canonical workspace/report projections before cutover.
 5. Add automatic schedules, visible destination/retention/failure/restore-verification health, and a
    graphical server manager. The developer CLI is not the normal-user v1.0 experience.
 6. Add Dropbox OAuth setup/revocation UI without placing provider secrets in the iOS app database or
