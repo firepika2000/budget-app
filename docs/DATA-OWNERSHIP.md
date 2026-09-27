@@ -134,6 +134,51 @@ For recipient-encrypted recovery, set `BUDGET_APP_BACKUP_AGE_IDENTITY` to the pr
 path before invoking `restore.sh`. Keep that identity outside the repository and separately from the
 backup destination. Losing the only identity means losing access to those encrypted generations.
 
+### Unattended macOS server backups
+
+The coordinated PostgreSQL/attachment backup can be scheduled with a per-user LaunchAgent. Put only
+the allowlisted backup settings in an owner-only file outside the repository:
+
+```sh
+mkdir -p "$HOME/Library/Application Support/Budget App Server"
+chmod 700 "$HOME/Library/Application Support/Budget App Server"
+
+touch "$HOME/Library/Application Support/Budget App Server/backup.env"
+chmod 600 "$HOME/Library/Application Support/Budget App Server/backup.env"
+# Edit this file without committing it.
+```
+
+Required content includes an `age` recipient so the unattended job never waits for or stores a
+passphrase. Add either a local destination or Dropbox credentials:
+
+```text
+BUDGET_APP_BACKUP_AGE_RECIPIENT=age1...
+BUDGET_APP_BACKUP_DESTINATION=dropbox
+BUDGET_APP_BACKUP_RETENTION=10
+BUDGET_APP_DROPBOX_REFRESH_TOKEN=...
+BUDGET_APP_DROPBOX_APP_KEY=...
+BUDGET_APP_DROPBOX_FOLDER=/Backups
+```
+
+Install a daily 03:00 schedule and inspect its latest run:
+
+```sh
+./budget backup-schedule install-launchd \
+  --project-name budget-server \
+  --backup-directory "$HOME/Library/Application Support/Budget App Server/backups" \
+  --environment-file "$HOME/Library/Application Support/Budget App Server/backup.env" \
+  --hour 3 --minute 0
+
+./budget backup-schedule status \
+  --backup-directory "$HOME/Library/Application Support/Budget App Server/backups"
+```
+
+The installer validates ownership and `0600` permissions, embeds only the environment-file path in
+the plist, and uses a nonblocking file lock to prevent overlapping captures. Each invocation records
+`healthy`, `failed`, or `already_running` state without copying credentials into logs or health data.
+The coordinated capture briefly pauses the named API while PostgreSQL and attachment objects are
+captured consistently, then resumes it before archive encryption/publication.
+
 For Dropbox, create a least-privilege app-folder Dropbox application. Configure either a temporary
 access token or, for durable operation, its refresh credentials outside the repository:
 

@@ -33,6 +33,7 @@ Commands:
   migrate  Bootstrap dependencies and upgrade the database to Alembic head
   test     Bootstrap dependencies and run the backend test suite
   storage  Publish/fetch encrypted backups using local or Dropbox destinations
+  backup-schedule  Install/run unattended macOS server backups
   portable-export  Create an encrypted provider-neutral budget archive
   portable-verify  Decrypt and validate a portable archive without importing it
   portable-import  Restore a portable archive into a new personal local authority
@@ -293,6 +294,12 @@ run_storage() {
     python3 "$SERVER_DIR/scripts/backup_destination.py" "$@"
 }
 
+run_backup_schedule() {
+    bootstrap_dependencies || return $?
+    shift
+    "$VENV_PYTHON" "$SERVER_DIR/scripts/backup_schedule.py" "$@"
+}
+
 run_portable_export() {
     bootstrap_dependencies || return $?
     shift
@@ -327,6 +334,7 @@ case "$command_name" in
     migrate) run_migrate_command ;;
     test) run_tests ;;
     storage) run_storage "$@" ;;
+    backup-schedule) run_backup_schedule "$@" ;;
     portable-export) run_portable_export "$@" ;;
     portable-verify) run_portable_verify "$@" ;;
     portable-import) run_portable_import "$@" ;;
