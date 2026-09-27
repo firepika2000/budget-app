@@ -29,6 +29,9 @@ navigation after Debt stabilization, retaining prior human evidence without dema
 | Household | Walk pending | Basic access/settings clarity and privacy | Advanced allowance/delegation expansion |
 | Settings | GOOD: profile opens; guided-tour resume moved directly below Profile and regression passes | Appearance/feedback/release build pass pending | Elaborate feedback backend |
 
+Authentication fields now advertise native username/current-password/new-password, name,
+household and invitation-code semantics for Password AutoFill and appropriate keyboard behavior.
+
 ## Core acceptance journey
 
 Disposable new user → onboarding → budget → checking/starting balance → categories → assign →

@@ -228,23 +228,28 @@ struct AuthenticationView: View {
                 }
                 if form.mode != 0 {
                     TextField("Your name", text: $form.displayName)
+                        .textContentType(.name)
                 }
                 if form.mode == 1 {
                     TextField("Household name", text: $form.householdName)
+                        .textContentType(.organizationName)
                 }
                 if form.mode == 2 {
                     TextField("Invitation code", text: $form.invitationToken, axis: .vertical)
+                        .textContentType(.oneTimeCode)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 } else {
                     TextField("Email", text: $form.email)
                         .accessibilityIdentifier("auth-email-field")
+                        .textContentType(.username)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.emailAddress)
                         .autocorrectionDisabled()
                 }
                 SecureField("Password", text: $form.password)
                     .accessibilityIdentifier("auth-password-field")
+                    .textContentType(form.mode == 0 ? .password : .newPassword)
                 if form.mode != 0 {
                     // New credentials must satisfy the server's 12-character minimum. Validate before
                     // submission so a short password never returns an opaque server-side 422.
