@@ -2171,6 +2171,10 @@ final class BudgetWorkspaceStore: ObservableObject {
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection {
         try requireWorkspaceAccess()
 #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ui-test-debt-cancelled-network"), request.strategy == "avalanche", request.rollover {
+            do { try await Task.sleep(for: .seconds(30)) }
+            catch { throw URLError(.cancelled) }
+        }
         if ProcessInfo.processInfo.arguments.contains("--ui-test-debt-projection-failure") {
             print("DEBT_ALERT source=projection-test event=failure")
             throw APIClientError.server(status: 503, message: "Test projection service unavailable")
@@ -4894,6 +4898,7 @@ private struct DebtPayoffContent: View {
     @State private var baseline: APIDebtStrategyProjection?
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var calculationID = UUID()
 
     private var extraPayment: Int64? {
         if extraPreset >= 0 { return extraPreset }
@@ -5044,16 +5049,24 @@ private struct DebtPayoffContent: View {
     private func move(_ id: String, by offset: Int) { guard let index = customOrder.firstIndex(of: id) else { return }; let destination = index + offset; guard customOrder.indices.contains(destination) else { return }; customOrder.swapAt(index, destination) }
     private func calculate() async {
         guard let extraPayment else { return }
-        isLoading = true; defer { isLoading = false }
+        let operation = UUID()
+        let key = scenarioKey
+        calculationID = operation
+        isLoading = true
+        defer { if calculationID == operation { isLoading = false } }
         do {
             let firstPayment = BudgetWorkspaceStore.dateString(Date())
             async let loaded = store.debtStrategyProjection(.init(firstPaymentOn: firstPayment, strategy: strategy, rollover: rollover, extraPaymentMinor: extraPayment, accountIDs: selectedAccountIDs, customOrder: strategy == "custom" ? customOrder : []))
             async let loadedBaseline = store.debtStrategyProjection(.init(firstPaymentOn: firstPayment, strategy: "avalanche", rollover: false, extraPaymentMinor: 0, accountIDs: selectedAccountIDs))
             let values = try await (loaded, loadedBaseline)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, calculationID == operation, scenarioKey == key else { return }
             result = values.0; baseline = values.1; errorMessage = nil
         } catch is CancellationError {
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            guard !Task.isCancelled, calculationID == operation, scenarioKey == key else { return }
+            if let networkError = error as? URLError, networkError.code == .cancelled { return }
+            errorMessage = "We couldn’t calculate this payoff scenario. Please try again. Your budget hasn’t changed."
+        }
     }
 }
 
@@ -5306,7 +5319,7 @@ private struct CurrencyChartAxis: ViewModifier {
         content.chartYAxis {
             AxisMarks { value in
                 AxisGridLine()
-                AxisValueLabel {
+                AxisValueLabel(anchor: .center) {
                     if let amount = value.as(Int64.self) { Text(store.format(amount)).font(.caption2) }
                 }
             }
@@ -5386,7 +5399,7 @@ private struct ReportDateChartAxis: ViewModifier {
         content.chartXAxis {
             AxisMarks(values: ticks) { _ in
                 AxisGridLine(); AxisTick()
-                AxisValueLabel(format: .dateTime.month(.abbreviated).year(.twoDigits))
+                AxisValueLabel(format: .dateTime.month(.abbreviated).year(.twoDigits), anchor: .center)
             }
         }
     }

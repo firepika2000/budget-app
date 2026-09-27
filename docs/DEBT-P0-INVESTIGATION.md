@@ -60,6 +60,12 @@ framework-derived anchors require runtime tracing; exact warning source remains 
 Code 9 cause is UNPROVEN. No OOM, memory runaway, CPU runaway or external termination diagnosis
 has been established. Resource sampling and crash/termination evidence remain required.
 
+Chart source audit found both production axis helpers omitted an explicit supported anchor. On
+iOS 27, Charts could derive a custom `UnitPoint`, matching the human warning. Currency and date
+axis labels now explicitly use `.center`. Production Debt history XCUITest PASS and its subsequent
+Simulator log contains neither the custom-UnitPoint warning nor an alert-presentation conflict
+(`/tmp/budget-beta1-debt-chart.log`).
+
 ## Required next work / release block
 
 1. Disposable Live-shaped reproduction with lifecycle/credential/report failures, actual request
@@ -71,3 +77,30 @@ has been established. Resource sampling and crash/termination evidence remain re
 6. Complete HUMAN-VISIBLE-PRODUCT-AUDIT and address discovered P0/P1 before feature expansion.
 
 No human acceptance, crash fix, alert-loop fix, or release readiness claimed.
+
+## Reproduced cancellation defect after `ad05aa1`
+
+DEBUG-only `--ui-test-debt-cancelled-network` holds a scenario request until cancellation and then
+throws `URLError.cancelled`, as a network operation may do. Production-composition navigation into
+Payoff, scrolling its lazy sections and returning toward strategy controls produced an unwanted
+payoff alert. The assertion “Scrolling must not turn cancellation into an alert” FAILED in
+`/tmp/budget-debt-cancel-scroll-before.log`. The initial probe's loading-indicator assertion also
+failed because this task is attached below the visible controls; that indicator is not used as
+proof of cancellation. A prior probe with no scroll did not establish the alert defect.
+
+Correction under verification: every calculation receives an operation ID and scenario key.
+Success and error publication require current identity/key and a non-cancelled task. Network
+cancellation is consumed rather than presented; an obsolete completion cannot clear a newer
+operation's loading state. Genuine current-operation errors use understandable budget-neutral
+wording rather than raw API descriptions. The 30-second hold exists only in DEBUG fault injection;
+no production delay workaround was added.
+
+This proves and addresses a cancellation alert path, NOT the whole reported Live P0. Live-first-error,
+parent/child competition, chart warning, request counts, resource profiling and code-9 cause remain
+open. A single attempted process snapshot during compilation found no running app and provides
+no memory/CPU conclusion.
+
+Focused correction verification on 2026-09-27: three production UI tests PASS in
+`/tmp/budget-beta1-debt.log` (superseded cancellation, genuine error dismissal, successful payoff),
+plus the production Debt history/chart test PASS in `/tmp/budget-beta1-debt-chart.log`. All use
+Xcode Beta 27.0 / iOS 27 on the existing iPhone 17 Pro Max Simulator. No backend changed.

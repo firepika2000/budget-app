@@ -351,6 +351,28 @@ final class AuthenticationJourneyTests: XCTestCase {
                                    "The production chart must contain distinct historical periods, not one selected Plan month")
     }
 
+    func testSupersededDebtNetworkCancellationDoesNotPresentFailure() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights", "--ui-test-debt-cancelled-network"]
+        app.launch()
+        let debt = app.buttons["insights-debt-interest"]
+        for _ in 0..<8 where !debt.isHittable { app.swipeUp() }
+        XCTAssertTrue(debt.waitForExistence(timeout: 5))
+        debt.tap()
+        app.segmentedControls.buttons["Payoff"].tap()
+        let strategy = app.segmentedControls["debt-payoff-strategy"]
+        XCTAssertTrue(strategy.waitForExistence(timeout: 5))
+        let readOnly = app.descendants(matching: .any)["debt-payoff-read-only"]
+        for _ in 0..<8 where !readOnly.exists { app.swipeUp() }
+        for _ in 0..<8 where !app.progressIndicators.firstMatch.exists { app.swipeDown() }
+        for _ in 0..<8 where !strategy.isHittable && !app.alerts.firstMatch.exists { app.swipeDown() }
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Scrolling must not turn cancellation into an alert")
+        guard !app.alerts.firstMatch.exists else { return }
+        strategy.buttons["Snowball"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.waitForExistence(timeout: 3), "Cancelled superseded network work must not present a failure")
+        XCTAssertTrue(app.navigationBars["Debt & Interest"].exists)
+    }
+
     func testDebtProjectionFailureDismissalDoesNotImmediatelyRepresent() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=insights", "--ui-test-debt-projection-failure"]
