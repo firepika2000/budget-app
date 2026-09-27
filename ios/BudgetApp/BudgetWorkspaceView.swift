@@ -651,7 +651,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         // legs. Insertion order and a start/end-only minimum can hide an intermediate shortfall.
         expanded.sort { $0.date == $1.date ? $0.schedule.id < $1.schedule.id : $0.date < $1.date }
         func difference(_ lhs: Int64, _ rhs: Int64) throws -> Int64 {
-            try Money(minorUnits: lhs, currencyCode: budget.currencyCode)
+            return try Money(minorUnits: lhs, currencyCode: budget.currencyCode)
                 .subtracting(Money(minorUnits: rhs, currencyCode: budget.currencyCode)).minorUnits
         }
         for event in expanded {
