@@ -59,6 +59,70 @@ final class LocalDatabaseTests: XCTestCase {
         }
     }
 
+    func testTypedAuthorityStorePersistsCompleteAggregateAcrossReopen() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("authority.sqlite")
+        var store: LocalAuthorityStore? = try LocalAuthorityStore(fileURL: databaseURL)
+        let timestamp = "2026-09-27T12:00:00Z"
+        let identity = LocalAuthorityIdentity(
+            householdID: "household", householdName: "Local Household",
+            ownerUserID: "owner", ownerDisplayName: "Owner", budgetID: "budget",
+            budgetName: "Local Budget", currencyCode: "usd"
+        )
+        try await store?.bootstrap(identity, createdAt: timestamp)
+        try await store?.insertAccount(.init(
+            id: "checking", budgetID: "budget", name: "Checking", kind: "checking",
+            isOnBudget: true, openingBalanceMinor: 9_007_199_254_740_991, createdAt: timestamp
+        ))
+        try await store?.insertCategoryGroup(.init(id: "needs", budgetID: "budget", name: "Needs", sortOrder: 0))
+        try await store?.insertCategory(.init(id: "groceries", budgetID: "budget", groupID: "needs", name: "Groceries", sortOrder: 0))
+        try await store?.insertPayee(.init(id: "market", budgetID: "budget", name: "Market", normalizedName: "market", defaultCategoryID: "groceries"))
+        try await store?.insertTransaction(.init(
+            id: "purchase", budgetID: "budget", accountID: "checking", payeeID: "market",
+            amountMinor: -12_345, occurredOn: "2026-09-27", memo: "Exact purchase",
+            createdByUserID: "owner", createdAt: timestamp,
+            splits: [.init(id: "food", categoryID: "groceries", amountMinor: -10_000),
+                     .init(id: "tax", categoryID: "groceries", amountMinor: -2_345)]
+        ))
+        try await store?.integrityCheck()
+        store = nil
+
+        let reopened = try LocalAuthorityStore(fileURL: databaseURL)
+        let snapshot = try await reopened.snapshot(budgetID: "budget")
+        XCTAssertEqual(snapshot.identity.currencyCode, "USD")
+        XCTAssertEqual(snapshot.accounts.map(\.openingBalanceMinor), [9_007_199_254_740_991])
+        XCTAssertEqual(snapshot.groups.map(\.name), ["Needs"])
+        XCTAssertEqual(snapshot.categories.map(\.name), ["Groceries"])
+        XCTAssertEqual(snapshot.payees.map(\.name), ["Market"])
+        XCTAssertEqual(snapshot.transactions.map(\.amountMinor), [-12_345])
+        XCTAssertEqual(snapshot.transactions.first?.splits.map(\.amountMinor), [-10_000, -2_345])
+        try await reopened.integrityCheck()
+    }
+
+    func testTypedAuthorityStoreRefusesInvalidSplitAggregateWithoutPartialWrite() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("atomic.sqlite")
+        let store = try LocalAuthorityStore(fileURL: databaseURL)
+        let timestamp = "2026-09-27T12:00:00Z"
+        try await store.bootstrap(.init(
+            householdID: "household", householdName: "Local Household", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "budget", budgetName: "Local Budget", currencyCode: "USD"
+        ), createdAt: timestamp)
+        try await store.insertAccount(.init(id: "checking", budgetID: "budget", name: "Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 0, createdAt: timestamp))
+        try await store.insertCategoryGroup(.init(id: "needs", budgetID: "budget", name: "Needs", sortOrder: 0))
+        try await store.insertCategory(.init(id: "groceries", budgetID: "budget", groupID: "needs", name: "Groceries", sortOrder: 0))
+
+        do {
+            try await store.insertTransaction(.init(
+                id: "invalid", budgetID: "budget", accountID: "checking", amountMinor: -500,
+                occurredOn: "2026-09-27", createdByUserID: "owner", createdAt: timestamp,
+                splits: [.init(id: "split", categoryID: "groceries", amountMinor: -499)]
+            ))
+            XCTFail("Mismatched split aggregate must be refused")
+        } catch {}
+
+        let snapshot = try await store.snapshot(budgetID: "budget")
+        XCTAssertTrue(snapshot.transactions.isEmpty)
+    }
+
     private var fixtureStatements: [LocalSQLStatement] {
         let created = LocalSQLiteValue.text("2026-09-27T00:00:00Z")
         return [

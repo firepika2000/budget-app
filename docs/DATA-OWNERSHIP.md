@@ -37,6 +37,15 @@ persistence. They also prove atomic rollback and verified snapshot reopen. This 
 infrastructure, not yet a selectable product provider: it deliberately does not duplicate server or
 Demo accounting calculations.
 
+`LocalAuthorityStore` now adds the first typed repository boundary above raw SQLite. It atomically
+bootstraps the single-owner authority and persists account, category-group, category, payee, and
+complete posted-transaction aggregates. Split totals are checked with overflow-safe integer math
+before any write, while balances, activity, reserves, and other accounting consequences remain the
+responsibility of the shared application-service layer. Destructive-reopen tests prove stable IDs,
+relationships, and exact `Int64` values survive repository reconstruction. This boundary is not yet
+wired into the app's data-source selector; update/delete commands and the remaining domain records
+must be completed first so users cannot enter a partially functional Local Device mode.
+
 ## Implemented personal desktop-local backend
 
 `./budget local` now provides a self-contained local authority for personal/development use through
