@@ -1862,3 +1862,55 @@ public struct APIAllocationOperation: Identifiable, Decodable, Equatable, Sendab
         case allocationVersion = "allocation_version"
     }
 }
+
+public struct APIBackupDestination: Decodable, Equatable, Sendable {
+    public let destination: String?
+    public let path: String?
+    public let filename: String?
+    public let size: Int64?
+    public let sha256: String?
+    public let contentHash: String?
+    public let verifiedAt: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case destination, path, filename, size, sha256
+        case contentHash = "content_hash"
+        case verifiedAt = "verified_at"
+    }
+}
+
+public struct APIBackupHealth: Decodable, Equatable, Sendable {
+    public let state: String
+    public let archive: String?
+    public let completedAt: String?
+    public let sha256: String?
+    public let size: Int64?
+    public let destination: APIBackupDestination?
+    public let error: String?
+    public let verifiedAt: String?
+    public let sourceProvider: String?
+    public let sourceArchiveSHA256: String?
+    public let databaseIntegrity: String?
+    public let foreignKeys: String?
+
+    enum CodingKeys: String, CodingKey {
+        case state, archive, sha256, size, destination, error
+        case completedAt = "completed_at"
+        case verifiedAt = "verified_at"
+        case sourceProvider = "source_provider"
+        case sourceArchiveSHA256 = "source_archive_sha256"
+        case databaseIntegrity = "database_integrity"
+        case foreignKeys = "foreign_keys"
+    }
+}
+
+public struct APIServerBackupStatus: Decodable, Equatable, Sendable {
+    public let configured: Bool
+    public let backup: APIBackupHealth
+    public let lastRestoreVerification: APIBackupHealth?
+
+    enum CodingKeys: String, CodingKey {
+        case configured, backup
+        case lastRestoreVerification = "last_restore_verification"
+    }
+}

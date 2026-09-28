@@ -85,9 +85,12 @@ new authority has produced its first backup.
 
 When those paths are configured (the personal local server does this automatically), an authenticated
 household owner can see the same sanitized backup and restore-verification state in the web Household
-Console at `/admin`. The contract is deliberately owner-only, returns not-found to non-owners even if
-they manage a budget, bounds metadata size, rejects symlinks/invalid documents, and allowlists response
-fields so credentials or unrelated status-file content cannot leak through the UI.
+Console at `/admin` and in the native app under **Profile & Settings → Backup & Recovery**. The native
+surface resolves the current Live credential for every refresh instead of retaining a bearer token,
+and it is not exposed for Demo or non-owner budgets. The contract is deliberately owner-only, returns
+not-found to non-owners even if they manage a budget, bounds metadata size, rejects symlinks/invalid
+documents, and allowlists response fields so credentials or unrelated status-file content cannot leak
+through either UI.
 
 The same `BUDGET_APP_BACKUP_DESTINATION`, retention, Dropbox, and age recipient/identity settings used
 by shared-server operations apply to `./budget local backup`. Thus a local authority can keep verified
@@ -281,14 +284,10 @@ and deployment configuration remain intentionally provider-local.
    through the shared accounting-command boundary.
 2. Prove account, category, assignment, expense/refund, transfer, reconciliation, schedule, payee,
    attachment, and audit persistence after every repository/service object is destroyed and reopened.
-3. Wrap the now completeness-audited, provider-neutral JSON data contract and attachment payloads in
-   a versioned portable archive. Structured export v2 includes stable IDs, every persistent domain
-   record, exact integer minor units, and a per-section count/SHA-256 manifest; it deliberately says
-   that attachment payload bytes are not included yet.
-4. Extend the implemented validate-then-commit desktop-local import to the production on-device
+3. Extend the implemented validate-then-commit desktop-local import to the production on-device
    repository, and compare the complete canonical workspace/report projections before cutover.
-5. Add automatic schedules, visible destination/retention/failure/restore-verification health, and a
-   graphical server manager. The developer CLI is not the normal-user v1.0 experience.
-6. Add Dropbox OAuth setup/revocation UI without placing provider secrets in the iOS app database or
+4. Add a graphical server manager and pairing/TLS workflow. Scheduling plus backup/restore health are
+   implemented, but the developer CLI is not the normal-user v1.0 server experience.
+5. Add Dropbox OAuth setup/revocation UI without placing provider secrets in the iOS app database or
    logs. Keep Dropbox as a backup destination unless a separately designed synchronization authority
    is approved.

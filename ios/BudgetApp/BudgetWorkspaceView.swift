@@ -2780,6 +2780,7 @@ private struct WorkspaceProfileView: View {
     @State private var showCreate = false
     @State private var showAppearance = false
     @State private var showRollover = false
+    @State private var showBackupHealth = false
 
     var body: some View {
         NavigationStack {
@@ -2826,6 +2827,16 @@ private struct WorkspaceProfileView: View {
                         Button("Cash Rollover", systemImage: "calendar.badge.clock") { showRollover = true }
                             .accessibilityIdentifier("cash-rollover-settings")
                     }
+                    if session.sourceMode == .liveServer {
+                        Section("Data Ownership") {
+                            Button("Backup & Recovery", systemImage: "externaldrive.badge.checkmark") {
+                                showBackupHealth = true
+                            }
+                            .accessibilityIdentifier("backup-recovery-settings")
+                            Text("Review the server’s last encrypted backup and verified restore state.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 Section("Household") { Button("Household and access", systemImage: "person.3") { showHousehold = true } }
                 Section("Connection") {
@@ -2853,6 +2864,9 @@ private struct WorkspaceProfileView: View {
             .navigationDestination(isPresented: $showConnection) { ServerConnectionSettingsView() }
             .navigationDestination(isPresented: $showAppearance) { AppearanceSettingsView() }
             .navigationDestination(isPresented: $showRollover) { CashRolloverSettingsView(store: store) }
+            .navigationDestination(isPresented: $showBackupHealth) {
+                BackupRecoverySettingsView(budgetID: store.budget.id)
+            }
             .sheet(isPresented: $showCreate) {
                 BudgetCreationView(households: session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? [])
             }
@@ -2880,6 +2894,84 @@ private struct WorkspaceProfileView: View {
 
         What I expected:
         """
+    }
+}
+
+private struct BackupRecoverySettingsView: View {
+    @EnvironmentObject private var session: AppSession
+    let budgetID: String
+    @State private var status: APIServerBackupStatus?
+    @State private var loading = false
+    @State private var error: String?
+
+    var body: some View {
+        Form {
+            if let status {
+                if !status.configured {
+                    ContentUnavailableView(
+                        "Backup Health Not Configured",
+                        systemImage: "externaldrive.badge.questionmark",
+                        description: Text("Configure encrypted backups on this Budget Server to publish health here.")
+                    )
+                } else {
+                    Section("Latest Backup") {
+                        LabeledContent("Status", value: status.backup.state.replacingOccurrences(of: "_", with: " ").capitalized)
+                        if let completed = status.backup.completedAt { LabeledContent("Completed", value: readableDate(completed)) }
+                        if let destination = status.backup.destination?.destination {
+                            LabeledContent("Destination", value: destination.capitalized)
+                        }
+                        if let size = status.backup.size {
+                            LabeledContent("Encrypted size", value: ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                        }
+                        if let failure = status.backup.error {
+                            Label(failure, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        }
+                    }
+                    Section("Restore Verification") {
+                        if let recovery = status.lastRestoreVerification {
+                            LabeledContent("Status", value: recovery.state.capitalized)
+                            if let verified = recovery.verifiedAt { LabeledContent("Verified", value: readableDate(verified)) }
+                            if let provider = recovery.sourceProvider {
+                                LabeledContent("Source", value: provider.replacingOccurrences(of: "_", with: " ").capitalized)
+                            }
+                            if let database = recovery.databaseIntegrity { LabeledContent("Database integrity", value: database.uppercased()) }
+                            if let foreignKeys = recovery.foreignKeys { LabeledContent("Foreign keys", value: foreignKeys.uppercased()) }
+                        } else {
+                            Text("No verified restore has been recorded for this authority.").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } else if loading {
+                ProgressView("Loading backup health…")
+            } else if let error {
+                ContentUnavailableView {
+                    Label("Backup Health Unavailable", systemImage: "exclamationmark.triangle")
+                } description: { Text(error) } actions: {
+                    Button("Try Again") { Task { await load() } }
+                }
+            }
+        }
+        .navigationTitle("Backup & Recovery")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        guard !loading else { return }
+        loading = true; error = nil
+        defer { loading = false }
+        do {
+            let (url, token) = try await session.currentLiveCredentials(caller: "backupRecoverySettings")
+            status = try await APIClient(baseURL: url).backupStatus(budgetID: budgetID, token: token)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func readableDate(_ value: String) -> String {
+        guard let date = ISO8601DateFormatter().date(from: value) else { return value }
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 }
 

@@ -723,6 +723,10 @@ public struct APIClient {
         )
     }
 
+    public func backupStatus(budgetID: String, token: String) async throws -> APIServerBackupStatus {
+        try await send(path: "api/v1/budgets/\(budgetID)/backup-status", token: token)
+    }
+
     private func send<Response: Decodable>(
         path: String,
         queryItems: [URLQueryItem],
