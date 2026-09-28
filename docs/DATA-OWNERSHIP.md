@@ -39,12 +39,14 @@ Demo accounting calculations.
 
 `LocalAuthorityStore` now adds the first typed repository boundary above raw SQLite. It atomically
 bootstraps the single-owner authority and persists account, category-group, category, payee, and
-complete posted-transaction aggregates. Split totals are checked with overflow-safe integer math
-before any write, while balances, activity, reserves, and other accounting consequences remain the
-responsibility of the shared application-service layer. Destructive-reopen tests prove stable IDs,
-relationships, and exact `Int64` values survive repository reconstruction. This boundary is not yet
-wired into the app's data-source selector; update/delete commands and the remaining domain records
-must be completed first so users cannot enter a partially functional Local Device mode.
+complete posted-transaction aggregates. Typed metadata updates plus atomic transaction replacement
+and deletion preserve immutable opening/creator facts and refuse missing records. Split totals are
+checked with overflow-safe integer math before any write, while balances, activity, reserves, and
+other accounting consequences remain the responsibility of the shared application-service layer.
+Destructive-reopen tests prove stable IDs, relationships, lifecycle changes, and exact `Int64` values
+survive repository reconstruction. This boundary is not yet wired into the app's data-source selector;
+the remaining domain records and application-service adapter must be completed first so users cannot
+enter a partially functional Local Device mode.
 
 ## Implemented personal desktop-local backend
 

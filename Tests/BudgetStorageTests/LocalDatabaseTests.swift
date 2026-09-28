@@ -123,6 +123,55 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertTrue(snapshot.transactions.isEmpty)
     }
 
+    func testTypedAuthorityStoreUpdateAndDeleteLifecyclePersistsAcrossReopen() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("lifecycle.sqlite")
+        var store: LocalAuthorityStore? = try LocalAuthorityStore(fileURL: databaseURL)
+        let timestamp = "2026-09-27T12:00:00Z"
+        try await store?.bootstrap(.init(
+            householdID: "household", householdName: "Local Household", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "budget", budgetName: "Local Budget", currencyCode: "USD"
+        ), createdAt: timestamp)
+        try await store?.insertAccount(.init(id: "checking", budgetID: "budget", name: "Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 100_00, createdAt: timestamp))
+        try await store?.insertCategoryGroup(.init(id: "needs", budgetID: "budget", name: "Needs", sortOrder: 0))
+        try await store?.insertCategory(.init(id: "food", budgetID: "budget", groupID: "needs", name: "Food", sortOrder: 0))
+        try await store?.insertPayee(.init(id: "market", budgetID: "budget", name: "Market", normalizedName: "market"))
+        try await store?.insertTransaction(.init(
+            id: "purchase", budgetID: "budget", accountID: "checking", payeeID: "market",
+            amountMinor: -1_00, occurredOn: "2026-09-27", createdByUserID: "owner", createdAt: timestamp,
+            splits: [.init(id: "original", categoryID: "food", amountMinor: -1_00)]
+        ))
+
+        try await store?.updateAccount(.init(id: "checking", budgetID: "budget", name: "Daily Checking", kind: "checking", isOnBudget: true, isClosed: false, openingBalanceMinor: 100_00, createdAt: timestamp))
+        try await store?.updateCategoryGroup(.init(id: "needs", budgetID: "budget", name: "Essentials", sortOrder: 4))
+        try await store?.updateCategory(.init(id: "food", budgetID: "budget", groupID: "needs", name: "Groceries", isArchived: false, sortOrder: 2))
+        try await store?.updatePayee(.init(id: "market", budgetID: "budget", name: "Local Market", normalizedName: "local market", defaultCategoryID: "food"))
+        try await store?.replaceTransaction(.init(
+            id: "purchase", budgetID: "budget", accountID: "checking", payeeID: "market",
+            amountMinor: -2_00, occurredOn: "2026-09-28", memo: "Updated", isCleared: true,
+            createdByUserID: "owner", createdAt: timestamp,
+            splits: [.init(id: "replacement", categoryID: "food", amountMinor: -2_00)]
+        ))
+        store = nil
+
+        store = try LocalAuthorityStore(fileURL: databaseURL)
+        var snapshot = try await store!.snapshot(budgetID: "budget")
+        XCTAssertEqual(snapshot.accounts.first?.name, "Daily Checking")
+        XCTAssertEqual(snapshot.accounts.first?.openingBalanceMinor, 100_00, "Metadata edits cannot rewrite opening money")
+        XCTAssertEqual(snapshot.groups.first?.name, "Essentials")
+        XCTAssertEqual(snapshot.categories.first?.name, "Groceries")
+        XCTAssertEqual(snapshot.payees.first?.defaultCategoryID, "food")
+        XCTAssertEqual(snapshot.transactions.first?.amountMinor, -2_00)
+        XCTAssertEqual(snapshot.transactions.first?.splits.map(\.id), ["replacement"])
+        XCTAssertEqual(snapshot.transactions.first?.createdByUserID, "owner", "Edits preserve creator identity")
+
+        try await store?.deleteTransaction(id: "purchase", budgetID: "budget")
+        store = nil
+        let reopened = try LocalAuthorityStore(fileURL: databaseURL)
+        snapshot = try await reopened.snapshot(budgetID: "budget")
+        XCTAssertTrue(snapshot.transactions.isEmpty)
+        try await reopened.integrityCheck()
+    }
+
     private var fixtureStatements: [LocalSQLStatement] {
         let created = LocalSQLiteValue.text("2026-09-27T00:00:00Z")
         return [

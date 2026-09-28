@@ -90,6 +90,13 @@ public actor LocalDatabase {
         try Self.execute(statement.sql, values: statement.values, on: requireHandle())
     }
 
+    @discardableResult
+    public func executeReturningChanges(_ statement: LocalSQLStatement) throws -> Int64 {
+        let database = try requireHandle()
+        try Self.execute(statement.sql, values: statement.values, on: database)
+        return Int64(sqlite3_changes(database))
+    }
+
     public func transaction(_ statements: [LocalSQLStatement]) throws {
         let database = try requireHandle()
         try Self.execute("BEGIN IMMEDIATE", on: database)

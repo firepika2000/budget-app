@@ -165,11 +165,28 @@ public actor LocalAuthorityStore {
         ))
     }
 
+    public func updateAccount(_ value: LocalAccountRecord) async throws {
+        let changes = try await database.executeReturningChanges(.init(
+            "UPDATE accounts SET name=?,kind=?,is_on_budget=?,is_closed=? WHERE id=? AND budget_id=?",
+            values: [.text(value.name), .text(value.kind), .integer(value.isOnBudget ? 1 : 0),
+                     .integer(value.isClosed ? 1 : 0), .text(value.id), .text(value.budgetID)]
+        ))
+        try requireOneChange(changes, record: "account")
+    }
+
     public func insertCategoryGroup(_ value: LocalCategoryGroupRecord) async throws {
         try await database.execute(.init(
             "INSERT INTO category_groups(id,budget_id,name,sort_order,is_archived) VALUES (?,?,?,?,?)",
             values: [.text(value.id), .text(value.budgetID), .text(value.name), .integer(value.sortOrder), .integer(value.isArchived ? 1 : 0)]
         ))
+    }
+
+    public func updateCategoryGroup(_ value: LocalCategoryGroupRecord) async throws {
+        let changes = try await database.executeReturningChanges(.init(
+            "UPDATE category_groups SET name=?,sort_order=?,is_archived=? WHERE id=? AND budget_id=?",
+            values: [.text(value.name), .integer(value.sortOrder), .integer(value.isArchived ? 1 : 0), .text(value.id), .text(value.budgetID)]
+        ))
+        try requireOneChange(changes, record: "category group")
     }
 
     public func insertCategory(_ value: LocalCategoryRecord) async throws {
@@ -179,6 +196,15 @@ public actor LocalAuthorityStore {
         ))
     }
 
+    public func updateCategory(_ value: LocalCategoryRecord) async throws {
+        let changes = try await database.executeReturningChanges(.init(
+            "UPDATE categories SET group_id=?,name=?,delegated_user_id=?,is_archived=?,sort_order=? WHERE id=? AND budget_id=?",
+            values: [.text(value.groupID), .text(value.name), optionalText(value.delegatedUserID),
+                     .integer(value.isArchived ? 1 : 0), .integer(value.sortOrder), .text(value.id), .text(value.budgetID)]
+        ))
+        try requireOneChange(changes, record: "category")
+    }
+
     public func insertPayee(_ value: LocalPayeeRecord) async throws {
         try await database.execute(.init(
             "INSERT INTO payees(id,budget_id,name,normalized_name,default_category_id,is_archived) VALUES (?,?,?,?,?,?)",
@@ -186,32 +212,41 @@ public actor LocalAuthorityStore {
         ))
     }
 
+    public func updatePayee(_ value: LocalPayeeRecord) async throws {
+        let changes = try await database.executeReturningChanges(.init(
+            "UPDATE payees SET name=?,normalized_name=?,default_category_id=?,is_archived=? WHERE id=? AND budget_id=?",
+            values: [.text(value.name), .text(value.normalizedName), optionalText(value.defaultCategoryID),
+                     .integer(value.isArchived ? 1 : 0), .text(value.id), .text(value.budgetID)]
+        ))
+        try requireOneChange(changes, record: "payee")
+    }
+
     public func insertTransaction(_ value: LocalTransactionRecord) async throws {
-        var total: Int64 = 0
-        var splitIDs = Set<String>()
-        for split in value.splits {
-            guard splitIDs.insert(split.id).inserted else {
-                throw LocalStorageError.operationFailed("Transaction split identifiers must be unique")
-            }
-            let (next, overflow) = total.addingReportingOverflow(split.amountMinor)
-            guard !overflow else { throw LocalStorageError.operationFailed("Transaction split total overflow") }
-            total = next
-        }
-        guard total == value.amountMinor else {
-            throw LocalStorageError.operationFailed("Transaction splits must equal the transaction amount")
-        }
-        var statements: [LocalSQLStatement] = [.init(
-            "INSERT INTO transactions(id,budget_id,account_id,payee_id,amount_minor,occurred_on,memo,is_cleared,is_reconciled,status,transfer_id,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            values: [.text(value.id), .text(value.budgetID), .text(value.accountID), optionalText(value.payeeID),
-                     .integer(value.amountMinor), .text(value.occurredOn), .text(value.memo),
-                     .integer(value.isCleared ? 1 : 0), .integer(value.isReconciled ? 1 : 0),
-                     .text(value.status), optionalText(value.transferID), .text(value.createdByUserID), .text(value.createdAt)]
-        )]
-        statements.append(contentsOf: value.splits.map { split in
-            .init("INSERT INTO transaction_splits(id,transaction_id,category_id,amount_minor,memo) VALUES (?,?,?,?,?)",
-                  values: [.text(split.id), .text(value.id), .text(split.categoryID), .integer(split.amountMinor), .text(split.memo)])
-        })
-        try await database.transaction(statements)
+        try validateTransaction(value)
+        try await database.transaction([transactionInsert(value)] + splitInserts(value))
+    }
+
+    public func replaceTransaction(_ value: LocalTransactionRecord) async throws {
+        try validateTransaction(value)
+        let existing = try await database.rows(.init(
+            "SELECT id FROM transactions WHERE id=? AND budget_id=?", values: [.text(value.id), .text(value.budgetID)]
+        ))
+        guard existing.count == 1 else { throw LocalStorageError.operationFailed("Local transaction was not found") }
+        let update = LocalSQLStatement(
+            "UPDATE transactions SET account_id=?,payee_id=?,amount_minor=?,occurred_on=?,memo=?,is_cleared=?,is_reconciled=?,status=?,transfer_id=? WHERE id=? AND budget_id=?",
+            values: [.text(value.accountID), optionalText(value.payeeID), .integer(value.amountMinor),
+                     .text(value.occurredOn), .text(value.memo), .integer(value.isCleared ? 1 : 0),
+                     .integer(value.isReconciled ? 1 : 0), .text(value.status), optionalText(value.transferID),
+                     .text(value.id), .text(value.budgetID)]
+        )
+        try await database.transaction([update, .init("DELETE FROM transaction_splits WHERE transaction_id=?", values: [.text(value.id)])] + splitInserts(value))
+    }
+
+    public func deleteTransaction(id: String, budgetID: String) async throws {
+        let changes = try await database.executeReturningChanges(.init(
+            "DELETE FROM transactions WHERE id=? AND budget_id=?", values: [.text(id), .text(budgetID)]
+        ))
+        try requireOneChange(changes, record: "transaction")
     }
 
     public func snapshot(budgetID: String) async throws -> LocalAuthoritySnapshot {
@@ -270,6 +305,43 @@ public actor LocalAuthorityStore {
             result.append(try .init(id: transactionID, budgetID: text(row, "budget_id"), accountID: text(row, "account_id"), payeeID: optionalText(row, "payee_id"), amountMinor: integer(row, "amount_minor"), occurredOn: text(row, "occurred_on"), memo: text(row, "memo"), isCleared: bool(row, "is_cleared"), isReconciled: bool(row, "is_reconciled"), status: text(row, "status"), transferID: optionalText(row, "transfer_id"), createdByUserID: text(row, "created_by_user_id"), createdAt: text(row, "created_at"), splits: splits))
         }
         return result
+    }
+
+    private func validateTransaction(_ value: LocalTransactionRecord) throws {
+        var total: Int64 = 0
+        var splitIDs = Set<String>()
+        for split in value.splits {
+            guard splitIDs.insert(split.id).inserted else {
+                throw LocalStorageError.operationFailed("Transaction split identifiers must be unique")
+            }
+            let (next, overflow) = total.addingReportingOverflow(split.amountMinor)
+            guard !overflow else { throw LocalStorageError.operationFailed("Transaction split total overflow") }
+            total = next
+        }
+        guard total == value.amountMinor else {
+            throw LocalStorageError.operationFailed("Transaction splits must equal the transaction amount")
+        }
+    }
+
+    private func transactionInsert(_ value: LocalTransactionRecord) -> LocalSQLStatement {
+        .init(
+            "INSERT INTO transactions(id,budget_id,account_id,payee_id,amount_minor,occurred_on,memo,is_cleared,is_reconciled,status,transfer_id,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            values: [.text(value.id), .text(value.budgetID), .text(value.accountID), optionalText(value.payeeID),
+                     .integer(value.amountMinor), .text(value.occurredOn), .text(value.memo),
+                     .integer(value.isCleared ? 1 : 0), .integer(value.isReconciled ? 1 : 0),
+                     .text(value.status), optionalText(value.transferID), .text(value.createdByUserID), .text(value.createdAt)]
+        )
+    }
+
+    private func splitInserts(_ value: LocalTransactionRecord) -> [LocalSQLStatement] {
+        value.splits.map { split in
+            .init("INSERT INTO transaction_splits(id,transaction_id,category_id,amount_minor,memo) VALUES (?,?,?,?,?)",
+                  values: [.text(split.id), .text(value.id), .text(split.categoryID), .integer(split.amountMinor), .text(split.memo)])
+        }
+    }
+
+    private func requireOneChange(_ changes: Int64, record: String) throws {
+        guard changes == 1 else { throw LocalStorageError.operationFailed("Local \(record) was not found") }
     }
 
     private func optionalText(_ value: String?) -> LocalSQLiteValue { value.map(LocalSQLiteValue.text) ?? .null }
