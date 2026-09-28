@@ -83,6 +83,10 @@ final class LocalDatabaseTests: XCTestCase {
             splits: [.init(id: "food", categoryID: "groceries", amountMinor: -10_000),
                      .init(id: "tax", categoryID: "groceries", amountMinor: -2_345)]
         ))
+        try await store?.insertAllocation(.init(id: "allocation", budgetID: "budget", categoryID: "groceries", amountMinor: 50_00, occurredOn: "2026-09-01", kind: "assign", actorUserID: "owner", createdAt: timestamp))
+        try await store?.insertReconciliation(.init(id: "reconciliation", accountID: "checking", statementDate: "2026-09-27", statementBalanceMinor: 9_007_199_254_728_646, createdAt: timestamp))
+        try await store?.upsertTarget(.init(categoryID: "groceries", targetType: "monthly", amountMinor: 60_00, cadence: "monthly", effectiveMonth: "2026-09"))
+        try await store?.upsertSchedule(.init(id: "schedule", budgetID: "budget", accountID: "checking", categoryID: "groceries", payeeID: "market", name: "Weekly market", amountMinor: -12_345, nextDate: "2026-10-04", recurrenceUnit: "weeks", intervalCount: 1))
         try await store?.integrityCheck()
         store = nil
 
@@ -95,6 +99,10 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(snapshot.payees.map(\.name), ["Market"])
         XCTAssertEqual(snapshot.transactions.map(\.amountMinor), [-12_345])
         XCTAssertEqual(snapshot.transactions.first?.splits.map(\.amountMinor), [-10_000, -2_345])
+        XCTAssertEqual(snapshot.allocations.map(\.amountMinor), [50_00])
+        XCTAssertEqual(snapshot.reconciliations.map(\.statementBalanceMinor), [9_007_199_254_728_646])
+        XCTAssertEqual(snapshot.targets.map(\.amountMinor), [60_00])
+        XCTAssertEqual(snapshot.schedules.map(\.amountMinor), [-12_345])
         try await reopened.integrityCheck()
     }
 

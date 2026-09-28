@@ -120,6 +120,58 @@ public struct LocalTransactionRecord: Equatable, Sendable {
     }
 }
 
+public struct LocalAllocationRecord: Equatable, Sendable {
+    public let id: String; public let budgetID: String; public let categoryID: String?
+    public let amountMinor: Int64; public let occurredOn: String; public let kind: String
+    public let actorUserID: String; public let note: String; public let createdAt: String
+    public init(id: String, budgetID: String, categoryID: String?, amountMinor: Int64,
+                occurredOn: String, kind: String, actorUserID: String, note: String = "", createdAt: String) {
+        self.id = id; self.budgetID = budgetID; self.categoryID = categoryID
+        self.amountMinor = amountMinor; self.occurredOn = occurredOn; self.kind = kind
+        self.actorUserID = actorUserID; self.note = note; self.createdAt = createdAt
+    }
+}
+
+public struct LocalReconciliationRecord: Equatable, Sendable {
+    public let id: String; public let accountID: String; public let statementDate: String
+    public let statementBalanceMinor: Int64; public let adjustmentTransactionID: String?
+    public let createdAt: String
+    public init(id: String, accountID: String, statementDate: String, statementBalanceMinor: Int64,
+                adjustmentTransactionID: String? = nil, createdAt: String) {
+        self.id = id; self.accountID = accountID; self.statementDate = statementDate
+        self.statementBalanceMinor = statementBalanceMinor
+        self.adjustmentTransactionID = adjustmentTransactionID; self.createdAt = createdAt
+    }
+}
+
+public struct LocalCategoryTargetRecord: Equatable, Sendable {
+    public let categoryID: String; public let targetType: String; public let amountMinor: Int64
+    public let cadence: String; public let effectiveMonth: String; public let snoozedMonth: String?
+    public init(categoryID: String, targetType: String, amountMinor: Int64, cadence: String,
+                effectiveMonth: String, snoozedMonth: String? = nil) {
+        self.categoryID = categoryID; self.targetType = targetType; self.amountMinor = amountMinor
+        self.cadence = cadence; self.effectiveMonth = effectiveMonth; self.snoozedMonth = snoozedMonth
+    }
+}
+
+public struct LocalScheduleRecord: Equatable, Sendable {
+    public let id: String; public let budgetID: String; public let accountID: String
+    public let destinationAccountID: String?; public let categoryID: String?; public let payeeID: String?
+    public let name: String; public let amountMinor: Int64; public let nextDate: String
+    public let recurrenceUnit: String; public let intervalCount: Int64; public let memo: String
+    public let isActive: Bool
+    public init(id: String, budgetID: String, accountID: String, destinationAccountID: String? = nil,
+                categoryID: String? = nil, payeeID: String? = nil, name: String, amountMinor: Int64,
+                nextDate: String, recurrenceUnit: String, intervalCount: Int64, memo: String = "",
+                isActive: Bool = true) {
+        self.id = id; self.budgetID = budgetID; self.accountID = accountID
+        self.destinationAccountID = destinationAccountID; self.categoryID = categoryID; self.payeeID = payeeID
+        self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate
+        self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.memo = memo
+        self.isActive = isActive
+    }
+}
+
 public struct LocalAuthoritySnapshot: Equatable, Sendable {
     public let identity: LocalAuthorityIdentity
     public let accounts: [LocalAccountRecord]
@@ -127,6 +179,10 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
     public let categories: [LocalCategoryRecord]
     public let payees: [LocalPayeeRecord]
     public let transactions: [LocalTransactionRecord]
+    public let allocations: [LocalAllocationRecord]
+    public let reconciliations: [LocalReconciliationRecord]
+    public let targets: [LocalCategoryTargetRecord]
+    public let schedules: [LocalScheduleRecord]
 }
 
 /// Typed persistence boundary for a single-writer Local Device authority.
@@ -249,6 +305,41 @@ public actor LocalAuthorityStore {
         try requireOneChange(changes, record: "transaction")
     }
 
+    public func insertAllocation(_ value: LocalAllocationRecord) async throws {
+        try await database.execute(.init(
+            "INSERT INTO allocation_operations(id,budget_id,category_id,amount_minor,occurred_on,kind,actor_user_id,note,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            values: [.text(value.id), .text(value.budgetID), optionalText(value.categoryID), .integer(value.amountMinor),
+                     .text(value.occurredOn), .text(value.kind), .text(value.actorUserID), .text(value.note), .text(value.createdAt)]
+        ))
+    }
+
+    public func insertReconciliation(_ value: LocalReconciliationRecord) async throws {
+        try await database.execute(.init(
+            "INSERT INTO reconciliations(id,account_id,statement_date,statement_balance_minor,adjustment_transaction_id,created_at) VALUES (?,?,?,?,?,?)",
+            values: [.text(value.id), .text(value.accountID), .text(value.statementDate),
+                     .integer(value.statementBalanceMinor), optionalText(value.adjustmentTransactionID), .text(value.createdAt)]
+        ))
+    }
+
+    public func upsertTarget(_ value: LocalCategoryTargetRecord) async throws {
+        try await database.execute(.init(
+            "INSERT INTO category_targets(category_id,target_type,amount_minor,cadence,effective_month,snoozed_month) VALUES (?,?,?,?,?,?) ON CONFLICT(category_id) DO UPDATE SET target_type=excluded.target_type,amount_minor=excluded.amount_minor,cadence=excluded.cadence,effective_month=excluded.effective_month,snoozed_month=excluded.snoozed_month",
+            values: [.text(value.categoryID), .text(value.targetType), .integer(value.amountMinor),
+                     .text(value.cadence), .text(value.effectiveMonth), optionalText(value.snoozedMonth)]
+        ))
+    }
+
+    public func upsertSchedule(_ value: LocalScheduleRecord) async throws {
+        guard value.intervalCount > 0 else { throw LocalStorageError.operationFailed("Schedule interval must be positive") }
+        try await database.execute(.init(
+            "INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id,destination_account_id=excluded.destination_account_id,category_id=excluded.category_id,payee_id=excluded.payee_id,name=excluded.name,amount_minor=excluded.amount_minor,next_date=excluded.next_date,recurrence_unit=excluded.recurrence_unit,interval_count=excluded.interval_count,memo=excluded.memo,is_active=excluded.is_active",
+            values: [.text(value.id), .text(value.budgetID), .text(value.accountID), optionalText(value.destinationAccountID),
+                     optionalText(value.categoryID), optionalText(value.payeeID), .text(value.name), .integer(value.amountMinor),
+                     .text(value.nextDate), .text(value.recurrenceUnit), .integer(value.intervalCount), .text(value.memo),
+                     .integer(value.isActive ? 1 : 0)]
+        ))
+    }
+
     public func snapshot(budgetID: String) async throws -> LocalAuthoritySnapshot {
         let identityRows = try await database.rows(.init(
             "SELECT h.id AS household_id,h.name AS household_name,u.id AS owner_user_id,u.display_name AS owner_display_name,b.id AS budget_id,b.name AS budget_name,b.currency_code FROM budgets b JOIN households h ON h.id=b.household_id JOIN memberships m ON m.household_id=h.id AND m.role='owner' AND m.is_active=1 JOIN users u ON u.id=m.user_id WHERE b.id=? ORDER BY u.id LIMIT 1",
@@ -265,7 +356,13 @@ public actor LocalAuthorityStore {
         let categories = try await loadCategories(budgetID: budgetID)
         let payees = try await loadPayees(budgetID: budgetID)
         let transactions = try await loadTransactions(budgetID: budgetID)
-        return .init(identity: identity, accounts: accounts, groups: groups, categories: categories, payees: payees, transactions: transactions)
+        let allocations = try await loadAllocations(budgetID: budgetID)
+        let reconciliations = try await loadReconciliations(accountIDs: Set(accounts.map(\.id)))
+        let targets = try await loadTargets(categoryIDs: Set(categories.map(\.id)))
+        let schedules = try await loadSchedules(budgetID: budgetID)
+        return .init(identity: identity, accounts: accounts, groups: groups, categories: categories,
+                     payees: payees, transactions: transactions, allocations: allocations,
+                     reconciliations: reconciliations, targets: targets, schedules: schedules)
     }
 
     public func integrityCheck() async throws { try await database.integrityCheck() }
@@ -305,6 +402,38 @@ public actor LocalAuthorityStore {
             result.append(try .init(id: transactionID, budgetID: text(row, "budget_id"), accountID: text(row, "account_id"), payeeID: optionalText(row, "payee_id"), amountMinor: integer(row, "amount_minor"), occurredOn: text(row, "occurred_on"), memo: text(row, "memo"), isCleared: bool(row, "is_cleared"), isReconciled: bool(row, "is_reconciled"), status: text(row, "status"), transferID: optionalText(row, "transfer_id"), createdByUserID: text(row, "created_by_user_id"), createdAt: text(row, "created_at"), splits: splits))
         }
         return result
+    }
+
+    private func loadAllocations(budgetID: String) async throws -> [LocalAllocationRecord] {
+        try await database.rows(.init("SELECT * FROM allocation_operations WHERE budget_id=? ORDER BY occurred_on,id", values: [.text(budgetID)])).map {
+            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), categoryID: optionalText($0, "category_id"), amountMinor: integer($0, "amount_minor"), occurredOn: text($0, "occurred_on"), kind: text($0, "kind"), actorUserID: text($0, "actor_user_id"), note: text($0, "note"), createdAt: text($0, "created_at"))
+        }
+    }
+
+    private func loadReconciliations(accountIDs: Set<String>) async throws -> [LocalReconciliationRecord] {
+        guard !accountIDs.isEmpty else { return [] }
+        let rows = try await database.rows(.init("SELECT * FROM reconciliations ORDER BY statement_date,id"))
+        return try rows.compactMap {
+            let accountID = try text($0, "account_id")
+            guard accountIDs.contains(accountID) else { return nil }
+            return try .init(id: text($0, "id"), accountID: accountID, statementDate: text($0, "statement_date"), statementBalanceMinor: integer($0, "statement_balance_minor"), adjustmentTransactionID: optionalText($0, "adjustment_transaction_id"), createdAt: text($0, "created_at"))
+        }
+    }
+
+    private func loadTargets(categoryIDs: Set<String>) async throws -> [LocalCategoryTargetRecord] {
+        guard !categoryIDs.isEmpty else { return [] }
+        let rows = try await database.rows(.init("SELECT * FROM category_targets ORDER BY category_id"))
+        return try rows.compactMap {
+            let categoryID = try text($0, "category_id")
+            guard categoryIDs.contains(categoryID) else { return nil }
+            return try .init(categoryID: categoryID, targetType: text($0, "target_type"), amountMinor: integer($0, "amount_minor"), cadence: text($0, "cadence"), effectiveMonth: text($0, "effective_month"), snoozedMonth: optionalText($0, "snoozed_month"))
+        }
+    }
+
+    private func loadSchedules(budgetID: String) async throws -> [LocalScheduleRecord] {
+        try await database.rows(.init("SELECT * FROM scheduled_transactions WHERE budget_id=? ORDER BY next_date,id", values: [.text(budgetID)])).map {
+            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), accountID: text($0, "account_id"), destinationAccountID: optionalText($0, "destination_account_id"), categoryID: optionalText($0, "category_id"), payeeID: optionalText($0, "payee_id"), name: text($0, "name"), amountMinor: integer($0, "amount_minor"), nextDate: text($0, "next_date"), recurrenceUnit: text($0, "recurrence_unit"), intervalCount: integer($0, "interval_count"), memo: text($0, "memo"), isActive: bool($0, "is_active"))
+        }
     }
 
     private func validateTransaction(_ value: LocalTransactionRecord) throws {
