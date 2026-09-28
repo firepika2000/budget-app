@@ -182,6 +182,8 @@ class LocalServerConfiguration:
             "BUDGET_APP_JWT_SECRET": self.jwt_secret,
             "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY": self.attachment_encryption_key,
             "BUDGET_APP_ATTACHMENT_STORAGE_PATH": str(self.attachment_path),
+            "BUDGET_APP_BACKUP_STATUS_PATH": str(self.backup_status_path),
+            "BUDGET_APP_RECOVERY_STATUS_PATH": str(self.recovery_status_path),
             "BUDGET_APP_ALLOWED_HOSTS": allowed_hosts,
         })
         return value

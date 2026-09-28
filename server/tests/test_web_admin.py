@@ -6,6 +6,8 @@ def test_admin_shell_has_security_headers_and_local_assets(client):
     assert response.headers["referrer-policy"] == "no-referrer"
     assert '<script src="/admin-assets/app.js"' in response.text
     assert '<link rel="stylesheet" href="/admin-assets/styles.css"' in response.text
+    assert 'id="backup-panel"' in response.text
+    assert "Backup & recovery" in response.text
     assert 'id="export-button"' in response.text
     assert 'id="move-money-button"' in response.text
     assert "https://" not in response.text
@@ -16,3 +18,10 @@ def test_admin_assets_are_served_without_exposing_html_entrypoint(client):
     assert client.get("/admin-assets/styles.css").status_code == 200
     assert client.get("/admin-assets/favicon.svg").status_code == 200
     assert client.get("/admin-assets/index.html").status_code == 404
+
+
+def test_admin_backup_panel_uses_owner_scoped_health_contract(client):
+    script = client.get("/admin-assets/app.js").text
+    assert "renderBackupHealth" in script
+    assert "/backup-status`" in script
+    assert "state.selected.effective_permission === \"owner\"" in script

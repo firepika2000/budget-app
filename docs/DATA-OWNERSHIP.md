@@ -83,6 +83,12 @@ the verification time, source-provider kind, source ciphertext SHA-256, database
 and foreign-key result. `backup-status` includes this as `last_restore_verification`, even before the
 new authority has produced its first backup.
 
+When those paths are configured (the personal local server does this automatically), an authenticated
+household owner can see the same sanitized backup and restore-verification state in the web Household
+Console at `/admin`. The contract is deliberately owner-only, returns not-found to non-owners even if
+they manage a budget, bounds metadata size, rejects symlinks/invalid documents, and allowlists response
+fields so credentials or unrelated status-file content cannot leak through the UI.
+
 The same `BUDGET_APP_BACKUP_DESTINATION`, retention, Dropbox, and age recipient/identity settings used
 by shared-server operations apply to `./budget local backup`. Thus a local authority can keep verified
 generations on local/external storage or Dropbox without ever running its SQLite file from the cloud

@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const state = { token: null, refreshToken: null, me: null, budgets: [], selected: null, accounts: [], categories: [], summary: null, requests: [], allowances: [] };
+  const state = { token: null, refreshToken: null, me: null, budgets: [], selected: null, accounts: [], categories: [], summary: null, requests: [], allowances: [], backupStatus: null };
   const $ = (id) => document.getElementById(id);
   const authView = $("auth-view");
   const appView = $("app-view");
@@ -119,8 +119,12 @@
       : [];
     state.allowances = await api(`/budgets/${id}/allowances`);
     renderBudget();
-    if (state.selected.effective_permission === "owner") await renderFamily();
-    else $("family-panel").classList.add("hidden");
+    if (state.selected.effective_permission === "owner") {
+      await Promise.all([renderFamily(), renderBackupHealth()]);
+    } else {
+      $("family-panel").classList.add("hidden");
+      $("backup-panel").classList.add("hidden");
+    }
   }
 
   function renderBudget() {
@@ -264,6 +268,34 @@
       }
       list.append(row);
     });
+  }
+
+  async function renderBackupHealth() {
+    const panel = $("backup-panel");
+    const content = $("backup-health");
+    panel.classList.remove("hidden");
+    try {
+      state.backupStatus = await api(`/budgets/${state.selected.id}/backup-status`);
+      content.replaceChildren();
+      if (!state.backupStatus.configured) {
+        content.append(emptyText("Backup health is not configured for this server."));
+        return;
+      }
+      const backup = state.backupStatus.backup;
+      content.append(labelBlock("Backup", backup.state.replaceAll("_", " ")));
+      if (backup.completed_at) content.append(labelBlock("Last completed", new Date(backup.completed_at).toLocaleString()));
+      if (backup.destination?.destination) content.append(labelBlock("Destination", backup.destination.destination));
+      if (backup.error) content.append(labelBlock("Attention required", backup.error));
+      const recovery = state.backupStatus.last_restore_verification;
+      if (recovery) {
+        content.append(labelBlock("Last restore verified", new Date(recovery.verified_at).toLocaleString()));
+        content.append(labelBlock("Recovery source", recovery.source_provider.replaceAll("_", " ")));
+      } else {
+        content.append(labelBlock("Restore verification", "No verified restore recorded"));
+      }
+    } catch (error) {
+      content.replaceChildren(emptyText(`Backup health unavailable: ${error.message}`));
+    }
   }
 
   $("sign-out").addEventListener("click", async () => {

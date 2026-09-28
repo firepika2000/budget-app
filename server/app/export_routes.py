@@ -1,13 +1,19 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
+import json
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
-from .access import find_visible_budget, has_capability, visible_resource_ids
+from .access import find_visible_budget, has_capability, is_household_owner, visible_resource_ids
+from .config import Settings
 from .database import get_db
 from .dependencies import get_current_user
+from .dependencies import get_settings
 from .models import (
     Account,
     AccountDebtTerms,
@@ -51,6 +57,61 @@ from .portable_data import FORMAT_NAME, FORMAT_VERSION, section_manifest
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
+
+
+def _health_document(path_value: str | None, expected_states: set[str]) -> dict | None:
+    if not path_value:
+        return None
+    configured = Path(path_value).expanduser()
+    if configured.is_symlink():
+        return {"state": "invalid", "message": "Backup health metadata is unreadable"}
+    path = configured.resolve()
+    if not path.exists():
+        return None
+    try:
+        metadata = path.lstat()
+        if not path.is_file() or metadata.st_size > 64 * 1024:
+            raise ValueError
+        value = json.loads(path.read_text())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"state": "invalid", "message": "Backup health metadata is unreadable"}
+    if not isinstance(value, dict) or value.get("state") not in expected_states:
+        return {"state": "invalid", "message": "Backup health metadata is invalid"}
+    allowed = {
+        "state", "archive", "completed_at", "sha256", "size", "destination", "error",
+        "verified_at", "source_provider", "source_archive_sha256", "database_integrity",
+        "foreign_keys",
+    }
+    result = {key: value[key] for key in allowed if key in value}
+    if isinstance(result.get("destination"), dict):
+        destination_allowed = {
+            "destination", "path", "filename", "size", "sha256", "content_hash",
+            "verified_at", "removed_generations",
+        }
+        result["destination"] = {
+            key: result["destination"][key]
+            for key in destination_allowed if key in result["destination"]
+        }
+    return result
+
+
+@router.get("/backup-status")
+def owner_backup_status(
+    budget_id: str,
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+) -> dict:
+    budget = find_visible_budget(db, user, budget_id)
+    if budget is None or not is_household_owner(db, user, budget.household_id):
+        raise HTTPException(status_code=404, detail="Budget not found")
+    backup = _health_document(settings.backup_status_path, {"healthy", "publication_failed"})
+    recovery = _health_document(settings.recovery_status_path, {"verified"})
+    return {
+        "configured": bool(settings.backup_status_path or settings.recovery_status_path),
+        "backup": backup or {"state": "never"},
+        "last_restore_verification": recovery,
+    }
 
 
 def row_data(item) -> dict:

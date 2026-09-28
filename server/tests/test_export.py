@@ -1,5 +1,7 @@
 import csv
+from dataclasses import replace
 from io import StringIO
+import json
 import pytest
 
 from app.models import Household, Payee
@@ -187,3 +189,44 @@ def test_portable_data_manifest_rejects_tampering():
     sections["transactions"][0]["amount_minor"] = -124
     with pytest.raises(ValueError, match="transactions"):
         validate_section_manifest(sections, manifest)
+
+
+def test_backup_health_is_owner_only_bounded_and_sanitized(
+    client, owner_token, session_factory, tmp_path
+):
+    from .test_budgeting_api import create_budget
+    budget = create_budget(client, owner_token, session_factory)
+    backup = tmp_path / "backup-status.json"
+    recovery = tmp_path / "recovery-status.json"
+    backup.write_text(json.dumps({
+        "state": "healthy", "archive": "/private/backup.age", "completed_at": "2026-09-27T12:00:00Z",
+        "sha256": "a" * 64, "size": 123,
+        "destination": {"destination": "dropbox", "path": "/Backups/backup.age", "secret": "must-not-leak"},
+        "unexpected": "must-not-leak",
+    }))
+    recovery.write_text(json.dumps({
+        "state": "verified", "verified_at": "2026-09-27T13:00:00Z",
+        "source_provider": "portable_archive", "source_archive_sha256": "b" * 64,
+        "database_integrity": "ok", "foreign_keys": "ok",
+    }))
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        backup_status_path=str(backup), recovery_status_path=str(recovery),
+    )
+    path = f"/api/v1/budgets/{budget['id']}/backup-status"
+
+    response = client.get(path, headers=auth(owner_token))
+
+    assert response.status_code == 200
+    assert response.json()["backup"]["state"] == "healthy"
+    assert response.json()["backup"]["destination"]["destination"] == "dropbox"
+    assert response.json()["last_restore_verification"]["source_provider"] == "portable_archive"
+    assert "must-not-leak" not in response.text
+
+    child_id, child_token = add_child(session_factory, client)
+    assert client.put(f"/api/v1/budgets/{budget['id']}/grants", headers=auth(owner_token), json={
+        "user_id": child_id, "permission": "manage",
+    }).status_code == 200
+    denied = client.get(path, headers=auth(child_token))
+    assert denied.status_code == 404
+    assert "backup" not in denied.text.lower()
