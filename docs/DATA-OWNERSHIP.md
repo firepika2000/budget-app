@@ -42,8 +42,12 @@ bootstraps the single-owner authority and persists account, category-group, cate
 complete posted-transaction aggregates, payee aliases, allocations, reconciliations, targets,
 recurring schedules, and attachment metadata. Attachment metadata is published only after the caller
 has durably stored the encrypted object and removed only after that object enters a recoverable
-tombstone lifecycle; the encrypted on-device object vault remains part of the application-service
-adapter work. Typed metadata updates plus atomic transaction replacement and deletion preserve immutable
+tombstone lifecycle. `LocalAttachmentVault` now provides the corresponding private object boundary:
+AES-GCM authenticated encryption under a caller-supplied 256-bit key, no-overwrite publication,
+plaintext SHA-256 verification, path-traversal rejection, recoverable detach/restore, and explicit
+retention purge. Key generation and iOS Keychain custody remain application-composition work; the key
+is never stored beside the SQLite database or encrypted objects. Typed metadata updates plus atomic
+transaction replacement and deletion preserve immutable
 opening/creator facts and refuse missing records. Split totals are checked with overflow-safe integer
 math before any write, while balances, activity, reserves, and other accounting consequences remain
 the responsibility of the shared application-service layer.
