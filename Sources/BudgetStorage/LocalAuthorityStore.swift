@@ -81,6 +81,15 @@ public struct LocalPayeeRecord: Equatable, Sendable {
     }
 }
 
+public struct LocalPayeeAliasRecord: Equatable, Sendable {
+    public let id: String; public let payeeID: String; public let displayName: String
+    public let normalizedName: String
+    public init(id: String, payeeID: String, displayName: String, normalizedName: String) {
+        self.id = id; self.payeeID = payeeID; self.displayName = displayName
+        self.normalizedName = normalizedName
+    }
+}
+
 public struct LocalTransactionSplitRecord: Equatable, Sendable {
     public let id: String
     public let categoryID: String
@@ -172,17 +181,31 @@ public struct LocalScheduleRecord: Equatable, Sendable {
     }
 }
 
+public struct LocalAttachmentRecord: Equatable, Sendable {
+    public let id: String; public let transactionID: String; public let filename: String
+    public let contentType: String; public let sizeBytes: Int64; public let sha256: String
+    public let objectName: String; public let createdAt: String
+    public init(id: String, transactionID: String, filename: String, contentType: String,
+                sizeBytes: Int64, sha256: String, objectName: String, createdAt: String) {
+        self.id = id; self.transactionID = transactionID; self.filename = filename
+        self.contentType = contentType; self.sizeBytes = sizeBytes; self.sha256 = sha256
+        self.objectName = objectName; self.createdAt = createdAt
+    }
+}
+
 public struct LocalAuthoritySnapshot: Equatable, Sendable {
     public let identity: LocalAuthorityIdentity
     public let accounts: [LocalAccountRecord]
     public let groups: [LocalCategoryGroupRecord]
     public let categories: [LocalCategoryRecord]
     public let payees: [LocalPayeeRecord]
+    public let payeeAliases: [LocalPayeeAliasRecord]
     public let transactions: [LocalTransactionRecord]
     public let allocations: [LocalAllocationRecord]
     public let reconciliations: [LocalReconciliationRecord]
     public let targets: [LocalCategoryTargetRecord]
     public let schedules: [LocalScheduleRecord]
+    public let attachments: [LocalAttachmentRecord]
 }
 
 /// Typed persistence boundary for a single-writer Local Device authority.
@@ -277,6 +300,20 @@ public actor LocalAuthorityStore {
         try requireOneChange(changes, record: "payee")
     }
 
+    public func insertPayeeAlias(_ value: LocalPayeeAliasRecord) async throws {
+        try await database.execute(.init(
+            "INSERT INTO payee_aliases(id,payee_id,display_name,normalized_name) VALUES (?,?,?,?)",
+            values: [.text(value.id), .text(value.payeeID), .text(value.displayName), .text(value.normalizedName)]
+        ))
+    }
+
+    public func deletePayeeAlias(id: String, payeeID: String) async throws {
+        let changes = try await database.executeReturningChanges(.init(
+            "DELETE FROM payee_aliases WHERE id=? AND payee_id=?", values: [.text(id), .text(payeeID)]
+        ))
+        try requireOneChange(changes, record: "payee alias")
+    }
+
     public func insertTransaction(_ value: LocalTransactionRecord) async throws {
         try validateTransaction(value)
         try await database.transaction([transactionInsert(value)] + splitInserts(value))
@@ -329,6 +366,13 @@ public actor LocalAuthorityStore {
         ))
     }
 
+    public func deleteTarget(categoryID: String) async throws {
+        let changes = try await database.executeReturningChanges(.init(
+            "DELETE FROM category_targets WHERE category_id=?", values: [.text(categoryID)]
+        ))
+        try requireOneChange(changes, record: "category target")
+    }
+
     public func upsertSchedule(_ value: LocalScheduleRecord) async throws {
         guard value.intervalCount > 0 else { throw LocalStorageError.operationFailed("Schedule interval must be positive") }
         try await database.execute(.init(
@@ -338,6 +382,31 @@ public actor LocalAuthorityStore {
                      .text(value.nextDate), .text(value.recurrenceUnit), .integer(value.intervalCount), .text(value.memo),
                      .integer(value.isActive ? 1 : 0)]
         ))
+    }
+
+    public func deleteSchedule(id: String, budgetID: String) async throws {
+        let changes = try await database.executeReturningChanges(.init(
+            "DELETE FROM scheduled_transactions WHERE id=? AND budget_id=?", values: [.text(id), .text(budgetID)]
+        ))
+        try requireOneChange(changes, record: "schedule")
+    }
+
+    /// Records metadata only after the encrypted object has been durably published by the caller.
+    public func insertAttachment(_ value: LocalAttachmentRecord) async throws {
+        guard value.sizeBytes >= 0 else { throw LocalStorageError.operationFailed("Attachment size is invalid") }
+        try await database.execute(.init(
+            "INSERT INTO attachments(id,transaction_id,filename,content_type,size_bytes,sha256,object_name,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            values: [.text(value.id), .text(value.transactionID), .text(value.filename), .text(value.contentType),
+                     .integer(value.sizeBytes), .text(value.sha256), .text(value.objectName), .text(value.createdAt)]
+        ))
+    }
+
+    /// Removes metadata only after the encrypted object has entered the caller's recoverable tombstone lifecycle.
+    public func deleteAttachment(id: String, transactionID: String) async throws {
+        let changes = try await database.executeReturningChanges(.init(
+            "DELETE FROM attachments WHERE id=? AND transaction_id=?", values: [.text(id), .text(transactionID)]
+        ))
+        try requireOneChange(changes, record: "attachment")
     }
 
     public func snapshot(budgetID: String) async throws -> LocalAuthoritySnapshot {
@@ -356,13 +425,16 @@ public actor LocalAuthorityStore {
         let categories = try await loadCategories(budgetID: budgetID)
         let payees = try await loadPayees(budgetID: budgetID)
         let transactions = try await loadTransactions(budgetID: budgetID)
+        let payeeAliases = try await loadPayeeAliases(payeeIDs: Set(payees.map(\.id)))
         let allocations = try await loadAllocations(budgetID: budgetID)
         let reconciliations = try await loadReconciliations(accountIDs: Set(accounts.map(\.id)))
         let targets = try await loadTargets(categoryIDs: Set(categories.map(\.id)))
         let schedules = try await loadSchedules(budgetID: budgetID)
+        let attachments = try await loadAttachments(transactionIDs: Set(transactions.map(\.id)))
         return .init(identity: identity, accounts: accounts, groups: groups, categories: categories,
-                     payees: payees, transactions: transactions, allocations: allocations,
-                     reconciliations: reconciliations, targets: targets, schedules: schedules)
+                     payees: payees, payeeAliases: payeeAliases, transactions: transactions, allocations: allocations,
+                     reconciliations: reconciliations, targets: targets, schedules: schedules,
+                     attachments: attachments)
     }
 
     public func integrityCheck() async throws { try await database.integrityCheck() }
@@ -388,6 +460,16 @@ public actor LocalAuthorityStore {
     private func loadPayees(budgetID: String) async throws -> [LocalPayeeRecord] {
         try await database.rows(.init("SELECT * FROM payees WHERE budget_id=? ORDER BY normalized_name,id", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), name: text($0, "name"), normalizedName: text($0, "normalized_name"), defaultCategoryID: optionalText($0, "default_category_id"), isArchived: bool($0, "is_archived"))
+        }
+    }
+
+    private func loadPayeeAliases(payeeIDs: Set<String>) async throws -> [LocalPayeeAliasRecord] {
+        guard !payeeIDs.isEmpty else { return [] }
+        let rows = try await database.rows(.init("SELECT * FROM payee_aliases ORDER BY normalized_name,id"))
+        return try rows.compactMap {
+            let payeeID = try text($0, "payee_id")
+            guard payeeIDs.contains(payeeID) else { return nil }
+            return try .init(id: text($0, "id"), payeeID: payeeID, displayName: text($0, "display_name"), normalizedName: text($0, "normalized_name"))
         }
     }
 
@@ -433,6 +515,16 @@ public actor LocalAuthorityStore {
     private func loadSchedules(budgetID: String) async throws -> [LocalScheduleRecord] {
         try await database.rows(.init("SELECT * FROM scheduled_transactions WHERE budget_id=? ORDER BY next_date,id", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), accountID: text($0, "account_id"), destinationAccountID: optionalText($0, "destination_account_id"), categoryID: optionalText($0, "category_id"), payeeID: optionalText($0, "payee_id"), name: text($0, "name"), amountMinor: integer($0, "amount_minor"), nextDate: text($0, "next_date"), recurrenceUnit: text($0, "recurrence_unit"), intervalCount: integer($0, "interval_count"), memo: text($0, "memo"), isActive: bool($0, "is_active"))
+        }
+    }
+
+    private func loadAttachments(transactionIDs: Set<String>) async throws -> [LocalAttachmentRecord] {
+        guard !transactionIDs.isEmpty else { return [] }
+        let rows = try await database.rows(.init("SELECT * FROM attachments ORDER BY created_at,id"))
+        return try rows.compactMap {
+            let transactionID = try text($0, "transaction_id")
+            guard transactionIDs.contains(transactionID) else { return nil }
+            return try .init(id: text($0, "id"), transactionID: transactionID, filename: text($0, "filename"), contentType: text($0, "content_type"), sizeBytes: integer($0, "size_bytes"), sha256: text($0, "sha256"), objectName: text($0, "object_name"), createdAt: text($0, "created_at"))
         }
     }
 

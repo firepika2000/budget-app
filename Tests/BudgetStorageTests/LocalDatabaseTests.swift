@@ -76,6 +76,7 @@ final class LocalDatabaseTests: XCTestCase {
         try await store?.insertCategoryGroup(.init(id: "needs", budgetID: "budget", name: "Needs", sortOrder: 0))
         try await store?.insertCategory(.init(id: "groceries", budgetID: "budget", groupID: "needs", name: "Groceries", sortOrder: 0))
         try await store?.insertPayee(.init(id: "market", budgetID: "budget", name: "Market", normalizedName: "market", defaultCategoryID: "groceries"))
+        try await store?.insertPayeeAlias(.init(id: "market-alias", payeeID: "market", displayName: "The Market", normalizedName: "the market"))
         try await store?.insertTransaction(.init(
             id: "purchase", budgetID: "budget", accountID: "checking", payeeID: "market",
             amountMinor: -12_345, occurredOn: "2026-09-27", memo: "Exact purchase",
@@ -87,6 +88,7 @@ final class LocalDatabaseTests: XCTestCase {
         try await store?.insertReconciliation(.init(id: "reconciliation", accountID: "checking", statementDate: "2026-09-27", statementBalanceMinor: 9_007_199_254_728_646, createdAt: timestamp))
         try await store?.upsertTarget(.init(categoryID: "groceries", targetType: "monthly", amountMinor: 60_00, cadence: "monthly", effectiveMonth: "2026-09"))
         try await store?.upsertSchedule(.init(id: "schedule", budgetID: "budget", accountID: "checking", categoryID: "groceries", payeeID: "market", name: "Weekly market", amountMinor: -12_345, nextDate: "2026-10-04", recurrenceUnit: "weeks", intervalCount: 1))
+        try await store?.insertAttachment(.init(id: "receipt", transactionID: "purchase", filename: "receipt.jpg", contentType: "image/jpeg", sizeBytes: 4_096, sha256: String(repeating: "a", count: 64), objectName: "objects/receipt.enc", createdAt: timestamp))
         try await store?.integrityCheck()
         store = nil
 
@@ -97,12 +99,14 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(snapshot.groups.map(\.name), ["Needs"])
         XCTAssertEqual(snapshot.categories.map(\.name), ["Groceries"])
         XCTAssertEqual(snapshot.payees.map(\.name), ["Market"])
+        XCTAssertEqual(snapshot.payeeAliases.map(\.displayName), ["The Market"])
         XCTAssertEqual(snapshot.transactions.map(\.amountMinor), [-12_345])
         XCTAssertEqual(snapshot.transactions.first?.splits.map(\.amountMinor), [-10_000, -2_345])
         XCTAssertEqual(snapshot.allocations.map(\.amountMinor), [50_00])
         XCTAssertEqual(snapshot.reconciliations.map(\.statementBalanceMinor), [9_007_199_254_728_646])
         XCTAssertEqual(snapshot.targets.map(\.amountMinor), [60_00])
         XCTAssertEqual(snapshot.schedules.map(\.amountMinor), [-12_345])
+        XCTAssertEqual(snapshot.attachments.map(\.objectName), ["objects/receipt.enc"])
         try await reopened.integrityCheck()
     }
 
@@ -178,6 +182,35 @@ final class LocalDatabaseTests: XCTestCase {
         snapshot = try await reopened.snapshot(budgetID: "budget")
         XCTAssertTrue(snapshot.transactions.isEmpty)
         try await reopened.integrityCheck()
+    }
+
+    func testTypedAuthorityAuxiliaryLifecycleDeletesOnlyRequestedRecords() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("auxiliary.sqlite")
+        let store = try LocalAuthorityStore(fileURL: databaseURL)
+        let timestamp = "2026-09-30T12:00:00Z"
+        try await store.bootstrap(.init(householdID: "h", householdName: "Household", ownerUserID: "u", ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD"), createdAt: timestamp)
+        try await store.insertAccount(.init(id: "a", budgetID: "b", name: "Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 0, createdAt: timestamp))
+        try await store.insertCategoryGroup(.init(id: "g", budgetID: "b", name: "Needs", sortOrder: 0))
+        try await store.insertCategory(.init(id: "c", budgetID: "b", groupID: "g", name: "Food", sortOrder: 0))
+        try await store.insertPayee(.init(id: "p", budgetID: "b", name: "Market", normalizedName: "market"))
+        try await store.insertPayeeAlias(.init(id: "alias", payeeID: "p", displayName: "Shop", normalizedName: "shop"))
+        try await store.insertTransaction(.init(id: "t", budgetID: "b", accountID: "a", payeeID: "p", amountMinor: -1, occurredOn: "2026-09-30", createdByUserID: "u", createdAt: timestamp, splits: [.init(id: "s", categoryID: "c", amountMinor: -1)]))
+        try await store.insertAttachment(.init(id: "attachment", transactionID: "t", filename: "receipt.png", contentType: "image/png", sizeBytes: 1, sha256: String(repeating: "b", count: 64), objectName: "objects/a.enc", createdAt: timestamp))
+        try await store.upsertTarget(.init(categoryID: "c", targetType: "monthly", amountMinor: 10, cadence: "monthly", effectiveMonth: "2026-09"))
+        try await store.upsertSchedule(.init(id: "schedule", budgetID: "b", accountID: "a", categoryID: "c", name: "Plan", amountMinor: -1, nextDate: "2026-10-01", recurrenceUnit: "months", intervalCount: 1))
+
+        try await store.deleteAttachment(id: "attachment", transactionID: "t")
+        try await store.deletePayeeAlias(id: "alias", payeeID: "p")
+        try await store.deleteTarget(categoryID: "c")
+        try await store.deleteSchedule(id: "schedule", budgetID: "b")
+
+        let snapshot = try await store.snapshot(budgetID: "b")
+        XCTAssertTrue(snapshot.attachments.isEmpty)
+        XCTAssertTrue(snapshot.payeeAliases.isEmpty)
+        XCTAssertTrue(snapshot.targets.isEmpty)
+        XCTAssertTrue(snapshot.schedules.isEmpty)
+        XCTAssertEqual(snapshot.transactions.map(\.id), ["t"])
+        XCTAssertEqual(snapshot.payees.map(\.id), ["p"])
     }
 
     private var fixtureStatements: [LocalSQLStatement] {

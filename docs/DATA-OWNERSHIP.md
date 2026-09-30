@@ -39,8 +39,11 @@ Demo accounting calculations.
 
 `LocalAuthorityStore` now adds the first typed repository boundary above raw SQLite. It atomically
 bootstraps the single-owner authority and persists account, category-group, category, payee, and
-complete posted-transaction aggregates, allocations, reconciliations, targets, and recurring
-schedules. Typed metadata updates plus atomic transaction replacement and deletion preserve immutable
+complete posted-transaction aggregates, payee aliases, allocations, reconciliations, targets,
+recurring schedules, and attachment metadata. Attachment metadata is published only after the caller
+has durably stored the encrypted object and removed only after that object enters a recoverable
+tombstone lifecycle; the encrypted on-device object vault remains part of the application-service
+adapter work. Typed metadata updates plus atomic transaction replacement and deletion preserve immutable
 opening/creator facts and refuse missing records. Split totals are checked with overflow-safe integer
 math before any write, while balances, activity, reserves, and other accounting consequences remain
 the responsibility of the shared application-service layer.
