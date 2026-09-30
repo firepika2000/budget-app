@@ -169,6 +169,20 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testFreshInstallDefaultsDirectlyToDurableLocalWorkspace() {
+        let suite = "LocalFirstShell.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let session = AppSession(defaults: defaults, keychain: InMemoryTokenStore([:]))
+
+        XCTAssertEqual(session.sourceMode, .localDevice)
+        XCTAssertEqual(session.connectionStatus, .localDevice)
+        XCTAssertEqual(session.route, .workspace(.localDevice))
+        XCTAssertNil(session.serverURL)
+        XCTAssertNil(session.token)
+    }
+
+    @MainActor
     func testProductionWorkspaceRebindsCommandsAfterAccessTokenRotation() {
         let budget = APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD")
         let serverURL = URL(string: "https://budget.example.com")!

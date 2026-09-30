@@ -23,7 +23,7 @@ final class LocalDatabaseTests: XCTestCase {
         let transaction = try await reopened.rows(.init("SELECT amount_minor, memo FROM transactions"))
         XCTAssertEqual(transaction.first?["amount_minor"], .integer(-12_345))
         XCTAssertEqual(transaction.first?["memo"], .text("Exact local purchase"))
-        let migration = try await reopened.rows(.init("SELECT version FROM local_schema_migrations"))
+        let migration = try await reopened.rows(.init("SELECT MAX(version) AS version FROM local_schema_migrations"))
         XCTAssertEqual(migration.first?["version"], .integer(Int64(LocalDatabase.schemaVersion)))
         try await reopened.integrityCheck()
     }
@@ -133,6 +133,23 @@ final class LocalDatabaseTests: XCTestCase {
 
         let snapshot = try await store.snapshot(budgetID: "budget")
         XCTAssertTrue(snapshot.transactions.isEmpty)
+    }
+
+    func testLocalSchemaV2PreservesTransactionMetadataAndAllowsUncategorizedIncome() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("metadata.sqlite")
+        let store = try LocalAuthorityStore(fileURL: databaseURL)
+        let timestamp = "2026-09-30T12:00:00Z"
+        try await store.bootstrap(.init(householdID: "h", householdName: "Household", ownerUserID: "u", ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD"), createdAt: timestamp)
+        try await store.insertAccount(.init(id: "a", budgetID: "b", name: "Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 0, createdAt: timestamp))
+        try await store.insertTransaction(.init(id: "income", budgetID: "b", accountID: "a", payeeName: "Employer", amountMinor: 123_45, occurredOn: "2026-09-30", memo: "Payroll", isCleared: true, flag: "Green", tags: ["income", "monthly"], financialClassification: "income", createdByUserID: "u", createdAt: timestamp, splits: []))
+
+        let value = try await store.snapshot(budgetID: "b").transactions.first
+        XCTAssertEqual(value?.payeeName, "Employer")
+        XCTAssertEqual(value?.flag, "Green")
+        XCTAssertEqual(value?.tags, ["income", "monthly"])
+        XCTAssertEqual(value?.financialClassification, "income")
+        XCTAssertEqual(value?.amountMinor, 123_45)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 2)
     }
 
     func testTypedAuthorityStoreUpdateAndDeleteLifecyclePersistsAcrossReopen() async throws {

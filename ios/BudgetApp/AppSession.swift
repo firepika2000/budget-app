@@ -2,19 +2,31 @@ import Foundation
 import BudgetAPI
 
 enum AppDataSourceMode: String, CaseIterable, Identifiable {
+    case localDevice
     case deterministic
     case liveServer
     var id: String { rawValue }
-    var title: String { self == .deterministic ? "Deterministic Demo" : "Live Budget Server" }
+    var title: String {
+        switch self {
+        case .localDevice: "On This iPhone"
+        case .deterministic: "Training & Example"
+        case .liveServer: "Personal Budget Server"
+        }
+    }
 }
 
-enum AppComposition: Equatable { case deterministic, liveServer }
+enum AppComposition: Equatable { case localDevice, deterministic, liveServer }
 
 enum WorkspaceRouteContext: Equatable {
+    case localDevice
     case deterministic
     case live(budget: APIBudget, serverURL: URL, token: String)
     var identity: String {
-        switch self { case .deterministic: "deterministic-workspace"; case let .live(budget, _, _): budget.id }
+        switch self {
+        case .localDevice: "local-device-workspace"
+        case .deterministic: "deterministic-workspace"
+        case let .live(budget, _, _): budget.id
+        }
     }
 }
 
@@ -28,11 +40,12 @@ enum ApplicationRoute: Equatable {
 }
 
 enum ServerConnectionStatus: Equatable {
-    case deterministic, connecting, connected, authenticationRequired, setupRequired
+    case localDevice, deterministic, connecting, connected, authenticationRequired, setupRequired
     case unreachable(String), invalidConfiguration(String)
 
     var title: String {
         switch self {
+        case .localDevice: "Stored safely on this iPhone"
         case .deterministic: "Demo data — not authoritative"
         case .connecting: "Connecting"
         case .connected: "Connected"
@@ -65,7 +78,13 @@ final class AppSession: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var activeBudgetID: String?
 
-    var composition: AppComposition { sourceMode == .deterministic ? .deterministic : .liveServer }
+    var composition: AppComposition {
+        switch sourceMode {
+        case .localDevice: .localDevice
+        case .deterministic: .deterministic
+        case .liveServer: .liveServer
+        }
+    }
     private let defaults: UserDefaults
     private let keychain: TokenStoring
     private let clientFactory: (URL) throws -> APIClient
@@ -111,14 +130,14 @@ final class AppSession: ObservableObject {
         let stored = defaults.string(forKey: sourceModeKey).flatMap(AppDataSourceMode.init(rawValue:))
         #if DEBUG
         let argumentMode: AppDataSourceMode? = ProcessInfo.processInfo.arguments.contains("--live") ? .liveServer : (ProcessInfo.processInfo.arguments.contains("--demo") ? .deterministic : nil)
-        let fallback: AppDataSourceMode = .deterministic
+        let fallback: AppDataSourceMode = .localDevice
         #else
         let argumentMode: AppDataSourceMode? = nil
-        let fallback: AppDataSourceMode = .liveServer
+        let fallback: AppDataSourceMode = .localDevice
         #endif
         let resolvedMode = initialMode ?? argumentMode ?? stored ?? fallback
         sourceMode = resolvedMode
-        connectionStatus = resolvedMode == .deterministic ? .deterministic : .connecting
+        connectionStatus = resolvedMode == .localDevice ? .localDevice : (resolvedMode == .deterministic ? .deterministic : .connecting)
         #if DEBUG
         if suppressLifecycleValidationForUITest {
             sourceMode = .liveServer
@@ -138,6 +157,15 @@ final class AppSession: ObservableObject {
         defaults.set(AppDataSourceMode.deterministic.rawValue, forKey: sourceModeKey)
         sourceMode = .deterministic; connectionStatus = .deterministic; errorMessage = nil
         debugLog("selected data source: deterministic")
+    }
+
+    func selectLocalDevice() {
+        clearCredentials(logoutFrom: serverURL)
+        defaults.set(AppDataSourceMode.localDevice.rawValue, forKey: sourceModeKey)
+        sourceMode = .localDevice
+        connectionStatus = .localDevice
+        errorMessage = nil
+        debugLog("selected data source: localDevice")
     }
 
     func configureServer(_ rawValue: String) async {
@@ -200,7 +228,10 @@ final class AppSession: ObservableObject {
 
     private func performValidateSelectedSource(caller: String) async {
         authLog("validate started", caller: caller)
-        guard sourceMode == .liveServer else { connectionStatus = .deterministic; return }
+        guard sourceMode == .liveServer else {
+            connectionStatus = sourceMode == .localDevice ? .localDevice : .deterministic
+            return
+        }
         guard let serverURL else { connectionStatus = .invalidConfiguration("Enter the address of your Budget Server."); return }
         await configureServer(serverURL.absoluteString)
     }
@@ -261,6 +292,7 @@ final class AppSession: ObservableObject {
     var activeBudget: APIBudget? { budgets.first { $0.id == activeBudgetID } }
 
     var route: ApplicationRoute {
+        if composition == .localDevice { return .workspace(.localDevice) }
         if composition == .deterministic { return .workspace(.deterministic) }
         guard serverURL != nil else { return .serverSetup }
         switch connectionStatus {
@@ -466,6 +498,8 @@ final class AppSession: ObservableObject {
             resolution = "unresolved_multiple_budget_chooser"
         case .budgetSelection:
             resolution = "unresolved_budget_chooser"
+        case .workspace(.localDevice):
+            resolution = "local_device_workspace"
         case .workspace(.deterministic):
             resolution = "deterministic_workspace"
         case .workspace(.live) where budgets.count == 1:
@@ -487,6 +521,7 @@ final class AppSession: ObservableObject {
         case .serverBootstrap: return "serverBootstrap"
         case .authentication: return "authentication"
         case .budgetSelection: return "budgetSelection"
+        case .workspace(.localDevice): return "workspace.localDevice"
         case .workspace(.deterministic): return "workspace.deterministic"
         case .workspace(.live): return "workspace.live"
         }

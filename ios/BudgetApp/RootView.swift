@@ -92,10 +92,10 @@ private struct ServerSetupView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Data Source") {
-                    LabeledContent("Mode", value: "Live Budget Server")
-                    Button("Use Deterministic Demo") { session.selectDeterministic() }
-                    Text("Demo data is temporary and is not your authoritative household database.")
+            Section("Data Source") {
+                    LabeledContent("Mode", value: "On This iPhone")
+                    Button("Start on This iPhone") { session.selectLocalDevice() }
+                    Text("Your budget remains available without a server or internet connection.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Your server") {
@@ -124,6 +124,7 @@ private struct ServerSetupView: View {
 
     private var connectionSymbol: String {
         switch session.connectionStatus {
+        case .localDevice: "iphone"
         case .connected: "checkmark.circle.fill"
         case .connecting: "arrow.triangle.2.circlepath"
         case .authenticationRequired: "person.badge.key"
@@ -137,18 +138,19 @@ private struct ServerSetupView: View {
 struct ServerConnectionSettingsView: View {
     @EnvironmentObject private var session: AppSession
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedMode: AppDataSourceMode = .deterministic
+    @State private var selectedMode: AppDataSourceMode = .localDevice
     @State private var address = "http://127.0.0.1:8000"
 
     var body: some View {
         Form {
             Section("Data Source") {
                 Picker("Mode", selection: $selectedMode) {
-                    ForEach(AppDataSourceMode.allCases) { Text($0.title).tag($0) }
+                    Text(AppDataSourceMode.localDevice.title).tag(AppDataSourceMode.localDevice)
+                    Text(AppDataSourceMode.liveServer.title).tag(AppDataSourceMode.liveServer)
                 }
-                Text(selectedMode == .deterministic
-                     ? "Uses temporary acceptance fixtures. Changes do not belong to your live household and reset on relaunch."
-                     : "Uses the authoritative Budget Server. Changes are sent to that server and persist there.")
+                Text(selectedMode == .localDevice
+                     ? "Your iPhone is the authority. Your budget works without an internet connection and stays private on this device."
+                     : "Move to a server you control for multi-device or household access. Migration and pairing will preserve your local data.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if selectedMode == .liveServer {
@@ -165,11 +167,19 @@ struct ServerConnectionSettingsView: View {
                 if let url = session.serverURL { LabeledContent("Server", value: url.absoluteString) }
             }
             Section {
-                Button(selectedMode == .deterministic ? "Use Deterministic Demo" : "Test and Connect") {
-                    if selectedMode == .deterministic { session.selectDeterministic(); dismiss() }
+                Button(selectedMode == .localDevice ? "Keep Data on This iPhone" : "Test and Connect") {
+                    if selectedMode == .localDevice { session.selectLocalDevice(); dismiss() }
                     else { Task { await session.configureServer(address) } }
                 }
                 .disabled(session.isWorking || (selectedMode == .liveServer && address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+            }
+            Section("Training") {
+                Button("Open Example Budget") {
+                    session.selectDeterministic()
+                    dismiss()
+                }
+                Text("The example is temporary and separate from your real budget. Use it only to learn or explore features.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Server Connection")

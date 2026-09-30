@@ -15,11 +15,11 @@ struct LocalDeviceStoragePaths: Equatable {
     }
 }
 
-/// Native composition boundary for the future Local Device provider.
+/// Native composition boundary for the Local Device provider.
 ///
-/// Constructing this value opens the durable authority and encrypted object store together. It is
-/// deliberately not selectable in the product until a complete `WorkspaceDataSource` adapter can
-/// route every read and mutation through the shared application-service layer.
+/// Constructing this value opens the durable authority and encrypted object store together. The
+/// production workspace adapter routes the same application-service commands used by Live through
+/// this boundary, so local mode is a real authority rather than a renamed demo fixture.
 @MainActor
 struct LocalDeviceStorageComposition {
     let paths: LocalDeviceStoragePaths

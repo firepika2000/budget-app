@@ -1687,6 +1687,39 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalDeviceWorkspacePersistsCanonicalMoneyAndMetadataAcrossReconstruction() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("LocalWorkspace-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let secrets = InMemorySecretDataStore()
+        let keyManager = LocalDeviceKeyManager(store: secrets)
+
+        let first = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: directory, keyManager: keyManager)
+        await first.refresh()
+        XCTAssertTrue(first.accounts.isEmpty)
+        XCTAssertTrue(first.categories.isEmpty)
+        try await first.createAccount(.init(name: "Phone Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 123_456))
+        try await first.createGroup(name: "Everyday")
+        let group = try XCTUnwrap(first.groups.first(where: { $0.name == "Everyday" }))
+        try await first.createCategory(groupID: group.id, newGroupName: "", name: "Groceries", delegatedUserID: nil)
+        let account = try XCTUnwrap(first.accounts.first(where: { $0.name == "Phone Checking" }))
+        let category = try XCTUnwrap(first.categories.first(where: { $0.name == "Groceries" }))
+        try await first.createTransaction(.init(accountID: account.id, categoryID: category.id, amountMinor: -1_234, occurredOn: "2026-09-30", payeeName: "Local Market", memo: "offline purchase", isCleared: true, splits: [], flag: "Orange", tags: ["offline"], attachmentMetadata: []))
+        let expectedBalance = first.accountBalances[account.id]
+
+        let reopened = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: directory, keyManager: keyManager)
+        await reopened.refresh()
+        XCTAssertEqual(reopened.accounts.map(\.name), ["Phone Checking"])
+        XCTAssertEqual(reopened.categories.map(\.name), ["Groceries"])
+        let transaction = try XCTUnwrap(reopened.transactions.first(where: { $0.payeeName == "Local Market" }))
+        XCTAssertEqual(transaction.amountMinor, -1_234)
+        XCTAssertEqual(transaction.memo, "offline purchase")
+        XCTAssertEqual(transaction.flag, "Orange")
+        XCTAssertEqual(transaction.tags, ["offline"])
+        XCTAssertTrue(transaction.isCleared)
+        XCTAssertEqual(reopened.accountBalances[account.id], expectedBalance)
+    }
+
+    @MainActor
     func testVoidAndMakeRecurringUseCanonicalDemoServicesWithoutRewritingOriginal() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

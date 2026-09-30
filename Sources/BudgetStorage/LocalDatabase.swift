@@ -6,11 +6,13 @@ public enum LocalStorageError: Error, Equatable, LocalizedError {
     case operationFailed(String)
     case invalidSnapshot(String)
     case destinationExists
+    case recordNotFound(String)
 
     public var errorDescription: String? {
         switch self {
         case let .openFailed(message), let .operationFailed(message), let .invalidSnapshot(message): message
         case .destinationExists: "The local storage destination already exists."
+        case let .recordNotFound(record): "Local \(record) was not found."
         }
     }
 }
@@ -44,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 1
+    public static let schemaVersion = 2
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -193,6 +195,21 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 2 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV2 { try execute(sql, on: database) }
+                try execute(
+                    "INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)",
+                    values: [.integer(2), .text(Self.timestamp())], on: database
+                )
+                try execute("PRAGMA user_version = 2", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -223,6 +240,18 @@ public actor LocalDatabase {
         "CREATE INDEX idx_splits_transaction ON transaction_splits(transaction_id)",
         "CREATE INDEX idx_allocations_budget_date ON allocation_operations(budget_id,occurred_on,id)",
         "CREATE INDEX idx_schedules_budget_date ON scheduled_transactions(budget_id,next_date,id)"
+    ]
+
+    private static let schemaV2 = [
+        "ALTER TABLE transactions ADD COLUMN payee_name TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE transactions ADD COLUMN flag TEXT",
+        "ALTER TABLE transactions ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE transactions ADD COLUMN financial_classification TEXT",
+        "ALTER TABLE transactions ADD COLUMN void_reason TEXT",
+        "ALTER TABLE transactions ADD COLUMN reversal_of_transaction_id TEXT",
+        "ALTER TABLE transactions ADD COLUMN reversal_transaction_id TEXT",
+        "ALTER TABLE allocation_operations ADD COLUMN operation_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE allocation_operations ADD COLUMN source_category_id TEXT REFERENCES categories(id)"
     ]
 
     private static func execute(

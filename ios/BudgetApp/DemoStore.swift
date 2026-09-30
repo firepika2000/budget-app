@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import BudgetCore
+import BudgetStorage
 
 @MainActor
 final class DemoStore: ObservableObject {
@@ -1057,4 +1058,94 @@ final class DemoStore: ObservableObject {
         .init(id: "schedule-card", accountID: "visa", categoryID: "groceries", name: "Grocery delivery", amount: -12_500, nextDate: "2026-09-05", recurrenceUnit: "weeks"),
         .init(id: "schedule-inactive", accountID: "checking", categoryID: "internet", name: "Old internet plan", amount: -7_900, nextDate: "2026-09-20", recurrenceUnit: "months", isActive: false)
     ]
+}
+
+// MARK: - Provider-neutral local authority bridge
+
+extension DemoStore {
+    /// Rehydrates the same exact-money command engine used by the production workspace from durable
+    /// local facts. No example fixtures or demo personas are installed on this path.
+    func loadLocalAuthority(_ value: LocalAuthoritySnapshot) throws {
+        persona = .rey
+        accounts = value.accounts.map { item in
+            DemoAccount(id: item.id, name: item.name, kind: DemoAccountKind(rawValue: item.kind) ?? (item.isOnBudget ? .checking : .asset), balance: item.openingBalanceMinor, cleared: item.openingBalanceMinor, isOnBudget: item.isOnBudget)
+        }
+        let groupNames = Dictionary(uniqueKeysWithValues: value.groups.map { ($0.id, $0.name) })
+        groupOrder = value.groups.sorted { ($0.sortOrder, $0.id) < ($1.sortOrder, $1.id) }.map(\.name)
+        archivedGroups = Set(value.groups.filter(\.isArchived).map(\.name))
+        categories = value.categories.map { item in
+            let target = value.targets.first { $0.categoryID == item.id }
+            return DemoCategory(id: item.id, group: groupNames[item.groupID] ?? "Categories", name: item.name, icon: "folder.fill", assigned: 0, activity: 0, available: 0, target: target?.amountMinor, targetType: target?.targetType ?? "savings_balance", targetIsActive: true, targetSnoozedMonths: Set([target?.snoozedMonth].compactMap { $0 }), isHidden: item.isArchived)
+        }
+        payees = value.payees.map { item in
+            DemoPayee(id: item.id, name: item.name, isArchived: item.isArchived, defaultCategoryID: item.defaultCategoryID, aliases: value.payeeAliases.filter { $0.payeeID == item.id }.map(\.displayName))
+        }
+        schedules = value.schedules.map { item in
+            DemoSchedule(id: item.id, accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amount: item.amountMinor, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: Int(item.intervalCount), memo: item.memo, isActive: item.isActive)
+        }
+        requests = []; allowances = []; allowanceHistory = []; reserveAttribution = [:]
+        allocationEvents = value.allocations.map { item in
+            AllocationEvent(id: item.id, operationID: item.operationID, occurredOn: item.occurredOn, kind: item.kind, actor: item.actorUserID, note: item.note, sourceCategoryID: item.sourceCategoryID, destinationCategoryID: item.categoryID ?? "", amountMinor: item.amountMinor)
+        }.filter { !$0.destinationCategoryID.isEmpty }
+        allocationVersion = Set(allocationEvents.map(\.operationID)).count
+        transactions = []
+        unassignedMinor = 0
+        fixtureAccountOpening = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0.balance) })
+        fixtureOpening = try .init(month: "2000-01-01", unassignedMinor: 0, categoryAvailable: [:])
+        for item in value.transactions.sorted(by: { ($0.occurredOn, $0.id) < ($1.occurredOn, $1.id) }) {
+            let date = BudgetWorkspaceStore.parseDate(item.occurredOn)
+            let categoryAmounts = Dictionary(uniqueKeysWithValues: item.splits.map { ($0.categoryID, $0.amountMinor) })
+            var transaction = DemoTransaction(id: item.id, date: date, payee: item.payeeName, memo: item.memo, accountID: item.accountID, categoryIDs: item.splits.map(\.categoryID), categoryAmounts: categoryAmounts, amount: item.amountMinor, member: .rey, cleared: item.isCleared, flag: item.flag, attachmentName: value.attachments.first(where: { $0.transactionID == item.id })?.filename, tags: item.tags, financialClassification: item.financialClassification, reconciled: item.isReconciled, transferID: item.transferID, status: item.status, voidReason: item.voidReason, reversalOfTransactionID: item.reversalOfTransactionID, reversalTransactionID: item.reversalTransactionID)
+            if transaction.payee.isEmpty, let payeeID = item.payeeID {
+                transaction.payee = payees.first(where: { $0.id == payeeID })?.name ?? ""
+            }
+            try applyCanonicalTransaction(transaction)
+            transactions.append(transaction)
+        }
+        transactions.sort { ($0.date, $0.id) > ($1.date, $1.id) }
+        for reconciliation in value.reconciliations {
+            if let index = accounts.firstIndex(where: { $0.id == reconciliation.accountID }) {
+                accounts[index].reconciledBalance = reconciliation.statementBalanceMinor
+            }
+        }
+        publishPlanning(try planningSnapshot(month: currentPlanningMonth))
+        errorMessage = nil
+    }
+
+    func localAuthoritySnapshot(identity: LocalAuthorityIdentity, preservingAttachments: [LocalAttachmentRecord] = []) throws -> LocalAuthoritySnapshot {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let groupIDs = Dictionary(uniqueKeysWithValues: groupOrder.enumerated().map { index, name in (name, "local-group-\(index)-\(name.lowercased().filter { $0.isLetter || $0.isNumber })") })
+        let accountRows = accounts.map { item in
+            LocalAccountRecord(id: item.id, budgetID: identity.budgetID, name: item.name, kind: item.kind.rawValue, isOnBudget: item.isOnBudget, openingBalanceMinor: 0, createdAt: stamp)
+        }
+        let groupRows = groupOrder.enumerated().map { index, name in
+            LocalCategoryGroupRecord(id: groupIDs[name]!, budgetID: identity.budgetID, name: name, sortOrder: Int64(index), isArchived: archivedGroups.contains(name))
+        }
+        let categoryRows = categories.enumerated().map { index, item in
+            LocalCategoryRecord(id: item.id, budgetID: identity.budgetID, groupID: groupIDs[item.group]!, name: item.name, delegatedUserID: nil, isArchived: item.isHidden, sortOrder: Int64(index))
+        }
+        let payeeRows = payees.map { item in
+            LocalPayeeRecord(id: item.id, budgetID: identity.budgetID, name: item.name, normalizedName: item.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased(), defaultCategoryID: item.defaultCategoryID, isArchived: item.isArchived)
+        }
+        let aliases = payees.flatMap { payee in payee.aliases.enumerated().map { offset, name in
+            LocalPayeeAliasRecord(id: "\(payee.id)-alias-\(offset)", payeeID: payee.id, displayName: name, normalizedName: name.lowercased())
+        } }
+        let transactionRows = transactions.map { item in
+            let amounts = canonicalCategoryAmounts(for: item)
+            return LocalTransactionRecord(id: item.id, budgetID: identity.budgetID, accountID: item.accountID, payeeID: payees.first(where: { $0.name == item.payee })?.id, payeeName: item.payee, amountMinor: item.amount, occurredOn: BudgetWorkspaceStore.dateString(item.date), memo: item.memo, isCleared: item.cleared, isReconciled: item.reconciled, status: item.status, transferID: item.transferID, flag: item.flag, tags: item.tags, financialClassification: item.financialClassification, voidReason: item.voidReason, reversalOfTransactionID: item.reversalOfTransactionID, reversalTransactionID: item.reversalTransactionID, createdByUserID: identity.ownerUserID, createdAt: stamp, splits: amounts.keys.sorted().map { LocalTransactionSplitRecord(id: "\(item.id)-\($0)", categoryID: $0, amountMinor: amounts[$0]!) })
+        }
+        let allocationRows = allocationEvents.map { item in
+            LocalAllocationRecord(id: item.id, operationID: item.operationID, budgetID: identity.budgetID, sourceCategoryID: item.sourceCategoryID, categoryID: item.destinationCategoryID, amountMinor: item.amountMinor, occurredOn: item.occurredOn, kind: item.kind, actorUserID: identity.ownerUserID, note: item.note, createdAt: stamp)
+        }
+        let reconciliations = accounts.compactMap { item -> LocalReconciliationRecord? in
+            item.reconciledBalance.map { LocalReconciliationRecord(id: "local-reconciliation-\(item.id)", accountID: item.id, statementDate: BudgetWorkspaceStore.dateString(Date()), statementBalanceMinor: $0, createdAt: stamp) }
+        }
+        let targets = categories.compactMap { item -> LocalCategoryTargetRecord? in
+            item.target.map { LocalCategoryTargetRecord(categoryID: item.id, targetType: item.targetType, amountMinor: $0, cadence: "monthly", effectiveMonth: currentPlanningMonth, snoozedMonth: item.targetSnoozedMonths.sorted().last) }
+        }
+        let scheduleRows = schedules.map { item in
+            LocalScheduleRecord(id: item.id, budgetID: identity.budgetID, accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, payeeID: payees.first(where: { $0.name == item.name })?.id, name: item.name, amountMinor: item.amount, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: Int64(item.intervalCount), memo: item.memo, isActive: item.isActive)
+        }
+        return LocalAuthoritySnapshot(identity: identity, accounts: accountRows, groups: groupRows, categories: categoryRows, payees: payeeRows, payeeAliases: aliases, transactions: transactionRows, allocations: allocationRows, reconciliations: reconciliations, targets: targets, schedules: scheduleRows, attachments: preservingAttachments)
+    }
 }

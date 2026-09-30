@@ -106,6 +106,7 @@ public struct LocalTransactionRecord: Equatable, Sendable {
     public let budgetID: String
     public let accountID: String
     public let payeeID: String?
+    public let payeeName: String
     public let amountMinor: Int64
     public let occurredOn: String
     public let memo: String
@@ -113,29 +114,46 @@ public struct LocalTransactionRecord: Equatable, Sendable {
     public let isReconciled: Bool
     public let status: String
     public let transferID: String?
+    public let flag: String?
+    public let tags: [String]
+    public let financialClassification: String?
+    public let voidReason: String?
+    public let reversalOfTransactionID: String?
+    public let reversalTransactionID: String?
     public let createdByUserID: String
     public let createdAt: String
     public let splits: [LocalTransactionSplitRecord]
 
     public init(id: String, budgetID: String, accountID: String, payeeID: String? = nil,
+                payeeName: String = "",
                 amountMinor: Int64, occurredOn: String, memo: String = "", isCleared: Bool = false,
                 isReconciled: Bool = false, status: String = "posted", transferID: String? = nil,
+                flag: String? = nil, tags: [String] = [], financialClassification: String? = nil,
+                voidReason: String? = nil, reversalOfTransactionID: String? = nil,
+                reversalTransactionID: String? = nil,
                 createdByUserID: String, createdAt: String, splits: [LocalTransactionSplitRecord]) {
         self.id = id; self.budgetID = budgetID; self.accountID = accountID; self.payeeID = payeeID
+        self.payeeName = payeeName
         self.amountMinor = amountMinor; self.occurredOn = occurredOn; self.memo = memo
         self.isCleared = isCleared; self.isReconciled = isReconciled; self.status = status
         self.transferID = transferID; self.createdByUserID = createdByUserID
+        self.flag = flag; self.tags = tags; self.financialClassification = financialClassification
+        self.voidReason = voidReason; self.reversalOfTransactionID = reversalOfTransactionID
+        self.reversalTransactionID = reversalTransactionID
         self.createdAt = createdAt; self.splits = splits
     }
 }
 
 public struct LocalAllocationRecord: Equatable, Sendable {
-    public let id: String; public let budgetID: String; public let categoryID: String?
+    public let id: String; public let operationID: String; public let budgetID: String
+    public let sourceCategoryID: String?; public let categoryID: String?
     public let amountMinor: Int64; public let occurredOn: String; public let kind: String
     public let actorUserID: String; public let note: String; public let createdAt: String
-    public init(id: String, budgetID: String, categoryID: String?, amountMinor: Int64,
+    public init(id: String, operationID: String? = nil, budgetID: String,
+                sourceCategoryID: String? = nil, categoryID: String?, amountMinor: Int64,
                 occurredOn: String, kind: String, actorUserID: String, note: String = "", createdAt: String) {
-        self.id = id; self.budgetID = budgetID; self.categoryID = categoryID
+        self.id = id; self.operationID = operationID ?? id; self.budgetID = budgetID
+        self.sourceCategoryID = sourceCategoryID; self.categoryID = categoryID
         self.amountMinor = amountMinor; self.occurredOn = occurredOn; self.kind = kind
         self.actorUserID = actorUserID; self.note = note; self.createdAt = createdAt
     }
@@ -206,6 +224,19 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
     public let targets: [LocalCategoryTargetRecord]
     public let schedules: [LocalScheduleRecord]
     public let attachments: [LocalAttachmentRecord]
+
+    public init(identity: LocalAuthorityIdentity, accounts: [LocalAccountRecord],
+                groups: [LocalCategoryGroupRecord], categories: [LocalCategoryRecord],
+                payees: [LocalPayeeRecord], payeeAliases: [LocalPayeeAliasRecord],
+                transactions: [LocalTransactionRecord], allocations: [LocalAllocationRecord],
+                reconciliations: [LocalReconciliationRecord], targets: [LocalCategoryTargetRecord],
+                schedules: [LocalScheduleRecord], attachments: [LocalAttachmentRecord]) {
+        self.identity = identity; self.accounts = accounts; self.groups = groups
+        self.categories = categories; self.payees = payees; self.payeeAliases = payeeAliases
+        self.transactions = transactions; self.allocations = allocations
+        self.reconciliations = reconciliations; self.targets = targets
+        self.schedules = schedules; self.attachments = attachments
+    }
 }
 
 /// Typed persistence boundary for a single-writer Local Device authority.
@@ -326,10 +357,13 @@ public actor LocalAuthorityStore {
         ))
         guard existing.count == 1 else { throw LocalStorageError.operationFailed("Local transaction was not found") }
         let update = LocalSQLStatement(
-            "UPDATE transactions SET account_id=?,payee_id=?,amount_minor=?,occurred_on=?,memo=?,is_cleared=?,is_reconciled=?,status=?,transfer_id=? WHERE id=? AND budget_id=?",
+            "UPDATE transactions SET account_id=?,payee_id=?,amount_minor=?,occurred_on=?,memo=?,is_cleared=?,is_reconciled=?,status=?,transfer_id=?,payee_name=?,flag=?,tags_json=?,financial_classification=?,void_reason=?,reversal_of_transaction_id=?,reversal_transaction_id=? WHERE id=? AND budget_id=?",
             values: [.text(value.accountID), optionalText(value.payeeID), .integer(value.amountMinor),
                      .text(value.occurredOn), .text(value.memo), .integer(value.isCleared ? 1 : 0),
                      .integer(value.isReconciled ? 1 : 0), .text(value.status), optionalText(value.transferID),
+                     .text(value.payeeName), optionalText(value.flag), .text(json(value.tags)),
+                     optionalText(value.financialClassification), optionalText(value.voidReason),
+                     optionalText(value.reversalOfTransactionID), optionalText(value.reversalTransactionID),
                      .text(value.id), .text(value.budgetID)]
         )
         try await database.transaction([update, .init("DELETE FROM transaction_splits WHERE transaction_id=?", values: [.text(value.id)])] + splitInserts(value))
@@ -344,9 +378,10 @@ public actor LocalAuthorityStore {
 
     public func insertAllocation(_ value: LocalAllocationRecord) async throws {
         try await database.execute(.init(
-            "INSERT INTO allocation_operations(id,budget_id,category_id,amount_minor,occurred_on,kind,actor_user_id,note,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO allocation_operations(id,budget_id,category_id,amount_minor,occurred_on,kind,actor_user_id,note,created_at,operation_id,source_category_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             values: [.text(value.id), .text(value.budgetID), optionalText(value.categoryID), .integer(value.amountMinor),
-                     .text(value.occurredOn), .text(value.kind), .text(value.actorUserID), .text(value.note), .text(value.createdAt)]
+                     .text(value.occurredOn), .text(value.kind), .text(value.actorUserID), .text(value.note), .text(value.createdAt),
+                     .text(value.operationID), optionalText(value.sourceCategoryID)]
         ))
     }
 
@@ -414,7 +449,7 @@ public actor LocalAuthorityStore {
             "SELECT h.id AS household_id,h.name AS household_name,u.id AS owner_user_id,u.display_name AS owner_display_name,b.id AS budget_id,b.name AS budget_name,b.currency_code FROM budgets b JOIN households h ON h.id=b.household_id JOIN memberships m ON m.household_id=h.id AND m.role='owner' AND m.is_active=1 JOIN users u ON u.id=m.user_id WHERE b.id=? ORDER BY u.id LIMIT 1",
             values: [.text(budgetID)]
         ))
-        guard let row = identityRows.first else { throw LocalStorageError.operationFailed("Local budget was not found") }
+        guard let row = identityRows.first else { throw LocalStorageError.recordNotFound("budget") }
         let identity = try LocalAuthorityIdentity(
             householdID: text(row, "household_id"), householdName: text(row, "household_name"),
             ownerUserID: text(row, "owner_user_id"), ownerDisplayName: text(row, "owner_display_name"),
@@ -438,6 +473,60 @@ public actor LocalAuthorityStore {
     }
 
     public func integrityCheck() async throws { try await database.integrityCheck() }
+
+    /// Atomically publishes a complete, already-validated workspace projection. This is the commit
+    /// boundary used by the on-device application-service adapter: readers observe either the old
+    /// authority or the new one, never a partially persisted command.
+    public func replaceWorkspaceState(_ value: LocalAuthoritySnapshot) async throws {
+        for transaction in value.transactions { try validateTransaction(transaction) }
+        let budgetID = value.identity.budgetID
+        var statements: [LocalSQLStatement] = [
+            .init("DELETE FROM attachments WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
+            .init("DELETE FROM reconciliations WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
+            .init("DELETE FROM category_targets WHERE category_id IN (SELECT id FROM categories WHERE budget_id=?)", values: [.text(budgetID)]),
+            .init("DELETE FROM scheduled_transactions WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM transaction_splits WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
+            .init("DELETE FROM transactions WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM allocation_operations WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM payee_aliases WHERE payee_id IN (SELECT id FROM payees WHERE budget_id=?)", values: [.text(budgetID)]),
+            .init("DELETE FROM payees WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM categories WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM category_groups WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM accounts WHERE budget_id=?", values: [.text(budgetID)])
+        ]
+        statements += value.accounts.map { item in
+            .init("INSERT INTO accounts(id,budget_id,name,kind,is_on_budget,is_closed,opening_balance_minor,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.name), .text(item.kind), .integer(item.isOnBudget ? 1 : 0), .integer(item.isClosed ? 1 : 0), .integer(item.openingBalanceMinor), .text(item.createdAt)])
+        }
+        statements += value.groups.map { item in
+            .init("INSERT INTO category_groups(id,budget_id,name,sort_order,is_archived) VALUES (?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.name), .integer(item.sortOrder), .integer(item.isArchived ? 1 : 0)])
+        }
+        statements += value.categories.map { item in
+            .init("INSERT INTO categories(id,budget_id,group_id,name,delegated_user_id,is_archived,sort_order) VALUES (?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.groupID), .text(item.name), optionalText(item.delegatedUserID), .integer(item.isArchived ? 1 : 0), .integer(item.sortOrder)])
+        }
+        statements += value.payees.map { item in
+            .init("INSERT INTO payees(id,budget_id,name,normalized_name,default_category_id,is_archived) VALUES (?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.name), .text(item.normalizedName), optionalText(item.defaultCategoryID), .integer(item.isArchived ? 1 : 0)])
+        }
+        statements += value.payeeAliases.map { item in
+            .init("INSERT INTO payee_aliases(id,payee_id,display_name,normalized_name) VALUES (?,?,?,?)", values: [.text(item.id), .text(item.payeeID), .text(item.displayName), .text(item.normalizedName)])
+        }
+        for item in value.transactions { statements += [transactionInsert(item)] + splitInserts(item) }
+        statements += value.allocations.map { item in
+            .init("INSERT INTO allocation_operations(id,budget_id,category_id,amount_minor,occurred_on,kind,actor_user_id,note,created_at,operation_id,source_category_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), optionalText(item.categoryID), .integer(item.amountMinor), .text(item.occurredOn), .text(item.kind), .text(item.actorUserID), .text(item.note), .text(item.createdAt), .text(item.operationID), optionalText(item.sourceCategoryID)])
+        }
+        statements += value.reconciliations.map { item in
+            .init("INSERT INTO reconciliations(id,account_id,statement_date,statement_balance_minor,adjustment_transaction_id,created_at) VALUES (?,?,?,?,?,?)", values: [.text(item.id), .text(item.accountID), .text(item.statementDate), .integer(item.statementBalanceMinor), optionalText(item.adjustmentTransactionID), .text(item.createdAt)])
+        }
+        statements += value.targets.map { item in
+            .init("INSERT INTO category_targets(category_id,target_type,amount_minor,cadence,effective_month,snoozed_month) VALUES (?,?,?,?,?,?)", values: [.text(item.categoryID), .text(item.targetType), .integer(item.amountMinor), .text(item.cadence), .text(item.effectiveMonth), optionalText(item.snoozedMonth)])
+        }
+        statements += value.schedules.map { item in
+            .init("INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), optionalText(item.destinationAccountID), optionalText(item.categoryID), optionalText(item.payeeID), .text(item.name), .integer(item.amountMinor), .text(item.nextDate), .text(item.recurrenceUnit), .integer(item.intervalCount), .text(item.memo), .integer(item.isActive ? 1 : 0)])
+        }
+        statements += value.attachments.map { item in
+            .init("INSERT INTO attachments(id,transaction_id,filename,content_type,size_bytes,sha256,object_name,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.transactionID), .text(item.filename), .text(item.contentType), .integer(item.sizeBytes), .text(item.sha256), .text(item.objectName), .text(item.createdAt)])
+        }
+        try await database.transaction(statements)
+    }
 
     private func loadAccounts(budgetID: String) async throws -> [LocalAccountRecord] {
         try await database.rows(.init("SELECT * FROM accounts WHERE budget_id=? ORDER BY created_at,id", values: [.text(budgetID)])).map {
@@ -481,14 +570,14 @@ public actor LocalAuthorityStore {
             let splits = try await database.rows(.init("SELECT * FROM transaction_splits WHERE transaction_id=? ORDER BY id", values: [.text(transactionID)])).map {
                 try LocalTransactionSplitRecord(id: text($0, "id"), categoryID: text($0, "category_id"), amountMinor: integer($0, "amount_minor"), memo: text($0, "memo"))
             }
-            result.append(try .init(id: transactionID, budgetID: text(row, "budget_id"), accountID: text(row, "account_id"), payeeID: optionalText(row, "payee_id"), amountMinor: integer(row, "amount_minor"), occurredOn: text(row, "occurred_on"), memo: text(row, "memo"), isCleared: bool(row, "is_cleared"), isReconciled: bool(row, "is_reconciled"), status: text(row, "status"), transferID: optionalText(row, "transfer_id"), createdByUserID: text(row, "created_by_user_id"), createdAt: text(row, "created_at"), splits: splits))
+            result.append(try .init(id: transactionID, budgetID: text(row, "budget_id"), accountID: text(row, "account_id"), payeeID: optionalText(row, "payee_id"), payeeName: text(row, "payee_name"), amountMinor: integer(row, "amount_minor"), occurredOn: text(row, "occurred_on"), memo: text(row, "memo"), isCleared: bool(row, "is_cleared"), isReconciled: bool(row, "is_reconciled"), status: text(row, "status"), transferID: optionalText(row, "transfer_id"), flag: optionalText(row, "flag"), tags: stringArray(row, "tags_json"), financialClassification: optionalText(row, "financial_classification"), voidReason: optionalText(row, "void_reason"), reversalOfTransactionID: optionalText(row, "reversal_of_transaction_id"), reversalTransactionID: optionalText(row, "reversal_transaction_id"), createdByUserID: text(row, "created_by_user_id"), createdAt: text(row, "created_at"), splits: splits))
         }
         return result
     }
 
     private func loadAllocations(budgetID: String) async throws -> [LocalAllocationRecord] {
         try await database.rows(.init("SELECT * FROM allocation_operations WHERE budget_id=? ORDER BY occurred_on,id", values: [.text(budgetID)])).map {
-            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), categoryID: optionalText($0, "category_id"), amountMinor: integer($0, "amount_minor"), occurredOn: text($0, "occurred_on"), kind: text($0, "kind"), actorUserID: text($0, "actor_user_id"), note: text($0, "note"), createdAt: text($0, "created_at"))
+            try .init(id: text($0, "id"), operationID: text($0, "operation_id"), budgetID: text($0, "budget_id"), sourceCategoryID: optionalText($0, "source_category_id"), categoryID: optionalText($0, "category_id"), amountMinor: integer($0, "amount_minor"), occurredOn: text($0, "occurred_on"), kind: text($0, "kind"), actorUserID: text($0, "actor_user_id"), note: text($0, "note"), createdAt: text($0, "created_at"))
         }
     }
 
@@ -539,18 +628,21 @@ public actor LocalAuthorityStore {
             guard !overflow else { throw LocalStorageError.operationFailed("Transaction split total overflow") }
             total = next
         }
-        guard total == value.amountMinor else {
+        guard value.splits.isEmpty || total == value.amountMinor else {
             throw LocalStorageError.operationFailed("Transaction splits must equal the transaction amount")
         }
     }
 
     private func transactionInsert(_ value: LocalTransactionRecord) -> LocalSQLStatement {
         .init(
-            "INSERT INTO transactions(id,budget_id,account_id,payee_id,amount_minor,occurred_on,memo,is_cleared,is_reconciled,status,transfer_id,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO transactions(id,budget_id,account_id,payee_id,amount_minor,occurred_on,memo,is_cleared,is_reconciled,status,transfer_id,created_by_user_id,created_at,payee_name,flag,tags_json,financial_classification,void_reason,reversal_of_transaction_id,reversal_transaction_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             values: [.text(value.id), .text(value.budgetID), .text(value.accountID), optionalText(value.payeeID),
                      .integer(value.amountMinor), .text(value.occurredOn), .text(value.memo),
                      .integer(value.isCleared ? 1 : 0), .integer(value.isReconciled ? 1 : 0),
-                     .text(value.status), optionalText(value.transferID), .text(value.createdByUserID), .text(value.createdAt)]
+                     .text(value.status), optionalText(value.transferID), .text(value.createdByUserID), .text(value.createdAt),
+                     .text(value.payeeName), optionalText(value.flag), .text(json(value.tags)),
+                     optionalText(value.financialClassification), optionalText(value.voidReason),
+                     optionalText(value.reversalOfTransactionID), optionalText(value.reversalTransactionID)]
         )
     }
 
@@ -566,6 +658,14 @@ public actor LocalAuthorityStore {
     }
 
     private func optionalText(_ value: String?) -> LocalSQLiteValue { value.map(LocalSQLiteValue.text) ?? .null }
+    private func json(_ values: [String]) -> String {
+        guard let data = try? JSONEncoder().encode(values) else { return "[]" }
+        return String(decoding: data, as: UTF8.self)
+    }
+    private func stringArray(_ row: LocalSQLiteRow, _ key: String) -> [String] {
+        guard case let .text(value)? = row[key], let data = value.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+    }
     private func text(_ row: LocalSQLiteRow, _ key: String) throws -> String {
         guard case let .text(value)? = row[key] else { throw LocalStorageError.operationFailed("Invalid local value for \(key)") }
         return value

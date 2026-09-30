@@ -1,5 +1,6 @@
 import BudgetAPI
 import BudgetCore
+import BudgetStorage
 import SwiftUI
 import Charts
 import UniformTypeIdentifiers
@@ -390,6 +391,10 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var accessEventRecords: [AccessEventRecord] = []
     private var removedMembers: Set<DemoPersona> = []
     private var membershipVersions: [DemoPersona: Int] = [:]
+    private let localAuthority: LocalAuthorityStore?
+    private let localAttachmentVault: LocalAttachmentVault?
+    fileprivate let localIdentity: LocalAuthorityIdentity?
+    private var localAuthorityLoaded = false
 
     private func requireActiveMembership() throws {
         guard !removedMembers.contains(demo.persona) else {
@@ -398,8 +403,19 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     }
     let budget: APIBudget
 
-    init(fresh: Bool = false, cashRolloverPolicies: [CashRolloverProjection.Change] = [], now: @escaping () -> Date = Date.init) {
+    init(
+        fresh: Bool = false,
+        cashRolloverPolicies: [CashRolloverProjection.Change] = [],
+        budgetOverride: APIBudget? = nil,
+        localAuthority: LocalAuthorityStore? = nil,
+        localAttachmentVault: LocalAttachmentVault? = nil,
+        localIdentity: LocalAuthorityIdentity? = nil,
+        now: @escaping () -> Date = Date.init
+    ) {
         self.now = now
+        self.localAuthority = localAuthority
+        self.localAttachmentVault = localAttachmentVault
+        self.localIdentity = localIdentity
         let store = DemoStore(fresh: fresh || ProcessInfo.processInfo.arguments.contains("--demo-fresh-budget"), cashRolloverPolicies: cashRolloverPolicies)
         // Adversarial production-composition fixture: valid per-target amounts whose sum overflows.
         if ProcessInfo.processInfo.arguments.contains("--demo-plan-cost-overflow") {
@@ -416,7 +432,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         demo = store
         attachmentData["t1"] = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
         let restricted = store.persona.isChild
-        budget = APIBudget(
+        budget = budgetOverride ?? APIBudget(
             id: "demo-budget", householdID: "demo-household", name: "Rivera Household", currencyCode: "USD",
             effectivePermission: store.persona == .rey ? .owner : (restricted ? .contribute : .manage),
             capabilities: restricted ? Self.delegatedCapabilities : nil
@@ -426,7 +442,9 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         debtTermsValues["auto"] = .init(termsType: "installment_loan", annualRateBasisPoints: 625, rateType: "fixed", paymentFrequency: "monthly", scheduledPaymentMinor: 41200, dueDay: 1)
     }
 
-    func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot { try requireActiveMembership();
+    func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
+        try requireActiveMembership()
+        try await synchronizeLocalAuthority()
         let planningPoints = try planPerformancePoints(start: report.start, end: report.end)
         let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"
         let plan = try demo.planningSnapshot(month: month)
@@ -686,6 +704,26 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
              "splits": plan.splits.map { ["destination_category_id": $0.0, "amount_minor": $0.1] as [String: Any] }] as [String: Any]
         })
         return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: allowanceRows, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: demoForecast, members: members, delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
+    }
+
+    private func synchronizeLocalAuthority() async throws {
+        guard let localAuthority, let localIdentity else { return }
+        if !localAuthorityLoaded {
+            let value: LocalAuthoritySnapshot
+            do {
+                value = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
+            } catch LocalStorageError.recordNotFound("budget") {
+                try await localAuthority.bootstrap(localIdentity, createdAt: ISO8601DateFormatter().string(from: now()))
+                value = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
+            }
+            try demo.loadLocalAuthority(value)
+            localAuthorityLoaded = true
+            return
+        }
+        let previous = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
+        let value = try demo.localAuthoritySnapshot(identity: localIdentity, preservingAttachments: previous.attachments)
+        try await localAuthority.replaceWorkspaceState(value)
+        try await localAuthority.integrityCheck()
     }
 
     private func transactionRows(categoryIDs: Set<String>) throws -> [APITransaction] {
@@ -1309,6 +1347,13 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return transaction
     }
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try requireActiveMembership();
+        if let localAuthority, let localIdentity {
+            _ = try attachmentTransaction(id: id)
+            let rows = try await localAuthority.snapshot(budgetID: localIdentity.budgetID).attachments.filter { $0.transactionID == id }
+            return try rows.map { item in
+                try decode(["id": item.id, "transaction_id": item.transactionID, "filename": item.filename, "content_type": item.contentType, "byte_count": item.sizeBytes, "sha256": item.sha256, "created_at": item.createdAt, "detached_at": NSNull()] as [String: Any])
+            }
+        }
         let transaction = try attachmentTransaction(id: id)
         guard let name = transaction.attachmentName else { return [] }
         let data = attachmentData[id] ?? Data()
@@ -1319,11 +1364,28 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let transaction = try attachmentTransaction(id: id, editing: true)
         guard transaction.status != "reversal" else { throw APIClientError.server(status: 409, message: "Attach supporting documents to the original transaction") }
         guard let index = demo.transactions.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found") }
+        if let localAuthority, let localAttachmentVault {
+            let stored = try await localAttachmentVault.store(data)
+            do {
+                try await localAuthority.insertAttachment(.init(id: UUID().uuidString, transactionID: id, filename: filename, contentType: contentType, sizeBytes: stored.plaintextSize, sha256: stored.plaintextSHA256, objectName: stored.objectName, createdAt: ISO8601DateFormatter().string(from: now())))
+            } catch {
+                _ = try? await localAttachmentVault.tombstone(objectName: stored.objectName)
+                throw error
+            }
+            demo.transactions[index].attachmentName = filename
+            return
+        }
         demo.transactions[index].attachmentName = filename
         attachmentData[id] = data
     }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try requireActiveMembership();
         let transaction = try attachmentTransaction(id: transactionID)
+        if let localAuthority, let localAttachmentVault, let localIdentity {
+            guard let item = try await localAuthority.snapshot(budgetID: localIdentity.budgetID).attachments.first(where: { $0.id == attachmentID && $0.transactionID == transactionID }) else {
+                throw APIClientError.server(status: 404, message: "Attachment not found")
+            }
+            return try await localAttachmentVault.data(objectName: item.objectName, expectedSHA256: item.sha256)
+        }
         guard transaction.attachmentName != nil, attachmentID == "demo-attachment-\(transactionID)" else {
             throw APIClientError.server(status: 404, message: "Attachment not found")
         }
@@ -1332,6 +1394,18 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try requireActiveMembership();
         let transaction = try attachmentTransaction(id: transactionID, editing: true)
+        if let localAuthority, let localAttachmentVault, let localIdentity {
+            let snapshot = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
+            guard let item = snapshot.attachments.first(where: { $0.id == attachmentID && $0.transactionID == transactionID }) else {
+                throw APIClientError.server(status: 404, message: "Attachment not found")
+            }
+            _ = try await localAttachmentVault.tombstone(objectName: item.objectName)
+            try await localAuthority.deleteAttachment(id: item.id, transactionID: transactionID)
+            if let index = demo.transactions.firstIndex(where: { $0.id == transactionID }) {
+                demo.transactions[index].attachmentName = snapshot.attachments.first(where: { $0.transactionID == transactionID && $0.id != attachmentID })?.filename
+            }
+            return
+        }
         guard transaction.attachmentName != nil, attachmentID == "demo-attachment-\(transactionID)" else {
             throw APIClientError.server(status: 404, message: "Attachment not found")
         }
@@ -1997,7 +2071,48 @@ final class BudgetWorkspaceStore: ObservableObject {
         configurePrivacy(userID: "deterministic-demo-user")
     }
     static func demo(fresh: Bool = false) -> BudgetWorkspaceStore { BudgetWorkspaceStore(dataSource: DemoWorkspaceDataSource(fresh: fresh)) }
+    static func localDevice(
+        fileManager: FileManager = .default,
+        applicationSupportDirectory: URL? = nil,
+        keyManager: LocalDeviceKeyManager? = nil
+    ) -> BudgetWorkspaceStore {
+        let identity = LocalAuthorityIdentity(
+            householdID: "local-device-household",
+            householdName: "My Household",
+            ownerUserID: "local-device-owner",
+            ownerDisplayName: "You",
+            budgetID: "local-device-budget",
+            budgetName: "My Budget",
+            currencyCode: Locale.current.currency?.identifier ?? "USD"
+        )
+        let budget = APIBudget(
+            id: identity.budgetID,
+            householdID: identity.householdID,
+            name: identity.budgetName,
+            currencyCode: identity.currencyCode,
+            effectivePermission: .owner
+        )
+        let source: DemoWorkspaceDataSource
+        do {
+            let composition: LocalDeviceStorageComposition
+            if let applicationSupportDirectory {
+                composition = try LocalDeviceStorageComposition(applicationSupportDirectory: applicationSupportDirectory, keyManager: keyManager ?? LocalDeviceKeyManager())
+            } else {
+                composition = try LocalDeviceStorageComposition.production(fileManager: fileManager)
+            }
+            source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget, localAuthority: composition.authority, localAttachmentVault: composition.attachments, localIdentity: identity)
+        } catch {
+            source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget)
+        }
+        let store = BudgetWorkspaceStore(dataSource: source)
+        if source.localIdentity == nil {
+            store.errorMessage = "Local storage could not be opened. Changes will not be accepted until the device storage is available."
+        }
+        store.configurePrivacy(userID: "local-device-owner")
+        return store
+    }
     static func production(context: WorkspaceRouteContext, clientFactory: @escaping (URL) throws -> APIClient = { try APIClient(baseURL: $0) }) -> BudgetWorkspaceStore {
+        if case .localDevice = context { return .localDevice() }
         guard case let .live(budget, serverURL, token) = context else { return .demo() }
         let source = LiveWorkspaceDataSource(budget: budget, serverURL: serverURL, token: token, clientFactory: clientFactory)
         let store = BudgetWorkspaceStore(budget: source.budget)
@@ -2786,7 +2901,7 @@ private struct WorkspaceProfileView: View {
         NavigationStack {
             Form {
                 Section("Profile") {
-                    LabeledContent("User", value: session.profile?.displayName ?? "Demo household owner")
+                    LabeledContent("User", value: session.profile?.displayName ?? (session.sourceMode == .localDevice ? "You" : "Demo household owner"))
                     LabeledContent("Active budget", value: store.budget.name)
                 }
                 Section("Help & Education") {
