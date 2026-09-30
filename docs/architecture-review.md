@@ -100,7 +100,8 @@ flowchart LR
 
 - CSV exists, but a structured JSON portability export is still missing.
 - Backup scheduling remains an owner/host responsibility.
-- The iPhone app has no offline read cache yet.
+- Authoritative on-device personal mode is durable and offline. Server-backed households still need
+  an authorized read cache and operation-specific offline conflict/outbox design.
 - Docker and PostgreSQL are verified in CI, but physical-phone signing and final-host restore testing necessarily remain owner acceptance tasks.
 
 ## Target architecture

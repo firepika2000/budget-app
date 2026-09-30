@@ -129,7 +129,7 @@ final class AppSession: ObservableObject {
         activeBudgetID = defaults.string(forKey: activeBudgetKey)
         let stored = defaults.string(forKey: sourceModeKey).flatMap(AppDataSourceMode.init(rawValue:))
         #if DEBUG
-        let argumentMode: AppDataSourceMode? = ProcessInfo.processInfo.arguments.contains("--live") ? .liveServer : (ProcessInfo.processInfo.arguments.contains("--demo") ? .deterministic : nil)
+        let argumentMode: AppDataSourceMode? = ProcessInfo.processInfo.arguments.contains("--local") ? .localDevice : (ProcessInfo.processInfo.arguments.contains("--live") ? .liveServer : (ProcessInfo.processInfo.arguments.contains("--demo") ? .deterministic : nil))
         let fallback: AppDataSourceMode = .localDevice
         #else
         let argumentMode: AppDataSourceMode? = nil

@@ -96,7 +96,7 @@ Status meanings:
 | Recurring allowances with splits | IMPLEMENTED | Weekly/monthly, rollover/use-it-or-lose-it, explicit issuance. |
 | Hide Amounts | FUTURE | The former demo-only toggle was removed pending persistent shared preference support. |
 | Export | IMPLEMENTED | Scoped, formula-safe CSV and audit JSON. |
-| Offline behavior | PARTIALLY IMPLEMENTED | Deterministic on-device demo works offline; live mutation queue/sync is future. |
+| Offline behavior | PARTIALLY IMPLEMENTED | Authoritative on-device personal mode works fully offline with durable exact-money state and encrypted attachments. Server-backed offline cache/outbox and conflict resolution remain future work. |
 | Widgets | FUTURE | Not part of v0.4.0. |
 | Accessibility | PARTIALLY IMPLEMENTED | Dynamic Type/native controls, semantic grouping, non-color status labels, VoiceOver labels, chart summaries; formal assistive-technology audit remains. |
 | Light/Dark Mode | IMPLEMENTED | System-native appearance verified in Simulator. |

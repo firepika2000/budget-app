@@ -394,9 +394,11 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private let localAuthority: LocalAuthorityStore?
     private let localAttachmentVault: LocalAttachmentVault?
     fileprivate let localIdentity: LocalAuthorityIdentity?
+    private let storageUnavailableMessage: String?
     private var localAuthorityLoaded = false
 
     private func requireActiveMembership() throws {
+        if let storageUnavailableMessage { throw workspaceRepositoryError(storageUnavailableMessage) }
         guard !removedMembers.contains(demo.persona) else {
             throw APIClientError.server(status: 403, message: "Your access to this household has been removed.")
         }
@@ -410,12 +412,14 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         localAuthority: LocalAuthorityStore? = nil,
         localAttachmentVault: LocalAttachmentVault? = nil,
         localIdentity: LocalAuthorityIdentity? = nil,
+        storageUnavailableMessage: String? = nil,
         now: @escaping () -> Date = Date.init
     ) {
         self.now = now
         self.localAuthority = localAuthority
         self.localAttachmentVault = localAttachmentVault
         self.localIdentity = localIdentity
+        self.storageUnavailableMessage = storageUnavailableMessage
         let store = DemoStore(fresh: fresh || ProcessInfo.processInfo.arguments.contains("--demo-fresh-budget"), cashRolloverPolicies: cashRolloverPolicies)
         // Adversarial production-composition fixture: valid per-target amounts whose sum overflows.
         if ProcessInfo.processInfo.arguments.contains("--demo-plan-cost-overflow") {
@@ -693,10 +697,17 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let scheduledOutflows = try difference(0, Money.sumMinorUnits(demoForecast.occurrences.filter { $0.destinationAccountID == nil && $0.amountMinor < 0 }.map(\.amountMinor)))
         let cashIDs = Set(visibleAccounts.filter { $0.isOnBudget && ["checking", "savings", "cash"].contains($0.kind.rawValue) }.map(\.id))
         let resilience: APIResilienceReport = try decode(["as_of": demoForecast.asOf, "through": demoForecast.through, "currency_code": budget.currencyCode, "cash_buffer_minor": Money.sumMinorUnits(demoForecast.accounts.filter { cashIDs.contains($0.accountID) }.map(\.actualBalanceMinor)), "current_on_budget_minor": demoForecast.actualTotalOnBudgetMinor, "projected_on_budget_minor": demoForecast.projectedTotalOnBudgetMinor, "lowest_projected_on_budget_minor": demoForecast.lowestProjectedTotalMinor, "scheduled_income_minor": scheduledIncome, "scheduled_outflows_minor": scheduledOutflows, "expected_margin_minor": difference(scheduledIncome, scheduledOutflows), "essential_expense_coverage_days": NSNull(), "emergency_fund_coverage_days": NSNull(), "unavailable_metrics": ["essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.", "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification."]])
-        let members: [APIHouseholdMember] = try decode(DemoPersona.allCases.map { persona in
-            ["user_id": persona == .rey ? "demo-owner" : persona.rawValue.lowercased(), "email": "\(persona.rawValue.lowercased())@example.test",
-             "display_name": "\(persona.rawValue) Rivera", "role": persona == .rey ? "owner" : persona.isChild ? "child" : "adult", "is_active": !removedMembers.contains(persona), "authorization_version": membershipVersions[persona] ?? 1] as [String: Any]
-        })
+        let memberPayload: [[String: Any]]
+        if let localIdentity {
+            memberPayload = [["user_id": localIdentity.ownerUserID, "email": "", "display_name": localIdentity.ownerDisplayName,
+                              "role": "owner", "is_active": true, "authorization_version": 1]]
+        } else {
+            memberPayload = DemoPersona.allCases.map { persona in
+                ["user_id": persona == .rey ? "demo-owner" : persona.rawValue.lowercased(), "email": "\(persona.rawValue.lowercased())@example.test",
+                 "display_name": "\(persona.rawValue) Rivera", "role": persona == .rey ? "owner" : persona.isChild ? "child" : "adult", "is_active": !removedMembers.contains(persona), "authorization_version": membershipVersions[persona] ?? 1] as [String: Any]
+            }
+        }
+        let members: [APIHouseholdMember] = try decode(memberPayload)
         let allowanceRows: [APIAllowancePlan] = try decode(demo.allowances.filter { allowanceVisible($0) }.sorted { ($0.nextDate, $0.id) < ($1.nextDate, $1.id) }.map { plan in
             ["id": plan.id, "delegated_user_id": plan.member.rawValue.lowercased(), "source_category_id": canManageAllowances ? plan.source as Any : NSNull(),
              "name": plan.name, "amount_minor": plan.amount, "next_issue_date": plan.nextDate, "recurrence_unit": plan.recurrenceUnit,
@@ -717,11 +728,35 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                 value = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
             }
             try demo.loadLocalAuthority(value)
+            debtTermsValues = Dictionary(uniqueKeysWithValues: value.debtTerms.map { item in
+                (item.accountID, APIAccountDebtTermsUpsert(termsType: item.termsType,
+                    annualRateBasisPoints: item.annualRateBasisPoints.map(Int.init), rateType: item.rateType,
+                    paymentFrequency: item.paymentFrequency, scheduledPaymentMinor: item.scheduledPaymentMinor,
+                    minimumPaymentRule: item.minimumPaymentRule, minimumPaymentMinor: item.minimumPaymentMinor,
+                    minimumPaymentRateBasisPoints: item.minimumPaymentRateBasisPoints.map(Int.init),
+                    dueDay: item.dueDay.map(Int.init), statementDay: item.statementDay.map(Int.init),
+                    originalPrincipalMinor: item.originalPrincipalMinor, originalTermMonths: item.originalTermMonths.map(Int.init),
+                    remainingTermMonths: item.remainingTermMonths.map(Int.init),
+                    promotionalRateBasisPoints: item.promotionalRateBasisPoints.map(Int.init),
+                    promotionalEndsOn: item.promotionalEndsOn))
+            })
             localAuthorityLoaded = true
             return
         }
         let previous = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
-        let value = try demo.localAuthoritySnapshot(identity: localIdentity, preservingAttachments: previous.attachments)
+        let debtTerms = debtTermsValues.map { accountID, item in
+            LocalAccountDebtTermsRecord(accountID: accountID, termsType: item.termsType,
+                annualRateBasisPoints: item.annualRateBasisPoints.map(Int64.init), rateType: item.rateType,
+                paymentFrequency: item.paymentFrequency, scheduledPaymentMinor: item.scheduledPaymentMinor,
+                minimumPaymentRule: item.minimumPaymentRule, minimumPaymentMinor: item.minimumPaymentMinor,
+                minimumPaymentRateBasisPoints: item.minimumPaymentRateBasisPoints.map(Int64.init),
+                dueDay: item.dueDay.map(Int64.init), statementDay: item.statementDay.map(Int64.init),
+                originalPrincipalMinor: item.originalPrincipalMinor, originalTermMonths: item.originalTermMonths.map(Int64.init),
+                remainingTermMonths: item.remainingTermMonths.map(Int64.init),
+                promotionalRateBasisPoints: item.promotionalRateBasisPoints.map(Int64.init),
+                promotionalEndsOn: item.promotionalEndsOn, updatedAt: ISO8601DateFormatter().string(from: now()))
+        }
+        let value = try demo.localAuthoritySnapshot(identity: localIdentity, preservingAttachments: previous.attachments, debtTerms: debtTerms)
         try await localAuthority.replaceWorkspaceState(value)
         try await localAuthority.integrityCheck()
     }
@@ -2102,7 +2137,8 @@ final class BudgetWorkspaceStore: ObservableObject {
             }
             source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget, localAuthority: composition.authority, localAttachmentVault: composition.attachments, localIdentity: identity)
         } catch {
-            source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget)
+            source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget,
+                                             storageUnavailableMessage: "Local storage could not be opened. No changes will be accepted until device storage is available.")
         }
         let store = BudgetWorkspaceStore(dataSource: source)
         if source.localIdentity == nil {
@@ -2478,11 +2514,14 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms {
-        try await commands().updateAccountDebtTerms(accountID: accountID, value: value)
+        let updated = try await commands().updateAccountDebtTerms(accountID: accountID, value: value)
+        await refresh()
+        return updated
     }
 
     func deleteAccountDebtTerms(accountID: String) async throws {
         try await commands().deleteAccountDebtTerms(accountID: accountID)
+        await refresh()
     }
 
     func createRequest(_ value: APIFinancialRequestCreate) async throws {
@@ -2903,6 +2942,10 @@ private struct WorkspaceProfileView: View {
                 Section("Profile") {
                     LabeledContent("User", value: session.profile?.displayName ?? (session.sourceMode == .localDevice ? "You" : "Demo household owner"))
                     LabeledContent("Active budget", value: store.budget.name)
+                    if session.sourceMode == .localDevice {
+                        Label("Stored on this iPhone", systemImage: "iphone")
+                            .accessibilityIdentifier("local-device-authority")
+                    }
                 }
                 Section("Help & Education") {
                     Button(store.onboardingCompleted ? "Restart Guided Tour" : "Continue Guided Tour", systemImage: "graduationcap") {
@@ -2951,13 +2994,23 @@ private struct WorkspaceProfileView: View {
                             Text("Review the server’s last encrypted backup and verified restore state.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
+                    } else if session.sourceMode == .localDevice {
+                        Section("Data Ownership") {
+                            LabeledContent("Authority", value: "This iPhone")
+                            Button("Server & Transfer Options", systemImage: "arrow.left.arrow.right") { showConnection = true }
+                            Text("Your complete budget works offline on this iPhone. Moving this budget to a personal server will be added in a later beta; connecting today never deletes the local copy.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
                     }
                 }
-                Section("Household") { Button("Household and access", systemImage: "person.3") { showHousehold = true } }
+                if session.sourceMode == .liveServer {
+                    Section("Household") { Button("Household and access", systemImage: "person.3") { showHousehold = true } }
+                }
                 Section("Connection") {
                     LabeledContent("Source", value: session.sourceMode.title)
+                        .accessibilityIdentifier("data-source-mode")
                     LabeledContent("Status", value: session.connectionStatus.title)
-                    Button("Server and data source", systemImage: "server.rack") { showConnection = true }
+                    Button("Data location", systemImage: "externaldrive") { showConnection = true }
                 }
                 Section("About & Support") {
                     LabeledContent("Version", value: "\(appVersion) (\(appBuild))")
@@ -5912,10 +5965,10 @@ struct LiveHouseholdView: View {
         NavigationStack {
             List {
                 Section("Signed in") {
-                    LabeledContent("Member", value: session.profile?.displayName ?? "Demo household")
+                    LabeledContent("Member", value: session.profile?.displayName ?? (session.sourceMode == .localDevice ? "You" : "Demo household"))
                     LabeledContent("Role", value: store.budget.effectivePermission.rawValue.capitalized)
                 }
-                if store.budget.effectivePermission == .owner {
+                if session.sourceMode == .liveServer && store.budget.effectivePermission == .owner {
                     Section("Household access") {
                         NavigationLink { HouseholdMemberLifecycleView(store: store) } label: {
                             Label("Members & Invitations", systemImage: "person.2.badge.gearshape")
@@ -5936,7 +5989,7 @@ struct LiveHouseholdView: View {
                         }
                     }
                 }
-                if store.budget.can("manage_allowances") {
+                if session.sourceMode == .liveServer && store.budget.can("manage_allowances") {
                     Section("Delegated budgets") {
                         NavigationLink { AllowanceManagementView(store: store) } label: {
                             Label("Allowances", systemImage: "calendar.badge.clock")
@@ -5964,7 +6017,7 @@ struct LiveHouseholdView: View {
                     LabeledContent("Data Source", value: session.sourceMode.title)
                     LabeledContent("Status", value: session.connectionStatus.title)
                     LabeledContent("Server", value: session.serverURL?.absoluteString ?? "No live server configured")
-                    NavigationLink("Server Connection") { ServerConnectionSettingsView() }
+                    NavigationLink("Data Location") { ServerConnectionSettingsView() }
                     Label("Manual entry only — no bank connections", systemImage: "building.columns")
                 }
             }

@@ -2,6 +2,27 @@ import XCTest
 import UIKit
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testLocalDeviceLaunchUsesProductionWorkspaceAndKeepsTrainingOutOfNormalFlow() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--local", "--skip-guided-onboarding"]
+        app.launch()
+
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.tabBars.buttons["Plan"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Activity"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Accounts"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Insights"].exists)
+        XCTAssertFalse(app.navigationBars["Budgets"].exists)
+
+        app.buttons["profile-settings-button"].tap()
+        XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "local-device-authority").firstMatch.exists)
+        app.swipeUp()
+        XCTAssertTrue(app.buttons["Server & Transfer Options"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["Household and access"].exists)
+    }
+
     func testProductionPlanCostOverflowRendersValidationInsteadOfCrashing() {
         continueAfterFailure = false
         let app = XCUIApplication()

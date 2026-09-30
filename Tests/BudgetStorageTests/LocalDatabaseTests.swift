@@ -74,7 +74,7 @@ final class LocalDatabaseTests: XCTestCase {
             isOnBudget: true, openingBalanceMinor: 9_007_199_254_740_991, createdAt: timestamp
         ))
         try await store?.insertCategoryGroup(.init(id: "needs", budgetID: "budget", name: "Needs", sortOrder: 0))
-        try await store?.insertCategory(.init(id: "groceries", budgetID: "budget", groupID: "needs", name: "Groceries", sortOrder: 0))
+        try await store?.insertCategory(.init(id: "groceries", budgetID: "budget", groupID: "needs", name: "Groceries", sortOrder: 0, isFavorite: true, favoriteSortOrder: 3))
         try await store?.insertPayee(.init(id: "market", budgetID: "budget", name: "Market", normalizedName: "market", defaultCategoryID: "groceries"))
         try await store?.insertPayeeAlias(.init(id: "market-alias", payeeID: "market", displayName: "The Market", normalizedName: "the market"))
         try await store?.insertTransaction(.init(
@@ -86,18 +86,22 @@ final class LocalDatabaseTests: XCTestCase {
         ))
         try await store?.insertAllocation(.init(id: "allocation", budgetID: "budget", categoryID: "groceries", amountMinor: 50_00, occurredOn: "2026-09-01", kind: "assign", actorUserID: "owner", createdAt: timestamp))
         try await store?.insertReconciliation(.init(id: "reconciliation", accountID: "checking", statementDate: "2026-09-27", statementBalanceMinor: 9_007_199_254_728_646, createdAt: timestamp))
-        try await store?.upsertTarget(.init(categoryID: "groceries", targetType: "monthly", amountMinor: 60_00, cadence: "monthly", effectiveMonth: "2026-09"))
-        try await store?.upsertSchedule(.init(id: "schedule", budgetID: "budget", accountID: "checking", categoryID: "groceries", payeeID: "market", name: "Weekly market", amountMinor: -12_345, nextDate: "2026-10-04", recurrenceUnit: "weeks", intervalCount: 1))
+        try await store?.upsertTarget(.init(categoryID: "groceries", targetType: "monthly", amountMinor: 60_00, cadence: "monthly", effectiveMonth: "2026-09", targetDate: "2027-01-01", recurrenceMonths: 3, minimumContributionMinor: 5_00, priority: 80, isActive: false, snoozedMonths: ["2026-10-01", "2026-11-01"]))
+        try await store?.upsertSchedule(.init(id: "schedule", budgetID: "budget", accountID: "checking", categoryID: "groceries", payeeID: "market", name: "Weekly market", amountMinor: -12_345, nextDate: "2026-10-04", recurrenceUnit: "weeks", intervalCount: 1, financialClassification: "interest_charge", lastRealizedOn: "2026-09-27"))
         try await store?.insertAttachment(.init(id: "receipt", transactionID: "purchase", filename: "receipt.jpg", contentType: "image/jpeg", sizeBytes: 4_096, sha256: String(repeating: "a", count: 64), objectName: "objects/receipt.enc", createdAt: timestamp))
         try await store?.integrityCheck()
         store = nil
 
         let reopened = try LocalAuthorityStore(fileURL: databaseURL)
-        let snapshot = try await reopened.snapshot(budgetID: "budget")
+        var snapshot = try await reopened.snapshot(budgetID: "budget")
+        try await reopened.replaceWorkspaceState(.init(identity: snapshot.identity, accounts: snapshot.accounts, groups: snapshot.groups, categories: snapshot.categories, payees: snapshot.payees, payeeAliases: snapshot.payeeAliases, transactions: snapshot.transactions, allocations: snapshot.allocations, reconciliations: snapshot.reconciliations, targets: snapshot.targets, schedules: snapshot.schedules, attachments: snapshot.attachments, debtTerms: [.init(accountID: "checking", termsType: "credit_card", annualRateBasisPoints: 1999, minimumPaymentMinor: 25_00, dueDay: 15, updatedAt: timestamp)], cashRolloverPolicies: [.init(id: "rollover-1", budgetID: "budget", effectiveMonth: "2026-10-01", policy: "absorb_next_month", version: 1, source: "user_selection", actorUserID: "owner", createdAt: timestamp)]))
+        snapshot = try await reopened.snapshot(budgetID: "budget")
         XCTAssertEqual(snapshot.identity.currencyCode, "USD")
         XCTAssertEqual(snapshot.accounts.map(\.openingBalanceMinor), [9_007_199_254_740_991])
         XCTAssertEqual(snapshot.groups.map(\.name), ["Needs"])
         XCTAssertEqual(snapshot.categories.map(\.name), ["Groceries"])
+        XCTAssertEqual(snapshot.categories.first?.isFavorite, true)
+        XCTAssertEqual(snapshot.categories.first?.favoriteSortOrder, 3)
         XCTAssertEqual(snapshot.payees.map(\.name), ["Market"])
         XCTAssertEqual(snapshot.payeeAliases.map(\.displayName), ["The Market"])
         XCTAssertEqual(snapshot.transactions.map(\.amountMinor), [-12_345])
@@ -105,8 +109,18 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(snapshot.allocations.map(\.amountMinor), [50_00])
         XCTAssertEqual(snapshot.reconciliations.map(\.statementBalanceMinor), [9_007_199_254_728_646])
         XCTAssertEqual(snapshot.targets.map(\.amountMinor), [60_00])
+        XCTAssertEqual(snapshot.targets.first?.targetDate, "2027-01-01")
+        XCTAssertEqual(snapshot.targets.first?.recurrenceMonths, 3)
+        XCTAssertEqual(snapshot.targets.first?.minimumContributionMinor, 5_00)
+        XCTAssertEqual(snapshot.targets.first?.priority, 80)
+        XCTAssertEqual(snapshot.targets.first?.isActive, false)
+        XCTAssertEqual(snapshot.targets.first?.snoozedMonths, ["2026-10-01", "2026-11-01"])
         XCTAssertEqual(snapshot.schedules.map(\.amountMinor), [-12_345])
+        XCTAssertEqual(snapshot.schedules.first?.financialClassification, "interest_charge")
+        XCTAssertEqual(snapshot.schedules.first?.lastRealizedOn, "2026-09-27")
         XCTAssertEqual(snapshot.attachments.map(\.objectName), ["objects/receipt.enc"])
+        XCTAssertEqual(snapshot.debtTerms.first?.annualRateBasisPoints, 1999)
+        XCTAssertEqual(snapshot.cashRolloverPolicies.first?.policy, "absorb_next_month")
         try await reopened.integrityCheck()
     }
 
@@ -135,7 +149,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertTrue(snapshot.transactions.isEmpty)
     }
 
-    func testLocalSchemaV2PreservesTransactionMetadataAndAllowsUncategorizedIncome() async throws {
+    func testLocalSchemaV3PreservesTransactionMetadataAndAllowsUncategorizedIncome() async throws {
         let databaseURL = try temporaryDirectory().appendingPathComponent("metadata.sqlite")
         let store = try LocalAuthorityStore(fileURL: databaseURL)
         let timestamp = "2026-09-30T12:00:00Z"
@@ -149,7 +163,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.tags, ["income", "monthly"])
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 2)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 3)
     }
 
     func testTypedAuthorityStoreUpdateAndDeleteLifecyclePersistsAcrossReopen() async throws {

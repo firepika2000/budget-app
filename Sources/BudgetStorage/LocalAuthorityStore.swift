@@ -57,11 +57,15 @@ public struct LocalCategoryRecord: Equatable, Sendable {
     public let delegatedUserID: String?
     public let isArchived: Bool
     public let sortOrder: Int64
+    public let isFavorite: Bool
+    public let favoriteSortOrder: Int64
 
     public init(id: String, budgetID: String, groupID: String, name: String,
-                delegatedUserID: String? = nil, isArchived: Bool = false, sortOrder: Int64) {
+                delegatedUserID: String? = nil, isArchived: Bool = false, sortOrder: Int64,
+                isFavorite: Bool = false, favoriteSortOrder: Int64 = 0) {
         self.id = id; self.budgetID = budgetID; self.groupID = groupID; self.name = name
         self.delegatedUserID = delegatedUserID; self.isArchived = isArchived; self.sortOrder = sortOrder
+        self.isFavorite = isFavorite; self.favoriteSortOrder = favoriteSortOrder
     }
 }
 
@@ -174,10 +178,18 @@ public struct LocalReconciliationRecord: Equatable, Sendable {
 public struct LocalCategoryTargetRecord: Equatable, Sendable {
     public let categoryID: String; public let targetType: String; public let amountMinor: Int64
     public let cadence: String; public let effectiveMonth: String; public let snoozedMonth: String?
+    public let targetDate: String?; public let recurrenceMonths: Int64?
+    public let minimumContributionMinor: Int64; public let priority: Int64; public let isActive: Bool
+    public let snoozedMonths: [String]
     public init(categoryID: String, targetType: String, amountMinor: Int64, cadence: String,
-                effectiveMonth: String, snoozedMonth: String? = nil) {
+                effectiveMonth: String, snoozedMonth: String? = nil, targetDate: String? = nil,
+                recurrenceMonths: Int64? = nil, minimumContributionMinor: Int64 = 0,
+                priority: Int64 = 50, isActive: Bool = true, snoozedMonths: [String] = []) {
         self.categoryID = categoryID; self.targetType = targetType; self.amountMinor = amountMinor
         self.cadence = cadence; self.effectiveMonth = effectiveMonth; self.snoozedMonth = snoozedMonth
+        self.targetDate = targetDate; self.recurrenceMonths = recurrenceMonths
+        self.minimumContributionMinor = minimumContributionMinor; self.priority = priority
+        self.isActive = isActive; self.snoozedMonths = snoozedMonths
     }
 }
 
@@ -187,15 +199,53 @@ public struct LocalScheduleRecord: Equatable, Sendable {
     public let name: String; public let amountMinor: Int64; public let nextDate: String
     public let recurrenceUnit: String; public let intervalCount: Int64; public let memo: String
     public let isActive: Bool
+    public let financialClassification: String?; public let lastRealizedOn: String?
     public init(id: String, budgetID: String, accountID: String, destinationAccountID: String? = nil,
                 categoryID: String? = nil, payeeID: String? = nil, name: String, amountMinor: Int64,
                 nextDate: String, recurrenceUnit: String, intervalCount: Int64, memo: String = "",
-                isActive: Bool = true) {
+                isActive: Bool = true, financialClassification: String? = nil,
+                lastRealizedOn: String? = nil) {
         self.id = id; self.budgetID = budgetID; self.accountID = accountID
         self.destinationAccountID = destinationAccountID; self.categoryID = categoryID; self.payeeID = payeeID
         self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate
         self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.memo = memo
         self.isActive = isActive
+        self.financialClassification = financialClassification; self.lastRealizedOn = lastRealizedOn
+    }
+}
+
+public struct LocalAccountDebtTermsRecord: Equatable, Sendable {
+    public let accountID: String; public let termsType: String; public let annualRateBasisPoints: Int64?
+    public let rateType: String?; public let paymentFrequency: String?; public let scheduledPaymentMinor: Int64?
+    public let minimumPaymentRule: String?; public let minimumPaymentMinor: Int64?
+    public let minimumPaymentRateBasisPoints: Int64?; public let dueDay: Int64?; public let statementDay: Int64?
+    public let originalPrincipalMinor: Int64?; public let originalTermMonths: Int64?; public let remainingTermMonths: Int64?
+    public let promotionalRateBasisPoints: Int64?; public let promotionalEndsOn: String?; public let updatedAt: String
+    public init(accountID: String, termsType: String, annualRateBasisPoints: Int64? = nil,
+                rateType: String? = nil, paymentFrequency: String? = nil, scheduledPaymentMinor: Int64? = nil,
+                minimumPaymentRule: String? = nil, minimumPaymentMinor: Int64? = nil,
+                minimumPaymentRateBasisPoints: Int64? = nil, dueDay: Int64? = nil, statementDay: Int64? = nil,
+                originalPrincipalMinor: Int64? = nil, originalTermMonths: Int64? = nil,
+                remainingTermMonths: Int64? = nil, promotionalRateBasisPoints: Int64? = nil,
+                promotionalEndsOn: String? = nil, updatedAt: String) {
+        self.accountID = accountID; self.termsType = termsType; self.annualRateBasisPoints = annualRateBasisPoints
+        self.rateType = rateType; self.paymentFrequency = paymentFrequency; self.scheduledPaymentMinor = scheduledPaymentMinor
+        self.minimumPaymentRule = minimumPaymentRule; self.minimumPaymentMinor = minimumPaymentMinor
+        self.minimumPaymentRateBasisPoints = minimumPaymentRateBasisPoints; self.dueDay = dueDay; self.statementDay = statementDay
+        self.originalPrincipalMinor = originalPrincipalMinor; self.originalTermMonths = originalTermMonths
+        self.remainingTermMonths = remainingTermMonths; self.promotionalRateBasisPoints = promotionalRateBasisPoints
+        self.promotionalEndsOn = promotionalEndsOn; self.updatedAt = updatedAt
+    }
+}
+
+public struct LocalCashRolloverPolicyRecord: Equatable, Sendable {
+    public let id: String; public let budgetID: String; public let effectiveMonth: String
+    public let policy: String; public let version: Int64; public let source: String
+    public let actorUserID: String?; public let createdAt: String
+    public init(id: String, budgetID: String, effectiveMonth: String, policy: String, version: Int64,
+                source: String, actorUserID: String? = nil, createdAt: String) {
+        self.id = id; self.budgetID = budgetID; self.effectiveMonth = effectiveMonth; self.policy = policy
+        self.version = version; self.source = source; self.actorUserID = actorUserID; self.createdAt = createdAt
     }
 }
 
@@ -224,18 +274,23 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
     public let targets: [LocalCategoryTargetRecord]
     public let schedules: [LocalScheduleRecord]
     public let attachments: [LocalAttachmentRecord]
+    public let debtTerms: [LocalAccountDebtTermsRecord]
+    public let cashRolloverPolicies: [LocalCashRolloverPolicyRecord]
 
     public init(identity: LocalAuthorityIdentity, accounts: [LocalAccountRecord],
                 groups: [LocalCategoryGroupRecord], categories: [LocalCategoryRecord],
                 payees: [LocalPayeeRecord], payeeAliases: [LocalPayeeAliasRecord],
                 transactions: [LocalTransactionRecord], allocations: [LocalAllocationRecord],
                 reconciliations: [LocalReconciliationRecord], targets: [LocalCategoryTargetRecord],
-                schedules: [LocalScheduleRecord], attachments: [LocalAttachmentRecord]) {
+                schedules: [LocalScheduleRecord], attachments: [LocalAttachmentRecord],
+                debtTerms: [LocalAccountDebtTermsRecord] = [],
+                cashRolloverPolicies: [LocalCashRolloverPolicyRecord] = []) {
         self.identity = identity; self.accounts = accounts; self.groups = groups
         self.categories = categories; self.payees = payees; self.payeeAliases = payeeAliases
         self.transactions = transactions; self.allocations = allocations
         self.reconciliations = reconciliations; self.targets = targets
         self.schedules = schedules; self.attachments = attachments
+        self.debtTerms = debtTerms; self.cashRolloverPolicies = cashRolloverPolicies
     }
 }
 
@@ -301,16 +356,16 @@ public actor LocalAuthorityStore {
 
     public func insertCategory(_ value: LocalCategoryRecord) async throws {
         try await database.execute(.init(
-            "INSERT INTO categories(id,budget_id,group_id,name,delegated_user_id,is_archived,sort_order) VALUES (?,?,?,?,?,?,?)",
-            values: [.text(value.id), .text(value.budgetID), .text(value.groupID), .text(value.name), optionalText(value.delegatedUserID), .integer(value.isArchived ? 1 : 0), .integer(value.sortOrder)]
+            "INSERT INTO categories(id,budget_id,group_id,name,delegated_user_id,is_archived,sort_order,is_favorite,favorite_sort_order) VALUES (?,?,?,?,?,?,?,?,?)",
+            values: [.text(value.id), .text(value.budgetID), .text(value.groupID), .text(value.name), optionalText(value.delegatedUserID), .integer(value.isArchived ? 1 : 0), .integer(value.sortOrder), .integer(value.isFavorite ? 1 : 0), .integer(value.favoriteSortOrder)]
         ))
     }
 
     public func updateCategory(_ value: LocalCategoryRecord) async throws {
         let changes = try await database.executeReturningChanges(.init(
-            "UPDATE categories SET group_id=?,name=?,delegated_user_id=?,is_archived=?,sort_order=? WHERE id=? AND budget_id=?",
+            "UPDATE categories SET group_id=?,name=?,delegated_user_id=?,is_archived=?,sort_order=?,is_favorite=?,favorite_sort_order=? WHERE id=? AND budget_id=?",
             values: [.text(value.groupID), .text(value.name), optionalText(value.delegatedUserID),
-                     .integer(value.isArchived ? 1 : 0), .integer(value.sortOrder), .text(value.id), .text(value.budgetID)]
+                     .integer(value.isArchived ? 1 : 0), .integer(value.sortOrder), .integer(value.isFavorite ? 1 : 0), .integer(value.favoriteSortOrder), .text(value.id), .text(value.budgetID)]
         ))
         try requireOneChange(changes, record: "category")
     }
@@ -395,9 +450,12 @@ public actor LocalAuthorityStore {
 
     public func upsertTarget(_ value: LocalCategoryTargetRecord) async throws {
         try await database.execute(.init(
-            "INSERT INTO category_targets(category_id,target_type,amount_minor,cadence,effective_month,snoozed_month) VALUES (?,?,?,?,?,?) ON CONFLICT(category_id) DO UPDATE SET target_type=excluded.target_type,amount_minor=excluded.amount_minor,cadence=excluded.cadence,effective_month=excluded.effective_month,snoozed_month=excluded.snoozed_month",
+            "INSERT INTO category_targets(category_id,target_type,amount_minor,cadence,effective_month,snoozed_month,target_date,recurrence_months,minimum_contribution_minor,priority,is_active,snoozed_months_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(category_id) DO UPDATE SET target_type=excluded.target_type,amount_minor=excluded.amount_minor,cadence=excluded.cadence,effective_month=excluded.effective_month,snoozed_month=excluded.snoozed_month,target_date=excluded.target_date,recurrence_months=excluded.recurrence_months,minimum_contribution_minor=excluded.minimum_contribution_minor,priority=excluded.priority,is_active=excluded.is_active,snoozed_months_json=excluded.snoozed_months_json",
             values: [.text(value.categoryID), .text(value.targetType), .integer(value.amountMinor),
-                     .text(value.cadence), .text(value.effectiveMonth), optionalText(value.snoozedMonth)]
+                     .text(value.cadence), .text(value.effectiveMonth), optionalText(value.snoozedMonth),
+                     optionalText(value.targetDate), optionalInteger(value.recurrenceMonths),
+                     .integer(value.minimumContributionMinor), .integer(value.priority),
+                     .integer(value.isActive ? 1 : 0), .text(json(value.snoozedMonths))]
         ))
     }
 
@@ -411,11 +469,12 @@ public actor LocalAuthorityStore {
     public func upsertSchedule(_ value: LocalScheduleRecord) async throws {
         guard value.intervalCount > 0 else { throw LocalStorageError.operationFailed("Schedule interval must be positive") }
         try await database.execute(.init(
-            "INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id,destination_account_id=excluded.destination_account_id,category_id=excluded.category_id,payee_id=excluded.payee_id,name=excluded.name,amount_minor=excluded.amount_minor,next_date=excluded.next_date,recurrence_unit=excluded.recurrence_unit,interval_count=excluded.interval_count,memo=excluded.memo,is_active=excluded.is_active",
+            "INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active,financial_classification,last_realized_on) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id,destination_account_id=excluded.destination_account_id,category_id=excluded.category_id,payee_id=excluded.payee_id,name=excluded.name,amount_minor=excluded.amount_minor,next_date=excluded.next_date,recurrence_unit=excluded.recurrence_unit,interval_count=excluded.interval_count,memo=excluded.memo,is_active=excluded.is_active,financial_classification=excluded.financial_classification,last_realized_on=excluded.last_realized_on",
             values: [.text(value.id), .text(value.budgetID), .text(value.accountID), optionalText(value.destinationAccountID),
                      optionalText(value.categoryID), optionalText(value.payeeID), .text(value.name), .integer(value.amountMinor),
                      .text(value.nextDate), .text(value.recurrenceUnit), .integer(value.intervalCount), .text(value.memo),
-                     .integer(value.isActive ? 1 : 0)]
+                     .integer(value.isActive ? 1 : 0), optionalText(value.financialClassification),
+                     optionalText(value.lastRealizedOn)]
         ))
     }
 
@@ -466,10 +525,12 @@ public actor LocalAuthorityStore {
         let targets = try await loadTargets(categoryIDs: Set(categories.map(\.id)))
         let schedules = try await loadSchedules(budgetID: budgetID)
         let attachments = try await loadAttachments(transactionIDs: Set(transactions.map(\.id)))
+        let debtTerms = try await loadDebtTerms(accountIDs: Set(accounts.map(\.id)))
+        let rollover = try await loadCashRolloverPolicies(budgetID: budgetID)
         return .init(identity: identity, accounts: accounts, groups: groups, categories: categories,
                      payees: payees, payeeAliases: payeeAliases, transactions: transactions, allocations: allocations,
                      reconciliations: reconciliations, targets: targets, schedules: schedules,
-                     attachments: attachments)
+                     attachments: attachments, debtTerms: debtTerms, cashRolloverPolicies: rollover)
     }
 
     public func integrityCheck() async throws { try await database.integrityCheck() }
@@ -481,6 +542,8 @@ public actor LocalAuthorityStore {
         for transaction in value.transactions { try validateTransaction(transaction) }
         let budgetID = value.identity.budgetID
         var statements: [LocalSQLStatement] = [
+            .init("DELETE FROM account_debt_terms WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
+            .init("DELETE FROM cash_rollover_policies WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM attachments WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM reconciliations WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM category_targets WHERE category_id IN (SELECT id FROM categories WHERE budget_id=?)", values: [.text(budgetID)]),
@@ -501,7 +564,7 @@ public actor LocalAuthorityStore {
             .init("INSERT INTO category_groups(id,budget_id,name,sort_order,is_archived) VALUES (?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.name), .integer(item.sortOrder), .integer(item.isArchived ? 1 : 0)])
         }
         statements += value.categories.map { item in
-            .init("INSERT INTO categories(id,budget_id,group_id,name,delegated_user_id,is_archived,sort_order) VALUES (?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.groupID), .text(item.name), optionalText(item.delegatedUserID), .integer(item.isArchived ? 1 : 0), .integer(item.sortOrder)])
+            .init("INSERT INTO categories(id,budget_id,group_id,name,delegated_user_id,is_archived,sort_order,is_favorite,favorite_sort_order) VALUES (?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.groupID), .text(item.name), optionalText(item.delegatedUserID), .integer(item.isArchived ? 1 : 0), .integer(item.sortOrder), .integer(item.isFavorite ? 1 : 0), .integer(item.favoriteSortOrder)])
         }
         statements += value.payees.map { item in
             .init("INSERT INTO payees(id,budget_id,name,normalized_name,default_category_id,is_archived) VALUES (?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.name), .text(item.normalizedName), optionalText(item.defaultCategoryID), .integer(item.isArchived ? 1 : 0)])
@@ -517,13 +580,19 @@ public actor LocalAuthorityStore {
             .init("INSERT INTO reconciliations(id,account_id,statement_date,statement_balance_minor,adjustment_transaction_id,created_at) VALUES (?,?,?,?,?,?)", values: [.text(item.id), .text(item.accountID), .text(item.statementDate), .integer(item.statementBalanceMinor), optionalText(item.adjustmentTransactionID), .text(item.createdAt)])
         }
         statements += value.targets.map { item in
-            .init("INSERT INTO category_targets(category_id,target_type,amount_minor,cadence,effective_month,snoozed_month) VALUES (?,?,?,?,?,?)", values: [.text(item.categoryID), .text(item.targetType), .integer(item.amountMinor), .text(item.cadence), .text(item.effectiveMonth), optionalText(item.snoozedMonth)])
+            .init("INSERT INTO category_targets(category_id,target_type,amount_minor,cadence,effective_month,snoozed_month,target_date,recurrence_months,minimum_contribution_minor,priority,is_active,snoozed_months_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.categoryID), .text(item.targetType), .integer(item.amountMinor), .text(item.cadence), .text(item.effectiveMonth), optionalText(item.snoozedMonth), optionalText(item.targetDate), optionalInteger(item.recurrenceMonths), .integer(item.minimumContributionMinor), .integer(item.priority), .integer(item.isActive ? 1 : 0), .text(json(item.snoozedMonths))])
         }
         statements += value.schedules.map { item in
-            .init("INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), optionalText(item.destinationAccountID), optionalText(item.categoryID), optionalText(item.payeeID), .text(item.name), .integer(item.amountMinor), .text(item.nextDate), .text(item.recurrenceUnit), .integer(item.intervalCount), .text(item.memo), .integer(item.isActive ? 1 : 0)])
+            .init("INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active,financial_classification,last_realized_on) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), optionalText(item.destinationAccountID), optionalText(item.categoryID), optionalText(item.payeeID), .text(item.name), .integer(item.amountMinor), .text(item.nextDate), .text(item.recurrenceUnit), .integer(item.intervalCount), .text(item.memo), .integer(item.isActive ? 1 : 0), optionalText(item.financialClassification), optionalText(item.lastRealizedOn)])
         }
         statements += value.attachments.map { item in
             .init("INSERT INTO attachments(id,transaction_id,filename,content_type,size_bytes,sha256,object_name,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.transactionID), .text(item.filename), .text(item.contentType), .integer(item.sizeBytes), .text(item.sha256), .text(item.objectName), .text(item.createdAt)])
+        }
+        statements += value.debtTerms.map { item in
+            .init("INSERT INTO account_debt_terms(account_id,terms_type,annual_rate_basis_points,rate_type,payment_frequency,scheduled_payment_minor,minimum_payment_rule,minimum_payment_minor,minimum_payment_rate_basis_points,due_day,statement_day,original_principal_minor,original_term_months,remaining_term_months,promotional_rate_basis_points,promotional_ends_on,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.accountID), .text(item.termsType), optionalInteger(item.annualRateBasisPoints), optionalText(item.rateType), optionalText(item.paymentFrequency), optionalInteger(item.scheduledPaymentMinor), optionalText(item.minimumPaymentRule), optionalInteger(item.minimumPaymentMinor), optionalInteger(item.minimumPaymentRateBasisPoints), optionalInteger(item.dueDay), optionalInteger(item.statementDay), optionalInteger(item.originalPrincipalMinor), optionalInteger(item.originalTermMonths), optionalInteger(item.remainingTermMonths), optionalInteger(item.promotionalRateBasisPoints), optionalText(item.promotionalEndsOn), .text(item.updatedAt)])
+        }
+        statements += value.cashRolloverPolicies.map { item in
+            .init("INSERT INTO cash_rollover_policies(id,budget_id,effective_month,policy,version,source,actor_user_id,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.effectiveMonth), .text(item.policy), .integer(item.version), .text(item.source), optionalText(item.actorUserID), .text(item.createdAt)])
         }
         try await database.transaction(statements)
     }
@@ -542,7 +611,7 @@ public actor LocalAuthorityStore {
 
     private func loadCategories(budgetID: String) async throws -> [LocalCategoryRecord] {
         try await database.rows(.init("SELECT * FROM categories WHERE budget_id=? ORDER BY sort_order,id", values: [.text(budgetID)])).map {
-            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), groupID: text($0, "group_id"), name: text($0, "name"), delegatedUserID: optionalText($0, "delegated_user_id"), isArchived: bool($0, "is_archived"), sortOrder: integer($0, "sort_order"))
+            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), groupID: text($0, "group_id"), name: text($0, "name"), delegatedUserID: optionalText($0, "delegated_user_id"), isArchived: bool($0, "is_archived"), sortOrder: integer($0, "sort_order"), isFavorite: bool($0, "is_favorite"), favoriteSortOrder: integer($0, "favorite_sort_order"))
         }
     }
 
@@ -597,13 +666,29 @@ public actor LocalAuthorityStore {
         return try rows.compactMap {
             let categoryID = try text($0, "category_id")
             guard categoryIDs.contains(categoryID) else { return nil }
-            return try .init(categoryID: categoryID, targetType: text($0, "target_type"), amountMinor: integer($0, "amount_minor"), cadence: text($0, "cadence"), effectiveMonth: text($0, "effective_month"), snoozedMonth: optionalText($0, "snoozed_month"))
+            return try .init(categoryID: categoryID, targetType: text($0, "target_type"), amountMinor: integer($0, "amount_minor"), cadence: text($0, "cadence"), effectiveMonth: text($0, "effective_month"), snoozedMonth: optionalText($0, "snoozed_month"), targetDate: optionalText($0, "target_date"), recurrenceMonths: optionalInteger($0, "recurrence_months"), minimumContributionMinor: integer($0, "minimum_contribution_minor"), priority: integer($0, "priority"), isActive: bool($0, "is_active"), snoozedMonths: stringArray($0, "snoozed_months_json"))
         }
     }
 
     private func loadSchedules(budgetID: String) async throws -> [LocalScheduleRecord] {
         try await database.rows(.init("SELECT * FROM scheduled_transactions WHERE budget_id=? ORDER BY next_date,id", values: [.text(budgetID)])).map {
-            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), accountID: text($0, "account_id"), destinationAccountID: optionalText($0, "destination_account_id"), categoryID: optionalText($0, "category_id"), payeeID: optionalText($0, "payee_id"), name: text($0, "name"), amountMinor: integer($0, "amount_minor"), nextDate: text($0, "next_date"), recurrenceUnit: text($0, "recurrence_unit"), intervalCount: integer($0, "interval_count"), memo: text($0, "memo"), isActive: bool($0, "is_active"))
+            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), accountID: text($0, "account_id"), destinationAccountID: optionalText($0, "destination_account_id"), categoryID: optionalText($0, "category_id"), payeeID: optionalText($0, "payee_id"), name: text($0, "name"), amountMinor: integer($0, "amount_minor"), nextDate: text($0, "next_date"), recurrenceUnit: text($0, "recurrence_unit"), intervalCount: integer($0, "interval_count"), memo: text($0, "memo"), isActive: bool($0, "is_active"), financialClassification: optionalText($0, "financial_classification"), lastRealizedOn: optionalText($0, "last_realized_on"))
+        }
+    }
+
+    private func loadDebtTerms(accountIDs: Set<String>) async throws -> [LocalAccountDebtTermsRecord] {
+        guard !accountIDs.isEmpty else { return [] }
+        let rows = try await database.rows(.init("SELECT * FROM account_debt_terms ORDER BY account_id"))
+        return try rows.compactMap { row in
+            let accountID = try text(row, "account_id")
+            guard accountIDs.contains(accountID) else { return nil }
+            return try .init(accountID: accountID, termsType: text(row, "terms_type"), annualRateBasisPoints: optionalInteger(row, "annual_rate_basis_points"), rateType: optionalText(row, "rate_type"), paymentFrequency: optionalText(row, "payment_frequency"), scheduledPaymentMinor: optionalInteger(row, "scheduled_payment_minor"), minimumPaymentRule: optionalText(row, "minimum_payment_rule"), minimumPaymentMinor: optionalInteger(row, "minimum_payment_minor"), minimumPaymentRateBasisPoints: optionalInteger(row, "minimum_payment_rate_basis_points"), dueDay: optionalInteger(row, "due_day"), statementDay: optionalInteger(row, "statement_day"), originalPrincipalMinor: optionalInteger(row, "original_principal_minor"), originalTermMonths: optionalInteger(row, "original_term_months"), remainingTermMonths: optionalInteger(row, "remaining_term_months"), promotionalRateBasisPoints: optionalInteger(row, "promotional_rate_basis_points"), promotionalEndsOn: optionalText(row, "promotional_ends_on"), updatedAt: text(row, "updated_at"))
+        }
+    }
+
+    private func loadCashRolloverPolicies(budgetID: String) async throws -> [LocalCashRolloverPolicyRecord] {
+        try await database.rows(.init("SELECT * FROM cash_rollover_policies WHERE budget_id=? ORDER BY version", values: [.text(budgetID)])).map { row in
+            try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), effectiveMonth: text(row, "effective_month"), policy: text(row, "policy"), version: integer(row, "version"), source: text(row, "source"), actorUserID: optionalText(row, "actor_user_id"), createdAt: text(row, "created_at"))
         }
     }
 
@@ -658,6 +743,7 @@ public actor LocalAuthorityStore {
     }
 
     private func optionalText(_ value: String?) -> LocalSQLiteValue { value.map(LocalSQLiteValue.text) ?? .null }
+    private func optionalInteger(_ value: Int64?) -> LocalSQLiteValue { value.map(LocalSQLiteValue.integer) ?? .null }
     private func json(_ values: [String]) -> String {
         guard let data = try? JSONEncoder().encode(values) else { return "[]" }
         return String(decoding: data, as: UTF8.self)
@@ -672,6 +758,10 @@ public actor LocalAuthorityStore {
     }
     private func optionalText(_ row: LocalSQLiteRow, _ key: String) -> String? {
         guard case let .text(value)? = row[key] else { return nil }
+        return value
+    }
+    private func optionalInteger(_ row: LocalSQLiteRow, _ key: String) -> Int64? {
+        guard case let .integer(value)? = row[key] else { return nil }
         return value
     }
     private func integer(_ row: LocalSQLiteRow, _ key: String) throws -> Int64 {

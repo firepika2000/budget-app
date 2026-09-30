@@ -167,7 +167,7 @@ struct ServerConnectionSettingsView: View {
                 if let url = session.serverURL { LabeledContent("Server", value: url.absoluteString) }
             }
             Section {
-                Button(selectedMode == .localDevice ? "Keep Data on This iPhone" : "Test and Connect") {
+                Button(selectedMode == .localDevice ? "Keep Data on This iPhone" : "Connect to Existing Server") {
                     if selectedMode == .localDevice { session.selectLocalDevice(); dismiss() }
                     else { Task { await session.configureServer(address) } }
                 }
@@ -182,7 +182,7 @@ struct ServerConnectionSettingsView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("Server Connection")
+        .navigationTitle("Data Location")
         .navigationBarTitleDisplayMode(.inline)
         .overlay { if session.isWorking { ProgressView() } }
         .onAppear {
