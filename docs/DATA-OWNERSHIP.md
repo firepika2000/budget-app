@@ -45,8 +45,10 @@ has durably stored the encrypted object and removed only after that object enter
 tombstone lifecycle. `LocalAttachmentVault` now provides the corresponding private object boundary:
 AES-GCM authenticated encryption under a caller-supplied 256-bit key, no-overwrite publication,
 plaintext SHA-256 verification, path-traversal rejection, recoverable detach/restore, and explicit
-retention purge. Key generation and iOS Keychain custody remain application-composition work; the key
-is never stored beside the SQLite database or encrypted objects. Typed metadata updates plus atomic
+retention purge. The native `LocalDeviceKeyManager` generates that key with the system secure random
+source and stores it as device-only Keychain data; relaunches reuse the exact key and malformed key
+material fails closed rather than silently orphaning encrypted objects. The key is never stored beside
+the SQLite database or encrypted objects. Typed metadata updates plus atomic
 transaction replacement and deletion preserve immutable
 opening/creator facts and refuse missing records. Split totals are checked with overflow-safe integer
 math before any write, while balances, activity, reserves, and other accounting consequences remain

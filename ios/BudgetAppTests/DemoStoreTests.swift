@@ -1815,6 +1815,27 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalDeviceAttachmentKeyIsGeneratedOnceAndReloadedExactly() throws {
+        let secrets = InMemorySecretDataStore()
+        let first = try LocalDeviceKeyManager(store: secrets).loadOrCreateAttachmentKey()
+        XCTAssertEqual(first.count, 32)
+
+        let reloaded = try LocalDeviceKeyManager(store: secrets).loadOrCreateAttachmentKey()
+        XCTAssertEqual(reloaded, first, "Repository reconstruction must retain access to encrypted objects")
+        XCTAssertEqual(secrets.saveCount, 1, "Reloading must not rotate the authority key")
+    }
+
+    @MainActor
+    func testMalformedLocalDeviceAttachmentKeyFailsClosedWithoutReplacement() throws {
+        let malformed = Data(repeating: 4, count: 31)
+        let secrets = InMemorySecretDataStore(initial: malformed)
+        let manager = LocalDeviceKeyManager(store: secrets)
+        XCTAssertThrowsError(try manager.loadOrCreateAttachmentKey())
+        XCTAssertEqual(secrets.readData(account: LocalDeviceKeyManager.attachmentKeyAccount), malformed)
+        XCTAssertEqual(secrets.saveCount, 0, "A damaged key must not silently orphan encrypted attachments")
+    }
+
+    @MainActor
     func testEditingAssignmentTotalPreservesActivityAndAppliesOnlyExactDelta() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
@@ -2138,6 +2159,23 @@ final class DemoStoreTests: XCTestCase {
         window.rootViewController = nil
         return signal
     }
+}
+
+private final class InMemorySecretDataStore: SecretDataStoring {
+    private var values: [String: Data] = [:]
+    private(set) var saveCount = 0
+
+    init(initial: Data? = nil) {
+        if let initial { values[LocalDeviceKeyManager.attachmentKeyAccount] = initial }
+    }
+
+    func saveData(_ value: Data, account: String) throws {
+        values[account] = value
+        saveCount += 1
+    }
+
+    func readData(account: String) -> Data? { values[account] }
+    func deleteData(account: String) { values.removeValue(forKey: account) }
 }
 
 private struct WorkspaceSelectionHarness: View {

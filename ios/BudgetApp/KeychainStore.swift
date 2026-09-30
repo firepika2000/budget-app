@@ -9,7 +9,13 @@ protocol TokenStoring {
     func delete(account: String)
 }
 
-struct KeychainStore: TokenStoring {
+protocol SecretDataStoring {
+    func saveData(_ value: Data, account: String) throws
+    func readData(account: String) -> Data?
+    func deleteData(account: String)
+}
+
+struct KeychainStore: TokenStoring, SecretDataStoring {
     private let service: String
 
     init(service: String = "com.firepika.BudgetApp") {
@@ -17,7 +23,10 @@ struct KeychainStore: TokenStoring {
     }
 
     func save(_ value: String, account: String) throws {
-        let encoded = Data(value.utf8)
+        try saveData(Data(value.utf8), account: account)
+    }
+
+    func saveData(_ value: Data, account: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -25,13 +34,18 @@ struct KeychainStore: TokenStoring {
         ]
         SecItemDelete(query as CFDictionary)
         var insert = query
-        insert[kSecValueData as String] = encoded
+        insert[kSecValueData as String] = value
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(insert as CFDictionary, nil)
         guard status == errSecSuccess else { throw KeychainError.unhandled(status) }
     }
 
     func read(account: String) -> String? {
+        guard let data = readData(account: account) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    func readData(account: String) -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -42,10 +56,14 @@ struct KeychainStore: TokenStoring {
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
               let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        return data
     }
 
     func delete(account: String) {
+        deleteData(account: account)
+    }
+
+    func deleteData(account: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -55,6 +73,31 @@ struct KeychainStore: TokenStoring {
     }
 }
 
+@MainActor
+final class LocalDeviceKeyManager {
+    static let attachmentKeyAccount = "local-device-attachment-key-v1"
+    private let store: SecretDataStoring
+
+    init(store: SecretDataStoring = KeychainStore()) {
+        self.store = store
+    }
+
+    func loadOrCreateAttachmentKey() throws -> Data {
+        if let existing = store.readData(account: Self.attachmentKeyAccount) {
+            guard existing.count == 32 else { throw KeychainError.invalidSecret }
+            return existing
+        }
+        var bytes = Data(count: 32)
+        let status = bytes.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
+        }
+        guard status == errSecSuccess else { throw KeychainError.unhandled(status) }
+        try store.saveData(bytes, account: Self.attachmentKeyAccount)
+        return bytes
+    }
+}
+
 enum KeychainError: Error {
     case unhandled(OSStatus)
+    case invalidSecret
 }
