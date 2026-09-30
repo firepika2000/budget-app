@@ -1,6 +1,6 @@
 # Beta 1 TestFlight release checklist
 
-Updated 2026-09-27. This is the short launch gate for the first closed TestFlight build.
+Updated 2026-09-30. This is the short launch gate for the first closed TestFlight build.
 It does not replace the product audit or broader production-readiness history.
 
 ## Engineering gate
@@ -62,8 +62,10 @@ remain open.
 
 ## Signing handoff
 
-The 2026-09-27 local inspection found `0 valid identities` and no `DEVELOPMENT_TEAM` in the
-Release settings. In Xcode Beta:
+Apple approved the developer enrollment on 2026-09-30. The subsequent local inspection still found
+`0 valid identities`, so the approved account has not yet installed signing assets in Xcode Beta.
+No `DEVELOPMENT_TEAM` is committed to the project: the release helper applies the owner's team only
+to the archive invocation, keeping personal team configuration out of Git. In Xcode Beta:
 
 1. Open **Xcode > Settings > Accounts** and sign in to the enrolled Apple Developer account.
 2. Open `ios/BudgetApp.xcodeproj`, select **BudgetApp > Signing & Capabilities**, and choose the
@@ -71,3 +73,19 @@ Release settings. In Xcode Beta:
 3. Confirm that the registered App ID should be `com.firepika.BudgetApp` before allowing Xcode to
    create/download signing assets.
 4. Re-run the signed archive and Xcode validation; never commit a personal provisioning profile.
+
+After Xcode has installed a signing identity, obtain the 10-character Team ID from the account's
+membership details and run:
+
+```sh
+export BUDGET_APP_DEVELOPMENT_TEAM='ABCDEFGHIJ'
+scripts/ios-release.sh preflight
+scripts/ios-release.sh archive
+```
+
+The helper is pinned to `/Users/firepika/Downloads/Xcode-beta.app` by default, verifies the Team ID,
+installed code-signing identity, `com.firepika.BudgetApp`, marketing/build versions, and Release
+settings before creating a timestamped archive. It refuses to overwrite an archive and stores output
+under the ignored `artifacts/archives/` directory. It does not upload, change App Store Connect, or
+commit provisioning material. Validate and upload the resulting archive deliberately through Xcode
+Organizer after the remaining release gates pass.

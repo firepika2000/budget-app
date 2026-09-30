@@ -7,6 +7,8 @@ DerivedData/
 .derived-data/
 *.xcuserstate
 **/xcuserdata/
+artifacts/
+*.xcarchive
 .env
 server/.env.development
 server/backups/
