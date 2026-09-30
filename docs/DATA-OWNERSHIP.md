@@ -53,6 +53,11 @@ transaction replacement and deletion preserve immutable
 opening/creator facts and refuse missing records. Split totals are checked with overflow-safe integer
 math before any write, while balances, activity, reserves, and other accounting consequences remain
 the responsibility of the shared application-service layer.
+The native target now links `BudgetStorage` through `LocalDeviceStorageComposition`. That composition
+opens the SQLite authority and encrypted attachment vault together beneath the app's private
+Application Support directory and supplies the vault only with the Keychain-held key. This is an
+internal durability boundary, not a selectable provider: activation remains gated until a complete
+workspace adapter implements every production read and command contract.
 Destructive-reopen tests prove stable IDs, relationships, lifecycle changes, and exact `Int64` values
 survive repository reconstruction. This boundary is not yet wired into the app's data-source selector;
 the remaining domain records and application-service adapter must be completed first so users cannot

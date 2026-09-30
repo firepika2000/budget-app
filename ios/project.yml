@@ -19,6 +19,8 @@ targets:
         product: BudgetAPI
       - package: BudgetCore
         product: BudgetCore
+      - package: BudgetCore
+        product: BudgetStorage
     postBuildScripts:
       - name: Inject Runtime Identity
         outputFiles:

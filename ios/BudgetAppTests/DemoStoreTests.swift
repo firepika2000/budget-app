@@ -3,6 +3,7 @@ import SwiftUI
 import UIKit
 import BudgetAPI
 import BudgetCore
+import BudgetStorage
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
@@ -1833,6 +1834,41 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertThrowsError(try manager.loadOrCreateAttachmentKey())
         XCTAssertEqual(secrets.readData(account: LocalDeviceKeyManager.attachmentKeyAccount), malformed)
         XCTAssertEqual(secrets.saveCount, 0, "A damaged key must not silently orphan encrypted attachments")
+    }
+
+    @MainActor
+    func testLocalDeviceStorageCompositionUsesPrivateStablePathsAndOneKey() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-device-composition-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let secrets = InMemorySecretDataStore()
+        let manager = LocalDeviceKeyManager(store: secrets)
+
+        let composition = try LocalDeviceStorageComposition(
+            applicationSupportDirectory: root,
+            keyManager: manager
+        )
+        XCTAssertEqual(composition.paths.database.lastPathComponent, "authority.sqlite3")
+        XCTAssertEqual(composition.paths.attachments.lastPathComponent, "Attachments")
+        XCTAssertTrue(composition.paths.database.path.contains("BudgetApp/LocalDevice"))
+
+        let identity = LocalAuthorityIdentity(
+            householdID: "household", householdName: "My Household",
+            ownerUserID: "owner", ownerDisplayName: "Owner",
+            budgetID: "budget", budgetName: "My Budget", currencyCode: "USD"
+        )
+        try await composition.authority.bootstrap(identity, createdAt: "2026-09-30T12:00:00Z")
+        let loaded = try await composition.authority.snapshot(budgetID: identity.budgetID)
+        XCTAssertEqual(loaded.identity, identity)
+
+        let payload = Data("receipt".utf8)
+        let stored = try await composition.attachments.store(payload, objectName: "receipt.enc")
+        let reopened = try await composition.attachments.data(
+            objectName: stored.objectName,
+            expectedSHA256: stored.plaintextSHA256
+        )
+        XCTAssertEqual(reopened, payload)
+        XCTAssertEqual(secrets.saveCount, 1)
     }
 
     @MainActor

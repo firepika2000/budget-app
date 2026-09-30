@@ -13,6 +13,8 @@
 		983A5654DFC35D2D8A62DEF3 /* EditingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0E14E75380CB2C219F61828 /* EditingViews.swift */; };
 		EDE2F76D4FC3C4F524640DA1 /* BudgetAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 8DA19D636EEAAB0BA449F759 /* BudgetAPI */; };
 		AA0000150000000000000015 /* BudgetCore in Frameworks */ = {isa = PBXBuildFile; productRef = BB0000150000000000000015 /* BudgetCore */; };
+		AA0000190000000000000019 /* BudgetStorage in Frameworks */ = {isa = PBXBuildFile; productRef = BB0000190000000000000019 /* BudgetStorage */; };
+		AA0000200000000000000020 /* LocalDeviceStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000200000000000000020 /* LocalDeviceStorage.swift */; };
 		F7F6130787A7D2A0DAF13030 /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10F6752E4E2DAAB5F30C155 /* AppSession.swift */; };
 		AA0000010000000000000001 /* DemoModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000010000000000000001 /* DemoModels.swift */; };
 		AA0000020000000000000002 /* DemoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000020000000000000002 /* DemoStore.swift */; };
@@ -67,6 +69,7 @@
 		BB0000140000000000000014 /* AppearancePreferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearancePreferenceTests.swift; sourceTree = "<group>"; };
 		BB0000160000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BB0000180000000000000018 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		BB0000200000000000000020 /* LocalDeviceStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDeviceStorage.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,6 +85,7 @@
 			files = (
 				EDE2F76D4FC3C4F524640DA1 /* BudgetAPI in Frameworks */,
 				AA0000150000000000000015 /* BudgetCore in Frameworks */,
+				AA0000190000000000000019 /* BudgetStorage in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -147,6 +151,7 @@
 				BB0000130000000000000013 /* AppearancePreference.swift */,
 				B0E14E75380CB2C219F61828 /* EditingViews.swift */,
 				DEFFDD801DC18A01D2C2C6FF /* KeychainStore.swift */,
+				BB0000200000000000000020 /* LocalDeviceStorage.swift */,
 				601308601949744C902D3365 /* RootView.swift */,
 				BB0000010000000000000001 /* DemoModels.swift */,
 				BB0000020000000000000002 /* DemoStore.swift */,
@@ -209,6 +214,7 @@
 			packageProductDependencies = (
 				8DA19D636EEAAB0BA449F759 /* BudgetAPI */,
 				BB0000150000000000000015 /* BudgetCore */,
+				BB0000190000000000000019 /* BudgetStorage */,
 			);
 			productName = BudgetApp;
 			productReference = 5D4070DC93D13B19958B946B /* BudgetApp.app */;
@@ -316,6 +322,7 @@
 				1C7D1E60B9E1C0ED2B68695C /* BudgetApp.swift in Sources */,
 				983A5654DFC35D2D8A62DEF3 /* EditingViews.swift in Sources */,
 				75327D5040AB839F991E0054 /* KeychainStore.swift in Sources */,
+				AA0000200000000000000020 /* LocalDeviceStorage.swift in Sources */,
 				924CF4BFFBE2D5F48825FA53 /* RootView.swift in Sources */,
 				AA0000010000000000000001 /* DemoModels.swift in Sources */,
 				AA0000020000000000000002 /* DemoStore.swift in Sources */,
@@ -628,6 +635,10 @@
 		BB0000150000000000000015 /* BudgetCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BudgetCore;
+		};
+		BB0000190000000000000019 /* BudgetStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BudgetStorage;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
