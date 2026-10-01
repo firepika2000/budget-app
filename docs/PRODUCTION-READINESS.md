@@ -1479,3 +1479,11 @@ remain `0700`, private configuration remains `0600`, and uninstall still preserv
 The focused 58-case distribution suite and QNAP shell syntax pass. Actual App Center volume-selection,
 package migration, Container Station, QTS/QuTS permissions, and supported-hardware acceptance remain
 required before customer release.
+
+The immutable server-image workflow now also pins upstream QDK 2.5.3 by commit and builds one QPKG
+against the exact published multi-architecture image digest. Full server identity remains embedded;
+QDK's separate ten-character package version uses an explicit, validated mapping (for example,
+`0.9.0-beta.1` → `0.9.0b1`) rather than truncation. On a successful independent QDK build, the file and
+SHA-256 are uploaded only as an explicitly named **unsigned hardware-acceptance artifact** and are
+deliberately excluded from customer GitHub release assets. QDK availability cannot block the
+Docker/Windows customer downloads. This enables real NAS testing without weakening the signing gate.

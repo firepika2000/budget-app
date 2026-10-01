@@ -8,10 +8,14 @@ fi
 
 VERSION=$1
 QBUILD=${2:-qbuild}
+QPKG_VERSION=${CLEARPOCKET_QPKG_VERSION:-$VERSION}
 case "$VERSION" in
     *[!A-Za-z0-9._-]*|'') echo "Invalid QPKG version" >&2; exit 2 ;;
 esac
-if [ "${#VERSION}" -gt 10 ]; then
+case "$QPKG_VERSION" in
+    *[!A-Za-z0-9._-]*|'') echo "Invalid QNAP package version" >&2; exit 2 ;;
+esac
+if [ "${#QPKG_VERSION}" -gt 10 ]; then
     echo "QDK QPKG versions must be at most 10 characters" >&2
     exit 2
 fi
@@ -33,7 +37,7 @@ STAGE=$(mktemp -d "${TMPDIR:-/tmp}/clearpocket-qpkg.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT HUP INT TERM
 
 mkdir -p "$STAGE/shared/server"
-awk -v version="$VERSION" '{ gsub(/@VERSION@/, version); print }' \
+awk -v version="$QPKG_VERSION" '{ gsub(/@VERSION@/, version); print }' \
     "$SCRIPT_DIR/template/qpkg.cfg" > "$STAGE/qpkg.cfg"
 cp "$SCRIPT_DIR/template/package_routines" "$STAGE/package_routines"
 cp "$SCRIPT_DIR/template/shared/ClearPocketServer.sh" "$STAGE/shared/ClearPocketServer.sh"

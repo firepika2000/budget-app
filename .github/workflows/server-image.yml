@@ -35,7 +35,17 @@ jobs:
         run: |
           value="${INPUT_VERSION:-${REF_NAME#server-v}}"
           [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || exit 2
+          qnap="$value"
+          if [[ "$value" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-(alpha|beta|rc)\.?([0-9]+)$ ]]; then
+            case "${BASH_REMATCH[2]}" in alpha) stage=a ;; beta) stage=b ;; rc) stage=r ;; esac
+            qnap="${BASH_REMATCH[1]}${stage}${BASH_REMATCH[3]}"
+          fi
+          [[ "$qnap" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,9}$ ]] || {
+            echo "Version cannot be represented safely in QNAP's ten-character package field" >&2
+            exit 2
+          }
           echo "value=$value" >> "$GITHUB_OUTPUT"
+          echo "qnap=$qnap" >> "$GITHUB_OUTPUT"
       - name: Refuse an existing release tag
         run: |
           if docker buildx imagetools inspect "ghcr.io/firepika2000/budget-server:${{ steps.version.outputs.value }}" >/dev/null 2>&1; then
@@ -83,6 +93,27 @@ jobs:
             "clearpocket-server-windows-$VERSION.zip" \
             "clearpocket-server-docker-$VERSION.tar.gz" \
             > "clearpocket-server-$VERSION-SHA256SUMS.txt")
+      - name: Build unsigned QNAP hardware-acceptance package
+        id: qnap_package
+        continue-on-error: true
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          QPKG_VERSION: ${{ steps.version.outputs.qnap }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          git clone https://github.com/qnap-dev/QDK.git qdk
+          git -C qdk checkout --detach 955d98c9913989561142f9a9ac994ec0091559d6
+          sudo bash qdk/InstallToUbuntu.sh install
+          rm -rf distribution/qnap/build
+          CLEARPOCKET_QPKG_VERSION="$QPKG_VERSION" \
+          CLEARPOCKET_SERVER_IMAGE_DIGEST="$IMAGE_DIGEST" \
+          CLEARPOCKET_SOURCE_COMMIT="$GITHUB_SHA" \
+            distribution/qnap/build.sh "$VERSION" /usr/share/QDK/bin/qbuild
+          set -- distribution/qnap/build/*.qpkg
+          [ "$#" -eq 1 ] || { echo "QDK did not produce exactly one QPKG" >&2; exit 1; }
+          cp "$1" "release/clearpocket-server-qnap-unsigned-$VERSION.qpkg"
+          (cd release && sha256sum "clearpocket-server-qnap-unsigned-$VERSION.qpkg" \
+            > "clearpocket-server-qnap-unsigned-$VERSION-SHA256SUM.txt")
       - uses: actions/upload-artifact@v4
         with:
           name: clearpocket-server-${{ steps.version.outputs.value }}
@@ -90,6 +121,14 @@ jobs:
             release/clearpocket-server-windows-${{ steps.version.outputs.value }}.zip
             release/clearpocket-server-docker-${{ steps.version.outputs.value }}.tar.gz
             release/clearpocket-server-${{ steps.version.outputs.value }}-SHA256SUMS.txt
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: steps.qnap_package.outcome == 'success'
+        with:
+          name: clearpocket-server-qnap-unsigned-${{ steps.version.outputs.value }}
+          path: |
+            release/clearpocket-server-qnap-unsigned-${{ steps.version.outputs.value }}.qpkg
+            release/clearpocket-server-qnap-unsigned-${{ steps.version.outputs.value }}-SHA256SUM.txt
           if-no-files-found: error
       - name: Publish immutable customer downloads
         if: startsWith(github.ref, 'refs/tags/server-v')

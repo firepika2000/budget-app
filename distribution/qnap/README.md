@@ -19,11 +19,26 @@ CLEARPOCKET_SERVER_IMAGE_DIGEST=sha256:RELEASE_DIGEST \
   ./build.sh 0.9.0 /path/to/qbuild
 ```
 
+When the full server version is longer than QDK's ten-character `QPKG_VER` field, provide a distinct,
+stable package version without changing the embedded server version or immutable image identity:
+
+```sh
+CLEARPOCKET_QPKG_VERSION=0.9.0b1 \
+CLEARPOCKET_SERVER_IMAGE_DIGEST=sha256:RELEASE_DIGEST \
+  ./build.sh 0.9.0-beta.1 /path/to/qbuild
+```
+
 QDK limits `QPKG_VER` to ten characters. The script stages a clean QDK project, inserts the shared
 versioned server bundle, embeds the exact published multi-architecture server-image digest, and invokes
 QDK's `qbuild`. First start and explicit upgrades pull that digest and only then assign the local tag
 used by Compose. An engineering build may omit the digest, but it is not a customer release. Do not
 build from a working directory containing a private `.env`.
+
+The server-image workflow pins QDK 2.5.3 by immutable commit and, when that independent toolchain build
+succeeds, uploads an explicitly named unsigned QPKG for hardware acceptance. A QDK outage cannot block
+the Docker/Windows release, and this artifact is never attached to customer GitHub releases. QNAP
+signing and real supported-model acceptance remain mandatory before relabeling or publishing it as a
+customer download.
 
 App Center asks which storage volume should host the package and supports later package migration
 through the [QDK volume-selection contract](https://github.com/qnap-dev/QDK/blob/master/docs/QDK-Developer-Guide.md#version--platform-gating).
@@ -147,6 +162,6 @@ health gate. Pull failure leaves both configuration and running services untouch
 run forward migrations but fails health, the API remains stopped and the version is not silently
 downgraded against the newer database; recover the preserved generation into a new empty authority.
 
-Before this package is customer-ready it still needs the signed QPKG release pipeline, supported-model
-matrix, a graphical first-run storage/host/TLS setup screen, and hardware validation on current QTS and
-QuTS hero. Until those gates pass, prefer the documented Container Station import path.
+Before this package is customer-ready, the hardware-acceptance artifact still needs QNAP signing,
+a supported-model matrix, a graphical first-run host/TLS setup screen, and validation on current QTS
+and QuTS hero. Until those gates pass, prefer the documented Container Station import path.

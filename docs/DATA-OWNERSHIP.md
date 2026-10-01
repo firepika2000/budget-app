@@ -605,6 +605,9 @@ and an internal loopback bridge to the application proxy, avoiding a competing l
 Customer QPKG builds now embed the published multi-architecture server-image digest; first start and
 backup-gated upgrade inspect/pull that immutable reference and assign the Compose tag locally. An
 engineering QPKG without that digest remains deliberately distinguishable from a customer release.
+The image publication workflow now builds a digest-bound, SHA-256-covered QPKG with an immutable
+pinned QDK toolchain and exposes it only as an explicitly unsigned hardware-acceptance artifact.
+Customer release remains gated on QNAP signing and supported-model validation.
 
 The first secure-pairing foundation is implemented behind an explicitly configured canonical
 HTTPS origin. Authenticated users can generate one active five-minute, high-entropy pairing secret

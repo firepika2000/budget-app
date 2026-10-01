@@ -628,6 +628,12 @@ def test_publish_workflow_builds_versioned_customer_bundle():
     assert "server/scripts/backup.sh server/scripts/restore.sh" in workflow
     assert "server/scripts/backup_archive.py server/scripts/backup_destination.py" in workflow
     assert "server/scripts/backup_schedule.py" in workflow
+    assert "955d98c9913989561142f9a9ac994ec0091559d6" in workflow
+    assert "clearpocket-server-qnap-unsigned-$VERSION.qpkg" in workflow
+    assert 'CLEARPOCKET_QPKG_VERSION="$QPKG_VERSION"' in workflow
+    assert "QDK did not produce exactly one QPKG" in workflow
+    release_step = workflow.split("- name: Publish immutable customer downloads", 1)[1]
+    assert "qnap-unsigned" not in release_step
 
     readme = (ROOT / "distribution" / "server" / "README.md").read_text()
     assert "sha256sum --check clearpocket-server-VERSION-SHA256SUMS.txt --ignore-missing" in readme
@@ -761,7 +767,8 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'distribution/server/Caddyfile' in builder
     assert 'distribution/server/Caddyfile.qnap' in builder
     assert 'distribution/server/manage.py' in builder
-    assert '"${#VERSION}" -gt 10' in builder
+    assert '"${#QPKG_VERSION}" -gt 10' in builder
+    assert "CLEARPOCKET_QPKG_VERSION" in builder
     assert "CLEARPOCKET_SERVER_IMAGE_DIGEST" in builder
     assert 'RELEASE-METADATA.txt' in builder
 
@@ -774,7 +781,7 @@ def test_qnap_builder_stages_a_versioned_shared_server_bundle(tmp_path: Path):
     fake_qbuild = tmp_path / "qbuild"
     fake_qbuild.write_text("""#!/bin/sh
 set -eu
-grep -q 'QPKG_VER=\"0.9.0\"' qpkg.cfg
+grep -q 'QPKG_VER="'"$EXPECTED_QPKG_VERSION"'"' qpkg.cfg
 grep -q 'QPKG_VOLUME_SELECT=\"3\"' qpkg.cfg
 grep -q 'QPKG_TIMEOUT=\"300,120\"' qpkg.cfg
 test -f shared/ClearPocketServer.sh
@@ -785,23 +792,32 @@ test -f shared/server/compose.yaml
 test -f shared/server/Caddyfile
 test -f shared/server/Caddyfile.qnap
 test -f shared/server/manage.py
-grep -q '^version=0.9.0$' shared/server/RELEASE-METADATA.txt
+grep -q "^version=$EXPECTED_SERVER_VERSION$" shared/server/RELEASE-METADATA.txt
 grep -q '^commit=test-commit$' shared/server/RELEASE-METADATA.txt
 grep -q '^image=ghcr.io/firepika2000/budget-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$' shared/server/RELEASE-METADATA.txt
 test -f shared/server/tools/backup.sh
 test -f shared/server/tools/restore.sh
 test -f shared/server/tools/backup_schedule.py
-test \"$(cat shared/server/VERSION)\" = \"0.9.0\"
+test \"$(cat shared/server/VERSION)\" = \"$EXPECTED_SERVER_VERSION\"
 mkdir -p build
 : > build/ClearPocketServer_0.9.0.qpkg
 """)
     fake_qbuild.chmod(0o755)
     environment = dict(os.environ,
                        CLEARPOCKET_SERVER_IMAGE_DIGEST="sha256:" + "a" * 64,
-                       CLEARPOCKET_SOURCE_COMMIT="test-commit")
+                       CLEARPOCKET_SOURCE_COMMIT="test-commit",
+                       EXPECTED_QPKG_VERSION="0.9.0", EXPECTED_SERVER_VERSION="0.9.0")
     subprocess.run([distribution / "qnap" / "build.sh", "0.9.0", fake_qbuild],
                    env=environment, check=True, capture_output=True, text=True)
     assert (distribution / "qnap" / "build" / "ClearPocketServer_0.9.0.qpkg").is_file()
+    beta_environment = dict(
+        environment, CLEARPOCKET_QPKG_VERSION="0.9.0b1",
+        EXPECTED_QPKG_VERSION="0.9.0b1", EXPECTED_SERVER_VERSION="0.9.0-beta.1",
+    )
+    subprocess.run(
+        [distribution / "qnap" / "build.sh", "0.9.0-beta.1", fake_qbuild],
+        env=beta_environment, check=True, capture_output=True, text=True,
+    )
     invalid_environment = dict(environment, CLEARPOCKET_SERVER_IMAGE_DIGEST="sha256:not-a-digest")
     invalid = subprocess.run(
         [distribution / "qnap" / "build.sh", "0.9.0", fake_qbuild],
