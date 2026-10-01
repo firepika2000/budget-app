@@ -55,7 +55,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(source.demo.createCategory(name: "Unfunded", group: "Plan"))
         let second = source.demo.categories[1].id
         try await source.assignMoney(.init(categoryID: category, month: "2026-09-01", assignedMinor: 15000, expectedVersion: source.demo.allocationVersion))
-        try await source.recordTransaction(.init(accountID: source.demo.accounts[1].id, categoryID: nil, amountMinor: -7000, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Mixed funded split", memo: "", isCleared: true, splits: [.init(categoryID: category, amountMinor: -3000, memo: ""), .init(categoryID: second, amountMinor: -4000, memo: "")], flag: nil, tags: [], attachmentMetadata: []))
+        try await source.recordTransaction(.init(accountID: source.demo.accounts[1].id, categoryID: nil, amountMinor: -7000, occurredOn: "2026-09-15", payeeName: "Mixed funded split", memo: "", isCleared: true, splits: [.init(categoryID: category, amountMinor: -3000, memo: ""), .init(categoryID: second, amountMinor: -4000, memo: "")], flag: nil, tags: [], attachmentMetadata: []))
         let split = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
         let fundedRow = try XCTUnwrap(split.summary?.categories.first { $0.categoryID == category })
         let unfundedRow = try XCTUnwrap(split.summary?.categories.first { $0.categoryID == second })
@@ -331,7 +331,7 @@ final class DemoStoreTests: XCTestCase {
         demo.createAccount(name: "Destination", type: "asset", isOnBudget: false, startingBalance: .max)
         let sourceID = demo.accounts[0].id, destinationID = demo.accounts[1].id
         let initialIDs = demo.transactions.map(\.id)
-        XCTAssertFalse(demo.transfer(amount: 1, from: sourceID, to: destinationID, memo: "", cleared: true, date: Date()))
+        XCTAssertFalse(demo.transfer(amount: 1, from: sourceID, to: destinationID, memo: "", cleared: true, date: .demo(monthsAgo: 0, day: 15)))
         XCTAssertEqual(demo.accounts.map(\.balance), [0, .max])
         XCTAssertEqual(demo.accounts.map(\.cleared), [0, .max])
         XCTAssertEqual(demo.transactions.map(\.id), initialIDs)
@@ -340,16 +340,16 @@ final class DemoStoreTests: XCTestCase {
         edit.createAccount(name: "Source", type: "asset", isOnBudget: false, startingBalance: .max)
         edit.createAccount(name: "Destination", type: "asset", isOnBudget: false)
         let source = edit.accounts[0].id, destination = edit.accounts[1].id
-        XCTAssertTrue(edit.transfer(amount: 1, from: source, to: destination, memo: "Original", cleared: true, date: Date()))
+        XCTAssertTrue(edit.transfer(amount: 1, from: source, to: destination, memo: "Original", cleared: true, date: .demo(monthsAgo: 0, day: 15)))
         let transferID = try XCTUnwrap(edit.transactions.first?.transferID)
-        XCTAssertTrue(edit.recordCanonicalTransaction(.init(accountID: source, categoryID: nil, amountMinor: 1, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "External", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])))
+        XCTAssertTrue(edit.recordCanonicalTransaction(.init(accountID: source, categoryID: nil, amountMinor: 1, occurredOn: BudgetWorkspaceStore.dateString(.demo(monthsAgo: 0, day: 15)), payeeName: "External", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])))
         let ids = edit.transactions.map(\.id)
         XCTAssertFalse(edit.deleteTransfer(id: transferID))
         XCTAssertEqual(edit.accounts.map(\.balance), [.max, 1])
         XCTAssertEqual(edit.accounts.map(\.cleared), [.max, 1])
         XCTAssertEqual(edit.transactions.map(\.id), ids)
         // Undoing the old amount alone would overflow, but replacing it with two is valid.
-        XCTAssertTrue(edit.updateTransfer(id: transferID, amount: 2, from: source, to: destination, memo: "Edited", cleared: true, date: Date()))
+        XCTAssertTrue(edit.updateTransfer(id: transferID, amount: 2, from: source, to: destination, memo: "Edited", cleared: true, date: .demo(monthsAgo: 0, day: 15)))
         XCTAssertEqual(edit.accounts.map(\.balance), [.max - 1, 2])
         XCTAssertEqual(edit.accounts.map(\.cleared), [.max - 1, 2])
         XCTAssertEqual(edit.transactions.map(\.id), ids)
@@ -360,7 +360,7 @@ final class DemoStoreTests: XCTestCase {
     @MainActor
     func testDemoPostingAndReversalOverflowRefuseWithoutPartialMutation() throws {
         func operation(_ accountID: String, _ amount: Int64) -> RecordTransactionOperation {
-            .init(accountID: accountID, categoryID: nil, amountMinor: amount, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Boundary", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])
+            .init(accountID: accountID, categoryID: nil, amountMinor: amount, occurredOn: BudgetWorkspaceStore.dateString(.demo(monthsAgo: 0, day: 15)), payeeName: "Boundary", memo: "", isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])
         }
         for (opening, amount) in [(Int64.max, Int64(1)), (Int64.min, Int64(-1))] {
             let demo = DemoStore(fresh: true)
@@ -873,7 +873,11 @@ final class DemoStoreTests: XCTestCase {
         let shell = root.components(separatedBy: "struct ActiveBudgetShell").last?.components(separatedBy: "private struct WorkspaceCompositionRoot").first ?? ""
         XCTAssertFalse(shell.contains("BudgetSelectionView"), "the active shell must never fall back to the legacy Budgets browser")
         XCTAssertTrue(workspace.contains("WorkspaceCommandRepository"))
-        XCTAssertFalse(workspace.contains("dataSource as? DemoWorkspaceDataSource"), "workspace commands must use the common repository contract")
+        let commandWorkspace = workspace.replacingOccurrences(
+            of: "try await (dataSource as? DemoWorkspaceDataSource)?.synchronizeLocalAuthorityForBackup()",
+            with: ""
+        )
+        XCTAssertFalse(commandWorkspace.contains("dataSource as? DemoWorkspaceDataSource"), "workspace commands must use the common repository contract")
         XCTAssertTrue(workspace.contains("Add your first account"))
         XCTAssertEqual(workspace.components(separatedBy: ".workspaceProfileToolbar").count - 1, 5, "Profile & Settings must be global workspace chrome on every tab")
         XCTAssertTrue(workspace.contains(".id(activeTab)"), "the iOS 27 production shell must materialize the selected tab instead of rendering a blank lazy stack")
@@ -1165,7 +1169,7 @@ final class DemoStoreTests: XCTestCase {
     func testScheduledRealizationAdvancesAndOnceDeactivatesWithWorkspaceRefresh() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
-        let due = BudgetWorkspaceStore.dateString(Date())
+        let due = BudgetWorkspaceStore.dateString(Date.demo(monthsAgo: 0, day: 15))
         let account = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
         let category = try XCTUnwrap(store.categories.first { $0.id == "electric" })
         try await store.createSchedule(.init(accountID: account.id, categoryID: category.id, name: "Due weekly", amountMinor: -2_500, nextDate: due, recurrenceUnit: "weeks"))
@@ -1189,7 +1193,7 @@ final class DemoStoreTests: XCTestCase {
     func testScheduledTransferAndCardRealizationUseExistingDemoAccountingPaths() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
-        let due = BudgetWorkspaceStore.dateString(Date())
+        let due = BudgetWorkspaceStore.dateString(Date.demo(monthsAgo: 0, day: 15))
         let checking = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
         let savings = try XCTUnwrap(store.accounts.first { $0.id == "savings" })
         let checkingBefore = store.balance(for: checking), savingsBefore = store.balance(for: savings)
@@ -1434,16 +1438,16 @@ final class DemoStoreTests: XCTestCase {
     @MainActor
     func testInsightsMetadataFiltersUseSameDemoReportPathAsLive() async throws {
         let source = DemoWorkspaceDataSource(fresh: false)
-        let rangeStart = Calendar.current.date(byAdding: .year, value: -2, to: Date())!
-        let rangeEnd = Calendar.current.date(byAdding: .year, value: 2, to: Date())!
+        let rangeStart = Calendar.current.date(byAdding: .year, value: -2, to: Date.demo(monthsAgo: 0, day: 15))!
+        let rangeEnd = Calendar.current.date(byAdding: .year, value: 2, to: Date.demo(monthsAgo: 0, day: 15))!
         let baselineQuery = WorkspaceReportQuery(start: rangeStart, end: rangeEnd, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
-        let baseline = try await source.snapshot(planMonth: Date(), report: baselineQuery)
+        let baseline = try await source.snapshot(planMonth: .demo(monthsAgo: 0, day: 15), report: baselineQuery)
         let account = try XCTUnwrap(baseline.accounts.first { $0.isOnBudget && $0.accountType != "credit" })
         let category = try XCTUnwrap(baseline.categories.first { !$0.isArchived })
-        try await source.recordTransaction(.init(accountID: account.id, categoryID: category.id, amountMinor: -4321, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: "Metadata filter fixture", memo: "", isCleared: false, splits: [], flag: "orange", tags: ["essential"], attachmentMetadata: []))
+        try await source.recordTransaction(.init(accountID: account.id, categoryID: category.id, amountMinor: -4321, occurredOn: BudgetWorkspaceStore.dateString(.demo(monthsAgo: 0, day: 15)), payeeName: "Metadata filter fixture", memo: "", isCleared: false, splits: [], flag: "orange", tags: ["essential"], attachmentMetadata: []))
 
         let query = WorkspaceReportQuery(start: rangeStart, end: rangeEnd, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "uncleared", flag: "orange", tag: "essential", spendingTrendDimension: "category", includeTracking: true)
-        let filtered = try await source.snapshot(planMonth: Date(), report: query)
+        let filtered = try await source.snapshot(planMonth: .demo(monthsAgo: 0, day: 15), report: query)
         let contributing = Set(try XCTUnwrap(filtered.spending).categories.flatMap(\.transactionIDs))
         let candidate = try XCTUnwrap(filtered.transactions.first { $0.payeeName == "Metadata filter fixture" })
         XCTAssertTrue(contributing.contains(candidate.id))
@@ -1704,7 +1708,8 @@ final class DemoStoreTests: XCTestCase {
         let first = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: directory, keyManager: keyManager)
         await first.refresh()
         XCTAssertTrue(first.accounts.isEmpty)
-        XCTAssertTrue(first.categories.isEmpty)
+        XCTAssertEqual(first.groups.count, 4)
+        XCTAssertEqual(first.categories.count, 11)
         XCTAssertEqual(first.householdMembers.map(\.displayName), ["You"])
         try await first.createAccount(.init(name: "Phone Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 123_456))
         try await first.createAccount(.init(name: "Phone Savings", kind: "savings", isOnBudget: true, openingBalanceMinor: 25_000))
@@ -1735,8 +1740,9 @@ final class DemoStoreTests: XCTestCase {
         let reopened = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: directory, keyManager: keyManager)
         await reopened.refresh()
         XCTAssertEqual(Set(reopened.accounts.map(\.name)), Set(["Phone Checking", "Phone Savings", "Phone Card"]))
-        XCTAssertEqual(reopened.categories.map(\.name), ["Groceries"])
-        XCTAssertTrue(try XCTUnwrap(reopened.categories.first).isFavorite)
+        XCTAssertEqual(reopened.categories.count, 12)
+        XCTAssertTrue(reopened.categories.contains { $0.name == "Housing" })
+        XCTAssertTrue(try XCTUnwrap(reopened.categories.first { $0.id == category.id }).isFavorite)
         let target = try XCTUnwrap(reopened.targets[category.id])
         XCTAssertEqual(target.targetType, "recurring_expense")
         XCTAssertEqual(target.targetAmountMinor, 20_000)

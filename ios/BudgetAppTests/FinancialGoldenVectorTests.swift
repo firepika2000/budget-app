@@ -783,7 +783,7 @@ final class FinancialGoldenVectorTests: XCTestCase {
         let cash = try XCTUnwrap(source.demo.accounts.last?.id)
         XCTAssertTrue(source.demo.createCategory(name: "Needs", group: "Needs"))
         let category = try XCTUnwrap(source.demo.categories.last?.id)
-        let today = BudgetWorkspaceStore.dateString(Date())
+        let today = BudgetWorkspaceStore.dateString(Date.demo(monthsAgo: 0, day: 15))
         try await services.transactions.record(.init(accountID: cash, categoryID: category, amountMinor: -2_000,
             occurredOn: today, payeeName: "Policy proof", memo: "", isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: []))
         let month = source.demo.currentPlanningMonth
@@ -1121,7 +1121,7 @@ final class FinancialGoldenVectorTests: XCTestCase {
                 case "reconcile":
                     let accountID = try XCTUnwrap(accountRefs[string(operation, "account")])
                     let cleared = try XCTUnwrap(source.demo.accounts.first(where: { $0.id == accountID })?.cleared)
-                    try await services.accounts.reconcile(.init(accountID: accountID, statementBalanceMinor: integer(operation, "statement_minor"), throughDate: operation["through_date"] as? String ?? BudgetWorkspaceStore.dateString(Date()), createAdjustment: bool(operation, "create_adjustment"), reason: "vector", expectedClearedBalanceMinor: cleared))
+                    try await services.accounts.reconcile(.init(accountID: accountID, statementBalanceMinor: integer(operation, "statement_minor"), throughDate: operation["through_date"] as? String ?? BudgetWorkspaceStore.dateString(.demo(monthsAgo: 0, day: 15)), createAdjustment: bool(operation, "create_adjustment"), reason: "vector", expectedClearedBalanceMinor: cleared))
                 case "schedule":
                     let name = "Vector \(string(operation, "ref"))"
                     try await services.schedules.create(.init(accountID: try XCTUnwrap(accountRefs[string(operation, "account")]), categoryID: (operation["category"] as? String).flatMap { categoryRefs[$0] }, name: name, amountMinor: integer(operation, "amount_minor"), nextDate: operation["next_date"] as? String ?? "2026-09-01", recurrenceUnit: string(operation, "recurrence")))
@@ -1203,7 +1203,7 @@ final class FinancialGoldenVectorTests: XCTestCase {
 
     @MainActor
     func testDatedVoidKeepsOriginalHistoryAndNetsSubsequentReserveRefunds() async throws {
-        let today = BudgetWorkspaceStore.dateString(Date())
+        let today = BudgetWorkspaceStore.dateString(Date.demo(monthsAgo: 0, day: 15))
         let currentMonth = String(today.prefix(7)) + "-01"
         let earlier = Calendar.current.date(byAdding: .month, value: -1, to: BudgetWorkspaceStore.parseDate(currentMonth))!
         let earlierMonth = BudgetWorkspaceStore.dateString(earlier)

@@ -67,7 +67,9 @@ final class AppSessionRefreshTests: XCTestCase {
         } else {
             XCTFail("Pairing must enter the canonical Live workspace")
         }
-        XCTAssertEqual(paths.paths, ["/api/v1/health", "/api/v1/bootstrap/status", "/api/v1/auth/pair", "/api/v1/me", "/api/v1/budgets"])
+        XCTAssertEqual(Array(paths.paths.prefix(3)), ["/api/v1/health", "/api/v1/bootstrap/status", "/api/v1/auth/pair"])
+        XCTAssertEqual(Set(paths.paths.dropFirst(3)), Set(["/api/v1/me", "/api/v1/budgets"]),
+                       "post-pair identity and budget hydration may complete concurrently")
     }
 
     private static func workspaceResponse(_ path: String) -> (Int, Data) {

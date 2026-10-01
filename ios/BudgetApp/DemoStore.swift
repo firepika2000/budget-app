@@ -28,6 +28,7 @@ final class DemoStore: ObservableObject {
     // separately; an absent history preserves the legacy carry policy.
     private(set) var cashRolloverPolicies: [CashRolloverProjection.Change]
     private let initialCashRolloverPolicies: [CashRolloverProjection.Change]
+    private let planningNow: () -> Date
     struct RolloverAuditMetadata {
         let id: String; let source: String; let actorID: String?; let createdAt: String
     }
@@ -85,10 +86,11 @@ final class DemoStore: ObservableObject {
     }
 
     func recordAllocation(amount: Int64, from source: String? = nil, to destination: String,
-                          occurredOn: String = BudgetWorkspaceStore.dateString(Date()),
+                          occurredOn: String? = nil,
                           kind: String = "assignment", note: String = "", id: String = UUID().uuidString) {
         guard amount != 0 else { return }
-        allocationEvents.append(.init(id: id, operationID: id, occurredOn: occurredOn, kind: kind,
+        allocationEvents.append(.init(id: id, operationID: id,
+                                     occurredOn: occurredOn ?? BudgetWorkspaceStore.dateString(planningNow()), kind: kind,
                                      actor: persona.rawValue.lowercased(), note: note,
                                      sourceCategoryID: source, destinationCategoryID: destination,
                                      amountMinor: amount))
@@ -127,9 +129,14 @@ final class DemoStore: ObservableObject {
     let spendingHistory: [Int64] = [594000, 621000, 609000, 642000, 598000, 634000]
     let netWorthHistory: [Int64] = [12840000, 12976000, 13112000, 13200000, 13358000, 13593000]
 
-    init(fresh: Bool = false, cashRolloverPolicies: [CashRolloverProjection.Change] = []) {
+    init(
+        fresh: Bool = false,
+        cashRolloverPolicies: [CashRolloverProjection.Change] = [],
+        planningNow: @escaping () -> Date = { Date.demo(monthsAgo: 0, day: 15) }
+    ) {
         self.cashRolloverPolicies = cashRolloverPolicies
         self.initialCashRolloverPolicies = cashRolloverPolicies
+        self.planningNow = planningNow
         accounts = []; categories = []; transactions = []; payees = []
         schedules = []; requests = []; allowances = []; groupOrder = []
         resetPolicyAudit()
@@ -281,7 +288,7 @@ final class DemoStore: ObservableObject {
         try planningSnapshot(month: month)
     }
 
-    var currentPlanningMonth: String { String(BudgetWorkspaceStore.dateString(Date()).prefix(7)) + "-01" }
+    var currentPlanningMonth: String { String(BudgetWorkspaceStore.dateString(planningNow()).prefix(7)) + "-01" }
 
     func planningSnapshot(month: String, through: String? = nil,
                           additionalAllocations: [PlanningPeriodProjection.Allocation] = [],
@@ -419,7 +426,7 @@ final class DemoStore: ObservableObject {
         let id = UUID().uuidString
         accounts.append(.init(id: id, name: name, kind: DemoAccountKind(rawValue: type) ?? (isOnBudget ? .checking : .asset), balance: startingBalance, cleared: startingBalance, isOnBudget: isOnBudget))
         if startingBalance != 0 {
-            transactions.insert(.init(id: UUID().uuidString, date: Date(), payee: "Starting Balance", memo: "Balance when account was added", accountID: id, categoryIDs: [], amount: startingBalance, member: persona, cleared: true), at: 0)
+            transactions.insert(.init(id: UUID().uuidString, date: planningNow(), payee: "Starting Balance", memo: "Balance when account was added", accountID: id, categoryIDs: [], amount: startingBalance, member: persona, cleared: true), at: 0)
         }
         unassignedMinor = nextUnassigned
         errorMessage = nil
@@ -438,7 +445,8 @@ final class DemoStore: ObservableObject {
 
     @discardableResult
     func move(amount: Int64, from sourceID: String, to destinationID: String,
-              occurredOn: String = BudgetWorkspaceStore.dateString(Date()), note: String = "") -> Bool {
+              occurredOn requestedDate: String? = nil, note: String = "") -> Bool {
+        let occurredOn = requestedDate ?? BudgetWorkspaceStore.dateString(planningNow())
         guard amount > 0 else { return fail(.invalidAmount) }
         guard let source = categories.firstIndex(where: { $0.id == sourceID }),
               let destination = categories.firstIndex(where: { $0.id == destinationID }) else { return fail(.categoryNotFound) }
@@ -464,7 +472,8 @@ final class DemoStore: ObservableObject {
     }
 
     @discardableResult
-    func approve(_ requestID: String, amount: Int64, sourceCategoryID: String = "buffer", note: String = "", at now: Date = Date()) -> Bool {
+    func approve(_ requestID: String, amount: Int64, sourceCategoryID: String = "buffer", note: String = "", at requestedDate: Date? = nil) -> Bool {
+        let now = requestedDate ?? planningNow()
         guard !isRestricted else { return fail(.restrictedCategory) }
         guard let index = requests.firstIndex(where: { $0.id == requestID }), requests[index].status == "Pending" else {
             return failMessage("Request has already changed or is unavailable.")
@@ -505,7 +514,7 @@ final class DemoStore: ObservableObject {
         guard Set(categoryIDs).count == categoryIDs.count else { _ = fail(.invalidAmount); return }
         let signed = amount > 0 ? -amount : amount
         let amounts = splitAmounts(total: signed, categoryIDs: categoryIDs)
-        _ = recordCanonicalTransaction(.init(accountID: accountID, categoryID: categoryIDs.count == 1 ? categoryIDs[0] : nil, amountMinor: signed, occurredOn: BudgetWorkspaceStore.dateString(Date()), payeeName: payee, memo: memo, isCleared: false, splits: categoryIDs.count > 1 ? amounts.map { .init(categoryID: $0.key, amountMinor: $0.value, memo: "") } : [], flag: "New", tags: [], attachmentMetadata: attachment ? [["name": "receipt.jpg"]] : []))
+        _ = recordCanonicalTransaction(.init(accountID: accountID, categoryID: categoryIDs.count == 1 ? categoryIDs[0] : nil, amountMinor: signed, occurredOn: BudgetWorkspaceStore.dateString(planningNow()), payeeName: payee, memo: memo, isCleared: false, splits: categoryIDs.count > 1 ? amounts.map { .init(categoryID: $0.key, amountMinor: $0.value, memo: "") } : [], flag: "New", tags: [], attachmentMetadata: attachment ? [["name": "receipt.jpg"]] : []))
     }
 
     func createTransaction(payee: String, signedAmount: Int64, date: Date = .demo(monthsAgo: 0, day: 30), accountID: String, categoryAmounts: [String: Int64], memo: String, cleared: Bool, flag: String? = nil, tags: [String] = [], attachmentName: String? = nil) {
@@ -529,7 +538,7 @@ final class DemoStore: ObservableObject {
         let values = splitAmounts(total: amount, categoryIDs: categoryIDs)
         return updateCanonicalTransaction(id: id, operation: .init(
             accountID: accountID, categoryID: categoryIDs.count == 1 ? categoryIDs[0] : nil,
-            amountMinor: -amount, occurredOn: transactions.first(where: { $0.id == id }).map { BudgetWorkspaceStore.dateString($0.date) } ?? BudgetWorkspaceStore.dateString(Date()),
+            amountMinor: -amount, occurredOn: transactions.first(where: { $0.id == id }).map { BudgetWorkspaceStore.dateString($0.date) } ?? BudgetWorkspaceStore.dateString(planningNow()),
             payeeName: payee, memo: memo, isCleared: cleared,
             splits: categoryIDs.count > 1 ? values.map { .init(categoryID: $0.key, amountMinor: -$0.value, memo: "") } : [],
             flag: flag, tags: [], attachmentMetadata: []
@@ -633,7 +642,8 @@ final class DemoStore: ObservableObject {
     }
 
     @discardableResult
-    func reconcile(accountID: String, statementBalance: Int64, throughDate: String = BudgetWorkspaceStore.dateString(Date()), createAdjustment: Bool = false, reason: String = "", expectedClearedBalance: Int64? = nil) -> Bool {
+    func reconcile(accountID: String, statementBalance: Int64, throughDate requestedDate: String? = nil, createAdjustment: Bool = false, reason: String = "", expectedClearedBalance: Int64? = nil) -> Bool {
+        let throughDate = requestedDate ?? BudgetWorkspaceStore.dateString(planningNow())
         guard !isRestricted else { return failMessage("You do not have permission to reconcile this account.") }
         guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return fail(.accountNotFound) }
         guard let cutoff = try? PlanningPeriodProjection.Day(throughDate),
@@ -766,7 +776,7 @@ final class DemoStore: ObservableObject {
         try validateAllowance(rule)
         try requireAllocationVersion(expectedVersion)
         let day = try PlanningPeriodProjection.Day(issueDate)
-        guard rule.nextDate == issueDate, issueDate <= BudgetWorkspaceStore.dateString(Date()),
+        guard rule.nextDate == issueDate, issueDate <= BudgetWorkspaceStore.dateString(planningNow()),
               !allowanceHistory.contains(where: { $0.planID == id && $0.issuedOn == issueDate }) else {
             throw NSError(domain: "BudgetWorkspace", code: 409, userInfo: [NSLocalizedDescriptionKey: "The allowance date changed or is still in the future."])
         }
@@ -799,13 +809,14 @@ final class DemoStore: ObservableObject {
         allocationEvents.append(contentsOf: events); allocationVersion += 1
         allowances[index].nextDate = nextDate
         allowanceHistory.append(.init(id: UUID().uuidString, planID: id, issuedOn: issueDate, amount: rule.amount,
-            reclaimed: returned, operationID: operationID, actorID: actor, createdAt: ISO8601DateFormatter().string(from: Date())))
+            reclaimed: returned, operationID: operationID, actorID: actor, createdAt: ISO8601DateFormatter().string(from: planningNow())))
         publishPlanning(current)
     }
 
     @discardableResult
     func assign(amount: Int64, to categoryID: String,
-                occurredOn: String = BudgetWorkspaceStore.dateString(Date())) -> Bool {
+                occurredOn requestedDate: String? = nil) -> Bool {
+        let occurredOn = requestedDate ?? BudgetWorkspaceStore.dateString(planningNow())
         guard amount > 0 else { return fail(.invalidAmount) }
         do {
             let month = try PlanningPeriodProjection.Day(occurredOn).month
@@ -843,7 +854,7 @@ final class DemoStore: ObservableObject {
         guard operation.amountMinor != 0,
               let account = accounts.first(where: { $0.id == operation.accountID }) else { return fail(.invalidAmount) }
         let occurredOn = BudgetWorkspaceStore.parseDate(operation.occurredOn)
-        guard Calendar.current.startOfDay(for: occurredOn) <= Calendar.current.startOfDay(for: Date()) else { return fail(.invalidAmount) }
+        guard Calendar.current.startOfDay(for: occurredOn) <= Calendar.current.startOfDay(for: planningNow()) else { return fail(.invalidAmount) }
         guard Set(operation.splits.map(\.categoryID)).count == operation.splits.count else { return fail(.invalidAmount) }
         let amounts = operation.categoryID.map { [$0: operation.amountMinor] }
             ?? Dictionary(uniqueKeysWithValues: operation.splits.map { ($0.categoryID, $0.amountMinor) })
@@ -1174,7 +1185,7 @@ extension DemoStore {
                                 debtTerms: [LocalAccountDebtTermsRecord] = [],
                                 transactionChanges: [LocalTransactionChangeRecord] = [],
                                 creditReserveEvents: [LocalCreditReserveEventRecord] = []) throws -> LocalAuthoritySnapshot {
-        let stamp = ISO8601DateFormatter().string(from: Date())
+        let stamp = ISO8601DateFormatter().string(from: planningNow())
         for name in groupOrder { ensureGroupIdentity(name) }
         let groupIDs = groupIdentityByName
         let accountRows = accounts.map { item in
@@ -1200,7 +1211,7 @@ extension DemoStore {
             LocalAllocationRecord(id: item.id, operationID: item.operationID, budgetID: identity.budgetID, sourceCategoryID: item.sourceCategoryID, categoryID: item.destinationCategoryID, amountMinor: item.amountMinor, occurredOn: item.occurredOn, kind: item.kind, actorUserID: identity.ownerUserID, note: item.note, createdAt: stamp)
         }
         let reconciliations = accounts.compactMap { item -> LocalReconciliationRecord? in
-            item.reconciledBalance.map { LocalReconciliationRecord(id: "local-reconciliation-\(item.id)", accountID: item.id, statementDate: BudgetWorkspaceStore.dateString(Date()), statementBalanceMinor: $0, createdAt: stamp) }
+            item.reconciledBalance.map { LocalReconciliationRecord(id: "local-reconciliation-\(item.id)", accountID: item.id, statementDate: BudgetWorkspaceStore.dateString(planningNow()), statementBalanceMinor: $0, createdAt: stamp) }
         }
         let targets = categories.compactMap { item -> LocalCategoryTargetRecord? in
             item.target.map { LocalCategoryTargetRecord(categoryID: item.id, targetType: item.targetType, amountMinor: $0, cadence: "monthly", effectiveMonth: currentPlanningMonth, snoozedMonth: item.targetSnoozedMonths.sorted().last, targetDate: item.targetDate, recurrenceMonths: item.targetRecurrenceMonths.map(Int64.init), minimumContributionMinor: item.targetMinimumContribution, priority: Int64(item.targetPriority), isActive: item.targetIsActive, snoozedMonths: item.targetSnoozedMonths.sorted()) }

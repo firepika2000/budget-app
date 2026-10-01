@@ -417,7 +417,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         localOperationGate: LocalDeviceOperationGate? = nil,
         localIdentity: LocalAuthorityIdentity? = nil,
         storageUnavailableMessage: String? = nil,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = { Date.demo(monthsAgo: 0, day: 15) }
     ) {
         self.now = now
         self.localAuthority = localAuthority
@@ -425,7 +425,11 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         self.localOperationGate = localOperationGate
         self.localIdentity = localIdentity
         self.storageUnavailableMessage = storageUnavailableMessage
-        let store = DemoStore(fresh: fresh || ProcessInfo.processInfo.arguments.contains("--demo-fresh-budget"), cashRolloverPolicies: cashRolloverPolicies)
+        let store = DemoStore(
+            fresh: fresh || ProcessInfo.processInfo.arguments.contains("--demo-fresh-budget"),
+            cashRolloverPolicies: cashRolloverPolicies,
+            planningNow: now
+        )
         // Adversarial production-composition fixture: valid per-target amounts whose sum overflows.
         if ProcessInfo.processInfo.arguments.contains("--demo-plan-cost-overflow") {
             for index in store.categories.indices {
@@ -2147,6 +2151,11 @@ final class BudgetWorkspaceStore: ObservableObject {
     init(budget: APIBudget) { self.budget = budget; dataSource = nil; commandRepository = nil; applicationServices = nil; localStorageComposition = nil }
     private init(dataSource: DemoWorkspaceDataSource, localStorageComposition: LocalDeviceStorageComposition? = nil) {
         self.budget = dataSource.budget
+        if dataSource.localIdentity == nil {
+            planMonth = Calendar.current.date(
+                from: Calendar.current.dateComponents([.year, .month], from: Date.demo(monthsAgo: 0, day: 15))
+            )!
+        }
         self.dataSource = dataSource
         self.localStorageComposition = localStorageComposition
         commandRepository = dataSource
@@ -2204,11 +2213,12 @@ final class BudgetWorkspaceStore: ObservableObject {
                 composition = try LocalDeviceStorageComposition.production(fileManager: fileManager)
             }
             localStorage = composition
-            source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget, localAuthority: composition.authority, localAttachmentVault: composition.attachments, localOperationGate: composition.operationGate, localIdentity: identity)
+            source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget, localAuthority: composition.authority, localAttachmentVault: composition.attachments, localOperationGate: composition.operationGate, localIdentity: identity, now: Date.init)
         } catch {
             print("[BudgetApp] local storage composition failed: \(error)")
-            source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget,
-                                             storageUnavailableMessage: "Local storage could not be opened. No changes will be accepted until device storage is available.")
+            source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget, localIdentity: identity,
+                                             storageUnavailableMessage: "Local storage could not be opened. No changes will be accepted until device storage is available.",
+                                             now: Date.init)
         }
         let store = BudgetWorkspaceStore(dataSource: source, localStorageComposition: localStorage)
         if source.localIdentity == nil {

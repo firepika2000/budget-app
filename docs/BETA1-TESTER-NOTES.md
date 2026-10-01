@@ -14,14 +14,17 @@ Automatic bank connections and the complete import workflow are not part of this
 ## What to test
 
 1. Launch offline and confirm the production workspace opens directly in **On This iPhone** mode.
-2. Create a checking account with a starting balance, category group and category.
-3. Assign money and enter a categorized expense. Confirm Plan, Activity and account values agree.
-4. Clear and reconcile the expense. Confirm a reconciled transaction cannot be cleared again.
-5. Schedule a future transaction, inspect Forecast, then use Enter Now once.
-6. Explore Home, Spending Breakdown, reports and Debt payoff projections.
-7. Force-quit and reopen the app; confirm the local budget persists while still offline.
-8. Try light/dark appearance, larger text and Hide Amounts where useful.
-9. From Profile & Settings, choose **Share Beta Feedback**. Describe what you were doing, what
+2. Confirm a new budget opens with a zero-dollar starter Plan and that onboarding explains it.
+3. Create a checking account with a starting balance, category group and category.
+4. Assign money and enter a categorized expense. Confirm Plan, Activity and account values agree.
+5. Clear and reconcile the expense. Confirm a reconciled transaction cannot be cleared again.
+6. Schedule a future transaction, inspect Forecast, then use Enter Now once.
+7. Explore Home, Spending Breakdown, reports and Debt payoff projections.
+8. Force-quit and reopen the app; confirm the local budget persists while still offline.
+9. Try light/dark appearance, larger text and Hide Amounts where useful.
+10. With disposable data, verify Profile & Settings → **Delete This Budget** requires the exact
+    budget name and returns to a fresh starter budget after deletion.
+11. From Profile & Settings, choose **Share Beta Feedback**. Describe what you were doing, what
    happened and what you expected. The template includes version and connection state but no
    balances or transaction data.
 
@@ -34,8 +37,8 @@ but review them first so they do not reveal personal financial information.
 - On-device personal mode is persistent and requires no server. Deleting the app also deletes data
   stored only on that phone, so use disposable beta data until backup/restore UI is accepted.
 - Training/example data is temporary and deliberately separate from the real local budget.
-- Automatic local-to-server migration is not included yet; connecting to a server keeps the local
-  copy but does not upload it.
+- Local-to-server transfer exports a verified encrypted generation for import by a new empty server;
+  server installation and import remain an administrator-guided beta workflow.
 - Bank connectivity is not included.
 - Import staging exists as engineering groundwork but is not an approved end-user Beta workflow.
 - This build is for closed testing, not production financial recordkeeping.

@@ -10,12 +10,19 @@ server-backed budgets; no example fixtures, server, account, or sign-in are requ
 - Accounts, category groups/categories, exact minor-unit transactions and splits, allocations,
   reconciliation observations, targets, favorites, payees/aliases, schedules, debt terms, rollover
   policy history, and encrypted attachment metadata/content survive process termination.
+- A genuinely new budget begins with a small zero-dollar starter Plan—Monthly Bills, Everyday
+  Spending, True Expenses, and Goals—so the user has useful structure without fabricated money,
+  accounts, targets, or activity. Guided onboarding explains that every example is editable.
 - The example household remains available only under the explicitly labeled **Training** section.
 - Profile & Settings identifies the current authority and owns Data Location plus Backup & Recovery.
   A local budget can now produce an authenticated transfer generation and separate recovery key for
   verified import into a new empty ClearPocket Server. Connecting alone never copies or deletes data,
   and the original iPhone authority remains intact after the guided handoff. Fully automatic in-app
   server provisioning and migration are intentionally not claimed by this revision.
+- An owner can permanently delete the active budget from Profile & Settings by typing its exact
+  name. Local deletion removes the authority, encrypted attachments, rollback generations, and
+  device-held recovery keys, then opens a genuinely fresh starter budget. External Files/Dropbox
+  backup packages remain separate artifacts.
 - Local personal mode exposes only the device owner. Invitations, delegated budgets, requests, and
   allowances remain server-household capabilities rather than simulated local features.
 
@@ -39,14 +46,18 @@ the workspace fails closed instead of accepting changes into volatile memory.
    local-only data, as expected for this checkpoint.
 2. Install the new build and launch with airplane mode enabled.
 3. Confirm the Home/Plan/Activity/Accounts/Insights shell opens without server setup or sign-in.
-4. Create an account, category group/category, assignment, and transaction.
-5. Force-quit and relaunch while still offline; confirm balances, Plan, and Activity agree.
-6. Open Profile & Settings and confirm **On This iPhone** plus **Server & Transfer Options**.
-7. Confirm the example budget appears only after explicitly choosing **Open Example Budget** under
+4. Confirm Plan contains the zero-dollar starter groups, then rename/add structure as desired.
+5. Create an account, category group/category, assignment, and transaction.
+6. Force-quit and relaunch while still offline; confirm balances, Plan, and Activity agree.
+7. Open Profile & Settings and confirm **On This iPhone** plus **Server & Transfer Options**.
+8. Confirm the example budget appears only after explicitly choosing **Open Example Budget** under
    Training, and that returning to On This iPhone restores the real local budget.
-8. In **Backup & Recovery**, create a backup and confirm **Move to a Server** exposes the package,
+9. In **Backup & Recovery**, create a backup and confirm **Move to a Server** exposes the package,
    separate transfer key, ordered import instructions, and a server connection action only after the
    generation exists. Cancel without connecting and confirm the local budget remains available.
-9. In a build configured with the production Dropbox app identity, connect Dropbox and choose
+10. In a build configured with the production Dropbox app identity, connect Dropbox and choose
    **Back Up Now to Dropbox**. Confirm a fresh recovery key appears, the verified generation is listed,
    and **Last successful backup** survives leaving and reopening Backup & Recovery.
+11. With disposable data only, open Profile & Settings → **Delete This Budget**, verify the action
+    stays disabled until the exact name is entered, delete it, and confirm the replacement budget
+    contains the starter Plan but none of the deleted financial records.

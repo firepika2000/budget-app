@@ -21,7 +21,7 @@ It does not replace the product audit or broader production-readiness history.
 
 ## App Store Connect gate
 
-- [x] Beta release identity is `0.8.0` build `2`; build `1` was the first upload.
+- [x] Current candidate identity is `0.8.0` build `3`; build `2` was the prior accepted upload.
 - [x] Apple Developer team `6JGQ5388N8` and App ID `com.firepika.BudgetApp` are available locally.
 - [x] Build number was incremented for this upload.
 - [ ] Confirm export-compliance answers for the app's use of Apple-provided HTTPS/Keychain APIs.
@@ -57,9 +57,8 @@ Use disposable Beta data; do not reset the existing human Live database.
 
 **ENGINEERING PACKAGE:** local-first release candidate verified and archiveable.
 
-**TESTFLIGHT READY:** BUILD UPLOADED — `0.8.0 (2)` is processing in App Store Connect. Human
-local-first acceptance and tester-group availability remain open; no human acceptance is inferred
-from a successful upload.
+**TESTFLIGHT READY:** `0.8.0 (3)` is the current engineering candidate. Upload and App Store Connect
+processing remain required; no human acceptance is inferred from a successful upload.
 
 ## Signing handoff
 
