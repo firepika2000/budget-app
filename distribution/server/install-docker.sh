@@ -15,7 +15,7 @@ case "$VERSION" in ''|edge|*[!A-Za-z0-9._-]*) echo "Server package version is in
 [ "${#VERSION}" -le 64 ] || { echo "Server package version is invalid." >&2; exit 1; }
 RELEASE_METADATA="$SCRIPT_DIR/RELEASE-METADATA.txt"
 CONTENT_MANIFEST="$SCRIPT_DIR/PACKAGE-CONTENTS-SHA256.txt"
-if [ -f "$RELEASE_METADATA" ]; then
+if [ -f "$RELEASE_METADATA" ] && [ ! -L "$RELEASE_METADATA" ]; then
     [ -f "$CONTENT_MANIFEST" ] && [ ! -L "$CONTENT_MANIFEST" ] || {
         echo "The release package integrity manifest is missing or unsafe. Download it again." >&2
         exit 1
@@ -29,12 +29,33 @@ if [ -f "$RELEASE_METADATA" ]; then
         exit 1
     }
     echo "Release package contents verified."
+elif [ -e "$RELEASE_METADATA" ]; then
+    echo "Release metadata is not a regular non-linked file." >&2
+    exit 1
 fi
 command -v docker >/dev/null 2>&1 || { echo "Docker Engine or Docker Desktop is required." >&2; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Docker is installed but is not running." >&2; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required." >&2; exit 1; }
 
 IMAGE="ghcr.io/firepika2000/budget-server:$VERSION"
+PINNED_IMAGE=""
+if [ -f "$RELEASE_METADATA" ] && [ ! -L "$RELEASE_METADATA" ]; then
+    [ "$(grep -c '^version=' "$RELEASE_METADATA")" = "1" ] || {
+        echo "Release metadata has an ambiguous version." >&2; exit 1;
+    }
+    [ "$(sed -n 's/^version=//p' "$RELEASE_METADATA")" = "$VERSION" ] || {
+        echo "Release metadata does not match this package version." >&2; exit 1;
+    }
+    [ "$(grep -c '^image=' "$RELEASE_METADATA")" = "1" ] || {
+        echo "Release metadata has an ambiguous image digest." >&2; exit 1;
+    }
+    PINNED_IMAGE=$(sed -n 's/^image=//p' "$RELEASE_METADATA")
+    DIGEST=${PINNED_IMAGE#ghcr.io/firepika2000/budget-server@sha256:}
+    case "$PINNED_IMAGE" in ghcr.io/firepika2000/budget-server@sha256:*) ;; *)
+        echo "Release metadata has an invalid server image." >&2; exit 1 ;; esac
+    case "$DIGEST" in *[!0-9a-f]*) echo "Release metadata has an invalid image digest." >&2; exit 1 ;; esac
+    [ "${#DIGEST}" = "64" ] || { echo "Release metadata has an invalid image digest." >&2; exit 1; }
+fi
 if [ ! -e "$ENV_FILE" ]; then
     printf 'ClearPocket Server first-time setup\n'
     printf 'For remote iPhone access, enter a public DNS name already pointing to this server.\n'
@@ -62,7 +83,8 @@ if [ ! -e "$ENV_FILE" ]; then
     chmod 700 "$DATA_ROOT" "$DATABASE" "$ATTACHMENTS" "$OPERATIONS"
 
     echo "Downloading immutable ClearPocket Server $VERSION..."
-    docker pull "$IMAGE"
+    docker pull "${PINNED_IMAGE:-$IMAGE}"
+    [ -z "$PINNED_IMAGE" ] || docker tag "$PINNED_IMAGE" "$IMAGE"
     USER_ID=$(id -u)
     GROUP_ID=$(id -g)
     set -- /bundle/configure.py --output /bundle/.env \

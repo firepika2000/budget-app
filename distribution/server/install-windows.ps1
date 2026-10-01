@@ -16,8 +16,14 @@ if ($version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or $version -eq "edg
 $releaseMetadata = Join-Path $sourceRoot "RELEASE-METADATA.txt"
 $contentManifest = Join-Path $sourceRoot "PACKAGE-CONTENTS-SHA256.txt"
 if (Test-Path -LiteralPath $releaseMetadata -PathType Leaf) {
+    if (((Get-Item -LiteralPath $releaseMetadata).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "The release metadata is a linked file. Download the package again."
+    }
     if (-not (Test-Path -LiteralPath $contentManifest -PathType Leaf)) {
         throw "The release package integrity manifest is missing. Download it again."
+    }
+    if (((Get-Item -LiteralPath $contentManifest).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "The release package integrity manifest is a linked file. Download it again."
     }
     $verifiedFiles = 0
     foreach ($line in Get-Content -LiteralPath $contentManifest) {
@@ -32,6 +38,9 @@ if (Test-Path -LiteralPath $releaseMetadata -PathType Leaf) {
         $candidate = Join-Path $sourceRoot $relative
         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
             throw "The release package is incomplete: $relative is missing."
+        }
+        if (((Get-Item -LiteralPath $candidate).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "The release package contains a linked program file: $relative."
         }
         $actualHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actualHash -ne $expectedHash) {
@@ -58,6 +67,9 @@ $requiredFiles = @(
     "tools\backup_archive.py",
     "tools\require_empty_restore.sql"
 )
+if (Test-Path -LiteralPath $releaseMetadata -PathType Leaf) {
+    $requiredFiles += "RELEASE-METADATA.txt", "PACKAGE-CONTENTS-SHA256.txt"
+}
 foreach ($relative in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $relative) -PathType Leaf)) {
         throw "The package is incomplete: $relative is missing. Download it again."

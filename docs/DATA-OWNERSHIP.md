@@ -448,8 +448,10 @@ new-destination recovery workflow.
 Tagged server builds now publish separately labeled Windows/Docker customer archives rather than a
 generic workflow artifact. Each bundle records the immutable version, source commit, and exact
 multi-architecture image digest; a release-level SHA-256 manifest covers both downloads, while the
-container build retains provenance and an SBOM. This supplies reproducible release identity and
-download-integrity checks, but does not claim the platform code-signing still required for final
+container build retains provenance and an SBOM. The released Docker and Windows installers verify the
+extracted file manifest, pull the recorded registry digest rather than trusting a mutable version tag,
+and only then assign the local tag consumed by Compose. This supplies reproducible release identity
+and download-integrity checks, but does not claim the platform code-signing still required for final
 normal-user installers.
 
 The generic versioned Docker bundle now has a one-command first-run installer. It requires only a

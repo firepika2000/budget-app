@@ -180,7 +180,10 @@ def test_docker_installer_uses_immutable_image_without_host_python_and_never_ove
     assert 'case "$VERSION" in \'\'|edge|' in script
     assert 'sha256sum --check --strict --quiet PACKAGE-CONTENTS-SHA256.txt' in script
     assert 'Release package content verification failed' in script
-    assert 'docker pull "$IMAGE"' in script
+    assert '[ ! -L "$RELEASE_METADATA" ]' in script
+    assert 'docker pull "${PINNED_IMAGE:-$IMAGE}"' in script
+    assert 'docker tag "$PINNED_IMAGE" "$IMAGE"' in script
+    assert 'ghcr.io/firepika2000/budget-server@sha256:' in script
     assert '--entrypoint python "$IMAGE"' in script
     assert '--user "$USER_ID:$GROUP_ID"' in script
     assert '/bundle/configure.py --output /bundle/.env' in script
@@ -353,7 +356,7 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "Type UPDATE" in script
     update_section = script.split("function Update-ClearPocketServer", 1)[1].split('if ($Operation -eq "Start")', 1)[0]
     backup_index = update_section.index('& $backupScript -EnvironmentFile $environmentFile')
-    pull_index = update_section.index('& docker pull "${image}:$serverVersion"')
+    pull_index = update_section.index('Install-PinnedReleaseImage "${image}:$serverVersion"')
     pin_index = update_section.index('Move-Item -LiteralPath $temporary -Destination $environmentFile -Force')
     health_index = update_section.index("Start-ClearPocketServer")
     assert backup_index < pull_index < pin_index < health_index
@@ -377,6 +380,8 @@ def test_windows_per_user_installer_preserves_authority_and_publishes_only_allow
     assert 'PACKAGE-CONTENTS-SHA256.txt' in installer
     assert 'Get-FileHash -LiteralPath $candidate -Algorithm SHA256' in installer
     assert 'release package integrity manifest contains an unsafe path' in installer
+    assert '[IO.FileAttributes]::ReparsePoint' in installer
+    assert 'release package contains a linked program file' in installer
     assert '$requiredFiles = @(' in installer
     assert 'tools\\backup_archive.py' in installer
     assert 'tools\\require_empty_restore.sql' in installer
@@ -384,10 +389,15 @@ def test_windows_per_user_installer_preserves_authority_and_publishes_only_allow
     assert 'Join-Path $installRoot ".env"' in installer
     assert 'Copy-Item -LiteralPath $source -Destination $temporary' in installer
     assert 'Copy-Item -LiteralPath $sourceRoot' not in installer
+    assert '$requiredFiles += "RELEASE-METADATA.txt", "PACKAGE-CONTENTS-SHA256.txt"' in installer
     assert "WScript.Shell" in installer
     assert 'GetFolderPath("Desktop")' in installer
     assert 'GetFolderPath("Programs")' in installer
     assert 'Start-Process -FilePath $manager' in installer
+    assert "function Get-PinnedReleaseImage" in launcher
+    assert "function Install-PinnedReleaseImage" in launcher
+    assert "budget-server@sha256:[0-9a-f]{64}" in launcher
+    assert "& docker tag $pinned $TaggedImage" in launcher
     assert 'Join-Path $env:LOCALAPPDATA "ClearPocket Server\\Data"' in launcher
     for forbidden in ("database", "attachments", "clearpocket-recovery-key.txt", "Backups"):
         assert f'"{forbidden}"' not in installer

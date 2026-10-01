@@ -26,6 +26,35 @@ function Assert-SafeValue([string] $Value, [string] $Label) {
     }
 }
 
+function Get-PinnedReleaseImage {
+    $metadata = Join-Path $PSScriptRoot "RELEASE-METADATA.txt"
+    if (-not (Test-Path -LiteralPath $metadata -PathType Leaf)) { return $null }
+    $versions = @(Get-Content -LiteralPath $metadata | Where-Object { $_ -match '^version=' })
+    $images = @(Get-Content -LiteralPath $metadata | Where-Object { $_ -match '^image=' })
+    if ($versions.Count -ne 1 -or $versions[0].Split('=', 2)[1] -ne $serverVersion) {
+        throw "Release metadata does not match this server package version."
+    }
+    if ($images.Count -ne 1) { throw "Release metadata has an ambiguous image digest." }
+    $reference = $images[0].Split('=', 2)[1]
+    if ($reference -notmatch '^ghcr\.io/firepika2000/budget-server@sha256:[0-9a-f]{64}$') {
+        throw "Release metadata has an invalid server image digest."
+    }
+    return $reference
+}
+
+function Install-PinnedReleaseImage([string] $TaggedImage) {
+    $pinned = Get-PinnedReleaseImage
+    if ($null -eq $pinned) {
+        & docker pull $TaggedImage
+    } else {
+        & docker pull $pinned
+        if ($LASTEXITCODE -eq 0) { & docker tag $pinned $TaggedImage }
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "The immutable ClearPocket Server image could not be downloaded."
+    }
+}
+
 function ConvertTo-PublicHost([string] $Value) {
     $hostName = $Value.Trim().TrimEnd('.').ToLowerInvariant()
     $address = $null
@@ -137,6 +166,7 @@ if ($newInstall) {
     [IO.File]::WriteAllLines($temporary, $lines, [Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $temporary -Destination $environmentFile
     Write-Host "Private configuration created. Keep the .env file with your encrypted backups; its secrets were not displayed."
+    Install-PinnedReleaseImage "ghcr.io/firepika2000/budget-server:$serverVersion"
 }
 
 $portSetting = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^CLEARPOCKET_PORT=' })
@@ -505,8 +535,9 @@ function Update-ClearPocketServer {
     & $backupScript -EnvironmentFile $environmentFile
     if (-not $?) { throw "Required pre-update backup did not complete." }
 
-    & docker pull "${image}:$serverVersion"
-    if ($LASTEXITCODE -ne 0) {
+    try {
+        Install-PinnedReleaseImage "${image}:$serverVersion"
+    } catch {
         throw "Version $serverVersion could not be downloaded. Configuration and running services were not changed."
     }
     $lines = @(Get-Content -LiteralPath $environmentFile | ForEach-Object {
