@@ -2255,6 +2255,33 @@ final class BudgetWorkspaceStore: ObservableObject {
         return try localStorageComposition.keyManager.loadOrCreateDropboxBackupRecoveryKey()
     }
 
+    func localDevicePendingBackupDirectory() throws -> URL {
+        guard let localStorageComposition else {
+            throw LocalStorageError.operationFailed("Pending backup storage is available only for a Local Device budget")
+        }
+        let directory = localStorageComposition.paths.rootDirectory
+            .appendingPathComponent("PendingBackups", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        #if os(iOS)
+        try FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: directory.path
+        )
+        #endif
+        return directory
+    }
+
+    func deletePendingLocalDeviceBackup(_ packageURL: URL) throws {
+        let directory = try localDevicePendingBackupDirectory().standardizedFileURL
+        let candidate = packageURL.standardizedFileURL
+        guard candidate.deletingLastPathComponent() == directory,
+              candidate.pathExtension == "clearpocketbackup" else {
+            throw LocalStorageError.operationFailed("The pending backup path is invalid")
+        }
+        try FileManager.default.removeItem(at: candidate)
+    }
+
     func prepareLocalDeviceRestore(packageURL: URL, recoveryKey: String) async throws -> LocalDevicePreparedRestore {
         guard let localStorageComposition else {
             throw LocalStorageError.operationFailed("Encrypted restore is available only for a Local Device budget")
@@ -2946,6 +2973,7 @@ struct BudgetWorkspaceView: View {
     @EnvironmentObject private var session: AppSession
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store: BudgetWorkspaceStore
+    @StateObject private var dropboxBackup = DropboxBackupCoordinator()
     @State private var showingSettings = false
     @State private var showingOnboarding = false
     @State private var didEvaluateOnboarding = false
@@ -3031,6 +3059,7 @@ struct BudgetWorkspaceView: View {
                 store.updateLiveCredentials(serverURL: serverURL, token: token)
             }
             await reload()
+            await runAutomaticDropboxBackupIfDue()
             if !didEvaluateOnboarding {
                 didEvaluateOnboarding = true
                 showingOnboarding = !ProcessInfo.processInfo.arguments.contains("--skip-guided-onboarding")
@@ -3043,11 +3072,15 @@ struct BudgetWorkspaceView: View {
         .onChange(of: store.workspaceAccessDenied) { _, denied in
             if denied { showingSettings = false; showingOnboarding = false }
         }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await runAutomaticDropboxBackupIfDue() }
+        }
         .alert("Unable to complete request", isPresented: Binding(get: { store.errorMessage != nil && !store.workspaceAccessDenied }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("Retry") { Task { await reload() } }; Button("Cancel", role: .cancel) {}
         } message: { Text(store.errorMessage ?? "Unknown error") }
         .sheet(isPresented: $showingSettings) {
-            WorkspaceProfileView(store: store) {
+            WorkspaceProfileView(store: store, dropboxBackup: dropboxBackup) {
                 if store.onboardingCompleted { store.restartOnboarding() } else { store.resumeOnboarding() }
                 showingOnboarding = true
             }
@@ -3072,6 +3105,28 @@ struct BudgetWorkspaceView: View {
         // application source and cannot start authentication or credential refresh work.
         await store.refresh()
     }
+
+    private func runAutomaticDropboxBackupIfDue() async {
+        guard session.sourceMode == .localDevice,
+              dropboxBackup.claimAutomaticBackupIfDue() else { return }
+        defer { dropboxBackup.finishAutomaticBackupAttempt() }
+        await dropboxBackup.refresh()
+        guard dropboxBackup.isConnected, dropboxBackup.automaticBackupIsDue() else { return }
+        var packageURL: URL?
+        do {
+            let recoveryKey = try store.localDeviceDropboxRecoveryKey()
+            let directory = try store.localDevicePendingBackupDirectory()
+            let backup = try await store.createLocalDeviceBackup(in: directory, recoveryKey: recoveryKey)
+            packageURL = backup.packageURL
+            _ = try await dropboxBackup.upload(packageURL: backup.packageURL)
+            dropboxBackup.clearPendingLocalGeneration()
+        } catch {
+            if let packageURL { dropboxBackup.retainPendingLocalGeneration(packageURL) }
+            dropboxBackup.errorMessage = error.localizedDescription
+            return
+        }
+        if let packageURL { try? FileManager.default.removeItem(at: packageURL) }
+    }
 }
 
 private struct WorkspaceProfileView: View {
@@ -3079,6 +3134,7 @@ private struct WorkspaceProfileView: View {
     @EnvironmentObject private var appearance: AppearancePreference
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var store: BudgetWorkspaceStore
+    @ObservedObject var dropboxBackup: DropboxBackupCoordinator
     let startOnboarding: () -> Void
     @State private var showHousehold = false
     @State private var showConnection = false
@@ -3201,7 +3257,7 @@ private struct WorkspaceProfileView: View {
                 BackupRecoverySettingsView(budgetID: store.budget.id)
             }
             .navigationDestination(isPresented: $showLocalBackup) {
-                LocalDeviceBackupRecoveryView(store: store)
+                LocalDeviceBackupRecoveryView(store: store, dropbox: dropboxBackup)
             }
             .navigationDestination(isPresented: $showDevices) { DeviceAccessSettingsView() }
             .sheet(isPresented: $showCreate) {
@@ -3372,7 +3428,7 @@ private struct DeviceAccessSettingsView: View {
 
 private struct LocalDeviceBackupRecoveryView: View {
     @ObservedObject var store: BudgetWorkspaceStore
-    @StateObject private var dropbox = DropboxBackupCoordinator()
+    @ObservedObject var dropbox: DropboxBackupCoordinator
     @State private var backup: LocalDeviceBackupExport?
     @State private var creating = false
     @State private var errorMessage: String?
@@ -3391,6 +3447,7 @@ private struct LocalDeviceBackupRecoveryView: View {
     @State private var dropboxRestorePackage: URL?
     @State private var dropboxRecoveryKey: String?
     @State private var dropboxKeyCopied = false
+    @State private var confirmingPendingBackupDeletion = false
 
     var body: some View {
         Form {
@@ -3419,10 +3476,24 @@ private struct LocalDeviceBackupRecoveryView: View {
                     Picker("Retain generations", selection: $dropbox.retention) {
                         ForEach([3, 5, 10, 20], id: \.self) { Text("\($0)").tag($0) }
                     }
+                    Toggle("Automatic Dropbox Backup", isOn: $dropbox.automaticBackupEnabled)
+                        .accessibilityIdentifier("automatic-dropbox-backup")
+                    if dropbox.automaticBackupEnabled {
+                        Picker("Backup frequency", selection: $dropbox.automaticBackupIntervalDays) {
+                            Text("Daily").tag(1)
+                            Text("Weekly").tag(7)
+                        }
+                        if let next = dropbox.nextAutomaticBackupAt() {
+                            LabeledContent("Next due", value: next.formatted(date: .abbreviated, time: .shortened))
+                        } else {
+                            Text("The first automatic backup is due now and will run while ClearPocket is active.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
                     Button("Back Up Now to Dropbox", systemImage: "arrow.up.doc") {
                         Task { await createAndUploadDropboxBackup() }
                     }
-                    .disabled(creating || dropbox.isWorking)
+                    .disabled(creating || dropbox.isWorking || dropbox.pendingLocalGenerationURL != nil)
                     .accessibilityIdentifier("backup-now-dropbox")
                     if let completedAt = dropbox.lastSuccessfulBackupAt {
                         LabeledContent("Last successful backup", value: completedAt.formatted(date: .abbreviated, time: .shortened))
@@ -3436,7 +3507,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                         }
                         .accessibilityIdentifier("copy-dropbox-backup-key")
                     }
-                    Text("ClearPocket creates each new encrypted generation using your dedicated Dropbox recovery key. Save that key somewhere outside this iPhone and outside Dropbox; ClearPocket cannot recover it after device loss. Backups made by an older app version may still require the recovery key shown when that backup was created.")
+                    Text("ClearPocket creates each new encrypted generation using your dedicated Dropbox recovery key. Automatic backups run when the app is active and due; iOS may defer them while the app is closed. Save the key somewhere outside this iPhone and outside Dropbox—ClearPocket cannot recover it after device loss. Backups made by an older app version may still require the recovery key shown when that backup was created.")
                         .font(.footnote).foregroundStyle(.secondary)
                     if dropbox.generations.isEmpty {
                         Text("No encrypted Dropbox generations found.")
@@ -3456,6 +3527,23 @@ private struct LocalDeviceBackupRecoveryView: View {
                     Button("Disconnect Dropbox", role: .destructive) { confirmingDropboxDisconnect = true }
                         .disabled(dropbox.isWorking)
                         .accessibilityIdentifier("disconnect-dropbox-backup")
+                }
+                if let pending = dropbox.pendingLocalGenerationURL {
+                    Label("A complete encrypted generation is waiting on this iPhone after an unsuccessful upload.", systemImage: "exclamationmark.icloud")
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("pending-dropbox-generation")
+                    if dropbox.isConnected {
+                        Button("Retry Pending Upload", systemImage: "arrow.clockwise.icloud") {
+                            Task { await retryPendingDropboxBackup(pending) }
+                        }
+                        .disabled(dropbox.isWorking)
+                    }
+                    ShareLink(item: pending) {
+                        Label("Save Pending Generation Elsewhere", systemImage: "square.and.arrow.up")
+                    }
+                    Button("Discard Pending Generation", role: .destructive) {
+                        confirmingPendingBackupDeletion = true
+                    }
                 }
                 if dropbox.isWorking { ProgressView().accessibilityLabel("Dropbox backup in progress") }
                 if let dropboxMessage {
@@ -3614,6 +3702,10 @@ private struct LocalDeviceBackupRecoveryView: View {
             if connected { loadDropboxRecoveryKey() }
             else { dropboxRecoveryKey = nil; dropboxKeyCopied = false }
         }
+        .onChange(of: dropbox.automaticBackupEnabled) { _, enabled in
+            guard enabled, dropbox.isConnected, dropbox.automaticBackupIsDue() else { return }
+            Task { await createAndUploadDropboxBackup() }
+        }
         .onDisappear {
             removeDropboxRestoreDownload()
             removeTemporaryBackup()
@@ -3689,9 +3781,30 @@ private struct LocalDeviceBackupRecoveryView: View {
         } message: {
             Text("ClearPocket will ask Dropbox to revoke access, then remove its device-only refresh credential. Existing encrypted generations remain in your Dropbox until you delete them.")
         }
+        .confirmationDialog(
+            "Discard Pending Generation?",
+            isPresented: $confirmingPendingBackupDeletion,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Generation", role: .destructive) {
+                let pending = dropbox.pendingLocalGenerationURL
+                guard let pending else { return }
+                do {
+                    try store.deletePendingLocalDeviceBackup(pending)
+                    dropbox.clearPendingLocalGeneration()
+                    if backup?.packageURL == pending { backup = nil }
+                } catch { errorMessage = error.localizedDescription }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Only this retained encrypted generation will be removed. Your live budget and Dropbox backups are unchanged.")
+        }
     }
 
-    private func createBackup(recoveryKey: LocalDeviceBackupRecoveryKey? = nil) async {
+    private func createBackup(
+        in directory: URL = FileManager.default.temporaryDirectory,
+        recoveryKey: LocalDeviceBackupRecoveryKey? = nil
+    ) async {
         guard !creating else { return }
         creating = true
         copied = false
@@ -3699,9 +3812,12 @@ private struct LocalDeviceBackupRecoveryView: View {
         dropboxMessage = nil
         defer { creating = false }
         do {
+            if backup?.packageURL == dropbox.pendingLocalGenerationURL {
+                throw LocalStorageError.operationFailed("Retry, save, or discard the pending Dropbox generation before creating another backup")
+            }
             if let prior = backup?.packageURL { try? FileManager.default.removeItem(at: prior) }
             backup = nil
-            backup = try await store.createLocalDeviceBackup(recoveryKey: recoveryKey)
+            backup = try await store.createLocalDeviceBackup(in: directory, recoveryKey: recoveryKey)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -3717,16 +3833,33 @@ private struct LocalDeviceBackupRecoveryView: View {
             errorMessage = error.localizedDescription
             return
         }
-        await createBackup(recoveryKey: recoveryKey)
+        let directory: URL
+        do { directory = try store.localDevicePendingBackupDirectory() }
+        catch { errorMessage = error.localizedDescription; return }
+        await createBackup(in: directory, recoveryKey: recoveryKey)
         guard let backup else { return }
         do {
             let publication = try await dropbox.upload(packageURL: backup.packageURL)
+            dropbox.clearPendingLocalGeneration()
             dropboxMessage = "Backup verified in Dropbox (\(publication.fileCount) encrypted files)."
+            try? FileManager.default.removeItem(at: backup.packageURL)
+            self.backup = nil
         } catch {
+            dropbox.retainPendingLocalGeneration(backup.packageURL)
             dropboxMessage = nil
             // The coordinator owns the actionable provider error. Keep the new local generation
             // and recovery key visible so the owner can save it elsewhere without recreating it.
         }
+    }
+
+    private func retryPendingDropboxBackup(_ packageURL: URL) async {
+        do {
+            let publication = try await dropbox.upload(packageURL: packageURL)
+            try? store.deletePendingLocalDeviceBackup(packageURL)
+            dropbox.clearPendingLocalGeneration()
+            if backup?.packageURL == packageURL { backup = nil }
+            dropboxMessage = "Backup verified in Dropbox (\(publication.fileCount) encrypted files)."
+        } catch { dropboxMessage = nil }
     }
 
     private func copyRecoveryKey(_ key: String) {
@@ -3788,6 +3921,7 @@ private struct LocalDeviceBackupRecoveryView: View {
 
     private func removeTemporaryBackup() {
         guard let backup else { return }
+        guard backup.packageURL != dropbox.pendingLocalGenerationURL else { return }
         try? FileManager.default.removeItem(at: backup.packageURL)
         self.backup = nil
     }

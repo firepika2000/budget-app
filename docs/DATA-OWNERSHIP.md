@@ -152,6 +152,16 @@ show the durable time of the last verified success, list remote generations, dow
 generation into private temporary storage, and hand it to the exact same recovery-key validation and
 cold-launch cutover used by Files. A failed upload keeps the newly created local generation and its
 separate recovery key available for another destination rather than claiming off-device success.
+The owner can also opt into daily or weekly Dropbox protection. When the app becomes active and the
+last verified success is due, the same operation-gated capture, stable recovery key, verified upload,
+and retention path runs automatically. The schedule is deliberately described as active-app
+automation: iOS may defer it while ClearPocket is closed, so the UI does not promise an unsupported
+wall-clock background service. Concurrent activation signals are single-flighted and one verified
+manual or automatic success advances the shared due date. If publication fails, the complete
+encrypted generation stays in the app's protected Local Device directory. Automatic capture pauses
+rather than accumulating more generations, and Backup & Recovery offers retry, provider-neutral
+sharing, or explicitly confirmed deletion. A preference-recovered path is never deleted without the
+Local Device store first proving that it is a generation inside that protected directory.
 Disconnect first asks Dropbox to revoke the grant and only removes
 the Keychain refresh token after remote confirmation. Builds without the registered public app key
 fail closed with an explicit configuration message while local backup, Files export/import, and

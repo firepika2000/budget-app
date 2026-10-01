@@ -1964,6 +1964,48 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDropboxAutomaticBackupSchedulePersistsAndUsesLastVerifiedSuccess() throws {
+        let suite = "BudgetAppTests.DropboxAutomatic.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let completedAt = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let first = DropboxBackupCoordinator(appKey: nil, defaults: defaults)
+        XCTAssertFalse(first.automaticBackupIsDue(at: completedAt))
+        first.automaticBackupEnabled = true
+        first.automaticBackupIntervalDays = 7
+        XCTAssertTrue(first.automaticBackupIsDue(at: completedAt))
+        XCTAssertTrue(first.claimAutomaticBackupIfDue(at: completedAt))
+        XCTAssertFalse(first.claimAutomaticBackupIfDue(at: completedAt), "Overlapping activation must not duplicate capture")
+        first.finishAutomaticBackupAttempt()
+        XCTAssertTrue(first.claimAutomaticBackupIfDue(at: completedAt))
+        first.finishAutomaticBackupAttempt()
+        first.recordSuccessfulBackup(at: completedAt)
+        XCTAssertFalse(first.automaticBackupIsDue(at: completedAt.addingTimeInterval(7 * 86_400 - 1)))
+        XCTAssertTrue(first.automaticBackupIsDue(at: completedAt.addingTimeInterval(7 * 86_400)))
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pending-dropbox-\(UUID().uuidString)", isDirectory: true)
+        let pending = root.appendingPathComponent("Failed.clearpocketbackup", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: pending, withIntermediateDirectories: true)
+        first.retainPendingLocalGeneration(pending)
+        XCTAssertEqual(first.pendingLocalGenerationURL, pending)
+        XCTAssertFalse(first.automaticBackupIsDue(at: completedAt.addingTimeInterval(8 * 86_400)),
+                       "A retained generation must be resolved instead of creating an invisible pile")
+
+        let reconstructed = DropboxBackupCoordinator(appKey: nil, defaults: defaults)
+        XCTAssertTrue(reconstructed.automaticBackupEnabled)
+        XCTAssertEqual(reconstructed.automaticBackupIntervalDays, 7)
+        XCTAssertEqual(reconstructed.lastSuccessfulBackupAt, completedAt)
+        XCTAssertEqual(reconstructed.nextAutomaticBackupAt(), completedAt.addingTimeInterval(7 * 86_400))
+        XCTAssertEqual(reconstructed.pendingLocalGenerationURL, pending)
+        reconstructed.clearPendingLocalGeneration()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pending.path),
+                      "The coordinator must never delete a path recovered from preferences")
+    }
+
+    @MainActor
     func testMalformedLocalDeviceAttachmentKeyFailsClosedWithoutReplacement() throws {
         let malformed = Data(repeating: 4, count: 31)
         let secrets = InMemorySecretDataStore(initial: malformed)
@@ -2033,6 +2075,15 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertGreaterThan(exported.encryptedBytes, 0)
         XCTAssertEqual(try LocalDeviceBackupRecoveryKey(encoded: exported.recoveryKey).encoded, exported.recoveryKey)
         XCTAssertEqual(exported.recoveryKey, dropboxRecovery.encoded)
+        XCTAssertThrowsError(try store.deletePendingLocalDeviceBackup(exported.packageURL))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: exported.packageURL.path),
+                      "A path outside protected pending storage must never be deleted")
+
+        let pendingDirectory = try store.localDevicePendingBackupDirectory()
+        let discardable = pendingDirectory.appendingPathComponent("Discardable.clearpocketbackup", isDirectory: true)
+        try FileManager.default.createDirectory(at: discardable, withIntermediateDirectories: true)
+        try store.deletePendingLocalDeviceBackup(discardable)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: discardable.path))
 
         let restored = root.appendingPathComponent("Restored", isDirectory: true)
         _ = try await LocalDeviceBackupService.restore(

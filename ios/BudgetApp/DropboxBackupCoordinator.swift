@@ -15,14 +15,30 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     @Published private(set) var generations: [DropboxBackupEntry] = []
     @Published private(set) var isWorking = false
     @Published private(set) var lastSuccessfulBackupAt: Date?
+    @Published private(set) var pendingLocalGenerationURL: URL?
     @Published var errorMessage: String?
     @Published var retention: Int {
         didSet { defaults.set(retention, forKey: retentionKey) }
+    }
+    @Published var automaticBackupEnabled: Bool {
+        didSet { defaults.set(automaticBackupEnabled, forKey: automaticBackupEnabledKey) }
+    }
+    @Published var automaticBackupIntervalDays: Int {
+        didSet {
+            if Self.supportedAutomaticIntervals.contains(automaticBackupIntervalDays) {
+                defaults.set(automaticBackupIntervalDays, forKey: automaticBackupIntervalKey)
+            }
+        }
     }
 
     private let defaults: UserDefaults
     private let retentionKey = "backup.dropbox.retention"
     private let lastSuccessfulBackupKey = "backup.dropbox.last-success"
+    private let automaticBackupEnabledKey = "backup.dropbox.automatic-enabled"
+    private let automaticBackupIntervalKey = "backup.dropbox.automatic-interval-days"
+    private let pendingLocalGenerationKey = "backup.dropbox.pending-local-generation"
+    static let supportedAutomaticIntervals = [1, 7]
+    private var automaticBackupClaimed = false
     private let credential: DropboxOAuthCredential?
     private var authenticationSession: ASWebAuthenticationSession?
     private var pendingAuthorization: DropboxPKCEAuthorization?
@@ -36,6 +52,14 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         let savedRetention = defaults.integer(forKey: retentionKey)
         retention = [3, 5, 10, 20].contains(savedRetention) ? savedRetention : 10
         lastSuccessfulBackupAt = defaults.object(forKey: lastSuccessfulBackupKey) as? Date
+        if let path = defaults.string(forKey: pendingLocalGenerationKey) {
+            let candidate = URL(fileURLWithPath: path, isDirectory: true)
+            if Self.isValidPendingGeneration(candidate) { pendingLocalGenerationURL = candidate }
+            else { defaults.removeObject(forKey: pendingLocalGenerationKey) }
+        }
+        automaticBackupEnabled = defaults.bool(forKey: automaticBackupEnabledKey)
+        let savedInterval = defaults.integer(forKey: automaticBackupIntervalKey)
+        automaticBackupIntervalDays = Self.supportedAutomaticIntervals.contains(savedInterval) ? savedInterval : 1
         #if DEBUG
         let environmentKey = ProcessInfo.processInfo.environment["BUDGETAPP_DROPBOX_APP_KEY"]
         #else
@@ -126,7 +150,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         defer { isWorking = false }
         do {
             try await credential.revoke()
-            isConnected = false; generations = []
+            isConnected = false; generations = []; automaticBackupEnabled = false
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -139,6 +163,48 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     func recordSuccessfulBackup(at completedAt: Date = Date()) {
         lastSuccessfulBackupAt = completedAt
         defaults.set(completedAt, forKey: lastSuccessfulBackupKey)
+    }
+
+    func automaticBackupIsDue(at date: Date = Date()) -> Bool {
+        guard automaticBackupEnabled, pendingLocalGenerationURL == nil else { return false }
+        guard let lastSuccessfulBackupAt else { return true }
+        return date >= lastSuccessfulBackupAt.addingTimeInterval(TimeInterval(automaticBackupIntervalDays * 86_400))
+    }
+
+    func nextAutomaticBackupAt() -> Date? {
+        guard automaticBackupEnabled, let lastSuccessfulBackupAt else { return nil }
+        return lastSuccessfulBackupAt.addingTimeInterval(TimeInterval(automaticBackupIntervalDays * 86_400))
+    }
+
+    /// Claims one due automatic run before capture begins. Scene activation and SwiftUI task
+    /// delivery can overlap, so the claim covers both the local snapshot and the later upload.
+    func claimAutomaticBackupIfDue(at date: Date = Date()) -> Bool {
+        guard !automaticBackupClaimed, !isWorking, automaticBackupIsDue(at: date) else { return false }
+        automaticBackupClaimed = true
+        return true
+    }
+
+    func finishAutomaticBackupAttempt() {
+        automaticBackupClaimed = false
+    }
+
+    func retainPendingLocalGeneration(_ url: URL) {
+        guard Self.isValidPendingGeneration(url) else { return }
+        pendingLocalGenerationURL = url
+        defaults.set(url.path, forKey: pendingLocalGenerationKey)
+    }
+
+    func clearPendingLocalGeneration() {
+        pendingLocalGenerationURL = nil
+        defaults.removeObject(forKey: pendingLocalGenerationKey)
+    }
+
+    private static func isValidPendingGeneration(_ url: URL) -> Bool {
+        let standardized = url.standardizedFileURL
+        var isDirectory: ObjCBool = false
+        return standardized.pathExtension == "clearpocketbackup"
+            && FileManager.default.fileExists(atPath: standardized.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
     }
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
