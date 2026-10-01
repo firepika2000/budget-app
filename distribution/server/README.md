@@ -319,6 +319,16 @@ Completed generations are bounded to the newest 10 by default. Advanced owners c
 `BUDGET_APP_BACKUP_RETENTION` value in the private `.env`; rotation runs only after a new encrypted
 generation has been published successfully and never follows links or removes unrelated files.
 
+The Windows manager also configures encrypted Dropbox publication without echoing private values.
+It supports a temporary access token or durable refresh-token/app-key credentials, restricts the
+resulting `dropbox.env` ACL to the signed-in Windows user, and preserves it across manager upgrades.
+Docker Desktop receives that file read-only and copies it to a private in-container file before the
+strict shared parser uses it. Manual and scheduled backups then retain the completed local generation,
+verify Dropbox content before promotion, and report either verified remote metadata or
+`publication_failed` without recording OAuth material. Disabling Dropbox removes only the local grant;
+existing local and remote generations remain. Public-app OAuth onboarding is still required before this
+can become a one-click consumer flow.
+
 For an existing pinned installation, run `install-windows.cmd` from the newer downloaded bundle, then
 choose **Apply this downloaded server version**. The manager requires an explicit `UPDATE`, completes the encrypted backup first, pulls the
 exact image before atomically changing only the version setting, and requires API health. Pull failure

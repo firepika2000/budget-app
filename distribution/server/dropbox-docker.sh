@@ -39,12 +39,13 @@ case "$ACTION" in
         KEEP=${5:-10}
         require_absolute_file "$ARCHIVE" "Encrypted backup"
         case "$ARCHIVE" in *.tar.gz.age) ;; *) echo "Only encrypted .tar.gz.age backups can be published." >&2; exit 1 ;; esac
+        ARCHIVE_NAME=$(basename -- "$ARCHIVE")
         require_absolute_file "$CREDENTIALS" "Dropbox credential file"
         case "$KEEP" in ''|*[!0-9]*|0) echo "Retention must be a positive integer." >&2; exit 1 ;; esac
         compose run --rm --no-deps --user "$USER_ID:$GROUP_ID" \
-            --volume "$ARCHIVE:/input/archive.age:ro" \
+            --volume "$ARCHIVE:/input/$ARCHIVE_NAME:ro" \
             --volume "$CREDENTIALS:/run/secrets/dropbox.env:ro" api \
-            python scripts/backup_destination.py publish /input/archive.age \
+            python scripts/backup_destination.py publish "/input/$ARCHIVE_NAME" \
             --destination dropbox --credentials-file /run/secrets/dropbox.env \
             --dropbox-folder "$FOLDER" --keep "$KEEP"
         ;;

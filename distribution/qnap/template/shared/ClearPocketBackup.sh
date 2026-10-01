@@ -194,9 +194,9 @@ PARTIAL=""
 if [ -f "$DROPBOX_CREDENTIALS" ]; then
     DROPBOX_RESULT="$STAGING/dropbox-publication.json"
     if ! compose run --rm --no-deps --user root \
-        --volume "$FINAL:/input/archive.age:ro" \
+        --volume "$FINAL:/input/$FILENAME:ro" \
         --volume "$DROPBOX_CREDENTIALS:/run/secrets/dropbox.env:ro" api \
-        python scripts/backup_destination.py publish /input/archive.age \
+        python scripts/backup_destination.py publish "/input/$FILENAME" \
         --destination dropbox --credentials-file /run/secrets/dropbox.env \
         --dropbox-folder "$DROPBOX_FOLDER" --keep "$RETENTION" > "$DROPBOX_RESULT"; then
         record_status publication_failed

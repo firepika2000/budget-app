@@ -179,7 +179,8 @@ def test_docker_dropbox_tool_uses_pinned_container_and_read_only_credentials():
     assert "command -v python" not in script
     assert "publish|list|fetch" in script
     assert ':/run/secrets/dropbox.env:ro' in script
-    assert ':/input/archive.age:ro' in script
+    assert ':/input/$ARCHIVE_NAME:ro' in script
+    assert 'publish "/input/$ARCHIVE_NAME"' in script
     assert "--credentials-file /run/secrets/dropbox.env" in script
     assert "scripts/backup_destination.py publish" in script
     assert "scripts/backup_destination.py list" in script
@@ -226,6 +227,13 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "The API remains stopped" in script
     assert '"8" { Import-ClearPocketLocalDevice }' in script
     assert '"15" { Import-ClearPocketPortableArchive }' in script
+    assert "function Configure-ClearPocketDropboxBackup" in script
+    assert "Read-Host $Prompt -AsSecureString" in script
+    assert "Security.AccessControl.FileSystemAccessRule" in script
+    assert 'Join-Path $PSScriptRoot "dropbox.env"' in script
+    assert '"16" { Configure-ClearPocketDropboxBackup }' in script
+    assert '"17" { Disable-ClearPocketDropboxBackup }' in script
+    assert "remote backups remain" in script
     portable_section = script.split("function Import-ClearPocketPortableArchive", 1)[1].split("function Install-ClearPocketBackupSchedule", 1)[0]
     assert ":/import/archive.age:ro" in portable_section
     assert ":/import/identity.txt:ro" in portable_section
@@ -308,6 +316,13 @@ def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():
     assert 'scripts/backup_archive.py", "create-manifest"' in script
     assert "age --recipient" in script
     assert "Move-Item -LiteralPath $partial -Destination $final" in script
+    assert 'Join-Path $PSScriptRoot "dropbox.env"' in script
+    assert "scripts/backup_destination.py publish" in script
+    assert "--credentials-file /tmp/dropbox.env" in script
+    assert "install -m 600 -o budget -g budget /input/dropbox.env" in script
+    assert 'Save-BackupStatus "publication_failed" $final' in script
+    assert "scripts/backup_health.py" in script
+    assert '/input/$filename' in script
     assert "/var/lib/budget-app/operations/backup-status.json" in script
     assert "Remove-Item -LiteralPath $partial" in script
     assert "down -v" not in script

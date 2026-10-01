@@ -38,7 +38,26 @@ function Write-PrivateText([string] $Path, [string] $Value) {
     [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false))
 }
 
-function Save-BackupStatus([string] $State, [string] $Archive = "") {
+function Save-BackupStatus([string] $State, [string] $Archive = "", [string] $DestinationJson = "") {
+    if ($DestinationJson) {
+        if ($State -ne "healthy" -or -not (Test-Path -LiteralPath $Archive -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $DestinationJson -PathType Leaf)) {
+            throw "Verified destination health requires a completed local generation and metadata."
+        }
+        $archiveName = [IO.Path]::GetFileName($Archive)
+        Invoke-ClearPocketCompose @(
+            "run", "--rm", "--no-deps", "--user", "root",
+            "--volume", "${Archive}:/input/${archiveName}:ro",
+            "--volume", "${DestinationJson}:/input/destination.json:ro",
+            "api", "python", "scripts/backup_health.py", "healthy", "/input/$archiveName",
+            "--reported-path", $Archive, "--destination-json", "/input/destination.json"
+        )
+        Invoke-ClearPocketCompose @(
+            "run", "--rm", "--no-deps", "--user", "root", "api", "sh", "-c",
+            'chown budget:budget "$BUDGET_APP_BACKUP_STATUS_PATH"'
+        )
+        return
+    }
     $status = [ordered]@{
         state = $State
         completed_at = [DateTimeOffset]::UtcNow.ToString("o")
@@ -51,6 +70,9 @@ function Save-BackupStatus([string] $State, [string] $Archive = "") {
         $status["destination"] = [ordered]@{
             destination = "local_generation"
             path = $file.FullName
+        }
+        if ($State -eq "publication_failed") {
+            $status["error"] = "Off-device backup publication failed"
         }
     } else {
         $status["error"] = "Backup capture failed"
@@ -146,6 +168,18 @@ $retention = 0
 if (-not [int]::TryParse($retentionText, [ref] $retention) -or $retention -lt 1) {
     throw "BUDGET_APP_BACKUP_RETENTION must be a positive integer."
 }
+$dropboxCredentials = Join-Path $PSScriptRoot "dropbox.env"
+$dropboxFolder = Read-EnvironmentSetting "BUDGET_APP_DROPBOX_FOLDER"
+if (-not $dropboxFolder) { $dropboxFolder = "/Backups" }
+if ($dropboxFolder -notmatch '^/(?!$)[A-Za-z0-9._/-]+$') {
+    throw "BUDGET_APP_DROPBOX_FOLDER must name a non-root Dropbox folder."
+}
+if (Test-Path -LiteralPath $dropboxCredentials) {
+    $dropboxItem = Get-Item -LiteralPath $dropboxCredentials -Force
+    if ($dropboxItem.PSIsContainer -or ($dropboxItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Dropbox credential file must be a regular, non-linked file."
+    }
+}
 
 $defaultBackup = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Backups"
 if ([string]::IsNullOrWhiteSpace($BackupDirectory)) {
@@ -165,6 +199,7 @@ $staging = Join-Path $env:TEMP "clearpocket-backup-$([Guid]::NewGuid().ToString(
 New-Item -ItemType Directory -Path $staging | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $staging "attachments") | Out-Null
 $apiPaused = $false
+$captureComplete = $false
 $databaseTemporary = "/tmp/clearpocket-$([Guid]::NewGuid().ToString('N')).sql"
 
 try {
@@ -218,12 +253,33 @@ try {
         throw "Encrypted backup publication did not produce a file."
     }
     Move-Item -LiteralPath $partial -Destination $final
+    $captureComplete = $true
+    if (Test-Path -LiteralPath $dropboxCredentials -PathType Leaf) {
+        $dropboxResult = Read-ClearPocketCompose @(
+            "run", "--rm", "--no-deps", "--user", "root",
+            "--volume", "${final}:/input/${filename}:ro",
+            "--volume", "${dropboxCredentials}:/input/dropbox.env:ro",
+            "api", "sh", "-c",
+            "install -m 600 -o budget -g budget /input/dropbox.env /tmp/dropbox.env && " +
+            "exec python scripts/backup_destination.py publish /input/$filename " +
+            '--destination dropbox --credentials-file /tmp/dropbox.env ' +
+            '--dropbox-folder "$1" --keep "$2"',
+            "dropbox-publish", $dropboxFolder, "$retention"
+        )
+        $destinationJson = Join-Path $staging "dropbox-publication.json"
+        Write-PrivateText $destinationJson ($dropboxResult + "`n")
+        Save-BackupStatus "healthy" $final $destinationJson
+    } else {
+        Save-BackupStatus "healthy" $final
+    }
     Invoke-BackupRetention $backupDirectory $retention
-    Save-BackupStatus "healthy" $final
     Write-Host "Encrypted backup complete: $final"
     Write-Host "Test recovery regularly and keep the recovery identity separate from this PC."
 } catch {
-    try { Save-BackupStatus "failed" } catch { Write-Warning "Backup failure status could not be recorded." }
+    try {
+        if ($captureComplete) { Save-BackupStatus "publication_failed" $final }
+        else { Save-BackupStatus "failed" }
+    } catch { Write-Warning "Backup failure status could not be recorded." }
     throw
 } finally {
     if ($apiPaused) {

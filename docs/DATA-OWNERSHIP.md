@@ -503,6 +503,12 @@ The Windows manager can also apply the immutable version in a newly downloaded b
 manager folder. It requires explicit confirmation, completes the encrypted backup first, pulls the exact
 image before atomically pinning the new version, and serves only after health. Pull failure changes
 nothing; failed post-migration activation stops the API and never attempts an unsafe automatic downgrade.
+The Windows manager now provides hidden-input Dropbox backup configuration using either temporary or
+durable refresh credentials. It writes a user-only ACL credential file that upgrades preserve, mounts it
+read-only, and copies it to a private in-container file before the same strict parser and verified
+publication engine run. Manual and scheduled jobs retain their local encrypted generation before remote
+publication; failure records `publication_failed`, while success stores only allowlisted verification
+metadata. Disconnect removes the local grant without touching any generation.
 `distribution/qnap` contains a QDK-compatible package foundation that
 wraps the same Compose bundle in App Center lifecycle hooks while keeping authority outside the
 replaceable QPKG directory. Its install routine chooses a durable QNAP shared-folder root, creates

@@ -26,6 +26,38 @@ function Assert-SafeValue([string] $Value, [string] $Label) {
     }
 }
 
+function Read-PrivateValue([string] $Prompt, [bool] $AllowEmpty = $false) {
+    $secure = Read-Host $Prompt -AsSecureString
+    if ($secure.Length -eq 0 -and $AllowEmpty) { return "" }
+    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try {
+        $value = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+    }
+    if ([string]::IsNullOrWhiteSpace($value) -or $value -ne $value.Trim() -or $value -match '[\x00-\x1f]') {
+        throw "Private Dropbox value is empty or contains unsupported whitespace."
+    }
+    return $value
+}
+
+function Set-PrivateEnvironmentSetting([string] $Name, [string] $Value) {
+    $matches = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match "^$([regex]::Escape($Name))=" })
+    if ($matches.Count -gt 1) { throw "Private configuration contains duplicate $Name settings." }
+    $found = $false
+    $lines = @(Get-Content -LiteralPath $environmentFile | ForEach-Object {
+        if ($_ -match "^$([regex]::Escape($Name))=") { $found = $true; "$Name=$Value" } else { $_ }
+    })
+    if (-not $found) { $lines += "$Name=$Value" }
+    $temporary = "$environmentFile.$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [IO.File]::WriteAllLines($temporary, $lines, [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporary -Destination $environmentFile -Force
+    } finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    }
+}
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker Desktop is required. Install it, start it, then run this launcher again."
 }
@@ -170,6 +202,70 @@ function Remove-ClearPocketAutoStart {
         Unregister-ScheduledTask -TaskName "ClearPocket Server" -Confirm:$false
     }
     Write-Host "Automatic startup disabled. Server data and configuration were not changed."
+}
+
+function Configure-ClearPocketDropboxBackup {
+    Write-Host ""
+    Write-Host "Configure encrypted Dropbox backup publication"
+    Write-Host "Dropbox stores only completed age-encrypted generations, never the live database."
+    Write-Host "Use a least-privilege Dropbox app-folder grant. Private values will not be displayed."
+    $mode = Read-Host "Use 1 for a temporary access token or 2 for durable refresh credentials [2]"
+    if ([string]::IsNullOrWhiteSpace($mode)) { $mode = "2" }
+    $credentialLines = @()
+    if ($mode -eq "1") {
+        $credentialLines += "BUDGET_APP_DROPBOX_ACCESS_TOKEN=$(Read-PrivateValue 'Dropbox access token')"
+    } elseif ($mode -eq "2") {
+        $credentialLines += "BUDGET_APP_DROPBOX_REFRESH_TOKEN=$(Read-PrivateValue 'Dropbox refresh token')"
+        $credentialLines += "BUDGET_APP_DROPBOX_APP_KEY=$(Read-PrivateValue 'Dropbox app key')"
+        $secret = Read-PrivateValue "Dropbox app secret (leave blank for a PKCE/native app)" $true
+        if ($secret) { $credentialLines += "BUDGET_APP_DROPBOX_APP_SECRET=$secret" }
+    } else {
+        throw "Choose 1 or 2 for the Dropbox credential type."
+    }
+    $folder = Read-Host "Dropbox app-folder path [/Backups]"
+    if ([string]::IsNullOrWhiteSpace($folder)) { $folder = "/Backups" }
+    if ($folder -notmatch '^/(?!$)[A-Za-z0-9._/-]+$') {
+        throw "Dropbox folder must be a non-root app-folder path using letters, numbers, dots, dashes, or underscores."
+    }
+    $credentialFile = Join-Path $PSScriptRoot "dropbox.env"
+    $temporary = "$credentialFile.$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [IO.File]::WriteAllLines($temporary, $credentialLines, [Text.UTF8Encoding]::new($false))
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $acl = [Security.AccessControl.FileSecurity]::new()
+        $acl.SetOwner($identity.User)
+        $acl.SetAccessRuleProtection($true, $false)
+        $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+            $identity.User, [Security.AccessControl.FileSystemRights]::FullControl,
+            [Security.AccessControl.AccessControlType]::Allow
+        )
+        $acl.AddAccessRule($rule)
+        Set-Acl -LiteralPath $temporary -AclObject $acl
+        Move-Item -LiteralPath $temporary -Destination $credentialFile -Force
+        Set-Acl -LiteralPath $credentialFile -AclObject $acl
+        Set-PrivateEnvironmentSetting "BUDGET_APP_DROPBOX_FOLDER" $folder
+    } finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        $credentialLines = @()
+        Remove-Variable secret -ErrorAction SilentlyContinue
+    }
+    Write-Host "Dropbox publication configured. The next manual or scheduled backup will test and use it."
+    Write-Warning "Keep the age recovery identity on a separate protected device, not in Dropbox."
+}
+
+function Disable-ClearPocketDropboxBackup {
+    $credentialFile = Join-Path $PSScriptRoot "dropbox.env"
+    if (-not (Test-Path -LiteralPath $credentialFile -PathType Leaf)) {
+        Write-Host "Dropbox backup publication is not configured."
+        return
+    }
+    $confirmation = Read-Host "Type DISCONNECT to remove the local Dropbox grant (remote backups remain)"
+    if ($confirmation -cne "DISCONNECT") {
+        Write-Host "Dropbox backup publication was not changed."
+        return
+    }
+    Remove-Item -LiteralPath $credentialFile -Force
+    Write-Host "Dropbox backup publication disabled. Existing local and remote generations were preserved."
 }
 
 function Import-ClearPocketLocalDevice {
@@ -416,6 +512,8 @@ Write-Host " 12. Disable scheduled backups"
 Write-Host " 13. Show backup schedule status"
 Write-Host " 14. Apply this downloaded server version"
 Write-Host " 15. Move an encrypted portable household to this server"
+Write-Host " 16. Configure Dropbox backup publication"
+Write-Host " 17. Disable Dropbox backup publication"
 Write-Host ""
 $choice = if ($newInstall) { "1" } else { Read-Host "Choose an option [1]" }
 if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
@@ -456,5 +554,7 @@ switch ($choice) {
     "13" { Show-ClearPocketBackupSchedule }
     "14" { Update-ClearPocketServer }
     "15" { Import-ClearPocketPortableArchive }
-    default { throw "Unknown option. Run the launcher again and choose 1 through 15." }
+    "16" { Configure-ClearPocketDropboxBackup }
+    "17" { Disable-ClearPocketDropboxBackup }
+    default { throw "Unknown option. Run the launcher again and choose 1 through 17." }
 }
