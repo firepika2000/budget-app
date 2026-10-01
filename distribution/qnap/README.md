@@ -47,6 +47,20 @@ destinations, compares exact financial observations, and restarts the server onl
 failure leaves the API stopped for inspection and never modifies the phone backup. This remains an
 administrator action pending the graphical QNAP setup/restore surface.
 
+A provider-neutral encrypted archive from another ClearPocket Server can initialize the same empty
+QNAP destination. Use the separately retained age identity, or `-` for a passphrase archive:
+
+```sh
+/etc/init.d/ClearPocketServer.sh import-portable \
+  /share/Private/budget-portable-YYYYMMDDTHHMMSSZ.tar.gz.age \
+  /share/Private/portable-age-identity.txt IMPORT
+```
+
+The archive and identity are mounted read-only. Decryption, completeness validation, password prompts,
+empty-destination enforcement, attachment re-encryption, exact financial observation comparison, and
+the final health gate all execute in the version-matched application container. Failure leaves the API
+stopped and does not alter either source file.
+
 The QPKG can create a coordinated encrypted backup without installing Python or `age` on the NAS:
 
 ```sh

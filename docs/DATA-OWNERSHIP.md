@@ -458,6 +458,9 @@ The Windows menu can also activate an authenticated iPhone Local Device backup t
 version-matched converter used by the shared manager. It requires explicit `IMPORT` confirmation,
 mounts the source package read-only, starts only PostgreSQL during conversion, and serves the API only
 after destination observation checks pass. Failure leaves the API stopped and the phone backup intact.
+It can likewise activate a provider-neutral encrypted portable archive in an empty destination, with
+the archive and optional age identity mounted read-only and all validation/password/observation gates
+executing inside the version-matched container.
 It now creates full PostgreSQL-plus-attachment encrypted generations using only PowerShell and the
 pinned server containers. First use generates an owner-held age recovery identity and persists only
 its public recipient in server configuration. Capture uses the canonical manifest, atomic publication,
@@ -486,6 +489,9 @@ and atomically creates but never overwrites the private configuration. QNAP admi
 preflight or activate a phone Local Device generation directly through the package service without
 host Python: the source must be a regular package under `/share`, is mounted read-only, and import
 restarts the API only after the same canonical conversion and observation verification succeeds.
+The service also accepts a provider-neutral encrypted archive plus an age identity (or interactive
+passphrase) through the same canonical empty-authority importer, so server-to-server migration does
+not depend on host Python, PostgreSQL, or age tooling.
 The QPKG service also performs coordinated encrypted database-plus-attachment capture entirely through
 the pinned containers, generates an owner-held age identity on first use, prevents overlap, publishes
 atomically to durable QNAP storage, and updates the owner-visible backup-health contract without host

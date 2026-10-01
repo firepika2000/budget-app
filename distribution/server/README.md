@@ -225,6 +225,12 @@ inside the version-matched application container, and the API restarts only afte
 attachment verification succeeds. A failed transfer leaves the API stopped for inspection and never
 modifies the iPhone package.
 
+The Windows menu also accepts the provider-neutral encrypted portable archive produced by another
+ClearPocket Server. It mounts the archive and optional age identity read-only, prompts inside the
+version-matched container for a new owner password, and invokes the same validate-then-commit importer
+used by the shared manager. The destination database and attachment store must be empty; failure keeps
+the API stopped and never changes either source file.
+
 The Windows menu can also create a complete encrypted server backup without installing Python,
 PostgreSQL tools, or `age` on Windows. On first use it creates an age recovery identity through the
 pinned application image, saves the private identity only in the folder selected by the owner, and

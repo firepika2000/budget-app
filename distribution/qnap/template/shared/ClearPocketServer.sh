@@ -117,6 +117,37 @@ import_local_device() {
     fi
 }
 
+portable_archive() {
+    ARCHIVE=$1
+    IDENTITY=$2
+    case "$ARCHIVE" in /share/*.tar.gz.age) ;; *) log_error "Portable archive must be a .tar.gz.age file in a QNAP shared folder"; return 1 ;; esac
+    [ -f "$ARCHIVE" ] && [ ! -L "$ARCHIVE" ] || { log_error "Portable archive must be a regular non-linked file"; return 1; }
+    set -- "run" "--rm" "--no-deps" "--user" "root" \
+        "--volume" "$ARCHIVE:/import/archive.age:ro"
+    PREPARE="install -m 600 -o budget -g budget /import/archive.age /tmp/archive.age"
+    if [ "$IDENTITY" != "-" ]; then
+        case "$IDENTITY" in /share/*) ;; *) log_error "Age identity must be in a QNAP shared folder"; return 1 ;; esac
+        [ -f "$IDENTITY" ] && [ ! -L "$IDENTITY" ] || { log_error "Age identity must be a regular non-linked file"; return 1; }
+        set -- "$@" "--volume" "$IDENTITY:/import/identity.txt:ro" \
+            "--env" "BUDGET_APP_BACKUP_AGE_IDENTITY=/tmp/identity.txt"
+        PREPARE="$PREPARE && install -m 600 -o budget -g budget /import/identity.txt /tmp/identity.txt"
+    fi
+    compose stop api || return 1
+    compose up -d database || return 1
+    if compose "$@" api sh -c \
+        "$PREPARE && exec su -s /bin/sh budget -c 'alembic upgrade head && python scripts/portable_import.py /tmp/archive.age --server-environment'"; then
+        if ! compose up -d || ! wait_healthy; then
+            compose stop api >/dev/null 2>&1 || true
+            log_error "Portable authority committed, but the API did not become healthy and remains stopped"
+            return 1
+        fi
+        echo "Portable household imported and verified; all users must sign in again."
+    else
+        log_error "Portable import failed; the API remains stopped and source files were not changed"
+        return 1
+    fi
+}
+
 upgrade_server() {
     [ "$1" = "UPGRADE" ] || {
         log_error "QNAP update requires the explicit final argument UPGRADE"
@@ -281,8 +312,13 @@ case "$1" in
         [ "$#" -eq 3 ] || { echo "Usage: $0 import-local-device /share/path/generation.clearpocketbackup IMPORT" >&2; exit 2; }
         import_local_device "$2" "$3"
         ;;
+    import-portable)
+        [ "$#" -eq 4 ] || { echo "Usage: $0 import-portable /share/path/archive.tar.gz.age /share/path/identity.txt|'-' IMPORT" >&2; exit 2; }
+        [ "$4" = "IMPORT" ] || { log_error "Portable import requires the explicit final argument IMPORT"; exit 1; }
+        portable_archive "$2" "$3"
+        ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|backup|restore|upgrade|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device}" >&2
+        echo "Usage: $0 {start|stop|restart|status|backup|restore|upgrade|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device|import-portable}" >&2
         exit 2
         ;;
 esac

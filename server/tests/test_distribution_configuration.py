@@ -158,6 +158,7 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert 'Unregister-ScheduledTask -TaskName "ClearPocket Server"' in script
     assert '-Operation Start' in script
     assert "function Import-ClearPocketLocalDevice" in script
+    assert "function Import-ClearPocketPortableArchive" in script
     assert 'Type IMPORT to stop this server and verify the transfer' in script
     assert 'Test-Path -LiteralPath (Join-Path $package.FullName "manifest.json") -PathType Leaf' in script
     assert '[IO.FileAttributes]::ReparsePoint' in script
@@ -167,6 +168,13 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "scripts/local_device_transfer.py /tmp/local-device-package --server-environment" in script
     assert "The API remains stopped" in script
     assert '"8" { Import-ClearPocketLocalDevice }' in script
+    assert '"15" { Import-ClearPocketPortableArchive }' in script
+    portable_section = script.split("function Import-ClearPocketPortableArchive", 1)[1].split("function Install-ClearPocketBackupSchedule", 1)[0]
+    assert ":/import/archive.age:ro" in portable_section
+    assert ":/import/identity.txt:ro" in portable_section
+    assert "BUDGET_APP_BACKUP_AGE_IDENTITY=/tmp/identity.txt" in portable_section
+    assert "scripts/portable_import.py /tmp/archive.age --server-environment" in portable_section
+    assert "The API remains stopped" in portable_section
     assert '"9" {' in script
     assert 'backup-windows.ps1' in script
     assert 'Create an encrypted server backup' in script
@@ -323,6 +331,14 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "the prior crontab was restored" in service
     assert "verify-local-device" in service
     assert "import-local-device" in service
+    assert "import-portable" in service
+    assert "Portable import requires the explicit final argument IMPORT" in service
+    portable_section = service.split("portable_archive()", 1)[1].split("upgrade_server()", 1)[0]
+    assert ':/import/archive.age:ro' in portable_section
+    assert ':/import/identity.txt:ro' in portable_section
+    assert "BUDGET_APP_BACKUP_AGE_IDENTITY=/tmp/identity.txt" in portable_section
+    assert "scripts/portable_import.py /tmp/archive.age --server-environment" in portable_section
+    assert "API did not become healthy and remains stopped" in portable_section
     assert '/share/*' in service
     assert ':/import/package:ro' in service
     assert "scripts/local_device_transfer.py /tmp/local-device-package" in service

@@ -220,6 +220,61 @@ function Import-ClearPocketLocalDevice {
     Write-Host "Local Device budget imported and verified. Keep the iPhone backup until you have tested this server and created a server backup."
 }
 
+function Import-ClearPocketPortableArchive {
+    Write-Host ""
+    Write-Host "Move an encrypted portable household into this empty server"
+    Write-Host "This validates the complete provider-neutral archive and never merges or replaces existing server data."
+    $archiveInput = Read-Host "Full path to the encrypted portable .tar.gz.age archive"
+    if ([string]::IsNullOrWhiteSpace($archiveInput)) { throw "No portable archive was selected." }
+    $archive = Get-Item -LiteralPath ([IO.Path]::GetFullPath($archiveInput)) -Force
+    if ($archive.PSIsContainer -or ($archive.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        -not $archive.Name.EndsWith(".tar.gz.age", [StringComparison]::OrdinalIgnoreCase)) {
+        throw "The portable archive must be a regular, non-linked .tar.gz.age file."
+    }
+    $identityInput = Read-Host "Full path to the age identity (leave blank for a passphrase archive)"
+    $identity = $null
+    if (-not [string]::IsNullOrWhiteSpace($identityInput)) {
+        $identity = Get-Item -LiteralPath ([IO.Path]::GetFullPath($identityInput)) -Force
+        if ($identity.PSIsContainer -or ($identity.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "The age identity must be a regular, non-linked file."
+        }
+    }
+    $confirmation = Read-Host "Type IMPORT to stop this server and initialize it from the portable archive"
+    if ($confirmation -cne "IMPORT") {
+        Write-Host "Import cancelled. The server and portable archive were not changed."
+        return
+    }
+
+    Invoke-ClearPocketCompose @("stop", "api")
+    Invoke-ClearPocketCompose @("up", "-d", "database")
+    $arguments = @(
+        "run", "--rm", "--no-deps", "--user", "root",
+        "--volume", "$($archive.FullName):/import/archive.age:ro"
+    )
+    $prepare = "install -m 600 -o budget -g budget /import/archive.age /tmp/archive.age"
+    if ($null -ne $identity) {
+        $arguments += @(
+            "--volume", "$($identity.FullName):/import/identity.txt:ro",
+            "--env", "BUDGET_APP_BACKUP_AGE_IDENTITY=/tmp/identity.txt"
+        )
+        $prepare += " && install -m 600 -o budget -g budget /import/identity.txt /tmp/identity.txt"
+    }
+    $arguments += @(
+        "api", "sh", "-c",
+        "$prepare && exec su -s /bin/sh budget -c 'alembic upgrade head && " +
+        "python scripts/portable_import.py /tmp/archive.age --server-environment'"
+    )
+    try {
+        Invoke-ClearPocketCompose $arguments
+    } catch {
+        Write-Warning "Portable import failed. The API remains stopped so a partial authority is never served."
+        Write-Warning "The source archive and identity were mounted read-only and were not changed."
+        throw
+    }
+    Start-ClearPocketServer
+    Write-Host "Portable household imported and verified. All users must sign in again against this new authority."
+}
+
 function Install-ClearPocketBackupSchedule {
     $backupScript = Join-Path $PSScriptRoot "backup-windows.ps1"
     if (-not (Test-Path -LiteralPath $backupScript -PathType Leaf)) {
@@ -360,6 +415,7 @@ Write-Host " 11. Schedule daily encrypted backups"
 Write-Host " 12. Disable scheduled backups"
 Write-Host " 13. Show backup schedule status"
 Write-Host " 14. Apply this downloaded server version"
+Write-Host " 15. Move an encrypted portable household to this server"
 Write-Host ""
 $choice = if ($newInstall) { "1" } else { Read-Host "Choose an option [1]" }
 if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
@@ -399,5 +455,6 @@ switch ($choice) {
     "12" { Remove-ClearPocketBackupSchedule }
     "13" { Show-ClearPocketBackupSchedule }
     "14" { Update-ClearPocketServer }
-    default { throw "Unknown option. Run the launcher again and choose 1 through 14." }
+    "15" { Import-ClearPocketPortableArchive }
+    default { throw "Unknown option. Run the launcher again and choose 1 through 15." }
 }
