@@ -104,10 +104,15 @@ publishes locally only after the whole generation succeeds. Corrupt or incomplet
 replace or become a Local Device authority; the existing recovery-key authentication and isolated
 restore/cutover path remains the sole activation mechanism.
 
-This is the destination core, not a claim that native Dropbox setup is complete. A production
-Dropbox HTTP/OAuth adapter, Keychain-held refresh credential, connection/revocation UI, and retention
-controls still have to be connected to Backup & Recovery. No Dropbox credential belongs in SQLite,
-the encrypted generation, logs, or source control.
+The destination core now has a production Dropbox API v2 HTTP adapter covering folder creation,
+no-overwrite upload and upload sessions, move/delete, paginated listing, and verified download. The
+adapter owns no bearer token: each request resolves the current access token through a credential
+provider, rejects only the exact value that receives a 401, and retries once after rotation. This
+prevents a long-lived backup service from retaining an expired credential.
+
+Native Dropbox setup is not complete yet. PKCE authorization, a Keychain-held refresh credential,
+connection/revocation UI, and retention controls still have to be connected to Backup & Recovery.
+No Dropbox credential belongs in SQLite, the encrypted generation, logs, or source control.
 
 ## Implemented personal desktop-local backend
 
