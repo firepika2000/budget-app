@@ -25,3 +25,6 @@ def test_admin_backup_panel_uses_owner_scoped_health_contract(client):
     assert "renderBackupHealth" in script
     assert "/backup-status`" in script
     assert "state.selected.effective_permission === \"owner\"" in script
+    assert "state.backupStatus.schedule" in script
+    assert "server local time" in script
+    assert "schedule.provider.replaceAll" in script

@@ -281,6 +281,19 @@
         content.append(emptyText("Backup health is not configured for this server."));
         return;
       }
+      const schedule = state.backupStatus.schedule;
+      if (schedule) {
+        content.append(labelBlock("Automatic backup", schedule.state.replaceAll("_", " ")));
+        if (schedule.hour !== undefined && schedule.minute !== undefined) {
+          const time = `${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`;
+          content.append(labelBlock("Schedule", `Daily at ${time} (server local time)`));
+        }
+        if (schedule.retention !== undefined) content.append(labelBlock("Retention", `${schedule.retention} generations`));
+        if (schedule.provider) content.append(labelBlock("Host scheduler", schedule.provider.replaceAll("_", " ")));
+        if (schedule.message) content.append(labelBlock("Schedule attention required", schedule.message));
+      } else {
+        content.append(labelBlock("Automatic backup", "No schedule published"));
+      }
       const backup = state.backupStatus.backup;
       content.append(labelBlock("Backup", backup.state.replaceAll("_", " ")));
       if (backup.completed_at) content.append(labelBlock("Last completed", new Date(backup.completed_at).toLocaleString()));
