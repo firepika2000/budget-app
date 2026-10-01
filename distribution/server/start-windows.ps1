@@ -235,6 +235,7 @@ Write-Host "  5. Show recent logs"
 Write-Host "  6. Start automatically when I sign in"
 Write-Host "  7. Disable automatic startup"
 Write-Host "  8. Move an iPhone Local Device budget to this server"
+Write-Host "  9. Create an encrypted server backup"
 Write-Host ""
 $choice = if ($newInstall) { "1" } else { Read-Host "Choose an option [1]" }
 if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
@@ -254,5 +255,13 @@ switch ($choice) {
     "6" { Install-ClearPocketAutoStart }
     "7" { Remove-ClearPocketAutoStart }
     "8" { Import-ClearPocketLocalDevice }
-    default { throw "Unknown option. Run the launcher again and choose 1 through 8." }
+    "9" {
+        $backupScript = Join-Path $PSScriptRoot "backup-windows.ps1"
+        if (-not (Test-Path -LiteralPath $backupScript -PathType Leaf)) {
+            throw "Windows backup support is missing. Download the complete server package again."
+        }
+        & $backupScript -EnvironmentFile $environmentFile
+        if (-not $?) { throw "Windows backup did not complete." }
+    }
+    default { throw "Unknown option. Run the launcher again and choose 1 through 9." }
 }

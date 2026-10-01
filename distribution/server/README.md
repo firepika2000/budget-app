@@ -199,9 +199,21 @@ configuration or credentials. The same menu can initialize a new empty Windows s
 Local Device `.clearpocketbackup` folder. The package is mounted read-only, authenticated and converted
 inside the version-matched application container, and the API restarts only after exact financial and
 attachment verification succeeds. A failed transfer leaves the API stopped for inspection and never
-modifies the iPhone package. Python and developer tools are not required. Docker Desktop is still required, and secure remote
+modifies the iPhone package.
+
+The Windows menu can also create a complete encrypted server backup without installing Python,
+PostgreSQL tools, or `age` on Windows. On first use it creates an age recovery identity through the
+pinned application image, saves the private identity only in the folder selected by the owner, and
+stores only its public recipient in `.env`. Copy that identity to a separate protected device or
+offline location: losing it makes recipient-encrypted generations unrecoverable. Capture briefly
+pauses the API, dumps PostgreSQL, copies the already-encrypted attachment store, resumes the API,
+builds the canonical integrity manifest, encrypts into private staging, and atomically publishes the
+finished generation. Partial output is removed on failure, and success/failure health is written to
+the same owner-visible status contract used on other hosts.
+
+Python and developer tools are not required. Docker Desktop is still required, and secure remote
 pairing/TLS is not yet guided, so this remains a preview rather than the final signed graphical server
-manager. Guided update, firewall guidance, and server backup/restore remain required.
+manager. Guided update, firewall guidance, and guided restore remain required.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;

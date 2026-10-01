@@ -148,10 +148,34 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "scripts/local_device_transfer.py /tmp/local-device-package --server-environment" in script
     assert "The API remains stopped" in script
     assert '"8" { Import-ClearPocketLocalDevice }' in script
+    assert '"9" {' in script
+    assert 'backup-windows.ps1' in script
+    assert 'Create an encrypted server backup' in script
     task_section = script.split("function Install-ClearPocketAutoStart", 1)[1]
     assert "BUDGET_APP_DB_PASSWORD" not in task_section
     assert "BUDGET_APP_JWT_SECRET" not in task_section
     assert "BUDGET_APP_JWT_SECRET" not in script.split("function Write-ClearPocketDiagnostics", 1)[1]
+    assert "down -v" not in script
+    assert "docker volume rm" not in script
+
+
+def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():
+    script = (ROOT / "distribution" / "server" / "backup-windows.ps1").read_text()
+    assert "BUDGET_APP_BACKUP_AGE_RECIPIENT" in script
+    assert "clearpocket-recovery-key.txt" in script
+    assert "age-keygen" in script
+    assert "Type USE to adopt it without replacing it" in script
+    assert 'Add-EnvironmentSetting "BUDGET_APP_BACKUP_AGE_RECIPIENT" $recipient' in script
+    assert 'Add-EnvironmentSetting "BUDGET_APP_BACKUP_AGE_IDENTITY"' not in script
+    assert '"stop", "api"' in script
+    assert "pg_dump --clean --if-exists --no-owner --no-privileges" in script
+    assert "api:/var/lib/budget-app/attachments/." in script
+    assert '"start", "api"' in script
+    assert 'scripts/backup_archive.py", "create-manifest"' in script
+    assert "age --recipient" in script
+    assert "Move-Item -LiteralPath $partial -Destination $final" in script
+    assert "/var/lib/budget-app/operations/backup-status.json" in script
+    assert "Remove-Item -LiteralPath $partial" in script
     assert "down -v" not in script
     assert "docker volume rm" not in script
 

@@ -449,13 +449,17 @@ The Windows menu can also activate an authenticated iPhone Local Device backup t
 version-matched converter used by the shared manager. It requires explicit `IMPORT` confirmation,
 mounts the source package read-only, starts only PostgreSQL during conversion, and serves the API only
 after destination observation checks pass. Failure leaves the API stopped and the phone backup intact.
+It now creates full PostgreSQL-plus-attachment encrypted generations using only PowerShell and the
+pinned server containers. First use generates an owner-held age recovery identity and persists only
+its public recipient in server configuration. Capture uses the canonical manifest, atomic publication,
+and backup-health contract; no Windows Python, PostgreSQL client, or age installation is required.
 `distribution/qnap` contains a QDK-compatible package foundation that
 wraps the same Compose bundle in App Center lifecycle hooks while keeping authority outside the
 replaceable QPKG directory. Its install routine chooses a durable QNAP shared-folder root, creates
 separate database/attachment/operations directories, generates independent kernel-random secrets,
 and atomically creates but never overwrites the private configuration. These remain previews rather
 than the promised normal-user setup:
-release images/packages are unsigned, QNAP hardware validation is pending, Windows guided backup is
+release images/packages are unsigned, QNAP hardware validation is pending, Windows guided restore is
 pending, and secure pairing/TLS is not implemented.
 
 1. Register the production Dropbox public app key/callback and complete live external-account
