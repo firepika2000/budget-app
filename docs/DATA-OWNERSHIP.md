@@ -405,9 +405,18 @@ Customer server packages can also perform a non-mutating preflight of a native i
 separate recovery key, authenticates the HMAC manifest and every chunk/hash, and verifies the local
 SQLite application identity, schema, integrity, foreign keys, attachment-key presence, and budget
 identity entirely in disposable plaintext staging. Only bounded table counts are reported. This
-proves cross-language package readability without activating or mutating a server. Actual Local
-Device → server cutover remains gated on a canonical converter for server-derived accounting facts
-(especially card reserve attribution) and must not be approximated by copying only visible rows.
+proves cross-language package readability without activating or mutating a server.
+
+The same manager can now initialize an empty customer server from that authenticated generation.
+The canonical converter preserves stable source identities and exact ledger rows, expands local
+allocation commands into balanced server postings, materializes nonzero local account openings as
+explicit opening-balance transactions, creates linked system payment categories for credit accounts,
+and reconstructs both purchase/refund attribution and card-payment reserve events. It also carries
+reconciliation observations, targets/snoozes, schedules, first-class Payees/preferences, debt terms,
+rollover history, and favorites. Local attachment objects are authenticated and decrypted only in
+private disposable staging, then re-encrypted by the destination attachment service. Import still
+requires an empty database and object store, compares exact financial observations after commit,
+records owner-visible recovery health, and leaves the source authority untouched.
 
 ## Remaining implementation sequence
 

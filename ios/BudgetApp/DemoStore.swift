@@ -568,8 +568,8 @@ final class DemoStore: ObservableObject {
         let transferID = UUID().uuidString
         do { accounts = try applyingTransferChanges([(source, destination, amount, cleared)]) }
         catch { return failMessage(error.localizedDescription) }
-        transactions.insert(.init(id: "\(transferID)-in", date: date, payee: "Transfer", memo: memo, accountID: destinationID, categoryIDs: [], amount: amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
-        transactions.insert(.init(id: "\(transferID)-out", date: date, payee: "Transfer", memo: memo, accountID: sourceID, categoryIDs: [], amount: -amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
+        transactions.insert(.init(id: UUID().uuidString, date: date, payee: "Transfer", memo: memo, accountID: destinationID, categoryIDs: [], amount: amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
+        transactions.insert(.init(id: UUID().uuidString, date: date, payee: "Transfer", memo: memo, accountID: sourceID, categoryIDs: [], amount: -amount, member: persona, cleared: cleared, transferID: transferID), at: 0)
         errorMessage = nil
         return true
     }

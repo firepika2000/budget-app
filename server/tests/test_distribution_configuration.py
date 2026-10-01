@@ -448,6 +448,29 @@ def test_manager_local_device_verification_is_isolated_and_never_starts_database
     assert all("down" not in item and "-v" not in item for item in runner.commands)
 
 
+def test_manager_local_device_import_uses_empty_server_path_and_restarts_only_after_success(tmp_path: Path):
+    target = manager_deployment(tmp_path)
+    package = tmp_path / "phone backup.clearpocketbackup"
+    package.mkdir()
+    (package / "manifest.json").write_text("{}")
+    runner = RecordedRunner()
+    interactive = RecordedRunner()
+    manager.local_device_import(
+        target, package, runner=runner, interactive_runner=interactive,
+        health_check=lambda _url, _timeout: True, timeout=1,
+    )
+    stop = next(command for command in runner.commands if command[-2:] == ["stop", "api"])
+    database = next(command for command in runner.commands if command[-3:] == ["up", "-d", "database"])
+    assert runner.commands.index(stop) < runner.commands.index(database)
+    assert len(interactive.commands) == 1
+    command = interactive.commands[0]
+    assert f"{package.resolve()}:/import/package:ro" in command
+    assert "alembic upgrade head" in command[-1]
+    assert "scripts/local_device_transfer.py /tmp/local-device-package --server-environment" in command[-1]
+    assert any(item[-2:] == ["up", "-d"] for item in runner.commands)
+    assert all("down" not in item and "-v" not in item for item in runner.commands)
+
+
 def test_manager_accepts_array_and_line_delimited_compose_status(tmp_path: Path):
     target = manager_deployment(tmp_path)
     array = RecordedRunner([(0, '[{"Service":"api","State":"running","Health":"healthy"}]', "")])

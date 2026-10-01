@@ -105,8 +105,22 @@ permissions remain intact. The verifier prompts for the separate Local Device re
 authenticates the manifest, decrypts and authenticates every bounded chunk, checks every size/hash,
 and verifies the SQLite application identity, supported schema, integrity, foreign keys, and exact
 budget identity. It prints only bounded record counts and destroys plaintext staging on exit. It
-does not start PostgreSQL or modify any server authority. Final activation remains deliberately
-unavailable until the Local Device → server converter proves all derived accounting state.
+does not start PostgreSQL or modify any server authority.
+
+After that preflight, initialize a newly installed, empty server directly from the phone generation:
+
+```sh
+./manage.py local-device-import /private/path/generation.clearpocketbackup
+```
+
+The manager stops the API, starts PostgreSQL alone, and prompts for the recovery key plus the new
+server login email and password. The converter preserves stable household/ledger identities, exact
+integer money, balanced allocation postings, opening balances, reconciliation observations, targets,
+schedules, Payees, debt terms, and rollover history. It creates linked server payment categories,
+reconstructs purchase/refund and card-payment reserve events from durable source facts, decrypts and
+authenticates every local attachment before the destination re-encrypts it, and requires an empty
+database and object store. It starts the API only after exact post-import financial comparison and
+health verification. Keep the phone authority and its backup until the new server is accepted.
 
 ## Versioned update safety
 

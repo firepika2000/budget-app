@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from datetime import datetime
 import getpass
 import hashlib
 import hmac
@@ -244,13 +245,85 @@ def staged_inventory(root: Path) -> dict[str, int]:
         }
 
 
+def _record_server_import(status: Path, manifest: dict[str, Any]) -> None:
+    if status.is_symlink():
+        raise LocalDeviceTransferError("Server recovery status path must not be a symbolic link")
+    status.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload: dict[str, object] = {
+        "state": "verified", "verified_at": datetime.now().astimezone().isoformat(),
+        "source_provider": "local_device_backup",
+        "source_archive_sha256": hashlib.sha256(canonical_json(manifest)).hexdigest(),
+        "database_integrity": "ok", "foreign_keys": "ok",
+    }
+    temporary = status.with_name(f".{status.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, status)
+
+
+def import_local_device_backup_into_server(
+    package: Path, recovery_key: str, owner_email: str, owner_password: str,
+) -> dict[str, Any]:
+    """Authenticate, convert, and atomically initialize one empty configured server authority."""
+    required = {
+        "BUDGET_APP_DATABASE_URL", "BUDGET_APP_JWT_SECRET",
+        "BUDGET_APP_ATTACHMENT_STORAGE_PATH", "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY",
+        "BUDGET_APP_RECOVERY_STATUS_PATH",
+    }
+    missing = sorted(key for key in required if not os.environ.get(key, "").strip())
+    if missing:
+        raise LocalDeviceTransferError(
+            "Server import configuration is incomplete: " + ", ".join(missing)
+        )
+    from app.database import build_session_factory
+    from scripts.local_device_payload import convert_staged_local_device
+    from scripts.portable_import import (
+        _financial_observations_from_database, _financial_observations_from_payload,
+        import_payload_into_authority,
+    )
+
+    package = package.expanduser().resolve()
+    with tempfile.TemporaryDirectory(prefix=".clearpocket-local-device-import-") as name:
+        staged = Path(name) / "verified"
+        manifest = stage_local_device_backup(package, staged, recovery_key)
+        payload, extracted = convert_staged_local_device(staged, owner_email)
+        import_payload_into_authority(
+            payload, extracted,
+            database_url=os.environ["BUDGET_APP_DATABASE_URL"],
+            attachment_path=Path(os.environ["BUDGET_APP_ATTACHMENT_STORAGE_PATH"]).resolve(),
+            deployment_secret=os.environ["BUDGET_APP_JWT_SECRET"],
+            attachment_encryption_key=os.environ["BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY"],
+            owner_password=owner_password,
+        )
+        engine = build_session_factory(os.environ["BUDGET_APP_DATABASE_URL"]).kw["bind"]
+        if _financial_observations_from_payload(payload) != _financial_observations_from_database(engine):
+            raise LocalDeviceTransferError("Local Device financial observations changed after server import")
+        _record_server_import(Path(os.environ["BUDGET_APP_RECOVERY_STATUS_PATH"]).resolve(), manifest)
+        return manifest
+
+
 def main(arguments: list[str] | None = None) -> int:
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("package", type=Path)
+    parser.add_argument(
+        "--server-environment", action="store_true",
+        help="initialize the new empty authority configured by BUDGET_APP_* variables",
+    )
     args = parser.parse_args(arguments)
     try:
         recovery_key = getpass.getpass("Local Device backup recovery key: ")
+        if args.server_environment:
+            owner_email = input("New server owner email: ").strip()
+            password = getpass.getpass("New server owner password: ")
+            confirmation = getpass.getpass("Confirm new server owner password: ")
+            if password != confirmation:
+                raise LocalDeviceTransferError("Owner password confirmation does not match")
+            manifest = import_local_device_backup_into_server(
+                args.package, recovery_key, owner_email, password
+            )
+            print(f"Local Device budget imported into the new empty server: {manifest['budget_id']}")
+            return 0
         with tempfile.TemporaryDirectory(prefix=".clearpocket-local-device-verify-") as name:
             destination = Path(name) / "verified"
             manifest = stage_local_device_backup(args.package, destination, recovery_key)
@@ -259,7 +332,7 @@ def main(arguments: list[str] | None = None) -> int:
         print(f"Local Device backup verified: budget={manifest['budget_id']} {summary}")
         print("No server authority was created or modified.")
         return 0
-    except (OSError, LocalDeviceTransferError, sqlite3.Error) as failure:
+    except (OSError, RuntimeError, sqlite3.Error) as failure:
         print(f"Local Device backup verification error: {failure}", file=os.sys.stderr)
         return 1
 

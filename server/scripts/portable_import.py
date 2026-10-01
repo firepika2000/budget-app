@@ -209,7 +209,11 @@ def import_payload_into_authority(
                         row["storage_key"] = str(uuid4())
                         attachment_rows.append(row)
                     deferred = DEFERRED_FIELDS.get(table_name, set())
-                    values = {name: row.pop(name) for name in tuple(deferred) if row.get(name) is not None}
+                    values: dict[str, Any] = {}
+                    for name in deferred:
+                        value = row.pop(name, None)
+                        if value is not None:
+                            values[name] = value
                     if values:
                         deferred_updates.append((table, str(row["id"]), values))
                     prepared.append(row)

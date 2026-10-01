@@ -1634,6 +1634,9 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(destinationLeg.amountMinor, 20_000)
         XCTAssertNotNil(sourceLeg.transferID)
         XCTAssertEqual(sourceLeg.transferID, destinationLeg.transferID)
+        XCTAssertNotEqual(sourceLeg.id, destinationLeg.id)
+        XCTAssertLessThanOrEqual(sourceLeg.id.count, 36)
+        XCTAssertLessThanOrEqual(destinationLeg.id.count, 36)
     }
 
     @MainActor

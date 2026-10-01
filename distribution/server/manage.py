@@ -370,6 +370,38 @@ def verify_local_device_backup(
     interactive_runner(command)
 
 
+def local_device_import(
+    target: Deployment, package: Path, *, runner: Runner = run,
+    interactive_runner: Callable[[Sequence[str]], subprocess.CompletedProcess[str]] = run_interactive,
+    health_check: Callable[[str, float], bool] = health, timeout: float = 120.0,
+) -> None:
+    """Convert a verified phone authority into a new empty server and activate it."""
+    package = package.expanduser()
+    if package.is_symlink() or not package.is_dir():
+        raise ManagerError("Local Device backup must be a regular non-symlink package directory")
+    package = package.resolve()
+    inspect_prerequisites(target, runner)
+    runner(target.compose_command("stop", "api"), check=False)
+    runner(target.compose_command("up", "-d", "database"))
+    operation = (
+        "alembic upgrade head && python scripts/local_device_transfer.py "
+        "/tmp/local-device-package --server-environment"
+    )
+    command = target.compose_command(
+        "run", "--rm", "--no-deps", "--user", "root",
+        "--volume", f"{package}:/import/package:ro", "api", "sh", "-c",
+        "cp -R /import/package /tmp/local-device-package && "
+        "chown -R budget:budget /tmp/local-device-package && "
+        f"exec su -s /bin/sh budget -c '{operation}'",
+    )
+    try:
+        interactive_runner(command)
+    except subprocess.CalledProcessError as error:
+        raise ManagerError("Local Device import failed; the server remains stopped for inspection") from error
+    refreshed = deployment(target.root, target.environment_file)
+    start(refreshed, runner=runner, health_check=health_check, timeout=timeout, pause=2.0)
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="Safely operate a ClearPocket Server deployment")
     value.add_argument("--root", type=Path, default=Path(__file__).resolve().parent,
@@ -407,6 +439,12 @@ def parser() -> argparse.ArgumentParser:
         help="authenticate an iPhone Local Device backup without modifying this server",
     )
     local_verify.add_argument("package", type=Path)
+    local_import = commands.add_parser(
+        "local-device-import",
+        help="move an iPhone Local Device household into a new empty customer server",
+    )
+    local_import.add_argument("package", type=Path)
+    local_import.add_argument("--timeout", type=float, default=120.0)
     diagnostic = commands.add_parser("diagnostics", help="write a redacted support report")
     diagnostic.add_argument("--output", type=Path, default=Path("clearpocket-diagnostics.json"))
     return value
@@ -457,6 +495,11 @@ def main() -> int:
             print("Portable household imported; ClearPocket Server is healthy")
         elif arguments.command == "verify-local-device":
             verify_local_device_backup(target, arguments.package)
+        elif arguments.command == "local-device-import":
+            if arguments.timeout <= 0:
+                raise ManagerError("Import health timeout must be positive")
+            local_device_import(target, arguments.package, timeout=arguments.timeout)
+            print("Local Device household imported; ClearPocket Server is healthy")
         elif arguments.command == "diagnostics":
             output = diagnostics(target, arguments.output)
             print(f"Redacted diagnostics written to {output}")
