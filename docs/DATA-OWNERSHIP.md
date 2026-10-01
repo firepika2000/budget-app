@@ -498,7 +498,7 @@ backup use explicit non-interactive manager operations. The first graphical back
 generation and recovery-key folders, confirms before adopting an existing identity, and delegates to
 the same verified capture/publication engine. Restore, transfer, update, scheduling, and Dropbox tools
 use the same command engine; recipient-encrypted restore is now graphical and still refuses anything
-but a new empty destination. Passphrase restore, portable import, update, and scheduling remain
+but a new empty destination. Passphrase restore and portable import remain
 available through an advanced entry while their dedicated graphical forms are completed. Windows now
 also exposes Local Device transfer in the graphical manager: the package is selected as a read-only
 folder, masked recovery/owner credentials cross only a private standard-input pipe, and the existing
@@ -511,6 +511,11 @@ Daily Windows backup scheduling is graphical after the required first successful
 The owner selects a destination and time, can inspect next/last-run state, and can disable only the task
 while retaining generations and recovery material. Schedule status, removal, and Dropbox disconnect do
 not depend on Docker being healthy, so an outage cannot trap those local administration controls.
+Applying a newer downloaded Windows bundle is graphical and still backup-gated. The owner selects the
+generation/recovery locations, confirms the operation, and the existing engine requires successful
+encrypted capture before pulling the package's immutable digest. Only then is the private version pin
+changed and forward migration/startup attempted. Failed pull changes nothing; failed post-migration
+health leaves the API stopped and the preserved generation available rather than attempting downgrade.
 The Windows helper uses built-in PowerShell for cryptographic first-run configuration and selectable
 durable storage without Python, and now provides start/open, status, data-preserving stop, redacted
 diagnostics and log actions. It can register a limited current-user Task Scheduler entry that waits

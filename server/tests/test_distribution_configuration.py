@@ -368,8 +368,10 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "Show-ClearPocketBackupSchedule" in script
     assert "Update-ClearPocketServer" in script
     assert "Type UPDATE" in script
+    assert '[bool] $AllowExistingRecoveryIdentity = $false' in script
+    assert 'Operation = $backupOperation' in script
     update_section = script.split("function Update-ClearPocketServer", 1)[1].split('if ($Operation -ne "Interactive")', 1)[0]
-    backup_index = update_section.index('& $backupScript -EnvironmentFile $environmentFile')
+    backup_index = update_section.index('& $backupScript @backupArguments')
     pull_index = update_section.index('Install-PinnedReleaseImage "${image}:$serverVersion"')
     pin_index = update_section.index('Move-Item -LiteralPath $temporary -Destination $environmentFile -Force')
     health_index = update_section.index("Start-ClearPocketServer")
@@ -450,6 +452,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert 'Content="Schedule Daily Backups"' in manager
     assert 'Content="Backup Schedule Status"' in manager
     assert 'Content="Disable Backup Schedule"' in manager
+    assert 'Content="Apply Downloaded Update"' in manager
     assert 'Content="Create Diagnostics"' in manager
     assert 'Content="Backup, Restore &amp; Advanced…"' in manager
     assert 'Invoke-ManagerOperation "Configure"' in manager
@@ -465,7 +468,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert '$info.RedirectStandardOutput = $true' in manager
     assert '$info.RedirectStandardError = $true' in manager
     assert "Remove-Item" not in manager
-    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus")' in engine
+    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus", "Update")' in engine
     assert '$Operation -notin @("Configure", "Interactive")' in engine
     assert '$env:CLEARPOCKET_SETUP_STORAGE_ROOT' in engine
     assert '$env:CLEARPOCKET_SETUP_PUBLIC_HOST' in engine
@@ -475,7 +478,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
         "Move-Item -LiteralPath $temporary -Destination $environmentFile"
     )
     noninteractive = engine.split('if ($Operation -ne "Interactive")', 1)[1]
-    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus"):
+    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus", "Update"):
         assert f'"{operation}"' in noninteractive
     assert 'Invoke-ClearPocketCompose @("stop")' in noninteractive
     assert 'Operation = "Manager"' in noninteractive
@@ -504,6 +507,12 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert 'Invoke-ManagerOperation "ScheduleBackup"' in manager
     assert 'Invoke-ManagerOperation "BackupScheduleStatus"' in manager
     assert 'Invoke-ManagerOperation "RemoveBackupSchedule"' in manager
+    assert 'Invoke-ManagerOperation "Update" $updateEnvironment' in manager
+    assert 'CLEARPOCKET_UPDATE_CONFIRMATION = "UPDATE"' in manager
+    assert 'CLEARPOCKET_UPDATE_BACKUP_DIRECTORY' in manager
+    assert '-Confirmation $env:CLEARPOCKET_UPDATE_CONFIRMATION' in noninteractive
+    assert '-BackupDirectory $env:CLEARPOCKET_UPDATE_BACKUP_DIRECTORY' in noninteractive
+    assert '-AllowExistingRecoveryIdentity ($env:CLEARPOCKET_UPDATE_ALLOW_EXISTING_RECOVERY -ceq "USE")' in noninteractive
     assert '$dockerIndependentOperations = @("DisconnectDropbox", "RemoveBackupSchedule", "BackupScheduleStatus")' in engine
 
 

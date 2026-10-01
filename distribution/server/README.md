@@ -429,15 +429,17 @@ existing local and remote generations remain. Public-app OAuth onboarding is sti
 customers can replace manual app-folder credential entry with a one-click browser connection.
 
 For an existing pinned installation, run `install-windows.cmd` from the newer downloaded bundle, then
-choose **Apply this downloaded server version**. The manager requires an explicit `UPDATE`, completes the encrypted backup first, pulls the
-exact image before atomically changing only the version setting, and requires API health. Pull failure
+choose **Apply Downloaded Update** in the graphical manager. The owner selects the required encrypted
+backup/recovery locations and explicitly confirms the update. The manager completes and verifies that
+backup first, pulls the exact image before atomically changing only the version setting, and requires
+API health. Pull failure
 leaves configuration and running services unchanged. An unhealthy post-migration image is stopped and
 never automatically downgraded against a potentially newer database; recover the preserved generation
 into a new empty server instead. A signed installer package will eventually wrap this same per-user flow.
 
 Python and developer tools are not required. Docker Desktop is still required. Secure remote
 pairing/TLS is guided for a new installation, but automatic router/firewall configuration, platform
-signing, and graphical forms for portable import/update remain open product work.
+signing, and a graphical form for portable import remain open product work.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;

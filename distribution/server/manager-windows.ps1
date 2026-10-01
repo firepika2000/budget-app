@@ -63,6 +63,7 @@ if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
           <Button Name="ScheduleBackupButton" Content="Schedule Daily Backups" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="ScheduleStatusButton" Content="Backup Schedule Status" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="RemoveScheduleButton" Content="Disable Backup Schedule" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="UpdateServerButton" Content="Apply Downloaded Update" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="DiagnosticsButton" Content="Create Diagnostics" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="LogsButton" Content="Recent Logs" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="AdvancedButton" Content="Backup, Restore &amp; Advanced…" Padding="18,9" Margin="0,0,10,10"/>
@@ -92,7 +93,7 @@ $storageBox = $window.FindName("StorageBox")
 $hostBox = $window.FindName("HostBox")
 $outputBox = $window.FindName("OutputBox")
 $stateText = $window.FindName("StateText")
-$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "ImportLocalButton", "DropboxButton", "DisconnectDropboxButton", "ScheduleBackupButton", "ScheduleStatusButton", "RemoveScheduleButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
+$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "ImportLocalButton", "DropboxButton", "DisconnectDropboxButton", "ScheduleBackupButton", "ScheduleStatusButton", "RemoveScheduleButton", "UpdateServerButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
 $actionButtons = @{}
 foreach ($name in $actionNames) { $actionButtons[$name] = $window.FindName($name) }
 
@@ -507,6 +508,48 @@ $actionButtons["RemoveScheduleButton"].Add_Click({
     )
     if ($decision -ne [System.Windows.MessageBoxResult]::Yes) { return }
     Invoke-ManagerOperation "RemoveBackupSchedule"
+})
+$actionButtons["UpdateServerButton"].Add_Click({
+    $targetVersion = (Get-Content -LiteralPath (Join-Path $PSScriptRoot "VERSION") -Raw).Trim()
+    $currentVersion = @(Get-Content -LiteralPath $environmentFile -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match '^CLEARPOCKET_SERVER_VERSION=' } |
+        ForEach-Object { $_.Split('=', 2)[1] })
+    if ($currentVersion.Count -eq 1 -and $currentVersion[0] -eq $targetVersion) {
+        $stateText.Text = "ClearPocket Server is already at version $targetVersion."
+        return
+    }
+    $backupDirectory = Select-ClearPocketFolder "Choose where the required pre-update backup will be stored" (Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Backups")
+    if ($null -eq $backupDirectory) { return }
+    $updateEnvironment = @{
+        CLEARPOCKET_UPDATE_CONFIRMATION = "UPDATE"
+        CLEARPOCKET_UPDATE_BACKUP_DIRECTORY = $backupDirectory
+    }
+    $hasRecipient = @(Get-Content -LiteralPath $environmentFile -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match '^BUDGET_APP_BACKUP_AGE_RECIPIENT=age1[0-9a-z]+$' }).Count -eq 1
+    if (-not $hasRecipient) {
+        [System.Windows.MessageBox]::Show(
+            "The required pre-update backup needs a separate recovery key. Keep a copy away from this PC.",
+            "Update recovery key", "OK", "Information"
+        ) | Out-Null
+        $recoveryDirectory = Select-ClearPocketFolder "Choose a separate folder for the recovery key" (Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Recovery")
+        if ($null -eq $recoveryDirectory) { return }
+        $identity = Join-Path $recoveryDirectory "clearpocket-recovery-key.txt"
+        if (Test-Path -LiteralPath $identity -PathType Leaf) {
+            $reuse = [System.Windows.MessageBox]::Show(
+                "Use the existing recovery key in this folder without replacing it?",
+                "Use existing recovery key?", "YesNo", "Warning"
+            )
+            if ($reuse -ne [System.Windows.MessageBoxResult]::Yes) { return }
+            $updateEnvironment["CLEARPOCKET_UPDATE_ALLOW_EXISTING_RECOVERY"] = "USE"
+        }
+        $updateEnvironment["CLEARPOCKET_UPDATE_RECOVERY_DIRECTORY"] = $recoveryDirectory
+    }
+    $decision = [System.Windows.MessageBox]::Show(
+        "ClearPocket will create and verify an encrypted backup, download the immutable server image from this package, run forward migrations, and require healthy startup. It will not automatically downgrade a migrated database. Continue?",
+        "Apply ClearPocket Server $targetVersion?", "YesNo", "Warning"
+    )
+    if ($decision -ne [System.Windows.MessageBoxResult]::Yes) { return }
+    Invoke-ManagerOperation "Update" $updateEnvironment
 })
 $actionButtons["DiagnosticsButton"].Add_Click({ Invoke-ManagerOperation "Diagnostics" })
 $actionButtons["LogsButton"].Add_Click({ Invoke-ManagerOperation "Logs" })

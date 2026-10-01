@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus")]
+    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus", "Update")]
     [string] $Operation = "Interactive"
 )
 
@@ -590,7 +590,12 @@ function Show-ClearPocketBackupSchedule {
     Write-Host "Last result: $($info.LastTaskResult)"
 }
 
-function Update-ClearPocketServer {
+function Update-ClearPocketServer(
+    [string] $Confirmation = "",
+    [string] $BackupDirectory = "",
+    [string] $RecoveryDirectory = "",
+    [bool] $AllowExistingRecoveryIdentity = $false
+) {
     if ($serverVersion -eq "edge") {
         throw "This folder is not an immutable release bundle. Download a versioned ClearPocket Server package."
     }
@@ -611,8 +616,11 @@ function Update-ClearPocketServer {
         Write-Host "ClearPocket Server is already configured for version $serverVersion."
         return
     }
-    $confirmation = Read-Host "Type UPDATE to back up and apply server version $serverVersion"
-    if ($confirmation -cne "UPDATE") {
+    $confirmationValue = $Confirmation
+    if ([string]::IsNullOrWhiteSpace($confirmationValue)) {
+        $confirmationValue = Read-Host "Type UPDATE to back up and apply server version $serverVersion"
+    }
+    if ($confirmationValue -cne "UPDATE") {
         Write-Host "Update cancelled. Server configuration and data were not changed."
         return
     }
@@ -620,7 +628,17 @@ function Update-ClearPocketServer {
     if (-not (Test-Path -LiteralPath $backupScript -PathType Leaf)) {
         throw "Windows backup support is missing. Download the complete server package again."
     }
-    & $backupScript -EnvironmentFile $environmentFile
+    $backupOperation = if ($BackupDirectory) { "Manager" } else { "Interactive" }
+    $backupArguments = @{
+        EnvironmentFile = $environmentFile
+        Operation = $backupOperation
+        BackupDirectory = $BackupDirectory
+        RecoveryDirectory = $RecoveryDirectory
+    }
+    if ($AllowExistingRecoveryIdentity) {
+        $backupArguments["AllowExistingRecoveryIdentity"] = $true
+    }
+    & $backupScript @backupArguments
     if (-not $?) { throw "Required pre-update backup did not complete." }
 
     try {
@@ -729,6 +747,13 @@ if ($Operation -ne "Interactive") {
         }
         "RemoveBackupSchedule" { Remove-ClearPocketBackupSchedule }
         "BackupScheduleStatus" { Show-ClearPocketBackupSchedule }
+        "Update" {
+            Update-ClearPocketServer `
+                -Confirmation $env:CLEARPOCKET_UPDATE_CONFIRMATION `
+                -BackupDirectory $env:CLEARPOCKET_UPDATE_BACKUP_DIRECTORY `
+                -RecoveryDirectory $env:CLEARPOCKET_UPDATE_RECOVERY_DIRECTORY `
+                -AllowExistingRecoveryIdentity ($env:CLEARPOCKET_UPDATE_ALLOW_EXISTING_RECOVERY -ceq "USE")
+        }
         default { throw "Unsupported non-interactive manager operation." }
     }
     exit 0
