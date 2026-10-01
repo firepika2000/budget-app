@@ -7,6 +7,7 @@ import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -29,6 +30,7 @@ SECRET_KEYS = {
     "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY",
 }
 SAFE_VALUE = re.compile(r"^[^\x00-\x1f\x7f]+$")
+VERSION_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 class ManagerError(RuntimeError):
@@ -228,6 +230,72 @@ def backup(target: Deployment, destination: Path, runner: Runner = run,
             "--project-name", project_name, str(destination)])
 
 
+def bundle_version(target: Deployment) -> str:
+    version_file = target.root / "VERSION"
+    try:
+        value = version_file.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise ManagerError("This server bundle has no immutable VERSION file") from error
+    if not VERSION_VALUE.fullmatch(value) or value == "edge":
+        raise ManagerError("The server bundle VERSION is not an immutable release version")
+    return value
+
+
+def replace_environment_version(target: Deployment, version: str) -> None:
+    if not VERSION_VALUE.fullmatch(version) or version == "edge":
+        raise ManagerError("Refusing an invalid or mutable server version")
+    path = target.environment_file
+    lines = path.read_text(encoding="utf-8").splitlines()
+    matches = [index for index, line in enumerate(lines)
+               if line.startswith("CLEARPOCKET_SERVER_VERSION=")]
+    if len(matches) != 1:
+        raise ManagerError("Private configuration has an ambiguous server version")
+    lines[matches[0]] = f"CLEARPOCKET_SERVER_VERSION={version}"
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.update")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output:
+            output.write("\n".join(lines) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def upgrade(
+    target: Deployment, backup_destination: Path, *, runner: Runner = run,
+    health_check: Callable[[str, float], bool] = health,
+    project_name: str = "clearpocket-server", timeout: float = 120.0,
+) -> str:
+    current = target.environment["CLEARPOCKET_SERVER_VERSION"]
+    if current == "edge" or not VERSION_VALUE.fullmatch(current):
+        raise ManagerError("Upgrade requires a currently pinned immutable server version")
+    intended = bundle_version(target)
+    if intended == current:
+        raise ManagerError(f"Server is already configured for version {intended}")
+    inspect_prerequisites(target, runner)
+    backup(target, backup_destination, runner, project_name)
+    image = target.environment["CLEARPOCKET_SERVER_IMAGE"]
+    runner(["docker", "pull", f"{image}:{intended}"])
+    replace_environment_version(target, intended)
+    upgraded = deployment(target.root, target.environment_file)
+    try:
+        start(upgraded, runner=runner, health_check=health_check, timeout=timeout, pause=2.0)
+    except ManagerError as error:
+        raise ManagerError(
+            f"Version {intended} did not become healthy. The pre-update encrypted backup was "
+            "preserved. Automatic image rollback is intentionally disabled after migrations; "
+            "keep this deployment isolated and follow the new-destination recovery workflow."
+        ) from error
+    return intended
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="Safely operate a ClearPocket Server deployment")
     value.add_argument("--root", type=Path, default=Path(__file__).resolve().parent,
@@ -246,6 +314,10 @@ def parser() -> argparse.ArgumentParser:
     backup_command.add_argument("--output", type=Path, required=True,
                                 help="private directory for immutable encrypted backup generations")
     backup_command.add_argument("--project-name", default="clearpocket-server")
+    upgrade_command = commands.add_parser("upgrade", help="back up, apply the bundle version, and verify health")
+    upgrade_command.add_argument("--backup-output", type=Path, required=True)
+    upgrade_command.add_argument("--project-name", default="clearpocket-server")
+    upgrade_command.add_argument("--timeout", type=float, default=120.0)
     diagnostic = commands.add_parser("diagnostics", help="write a redacted support report")
     diagnostic.add_argument("--output", type=Path, default=Path("clearpocket-diagnostics.json"))
     return value
@@ -280,6 +352,12 @@ def main() -> int:
             print(logs(target, lines=arguments.lines), end="")
         elif arguments.command == "backup":
             backup(target, arguments.output, project_name=arguments.project_name)
+        elif arguments.command == "upgrade":
+            if arguments.timeout <= 0:
+                raise ManagerError("Upgrade timeout must be positive")
+            version = upgrade(target, arguments.backup_output,
+                              project_name=arguments.project_name, timeout=arguments.timeout)
+            print(f"ClearPocket Server upgraded and healthy at version {version}")
         elif arguments.command == "diagnostics":
             output = diagnostics(target, arguments.output)
             print(f"Redacted diagnostics written to {output}")

@@ -330,6 +330,58 @@ def test_manager_backup_uses_bundled_coordinated_backup_and_explicit_target(tmp_
         manager.backup(target, destination, runner, project_name="unsafe target")
 
 
+def upgrade_deployment(tmp_path: Path):
+    target = manager_deployment(tmp_path)
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    script = tools / "backup.sh"
+    script.write_text("#!/bin/sh\n")
+    script.chmod(0o755)
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    return target
+
+
+def test_manager_upgrade_requires_backup_then_atomically_pins_and_health_checks_exact_image(tmp_path: Path):
+    target = upgrade_deployment(tmp_path)
+    original = manager.load_environment(target.environment_file)
+    runner = RecordedRunner()
+    version = manager.upgrade(
+        target, tmp_path / "backups", runner=runner,
+        health_check=lambda _url, _timeout: True, project_name="customer-home", timeout=1,
+    )
+    assert version == "1.0.0"
+    updated = manager.load_environment(target.environment_file)
+    assert updated["CLEARPOCKET_SERVER_VERSION"] == "1.0.0"
+    for secret in manager.SECRET_KEYS:
+        assert updated[secret] == original[secret]
+    backup_index = next(index for index, command in enumerate(runner.commands)
+                        if command[0].endswith("backup.sh"))
+    pull_index = runner.commands.index(["docker", "pull", "example/server:1.0.0"])
+    up_index = next(index for index, command in enumerate(runner.commands)
+                    if command[-2:] == ["up", "-d"])
+    assert backup_index < pull_index < up_index
+    assert not list(tmp_path.glob("..env.*.update"))
+
+
+def test_manager_upgrade_pull_failure_leaves_private_version_unchanged(tmp_path: Path):
+    target = upgrade_deployment(tmp_path)
+    runner = RecordedRunner([
+        (0, "27.0.0", ""), (0, "2.39.1", ""), (0, "", ""),
+        (0, "", ""), (1, "", "image unavailable"),
+    ])
+    with pytest.raises(manager.ManagerError, match="image unavailable"):
+        manager.upgrade(target, tmp_path / "backups", runner=runner)
+    assert manager.load_environment(target.environment_file)["CLEARPOCKET_SERVER_VERSION"] == "test"
+
+
+def test_manager_upgrade_never_auto_downgrades_after_unhealthy_migration(tmp_path: Path):
+    target = upgrade_deployment(tmp_path)
+    with pytest.raises(manager.ManagerError, match="Automatic image rollback is intentionally disabled"):
+        manager.upgrade(target, tmp_path / "backups", runner=RecordedRunner(),
+                        health_check=lambda _url, _timeout: False, timeout=0.001)
+    assert manager.load_environment(target.environment_file)["CLEARPOCKET_SERVER_VERSION"] == "1.0.0"
+
+
 def test_manager_accepts_array_and_line_delimited_compose_status(tmp_path: Path):
     target = manager_deployment(tmp_path)
     array = RecordedRunner([(0, '[{"Service":"api","State":"running","Health":"healthy"}]', "")])

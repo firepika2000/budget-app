@@ -71,6 +71,24 @@ menu action: it accepts only a brand-new empty recovery deployment, verifies the
 attachment key before mutation, and requires an explicit `--yes --project-name` target. Follow the
 recovery runbook and preserve the source authority until the restored destination is verified.
 
+## Versioned update safety
+
+A newly downloaded immutable bundle can update an existing advanced Docker/QNAP deployment only after
+creating a complete encrypted generation:
+
+```sh
+./manage.py --env-file /durable/private/path/.env upgrade \
+  --backup-output /protected/path/clearpocket-backups
+```
+
+The manager refuses `edge`, validates Docker and the rendered Compose contract, completes the backup,
+pulls the exact image named by the bundle's `VERSION`, atomically changes only the private version
+setting, starts the new services, and waits for API health. A failed pull leaves configuration and
+containers unchanged. If the new image starts migrations but does not become healthy, the manager
+does not perform an unsafe image downgrade against a possibly forward-migrated database; it preserves
+the pre-update backup and directs recovery into a new deployment. Graphical update/recovery guidance
+and release-signature verification remain required for the normal-user manager.
+
 For a Linux Docker host with an owner-controlled age recipient, `tools/backup_schedule.py` can install
 a persistent daily systemd user timer. The backup credential file and deployment `.env` must both be
 owner-only regular files; the generated unit records only their paths, never their contents:

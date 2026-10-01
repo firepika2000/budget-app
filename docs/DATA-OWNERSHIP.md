@@ -398,6 +398,11 @@ builds the same image for ARM64 and AMD64 and ships the canonical coordinated ba
 A data-preserving manager validates, starts, health-checks, stops, diagnoses, and creates encrypted
 database-plus-attachment generations. Backup capture success/failure and restore verification are
 persisted inside a dedicated operations volume and exposed through the existing owner-only API/UI.
+For advanced Docker/QNAP administration, a versioned bundle can now apply its immutable image only
+after completing a coordinated encrypted backup. Pull failure leaves configuration unchanged; the
+version setting changes atomically before activation; and an unhealthy post-migration deployment
+never triggers an unsafe automatic image downgrade. The preserved generation instead anchors the
+new-destination recovery workflow.
 
 The Windows helper uses built-in PowerShell for cryptographic first-run configuration and selectable
 durable storage without Python, and now provides start/open, status, data-preserving stop, redacted
