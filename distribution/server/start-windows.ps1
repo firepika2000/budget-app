@@ -236,6 +236,7 @@ Write-Host "  6. Start automatically when I sign in"
 Write-Host "  7. Disable automatic startup"
 Write-Host "  8. Move an iPhone Local Device budget to this server"
 Write-Host "  9. Create an encrypted server backup"
+Write-Host " 10. Restore an encrypted backup into this empty server"
 Write-Host ""
 $choice = if ($newInstall) { "1" } else { Read-Host "Choose an option [1]" }
 if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
@@ -263,5 +264,13 @@ switch ($choice) {
         & $backupScript -EnvironmentFile $environmentFile
         if (-not $?) { throw "Windows backup did not complete." }
     }
-    default { throw "Unknown option. Run the launcher again and choose 1 through 9." }
+    "10" {
+        $restoreScript = Join-Path $PSScriptRoot "restore-windows.ps1"
+        if (-not (Test-Path -LiteralPath $restoreScript -PathType Leaf)) {
+            throw "Windows recovery support is missing. Download the complete server package again."
+        }
+        & $restoreScript -EnvironmentFile $environmentFile
+        if (-not $?) { throw "Windows recovery did not complete." }
+    }
+    default { throw "Unknown option. Run the launcher again and choose 1 through 10." }
 }

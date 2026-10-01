@@ -453,14 +453,19 @@ It now creates full PostgreSQL-plus-attachment encrypted generations using only 
 pinned server containers. First use generates an owner-held age recovery identity and persists only
 its public recipient in server configuration. Capture uses the canonical manifest, atomic publication,
 and backup-health contract; no Windows Python, PostgreSQL client, or age installation is required.
+The paired guided restore accepts the separately retained identity or an interactive passphrase,
+verifies in isolated staging, refuses nonempty database/object destinations twice, replaces the empty
+destination's attachment key with the authenticated recovered key, restores PostgreSQL in one guarded
+transaction, and serves only after a force-recreated API passes health. Failure leaves the recovery
+API stopped and never modifies the source archive.
 `distribution/qnap` contains a QDK-compatible package foundation that
 wraps the same Compose bundle in App Center lifecycle hooks while keeping authority outside the
 replaceable QPKG directory. Its install routine chooses a durable QNAP shared-folder root, creates
 separate database/attachment/operations directories, generates independent kernel-random secrets,
 and atomically creates but never overwrites the private configuration. These remain previews rather
 than the promised normal-user setup:
-release images/packages are unsigned, QNAP hardware validation is pending, Windows guided restore is
-pending, and secure pairing/TLS is not implemented.
+release images/packages are unsigned, QNAP hardware validation is pending, and secure pairing/TLS is
+not implemented.
 
 1. Register the production Dropbox public app key/callback and complete live external-account
    acceptance. Dropbox remains a backup destination, not a second authority.

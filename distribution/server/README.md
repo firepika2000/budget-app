@@ -209,11 +209,16 @@ offline location: losing it makes recipient-encrypted generations unrecoverable.
 pauses the API, dumps PostgreSQL, copies the already-encrypted attachment store, resumes the API,
 builds the canonical integrity manifest, encrypts into private staging, and atomically publishes the
 finished generation. Partial output is removed on failure, and success/failure health is written to
-the same owner-visible status contract used on other hosts.
+the same owner-visible status contract used on other hosts. The matching Restore menu accepts either
+that recovery identity or an interactive passphrase archive. It decrypts and validates entirely in
+private temporary staging, refuses a populated database or attachment store before and after pausing
+the API, adopts the authenticated attachment key only for that empty destination, and restores SQL in
+one guarded transaction. The API is force-recreated with the recovered key and must pass its health
+check; otherwise it remains stopped for inspection.
 
 Python and developer tools are not required. Docker Desktop is still required, and secure remote
 pairing/TLS is not yet guided, so this remains a preview rather than the final signed graphical server
-manager. Guided update, firewall guidance, and guided restore remain required.
+manager. Guided update and firewall guidance remain required.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;

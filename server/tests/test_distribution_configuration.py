@@ -151,6 +151,8 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert '"9" {' in script
     assert 'backup-windows.ps1' in script
     assert 'Create an encrypted server backup' in script
+    assert 'restore-windows.ps1' in script
+    assert 'Restore an encrypted backup into this empty server' in script
     task_section = script.split("function Install-ClearPocketAutoStart", 1)[1]
     assert "BUDGET_APP_DB_PASSWORD" not in task_section
     assert "BUDGET_APP_JWT_SECRET" not in task_section
@@ -176,6 +178,23 @@ def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():
     assert "Move-Item -LiteralPath $partial -Destination $final" in script
     assert "/var/lib/budget-app/operations/backup-status.json" in script
     assert "Remove-Item -LiteralPath $partial" in script
+    assert "down -v" not in script
+    assert "docker volume rm" not in script
+
+
+def test_windows_restore_is_verified_empty_guarded_and_never_in_place():
+    script = (ROOT / "distribution" / "server" / "restore-windows.ps1").read_text()
+    assert "require_empty_restore.sql" in script
+    assert "Type RESTORE to verify this backup" in script
+    assert "extract-verified /restore/archive.tar.gz /restore/verified" in script
+    assert 'Assert-EmptyRecoveryDestination $true' in script
+    assert '"stop", "api"' in script
+    assert 'Set-RecoveredAttachmentKey $recoveryLine' in script
+    assert 'psql", "--single-transaction"' in script
+    assert '"-f", $guardContainer, "-f", $databaseContainer' in script
+    assert '"up", "-d", "--force-recreate", "api"' in script
+    assert "/var/lib/budget-app/operations/recovery-status.json" in script
+    assert "The API remains stopped for inspection" in script
     assert "down -v" not in script
     assert "docker volume rm" not in script
 
