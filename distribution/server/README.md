@@ -34,18 +34,41 @@ front of it. `0.0.0.0` is available for protected LAN testing, but the iPhone ap
 ordinary remote HTTP; secure pairing/TLS remains a release gate. Never forward raw port 8080 from a
 home router to the Internet.
 
+## Safe server management
+
+Linux Docker Engine and QNAP administrators can use the bundled management command after generating
+`.env`:
+
+```sh
+./manage.py doctor
+./manage.py start
+./manage.py status
+./manage.py diagnostics
+./manage.py logs --lines 200
+./manage.py stop
+```
+
+`start` validates Docker and the rendered Compose contract, starts the pinned services, and waits a
+bounded time for the real API health endpoint. `stop` uses Compose's non-destructive stop operation;
+it never removes containers, volumes, database files, attachments, or configuration. `diagnostics`
+writes a JSON support report containing only allowlisted runtime/status fields. It excludes secrets,
+allowed-host details, host storage paths, container environment, and application data. Review logs
+before sharing them because user-entered server activity may still be visible there.
+
 ## Docker Engine
 
 Use this Compose file on a Linux Docker Engine or equivalent host. Pin `CLEARPOCKET_SERVER_VERSION`
-to a tested release rather than `edge`. After both services report healthy, open `/admin` through the
-configured HTTPS endpoint and perform First Setup.
+to a tested release rather than `edge`. Run `./manage.py start`; after it reports healthy, open
+`/admin` through the configured HTTPS endpoint and perform First Setup.
 
 ## QNAP NAS
 
 Container Station can import `compose.yaml` as an application. Download and unpack the versioned
 server bundle, then generate `.env` with database and attachment paths under the same protected QNAP
-shared folder. Import `compose.yaml` and `.env`; do not copy secrets into the Compose file. Use QNAP's supported
-reverse-proxy/certificate workflow or a private VPN. QNAP model architecture must be supported by the
+shared folder. Import `compose.yaml` and `.env`; do not copy secrets into the Compose file. When SSH
+administration is enabled, `manage.py` provides the same non-destructive status/start/stop/diagnostics
+contract as a Linux Docker host. Use QNAP's supported reverse-proxy/certificate workflow or a private
+VPN. QNAP model architecture must be supported by the
 published image (`linux/amd64` or `linux/arm64`). A QPKG-style guided installer, storage-volume picker,
 certificate/pairing UI, upgrade safety, and tested model matrix remain required before this becomes a
 normal-user QNAP package.

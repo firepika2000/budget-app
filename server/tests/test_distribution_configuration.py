@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -16,6 +19,12 @@ SPEC = importlib.util.spec_from_file_location("deployment_configuration", SCRIPT
 assert SPEC and SPEC.loader
 module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(module)
+MANAGER_SCRIPT = ROOT / "distribution" / "server" / "manage.py"
+MANAGER_SPEC = importlib.util.spec_from_file_location("deployment_manager", MANAGER_SCRIPT)
+assert MANAGER_SPEC and MANAGER_SPEC.loader
+manager = importlib.util.module_from_spec(MANAGER_SPEC)
+sys.modules[MANAGER_SPEC.name] = manager
+MANAGER_SPEC.loader.exec_module(manager)
 
 
 def parsed(contents: str) -> dict[str, str]:
@@ -120,3 +129,92 @@ def test_publish_workflow_builds_versioned_customer_bundle():
     assert "clearpocket-server-$VERSION.zip" in workflow
     assert "clearpocket-server-$VERSION.tar.gz" in workflow
     assert "actions/upload-artifact@v4" in workflow
+
+
+def manager_deployment(tmp_path: Path):
+    (tmp_path / "compose.yaml").write_text("services: {}\n")
+    contents = module.configuration(allowed_hosts="private.example", bind_address="0.0.0.0",
+        port=8080, image="example/server", version="test",
+        database_storage="customer_database", attachments_storage="/srv/private/attachments")
+    (tmp_path / ".env").write_text(contents)
+    return manager.deployment(tmp_path)
+
+
+class RecordedRunner:
+    def __init__(self, responses: list[tuple[int, str, str]] | None = None):
+        self.commands: list[list[str]] = []
+        self.responses = list(responses or [])
+
+    def __call__(self, command, *, check=True):
+        self.commands.append(list(command))
+        returncode, stdout, stderr = self.responses.pop(0) if self.responses else (0, "", "")
+        if check and returncode:
+            raise manager.ManagerError(stderr or stdout)
+        return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+
+
+def test_manager_rejects_duplicate_or_incomplete_private_configuration(tmp_path: Path):
+    (tmp_path / "compose.yaml").write_text("services: {}\n")
+    (tmp_path / ".env").write_text("CLEARPOCKET_PORT=8080\nCLEARPOCKET_PORT=8081\n")
+    with pytest.raises(manager.ManagerError, match="duplicate"):
+        manager.deployment(tmp_path)
+    (tmp_path / ".env").write_text("CLEARPOCKET_PORT=8080\n")
+    with pytest.raises(manager.ManagerError, match="missing required"):
+        manager.deployment(tmp_path)
+
+
+def test_manager_start_validates_then_uses_compose_and_current_local_health(tmp_path: Path):
+    target = manager_deployment(tmp_path)
+    runner = RecordedRunner([(0, "27.0.0\n", ""), (0, "2.39.1\n", ""),
+                             (0, "", ""), (0, "", "")])
+    checked_urls: list[str] = []
+
+    def healthy(url: str, timeout: float) -> bool:
+        checked_urls.append(url)
+        return True
+
+    manager.start(target, runner=runner, health_check=healthy, timeout=1, pause=0)
+    assert runner.commands[-1][-2:] == ["up", "-d"]
+    assert any(command[-2:] == ["config", "--quiet"] for command in runner.commands)
+    assert checked_urls == ["http://127.0.0.1:8080/api/v1/health"]
+    assert all("down" not in command and "-v" not in command for command in runner.commands)
+
+
+def test_manager_stop_is_data_preserving(tmp_path: Path):
+    target = manager_deployment(tmp_path)
+    runner = RecordedRunner()
+    manager.stop(target, runner)
+    assert runner.commands[0][-1] == "stop"
+    assert "down" not in runner.commands[0]
+    assert "-v" not in runner.commands[0]
+
+
+def test_manager_accepts_array_and_line_delimited_compose_status(tmp_path: Path):
+    target = manager_deployment(tmp_path)
+    array = RecordedRunner([(0, '[{"Service":"api","State":"running","Health":"healthy"}]', "")])
+    assert manager.compose_services(target, array)[0]["Service"] == "api"
+    lines = RecordedRunner([(0, '{"Service":"api","State":"running"}\n'
+        '{"Service":"database","State":"running"}\n', "")])
+    assert [item["Service"] for item in manager.compose_services(target, lines)] == ["api", "database"]
+
+
+def test_manager_diagnostics_are_allowlisted_and_never_contain_secrets_or_paths(tmp_path: Path, monkeypatch):
+    target = manager_deployment(tmp_path)
+    runner = RecordedRunner([
+        (0, "27.0.0\n", ""), (0, "2.39.1\n", ""), (0, "", ""),
+        (0, '[{"Service":"api","State":"running","Health":"healthy",'
+            '"Env":"BUDGET_APP_JWT_SECRET=leaked","Mounts":"/srv/private/attachments"}]', ""),
+    ])
+    monkeypatch.setattr(manager, "health", lambda _url: True)
+    destination = manager.diagnostics(target, tmp_path / "support.json", runner)
+    contents = destination.read_text()
+    report = json.loads(contents)
+    assert report["attachment_storage"] == "host-directory"
+    assert report["database_storage"] == "docker-volume"
+    assert report["health"] == "healthy"
+    assert report["services"] == [{"service": "api", "state": "running", "health": "healthy"}]
+    for secret in manager.SECRET_KEYS:
+        assert target.environment[secret] not in contents
+    assert "private.example" not in contents
+    assert "/srv/private/attachments" not in contents
+    assert "leaked" not in contents
