@@ -133,6 +133,14 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "$healthUrl" in script
     assert "Start-Process $adminUrl" in script
     assert "Write-ClearPocketDiagnostics" in script
+    assert "Register-ScheduledTask" in script
+    assert "New-ScheduledTaskPrincipal" in script
+    assert "-RunLevel Limited" in script
+    assert 'Unregister-ScheduledTask -TaskName "ClearPocket Server"' in script
+    assert '-Operation Start' in script
+    task_section = script.split("function Install-ClearPocketAutoStart", 1)[1]
+    assert "BUDGET_APP_DB_PASSWORD" not in task_section
+    assert "BUDGET_APP_JWT_SECRET" not in task_section
     assert "BUDGET_APP_JWT_SECRET" not in script.split("function Write-ClearPocketDiagnostics", 1)[1]
     assert "down -v" not in script
     assert "docker volume rm" not in script

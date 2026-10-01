@@ -1,3 +1,8 @@
+param(
+    [ValidateSet("Interactive", "Start")]
+    [string] $Operation = "Interactive"
+)
+
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 $serverVersion = "edge"
@@ -24,11 +29,20 @@ function Assert-SafeValue([string] $Value, [string] $Label) {
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker Desktop is required. Install it, start it, then run this launcher again."
 }
-docker info *> $null
-if ($LASTEXITCODE -ne 0) { throw "Docker Desktop is installed but is not running." }
+$dockerReady = $false
+$attemptLimit = if ($Operation -eq "Start") { 60 } else { 1 }
+for ($attempt = 0; $attempt -lt $attemptLimit; $attempt++) {
+    docker info *> $null
+    if ($LASTEXITCODE -eq 0) { $dockerReady = $true; break }
+    if ($attempt + 1 -lt $attemptLimit) { Start-Sleep -Seconds 2 }
+}
+if (-not $dockerReady) { throw "Docker Desktop is installed but is not running." }
 
 $environmentFile = Join-Path $PSScriptRoot ".env"
 $newInstall = -not (Test-Path -LiteralPath $environmentFile)
+if ($newInstall -and $Operation -eq "Start") {
+    throw "Automatic startup needs first-time setup. Run start-windows.cmd interactively once."
+}
 if ($newInstall) {
     Write-Host "ClearPocket Server first-time setup"
     Write-Host "The iPhone app requires HTTPS for remote servers. This preview starts a local server; do not expose port 8080 to the Internet."
@@ -134,6 +148,35 @@ function Write-ClearPocketDiagnostics {
     Write-Host "The report contains runtime status, never configuration secrets or application data."
 }
 
+function Install-ClearPocketAutoStart {
+    $taskName = "ClearPocket Server"
+    $powershell = Join-Path $PSHOME "powershell.exe"
+    $arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Operation Start"
+    $action = New-ScheduledTaskAction -Execute $powershell -Argument $arguments
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $trigger.Delay = "PT1M"
+    $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
+        -LogonType Interactive -RunLevel Limited
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal `
+        -Description "Start the private ClearPocket household server after Docker Desktop is available." `
+        -Force | Out-Null
+    Write-Host "Automatic startup enabled for this Windows account."
+    Write-Host "Keep Docker Desktop's 'Start Docker Desktop when you sign in' setting enabled."
+}
+
+function Remove-ClearPocketAutoStart {
+    $task = Get-ScheduledTask -TaskName "ClearPocket Server" -ErrorAction SilentlyContinue
+    if ($null -ne $task) {
+        Unregister-ScheduledTask -TaskName "ClearPocket Server" -Confirm:$false
+    }
+    Write-Host "Automatic startup disabled. Server data and configuration were not changed."
+}
+
+if ($Operation -eq "Start") {
+    Start-ClearPocketServer
+    exit 0
+}
+
 Write-Host ""
 Write-Host "ClearPocket Server Manager"
 Write-Host "  1. Start server and open setup"
@@ -141,6 +184,8 @@ Write-Host "  2. Show status"
 Write-Host "  3. Stop server (keep all data)"
 Write-Host "  4. Create redacted diagnostics"
 Write-Host "  5. Show recent logs"
+Write-Host "  6. Start automatically when I sign in"
+Write-Host "  7. Disable automatic startup"
 Write-Host ""
 $choice = if ($newInstall) { "1" } else { Read-Host "Choose an option [1]" }
 if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
@@ -157,5 +202,7 @@ switch ($choice) {
     }
     "4" { Write-ClearPocketDiagnostics }
     "5" { Invoke-ClearPocketCompose @("logs", "--no-color", "--tail", "200") }
-    default { throw "Unknown option. Run the launcher again and choose 1 through 5." }
+    "6" { Install-ClearPocketAutoStart }
+    "7" { Remove-ClearPocketAutoStart }
+    default { throw "Unknown option. Run the launcher again and choose 1 through 7." }
 }

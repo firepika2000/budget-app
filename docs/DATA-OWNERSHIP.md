@@ -401,7 +401,9 @@ persisted inside a dedicated operations volume and exposed through the existing 
 
 The Windows helper uses built-in PowerShell for cryptographic first-run configuration and selectable
 durable storage without Python, and now provides start/open, status, data-preserving stop, redacted
-diagnostics and log actions. `distribution/qnap` contains a QDK-compatible package foundation that
+diagnostics and log actions. It can register a limited current-user Task Scheduler entry that waits
+for Docker Desktop and starts the server after sign-in without embedding credentials. `distribution/qnap`
+contains a QDK-compatible package foundation that
 wraps the same Compose bundle in App Center lifecycle hooks while keeping authority outside the
 replaceable QPKG directory. Its install routine chooses a durable QNAP shared-folder root, creates
 separate database/attachment/operations directories, generates independent kernel-random secrets,

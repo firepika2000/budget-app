@@ -116,9 +116,11 @@ hardware-validation gates are complete.
 setup asks for a durable data folder and creates independent cryptographic secrets without displaying
 them. Its menu can start and health-check the pinned Compose application, open local setup, show
 status, stop without deleting data, create a redacted diagnostics report, and display recent logs.
-Python and developer tools are not required. Docker Desktop is still required, and secure remote
+It can also register or remove a limited current-user Task Scheduler entry that waits for Docker
+Desktop and starts the server after sign-in; the task contains only the manager path, never private
+configuration or credentials. Python and developer tools are not required. Docker Desktop is still required, and secure remote
 pairing/TLS is not yet guided, so this remains a preview rather than the final signed graphical server
-manager. Automatic start/update, firewall guidance, and guided backup/restore remain required.
+manager. Guided update, firewall guidance, and backup/restore remain required.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;
