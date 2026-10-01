@@ -25,8 +25,14 @@ QDK's `qbuild`. First start and explicit upgrades pull that digest and only then
 used by Compose. An engineering build may omit the digest, but it is not a customer release. Do not
 build from a working directory containing a private `.env`.
 
-The installer chooses the QNAP Public share as its initial durable root, generates independent
-database/JWT/attachment secrets from `/dev/urandom`, and refuses to replace an existing `.env`.
+App Center asks which storage volume should host the package and supports later package migration
+through the [QDK volume-selection contract](https://github.com/qnap-dev/QDK/blob/master/docs/QDK-Developer-Guide.md#version--platform-gating).
+For a fresh install, ClearPocket creates a private `ClearPocketServerData` directory directly on that
+selected volume rather than placing financial authority inside the NAS Public share. The durable path
+remains outside the replaceable QPKG directory, is recorded in the owner-only system pointer, and is
+not removed with the package. Existing installations continue using their recorded data root without
+an implicit move. Setup generates independent database/JWT/attachment secrets from `/dev/urandom`
+and refuses to replace an existing `.env`.
 
 An administrator can copy an iPhone `.clearpocketbackup` package into a protected QNAP shared folder
 and authenticate it without touching the server authority:

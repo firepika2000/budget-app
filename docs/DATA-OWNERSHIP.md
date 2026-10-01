@@ -565,7 +565,9 @@ publication; failure records `publication_failed`, while success stores only all
 metadata. Disconnect removes the local grant without touching any generation.
 `distribution/qnap` contains a QDK-compatible package foundation that
 wraps the same Compose bundle in App Center lifecycle hooks while keeping authority outside the
-replaceable QPKG directory. Its install routine chooses a durable QNAP shared-folder root, creates
+replaceable QPKG directory. Fresh installs use QDK's App Center volume selection and create a private
+durable `ClearPocketServerData` directory on that volume—not under the NAS Public share—while an
+existing owner-only system pointer remains authoritative across upgrades. The install routine creates
 separate database/attachment/operations directories, generates independent kernel-random secrets,
 and atomically creates but never overwrites the private configuration. QNAP administrators can now
 preflight or activate a phone Local Device generation directly through the package service without

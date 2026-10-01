@@ -1467,3 +1467,15 @@ blocks a loopback socket and real `age` controlling terminal, and existing finan
 those shifted periods. No application/backend financial code changed in this checkpoint. WPF runtime,
 Windows accessibility, Docker Desktop, and signed-installer acceptance require a Windows test host and
 remain open; source assertions are not represented as that acceptance.
+
+### QNAP private-volume installation correction — 2026-10-01
+
+The QPKG no longer defaults a fresh household authority beneath the NAS Public share. It declares
+QDK App Center volume selection and migration support, applies bounded start/stop timeouts, and creates
+the durable `ClearPocketServerData` authority as a private `0700` directory on the selected volume,
+outside the replaceable package tree. Its `/etc/config` pointer remains owner-only and authoritative;
+an upgrade never relocates an existing installation. Database, attachment, and operations subtrees
+remain `0700`, private configuration remains `0600`, and uninstall still preserves the authority.
+The focused 58-case distribution suite and QNAP shell syntax pass. Actual App Center volume-selection,
+package migration, Container Station, QTS/QuTS permissions, and supported-hardware acceptance remain
+required before customer release.

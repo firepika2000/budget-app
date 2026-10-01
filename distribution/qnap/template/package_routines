@@ -14,8 +14,14 @@ pkg_check_requirement() {
 
 pkg_install() {
     if [ ! -f "$CLEARPOCKET_SYSTEM_CONFIG" ]; then
-        DATA_ROOT="${SYS_PUBLIC_SHARE}/ClearPocketServer"
-        [ -n "$SYS_PUBLIC_SHARE" ] || DATA_ROOT="/share/Public/ClearPocketServer"
+        DATA_ROOT="${SYS_QPKG_BASE}/ClearPocketServerData"
+        case "$DATA_ROOT" in
+            /share/*/ClearPocketServerData) ;;
+            *)
+                err_log "ClearPocket could not resolve private storage on the selected QNAP volume."
+                return 1
+                ;;
+        esac
         $CMD_ECHO "CLEARPOCKET_DATA_ROOT=$DATA_ROOT" > "$CLEARPOCKET_SYSTEM_CONFIG"
         $CMD_CHMOD 600 "$CLEARPOCKET_SYSTEM_CONFIG"
     fi

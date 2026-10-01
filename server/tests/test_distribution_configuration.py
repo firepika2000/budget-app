@@ -653,9 +653,15 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     builder = (root / "build.sh").read_text()
     assert 'QPKG_NAME="ClearPocketServer"' in config
     assert 'QPKG_SERVICE_PROGRAM="ClearPocketServer.sh"' in config
+    assert 'QPKG_VOLUME_SELECT="3"' in config
+    assert 'QPKG_TIMEOUT="300,120"' in config
+    assert 'QPKG_DISTRIBUTION_TYPE="1"' in config
     assert "Container Station must be installed" in routines
     assert "ClearPocketSetup.sh" in routines
     assert "CLEARPOCKET_DATA_ROOT" in routines
+    assert 'DATA_ROOT="${SYS_QPKG_BASE}/ClearPocketServerData"' in routines
+    assert "SYS_PUBLIC_SHARE" not in routines
+    assert "/share/Public" not in routines
     assert "PKG_MAIN_REMOVE" not in routines
     assert "CLEARPOCKET_DATA_ROOT" in service
     assert 'compose up -d' in service
@@ -769,6 +775,8 @@ def test_qnap_builder_stages_a_versioned_shared_server_bundle(tmp_path: Path):
     fake_qbuild.write_text("""#!/bin/sh
 set -eu
 grep -q 'QPKG_VER=\"0.9.0\"' qpkg.cfg
+grep -q 'QPKG_VOLUME_SELECT=\"3\"' qpkg.cfg
+grep -q 'QPKG_TIMEOUT=\"300,120\"' qpkg.cfg
 test -f shared/ClearPocketServer.sh
 test -x shared/ClearPocketSetup.sh
 test -x shared/ClearPocketBackup.sh
@@ -812,7 +820,7 @@ def test_qnap_first_run_generates_private_exact_secrets_and_never_overwrites(tmp
     setup.chmod(0o755)
     (server / "VERSION").write_text("0.9.0\n")
     share = tmp_path / "share"
-    data = share / "Public" / "ClearPocketServer"
+    data = share / "CACHEDEV1_DATA" / "ClearPocketServerData"
     environment = dict(os.environ, CLEARPOCKET_QNAP_SHARE_ROOT=str(share))
 
     first = subprocess.run([setup, data], env=environment, check=True, capture_output=True, text=True)
@@ -825,6 +833,9 @@ def test_qnap_first_run_generates_private_exact_secrets_and_never_overwrites(tmp
     assert len(values["BUDGET_APP_DB_PASSWORD"]) >= 36
     assert len(values["BUDGET_APP_JWT_SECRET"]) >= 48
     assert len(base64.urlsafe_b64decode(values["BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY"])) == 32
+    assert data.stat().st_mode & 0o777 == 0o700
+    for directory in ("database", "attachments", "operations"):
+        assert (data / directory).stat().st_mode & 0o777 == 0o700
     assert private.stat().st_mode & 0o777 == 0o600
     assert values["BUDGET_APP_DB_PASSWORD"] not in first.stdout
     original = private.read_bytes()
