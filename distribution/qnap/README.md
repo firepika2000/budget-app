@@ -59,7 +59,10 @@ or offline location; keeping its only copy on the NAS does not protect against d
 backup helper prevents overlapping captures, briefly pauses the API, captures PostgreSQL and encrypted
 attachments under the canonical integrity manifest, resumes the API, encrypts and atomically publishes
 to the durable `backups` directory, and records owner-visible health. It removes partial output and
-records failure if capture or publication does not finish. Scheduled and off-NAS/Dropbox publication
+records failure if capture or publication does not finish. Completed local generations retain the ten
+newest by default; an administrator may set `BUDGET_APP_BACKUP_RETENTION` to another positive count in
+the private `.env`. Rotation runs only after the new generation and health record succeed and touches
+only completed `budget-*.tar.gz.age` files. Scheduled and off-NAS/Dropbox publication
 remain part of the graphical QNAP management work.
 
 Before this package is customer-ready it still needs the signed QPKG release pipeline, supported-model

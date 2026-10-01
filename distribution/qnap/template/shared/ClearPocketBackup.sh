@@ -107,6 +107,24 @@ printf '%s\n' "$RECIPIENT" | grep -Eq '^age1[0-9a-z]+$' || {
     echo "Configured backup recipient is invalid" >&2
     exit 1
 }
+RETENTION=$(sed -n 's/^BUDGET_APP_BACKUP_RETENTION=//p' "$ENV_FILE")
+[ "$(grep -c '^BUDGET_APP_BACKUP_RETENTION=' "$ENV_FILE")" -le 1 ] || {
+    echo "Private configuration has duplicate backup retention settings" >&2
+    exit 1
+}
+[ -n "$RETENTION" ] || RETENTION=10
+case "$RETENTION" in ''|*[!0-9]*|0) echo "Backup retention must be a positive integer" >&2; exit 1 ;; esac
+
+apply_retention() {
+    count=0
+    for generation in $(ls -1t "$BACKUP_DIR"/budget-*.tar.gz.age 2>/dev/null); do
+        [ -f "$generation" ] && [ ! -L "$generation" ] || continue
+        count=$((count + 1))
+        if [ "$count" -gt "$RETENTION" ]; then
+            rm -f "$generation"
+        fi
+    done
+}
 
 TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
 FILENAME="budget-$TIMESTAMP.tar.gz.age"
@@ -151,5 +169,6 @@ mv "$PARTIAL" "$FINAL"
 PARTIAL=""
 record_status healthy
 STATUS_RECORDED=true
+apply_retention
 echo "Encrypted QNAP backup complete: $FINAL"
 echo "Test recovery regularly and keep the recovery identity separate from this NAS."

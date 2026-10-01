@@ -255,6 +255,9 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "scripts/backup_health.py healthy" in backup
     assert "age --recipient" in backup
     assert "qnap-backup.lock" in backup
+    assert "BUDGET_APP_BACKUP_RETENTION" in backup
+    assert "budget-*.tar.gz.age" in backup
+    assert "apply_retention" in backup
     assert "compose stop api" in backup and "compose start api" in backup
     assert "down -v" not in backup and "docker volume rm" not in backup
     assert "Existing private ClearPocket configuration preserved" in setup

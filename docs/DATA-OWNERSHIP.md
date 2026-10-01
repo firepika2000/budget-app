@@ -469,7 +469,8 @@ restarts the API only after the same canonical conversion and observation verifi
 The QPKG service also performs coordinated encrypted database-plus-attachment capture entirely through
 the pinned containers, generates an owner-held age identity on first use, prevents overlap, publishes
 atomically to durable QNAP storage, and updates the owner-visible backup-health contract without host
-Python or age. The identity must still be copied off the NAS, and scheduled/off-NAS publication remains
+Python or age. Completed generations have bounded post-success retention that never touches partial or
+unrelated files. The identity must still be copied off the NAS, and scheduled/off-NAS publication remains
 open.
 These remain previews rather
 than the promised normal-user setup:
