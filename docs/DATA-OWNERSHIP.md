@@ -457,10 +457,9 @@ invitations/access history, delegated requests or allowances, grants, unsupporte
 history and non-owner financial attribution produce bounded,
 human-readable blockers. Non-owners receive the same not-found response as an invisible budget.
 
-This is deliberately not a lossy exporter: it does not flatten a household into one person, discard
-attribution, or imply that eligibility has already copied data. The next checkpoint must transport
-and validate every eligible financial record and attachment into a brand-new private Local Device
-authority, compare canonical observations, and only then offer cold-launch activation while leaving
+This is deliberately not a lossy exporter: it does not flatten a household into one person or discard
+attribution. Eligibility remains only the gate; the separate transfer operation copies and validates
+every eligible financial record and attachment before it offers cold-launch activation while leaving
 the server unchanged.
 
 The provider-side new-authority commit boundary is now implemented in `BudgetStorage`.
@@ -470,11 +469,10 @@ duplicate, size-mismatched, or hash-mismatched objects; encrypts every object un
 device key; creates and integrity-checks a migrated SQLite authority in private sibling staging;
 reopens and compares the entire typed projection; and atomically publishes only to a path that does
 not exist. Any failure removes staging and leaves both the current phone authority and server source
-unchanged. Network transport, server-ledger-to-local projection mapping, canonical financial
-observation comparison, Keychain handoff, and cold-launch activation remain the next integration
-checkpoint.
+unchanged. The network transport, mapping, observation comparison, Keychain handoff, and cold-launch
+activation described below now consume this boundary without weakening it.
 
-The server now exposes the first half of that transport boundary through the owner-only
+The server exposes that transport boundary through the owner-only
 `GET /api/v1/budgets/{budget_id}/local-device-transfer` contract. It returns a complete,
 point-in-time Local Device-shaped projection, exact transaction/allocation/reserve observations, an
 active attachment manifest with plaintext hashes, and a canonical source revision. The native API
@@ -492,6 +490,14 @@ for detached attachment tombstones, unrepresentable allocation shapes, realized-
 and merged-Payee lineage instead of silently dropping them. Eligible owners can now explicitly prepare
 the move from Backup & Recovery; activation is intentionally deferred until the next cold launch so an
 open Live workspace is never replaced underneath active views.
+
+After that cutover, Backup & Recovery exposes a guarded return to the retained previous server. The
+app first proves the server is reachable, rotates the retained refresh credential, reloads the
+authoritative profile/budget collection, and confirms that the same stable budget identity is still
+visible. Only then does it publish Live mode. A network, authentication, or identity failure leaves
+the Local Device route and authority active. This is an authority selection, not bidirectional sync:
+phone-only changes are never silently merged into an independently changed server, and the local
+authority remains retained for an explicit later choice.
 
 Local schema v5 closes two ordinary-personal-budget fidelity gaps required by that mapping. It now
 persists immutable transaction change snapshots and the exact credit-card reserve event ledger in

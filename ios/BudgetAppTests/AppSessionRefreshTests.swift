@@ -853,6 +853,116 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testGuardedReturnToSavedServerVerifiesRefreshAndMatchingBudgetBeforeCutover() async {
+        let requests = CredentialRequestRecorder()
+        let session = makeLocalSessionWithRetainedServer { request in
+            requests.append(
+                path: request.url!.path,
+                authorization: request.value(forHTTPHeaderField: "Authorization") ?? ""
+            )
+            switch request.url?.path {
+            case "/api/v1/health":
+                return Self.json(200, #"{"status":"ok"}"#)
+            case "/api/v1/auth/refresh":
+                return Self.json(200, #"{"access_token":"A2","refresh_token":"R2","token_type":"bearer"}"#)
+            case "/api/v1/me":
+                return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
+            case "/api/v1/budgets":
+                return Self.json(200, #"[{"id":"b1","household_id":"h1","name":"Home","currency_code":"USD","effective_permission":"owner","allocation_version":0}]"#)
+            default:
+                return Self.json(404, #"{"detail":"not found"}"#)
+            }
+        }
+
+        await session.returnToSavedServer(expectedBudgetID: "b1")
+
+        XCTAssertEqual(session.sourceMode, .liveServer)
+        XCTAssertEqual(session.connectionStatus, .connected)
+        XCTAssertEqual(session.token, "A2")
+        XCTAssertEqual(session.refreshToken, "R2")
+        XCTAssertEqual(session.activeBudgetID, "b1")
+        guard case let .workspace(.live(budget, _, token)) = session.route else {
+            return XCTFail("A verified return must enter the canonical Live workspace")
+        }
+        XCTAssertEqual(budget.id, "b1")
+        XCTAssertEqual(token, "A2")
+        XCTAssertEqual(Set(requests.paths), Set([
+            "/api/v1/health", "/api/v1/auth/refresh", "/api/v1/me", "/api/v1/budgets",
+        ]))
+        XCTAssertTrue(requests.authorizations.filter { !$0.isEmpty }.allSatisfy { $0 == "Bearer A2" })
+    }
+
+    @MainActor
+    func testGuardedReturnFailureLeavesLocalAuthoritySelectedAndCredentialsRetryable() async {
+        let session = makeLocalSessionWithRetainedServer { request in
+            switch request.url?.path {
+            case "/api/v1/health":
+                return Self.json(503, #"{"detail":"offline"}"#)
+            default:
+                return Self.json(500, "{}")
+            }
+        }
+
+        await session.returnToSavedServer(expectedBudgetID: "b1")
+
+        XCTAssertEqual(session.sourceMode, .localDevice)
+        XCTAssertEqual(session.connectionStatus, .localDevice)
+        XCTAssertEqual(session.route, .workspace(.localDevice))
+        XCTAssertEqual(session.token, "A1")
+        XCTAssertEqual(session.refreshToken, "R1")
+        XCTAssertTrue(session.canReturnToSavedServer)
+        XCTAssertNotNil(session.errorMessage)
+    }
+
+    @MainActor
+    func testGuardedReturnRejectsDifferentServerBudgetWithoutPublishingLiveMode() async {
+        let session = makeLocalSessionWithRetainedServer { request in
+            switch request.url?.path {
+            case "/api/v1/health":
+                return Self.json(200, #"{"status":"ok"}"#)
+            case "/api/v1/auth/refresh":
+                return Self.json(200, #"{"access_token":"A2","refresh_token":"R2","token_type":"bearer"}"#)
+            case "/api/v1/me":
+                return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
+            case "/api/v1/budgets":
+                return Self.json(200, #"[{"id":"other","household_id":"h2","name":"Different","currency_code":"USD","effective_permission":"owner","allocation_version":0}]"#)
+            default:
+                return Self.json(404, "{}")
+            }
+        }
+
+        await session.returnToSavedServer(expectedBudgetID: "b1")
+
+        XCTAssertEqual(session.sourceMode, .localDevice)
+        XCTAssertEqual(session.route, .workspace(.localDevice))
+        XCTAssertEqual(session.token, "A2", "Rotated credentials must remain durable for a later retry")
+        XCTAssertEqual(session.refreshToken, "R2")
+        XCTAssertTrue(session.errorMessage?.contains("no longer exposes this budget") == true)
+    }
+
+    @MainActor
+    private func makeLocalSessionWithRetainedServer(
+        handler: @escaping (URLRequest) -> (Int, Data)
+    ) -> AppSession {
+        RefreshMockURLProtocol.handler = handler
+        let suite = "SavedServerReturnTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set("https://budget.example.com", forKey: "budget.serverURL")
+        defaults.set("localDevice", forKey: "budget.dataSourceMode")
+        return AppSession(
+            defaults: defaults,
+            keychain: InMemoryTokenStore(["access-token": "A1", "refresh-token": "R1"]),
+            clientFactory: {
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.protocolClasses = [RefreshMockURLProtocol.self]
+                return try APIClient(baseURL: $0, session: URLSession(configuration: configuration))
+            },
+            initialMode: .localDevice
+        )
+    }
+
+    @MainActor
     func testSignOutClearsPersistedActiveBudgetContext() {
         let session = makeSession(access: "A1", refresh: "R1") { request in
             request.url?.path == "/api/v1/auth/logout" ? Self.json(204, "") : Self.json(404, "{}")

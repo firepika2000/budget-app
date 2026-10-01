@@ -3431,6 +3431,7 @@ private struct DeviceAccessSettingsView: View {
 }
 
 private struct LocalDeviceBackupRecoveryView: View {
+    @EnvironmentObject private var session: AppSession
     @ObservedObject var store: BudgetWorkspaceStore
     @ObservedObject var dropbox: DropboxBackupCoordinator
     @State private var backup: LocalDeviceBackupExport?
@@ -3452,6 +3453,7 @@ private struct LocalDeviceBackupRecoveryView: View {
     @State private var dropboxRecoveryKey: String?
     @State private var dropboxKeyCopied = false
     @State private var confirmingPendingBackupDeletion = false
+    @State private var confirmingSavedServerReturn = false
 
     var body: some View {
         Form {
@@ -3615,6 +3617,19 @@ private struct LocalDeviceBackupRecoveryView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
 
+            if session.canReturnToSavedServer, let savedServer = session.serverURL {
+                Section("Previous Server") {
+                    LabeledContent("Server", value: savedServer.absoluteString)
+                    Button("Return to Previous Server", systemImage: "server.rack") {
+                        confirmingSavedServerReturn = true
+                    }
+                    .disabled(session.isWorking)
+                    .accessibilityIdentifier("return-to-previous-server")
+                    Text("ClearPocket verifies the saved sign-in and confirms this same budget is still available before switching. Changes made on this iPhone are not merged into the server; the local authority remains retained on this device.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+
             Section {
                 Button {
                     Task { await createBackup() }
@@ -3725,6 +3740,18 @@ private struct LocalDeviceBackupRecoveryView: View {
             case let .failure(error):
                 errorMessage = error.localizedDescription
             }
+        }
+        .confirmationDialog(
+            "Return to the previous server?",
+            isPresented: $confirmingSavedServerReturn,
+            titleVisibility: .visible
+        ) {
+            Button("Verify and Return") {
+                Task { await session.returnToSavedServer(expectedBudgetID: store.budget.id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The server becomes authoritative again only after it is reachable, your retained session refreshes, and the same budget is visible. Local-only changes are not synchronized or merged.")
         }
         .confirmationDialog(
             "Prepare this backup for restore?",

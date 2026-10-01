@@ -86,6 +86,13 @@ final class AppSession: ObservableObject {
         case .liveServer: .liveServer
         }
     }
+
+    /// A verified server-to-device cutover deliberately retains the prior server address and
+    /// refresh credential. This only advertises that a guarded return can be attempted; the server
+    /// and matching budget are revalidated before the active provider changes.
+    var canReturnToSavedServer: Bool {
+        sourceMode == .localDevice && serverURL != nil && refreshToken != nil
+    }
     private let defaults: UserDefaults
     private let keychain: TokenStoring
     private let clientFactory: (URL) throws -> APIClient
@@ -183,6 +190,56 @@ final class AppSession: ObservableObject {
         }
         defaults.set(AppDataSourceMode.localDevice.rawValue, forKey: sourceModeKey)
         debugLog("scheduled verified Local Device authority for next cold launch")
+    }
+
+    /// Returns to a retained server authority without risking the currently active Local Device
+    /// authority. All network/authentication/budget checks finish first; any failure leaves the
+    /// source mode and route local. Local changes are never uploaded or merged by this operation.
+    func returnToSavedServer(expectedBudgetID: String) async {
+        guard !isWorking else { return }
+        guard sourceMode == .localDevice,
+              let serverURL,
+              let retainedRefresh = refreshToken else {
+            errorMessage = "No previously connected Budget Server session is available."
+            return
+        }
+        isWorking = true
+        errorMessage = nil
+        defer { isWorking = false }
+        do {
+            let client = try clientFactory(serverURL)
+            try await client.health()
+            // Refresh before any authenticated read. The old access token may have expired while
+            // Local Device was authoritative, and a refresh-token rotation must be persisted even
+            // if a later compatibility check refuses the provider switch.
+            let rotated = try await client.refresh(retainedRefresh)
+            try save(rotated)
+            async let loadedProfile = client.profile(token: rotated.accessToken)
+            async let loadedBudgets = client.budgets(token: rotated.accessToken)
+            let loaded = try await (loadedProfile, loadedBudgets)
+            guard loaded.1.contains(where: { $0.id == expectedBudgetID }) else {
+                throw APIClientError.server(
+                    status: 409,
+                    message: "The previous server no longer exposes this budget. This iPhone remains active."
+                )
+            }
+            profile = loaded.0
+            budgets = loaded.1
+            selectBudget(expectedBudgetID)
+            defaults.set(AppDataSourceMode.liveServer.rawValue, forKey: sourceModeKey)
+            sourceMode = .liveServer
+            connectionStatus = .connected
+            debugLog("returned to verified saved server authority")
+        } catch {
+            // Crucially, do not publish Live mode or clear the phone authority on any failure.
+            connectionStatus = .localDevice
+            if case let APIClientError.server(_, message) = error, !message.isEmpty {
+                errorMessage = message
+            } else {
+                errorMessage = connectionMessage(error)
+            }
+            debugLog("saved server return failed: \(failureCategory(error))")
+        }
     }
 
     func configureServer(_ rawValue: String) async {
