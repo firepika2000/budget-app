@@ -119,7 +119,17 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "CLEARPOCKET_ATTACHMENTS_STORAGE" in script
     assert "Test-Path -LiteralPath $environmentFile" in script
     assert "Write-Host $lines" not in script
-    assert "docker compose --env-file .env up -d" in script
+    assert "Start-ClearPocketServer" in script
+    assert 'Invoke-ClearPocketCompose @(\"up\", \"-d\")' in script
+    assert 'Invoke-ClearPocketCompose @(\"stop\")' in script
+    assert "Test-ClearPocketHealth" in script
+    assert "^CLEARPOCKET_PORT=" in script
+    assert "$healthUrl" in script
+    assert "Start-Process $adminUrl" in script
+    assert "Write-ClearPocketDiagnostics" in script
+    assert "BUDGET_APP_JWT_SECRET" not in script.split("function Write-ClearPocketDiagnostics", 1)[1]
+    assert "down -v" not in script
+    assert "docker volume rm" not in script
 
 
 def test_publish_workflow_builds_versioned_customer_bundle():

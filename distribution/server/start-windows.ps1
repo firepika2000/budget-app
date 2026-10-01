@@ -28,7 +28,8 @@ docker info *> $null
 if ($LASTEXITCODE -ne 0) { throw "Docker Desktop is installed but is not running." }
 
 $environmentFile = Join-Path $PSScriptRoot ".env"
-if (-not (Test-Path -LiteralPath $environmentFile)) {
+$newInstall = -not (Test-Path -LiteralPath $environmentFile)
+if ($newInstall) {
     Write-Host "ClearPocket Server first-time setup"
     Write-Host "The iPhone app requires HTTPS for remote servers. This preview starts a local server; do not expose port 8080 to the Internet."
     $hostName = Read-Host "This PC's protected-LAN hostname or IP address"
@@ -63,7 +64,95 @@ if (-not (Test-Path -LiteralPath $environmentFile)) {
     Write-Host "Private configuration created. Keep the .env file with your encrypted backups; its secrets were not displayed."
 }
 
-docker compose --env-file .env up -d
-if ($LASTEXITCODE -ne 0) { throw "ClearPocket Server did not start." }
-Write-Host "ClearPocket Server started. Opening local household setup..."
-Start-Process "http://127.0.0.1:8080/admin"
+$portSetting = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^CLEARPOCKET_PORT=' })
+if ($portSetting.Count -ne 1) { throw "Private configuration has an invalid server port setting." }
+$serverPort = 0
+if (-not [int]::TryParse($portSetting[0].Split('=', 2)[1], [ref] $serverPort) -or
+    $serverPort -lt 1 -or $serverPort -gt 65535) {
+    throw "Private configuration has an invalid server port setting."
+}
+$healthUrl = "http://127.0.0.1:$serverPort/api/v1/health"
+$adminUrl = "http://127.0.0.1:$serverPort/admin"
+
+function Invoke-ClearPocketCompose([string[]] $ComposeArguments) {
+    & docker compose --env-file $environmentFile @ComposeArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Docker Compose operation failed. Choose Diagnostics for support information."
+    }
+}
+
+function Test-ClearPocketHealth {
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 3
+        return $response.StatusCode -eq 200
+    } catch {
+        return $false
+    }
+}
+
+function Start-ClearPocketServer {
+    Invoke-ClearPocketCompose @("config", "--quiet")
+    Invoke-ClearPocketCompose @("up", "-d")
+    Write-Host "Waiting for ClearPocket Server to become healthy..."
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
+        if (Test-ClearPocketHealth) {
+            Write-Host "ClearPocket Server is healthy."
+            return
+        }
+        Start-Sleep -Seconds 2
+    }
+    throw "Containers started, but the server did not become healthy within two minutes. Choose Diagnostics and Recent logs."
+}
+
+function Show-ClearPocketStatus {
+    Invoke-ClearPocketCompose @("ps")
+    if (Test-ClearPocketHealth) {
+        Write-Host "API health: healthy"
+    } else {
+        Write-Host "API health: unreachable"
+    }
+}
+
+function Write-ClearPocketDiagnostics {
+    $dockerVersion = (& docker version --format "{{.Server.Version}}" 2>$null)
+    $composeVersion = (& docker compose version --short 2>$null)
+    $services = (& docker compose --env-file $environmentFile ps --format json 2>$null)
+    $report = [ordered]@{
+        GeneratedAt = [DateTimeOffset]::UtcNow.ToString("o")
+        ServerVersion = $serverVersion
+        DockerServer = $dockerVersion
+        DockerCompose = $composeVersion
+        ApiHealth = if (Test-ClearPocketHealth) { "healthy" } else { "unreachable" }
+        Services = $services
+    }
+    $destination = Join-Path $PSScriptRoot "clearpocket-diagnostics.json"
+    $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $destination -Encoding UTF8
+    Write-Host "Redacted diagnostics written to $destination"
+    Write-Host "The report contains runtime status, never configuration secrets or application data."
+}
+
+Write-Host ""
+Write-Host "ClearPocket Server Manager"
+Write-Host "  1. Start server and open setup"
+Write-Host "  2. Show status"
+Write-Host "  3. Stop server (keep all data)"
+Write-Host "  4. Create redacted diagnostics"
+Write-Host "  5. Show recent logs"
+Write-Host ""
+$choice = if ($newInstall) { "1" } else { Read-Host "Choose an option [1]" }
+if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
+
+switch ($choice) {
+    "1" {
+        Start-ClearPocketServer
+        Start-Process $adminUrl
+    }
+    "2" { Show-ClearPocketStatus }
+    "3" {
+        Invoke-ClearPocketCompose @("stop")
+        Write-Host "ClearPocket Server stopped. Database, attachments, and private configuration were preserved."
+    }
+    "4" { Write-ClearPocketDiagnostics }
+    "5" { Invoke-ClearPocketCompose @("logs", "--no-color", "--tail", "200") }
+    default { throw "Unknown option. Run the launcher again and choose 1 through 5." }
+}

@@ -75,13 +75,13 @@ normal-user QNAP package.
 
 ## Always-on Windows PC
 
-`start-windows.cmd` is an early double-clickable Docker Desktop launcher. Its built-in PowerShell
-setup asks for a durable data folder, creates independent cryptographic secrets without displaying
-them, starts the pinned Compose application, and opens the local admin page. Python and developer
-tools are not required. Docker Desktop is still required, and secure remote pairing/TLS is not yet
-guided, so this remains a preview rather than the final signed graphical server manager. The final
-manager must also provide automatic start/update, firewall guidance, backup/restore, diagnostics,
-and explicit data-preserving uninstall.
+`start-windows.cmd` is an early double-clickable Docker Desktop manager. Its built-in PowerShell
+setup asks for a durable data folder and creates independent cryptographic secrets without displaying
+them. Its menu can start and health-check the pinned Compose application, open local setup, show
+status, stop without deleting data, create a redacted diagnostics report, and display recent logs.
+Python and developer tools are not required. Docker Desktop is still required, and secure remote
+pairing/TLS is not yet guided, so this remains a preview rather than the final signed graphical server
+manager. Automatic start/update, firewall guidance, and guided backup/restore remain required.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;
