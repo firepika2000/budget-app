@@ -41,6 +41,20 @@ def _canonical(value: object) -> bytes:
     return json.dumps(jsonable_encoder(value), sort_keys=True, separators=(",", ":")).encode()
 
 
+def source_revision(projection: dict[str, Any]) -> str:
+    """Hash authority content while excluding response-generation metadata.
+
+    Native transfer downloads attachments between two projection reads. A stable revision lets it
+    prove the authority did not change during that interval; including ``generated_at`` would make
+    every otherwise-identical read appear different and render that safety check unusable.
+    """
+    content = {
+        key: value for key, value in projection.items()
+        if key not in {"generated_at", "source_revision"}
+    }
+    return hashlib.sha256(_canonical(content)).hexdigest()
+
+
 def _allocation_rows(
     operations: list[AllocationOperation], postings: list[AllocationPosting]
 ) -> list[dict[str, Any]]:
@@ -300,7 +314,7 @@ def build_local_device_projection(
                          for category_id, amount in sorted(_reserve_observations(reserve_events).items())],
         },
     }
-    projection["source_revision"] = hashlib.sha256(_canonical(projection)).hexdigest()
+    projection["source_revision"] = source_revision(projection)
     return projection
 
 

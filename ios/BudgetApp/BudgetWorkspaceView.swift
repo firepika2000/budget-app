@@ -3948,6 +3948,10 @@ private struct BackupRecoverySettingsView: View {
     @State private var localTransfer: APILocalDeviceTransferEligibility?
     @State private var loading = false
     @State private var error: String?
+    @State private var movingToDevice = false
+    @State private var confirmMoveToDevice = false
+    @State private var preparedTransfer: ServerToLocalDeviceTransferResult?
+    @State private var transferError: String?
 
     var body: some View {
         Form {
@@ -4038,8 +4042,24 @@ private struct BackupRecoverySettingsView: View {
                             if localTransfer.eligible {
                                 Label("This budget is eligible for a lossless move to Local Device.", systemImage: "iphone.gen3.circle.fill")
                                     .foregroundStyle(.green)
-                                Text("The server copy will remain unchanged. Activation will require a new private Local Device authority and full verification before cutover.")
+                                Text("The server copy will remain unchanged. ClearPocket verifies a new encrypted authority before scheduling activation at the next cold launch.")
                                     .font(.footnote).foregroundStyle(.secondary)
+                                if let preparedTransfer {
+                                    Label("Verified and ready on this iPhone", systemImage: "checkmark.shield.fill")
+                                        .foregroundStyle(.green)
+                                    Text("Close ClearPocket completely, then reopen it. The verified local authority will activate before its database opens. \(preparedTransfer.attachmentCount) attachment\(preparedTransfer.attachmentCount == 1 ? "" : "s") secured.")
+                                        .font(.footnote).foregroundStyle(.secondary)
+                                        .accessibilityIdentifier("local-transfer-ready")
+                                } else {
+                                    Button("Move Budget to This iPhone", systemImage: "iphone.and.arrow.forward") {
+                                        confirmMoveToDevice = true
+                                    }
+                                    .disabled(movingToDevice)
+                                    .accessibilityIdentifier("move-budget-to-this-iphone")
+                                    if movingToDevice {
+                                        ProgressView("Verifying and encrypting…")
+                                    }
+                                }
                             } else {
                                 Label("This budget must remain on Budget Server for now.", systemImage: "server.rack")
                                 ForEach(localTransfer.blockers, id: \.code) { blocker in
@@ -4072,6 +4092,24 @@ private struct BackupRecoverySettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
+        .confirmationDialog(
+            "Move this budget to this iPhone?",
+            isPresented: $confirmMoveToDevice,
+            titleVisibility: .visible
+        ) {
+            Button("Verify and Prepare Move") { Task { await prepareMoveToDevice() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("ClearPocket will download a point-in-time copy, verify every financial observation and attachment, and encrypt it with a new device-only key. The Budget Server copy will not be changed or deleted.")
+        }
+        .alert("Unable to Prepare Move", isPresented: Binding(
+            get: { transferError != nil },
+            set: { if !$0 { transferError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(transferError ?? "Unknown transfer error")
+        }
     }
 
     private func load() async {
@@ -4086,6 +4124,20 @@ private struct BackupRecoverySettingsView: View {
             localTransfer = try await loadedTransfer
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private func prepareMoveToDevice() async {
+        guard !movingToDevice else { return }
+        movingToDevice = true; transferError = nil
+        defer { movingToDevice = false }
+        do {
+            let coordinator = try ServerToLocalDeviceTransferCoordinator(session: session)
+            let result = try await coordinator.prepare(budgetID: budgetID)
+            try session.scheduleLocalDeviceActivationAfterRestart()
+            preparedTransfer = result
+        } catch {
+            transferError = error.localizedDescription
         }
     }
 

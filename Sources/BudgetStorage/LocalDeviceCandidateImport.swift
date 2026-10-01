@@ -69,7 +69,7 @@ public enum LocalDeviceCandidateImportService {
         authorityCreatedAt: String,
         destinationRootURL: URL,
         attachmentKey: Data,
-        attachmentLoader: @Sendable (LocalAttachmentRecord) async throws -> Data
+        attachmentLoader: (LocalAttachmentRecord) async throws -> Data
     ) async throws -> LocalDeviceCandidateImportResult {
         guard attachmentKey.count == 32 else {
             throw LocalStorageError.operationFailed("Local attachment key must contain exactly 32 bytes")

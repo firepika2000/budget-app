@@ -352,11 +352,20 @@ struct ServerConnectionSettingsView: View {
                 if let url = session.serverURL { LabeledContent("Server", value: url.absoluteString) }
             }
             Section {
+                if session.sourceMode == .liveServer && selectedMode == .localDevice {
+                    Label("Verified transfer required", systemImage: "lock.shield")
+                    Text("Open Profile & Settings → Backup & Recovery to move this budget without losing accounts, history, or attachments.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Button(selectedMode == .localDevice ? "Keep Data on This iPhone" : "Connect to Existing Server") {
                     if selectedMode == .localDevice { session.selectLocalDevice(); dismiss() }
                     else { Task { await session.configureServer(address) } }
                 }
-                .disabled(session.isWorking || (selectedMode == .liveServer && address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                .disabled(
+                    session.isWorking
+                    || (session.sourceMode == .liveServer && selectedMode == .localDevice)
+                    || (selectedMode == .liveServer && address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                )
             }
             Section("Training") {
                 Button("Open Example Budget") {

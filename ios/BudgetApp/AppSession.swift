@@ -161,12 +161,28 @@ final class AppSession: ObservableObject {
     }
 
     func selectLocalDevice() {
+        guard sourceMode != .liveServer || token == nil else {
+            errorMessage = "Use Backup & Recovery to verify and move this server budget before switching data locations."
+            return
+        }
         clearCredentials(logoutFrom: serverURL)
         defaults.set(AppDataSourceMode.localDevice.rawValue, forKey: sourceModeKey)
         sourceMode = .localDevice
         connectionStatus = .localDevice
         errorMessage = nil
         debugLog("selected data source: localDevice")
+    }
+
+    /// Persists Local Device as the next cold-launch composition after a verified transfer journal
+    /// has been published. The current Live workspace and its credentials remain intact until this
+    /// process ends, so an open server authority is never replaced underneath active views and the
+    /// unchanged source can still be selected again later.
+    func scheduleLocalDeviceActivationAfterRestart() throws {
+        guard sourceMode == .liveServer, token != nil, serverURL != nil else {
+            throw APIClientError.server(status: 409, message: "A connected Budget Server is required")
+        }
+        defaults.set(AppDataSourceMode.localDevice.rawValue, forKey: sourceModeKey)
+        debugLog("scheduled verified Local Device authority for next cold launch")
     }
 
     func configureServer(_ rawValue: String) async {

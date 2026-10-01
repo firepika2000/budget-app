@@ -154,13 +154,22 @@ final class LocalDeviceKeyManager {
     }
 
     func activatePendingRestoreKey(rollbackIdentifier: String) throws {
+        try activatePendingRestoreKey(rollbackIdentifier: Optional(rollbackIdentifier))
+    }
+
+    /// Activates a prepared key after the matching authority directory has been promoted. A first
+    /// Local Device authority has no previous directory/key generation to retain, while replacement
+    /// restores preserve the former key under the rollback directory's identifier.
+    func activatePendingRestoreKey(rollbackIdentifier: String?) throws {
         let replacement = try pendingRestoreKey()
-        let current = try loadOrCreateAttachmentKey()
-        let rollbackAccount = Self.rollbackKeyAccountPrefix + rollbackIdentifier
-        if let existingRollback = store.readData(account: rollbackAccount) {
-            guard existingRollback.count == 32 else { throw KeychainError.invalidSecret }
-        } else {
-            try store.saveData(current, account: rollbackAccount)
+        if let rollbackIdentifier {
+            let current = try loadOrCreateAttachmentKey()
+            let rollbackAccount = Self.rollbackKeyAccountPrefix + rollbackIdentifier
+            if let existingRollback = store.readData(account: rollbackAccount) {
+                guard existingRollback.count == 32 else { throw KeychainError.invalidSecret }
+            } else {
+                try store.saveData(current, account: rollbackAccount)
+            }
         }
         try store.saveData(replacement, account: Self.attachmentKeyAccount)
     }

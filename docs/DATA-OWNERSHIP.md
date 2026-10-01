@@ -482,11 +482,16 @@ adapter downloads this document opaquely with the current rotated credential. `B
 strictly decodes it into the typed Local Device authority and rejects unsupported envelopes, duplicate
 or mixed identities, and any transaction/allocation/reserve aggregate that differs from the canonical
 server observations. Candidate creation can fetch, size-check, hash-check, and encrypt attachments one
-at a time, avoiding a whole-authority plaintext memory buffer. Eligibility also fails closed
+at a time, avoiding a whole-authority plaintext memory buffer. The native transfer coordinator resolves
+the current credential for every object, re-reads a content-stable server revision after download, and
+publishes the candidate only if the authority remained unchanged. It then records a device-only Keychain
+key plus a crash-recoverable cold-launch journal; a first authority activates without inventing a rollback,
+while replacement retains the prior local authority and matching key. The source server is never mutated
+or deleted, and its credentials remain available for a later provider switch. Eligibility also fails closed
 for detached attachment tombstones, unrepresentable allocation shapes, realized-schedule lineage,
-and merged-Payee lineage instead of silently dropping them. Wiring current-credential attachment
-downloads into that streaming loader, candidate publication, Keychain handoff, and cold activation
-remain required before the UI may offer the transfer action.
+and merged-Payee lineage instead of silently dropping them. Eligible owners can now explicitly prepare
+the move from Backup & Recovery; activation is intentionally deferred until the next cold launch so an
+open Live workspace is never replaced underneath active views.
 
 Local schema v5 closes two ordinary-personal-budget fidelity gaps required by that mapping. It now
 persists immutable transaction change snapshots and the exact credit-card reserve event ledger in

@@ -4,6 +4,7 @@ import UIKit
 import BudgetAPI
 import BudgetCore
 import BudgetStorage
+import CryptoKit
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
@@ -2315,6 +2316,160 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testFirstServerImportPromotesWithoutInventingRollbackGeneration() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("first-local-device-import-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let candidate = root.appendingPathComponent(
+            ".LocalDevice-Transfer-\(UUID().uuidString)", isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: candidate, withIntermediateDirectories: true)
+        let identity = LocalAuthorityIdentity(
+            householdID: "household", householdName: "Imported Home", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "imported-budget", budgetName: "Imported Budget",
+            currencyCode: "USD"
+        )
+        var authority: LocalAuthorityStore? = try LocalAuthorityStore(
+            fileURL: candidate.appendingPathComponent("authority.sqlite3")
+        )
+        try await authority?.bootstrap(identity, createdAt: "2026-10-01T12:00:00Z")
+        authority = nil
+
+        let secrets = InMemorySecretDataStore()
+        let keyManager = LocalDeviceKeyManager(store: secrets)
+        let attachmentKey = Data(repeating: 41, count: 32)
+        let prepared = try LocalDeviceRestoreCoordinator.prepareImportedCandidate(
+            .init(rootURL: candidate, budgetID: identity.budgetID, attachmentCount: 0),
+            attachmentKey: attachmentKey,
+            createdAt: "2026-10-01T12:00:00Z",
+            applicationDirectory: root,
+            keyManager: keyManager
+        )
+        XCTAssertEqual(prepared.budgetID, identity.budgetID)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("LocalDevice").path))
+        XCTAssertTrue(LocalDeviceRestoreCoordinator.hasPendingRestore(applicationDirectory: root))
+
+        XCTAssertTrue(try LocalDeviceRestoreCoordinator.applyPendingRestore(
+            applicationDirectory: root, keyManager: keyManager
+        ))
+        XCTAssertEqual(try keyManager.loadOrCreateAttachmentKey(), attachmentKey)
+        XCTAssertFalse(LocalDeviceRestoreCoordinator.hasPendingRestore(applicationDirectory: root))
+        XCTAssertTrue(try LocalDeviceRestoreCoordinator.rollbackGenerations(
+            applicationDirectory: root, keyManager: keyManager
+        ).isEmpty)
+        let reopened = try LocalAuthorityStore(
+            fileURL: root.appendingPathComponent("LocalDevice/authority.sqlite3")
+        )
+        let reopenedSnapshot = try await reopened.snapshot(budgetID: identity.budgetID)
+        XCTAssertEqual(reopenedSnapshot.identity, identity)
+    }
+
+    @MainActor
+    func testServerTransferUsesCurrentCredentialPerObjectAndStableColdJournal() async throws {
+        let support = FileManager.default.temporaryDirectory
+            .appendingPathComponent("server-to-local-transfer-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ConnectionURLProtocol.handler = nil
+            try? FileManager.default.removeItem(at: support)
+        }
+        let receipt = Data("verified receipt".utf8)
+        let projection = serverTransferFixture(attachment: receipt)
+        let recorder = TransferRequestRecorder()
+        let clientFactory = connectionClientFactory { request in
+            recorder.append(
+                path: request.url!.path,
+                authorization: request.value(forHTTPHeaderField: "Authorization") ?? ""
+            )
+            if request.url!.path.hasSuffix("/local-device-transfer") {
+                return Self.response(request, body: String(decoding: projection, as: UTF8.self))
+            }
+            if request.url!.path.hasSuffix("/attachments/attachment") {
+                return (HTTPURLResponse(
+                    url: request.url!, statusCode: 200, httpVersion: nil,
+                    headerFields: ["Content-Type": "image/jpeg"]
+                )!, receipt)
+            }
+            return (HTTPURLResponse(
+                url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil
+            )!, Data())
+        }
+        let tokens = ["token-a", "token-b", "token-c"]
+        var credentialIndex = 0
+        let keyManager = LocalDeviceKeyManager(store: InMemorySecretDataStore())
+        let coordinator = ServerToLocalDeviceTransferCoordinator(
+            credentialProvider: { _ in
+                let token = tokens[credentialIndex]
+                credentialIndex += 1
+                return (URL(string: "http://127.0.0.1:8000")!, token)
+            },
+            clientFactory: clientFactory,
+            applicationSupportDirectory: support,
+            keyManager: keyManager
+        )
+
+        let result = try await coordinator.prepare(budgetID: "budget")
+        XCTAssertEqual(result.sourceRevision, String(repeating: "a", count: 64))
+        XCTAssertEqual(result.attachmentCount, 1)
+        XCTAssertEqual(credentialIndex, 3)
+        XCTAssertEqual(recorder.authorizations, ["Bearer token-a", "Bearer token-b", "Bearer token-c"])
+        XCTAssertEqual(recorder.paths.filter { $0.hasSuffix("/local-device-transfer") }.count, 2)
+        XCTAssertEqual(recorder.paths.filter { $0.hasSuffix("/attachments/attachment") }.count, 1)
+        let applicationDirectory = support.appendingPathComponent("BudgetApp", isDirectory: true)
+        XCTAssertTrue(LocalDeviceRestoreCoordinator.hasPendingRestore(
+            applicationDirectory: applicationDirectory
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: applicationDirectory.appendingPathComponent("LocalDevice").path
+        ), "Preparation must not activate the candidate in the running process")
+    }
+
+    @MainActor
+    func testServerTransferRejectsConcurrentAuthorityChangeWithoutPublishingJournal() async throws {
+        let support = FileManager.default.temporaryDirectory
+            .appendingPathComponent("changed-server-transfer-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            ConnectionURLProtocol.handler = nil
+            try? FileManager.default.removeItem(at: support)
+        }
+        let receipt = Data("verified receipt".utf8)
+        let first = serverTransferFixture(attachment: receipt, revision: String(repeating: "a", count: 64))
+        let changed = serverTransferFixture(attachment: receipt, revision: String(repeating: "b", count: 64))
+        let projectionRequests = TransferCounter()
+        let clientFactory = connectionClientFactory { request in
+            if request.url!.path.hasSuffix("/local-device-transfer") {
+                let response = projectionRequests.increment() == 1 ? first : changed
+                return Self.response(request, body: String(decoding: response, as: UTF8.self))
+            }
+            return (HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "image/jpeg"]
+            )!, receipt)
+        }
+        let secrets = InMemorySecretDataStore()
+        let coordinator = ServerToLocalDeviceTransferCoordinator(
+            credentialProvider: { _ in (URL(string: "http://127.0.0.1:8000")!, "current") },
+            clientFactory: clientFactory,
+            applicationSupportDirectory: support,
+            keyManager: LocalDeviceKeyManager(store: secrets)
+        )
+
+        do {
+            _ = try await coordinator.prepare(budgetID: "budget")
+            XCTFail("A changed source revision must never publish a candidate journal")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("changed during transfer"))
+        }
+        let applicationDirectory = support.appendingPathComponent("BudgetApp", isDirectory: true)
+        XCTAssertFalse(LocalDeviceRestoreCoordinator.hasPendingRestore(
+            applicationDirectory: applicationDirectory
+        ))
+        XCTAssertNil(secrets.readData(account: LocalDeviceKeyManager.pendingRestoreKeyAccount))
+        let remaining = (try? FileManager.default.contentsOfDirectory(atPath: applicationDirectory.path)) ?? []
+        XCTAssertFalse(remaining.contains { $0.hasPrefix(".LocalDevice-Transfer-") })
+    }
+
+    @MainActor
     func testEditingAssignmentTotalPreservesActivityAndAppliesOnlyExactDelta() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
@@ -2345,6 +2500,28 @@ final class DemoStoreTests: XCTestCase {
         configuration.protocolClasses = [ConnectionURLProtocol.self]
         let session = URLSession(configuration: configuration)
         return { try APIClient(baseURL: $0, session: session) }
+    }
+
+    private func serverTransferFixture(
+        attachment: Data,
+        revision: String = String(repeating: "a", count: 64)
+    ) -> Data {
+        let sha = SHA256.hash(data: attachment).map { String(format: "%02x", $0) }.joined()
+        return Data(#"""
+        {
+          "format":"com.clearpocket.local-device-transfer","version":1,
+          "generated_at":"2026-10-01T12:00:00Z","authority_created_at":"2026-01-01T12:00:00Z",
+          "source_revision":"\#(revision)",
+          "identity":{"household_id":"household","household_name":"Home","owner_user_id":"owner","owner_display_name":"Owner","budget_id":"budget","budget_name":"Budget","currency_code":"USD"},
+          "accounts":[{"id":"account","budget_id":"budget","name":"Checking","kind":"checking","is_on_budget":true,"is_closed":false,"opening_balance_minor":0,"created_at":"2026-01-01T12:00:00Z"}],
+          "groups":[],"categories":[],"payees":[],"payee_aliases":[],
+          "transactions":[{"id":"transaction","budget_id":"budget","account_id":"account","payee_id":null,"payee_name":"Store","amount_minor":-100,"occurred_on":"2026-10-01","memo":"","is_cleared":false,"is_reconciled":false,"status":"posted","transfer_id":null,"flag":null,"tags":[],"financial_classification":null,"void_reason":null,"reversal_of_transaction_id":null,"reversal_transaction_id":null,"created_by_user_id":"owner","created_at":"2026-10-01T12:00:00Z","splits":[]}],
+          "allocations":[],"reconciliations":[],"targets":[],"schedules":[],
+          "attachments":[{"id":"attachment","transaction_id":"transaction","filename":"receipt.jpg","content_type":"image/jpeg","size_bytes":\#(attachment.count),"sha256":"\#(sha)","object_name":"attachment","created_at":"2026-10-01T12:00:00Z"}],
+          "debt_terms":[],"cash_rollover_policies":[],"credit_reserve_attributions":[],"transaction_changes":[],"credit_reserve_events":[],
+          "observations":{"transaction_count":1,"transactions":[{"account_id":"account","status":"posted","amount_minor":-100}],"allocation_count":0,"allocations":[],"reserve_count":0,"reserves":[]}
+        }
+        """#.utf8)
     }
 
     private static func response(_ request: URLRequest, body: String) -> (HTTPURLResponse, Data) {
@@ -2693,4 +2870,36 @@ private final class ConnectionURLProtocol: URLProtocol {
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
     override func stopLoading() {}
+}
+
+private final class TransferRequestRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedPaths: [String] = []
+    private var recordedAuthorizations: [String] = []
+
+    func append(path: String, authorization: String) {
+        lock.lock(); defer { lock.unlock() }
+        recordedPaths.append(path)
+        recordedAuthorizations.append(authorization)
+    }
+
+    var paths: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return recordedPaths
+    }
+
+    var authorizations: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return recordedAuthorizations
+    }
+}
+
+private final class TransferCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        count += 1
+        return count
+    }
 }

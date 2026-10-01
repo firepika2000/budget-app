@@ -5,9 +5,18 @@ import json
 import pytest
 
 from app.models import Household, Payee
+from app.local_device_export import source_revision
 from .test_delegated_access import add_child
 
 from .conftest import auth
+
+
+def test_local_device_source_revision_excludes_response_time_but_covers_authority_content():
+    first = {"generated_at": "2026-10-01T12:00:00Z", "identity": {"budget_id": "one"}}
+    second = {"generated_at": "2026-10-01T12:01:00Z", "identity": {"budget_id": "one"}}
+    assert source_revision(first) == source_revision(second)
+    second["identity"]["budget_id"] = "two"
+    assert source_revision(first) != source_revision(second)
 
 
 @pytest.mark.parametrize("restrict_accounts,restrict_categories", [(False, False), (True, False), (False, True), (True, True)])
@@ -199,6 +208,9 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
     assert observations["allocation_count"] == 2
     assert sum(item["amount_minor"] for item in observations["allocations"]) == 0
     assert observations["reserve_count"] == 0
+    repeated = client.get(f"{path}/local-device-transfer", headers=auth(owner_token))
+    assert repeated.status_code == 200
+    assert repeated.json()["source_revision"] == value["source_revision"]
 
 
 def test_local_device_transfer_fails_closed_for_detached_history_and_non_owner(

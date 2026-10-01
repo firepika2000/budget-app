@@ -1,4 +1,5 @@
 import BudgetStorage
+import BudgetAPI
 import Foundation
 
 struct LocalDeviceStoragePaths: Equatable {
@@ -72,6 +73,130 @@ struct LocalDevicePreparedRestore: Equatable {
     let createdAt: String
 }
 
+struct ServerToLocalDeviceTransferResult: Equatable {
+    let prepared: LocalDevicePreparedRestore
+    let sourceRevision: String
+    let attachmentCount: Int
+}
+
+/// Stages a server budget as a new encrypted Local Device authority without mutating the server.
+/// Every network operation resolves the session's current credential, and a second stable revision
+/// read proves the server authority did not change while attachment bytes were being downloaded.
+@MainActor
+final class ServerToLocalDeviceTransferCoordinator {
+    typealias CredentialProvider = @MainActor (_ caller: String) async throws -> (URL, String)
+
+    private let credentialProvider: CredentialProvider
+    private let clientFactory: (URL) throws -> APIClient
+    private let applicationSupportDirectory: URL
+    private let keyManager: LocalDeviceKeyManager
+
+    init(
+        credentialProvider: @escaping CredentialProvider,
+        clientFactory: @escaping (URL) throws -> APIClient = { try APIClient(baseURL: $0) },
+        applicationSupportDirectory: URL,
+        keyManager: LocalDeviceKeyManager
+    ) {
+        self.credentialProvider = credentialProvider
+        self.clientFactory = clientFactory
+        self.applicationSupportDirectory = applicationSupportDirectory
+        self.keyManager = keyManager
+    }
+
+    convenience init(
+        session: AppSession,
+        fileManager: FileManager = .default,
+        keyManager: LocalDeviceKeyManager? = nil
+    ) throws {
+        guard let applicationSupport = fileManager.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first else {
+            throw LocalDeviceStorageCompositionError.applicationSupportUnavailable
+        }
+        self.init(
+            credentialProvider: { caller in
+                try await session.currentLiveCredentials(caller: caller)
+            },
+            applicationSupportDirectory: applicationSupport,
+            keyManager: keyManager ?? LocalDeviceKeyManager()
+        )
+    }
+
+    func prepare(budgetID: String) async throws -> ServerToLocalDeviceTransferResult {
+        let (sourceURL, initialToken) = try await credentialProvider("localTransfer.projection.start")
+        let initialData = try await clientFactory(sourceURL).localDeviceTransferProjectionData(
+            budgetID: budgetID, token: initialToken
+        )
+        let projection = try LocalDeviceTransferProjectionDecoder.decode(initialData)
+        guard projection.snapshot.identity.budgetID == budgetID else {
+            throw LocalStorageError.invalidSnapshot("The server returned a different budget authority")
+        }
+
+        let applicationDirectory = applicationSupportDirectory
+            .appendingPathComponent("BudgetApp", isDirectory: true)
+        try FileManager.default.createDirectory(at: applicationDirectory, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: applicationDirectory.path
+        )
+        let candidate = applicationDirectory.appendingPathComponent(
+            ".LocalDevice-Transfer-\(UUID().uuidString)", isDirectory: true
+        )
+        let attachmentKey = try LocalDeviceBackupRecoveryKey.generate().data
+        var journalPublished = false
+        defer {
+            if !journalPublished { try? FileManager.default.removeItem(at: candidate) }
+        }
+
+        let imported = try await LocalDeviceCandidateImportService.createStreaming(
+            snapshot: projection.snapshot,
+            authorityCreatedAt: projection.authorityCreatedAt,
+            destinationRootURL: candidate,
+            attachmentKey: attachmentKey
+        ) { [credentialProvider, clientFactory] record in
+            let (currentURL, currentToken) = try await credentialProvider(
+                "localTransfer.attachment.\(record.id)"
+            )
+            guard currentURL == sourceURL else {
+                throw LocalStorageError.operationFailed("The selected server changed during transfer")
+            }
+            return try await clientFactory(currentURL).downloadTransactionAttachment(
+                budgetID: budgetID,
+                transactionID: record.transactionID,
+                attachmentID: record.id,
+                token: currentToken
+            )
+        }
+
+        let (finalURL, finalToken) = try await credentialProvider("localTransfer.projection.finish")
+        guard finalURL == sourceURL else {
+            throw LocalStorageError.operationFailed("The selected server changed during transfer")
+        }
+        let finalData = try await clientFactory(finalURL).localDeviceTransferProjectionData(
+            budgetID: budgetID, token: finalToken
+        )
+        let finalProjection = try LocalDeviceTransferProjectionDecoder.decode(finalData)
+        guard finalProjection.sourceRevision == projection.sourceRevision else {
+            throw LocalStorageError.operationFailed(
+                "The budget changed during transfer. Nothing was activated; try again."
+            )
+        }
+
+        let prepared = try LocalDeviceRestoreCoordinator.prepareImportedCandidate(
+            imported,
+            attachmentKey: attachmentKey,
+            createdAt: projection.generatedAt,
+            applicationDirectory: applicationDirectory,
+            keyManager: keyManager
+        )
+        journalPublished = true
+        return .init(
+            prepared: prepared,
+            sourceRevision: projection.sourceRevision,
+            attachmentCount: imported.attachmentCount
+        )
+    }
+}
+
 struct LocalDeviceRollbackGeneration: Identifiable, Equatable {
     let id: String
     let retainedAt: Date
@@ -93,6 +218,9 @@ enum LocalDeviceRestoreCoordinator {
         let rollbackName: String
         let budgetID: String
         let createdAt: String
+        /// Absent in journals written before first-authority imports existed; those journals always
+        /// replaced an existing Local Device authority and therefore require rollback preservation.
+        let hadCurrentAuthority: Bool?
     }
 
     static func prepare(
@@ -128,12 +256,63 @@ enum LocalDeviceRestoreCoordinator {
         try keyManager.prepareRestoreKey(result.attachmentKey)
         preparedKey = true
         let marker = Marker(candidateName: candidateName, rollbackName: rollbackName,
-                            budgetID: result.manifest.budgetID, createdAt: result.manifest.createdAt)
+                            budgetID: result.manifest.budgetID, createdAt: result.manifest.createdAt,
+                            hadCurrentAuthority: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         try encoder.encode(marker).write(to: markerURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: markerURL.path)
         publishedMarker = true
+        return .init(budgetID: marker.budgetID, createdAt: marker.createdAt)
+    }
+
+    /// Publishes a fully verified server-import candidate into the same cold-start journal used by
+    /// encrypted backup restore. The source server remains untouched; this only schedules local
+    /// promotion and stores the candidate's independent attachment key in device-only Keychain.
+    static func prepareImportedCandidate(
+        _ result: LocalDeviceCandidateImportResult,
+        attachmentKey: Data,
+        createdAt: String,
+        applicationDirectory: URL,
+        keyManager: LocalDeviceKeyManager
+    ) throws -> LocalDevicePreparedRestore {
+        let directory = applicationDirectory.standardizedFileURL
+        let candidate = result.rootURL.standardizedFileURL
+        let markerURL = directory.appendingPathComponent(markerName)
+        guard candidate.deletingLastPathComponent() == directory,
+              candidate.lastPathComponent.hasPrefix(".LocalDevice-Transfer-"),
+              safeComponent(candidate.lastPathComponent) else {
+            throw LocalStorageError.operationFailed("The verified transfer candidate path is invalid")
+        }
+        let values = try candidate.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true,
+              FileManager.default.fileExists(
+                atPath: candidate.appendingPathComponent("authority.sqlite3").path
+              ) else {
+            throw LocalStorageError.invalidSnapshot("The verified transfer candidate is unavailable")
+        }
+        guard !FileManager.default.fileExists(atPath: markerURL.path) else {
+            throw LocalStorageError.operationFailed("A verified restore is already waiting for the app to restart")
+        }
+        try keyManager.prepareRestoreKey(attachmentKey)
+        var published = false
+        defer {
+            if !published {
+                keyManager.clearPendingRestoreKey()
+                try? FileManager.default.removeItem(at: candidate)
+                try? FileManager.default.removeItem(at: markerURL)
+            }
+        }
+        let current = directory.appendingPathComponent("LocalDevice", isDirectory: true)
+        let marker = Marker(
+            candidateName: candidate.lastPathComponent,
+            rollbackName: "LocalDevice-Rollback-\(UUID().uuidString)",
+            budgetID: result.budgetID,
+            createdAt: createdAt,
+            hadCurrentAuthority: FileManager.default.fileExists(atPath: current.path)
+        )
+        try write(marker: marker, to: markerURL)
+        published = true
         return .init(budgetID: marker.budgetID, createdAt: marker.createdAt)
     }
 
@@ -167,34 +346,50 @@ enum LocalDeviceRestoreCoordinator {
         let candidate = directory.appendingPathComponent(marker.candidateName, isDirectory: true)
         let rollback = directory.appendingPathComponent(marker.rollbackName, isDirectory: true)
         let fileManager = FileManager.default
+        let hadCurrentAuthority = marker.hadCurrentAuthority ?? true
         var hasCurrent = fileManager.fileExists(atPath: current.path)
         var hasCandidate = fileManager.fileExists(atPath: candidate.path)
         var hasRollback = fileManager.fileExists(atPath: rollback.path)
 
-        // Resume any interrupted rename sequence using the journal's three unambiguous states.
-        if hasCurrent && hasCandidate && !hasRollback {
-            try fileManager.moveItem(at: current, to: rollback)
-            hasCurrent = false; hasRollback = true
-        }
-        if !hasCurrent && hasCandidate && hasRollback {
-            do {
+        if hadCurrentAuthority {
+            // Resume any interrupted replacement sequence using the journal's three states.
+            if hasCurrent && hasCandidate && !hasRollback {
+                try fileManager.moveItem(at: current, to: rollback)
+                hasCurrent = false; hasRollback = true
+            }
+            if !hasCurrent && hasCandidate && hasRollback {
+                do {
+                    try fileManager.moveItem(at: candidate, to: current)
+                    hasCurrent = true; hasCandidate = false
+                } catch {
+                    try? fileManager.moveItem(at: rollback, to: current)
+                    throw error
+                }
+            }
+            guard hasCurrent, !hasCandidate, hasRollback else {
+                throw LocalStorageError.invalidSnapshot("The pending local restore journal does not match storage state")
+            }
+        } else {
+            guard !hasRollback else {
+                throw LocalStorageError.invalidSnapshot("A first Local Device import has an unexpected rollback")
+            }
+            if !hasCurrent && hasCandidate {
                 try fileManager.moveItem(at: candidate, to: current)
                 hasCurrent = true; hasCandidate = false
-            } catch {
-                try? fileManager.moveItem(at: rollback, to: current)
-                throw error
+            }
+            guard hasCurrent, !hasCandidate else {
+                throw LocalStorageError.invalidSnapshot("The pending first Local Device import does not match storage state")
             }
         }
-        guard hasCurrent, !hasCandidate, hasRollback else {
-            throw LocalStorageError.invalidSnapshot("The pending local restore journal does not match storage state")
-        }
         do {
-            try keyManager.activatePendingRestoreKey(rollbackIdentifier: marker.rollbackName)
+            try keyManager.activatePendingRestoreKey(
+                rollbackIdentifier: hadCurrentAuthority ? marker.rollbackName : nil
+            )
         } catch {
             // The active key was updated atomically by KeychainStore or not at all. Restore the old
             // directory when activation fails so authority bytes and key never intentionally diverge.
             try? fileManager.moveItem(at: current, to: candidate)
-            try? fileManager.moveItem(at: rollback, to: current)
+            if hadCurrentAuthority { try? fileManager.moveItem(at: rollback, to: current) }
             throw error
         }
         try fileManager.removeItem(at: markerURL)
@@ -260,14 +455,9 @@ enum LocalDeviceRestoreCoordinator {
         let newRollback = "LocalDevice-Rollback-\(UUID().uuidString)"
         let createdAt = ISO8601DateFormatter().string(from: generation.retainedAt)
         let marker = Marker(candidateName: generation.id, rollbackName: newRollback,
-                            budgetID: "local-device-budget", createdAt: createdAt)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        try encoder.encode(marker).write(
-            to: markerURL,
-            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
-        )
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: markerURL.path)
+                            budgetID: "local-device-budget", createdAt: createdAt,
+                            hadCurrentAuthority: true)
+        try write(marker: marker, to: markerURL)
         published = true
         return .init(budgetID: marker.budgetID, createdAt: marker.createdAt)
     }
@@ -303,6 +493,16 @@ enum LocalDeviceRestoreCoordinator {
             total += Int64(values.fileAllocatedSize ?? 0)
         }
         return total
+    }
+
+    private static func write(marker: Marker, to markerURL: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(marker).write(
+            to: markerURL,
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        )
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: markerURL.path)
     }
 
     private static func safeComponent(_ value: String) -> Bool {

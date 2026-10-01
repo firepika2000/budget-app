@@ -811,6 +811,48 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testVerifiedTransferSchedulesColdLocalLaunchWithoutDiscardingServerCredentials() throws {
+        let suite = "AppSessionTransferActivationTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("https://budget.example.com", forKey: "budget.serverURL")
+        defaults.set("liveServer", forKey: "budget.dataSourceMode")
+        let keychain = InMemoryTokenStore([
+            "access-token": "access-a", "refresh-token": "refresh-a",
+        ])
+        let active = AppSession(defaults: defaults, keychain: keychain)
+
+        try active.scheduleLocalDeviceActivationAfterRestart()
+
+        XCTAssertEqual(active.sourceMode, .liveServer)
+        XCTAssertEqual(active.token, "access-a")
+        XCTAssertEqual(active.refreshToken, "refresh-a")
+        let relaunched = AppSession(defaults: defaults, keychain: keychain)
+        XCTAssertEqual(relaunched.sourceMode, .localDevice)
+        XCTAssertEqual(relaunched.token, "access-a", "Server access remains available for a later switch back")
+        XCTAssertEqual(relaunched.refreshToken, "refresh-a")
+    }
+
+    @MainActor
+    func testConnectedServerCannotBypassVerifiedTransferIntoEmptyLocalAuthority() {
+        let suite = "AppSessionTransferBypassTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("https://budget.example.com", forKey: "budget.serverURL")
+        defaults.set("liveServer", forKey: "budget.dataSourceMode")
+        let session = AppSession(
+            defaults: defaults,
+            keychain: InMemoryTokenStore(["access-token": "access-a", "refresh-token": "refresh-a"])
+        )
+
+        session.selectLocalDevice()
+
+        XCTAssertEqual(session.sourceMode, .liveServer)
+        XCTAssertEqual(session.token, "access-a")
+        XCTAssertTrue(session.errorMessage?.contains("Backup & Recovery") == true)
+    }
+
+    @MainActor
     func testSignOutClearsPersistedActiveBudgetContext() {
         let session = makeSession(access: "A1", refresh: "R1") { request in
             request.url?.path == "/api/v1/auth/logout" ? Self.json(204, "") : Self.json(404, "{}")
