@@ -36,8 +36,47 @@ public enum LocalDeviceCandidateImportService {
         destinationRootURL: URL,
         attachmentKey: Data
     ) async throws -> LocalDeviceCandidateImportResult {
+        let expectedRecords = Dictionary(grouping: snapshot.attachments, by: \.id)
+        let supplied = Dictionary(grouping: attachments, by: { $0.record.id })
+        guard expectedRecords.count == snapshot.attachments.count,
+              supplied.count == attachments.count,
+              Set(expectedRecords.keys) == Set(supplied.keys) else {
+            throw LocalStorageError.invalidSnapshot("Server transfer attachment coverage is incomplete or ambiguous")
+        }
+        for item in attachments {
+            guard expectedRecords[item.record.id]?.only == item.record,
+                  Int64(item.plaintext.count) == item.record.sizeBytes else {
+                throw LocalStorageError.invalidSnapshot("Server transfer attachment metadata does not match its payload")
+            }
+        }
+        let byID = Dictionary(uniqueKeysWithValues: attachments.map { ($0.record.id, $0.plaintext) })
+        return try await createStreaming(
+            snapshot: snapshot, authorityCreatedAt: authorityCreatedAt,
+            destinationRootURL: destinationRootURL, attachmentKey: attachmentKey
+        ) { record in
+            guard let value = byID[record.id] else {
+                throw LocalStorageError.invalidSnapshot("Server transfer attachment payload is missing")
+            }
+            return value
+        }
+    }
+
+    /// Fetches and encrypts one attachment at a time so a large authority never requires every
+    /// plaintext object to coexist in memory. The loader must resolve the authorized manifest record
+    /// supplied by this service; size and SHA-256 are verified before candidate publication.
+    public static func createStreaming(
+        snapshot: LocalAuthoritySnapshot,
+        authorityCreatedAt: String,
+        destinationRootURL: URL,
+        attachmentKey: Data,
+        attachmentLoader: @Sendable (LocalAttachmentRecord) async throws -> Data
+    ) async throws -> LocalDeviceCandidateImportResult {
         guard attachmentKey.count == 32 else {
             throw LocalStorageError.operationFailed("Local attachment key must contain exactly 32 bytes")
+        }
+        guard Set(snapshot.attachments.map(\.id)).count == snapshot.attachments.count,
+              Set(snapshot.attachments.map(\.objectName)).count == snapshot.attachments.count else {
+            throw LocalStorageError.invalidSnapshot("Server transfer attachment coverage is ambiguous")
         }
         let destination = destinationRootURL.standardizedFileURL
         let fileManager = FileManager.default
@@ -52,20 +91,6 @@ public enum LocalDeviceCandidateImportService {
         var published = false
         defer { if !published { try? fileManager.removeItem(at: staging) } }
 
-        let expectedRecords = Dictionary(grouping: snapshot.attachments, by: \.id)
-        let supplied = Dictionary(grouping: attachments, by: { $0.record.id })
-        guard expectedRecords.count == snapshot.attachments.count,
-              supplied.count == attachments.count,
-              Set(expectedRecords.keys) == Set(supplied.keys) else {
-            throw LocalStorageError.invalidSnapshot("Server transfer attachment coverage is incomplete or ambiguous")
-        }
-        for item in attachments {
-            guard expectedRecords[item.record.id]?.only == item.record,
-                  Int64(item.plaintext.count) == item.record.sizeBytes else {
-                throw LocalStorageError.invalidSnapshot("Server transfer attachment metadata does not match its payload")
-            }
-        }
-
         var authority: LocalAuthorityStore? = try LocalAuthorityStore(
             fileURL: staging.appendingPathComponent("authority.sqlite3")
         )
@@ -78,10 +103,14 @@ public enum LocalDeviceCandidateImportService {
                 throw LocalStorageError.operationFailed("Unable to create Local Device authority")
             }
             try await openedAuthority.bootstrap(snapshot.identity, createdAt: authorityCreatedAt)
-            for item in attachments {
-                let stored = try await vault.store(item.plaintext, objectName: item.record.objectName)
-                guard stored.plaintextSize == item.record.sizeBytes,
-                      stored.plaintextSHA256 == item.record.sha256.lowercased() else {
+            for record in snapshot.attachments {
+                let plaintext = try await attachmentLoader(record)
+                guard Int64(plaintext.count) == record.sizeBytes else {
+                    throw LocalStorageError.invalidSnapshot("Server transfer attachment size does not match")
+                }
+                let stored = try await vault.store(plaintext, objectName: record.objectName)
+                guard stored.plaintextSize == record.sizeBytes,
+                      stored.plaintextSHA256 == record.sha256.lowercased() else {
                     throw LocalStorageError.invalidSnapshot("Server transfer attachment integrity does not match")
                 }
             }
@@ -97,7 +126,8 @@ public enum LocalDeviceCandidateImportService {
         }
         try fileManager.moveItem(at: staging, to: destination)
         published = true
-        return .init(rootURL: destination, budgetID: snapshot.identity.budgetID, attachmentCount: attachments.count)
+        return .init(rootURL: destination, budgetID: snapshot.identity.budgetID,
+                     attachmentCount: snapshot.attachments.count)
     }
 
     private static func validateProjection(

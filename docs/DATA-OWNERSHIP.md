@@ -478,12 +478,15 @@ The server now exposes the first half of that transport boundary through the own
 `GET /api/v1/budgets/{budget_id}/local-device-transfer` contract. It returns a complete,
 point-in-time Local Device-shaped projection, exact transaction/allocation/reserve observations, an
 active attachment manifest with plaintext hashes, and a canonical source revision. The native API
-adapter downloads this document opaquely with the current rotated credential so `BudgetStorage`, not
-the HTTP layer, will own strict decoding and financial validation. Eligibility now also fails closed
+adapter downloads this document opaquely with the current rotated credential. `BudgetStorage` now
+strictly decodes it into the typed Local Device authority and rejects unsupported envelopes, duplicate
+or mixed identities, and any transaction/allocation/reserve aggregate that differs from the canonical
+server observations. Candidate creation can fetch, size-check, hash-check, and encrypt attachments one
+at a time, avoiding a whole-authority plaintext memory buffer. Eligibility also fails closed
 for detached attachment tombstones, unrepresentable allocation shapes, realized-schedule lineage,
-and merged-Payee lineage instead of silently dropping them. Attachment payload download, native
-projection decoding, observation comparison, candidate publication, Keychain handoff, and cold
-activation remain required before the UI may offer the transfer action.
+and merged-Payee lineage instead of silently dropping them. Wiring current-credential attachment
+downloads into that streaming loader, candidate publication, Keychain handoff, and cold activation
+remain required before the UI may offer the transfer action.
 
 Local schema v5 closes two ordinary-personal-budget fidelity gaps required by that mapping. It now
 persists immutable transaction change snapshots and the exact credit-card reserve event ledger in

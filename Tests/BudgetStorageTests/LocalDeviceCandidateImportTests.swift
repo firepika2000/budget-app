@@ -101,4 +101,31 @@ final class LocalDeviceCandidateImportTests: XCTestCase {
         }
         XCTAssertEqual(try Data(contentsOf: sentinel), Data("preserve".utf8))
     }
+
+    func testStreamingLoaderEncryptsOneManifestObjectAndFailureNeverPublishes() async throws {
+        let parent = try temporaryDirectory()
+        let plaintext = Data("streamed receipt payload".utf8)
+        let (snapshot, record) = fixture(attachment: plaintext)
+        let destination = parent.appendingPathComponent("streamed", isDirectory: true)
+
+        let result = try await LocalDeviceCandidateImportService.createStreaming(
+            snapshot: snapshot, authorityCreatedAt: "2026-10-01T12:00:00Z",
+            destinationRootURL: destination, attachmentKey: Data(repeating: 31, count: 32)
+        ) { requested in
+            XCTAssertEqual(requested, record)
+            return plaintext
+        }
+        XCTAssertEqual(result.attachmentCount, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+
+        let failed = parent.appendingPathComponent("failed-stream", isDirectory: true)
+        do {
+            _ = try await LocalDeviceCandidateImportService.createStreaming(
+                snapshot: snapshot, authorityCreatedAt: "2026-10-01T12:00:00Z",
+                destinationRootURL: failed, attachmentKey: Data(repeating: 31, count: 32)
+            ) { _ in Data("truncated".utf8) }
+            XCTFail("Truncated streamed attachment unexpectedly published")
+        } catch {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: failed.path))
+    }
 }
