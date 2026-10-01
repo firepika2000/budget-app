@@ -191,7 +191,15 @@ plus backup-before-update activation of the immutable version bundled by the QPK
 
 ## Always-on Windows PC
 
-`start-windows.cmd` is an early double-clickable Docker Desktop manager. Its built-in PowerShell
+On Windows, extract the versioned ZIP and double-click `install-windows.cmd`. The per-user installer
+validates the complete immutable bundle, atomically publishes only allowlisted replaceable program
+files under `%LOCALAPPDATA%\Programs\ClearPocket Server`, creates Desktop and Start Menu shortcuts,
+and opens the manager. It never copies or replaces `.env`, database, attachment, recovery-key, or
+backup data. Rerunning a newer installer preserves the stable manager/task path and directs the owner
+to the backup-gated version action. No administrator account, Python, or development environment is
+required; Docker Desktop remains required.
+
+`start-windows.cmd` is the double-clickable Docker Desktop manager. Its built-in PowerShell
 setup asks for a durable data folder and creates independent cryptographic secrets without displaying
 them. Its menu can start and health-check the pinned Compose application, open local setup, show
 status, stop without deleting data, create a redacted diagnostics report, and display recent logs.
@@ -231,13 +239,12 @@ Completed generations are bounded to the newest 10 by default. Advanced owners c
 `BUDGET_APP_BACKUP_RETENTION` value in the private `.env`; rotation runs only after a new encrypted
 generation has been published successfully and never follows links or removes unrelated files.
 
-For an existing pinned installation, extract a newer versioned bundle over the same manager folder
-without deleting its hidden `.env`, rerun `start-windows.cmd`, and choose **Apply this downloaded server
-version**. The manager requires an explicit `UPDATE`, completes the encrypted backup first, pulls the
+For an existing pinned installation, run `install-windows.cmd` from the newer downloaded bundle, then
+choose **Apply this downloaded server version**. The manager requires an explicit `UPDATE`, completes the encrypted backup first, pulls the
 exact image before atomically changing only the version setting, and requires API health. Pull failure
 leaves configuration and running services unchanged. An unhealthy post-migration image is stopped and
 never automatically downgraded against a potentially newer database; recover the preserved generation
-into a new empty server instead. A signed installer will replace this manual bundle-overlay step.
+into a new empty server instead. A signed installer package will eventually wrap this same per-user flow.
 
 Python and developer tools are not required. Docker Desktop is still required, and secure remote
 pairing/TLS is not yet guided, so this remains a preview rather than the final signed graphical server

@@ -441,6 +441,9 @@ version setting changes atomically before activation; and an unhealthy post-migr
 never triggers an unsafe automatic image downgrade. The preserved generation instead anchors the
 new-destination recovery workflow.
 
+The versioned Windows ZIP now includes a double-click per-user installer. It validates and atomically
+publishes an allowlisted manager payload to a stable `%LOCALAPPDATA%` program path, adds Desktop and
+Start Menu shortcuts, and preserves private configuration and every authority/recovery path on rerun.
 The Windows helper uses built-in PowerShell for cryptographic first-run configuration and selectable
 durable storage without Python, and now provides start/open, status, data-preserving stop, redacted
 diagnostics and log actions. It can register a limited current-user Task Scheduler entry that waits

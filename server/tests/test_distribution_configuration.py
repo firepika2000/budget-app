@@ -177,6 +177,30 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "docker volume rm" not in script
 
 
+def test_windows_per_user_installer_preserves_authority_and_publishes_only_allowlisted_program_files():
+    root = ROOT / "distribution" / "server"
+    command = (root / "install-windows.cmd").read_text()
+    installer = (root / "install-windows.ps1").read_text()
+    launcher = (root / "start-windows.ps1").read_text()
+    assert "install-windows.ps1" in command
+    assert 'Programs\\ClearPocket Server' in installer
+    assert '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' in installer
+    assert '$requiredFiles = @(' in installer
+    assert 'tools\\backup_archive.py' in installer
+    assert 'tools\\require_empty_restore.sql' in installer
+    assert 'Move-Item -LiteralPath $temporary -Destination $destination -Force' in installer
+    assert 'Join-Path $installRoot ".env"' in installer
+    assert 'Copy-Item -LiteralPath $source -Destination $temporary' in installer
+    assert 'Copy-Item -LiteralPath $sourceRoot' not in installer
+    assert "WScript.Shell" in installer
+    assert 'GetFolderPath("Desktop")' in installer
+    assert 'GetFolderPath("Programs")' in installer
+    assert 'Start-Process -FilePath $manager' in installer
+    assert 'Join-Path $env:LOCALAPPDATA "ClearPocket Server\\Data"' in launcher
+    for forbidden in ("database", "attachments", "clearpocket-recovery-key.txt", "Backups"):
+        assert f'"{forbidden}"' not in installer
+
+
 def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():
     script = (ROOT / "distribution" / "server" / "backup-windows.ps1").read_text()
     assert "BUDGET_APP_BACKUP_AGE_RECIPIENT" in script

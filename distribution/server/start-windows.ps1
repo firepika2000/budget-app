@@ -49,7 +49,7 @@ if ($newInstall) {
     $hostName = Read-Host "This PC's protected-LAN hostname or IP address"
     Assert-SafeValue $hostName "Hostname"
 
-    $defaultRoot = Join-Path $env:ProgramData "ClearPocket Server"
+    $defaultRoot = Join-Path $env:LOCALAPPDATA "ClearPocket Server\Data"
     $storageRoot = Read-Host "Data folder [$defaultRoot]"
     if ([string]::IsNullOrWhiteSpace($storageRoot)) { $storageRoot = $defaultRoot }
     $storageRoot = [IO.Path]::GetFullPath($storageRoot)
