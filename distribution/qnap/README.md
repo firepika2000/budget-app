@@ -62,8 +62,28 @@ to the durable `backups` directory, and records owner-visible health. It removes
 records failure if capture or publication does not finish. Completed local generations retain the ten
 newest by default; an administrator may set `BUDGET_APP_BACKUP_RETENTION` to another positive count in
 the private `.env`. Rotation runs only after the new generation and health record succeed and touches
-only completed `budget-*.tar.gz.age` files. Scheduled and off-NAS/Dropbox publication
+only completed `budget-*.tar.gz.age` files. Graphical schedule controls and off-NAS/Dropbox publication
 remain part of the graphical QNAP management work.
+
+After one successful manual backup has created and validated the recovery identity, an administrator
+can install a persistent daily QNAP schedule. For example, run at 03:15:
+
+```sh
+/etc/init.d/ClearPocketServer.sh install-backup-schedule 3 15
+/etc/init.d/ClearPocketServer.sh backup-schedule-status
+```
+
+Remove only the schedule—never its generations or recovery identity—with:
+
+```sh
+/etc/init.d/ClearPocketServer.sh remove-backup-schedule
+```
+
+The installer validates the hour/minute and recovery setup, replaces only the marked ClearPocket cron
+entry, keeps credentials out of cron, atomically updates `/etc/config/crontab`, and restores the prior
+file if QNAP rejects the reload. The entry calls the package by absolute path and becomes harmless if
+that executable is absent. The backup's own lock prevents overlaps after delayed boots or long runs.
+Remove the schedule before uninstalling the preview QPKG so the marker does not remain in QNAP cron.
 
 Before this package is customer-ready it still needs the signed QPKG release pipeline, supported-model
 matrix, a graphical first-run storage/host/TLS setup screen, and hardware validation on current QTS and

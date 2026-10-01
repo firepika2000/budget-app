@@ -236,6 +236,13 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'compose stop' in service
     assert 'compose ps' in service
     assert 'ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT"' in service
+    assert "install-backup-schedule" in service
+    assert "remove-backup-schedule" in service
+    assert "backup-schedule-status" in service
+    assert "# ClearPocketServerBackup" in service
+    assert "Create one successful manual backup before enabling the schedule" in service
+    assert 'mv "$ORIGINAL" "$CRON_FILE"' in service
+    assert "the prior crontab was restored" in service
     assert "verify-local-device" in service
     assert "import-local-device" in service
     assert '/share/*' in service

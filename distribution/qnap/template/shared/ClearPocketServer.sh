@@ -117,6 +117,63 @@ import_local_device() {
     fi
 }
 
+find_crontab() {
+    command -v crontab 2>/dev/null && return 0
+    [ -x /usr/bin/crontab ] && { echo /usr/bin/crontab; return 0; }
+    [ -x /bin/crontab ] && { echo /bin/crontab; return 0; }
+    return 1
+}
+
+update_backup_schedule() {
+    mode=$1
+    hour=${2:-}
+    minute=${3:-}
+    CRON_FILE=/etc/config/crontab
+    CRONTAB=$(find_crontab) || { log_error "QNAP crontab command is unavailable"; return 1; }
+    [ -f "$CRON_FILE" ] && [ ! -L "$CRON_FILE" ] || { log_error "QNAP crontab configuration is invalid"; return 1; }
+    if [ "$mode" = install ]; then
+        case "$hour" in ''|*[!0-9]*) log_error "Backup hour must be 0 through 23"; return 1 ;; esac
+        case "$minute" in ''|*[!0-9]*) log_error "Backup minute must be 0 through 59"; return 1 ;; esac
+        [ "$hour" -le 23 ] && [ "$minute" -le 59 ] || { log_error "Backup time is invalid"; return 1; }
+        [ -f "$CLEARPOCKET_DATA_ROOT/recovery/clearpocket-recovery-key.txt" ] || {
+            log_error "Create one successful manual backup before enabling the schedule"
+            return 1
+        }
+        [ "$(grep -c '^BUDGET_APP_BACKUP_AGE_RECIPIENT=' "$ENV_FILE")" = "1" ] || {
+            log_error "Backup recovery recipient is not configured"
+            return 1
+        }
+    fi
+    ORIGINAL="$CRON_FILE.clearpocket-original.$$"
+    TEMPORARY="$CRON_FILE.clearpocket-new.$$"
+    cp "$CRON_FILE" "$ORIGINAL" || return 1
+    trap 'rm -f "$ORIGINAL" "$TEMPORARY"' EXIT
+    trap 'exit 1' HUP INT TERM
+    if ! awk 'index($0, "# ClearPocketServerBackup") == 0' "$CRON_FILE" > "$TEMPORARY"; then
+        rm -f "$ORIGINAL" "$TEMPORARY"
+        return 1
+    fi
+    if [ "$mode" = install ]; then
+        printf '%s %s * * * test ! -x "%s/ClearPocketServer.sh" || "%s/ClearPocketServer.sh" backup >/dev/null 2>&1 # ClearPocketServerBackup\n' \
+            "$minute" "$hour" "$QPKG_ROOT" "$QPKG_ROOT" >> "$TEMPORARY"
+    fi
+    chmod 600 "$TEMPORARY"
+    mv "$TEMPORARY" "$CRON_FILE"
+    if ! "$CRONTAB" "$CRON_FILE"; then
+        mv "$ORIGINAL" "$CRON_FILE"
+        "$CRONTAB" "$CRON_FILE" >/dev/null 2>&1 || true
+        log_error "QNAP rejected the backup schedule; the prior crontab was restored"
+        return 1
+    fi
+    rm -f "$ORIGINAL"
+    trap - EXIT HUP INT TERM
+    if [ "$mode" = install ]; then
+        echo "Daily encrypted backup scheduled for hour $hour, minute $minute."
+    else
+        echo "Scheduled ClearPocket backup removed. Existing generations were preserved."
+    fi
+}
+
 case "$1" in
     start)
         compose config --quiet && compose up -d
@@ -136,6 +193,18 @@ case "$1" in
         [ -x "$QPKG_ROOT/ClearPocketBackup.sh" ] || { log_error "QNAP backup helper is missing"; exit 1; }
         "$QPKG_ROOT/ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT"
         ;;
+    install-backup-schedule)
+        [ "$#" -eq 3 ] || { echo "Usage: $0 install-backup-schedule HOUR MINUTE" >&2; exit 2; }
+        update_backup_schedule install "$2" "$3"
+        ;;
+    remove-backup-schedule)
+        [ "$#" -eq 1 ] || { echo "Usage: $0 remove-backup-schedule" >&2; exit 2; }
+        update_backup_schedule remove
+        ;;
+    backup-schedule-status)
+        [ "$#" -eq 1 ] || { echo "Usage: $0 backup-schedule-status" >&2; exit 2; }
+        grep '# ClearPocketServerBackup$' /etc/config/crontab || echo "No ClearPocket backup schedule is installed."
+        ;;
     verify-local-device)
         [ "$#" -eq 2 ] || { echo "Usage: $0 verify-local-device /share/path/generation.clearpocketbackup" >&2; exit 2; }
         verify_local_device "$2"
@@ -145,7 +214,7 @@ case "$1" in
         import_local_device "$2" "$3"
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|backup|verify-local-device|import-local-device}" >&2
+        echo "Usage: $0 {start|stop|restart|status|backup|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device}" >&2
         exit 2
         ;;
 esac

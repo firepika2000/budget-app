@@ -470,8 +470,10 @@ The QPKG service also performs coordinated encrypted database-plus-attachment ca
 the pinned containers, generates an owner-held age identity on first use, prevents overlap, publishes
 atomically to durable QNAP storage, and updates the owner-visible backup-health contract without host
 Python or age. Completed generations have bounded post-success retention that never touches partial or
-unrelated files. The identity must still be copied off the NAS, and scheduled/off-NAS publication remains
-open.
+unrelated files. After the first successful manual generation, an administrator can atomically install,
+inspect, or remove a daily QNAP cron entry containing only the absolute package action and no credentials;
+failed crontab reload restores the prior system file, while the capture lock prevents overlap. The identity
+must still be copied off the NAS, and off-NAS publication remains open.
 These remain previews rather
 than the promised normal-user setup:
 release images/packages are unsigned, QNAP hardware validation is pending, and secure pairing/TLS is
