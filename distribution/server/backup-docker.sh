@@ -170,6 +170,8 @@ printf '%s\n' "$REVISION" | grep -Eq '^[A-Za-z0-9_]+$' || { echo "Database revis
 printf 'format_version=1\ncreated_at=%s\ndatabase_revision=%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REVISION" > "$STAGING/BACKUP-METADATA"
 compose cp api:/var/lib/budget-app/attachments/. "$STAGING/attachments"
+compose run --rm --no-deps --volume "$STAGING/attachments:/capture/attachments:ro" api \
+    python scripts/backup_capture.py validate-attachments /capture/attachments
 compose exec -T database rm -f "$DATABASE_TEMPORARY"
 compose start api
 API_PAUSED=false

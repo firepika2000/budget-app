@@ -143,6 +143,8 @@ printf 'format_version=1\ncreated_at=%s\ndatabase_revision=%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$database_revision" > "$work_dir/BACKUP-METADATA"
 mkdir -p "$work_dir/attachments"
 "${compose[@]}" cp api:/var/lib/budget-app/attachments/. "$work_dir/attachments/"
+"${compose[@]}" run --rm --no-deps --volume "$work_dir/attachments:/capture/attachments:ro" api \
+  python scripts/backup_capture.py validate-attachments /capture/attachments
 "${compose[@]}" start api
 resume_api=false
 python3 "$script_dir/backup_archive.py" create-manifest "$work_dir"

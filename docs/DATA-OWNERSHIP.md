@@ -296,7 +296,12 @@ The installer validates ownership and `0600` permissions, embeds only the enviro
 the plist, and uses a nonblocking file lock to prevent overlapping captures. Each invocation records
 `healthy`, `failed`, or `already_running` state without copying credentials into logs or health data.
 The coordinated capture briefly pauses the named API while PostgreSQL and attachment objects are
-captured consistently, then resumes it before archive encryption/publication.
+captured consistently. Before service resumes, the version-matched application validates every
+attachment row against the copied encrypted object: the object must be regular, authenticate under
+the authority key, and match the database's plaintext byte count and SHA-256. Detached tombstones are
+included until normal purge removes both their row and object. Any mismatch aborts the generation;
+the source API cleanup path is then resumed before reporting failure. Archive encryption/publication
+runs only after this frozen cross-resource validation passes.
 
 The versioned customer bundle ships the same scheduler for Linux Docker Engine. Its
 `install-systemd` command installs a persistent daily user timer. An external Compose `.env` (as used

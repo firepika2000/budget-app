@@ -242,6 +242,12 @@ def test_docker_only_backup_is_coordinated_encrypted_bounded_and_user_owned():
     assert "backup_health.py publication_failed" in script
     assert 'budget-*.tar.gz.age' in script
     assert "chown '$USER_ID:$GROUP_ID'" in script
+    stop_index = script.index("compose stop api")
+    dump_index = script.index("pg_dump --clean --if-exists")
+    copy_index = script.index("compose cp api:/var/lib/budget-app/attachments/.")
+    validate_index = script.index("scripts/backup_capture.py validate-attachments")
+    start_index = script.index("compose start api", stop_index)
+    assert stop_index < dump_index < copy_index < validate_index < start_index
     assert "down -v" not in script and "docker volume rm" not in script
 
 
@@ -554,6 +560,12 @@ def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():
     assert "api:/var/lib/budget-app/attachments/." in script
     assert '"start", "api"' in script
     assert 'scripts/backup_archive.py", "create-manifest"' in script
+    stop_index = script.index('Invoke-ClearPocketCompose @("stop", "api")')
+    dump_index = script.index("pg_dump --clean --if-exists")
+    copy_index = script.index('"api:/var/lib/budget-app/attachments/."')
+    validate_index = script.index('"scripts/backup_capture.py", "validate-attachments"')
+    start_index = script.index('Invoke-ClearPocketCompose @("start", "api")', stop_index)
+    assert stop_index < dump_index < copy_index < validate_index < start_index
     assert "age --recipient" in script
     assert "Move-Item -LiteralPath $partial -Destination $final" in script
     assert 'Join-Path $PSScriptRoot "dropbox.env"' in script
@@ -702,6 +714,12 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "docker volume rm" not in service
     assert "/dev/urandom" in setup
     assert "scripts/backup_archive.py create-manifest" in backup
+    stop_index = backup.index("compose stop api")
+    dump_index = backup.index("pg_dump --clean --if-exists")
+    copy_index = backup.index("compose cp api:/var/lib/budget-app/attachments/.")
+    validate_index = backup.index("scripts/backup_capture.py validate-attachments")
+    start_index = backup.index("compose start api", stop_index)
+    assert stop_index < dump_index < copy_index < validate_index < start_index
     assert backup.startswith("#!/bin/sh\nset -eu\n")
     assert "scripts/backup_health.py healthy" in backup
     assert "age --recipient" in backup

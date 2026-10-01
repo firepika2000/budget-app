@@ -1410,8 +1410,16 @@ real plain/encrypted new-destination recoveries pass; copy/SQL/start failures an
 have explicit command-order assertions. Full backend **329 passed, zero skips**, shell syntax and
 diff check pass. No native changes. This intentionally removes destructive in-place restore; the
 documented mission requires new-destination recovery and preserves the original deployment/backup.
-Next operational gap: coordinate source database/object backup capture against concurrent writers;
-do not claim a hot cross-resource snapshot is atomic merely because its manifest is complete.
+
+Source-capture follow-up now proves the cross-resource relationship rather than relying on a hot-file
+manifest. Every Docker, Windows, and QNAP backup stops all Compose API service instances before the
+PostgreSQL dump and encrypted-object copy, validates the copied objects against every attachment row
+while the API remains stopped, and only then resumes service. Validation authenticates each encrypted
+object with the authority key and checks its recorded plaintext byte count and SHA-256, including
+detached objects retained during the tombstone window. Any missing, linked, corrupted, or mismatched
+database object aborts publication and the cleanup path resumes only the source it paused. The later
+manifest still provides complete ciphertext/archive coverage. Focused capture, recovery-script, and
+distribution tests pass; real Docker/QNAP/Windows runtime acceptance remains separate.
 
 ### Windows graphical manager foundation — 2026-10-01
 

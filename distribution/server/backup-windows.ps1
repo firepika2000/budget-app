@@ -240,6 +240,10 @@ try {
     $metadata = "format_version=1`ncreated_at=$([DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))`ndatabase_revision=$revision`n"
     Write-PrivateText (Join-Path $staging "BACKUP-METADATA") $metadata
     Invoke-ClearPocketCompose @("cp", "api:/var/lib/budget-app/attachments/.", (Join-Path $staging "attachments"))
+    Invoke-ClearPocketCompose @(
+        "run", "--rm", "--no-deps", "--volume", "${staging}/attachments:/capture/attachments:ro",
+        "api", "python", "scripts/backup_capture.py", "validate-attachments", "/capture/attachments"
+    )
     Invoke-ClearPocketCompose @("exec", "-T", "database", "rm", "-f", $databaseTemporary)
     Invoke-ClearPocketCompose @("start", "api")
     $apiPaused = $false

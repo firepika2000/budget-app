@@ -114,6 +114,8 @@ elif [[ "$*" == *"cp api:/var/lib/budget-app/attachments/."* ]]; then
   destination="${@: -1}"
   mkdir -p "$destination"
   printf 'encrypted-object' > "${destination%/}/object-1"
+elif [[ "$*" == *"scripts/backup_capture.py validate-attachments"* ]]; then
+  [[ "${BACKUP_TEST_FAIL_VALIDATE:-}" != 1 ]] || exit 1
 elif [[ "$*" == *"exec -T api sh -c"* ]]; then
   [[ "${BACKUP_TEST_FAIL_SOURCE:-}" != 1 ]] || exit 1
   printf 'BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=test-key\\n'
@@ -160,15 +162,16 @@ def test_backup_targets_named_project_and_archives_database_objects_key_and_mani
     )
     assert result.returncode == 0, result.stderr
     calls = log.read_text().splitlines()
-    assert len(calls) == 7
+    assert len(calls) == 8
     assert all("--project-name budget-source" in call for call in calls)
     assert "exec -T api sh -c" in calls[0]
     assert "stop api" in calls[1]
     assert "pg_dump" in calls[2]
     assert "--exclude-table-data=pairing_codes" in calls[2]
     assert "cp api:" in calls[4]
-    assert "start api" in calls[5]
-    assert "backup-status.json" in calls[6]
+    assert "scripts/backup_capture.py validate-attachments" in calls[5]
+    assert "start api" in calls[6]
+    assert "backup-status.json" in calls[7]
     status = json.loads(Path(environment["FAKE_STATUS_LOG"]).read_text())
     assert status["state"] == "healthy"
     assert status["destination"]["destination"] == "local_generation"
@@ -527,7 +530,7 @@ def test_backup_requires_explicit_source_before_any_service_action(tmp_path):
     assert not log.exists()
 
 
-@pytest.mark.parametrize("failure", ["DUMP", "COPY", "START", "SOURCE"])
+@pytest.mark.parametrize("failure", ["DUMP", "COPY", "VALIDATE", "START", "SOURCE"])
 def test_backup_failure_resumes_only_a_source_it_attempted_to_pause(tmp_path, failure):
     environment, log = _backup_environment(tmp_path)
     environment[f"BACKUP_TEST_FAIL_{failure}"] = "1"

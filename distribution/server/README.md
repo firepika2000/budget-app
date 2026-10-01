@@ -399,9 +399,11 @@ PostgreSQL tools, or `age` on Windows. On first use it creates an age recovery i
 pinned application image, saves the private identity only in the folder selected by the owner, and
 stores only its public recipient in `.env`. Copy that identity to a separate protected device or
 offline location: losing it makes recipient-encrypted generations unrecoverable. Capture briefly
-pauses the API, dumps PostgreSQL, copies the already-encrypted attachment store, resumes the API,
-builds the canonical integrity manifest, encrypts into private staging, and atomically publishes the
-finished generation. Partial output is removed on failure, and success/failure health is written to
+pauses the API, dumps PostgreSQL, and copies the already-encrypted attachment store. While still
+paused, it authenticates every database-referenced object and verifies its plaintext byte count and
+digest; only then does it resume the API, build the canonical integrity manifest, encrypt in private
+staging, and atomically publish the finished generation. Partial output is removed on failure, and
+success/failure health is written to
 the same owner-visible status contract used on other hosts. The matching Restore menu accepts either
 that recovery identity or an interactive passphrase archive. It decrypts and validates entirely in
 private temporary staging, refuses a populated database or attachment store before and after pausing
