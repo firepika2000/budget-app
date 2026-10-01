@@ -2034,6 +2034,30 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalAuthorityPreservesCategoryGroupIdentityAcrossRenameReorderAndReload() throws {
+        let identity = LocalAuthorityIdentity(
+            householdID: "local-household", householdName: "Local Household",
+            ownerUserID: "local-owner", ownerDisplayName: "Owner",
+            budgetID: "local-budget", budgetName: "Local Budget", currencyCode: "USD"
+        )
+        let source = DemoStore(fresh: true)
+        source.createCategoryGroup(named: "Long-term Plans")
+        let original = try source.localAuthoritySnapshot(identity: identity)
+        let originalGroup = try XCTUnwrap(original.groups.first { $0.name == "Long-term Plans" })
+
+        source.renameCategoryGroup(from: "Long-term Plans", to: "Future Plans", sortOrder: 0)
+        let renamed = try source.localAuthoritySnapshot(identity: identity)
+        let renamedGroup = try XCTUnwrap(renamed.groups.first { $0.name == "Future Plans" })
+        XCTAssertEqual(renamedGroup.id, originalGroup.id)
+        XCTAssertEqual(renamedGroup.sortOrder, 0)
+
+        let reopened = DemoStore(fresh: true)
+        try reopened.loadLocalAuthority(renamed)
+        let roundTrip = try reopened.localAuthoritySnapshot(identity: identity)
+        XCTAssertEqual(roundTrip.groups, renamed.groups)
+    }
+
+    @MainActor
     func testVerifiedLocalRestoreCutsOverOnlyAtNextCompositionAndRetainsRollback() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-device-cutover-\(UUID().uuidString)", isDirectory: true)

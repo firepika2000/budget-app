@@ -17,6 +17,7 @@ final class DemoStore: ObservableObject {
     private(set) var allowanceHistory: [DemoAllowanceIssuance] = []
     @Published var groupOrder: [String]
     @Published var archivedGroups = Set<String>()
+    private var groupIdentityByName: [String: String] = [:]
     @Published var selectedMonth = "September 2026"
     @Published private(set) var unassignedMinor: Int64 = 0
     @Published var errorMessage: String?
@@ -213,6 +214,9 @@ final class DemoStore: ObservableObject {
         allowances = Self.seedAllowances
         allowanceHistory = []
         groupOrder = Array(Set(Self.seedCategories.map(\.group))).sorted()
+        groupIdentityByName = Dictionary(uniqueKeysWithValues: groupOrder.enumerated().map { index, name in
+            (name, "demo-group-\(index)")
+        })
         reserveAttribution = [:]
         allocationEvents = []
         allocationVersion = 0
@@ -685,12 +689,40 @@ final class DemoStore: ObservableObject {
             delegatedTo: isRestricted ? persona : nil
         ))
         if !groupOrder.contains(targetGroup) { groupOrder.append(targetGroup) }
+        ensureGroupIdentity(targetGroup)
         if !isRestricted { unassignedMinor -= initialAssignment }
         if !isRestricted, let category = categories.last {
             recordAllocation(amount: initialAssignment, to: category.id, note: "Initial assignment")
         }
         errorMessage = nil
         return true
+    }
+
+    func createCategoryGroup(named name: String) {
+        guard !groupOrder.contains(name) else { return }
+        groupOrder.append(name)
+        ensureGroupIdentity(name)
+    }
+
+    func renameCategoryGroup(from oldName: String, to newName: String, sortOrder: Int) {
+        let identity = groupIdentityByName.removeValue(forKey: oldName) ?? UUID().uuidString
+        groupIdentityByName[newName] = identity
+        for index in categories.indices where categories[index].group == oldName {
+            categories[index].group = newName
+        }
+        if let index = groupOrder.firstIndex(of: oldName) {
+            groupOrder.remove(at: index)
+            groupOrder.insert(newName, at: min(max(sortOrder, 0), groupOrder.count))
+        }
+    }
+
+    func deleteCategoryGroup(named name: String) {
+        groupOrder.removeAll { $0 == name }
+        groupIdentityByName.removeValue(forKey: name)
+    }
+
+    private func ensureGroupIdentity(_ name: String) {
+        if groupIdentityByName[name] == nil { groupIdentityByName[name] = UUID().uuidString }
     }
 
     func validateAllowance(_ plan: DemoAllowance) throws {
@@ -1070,8 +1102,13 @@ extension DemoStore {
         accounts = value.accounts.map { item in
             DemoAccount(id: item.id, name: item.name, kind: DemoAccountKind(rawValue: item.kind) ?? (item.isOnBudget ? .checking : .asset), balance: item.openingBalanceMinor, cleared: item.openingBalanceMinor, isOnBudget: item.isOnBudget)
         }
+        guard Set(value.groups.map(\.id)).count == value.groups.count,
+              Set(value.groups.map(\.name)).count == value.groups.count else {
+            throw LocalStorageError.invalidSnapshot("Category-group identity or name is duplicated")
+        }
         let groupNames = Dictionary(uniqueKeysWithValues: value.groups.map { ($0.id, $0.name) })
         groupOrder = value.groups.sorted { ($0.sortOrder, $0.id) < ($1.sortOrder, $1.id) }.map(\.name)
+        groupIdentityByName = Dictionary(uniqueKeysWithValues: value.groups.map { ($0.name, $0.id) })
         archivedGroups = Set(value.groups.filter(\.isArchived).map(\.name))
         categories = value.categories.map { item in
             let target = value.targets.first { $0.categoryID == item.id }
@@ -1136,7 +1173,8 @@ extension DemoStore {
     func localAuthoritySnapshot(identity: LocalAuthorityIdentity, preservingAttachments: [LocalAttachmentRecord] = [],
                                 debtTerms: [LocalAccountDebtTermsRecord] = []) throws -> LocalAuthoritySnapshot {
         let stamp = ISO8601DateFormatter().string(from: Date())
-        let groupIDs = Dictionary(uniqueKeysWithValues: groupOrder.enumerated().map { index, name in (name, "local-group-\(index)-\(name.lowercased().filter { $0.isLetter || $0.isNumber })") })
+        for name in groupOrder { ensureGroupIdentity(name) }
+        let groupIDs = groupIdentityByName
         let accountRows = accounts.map { item in
             LocalAccountRecord(id: item.id, budgetID: identity.budgetID, name: item.name, kind: item.kind.rawValue, isOnBudget: item.isOnBudget, openingBalanceMinor: 0, createdAt: stamp)
         }

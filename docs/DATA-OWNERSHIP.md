@@ -58,6 +58,9 @@ reserve attribution. Reopen replays the canonical transaction engine and rejects
 attribution set if it differs. Databases migrated from v3 may derive it once and publish it on their
 next normal workspace save. This makes the observation explicit in backup and transfer data without
 moving reserve calculation into the storage layer.
+Local category-group identifiers are likewise carried by the production command model rather than
+recomputed from display names or sort positions. Rename, reorder, reopen, backup, and later provider
+conversion therefore retain the same group identity and every category reference.
 The native target links `BudgetStorage` through `LocalDeviceStorageComposition`. That composition
 opens the SQLite authority and encrypted attachment vault together beneath the app's private
 Application Support directory and supplies the vault only with the Keychain-held key. The canonical

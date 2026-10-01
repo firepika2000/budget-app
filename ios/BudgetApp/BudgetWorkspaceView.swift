@@ -1576,7 +1576,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard demo.createCategory(name: name, group: groupName.isEmpty ? newGroupName : groupName) else { throw workspaceRepositoryError(demo.errorMessage) }
         if !demo.isRestricted { demo.categories[demo.categories.count - 1].delegatedTo = member }
     }
-    func createGroup(name: String) async throws { try requireActiveMembership(); if !demo.groupOrder.contains(name) { demo.groupOrder.append(name) } }
+    func createGroup(name: String) async throws { try requireActiveMembership(); demo.createCategoryGroup(named: name) }
     func createAccount(_ operation: CreateAccountOperation) async throws { try requireActiveMembership();
         guard demo.createAccount(name: operation.name, type: operation.kind, isOnBudget: operation.isOnBudget, startingBalance: operation.openingBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
@@ -1621,14 +1621,13 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { try requireActiveMembership();
         guard let currentName else { throw workspaceRepositoryError("Category group not found.") }
-        for index in demo.categories.indices where demo.categories[index].group == currentName { demo.categories[index].group = value.name }
-        if let index = demo.groupOrder.firstIndex(of: currentName) { demo.groupOrder[index] = value.name; demo.groupOrder.remove(at: index); demo.groupOrder.insert(value.name, at: min(max(value.sortOrder, 0), demo.groupOrder.count)) }
+        demo.renameCategoryGroup(from: currentName, to: value.name, sortOrder: value.sortOrder)
         demo.archivedGroups.remove(currentName); if value.isArchived { demo.archivedGroups.insert(value.name) }
     }
     func deleteGroup(id: String, currentName: String?) async throws { try requireActiveMembership();
         guard let currentName else { throw workspaceRepositoryError("Category group not found.") }
         guard !demo.categories.contains(where: { $0.group == currentName }) else { throw workspaceRepositoryError("Move or archive every category before deleting this group") }
-        demo.groupOrder.removeAll { $0 == currentName }
+        demo.deleteCategoryGroup(named: currentName)
     }
     func deleteCategory(id: String) async throws { try requireActiveMembership(); guard !demo.transactions.contains(where: { $0.categoryIDs.contains(id) }) else { throw workspaceRepositoryError("This category has financial history. Archive it to preserve the audit trail") }; demo.categories.removeAll { $0.id == id } }
     func setCategoryFavorite(id: String, isFavorite: Bool, sortOrder: Int) async throws { try requireActiveMembership();
