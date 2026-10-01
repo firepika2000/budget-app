@@ -234,6 +234,18 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'compose up -d' in service
     assert 'compose stop' in service
     assert 'compose ps' in service
+    assert "verify-local-device" in service
+    assert "import-local-device" in service
+    assert '/share/*' in service
+    assert ':/import/package:ro' in service
+    assert "scripts/local_device_transfer.py /tmp/local-device-package" in service
+    assert "--server-environment" in service
+    assert 'compose stop api' in service
+    assert 'compose up -d database' in service
+    assert "wait_healthy" in service
+    assert "urlopen('http://127.0.0.1:8080/api/v1/health'" in service
+    assert "Imported authority committed, but the API did not become healthy" in service
+    assert 'the API remains stopped' in service
     assert "down -v" not in service
     assert "docker volume rm" not in service
     assert "/dev/urandom" in setup

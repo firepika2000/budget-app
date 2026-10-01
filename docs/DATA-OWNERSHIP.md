@@ -462,7 +462,11 @@ API stopped and never modifies the source archive.
 wraps the same Compose bundle in App Center lifecycle hooks while keeping authority outside the
 replaceable QPKG directory. Its install routine chooses a durable QNAP shared-folder root, creates
 separate database/attachment/operations directories, generates independent kernel-random secrets,
-and atomically creates but never overwrites the private configuration. These remain previews rather
+and atomically creates but never overwrites the private configuration. QNAP administrators can now
+preflight or activate a phone Local Device generation directly through the package service without
+host Python: the source must be a regular package under `/share`, is mounted read-only, and import
+restarts the API only after the same canonical conversion and observation verification succeeds.
+These remain previews rather
 than the promised normal-user setup:
 release images/packages are unsigned, QNAP hardware validation is pending, and secure pairing/TLS is
 not implemented.
