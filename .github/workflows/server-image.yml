@@ -122,7 +122,10 @@ jobs:
         run: |
           git clone https://github.com/qnap-dev/QDK.git qdk
           git -C qdk checkout --detach 955d98c9913989561142f9a9ac994ec0091559d6
-          sudo bash qdk/InstallToUbuntu.sh install
+          # QDK 2.5.3 predates Ubuntu 24.04's python-is-python3 package transition and its
+          # installer resolves src/shared relative to the current directory.
+          sed -i 's/ python / python-is-python3 /' qdk/InstallToUbuntu.sh
+          (cd qdk && sudo bash InstallToUbuntu.sh install)
           rm -rf distribution/qnap/build
           CLEARPOCKET_QPKG_VERSION="$QPKG_VERSION" \
           CLEARPOCKET_SERVER_IMAGE_DIGEST="$IMAGE_DIGEST" \

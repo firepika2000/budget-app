@@ -638,6 +638,8 @@ def test_publish_workflow_builds_versioned_customer_bundle():
     assert "clearpocket-server-qnap-unsigned-$VERSION.qpkg" in workflow
     assert 'CLEARPOCKET_QPKG_VERSION="$QPKG_VERSION"' in workflow
     assert "QDK did not produce exactly one QPKG" in workflow
+    assert "python-is-python3" in workflow
+    assert "(cd qdk && sudo bash InstallToUbuntu.sh install)" in workflow
     release_step = workflow.split("- name: Publish immutable customer downloads", 1)[1]
     assert "qnap-unsigned" not in release_step
 
