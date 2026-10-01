@@ -463,6 +463,17 @@ and validate every eligible financial record and attachment into a brand-new pri
 authority, compare canonical observations, and only then offer cold-launch activation while leaving
 the server unchanged.
 
+The provider-side new-authority commit boundary is now implemented in `BudgetStorage`.
+`LocalDeviceCandidateImportService` accepts only a complete typed Local Device projection plus exact
+plaintext attachment payloads already authorized by the application service. It refuses missing,
+duplicate, size-mismatched, or hash-mismatched objects; encrypts every object under a new caller-held
+device key; creates and integrity-checks a migrated SQLite authority in private sibling staging;
+reopens and compares the entire typed projection; and atomically publishes only to a path that does
+not exist. Any failure removes staging and leaves both the current phone authority and server source
+unchanged. Network transport, server-ledger-to-local projection mapping, canonical financial
+observation comparison, Keychain handoff, and cold-launch activation remain the next integration
+checkpoint.
+
 ## Remaining implementation sequence
 
 The production on-device authority and persistence/reopen coverage are implemented. The iOS app can
