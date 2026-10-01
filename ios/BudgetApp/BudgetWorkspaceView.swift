@@ -3941,6 +3941,7 @@ private struct BackupRecoverySettingsView: View {
     @EnvironmentObject private var session: AppSession
     let budgetID: String
     @State private var status: APIServerBackupStatus?
+    @State private var localTransfer: APILocalDeviceTransferEligibility?
     @State private var loading = false
     @State private var error: String?
 
@@ -4028,6 +4029,30 @@ private struct BackupRecoverySettingsView: View {
                             Text("No verified restore has been recorded for this authority.").foregroundStyle(.secondary)
                         }
                     }
+                    Section("Move to This iPhone") {
+                        if let localTransfer {
+                            if localTransfer.eligible {
+                                Label("This budget is eligible for a lossless move to Local Device.", systemImage: "iphone.gen3.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("The server copy will remain unchanged. Activation will require a new private Local Device authority and full verification before cutover.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            } else {
+                                Label("This budget must remain on Budget Server for now.", systemImage: "server.rack")
+                                ForEach(localTransfer.blockers, id: \.code) { blocker in
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(blocker.title)
+                                        Text("\(blocker.recordCount) protected record\(blocker.recordCount == 1 ? "" : "s")")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    .accessibilityElement(children: .combine)
+                                }
+                                Text("ClearPocket will not discard household permissions, attribution, or audit history to force a transfer.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
+                        } else {
+                            ProgressView("Checking transfer compatibility…")
+                        }
+                    }
                 }
             } else if loading {
                 ProgressView("Loading backup health…")
@@ -4051,7 +4076,10 @@ private struct BackupRecoverySettingsView: View {
         defer { loading = false }
         do {
             let (url, token) = try await session.currentLiveCredentials(caller: "backupRecoverySettings")
-            status = try await APIClient(baseURL: url).backupStatus(budgetID: budgetID, token: token)
+            async let loadedStatus = APIClient(baseURL: url).backupStatus(budgetID: budgetID, token: token)
+            async let loadedTransfer = APIClient(baseURL: url).localDeviceTransferEligibility(budgetID: budgetID, token: token)
+            status = try await loadedStatus
+            localTransfer = try await loadedTransfer
         } catch {
             self.error = error.localizedDescription
         }
