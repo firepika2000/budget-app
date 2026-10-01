@@ -39,6 +39,9 @@ that exact registry digest and assign the package's version tag locally; they ne
 tag alone to select executable server bytes. The advanced `manage.py upgrade` path enforces the same
 release-metadata binding after completing its mandatory encrypted backup. The container build includes
 provenance and an SBOM.
+If packaging or upload fails after the image is published, rerunning the exact same commit reuses that
+digest only after verifying the image's embedded source-revision label. Another commit remains
+forbidden from overwriting the version.
 SHA-256 detects a corrupt or substituted download only when the release checksum came through a
 separately trusted GitHub connection; it is not a replacement for the still-pending signed normal-user
 installers.

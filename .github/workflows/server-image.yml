@@ -46,14 +46,33 @@ jobs:
           }
           echo "value=$value" >> "$GITHUB_OUTPUT"
           echo "qnap=$qnap" >> "$GITHUB_OUTPUT"
-      - name: Refuse an existing release tag
+      - name: Resolve or reserve immutable image version
+        id: existing_image
         run: |
-          if docker buildx imagetools inspect "ghcr.io/firepika2000/budget-server:${{ steps.version.outputs.value }}" >/dev/null 2>&1; then
-            echo "Refusing to overwrite an existing server image version" >&2
-            exit 1
+          image="ghcr.io/firepika2000/budget-server:${{ steps.version.outputs.value }}"
+          if ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          metadata=$(docker buildx imagetools inspect "$image" \
+            --format '{{json (index .Image "linux/amd64")}}')
+          revision=$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' <<<"$metadata")
+          [ "$revision" = "$GITHUB_SHA" ] || {
+            echo "Refusing to overwrite an existing server image version from another commit" >&2
+            exit 1
+          }
+          manifest=$(docker buildx imagetools inspect "$image" --format '{{json .Manifest}}')
+          digest=$(jq -r '.digest // empty' <<<"$manifest")
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "Existing same-commit image has no valid immutable digest" >&2
+            exit 1
+          }
+          echo "Reusing the existing immutable image produced by this exact commit."
+          echo "reuse=true" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         id: image
+        if: steps.existing_image.outputs.reuse != 'true'
         with:
           context: server
           platforms: linux/amd64,linux/arm64
@@ -70,7 +89,7 @@ jobs:
       - name: Build customer deployment bundle
         env:
           VERSION: ${{ steps.version.outputs.value }}
-          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest || steps.existing_image.outputs.digest }}
         run: |
           mkdir -p release/clearpocket-server
           cp -R distribution/server/. release/clearpocket-server/
@@ -99,7 +118,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.value }}
           QPKG_VERSION: ${{ steps.version.outputs.qnap }}
-          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest || steps.existing_image.outputs.digest }}
         run: |
           git clone https://github.com/qnap-dev/QDK.git qdk
           git -C qdk checkout --detach 955d98c9913989561142f9a9ac994ec0091559d6

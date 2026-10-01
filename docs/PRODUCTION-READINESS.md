@@ -1487,3 +1487,7 @@ QDK's separate ten-character package version uses an explicit, validated mapping
 SHA-256 are uploaded only as an explicitly named **unsigned hardware-acceptance artifact** and are
 deliberately excluded from customer GitHub release assets. QDK availability cannot block the
 Docker/Windows customer downloads. This enables real NAS testing without weakening the signing gate.
+Release retries after image publication are now safe and recoverable: the workflow inspects the
+existing AMD64 image configuration and reuses its index digest only when the embedded OCI source
+revision exactly equals the current commit. A different commit can never reuse or overwrite that
+version. This lets a same-commit packaging or upload retry finish without weakening immutable tags.

@@ -620,7 +620,13 @@ def test_publish_workflow_builds_versioned_customer_bundle():
     assert "RELEASE-METADATA.txt" in workflow
     assert "PACKAGE-CONTENTS-SHA256.txt" in workflow
     assert "find . -type f ! -name PACKAGE-CONTENTS-SHA256.txt" in workflow
-    assert "${{ steps.image.outputs.digest }}" in workflow
+    assert "${{ steps.image.outputs.digest || steps.existing_image.outputs.digest }}" in workflow
+    assert '{{json (index .Image "linux/amd64")}}' in workflow
+    assert "org.opencontainers.image.revision" in workflow
+    assert '[ "$revision" = "$GITHUB_SHA" ]' in workflow
+    assert "digest=$(jq -r" in workflow
+    assert "steps.existing_image.outputs.reuse != 'true'" in workflow
+    assert "Refusing to overwrite an existing server image version from another commit" in workflow
     assert "sha256sum" in workflow
     assert "actions/upload-artifact@v4" in workflow
     assert 'gh release create "$GITHUB_REF_NAME" --verify-tag' in workflow
