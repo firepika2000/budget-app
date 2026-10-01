@@ -56,6 +56,12 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["copy-local-backup-key"].exists)
         XCTAssertTrue(app.buttons["share-local-device-backup"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["local-backup-error"].exists)
+        let transferReady = app.descendants(matching: .any)["local-server-transfer-ready"]
+        for _ in 0..<6 where !transferReady.exists { app.swipeUp() }
+        XCTAssertTrue(transferReady.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["share-local-server-transfer"].exists)
+        XCTAssertTrue(app.buttons["copy-local-server-transfer-key"].exists)
+        XCTAssertTrue(app.buttons["connect-after-server-import"].exists)
         let restore = app.buttons["choose-local-device-restore"]
         for _ in 0..<6 where !restore.isHittable { app.swipeUp() }
         XCTAssertTrue(restore.waitForExistence(timeout: 5), "The production backup screen must expose verified restore, not export only")

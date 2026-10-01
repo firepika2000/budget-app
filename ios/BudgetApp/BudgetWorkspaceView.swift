@@ -3413,11 +3413,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                         .textSelection(.enabled)
                         .accessibilityIdentifier("local-backup-recovery-key")
                     Button(copied ? "Copied" : "Copy Recovery Key", systemImage: copied ? "checkmark" : "doc.on.doc") {
-                        UIPasteboard.general.setItems(
-                            [[UTType.plainText.identifier: backup.recoveryKey]],
-                            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(300)]
-                        )
-                        copied = true
+                        copyRecoveryKey(backup.recoveryKey)
                     }
                     .accessibilityIdentifier("copy-local-backup-key")
                     Label("Store this key separately from the backup. There is no account recovery if the only copy is lost.", systemImage: "exclamationmark.triangle.fill")
@@ -3431,6 +3427,37 @@ private struct LocalDeviceBackupRecoveryView: View {
                     }
                     .accessibilityIdentifier("share-local-device-backup")
                 }
+            }
+
+            Section("Move to a Server") {
+                Text("Create one authenticated transfer generation, import it into a new empty ClearPocket Server, then connect this iPhone. The server validates the complete database and every encrypted attachment before it serves the household.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if let backup {
+                    Label("Transfer package ready", systemImage: "checkmark.seal.fill")
+                        .foregroundStyle(.green)
+                        .accessibilityIdentifier("local-server-transfer-ready")
+                    ShareLink(item: backup.packageURL) {
+                        Label("Send Package to Server", systemImage: "square.and.arrow.up")
+                    }
+                    .accessibilityIdentifier("share-local-server-transfer")
+                    Button(copied ? "Transfer Key Copied" : "Copy Transfer Key", systemImage: copied ? "checkmark" : "key") {
+                        copyRecoveryKey(backup.recoveryKey)
+                    }
+                    .accessibilityIdentifier("copy-local-server-transfer-key")
+                } else {
+                    Button("Create Transfer Package", systemImage: "shippingbox.and.arrow.backward") {
+                        Task { await createBackup() }
+                    }
+                    .disabled(creating)
+                    .accessibilityIdentifier("create-local-server-transfer")
+                }
+                NavigationLink("Connect After Server Import") {
+                    ServerConnectionSettingsView()
+                }
+                .disabled(backup == nil)
+                .accessibilityIdentifier("connect-after-server-import")
+                Text("1. Keep the package and key separate. 2. On the new server, choose Move an iPhone Local Device budget and complete its verified import. 3. Only after the server reports healthy, connect or pair this iPhone. Your original local budget is retained until you intentionally remove it.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
 
             Section {
@@ -3602,6 +3629,14 @@ private struct LocalDeviceBackupRecoveryView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func copyRecoveryKey(_ key: String) {
+        UIPasteboard.general.setItems(
+            [[UTType.plainText.identifier: key]],
+            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(300)]
+        )
+        copied = true
     }
 
     private func prepareRestore() async {

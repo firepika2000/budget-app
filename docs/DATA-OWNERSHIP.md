@@ -423,7 +423,11 @@ records owner-visible recovery health, and leaves the source authority untouched
 The production on-device authority and persistence/reopen coverage are implemented. The iOS app can
 also create encrypted, generation-based local backups and export them through the system share sheet;
 that share sheet can target Files, Dropbox, or another installed provider without granting the app
-ambient access to the user's cloud account.
+ambient access to the user's cloud account. Backup & Recovery now presents the same generation as a
+guided server-transfer handoff: the owner shares the package, copies the separately retained key,
+imports into a new empty server through its canonical verifier/converter, and connects the phone only
+after that server reports healthy. The connection screen explicitly refuses to imply that changing an
+address migrates data, defaults to an HTTPS origin, and retains the original phone authority throughout.
 
 The repository now includes the shared customer-server deployment contract under
 `distribution/server`: one pinned container image contract, PostgreSQL, attachment and operations
@@ -444,8 +448,10 @@ new-destination recovery workflow.
 The generic versioned Docker bundle now has a one-command first-run installer. It requires only a
 running Docker/Compose v2 installation, uses the exact immutable application image to execute the
 configuration generator under the host user's identity, creates private durable authority directories,
-starts Compose, and requires API health. It binds to loopback until TLS/pairing exists and refuses to
-replace an existing `.env` or authority on rerun.
+starts Compose, and requires API health. The safe default keeps the API loopback-only. An explicit
+public-hostname setup adds the bundled Caddy profile, automatic HTTPS, canonical pairing origin, and
+trusted-proxy boundary without exposing the raw API port; reruns refuse to replace an existing `.env`
+or authority.
 The same generic bundle now performs coordinated encrypted backup entirely through the pinned
 containers, including age identity creation, PostgreSQL dump, attachment capture, canonical manifest,
 atomic publication, health reporting, overlap exclusion, and bounded post-success retention. The
@@ -542,10 +548,10 @@ After a newer versioned QPKG is installed, its explicit package update action ap
 manager invariant: create the encrypted generation first, pull the exact immutable image before changing
 the version setting, atomically pin it, and require API health. Pull failure changes nothing; unhealthy
 post-migration activation keeps the API stopped and never attempts an unsafe automatic downgrade.
-These remain previews rather
-than the promised normal-user setup:
-release images/packages are unsigned, QNAP hardware validation is pending, and complete guided
-pairing/TLS is not implemented.
+These remain previews rather than the promised normal-user setup: release images/packages are
+unsigned and QNAP hardware validation is pending. Docker and Windows packages can opt into bundled
+Caddy automatic HTTPS and canonical pairing. QNAP uses its QTS-managed certificate/public 443 path
+and an internal loopback bridge to the application proxy, avoiding a competing listener on the NAS.
 
 The first secure-pairing foundation is implemented behind an explicitly configured canonical
 HTTPS origin. Authenticated users can generate one active five-minute, high-entropy pairing secret
@@ -554,9 +560,10 @@ used by password sign-in and assigns a device label. Users can list and revoke o
 refresh sessions. Insecure non-loopback requests and deployments without a canonical pairing origin
 fail closed. The production iOS settings now render the QR locally, offer native camera scanning plus
 manual fallback, enter the canonical Live application route after redemption, and provide labeled
-device-session listing and confirmed revocation. Supported TLS provisioning, real-network human
-acceptance, and immediate invalidation of already-issued short-lived access tokens remain open; see
-`PAIRING-SECURITY.md`.
+device-session listing and confirmed revocation. Supported customer packages now establish their
+deployment-specific HTTPS edge and canonical pairing origin; real-network/hardware human acceptance,
+certificate-domain operational guidance, and immediate invalidation of already-issued short-lived
+access tokens remain open; see `PAIRING-SECURITY.md`.
 
 1. Register the production Dropbox public app key/callback and complete live external-account
    acceptance. Dropbox remains a backup destination, not a second authority.
@@ -564,5 +571,5 @@ acceptance, and immediate invalidation of already-issued short-lived access toke
    selection, install/update/rollback, scheduled backup/restore, and actionable health reporting.
 3. Validate and package the manager for supported QNAP models and always-on Windows PCs, with signed
    installers and no command-line requirement for the normal path.
-4. Add secure pairing and TLS for remote clients. Until that exists, keep the default loopback bind
-   and never expose the raw API port directly to the Internet.
+4. Complete real-network acceptance of secure pairing/TLS across Docker, QNAP, and Windows, while
+   preserving loopback-only raw API binding and never exposing that port directly to the Internet.

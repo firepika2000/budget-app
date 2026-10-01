@@ -11,9 +11,11 @@ server-backed budgets; no example fixtures, server, account, or sign-in are requ
   reconciliation observations, targets, favorites, payees/aliases, schedules, debt terms, rollover
   policy history, and encrypted attachment metadata/content survive process termination.
 - The example household remains available only under the explicitly labeled **Training** section.
-- Profile & Settings identifies the current authority and owns the Data Location / future transfer
-  surface. Connecting to an existing server does not delete the local copy. Automated migration of
-  a local budget into a server is intentionally not claimed by this revision.
+- Profile & Settings identifies the current authority and owns Data Location plus Backup & Recovery.
+  A local budget can now produce an authenticated transfer generation and separate recovery key for
+  verified import into a new empty ClearPocket Server. Connecting alone never copies or deletes data,
+  and the original iPhone authority remains intact after the guided handoff. Fully automatic in-app
+  server provisioning and migration are intentionally not claimed by this revision.
 - Local personal mode exposes only the device owner. Invitations, delegated budgets, requests, and
   allowances remain server-household capabilities rather than simulated local features.
 
@@ -42,4 +44,6 @@ the workspace fails closed instead of accepting changes into volatile memory.
 6. Open Profile & Settings and confirm **On This iPhone** plus **Server & Transfer Options**.
 7. Confirm the example budget appears only after explicitly choosing **Open Example Budget** under
    Training, and that returning to On This iPhone restores the real local budget.
-
+8. In **Backup & Recovery**, create a backup and confirm **Move to a Server** exposes the package,
+   separate transfer key, ordered import instructions, and a server connection action only after the
+   generation exists. Cancel without connecting and confirm the local budget remains available.

@@ -324,7 +324,7 @@ struct ServerConnectionSettingsView: View {
     @EnvironmentObject private var session: AppSession
     @Environment(\.dismiss) private var dismiss
     @State private var selectedMode: AppDataSourceMode = .localDevice
-    @State private var address = "http://127.0.0.1:8000"
+    @State private var address = "https://your-server.example.com"
 
     var body: some View {
         Form {
@@ -335,14 +335,14 @@ struct ServerConnectionSettingsView: View {
                 }
                 Text(selectedMode == .localDevice
                      ? "Your iPhone is the authority. Your budget works without an internet connection and stays private on this device."
-                     : "Move to a server you control for multi-device or household access. Migration and pairing will preserve your local data.")
+                     : "Connect to a server you control for multi-device or household access. Connecting does not copy this iPhone budget; use Backup & Recovery to create and import a verified transfer package first when moving existing data.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if selectedMode == .liveServer {
                 Section("Server Address") {
-                    TextField("http://127.0.0.1:8000", text: $address)
+                    TextField("https://your-server.example.com", text: $address)
                         .textInputAutocapitalization(.never).keyboardType(.URL).autocorrectionDisabled()
-                    Text("Raw addresses are available for development acceptance. Discovery and secure pairing remain future work.")
+                    Text("Use the server’s HTTPS address. Loopback HTTP remains available only for development; secure QR pairing is offered by the server sign-in screen.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
