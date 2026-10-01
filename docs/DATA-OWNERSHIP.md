@@ -242,7 +242,7 @@ For recipient-encrypted recovery, set `BUDGET_APP_BACKUP_AGE_IDENTITY` to the pr
 path before invoking `restore.sh`. Keep that identity outside the repository and separately from the
 backup destination. Losing the only identity means losing access to those encrypted generations.
 
-### Unattended macOS server backups
+### Unattended macOS and Linux server backups
 
 The coordinated PostgreSQL/attachment backup can be scheduled with a per-user LaunchAgent. Put only
 the allowlisted backup settings in an owner-only file outside the repository:
@@ -286,6 +286,12 @@ the plist, and uses a nonblocking file lock to prevent overlapping captures. Eac
 `healthy`, `failed`, or `already_running` state without copying credentials into logs or health data.
 The coordinated capture briefly pauses the named API while PostgreSQL and attachment objects are
 captured consistently, then resumes it before archive encryption/publication.
+
+The versioned customer bundle ships the same scheduler for Linux Docker Engine. Its
+`install-systemd` command installs a persistent daily user timer. An external Compose `.env` (as used
+by packaged/NAS deployments) can be supplied with `--compose-env-file`; both private files must be
+regular, owner-only files, and only their paths enter the unit. QNAP App Center scheduling and the
+Windows Task Scheduler still require their final no-terminal manager integration.
 
 For Dropbox, create a least-privilege app-folder Dropbox application. Configure either a temporary
 access token or, for durable operation, its refresh credentials outside the repository:

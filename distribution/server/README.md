@@ -71,6 +71,22 @@ menu action: it accepts only a brand-new empty recovery deployment, verifies the
 attachment key before mutation, and requires an explicit `--yes --project-name` target. Follow the
 recovery runbook and preserve the source authority until the restored destination is verified.
 
+For a Linux Docker host with an owner-controlled age recipient, `tools/backup_schedule.py` can install
+a persistent daily systemd user timer. The backup credential file and deployment `.env` must both be
+owner-only regular files; the generated unit records only their paths, never their contents:
+
+```sh
+python3 tools/backup_schedule.py install-systemd \
+  --project-name clearpocket-server \
+  --backup-directory /protected/path/clearpocket-backups \
+  --environment-file /protected/path/backup.env \
+  --compose-env-file .env --hour 3 --minute 0
+```
+
+The scheduler uses a nonblocking lock to prevent overlapping captures and records a bounded health
+document for every run. Host Python 3 and `age` remain requirements for this advanced path. The
+normal-user graphical scheduling experience is not complete.
+
 ## Docker Engine
 
 Use this Compose file on a Linux Docker Engine or equivalent host. Pin `CLEARPOCKET_SERVER_VERSION`

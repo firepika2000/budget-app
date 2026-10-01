@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -41,17 +42,17 @@ def validate_project_name(value: str) -> str:
 
 
 def load_private_environment(path: Path) -> dict[str, str]:
-    path = path.expanduser().resolve()
+    candidate = path.expanduser()
     try:
-        metadata = path.lstat()
+        metadata = candidate.lstat()
     except FileNotFoundError as failure:
         raise BackupScheduleError("Scheduled-backup environment file was not found") from failure
-    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+    if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
         raise BackupScheduleError("Scheduled-backup environment must be a regular non-symlink file")
     if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
         raise BackupScheduleError("Scheduled-backup environment must be owner-only (0600)")
     result: dict[str, str] = {}
-    for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+    for line_number, line in enumerate(candidate.read_text().splitlines(), start=1):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -78,6 +79,19 @@ def load_private_environment(path: Path) -> dict[str, str]:
     return result
 
 
+def validate_private_compose_environment(path: Path) -> Path:
+    candidate = path.expanduser()
+    try:
+        metadata = candidate.lstat()
+    except FileNotFoundError as failure:
+        raise BackupScheduleError("Compose environment file was not found") from failure
+    if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise BackupScheduleError("Compose environment must be a regular non-symlink file")
+    if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+        raise BackupScheduleError("Compose environment must be owner-only (0600)")
+    return candidate.resolve()
+
+
 def _atomic_status(path: Path, payload: dict[str, object]) -> None:
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
@@ -87,7 +101,7 @@ def _atomic_status(path: Path, payload: dict[str, object]) -> None:
 
 def run_scheduled_backup(
     project_name: str, backup_directory: Path, environment_file: Path,
-    backup_script: Path | None = None,
+    backup_script: Path | None = None, compose_environment_file: Path | None = None,
 ) -> int:
     project_name = validate_project_name(project_name)
     backup_directory = backup_directory.expanduser().resolve()
@@ -110,10 +124,11 @@ def run_scheduled_backup(
             })
             return 0
         started = datetime.now(timezone.utc)
-        result = subprocess.run(
-            [str(script), "--project-name", project_name, str(backup_directory)],
-            env=environment,
-        )
+        command = [str(script)]
+        if compose_environment_file is not None:
+            command += ["--env-file", str(validate_private_compose_environment(compose_environment_file))]
+        command += ["--project-name", project_name, str(backup_directory)]
+        result = subprocess.run(command, env=environment)
         completed = datetime.now(timezone.utc)
         generations = sorted(
             (item for item in backup_directory.glob("budget-*.tar.gz.age") if item.is_file()),
@@ -137,7 +152,7 @@ def run_scheduled_backup(
 
 def launch_agent_payload(
     project_name: str, backup_directory: Path, environment_file: Path,
-    hour: int, minute: int,
+    hour: int, minute: int, compose_environment_file: Path | None = None,
 ) -> tuple[str, dict[str, object]]:
     project_name = validate_project_name(project_name)
     if not 0 <= hour <= 23 or not 0 <= minute <= 59:
@@ -147,13 +162,16 @@ def launch_agent_payload(
     label = f"com.firepika.budget-backup.{project_name}"
     backup_directory = backup_directory.expanduser().resolve()
     script = Path(__file__).resolve()
+    program_arguments = [
+        sys.executable, str(script), "run", "--project-name", project_name,
+        "--backup-directory", str(backup_directory),
+        "--environment-file", str(environment_file.expanduser().resolve()),
+    ]
+    if compose_environment_file is not None:
+        program_arguments += ["--compose-env-file", str(validate_private_compose_environment(compose_environment_file))]
     payload: dict[str, object] = {
         "Label": label,
-        "ProgramArguments": [
-            sys.executable, str(script), "run", "--project-name", project_name,
-            "--backup-directory", str(backup_directory),
-            "--environment-file", str(environment_file.expanduser().resolve()),
-        ],
+        "ProgramArguments": program_arguments,
         "StartCalendarInterval": {"Hour": hour, "Minute": minute},
         "RunAtLoad": False,
         "StandardOutPath": str(backup_directory / "scheduled-backup.log"),
@@ -166,10 +184,12 @@ def launch_agent_payload(
 def install_launch_agent(
     project_name: str, backup_directory: Path, environment_file: Path,
     hour: int, minute: int, launch_agents_directory: Path | None = None,
+    compose_environment_file: Path | None = None,
 ) -> Path:
     if sys.platform != "darwin":
         raise BackupScheduleError("launchd scheduling is available only on macOS")
-    label, payload = launch_agent_payload(project_name, backup_directory, environment_file, hour, minute)
+    label, payload = launch_agent_payload(project_name, backup_directory, environment_file, hour, minute,
+                                          compose_environment_file)
     backup_directory = backup_directory.expanduser().resolve()
     backup_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     directory = launch_agents_directory or (Path.home() / "Library" / "LaunchAgents")
@@ -186,17 +206,81 @@ def install_launch_agent(
     return target
 
 
+def systemd_user_payload(
+    project_name: str, backup_directory: Path, environment_file: Path,
+    hour: int, minute: int, compose_environment_file: Path | None = None,
+) -> tuple[str, str, str]:
+    project_name = validate_project_name(project_name)
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise BackupScheduleError("Backup schedule time is invalid")
+    load_private_environment(environment_file)
+    arguments = [
+        sys.executable, str(Path(__file__).resolve()), "run",
+        "--project-name", project_name,
+        "--backup-directory", str(backup_directory.expanduser().resolve()),
+        "--environment-file", str(environment_file.expanduser().resolve()),
+    ]
+    if compose_environment_file is not None:
+        arguments += ["--compose-env-file", str(validate_private_compose_environment(compose_environment_file))]
+    name = f"clearpocket-backup-{project_name}"
+    command = " ".join(shlex.quote(argument) for argument in arguments)
+    service = (
+        "[Unit]\nDescription=ClearPocket encrypted household backup\n\n"
+        "[Service]\nType=oneshot\n"
+        f"ExecStart={command}\n"
+    )
+    timer = (
+        "[Unit]\nDescription=Daily ClearPocket encrypted household backup\n\n"
+        "[Timer]\n"
+        f"OnCalendar=*-*-* {hour:02d}:{minute:02d}:00\n"
+        "Persistent=true\nUnit=" + name + ".service\n\n"
+        "[Install]\nWantedBy=timers.target\n"
+    )
+    return name, service, timer
+
+
+def install_systemd_user_timer(
+    project_name: str, backup_directory: Path, environment_file: Path,
+    hour: int, minute: int, unit_directory: Path | None = None,
+    compose_environment_file: Path | None = None,
+) -> Path:
+    if not sys.platform.startswith("linux"):
+        raise BackupScheduleError("systemd user scheduling is available only on Linux")
+    name, service, timer = systemd_user_payload(
+        project_name, backup_directory, environment_file, hour, minute,
+        compose_environment_file,
+    )
+    directory = unit_directory or (Path.home() / ".config" / "systemd" / "user")
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for suffix, contents in (("service", service), ("timer", timer)):
+        target = directory / f"{name}.{suffix}"
+        temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+        temporary.write_text(contents)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+    if subprocess.run(["systemctl", "--user", "daemon-reload"]).returncode != 0:
+        raise BackupScheduleError("systemd could not reload user units")
+    timer_name = f"{name}.timer"
+    if subprocess.run(["systemctl", "--user", "enable", "--now", timer_name]).returncode != 0:
+        raise BackupScheduleError("systemd could not enable the backup timer")
+    return directory / timer_name
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description=__doc__)
     commands = value.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run")
     install = commands.add_parser("install-launchd")
-    for command in (run, install):
+    install_systemd = commands.add_parser("install-systemd")
+    for command in (run, install, install_systemd):
         command.add_argument("--project-name", required=True)
         command.add_argument("--backup-directory", type=Path, required=True)
         command.add_argument("--environment-file", type=Path, required=True)
+        command.add_argument("--compose-env-file", type=Path)
     install.add_argument("--hour", type=int, default=3)
     install.add_argument("--minute", type=int, default=0)
+    install_systemd.add_argument("--hour", type=int, default=3)
+    install_systemd.add_argument("--minute", type=int, default=0)
     status = commands.add_parser("status")
     status.add_argument("--backup-directory", type=Path, required=True)
     return value
@@ -208,12 +292,21 @@ def main(arguments: list[str] | None = None) -> int:
     try:
         if args.command == "run":
             return run_scheduled_backup(
-                args.project_name, args.backup_directory, args.environment_file
+                args.project_name, args.backup_directory, args.environment_file,
+                compose_environment_file=args.compose_env_file,
             )
         if args.command == "install-launchd":
             target = install_launch_agent(
                 args.project_name, args.backup_directory, args.environment_file,
                 args.hour, args.minute,
+                compose_environment_file=args.compose_env_file,
+            )
+            print(f"Automatic backup schedule installed: {target}")
+            return 0
+        if args.command == "install-systemd":
+            target = install_systemd_user_timer(
+                args.project_name, args.backup_directory, args.environment_file,
+                args.hour, args.minute, compose_environment_file=args.compose_env_file,
             )
             print(f"Automatic backup schedule installed: {target}")
             return 0

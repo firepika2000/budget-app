@@ -8,11 +8,12 @@ import pytest
 
 from scripts.backup_schedule import (
     BackupScheduleError, launch_agent_payload, load_private_environment,
-    run_scheduled_backup,
+    run_scheduled_backup, systemd_user_payload, validate_private_compose_environment,
 )
 
 
 def environment_file(tmp_path: Path, text: str | None = None) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     value = tmp_path / "backup.env"
     value.write_text(text or (
         "BUDGET_APP_BACKUP_AGE_RECIPIENT=age1owner\n"
@@ -32,7 +33,8 @@ def fake_backup(tmp_path: Path, exit_code: int = 0) -> Path:
         "set -eu\n"
         "test -n \"$BUDGET_APP_BACKUP_AGE_RECIPIENT\"\n"
         "test -n \"$BUDGET_APP_DROPBOX_REFRESH_TOKEN\"\n"
-        "directory=\"$3\"\n"
+        "[[ -z \"${BACKUP_ARGUMENT_LOG:-}\" ]] || printf '%s\\n' \"$@\" > \"$BACKUP_ARGUMENT_LOG\"\n"
+        "directory=\"${@: -1}\"\n"
         "printf 'age-encryption.org/v1\\nfixture' > \"$directory/budget-20260927T120000Z.tar.gz.age\"\n"
         f"exit {exit_code}\n"
     )
@@ -65,6 +67,11 @@ def test_environment_rejects_insecure_permissions_unknown_keys_and_passphrase_mo
     missing_recipient = environment_file(tmp_path, "BUDGET_APP_BACKUP_DESTINATION=\n")
     with pytest.raises(BackupScheduleError, match="AGE_RECIPIENT"):
         load_private_environment(missing_recipient)
+    target = environment_file(tmp_path / "target")
+    link = tmp_path / "linked.env"
+    link.symlink_to(target)
+    with pytest.raises(BackupScheduleError, match="non-symlink"):
+        load_private_environment(link)
 
 
 def test_scheduled_run_inherits_private_configuration_and_records_health(tmp_path):
@@ -92,3 +99,36 @@ def test_scheduled_failure_is_visible_and_returns_failure(tmp_path):
     recorded = json.loads((backup_directory / "scheduled-backup-status.json").read_text())
     assert recorded["state"] == "failed"
     assert recorded["exit_code"] == 7
+
+
+def test_external_compose_environment_is_private_and_forwarded_without_embedding_secrets(tmp_path, monkeypatch):
+    backup_environment = environment_file(tmp_path)
+    compose_environment = tmp_path / "deployment.env"
+    compose_environment.write_text("BUDGET_APP_DB_PASSWORD=database-secret\n")
+    compose_environment.chmod(0o600)
+    assert validate_private_compose_environment(compose_environment) == compose_environment.resolve()
+
+    argument_log = tmp_path / "arguments.log"
+    monkeypatch.setenv("BACKUP_ARGUMENT_LOG", str(argument_log))
+    status = run_scheduled_backup(
+        "family", tmp_path / "backups", backup_environment, fake_backup(tmp_path),
+        compose_environment_file=compose_environment,
+    )
+    assert status == 0
+    arguments = argument_log.read_text().splitlines()
+    assert arguments[:2] == ["--env-file", str(compose_environment)]
+
+    label, launch = launch_agent_payload(
+        "family", tmp_path / "backups", backup_environment, 3, 15, compose_environment,
+    )
+    name, service, timer = systemd_user_payload(
+        "family", tmp_path / "backups", backup_environment, 3, 15, compose_environment,
+    )
+    serialized = json.dumps(launch) + service + timer
+    assert label == "com.firepika.budget-backup.family"
+    assert name == "clearpocket-backup-family"
+    assert str(compose_environment) in serialized
+    assert "database-secret" not in serialized
+    assert "private-refresh" not in serialized
+    assert "OnCalendar=*-*-* 03:15:00" in timer
+    assert "Persistent=true" in timer

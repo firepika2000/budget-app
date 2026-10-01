@@ -65,6 +65,7 @@ jobs:
           mkdir -p release/clearpocket-server/tools
           cp server/scripts/backup.sh server/scripts/restore.sh \
              server/scripts/backup_archive.py server/scripts/backup_destination.py \
+             server/scripts/backup_schedule.py \
              server/scripts/require_empty_restore.sql release/clearpocket-server/tools/
           printf '%s\n' "$VERSION" > release/clearpocket-server/VERSION
           sed -i "s/^CLEARPOCKET_SERVER_VERSION=.*/CLEARPOCKET_SERVER_VERSION=$VERSION/" release/clearpocket-server/.env.example

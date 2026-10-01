@@ -41,6 +41,7 @@ cp "$PROJECT_ROOT/server/scripts/backup.sh" \
    "$PROJECT_ROOT/server/scripts/restore.sh" \
    "$PROJECT_ROOT/server/scripts/backup_archive.py" \
    "$PROJECT_ROOT/server/scripts/backup_destination.py" \
+   "$PROJECT_ROOT/server/scripts/backup_schedule.py" \
    "$PROJECT_ROOT/server/scripts/require_empty_restore.sql" \
    "$STAGE/shared/server/tools/"
 printf '%s\n' "$VERSION" > "$STAGE/shared/server/VERSION"

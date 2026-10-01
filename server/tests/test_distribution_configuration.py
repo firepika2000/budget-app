@@ -147,6 +147,7 @@ def test_publish_workflow_builds_versioned_customer_bundle():
     assert "actions/upload-artifact@v4" in workflow
     assert "server/scripts/backup.sh server/scripts/restore.sh" in workflow
     assert "server/scripts/backup_archive.py server/scripts/backup_destination.py" in workflow
+    assert "server/scripts/backup_schedule.py" in workflow
 
 
 def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority():
@@ -185,6 +186,7 @@ test -f shared/server/compose.yaml
 test -f shared/server/manage.py
 test -f shared/server/tools/backup.sh
 test -f shared/server/tools/restore.sh
+test -f shared/server/tools/backup_schedule.py
 test \"$(cat shared/server/VERSION)\" = \"0.9.0\"
 mkdir -p build
 : > build/ClearPocketServer_0.9.0.qpkg
