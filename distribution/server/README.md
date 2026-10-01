@@ -347,9 +347,12 @@ secrets without displaying them. The same window starts and health-checks the pi
 application, opens local setup, shows status, stops without deleting data, creates a coordinated
 encrypted backup through graphical destination/recovery-key selection, creates a redacted diagnostics
 report, and displays recent logs. The first backup makes the separate recovery key impossible to miss
-and never replaces an existing key without confirmation. `start-windows.cmd` remains the advanced manager used by
-**Backup, Restore & Advanced** while the remaining recovery and credential forms are brought into the
-graphical surface.
+and never replaces an existing key without confirmation. The graphical restore flow selects the
+encrypted generation and separate identity, confirms the operation, and delegates to the existing
+verify-before-mutate recovery engine; populated database or attachment destinations are still refused.
+Passphrase-encrypted generations remain in the advanced terminal flow because `age` intentionally
+reads that secret from a real terminal. `start-windows.cmd` remains the advanced manager used by
+**Backup, Restore & Advanced** while the remaining migration and credential forms are brought into the graphical surface.
 It can also register or remove a limited current-user Task Scheduler entry that waits for Docker
 Desktop and starts the server after sign-in; the task contains only the manager path, never private
 configuration or credentials. The same menu can initialize a new empty Windows server from an iPhone
@@ -418,7 +421,7 @@ into a new empty server instead. A signed installer package will eventually wrap
 
 Python and developer tools are not required. Docker Desktop is still required. Secure remote
 pairing/TLS is guided for a new installation, but automatic router/firewall configuration, platform
-signing, and graphical forms for restore/import/scheduling/update/Dropbox credentials remain open product work.
+signing, and graphical forms for import/scheduling/update/Dropbox credentials remain open product work.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;

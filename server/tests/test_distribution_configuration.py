@@ -434,7 +434,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert '$info.RedirectStandardOutput = $true' in manager
     assert '$info.RedirectStandardError = $true' in manager
     assert "Remove-Item" not in manager
-    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup")' in engine
+    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore")' in engine
     assert '$Operation -notin @("Configure", "Interactive")' in engine
     assert '$env:CLEARPOCKET_SETUP_STORAGE_ROOT' in engine
     assert '$env:CLEARPOCKET_SETUP_PUBLIC_HOST' in engine
@@ -444,12 +444,15 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
         "Move-Item -LiteralPath $temporary -Destination $environmentFile"
     )
     noninteractive = engine.split('if ($Operation -ne "Interactive")', 1)[1]
-    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup"):
+    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore"):
         assert f'"{operation}"' in noninteractive
     assert 'Invoke-ClearPocketCompose @("stop")' in noninteractive
     assert 'Operation = "Manager"' in noninteractive
     assert 'BackupDirectory = $env:CLEARPOCKET_BACKUP_DIRECTORY' in noninteractive
     assert 'RecoveryDirectory = $env:CLEARPOCKET_RECOVERY_DIRECTORY' in noninteractive
+    assert '-ArchivePath $env:CLEARPOCKET_RESTORE_ARCHIVE' in noninteractive
+    assert '-IdentityPath $env:CLEARPOCKET_RESTORE_IDENTITY' in noninteractive
+    assert '-Confirmation $env:CLEARPOCKET_RESTORE_CONFIRMATION' in noninteractive
     assert "down -v" not in noninteractive
     assert "docker volume rm" not in noninteractive
 
@@ -497,6 +500,13 @@ def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():
 
 def test_windows_restore_is_verified_empty_guarded_and_never_in_place():
     script = (ROOT / "distribution" / "server" / "restore-windows.ps1").read_text()
+    manager = (ROOT / "distribution" / "server" / "manager-windows.ps1").read_text()
+    assert '[ValidateSet("Interactive", "Manager")]' in script
+    assert '[string] $ArchivePath = ""' in script
+    assert '[string] $IdentityPath = ""' in script
+    assert '[string] $Confirmation = ""' in script
+    assert "Graphical restore requires the separate recovery identity" in script
+    assert '$confirmationValue -cne "RESTORE"' in script
     assert "require_empty_restore.sql" in script
     assert "Type RESTORE to verify this backup" in script
     assert "extract-verified /restore/archive.tar.gz /restore/verified" in script
@@ -510,6 +520,11 @@ def test_windows_restore_is_verified_empty_guarded_and_never_in_place():
     assert "The API remains stopped for inspection" in script
     assert "down -v" not in script
     assert "docker volume rm" not in script
+    assert 'Content="Restore Empty Server"' in manager
+    assert 'Select-ClearPocketFile "Choose an encrypted ClearPocket backup"' in manager
+    assert 'Select-ClearPocketFile "Choose the separate ClearPocket recovery key"' in manager
+    assert 'CLEARPOCKET_RESTORE_CONFIRMATION = "RESTORE"' in manager
+    assert 'Invoke-ManagerOperation "Restore"' in manager
 
 
 def test_publish_workflow_builds_versioned_customer_bundle():

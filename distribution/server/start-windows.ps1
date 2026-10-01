@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup")]
+    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore")]
     [string] $Operation = "Interactive"
 )
 
@@ -604,6 +604,17 @@ if ($Operation -ne "Interactive") {
             }
             & $backupScript @backupArguments
             if (-not $?) { throw "Windows backup did not complete." }
+        }
+        "Restore" {
+            $restoreScript = Join-Path $PSScriptRoot "restore-windows.ps1"
+            if (-not (Test-Path -LiteralPath $restoreScript -PathType Leaf)) {
+                throw "Windows recovery support is missing. Download the complete server package again."
+            }
+            & $restoreScript -EnvironmentFile $environmentFile -Operation Manager `
+                -ArchivePath $env:CLEARPOCKET_RESTORE_ARCHIVE `
+                -IdentityPath $env:CLEARPOCKET_RESTORE_IDENTITY `
+                -Confirmation $env:CLEARPOCKET_RESTORE_CONFIRMATION
+            if (-not $?) { throw "Windows recovery did not complete." }
         }
         default { throw "Unsupported non-interactive manager operation." }
     }

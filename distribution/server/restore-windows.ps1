@@ -1,7 +1,12 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string] $EnvironmentFile
+    [string] $EnvironmentFile,
+    [ValidateSet("Interactive", "Manager")]
+    [string] $Operation = "Interactive",
+    [string] $ArchivePath = "",
+    [string] $IdentityPath = "",
+    [string] $Confirmation = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -91,13 +96,22 @@ function Save-RecoveryStatus([string] $Archive) {
 
 Write-Host "Restore an encrypted ClearPocket Server backup"
 Write-Host "The configured database and attachment folder must be empty. Existing data is never overwritten."
-$archiveInput = Read-Host "Full path to the encrypted .tar.gz.age backup"
+$archiveInput = $ArchivePath
+if ([string]::IsNullOrWhiteSpace($archiveInput) -and $Operation -eq "Interactive") {
+    $archiveInput = Read-Host "Full path to the encrypted .tar.gz.age backup"
+}
 if ([string]::IsNullOrWhiteSpace($archiveInput)) { throw "No encrypted backup was selected." }
 $archive = Get-Item -LiteralPath ([IO.Path]::GetFullPath($archiveInput)) -Force
 if ($archive.PSIsContainer -or ($archive.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
     throw "The recovery archive must be a regular, non-linked file."
 }
-$identityInput = Read-Host "Full path to the recovery identity (leave blank for a passphrase backup)"
+$identityInput = $IdentityPath
+if ([string]::IsNullOrWhiteSpace($identityInput) -and $Operation -eq "Interactive") {
+    $identityInput = Read-Host "Full path to the recovery identity (leave blank for a passphrase backup)"
+}
+if ([string]::IsNullOrWhiteSpace($identityInput) -and $Operation -eq "Manager") {
+    throw "Graphical restore requires the separate recovery identity. Use Advanced for a passphrase backup."
+}
 $identity = $null
 if (-not [string]::IsNullOrWhiteSpace($identityInput)) {
     $identity = Get-Item -LiteralPath ([IO.Path]::GetFullPath($identityInput)) -Force
@@ -105,8 +119,11 @@ if (-not [string]::IsNullOrWhiteSpace($identityInput)) {
         throw "The recovery identity must be a regular, non-linked file."
     }
 }
-$confirmation = Read-Host "Type RESTORE to verify this backup and initialize the empty server"
-if ($confirmation -cne "RESTORE") {
+$confirmationValue = $Confirmation
+if ([string]::IsNullOrWhiteSpace($confirmationValue) -and $Operation -eq "Interactive") {
+    $confirmationValue = Read-Host "Type RESTORE to verify this backup and initialize the empty server"
+}
+if ($confirmationValue -cne "RESTORE") {
     Write-Host "Recovery cancelled. No server data or configuration was changed."
     exit 0
 }

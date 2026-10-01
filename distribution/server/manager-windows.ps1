@@ -56,6 +56,7 @@ if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
           <Button Name="StatusButton" Content="Refresh Status" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="StopButton" Content="Stop Safely" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="BackupButton" Content="Create Encrypted Backup" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="RestoreButton" Content="Restore Empty Server" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="DiagnosticsButton" Content="Create Diagnostics" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="LogsButton" Content="Recent Logs" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="AdvancedButton" Content="Backup, Restore &amp; Advanced…" Padding="18,9" Margin="0,0,10,10"/>
@@ -85,7 +86,7 @@ $storageBox = $window.FindName("StorageBox")
 $hostBox = $window.FindName("HostBox")
 $outputBox = $window.FindName("OutputBox")
 $stateText = $window.FindName("StateText")
-$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
+$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
 $actionButtons = @{}
 foreach ($name in $actionNames) { $actionButtons[$name] = $window.FindName($name) }
 
@@ -110,6 +111,16 @@ function Select-ClearPocketFolder([string] $Description, [string] $InitialPath) 
     } finally {
         $dialog.Dispose()
     }
+}
+
+function Select-ClearPocketFile([string] $Title, [string] $Filter) {
+    $dialog = New-Object Microsoft.Win32.OpenFileDialog
+    $dialog.Title = $Title
+    $dialog.Filter = $Filter
+    $dialog.CheckFileExists = $true
+    $dialog.Multiselect = $false
+    if ($dialog.ShowDialog($window) -eq $true) { return $dialog.FileName }
+    return $null
 }
 
 function Invoke-ManagerOperation([string] $Operation, [hashtable] $Environment = @{}) {
@@ -213,6 +224,22 @@ $actionButtons["BackupButton"].Add_Click({
         $backupEnvironment["CLEARPOCKET_RECOVERY_DIRECTORY"] = $recoveryDirectory
     }
     Invoke-ManagerOperation "Backup" $backupEnvironment
+})
+$actionButtons["RestoreButton"].Add_Click({
+    $archive = Select-ClearPocketFile "Choose an encrypted ClearPocket backup" "Encrypted ClearPocket backup (*.tar.gz.age)|*.tar.gz.age|All files (*.*)|*.*"
+    if ($null -eq $archive) { return }
+    $identity = Select-ClearPocketFile "Choose the separate ClearPocket recovery key" "ClearPocket recovery key (*.txt)|*.txt|All files (*.*)|*.*"
+    if ($null -eq $identity) { return }
+    $decision = [System.Windows.MessageBox]::Show(
+        "Restore verifies the encrypted generation and initializes only an empty server. It will refuse any existing database rows or attachment objects. Continue?",
+        "Restore empty server?", "YesNo", "Warning"
+    )
+    if ($decision -ne [System.Windows.MessageBoxResult]::Yes) { return }
+    Invoke-ManagerOperation "Restore" @{
+        CLEARPOCKET_RESTORE_ARCHIVE = $archive
+        CLEARPOCKET_RESTORE_IDENTITY = $identity
+        CLEARPOCKET_RESTORE_CONFIRMATION = "RESTORE"
+    }
 })
 $actionButtons["DiagnosticsButton"].Add_Click({ Invoke-ManagerOperation "Diagnostics" })
 $actionButtons["LogsButton"].Add_Click({ Invoke-ManagerOperation "Logs" })

@@ -1426,8 +1426,11 @@ No stop path deletes volumes, configuration, backups, or financial data. Graphic
 generation and separate recovery-key locations, warns about key loss, and confirms before adopting an
 existing identity; the canonical capture, encryption, health, retention, and optional Dropbox
 publication engine remains singular. Restore, phone transfer, portable import, scheduling, update,
-and Dropbox configuration remain under a clearly labeled advanced entry until their graphical forms
-are implemented.
+and Dropbox configuration remain singular too; recipient-encrypted restore is now available in the
+graphical manager with native file selection and explicit confirmation, while the canonical two-stage
+empty-destination checks remain mandatory. Passphrase recovery remains terminal-bound so its secret
+continues to go directly to `age`; phone transfer, portable import, scheduling, update, and Dropbox
+configuration remain under a clearly labeled advanced entry until their graphical forms are implemented.
 
 All **58 distribution contract tests pass**, including the new graphical composition, hidden-process
 output/error handling, immutable-image-before-configuration ordering, installer allowlist, and
