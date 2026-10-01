@@ -1,7 +1,7 @@
 # Secure device pairing foundation
 
-Status: backend and native QR/device-management foundation implemented; guided TLS provisioning and
-real-network human acceptance remain open.
+Status: backend, native QR/device management, and Docker automatic-TLS provisioning implemented;
+QNAP/Windows guided TLS and real-network human acceptance remain open.
 
 ## Trust boundary
 
@@ -58,6 +58,6 @@ but deliberately omit all pairing-code rows, so restoring an archive can never r
 
 - Real-device scan/display, accessibility, revocation, and multi-device human acceptance.
 - Consumer server discovery and graphical server installation/configuration.
-- Supported automatic TLS/certificate provisioning for Docker, QNAP, and Windows.
+- Supported automatic TLS/certificate provisioning for QNAP and Windows (Docker is implemented).
 - Session-bound access tokens if immediate device revocation is required.
 - Abuse, concurrent redemption, proxy-boundary, and real-network integration review.

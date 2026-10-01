@@ -55,6 +55,8 @@ def test_configuration_generates_independent_exact_secrets_without_placeholders(
     vault.write("object", b"encrypted attachment")
     assert vault.read("object") == b"encrypted attachment"
     assert not any("GENERATE" in value or "replace" in value for value in first.values())
+    assert "COMPOSE_PROFILES" not in first
+    assert "BUDGET_APP_PAIRING_PUBLIC_URL" not in first
 
 
 @pytest.mark.parametrize("hosts", ["", "bad host", "example..com", "https://example.com", "a/b"])
@@ -96,6 +98,33 @@ def test_configuration_accepts_named_posix_and_windows_storage():
     assert windows["CLEARPOCKET_DATABASE_STORAGE"] == "D:/ClearPocket/database"
 
 
+def test_configuration_enables_bundled_tls_and_pairing_for_valid_public_host():
+    values = parsed(module.configuration(allowed_hosts="localhost,192.168.1.20",
+        bind_address="127.0.0.1", port=8080, image="example/server", version="test",
+        public_host="Budget.Example.COM."))
+    assert values["COMPOSE_PROFILES"] == "tls"
+    assert values["CLEARPOCKET_PUBLIC_HOST"] == "budget.example.com"
+    assert values["BUDGET_APP_PAIRING_PUBLIC_URL"] == "https://budget.example.com"
+    assert values["BUDGET_APP_FORWARDED_ALLOW_IPS"] == "*"
+    assert values["BUDGET_APP_ALLOWED_HOSTS"] == \
+        "localhost,192.168.1.20,budget.example.com"
+
+    normalized = parsed(module.configuration(allowed_hosts="Budget.Example.COM",
+        bind_address="127.0.0.1", port=8080, image="example/server", version="test",
+        public_host="Budget.Example.COM."))
+    assert normalized["BUDGET_APP_ALLOWED_HOSTS"] == "budget.example.com"
+
+
+@pytest.mark.parametrize("public_host", [
+    "localhost", "server", "127.0.0.1", "https://budget.example.com", "bad host.example",
+    "-bad.example", "bad-.example", "example..com", "*.example.com", "example.com/path",
+])
+def test_configuration_rejects_public_hosts_unsuitable_for_automatic_tls(public_host: str):
+    with pytest.raises(module.ConfigurationError):
+        module.configuration(allowed_hosts="localhost", bind_address="127.0.0.1", port=8080,
+            image="example/server", version="test", public_host=public_host)
+
+
 def test_shared_compose_contract_preserves_security_and_persistent_authority():
     compose = (ROOT / "distribution" / "server" / "compose.yaml").read_text()
     assert "ghcr.io/firepika2000/budget-server" in compose
@@ -111,6 +140,27 @@ def test_shared_compose_contract_preserves_security_and_persistent_authority():
     assert "BUDGET_APP_PAIRING_PUBLIC_URL" in compose
     assert "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY" in compose
     assert "CLEARPOCKET_BIND_ADDRESS:-127.0.0.1" in compose
+    assert 'profiles: ["tls"]' in compose
+    assert "caddy:2.11.4-alpine" in compose
+    assert '"80:80"' in compose and '"443:443"' in compose
+    assert "./Caddyfile:/etc/caddy/Caddyfile:ro" in compose
+    assert "clearpocket_caddy_data:/data" in compose
+    assert "clearpocket_caddy_config:/config" in compose
+    assert "BUDGET_APP_FORWARDED_ALLOW_IPS" in compose
+
+
+def test_bundled_caddy_is_the_public_tls_boundary():
+    caddy = (ROOT / "distribution" / "server" / "Caddyfile").read_text()
+    assert "{$CLEARPOCKET_PUBLIC_HOST}" in caddy
+    assert "reverse_proxy api:8080" in caddy
+    assert "Strict-Transport-Security" in caddy
+    assert 'X-Frame-Options "DENY"' in caddy
+    assert "X-Content-Type-Options" in caddy
+    assert "tls internal" not in caddy
+    dockerfile = (ROOT / "server" / "Dockerfile").read_text()
+    assert "--proxy-headers" in dockerfile
+    assert '--forwarded-allow-ips' in dockerfile
+    assert "BUDGET_APP_FORWARDED_ALLOW_IPS:-127.0.0.1" in dockerfile
 
 
 def test_docker_installer_uses_immutable_image_without_host_python_and_never_overwrites():
@@ -124,6 +174,9 @@ def test_docker_installer_uses_immutable_image_without_host_python_and_never_ove
     assert '--user "$USER_ID:$GROUP_ID"' in script
     assert '/bundle/configure.py --output /bundle/.env' in script
     assert '--bind-address 127.0.0.1' in script
+    assert '--public-host "$PUBLIC_HOST"' in script
+    assert "Public HTTPS hostname" in script
+    assert "Raw port 8080 remains private" in script
     assert 'if [ ! -e "$ENV_FILE" ]' in script
     assert "Existing private configuration preserved" in script
     assert 'compose.yaml" config --quiet' in script
@@ -461,6 +514,7 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY" in setup
     assert "CLEARPOCKET_OPERATIONS_STORAGE" in setup
     assert 'distribution/server/compose.yaml' in builder
+    assert 'distribution/server/Caddyfile' in builder
     assert 'distribution/server/manage.py' in builder
     assert '"${#VERSION}" -gt 10' in builder
 
@@ -479,6 +533,7 @@ test -x shared/ClearPocketSetup.sh
 test -x shared/ClearPocketBackup.sh
 test -x shared/ClearPocketRestore.sh
 test -f shared/server/compose.yaml
+test -f shared/server/Caddyfile
 test -f shared/server/manage.py
 test -f shared/server/tools/backup.sh
 test -f shared/server/tools/restore.sh

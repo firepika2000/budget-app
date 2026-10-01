@@ -40,7 +40,9 @@ class ExportTransport:
 
 def test_portable_import_mapping_covers_every_transferable_table():
     mapped_tables = {table for _, table in SECTION_TABLE_ORDER}
-    assert mapped_tables == set(Base.metadata.tables) - {"setup_state", "refresh_sessions"}
+    assert mapped_tables == set(Base.metadata.tables) - {
+        "setup_state", "refresh_sessions", "pairing_codes",
+    }
 
 
 def test_portable_import_creates_separate_login_capable_authority_with_exact_money(

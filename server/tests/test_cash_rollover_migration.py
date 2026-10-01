@@ -51,7 +51,10 @@ def test_populated_0028_policy_history_upgrade_preserves_rows_and_financial_obse
         paths += [f"{root}/accounts/{item['id']}/balance" for item in (account, card)]
         paths += [f"{root}/transactions", f"{root}/allocations"]
         observations = {path: client.get(path, headers=auth(token)).json() for path in paths}
-        tables = [name for name in inspect(engine).get_table_names() if name not in ("alembic_version", "refresh_sessions", "audit_events", "cash_rollover_policy_changes", "import_batches")]
+        tables = [name for name in inspect(engine).get_table_names() if name not in (
+            "alembic_version", "refresh_sessions", "pairing_codes", "audit_events",
+            "cash_rollover_policy_changes", "import_batches",
+        )]
         with engine.connect() as connection:
             before = {name: sorted(connection.execute(text(f'SELECT * FROM "{name}"')).all(), key=repr) for name in tables}
         command.downgrade(config, "0028_target_snoozes")

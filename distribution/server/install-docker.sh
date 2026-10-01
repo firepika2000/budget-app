@@ -20,10 +20,18 @@ docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required.
 IMAGE="ghcr.io/firepika2000/budget-server:$VERSION"
 if [ ! -e "$ENV_FILE" ]; then
     printf 'ClearPocket Server first-time setup\n'
-    printf 'The iPhone app requires HTTPS for remote servers. This installer binds to this computer only.\n'
-    printf "Allowed local hostname [localhost]: "
-    IFS= read -r ALLOWED_HOST || ALLOWED_HOST=""
-    [ -n "$ALLOWED_HOST" ] || ALLOWED_HOST=localhost
+    printf 'For remote iPhone access, enter a public DNS name already pointing to this server.\n'
+    printf 'Leave it blank for private, loopback-only installation.\n'
+    printf "Public HTTPS hostname [local only]: "
+    IFS= read -r PUBLIC_HOST || PUBLIC_HOST=""
+    if [ -n "$PUBLIC_HOST" ]; then
+        ALLOWED_HOST=$PUBLIC_HOST
+        printf 'Automatic HTTPS requires inbound TCP ports 80 and 443. Raw port 8080 remains private.\n'
+    else
+        printf "Allowed local hostname [localhost]: "
+        IFS= read -r ALLOWED_HOST || ALLOWED_HOST=""
+        [ -n "$ALLOWED_HOST" ] || ALLOWED_HOST=localhost
+    fi
     DEFAULT_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/clearpocket-server"
     printf 'Durable data folder [%s]: ' "$DEFAULT_DATA"
     IFS= read -r DATA_ROOT || DATA_ROOT=""
@@ -40,13 +48,14 @@ if [ ! -e "$ENV_FILE" ]; then
     docker pull "$IMAGE"
     USER_ID=$(id -u)
     GROUP_ID=$(id -g)
-    docker run --rm --user "$USER_ID:$GROUP_ID" \
-        --volume "$SCRIPT_DIR:/bundle" --entrypoint python "$IMAGE" \
-        /bundle/configure.py --output /bundle/.env \
+    set -- /bundle/configure.py --output /bundle/.env \
         --allowed-hosts "$ALLOWED_HOST" --bind-address 127.0.0.1 --port 8080 \
         --image ghcr.io/firepika2000/budget-server --version "$VERSION" \
         --database-storage "$DATABASE" --attachments-storage "$ATTACHMENTS" \
         --operations-storage "$OPERATIONS"
+    [ -z "$PUBLIC_HOST" ] || set -- "$@" --public-host "$PUBLIC_HOST"
+    docker run --rm --user "$USER_ID:$GROUP_ID" \
+        --volume "$SCRIPT_DIR:/bundle" --entrypoint python "$IMAGE" "$@"
 else
     [ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || {
         echo "Existing private configuration is not a regular file; refusing to replace it." >&2
@@ -66,7 +75,12 @@ while [ "$attempt" -lt 60 ]; do
         -f "$SCRIPT_DIR/compose.yaml" exec -T api python -c \
         "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/v1/health', timeout=3)" \
         >/dev/null 2>&1; then
-        echo "ClearPocket Server $VERSION is healthy. Open http://127.0.0.1:8080/admin on this computer."
+        PUBLIC_URL=$(sed -n 's/^BUDGET_APP_PAIRING_PUBLIC_URL=//p' "$ENV_FILE" | head -n 1)
+        if [ -n "$PUBLIC_URL" ]; then
+            echo "ClearPocket Server $VERSION is healthy. Open $PUBLIC_URL/admin."
+        else
+            echo "ClearPocket Server $VERSION is healthy. Open http://127.0.0.1:8080/admin on this computer."
+        fi
         exit 0
     fi
     attempt=$((attempt + 1))

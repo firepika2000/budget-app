@@ -13,7 +13,12 @@ This guide deploys Budget App on one Linux host with Docker Compose and Caddy. T
 
 ## Configure
 
-From `server/`, create the deployment environment:
+For a versioned customer bundle, run `distribution/server/install-docker.sh`. Enter the public DNS
+hostname when prompted and it will generate the secrets and activate the pinned Caddy TLS profile.
+The hostname must already resolve to the host and TCP 80/443 must reach it. The raw API stays on host
+loopback and must not be port-forwarded.
+
+For an advanced source deployment from `server/`, create the deployment environment:
 
 ```sh
 cp .env.example .env

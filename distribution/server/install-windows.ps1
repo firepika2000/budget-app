@@ -18,6 +18,7 @@ $requiredFiles = @(
     "README.md",
     "VERSION",
     "backup-windows.ps1",
+    "Caddyfile",
     "compose.yaml",
     "restore-windows.ps1",
     "start-windows.cmd",

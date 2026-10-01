@@ -14,6 +14,7 @@ import tempfile
 
 
 HOST = re.compile(r"^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|localhost)$")
+DNS_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 IMAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,254}$")
 VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 VOLUME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -47,6 +48,24 @@ def _bind_address(value: str) -> str:
     return str(address)
 
 
+def _public_host(value: str) -> str:
+    """Validate a public DNS hostname suitable for automatic ACME certificates."""
+    value = value.strip().lower().rstrip(".")
+    if not value or len(value) > 253 or "." not in value:
+        raise ConfigurationError("Public host must be a fully qualified DNS hostname")
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        pass
+    else:
+        raise ConfigurationError("Public host cannot be an IP address")
+    if value == "localhost" or value.endswith(".localhost"):
+        raise ConfigurationError("Public host cannot be localhost")
+    if any(not DNS_LABEL.fullmatch(label) for label in value.split(".")):
+        raise ConfigurationError("Public host is not a valid DNS hostname")
+    return value
+
+
 def _storage(value: str) -> str:
     """Accept a Docker volume name or an absolute host bind path safe for .env/Compose."""
     value = value.strip().replace("\\", "/")
@@ -67,7 +86,8 @@ def configuration(*, allowed_hosts: str, bind_address: str, port: int,
                   image: str, version: str,
                   database_storage: str = "clearpocket_database",
                   attachments_storage: str = "clearpocket_attachments",
-                  operations_storage: str = "clearpocket_operations") -> str:
+                  operations_storage: str = "clearpocket_operations",
+                  public_host: str | None = None) -> str:
     if not 1 <= port <= 65535:
         raise ConfigurationError("Port must be between 1 and 65535")
     if not IMAGE.fullmatch(image) or ".." in image:
@@ -75,6 +95,7 @@ def configuration(*, allowed_hosts: str, bind_address: str, port: int,
     if not VERSION.fullmatch(version):
         raise ConfigurationError("Server version is invalid")
     attachment_key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
+    allowed = _hosts(allowed_hosts)
     values = {
         "CLEARPOCKET_SERVER_IMAGE": image,
         "CLEARPOCKET_SERVER_VERSION": version,
@@ -83,11 +104,25 @@ def configuration(*, allowed_hosts: str, bind_address: str, port: int,
         "CLEARPOCKET_DATABASE_STORAGE": _storage(database_storage),
         "CLEARPOCKET_ATTACHMENTS_STORAGE": _storage(attachments_storage),
         "CLEARPOCKET_OPERATIONS_STORAGE": _storage(operations_storage),
-        "BUDGET_APP_ALLOWED_HOSTS": _hosts(allowed_hosts),
+        "BUDGET_APP_ALLOWED_HOSTS": allowed,
         "BUDGET_APP_DB_PASSWORD": secrets.token_urlsafe(36),
         "BUDGET_APP_JWT_SECRET": secrets.token_urlsafe(48),
         "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY": attachment_key,
     }
+    if public_host is not None:
+        public = _public_host(public_host)
+        hosts = [public if host.rstrip(".").lower() == public else host
+                 for host in allowed.split(",")]
+        if public not in hosts:
+            hosts.append(public)
+        values.update({
+            "COMPOSE_PROFILES": "tls",
+            "CLEARPOCKET_PUBLIC_HOST": public,
+            "BUDGET_APP_ALLOWED_HOSTS": ",".join(hosts),
+            "BUDGET_APP_PAIRING_PUBLIC_URL": f"https://{public}",
+            # Only containers on the private Compose network can reach the API directly.
+            "BUDGET_APP_FORWARDED_ALLOW_IPS": "*",
+        })
     return "".join(f"{key}={value}\n" for key, value in values.items())
 
 
@@ -127,6 +162,8 @@ def parser() -> argparse.ArgumentParser:
                        help="Docker volume name or absolute host directory for encrypted attachments")
     value.add_argument("--operations-storage", default="clearpocket_operations",
                        help="Docker volume name or absolute host directory for backup/recovery health")
+    value.add_argument("--public-host",
+                       help="Public DNS hostname; enables bundled Caddy HTTPS and secure pairing")
     return value
 
 
@@ -138,7 +175,8 @@ def main() -> int:
             image=arguments.image, version=arguments.version,
             database_storage=arguments.database_storage,
             attachments_storage=arguments.attachments_storage,
-            operations_storage=arguments.operations_storage)
+            operations_storage=arguments.operations_storage,
+            public_host=arguments.public_host)
         write_configuration(arguments.output, contents)
     except (ConfigurationError, OSError) as error:
         parser().error(str(error))

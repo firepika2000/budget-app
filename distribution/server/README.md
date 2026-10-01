@@ -2,7 +2,8 @@
 
 This directory is the shared, versioned deployment contract for the future customer installers. It
 is intentionally a **preview/advanced self-hosting foundation**, not yet the v1.0 graphical server
-manager. It must not be advertised as zero-configuration or safe for direct Internet exposure.
+manager. The Docker installer now supports an opt-in, guarded public-HTTPS path; the package must not
+be advertised as zero-configuration.
 
 The same immutable multi-architecture API image, PostgreSQL version, persistent volume layout,
 health checks, environment contract, and migration entry point are used on all supported container
@@ -20,9 +21,16 @@ run:
 
 The installer requires Docker only. It pulls the exact immutable image, runs the bundled configuration
 generator inside that image as the current host user, creates three private durable data directories,
-validates Compose, starts the services, and waits for the real health endpoint. It binds to loopback
-because guided TLS/pairing is not complete. Rerunning it preserves `.env` and every authority directory;
-it never offers reset or overwrite.
+validates Compose, starts the services, and waits for the real health endpoint. Rerunning it preserves
+`.env` and every authority directory; it never offers reset or overwrite.
+
+On first run, leave the public hostname blank for a loopback-only installation. To reach the server
+from an iPhone over the Internet, enter a fully qualified DNS hostname that already resolves to this
+host and allow inbound TCP 80 and 443. The generated `tls` Compose profile starts the pinned bundled
+Caddy proxy, obtains and renews a public certificate automatically, configures the exact secure
+pairing origin, and publishes only Caddy. The API remains bound to host loopback and PostgreSQL has no
+published port. Do not forward port 8080. Caddy certificate issuance requires the hostname and router
+port forwarding to be correct before installation.
 
 Create a coordinated encrypted backup with Docker alone:
 
@@ -104,17 +112,23 @@ and encrypted attachments are a single recovery unit even though they use separa
 The operations storage contains only persistent backup/recovery health documents shown to owners; it
 must remain durable across container replacement but is not a substitute for either authority volume.
 
-The default bind address is loopback. Put a supported TLS reverse proxy or private-network overlay in
-front of it. `0.0.0.0` is available for protected LAN testing, but the iPhone app deliberately rejects
-ordinary remote HTTP; secure pairing/TLS remains a release gate. Never forward raw port 8080 from a
-home router to the Internet.
+The default bind address is loopback. The guided `--public-host budget.example.com` path enables the
+bundled TLS proxy; advanced administrators may instead place a private-network overlay or their own
+trusted TLS proxy in front of the API. `0.0.0.0` is available only for protected LAN testing, but the
+iPhone app deliberately rejects ordinary remote HTTP. Never forward raw port 8080 from a home router
+to the Internet.
 
 Advanced deployments that already terminate trusted HTTPS may set
 `BUDGET_APP_PAIRING_PUBLIC_URL=https://budget.example.com`. This enables the one-time pairing API only
 for that canonical origin; it does not configure certificates, open firewall ports, or make raw HTTP
 safe. Pairing secrets expire after five minutes, are stored only as hashes, redeem once into ordinary
-rotating sessions, and can be revoked through the session API. Native QR enrollment and guided TLS
-remain incomplete, so normal users should not be instructed to configure this manually.
+rotating sessions, and can be revoked through the session API. The native app displays and scans the
+versioned QR enrollment payload and uses the ordinary rotating session after redemption.
+
+In bundled TLS mode, the API trusts forwarded scheme information because only the Caddy service on
+the private Compose network can reach its container port and the host-published API port remains
+loopback-only. Do not attach untrusted containers to this Compose network or change the API binding to
+a public interface while `BUDGET_APP_FORWARDED_ALLOW_IPS=*` is configured.
 
 ## Safe server management
 
