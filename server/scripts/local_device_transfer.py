@@ -24,7 +24,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 FORMAT = "com.clearpocket.local-backup"
 FORMAT_VERSION = 1
-LOCAL_SCHEMA_VERSION = 4
+LOCAL_SCHEMA_VERSION = 5
 LOCAL_APPLICATION_ID = 0x42554447
 MAGIC = b"CPBF1"
 MAXIMUM_CHUNK_BYTES = 1_100_000

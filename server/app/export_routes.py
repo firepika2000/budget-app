@@ -230,20 +230,16 @@ def local_device_transfer_eligibility(
     add(
         "unsupported_audit_history",
         "This budget has server audit or import history not yet represented on Local Device.",
-        count(TransactionChange, TransactionChange.budget_id == budget.id)
-        + count(ImportBatch, ImportBatch.budget_id == budget.id)
+        count(ImportBatch, ImportBatch.budget_id == budget.id)
         + count(MonthlyAssignment, MonthlyAssignment.budget_id == budget.id),
-    )
-    add(
-        "credit_reserve_event_history",
-        "Credit-card reserve event history is not yet portable to Local Device.",
-        count(CreditCardReserveEvent, CreditCardReserveEvent.budget_id == budget.id),
     )
     add(
         "non_owner_financial_attribution",
         "Financial records attributed to another household member cannot be flattened to one owner.",
         count(Transaction, Transaction.budget_id == budget.id, Transaction.created_by_user_id != household.owner_user_id)
-        + count(AllocationOperation, AllocationOperation.budget_id == budget.id, AllocationOperation.actor_user_id != household.owner_user_id),
+        + count(AllocationOperation, AllocationOperation.budget_id == budget.id, AllocationOperation.actor_user_id != household.owner_user_id)
+        + count(TransactionChange, TransactionChange.budget_id == budget.id, TransactionChange.actor_user_id != household.owner_user_id)
+        + count(CreditCardReserveEvent, CreditCardReserveEvent.budget_id == budget.id, CreditCardReserveEvent.actor_user_id != household.owner_user_id),
     )
 
     return {

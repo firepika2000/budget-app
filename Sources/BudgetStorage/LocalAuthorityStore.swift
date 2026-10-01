@@ -273,6 +273,36 @@ public struct LocalCreditReserveAttributionRecord: Equatable, Sendable {
     }
 }
 
+public struct LocalTransactionChangeRecord: Equatable, Sendable {
+    public let id: String; public let budgetID: String; public let transactionID: String
+    public let actorUserID: String; public let action: String; public let beforeJSON: String?
+    public let afterJSON: String?; public let createdAt: String
+    public init(id: String, budgetID: String, transactionID: String, actorUserID: String,
+                action: String, beforeJSON: String? = nil, afterJSON: String? = nil, createdAt: String) {
+        self.id = id; self.budgetID = budgetID; self.transactionID = transactionID
+        self.actorUserID = actorUserID; self.action = action; self.beforeJSON = beforeJSON
+        self.afterJSON = afterJSON; self.createdAt = createdAt
+    }
+}
+
+public struct LocalCreditReserveEventRecord: Equatable, Sendable {
+    public let id: String; public let budgetID: String; public let creditAccountID: String
+    public let paymentCategoryID: String; public let spendingCategoryID: String?
+    public let sourceTransactionID: String?; public let transferID: String?
+    public let occurredOn: String; public let amountMinor: Int64; public let kind: String
+    public let actorUserID: String; public let createdAt: String
+    public init(id: String, budgetID: String, creditAccountID: String, paymentCategoryID: String,
+                spendingCategoryID: String? = nil, sourceTransactionID: String? = nil,
+                transferID: String? = nil, occurredOn: String, amountMinor: Int64, kind: String,
+                actorUserID: String, createdAt: String) {
+        self.id = id; self.budgetID = budgetID; self.creditAccountID = creditAccountID
+        self.paymentCategoryID = paymentCategoryID; self.spendingCategoryID = spendingCategoryID
+        self.sourceTransactionID = sourceTransactionID; self.transferID = transferID
+        self.occurredOn = occurredOn; self.amountMinor = amountMinor; self.kind = kind
+        self.actorUserID = actorUserID; self.createdAt = createdAt
+    }
+}
+
 public struct LocalAuthoritySnapshot: Equatable, Sendable {
     public let identity: LocalAuthorityIdentity
     public let accounts: [LocalAccountRecord]
@@ -289,6 +319,8 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
     public let debtTerms: [LocalAccountDebtTermsRecord]
     public let cashRolloverPolicies: [LocalCashRolloverPolicyRecord]
     public let creditReserveAttributions: [LocalCreditReserveAttributionRecord]
+    public let transactionChanges: [LocalTransactionChangeRecord]
+    public let creditReserveEvents: [LocalCreditReserveEventRecord]
 
     public init(identity: LocalAuthorityIdentity, accounts: [LocalAccountRecord],
                 groups: [LocalCategoryGroupRecord], categories: [LocalCategoryRecord],
@@ -298,7 +330,9 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
                 schedules: [LocalScheduleRecord], attachments: [LocalAttachmentRecord],
                 debtTerms: [LocalAccountDebtTermsRecord] = [],
                 cashRolloverPolicies: [LocalCashRolloverPolicyRecord] = [],
-                creditReserveAttributions: [LocalCreditReserveAttributionRecord] = []) {
+                creditReserveAttributions: [LocalCreditReserveAttributionRecord] = [],
+                transactionChanges: [LocalTransactionChangeRecord] = [],
+                creditReserveEvents: [LocalCreditReserveEventRecord] = []) {
         self.identity = identity; self.accounts = accounts; self.groups = groups
         self.categories = categories; self.payees = payees; self.payeeAliases = payeeAliases
         self.transactions = transactions; self.allocations = allocations
@@ -306,6 +340,7 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
         self.schedules = schedules; self.attachments = attachments
         self.debtTerms = debtTerms; self.cashRolloverPolicies = cashRolloverPolicies
         self.creditReserveAttributions = creditReserveAttributions
+        self.transactionChanges = transactionChanges; self.creditReserveEvents = creditReserveEvents
     }
 }
 
@@ -549,11 +584,14 @@ public actor LocalAuthorityStore {
         let debtTerms = try await loadDebtTerms(accountIDs: Set(accounts.map(\.id)))
         let rollover = try await loadCashRolloverPolicies(budgetID: budgetID)
         let reserve = try await loadCreditReserveAttributions(transactionIDs: Set(transactions.map(\.id)))
+        let changes = try await loadTransactionChanges(budgetID: budgetID)
+        let reserveEvents = try await loadCreditReserveEvents(budgetID: budgetID)
         return .init(identity: identity, accounts: accounts, groups: groups, categories: categories,
                      payees: payees, payeeAliases: payeeAliases, transactions: transactions, allocations: allocations,
                      reconciliations: reconciliations, targets: targets, schedules: schedules,
                      attachments: attachments, debtTerms: debtTerms, cashRolloverPolicies: rollover,
-                     creditReserveAttributions: reserve)
+                     creditReserveAttributions: reserve, transactionChanges: changes,
+                     creditReserveEvents: reserveEvents)
     }
 
     public func integrityCheck() async throws { try await database.integrityCheck() }
@@ -568,6 +606,8 @@ public actor LocalAuthorityStore {
             .init("DELETE FROM account_debt_terms WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM cash_rollover_policies WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM credit_reserve_attributions WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
+            .init("DELETE FROM credit_reserve_events WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM transaction_changes WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM attachments WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM reconciliations WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM category_targets WHERE category_id IN (SELECT id FROM categories WHERE budget_id=?)", values: [.text(budgetID)]),
@@ -599,6 +639,12 @@ public actor LocalAuthorityStore {
         for item in value.transactions { statements += [transactionInsert(item)] + splitInserts(item) }
         statements += value.creditReserveAttributions.map { item in
             .init("INSERT INTO credit_reserve_attributions(transaction_id,category_id,amount_minor) VALUES (?,?,?)", values: [.text(item.transactionID), .text(item.categoryID), .integer(item.amountMinor)])
+        }
+        statements += value.transactionChanges.map { item in
+            .init("INSERT INTO transaction_changes(id,budget_id,transaction_id,actor_user_id,action,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.transactionID), .text(item.actorUserID), .text(item.action), optionalText(item.beforeJSON), optionalText(item.afterJSON), .text(item.createdAt)])
+        }
+        statements += value.creditReserveEvents.map { item in
+            .init("INSERT INTO credit_reserve_events(id,budget_id,credit_account_id,payment_category_id,spending_category_id,source_transaction_id,transfer_id,occurred_on,amount_minor,kind,actor_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.creditAccountID), .text(item.paymentCategoryID), optionalText(item.spendingCategoryID), optionalText(item.sourceTransactionID), optionalText(item.transferID), .text(item.occurredOn), .integer(item.amountMinor), .text(item.kind), .text(item.actorUserID), .text(item.createdAt)])
         }
         statements += value.allocations.map { item in
             .init("INSERT INTO allocation_operations(id,budget_id,category_id,amount_minor,occurred_on,kind,actor_user_id,note,created_at,operation_id,source_category_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), optionalText(item.categoryID), .integer(item.amountMinor), .text(item.occurredOn), .text(item.kind), .text(item.actorUserID), .text(item.note), .text(item.createdAt), .text(item.operationID), optionalText(item.sourceCategoryID)])
@@ -726,6 +772,18 @@ public actor LocalAuthorityStore {
             let transactionID = try text(row, "transaction_id")
             guard transactionIDs.contains(transactionID) else { return nil }
             return try .init(transactionID: transactionID, categoryID: text(row, "category_id"), amountMinor: integer(row, "amount_minor"))
+        }
+    }
+
+    private func loadTransactionChanges(budgetID: String) async throws -> [LocalTransactionChangeRecord] {
+        try await database.rows(.init("SELECT * FROM transaction_changes WHERE budget_id=? ORDER BY created_at,id", values: [.text(budgetID)])).map { row in
+            try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), transactionID: text(row, "transaction_id"), actorUserID: text(row, "actor_user_id"), action: text(row, "action"), beforeJSON: optionalText(row, "before_json"), afterJSON: optionalText(row, "after_json"), createdAt: text(row, "created_at"))
+        }
+    }
+
+    private func loadCreditReserveEvents(budgetID: String) async throws -> [LocalCreditReserveEventRecord] {
+        try await database.rows(.init("SELECT * FROM credit_reserve_events WHERE budget_id=? ORDER BY occurred_on,id", values: [.text(budgetID)])).map { row in
+            try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), creditAccountID: text(row, "credit_account_id"), paymentCategoryID: text(row, "payment_category_id"), spendingCategoryID: optionalText(row, "spending_category_id"), sourceTransactionID: optionalText(row, "source_transaction_id"), transferID: optionalText(row, "transfer_id"), occurredOn: text(row, "occurred_on"), amountMinor: integer(row, "amount_minor"), kind: text(row, "kind"), actorUserID: text(row, "actor_user_id"), createdAt: text(row, "created_at"))
         }
     }
 

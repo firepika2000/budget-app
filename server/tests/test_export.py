@@ -92,14 +92,20 @@ def test_unknown_budget_export_does_not_disclose_existence(client, owner_token):
 def test_local_device_transfer_eligibility_is_owner_only_and_refuses_shared_history(
     client, owner_token, session_factory
 ):
-    from .test_budgeting_api import create_budget
+    from .test_advanced_ledger import record
+    from .test_budgeting_api import create_budget, create_budget_structure
 
     budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=category["id"], amount_minor=-500, occurred_on="2026-10-01",
+    )
     path = f"/api/v1/budgets/{budget['id']}/local-device-transfer-eligibility"
 
-    clean = client.get(path, headers=auth(owner_token))
-    assert clean.status_code == 200, clean.text
-    assert clean.json() == {
+    personal = client.get(path, headers=auth(owner_token))
+    assert personal.status_code == 200, personal.text
+    assert personal.json() == {
         "target_provider": "local_device",
         "eligible": True,
         "budget_id": budget["id"],

@@ -30,6 +30,13 @@ def _rows(connection: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
     return [dict(row) for row in connection.execute(f'SELECT * FROM "{table}"')]
 
 
+def _optional_rows(connection: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return _rows(connection, table) if exists else []
+
+
 def _one(rows: list[dict[str, Any]], label: str) -> dict[str, Any]:
     if len(rows) != 1:
         raise LocalDeviceTransferError(f"Local Device authority must contain exactly one {label}")
@@ -75,9 +82,9 @@ def convert_staged_local_device(root: Path, owner_email: str) -> tuple[dict[str,
     with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as connection:
         connection.row_factory = sqlite3.Row
         schema = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        if schema != LOCAL_SCHEMA_VERSION:
+        if not 4 <= schema <= LOCAL_SCHEMA_VERSION:
             raise LocalDeviceTransferError(
-                f"Local Device authority must be upgraded to schema {LOCAL_SCHEMA_VERSION} before transfer"
+                f"Local Device authority schema {schema} is not supported by this server"
             )
         household = _one(_rows(connection, "households"), "household")
         budget = _one(_rows(connection, "budgets"), "budget")
@@ -105,6 +112,8 @@ def convert_staged_local_device(root: Path, owner_email: str) -> tuple[dict[str,
         debt_terms = _rows(connection, "account_debt_terms")
         rollover = _rows(connection, "cash_rollover_policies")
         reserve_attribution = _rows(connection, "credit_reserve_attributions")
+        transaction_changes = _optional_rows(connection, "transaction_changes")
+        persisted_reserve_events = _optional_rows(connection, "credit_reserve_events")
 
     owner_id = str(owner["id"])
     budget_id = str(budget["id"])
@@ -265,8 +274,36 @@ def convert_staged_local_device(root: Path, owner_email: str) -> tuple[dict[str,
             })
 
     transaction_by_id = {str(item["id"]): item for item in transactions}
+    server_transaction_changes = []
+    for item in transaction_changes:
+        local_transaction_id = str(item["transaction_id"])
+        if local_transaction_id not in transaction_ids:
+            raise LocalDeviceTransferError("Local Device transaction change references an unknown transaction")
+        server_transaction_changes.append({
+            **item,
+            "id": _bounded_id(item["id"], "transaction-change"),
+            "budget_id": budget_id,
+            "transaction_id": transaction_ids[local_transaction_id],
+        })
+
     reserve_events = []
-    for item in reserve_attribution:
+    for item in persisted_reserve_events:
+        source_transaction_id = item["source_transaction_id"]
+        if source_transaction_id is not None and str(source_transaction_id) not in transaction_ids:
+            raise LocalDeviceTransferError("Local Device reserve event references an unknown transaction")
+        credit_account_id = str(item["credit_account_id"])
+        if credit_account_id not in payment_category_ids:
+            raise LocalDeviceTransferError("Local Device reserve event references a non-credit account")
+        reserve_events.append({
+            **item,
+            "id": _bounded_id(item["id"], "credit-reserve-event"),
+            "budget_id": budget_id,
+            "payment_category_id": payment_category_ids[credit_account_id],
+            "source_transaction_id": (
+                transaction_ids[str(source_transaction_id)] if source_transaction_id is not None else None
+            ),
+        })
+    for item in ([] if persisted_reserve_events else reserve_attribution):
         transaction = transaction_by_id.get(str(item["transaction_id"]))
         if transaction is None or str(transaction["account_id"]) not in payment_category_ids:
             raise LocalDeviceTransferError("Local Device reserve attribution has no credit transaction")
@@ -288,7 +325,7 @@ def convert_staged_local_device(root: Path, owner_email: str) -> tuple[dict[str,
         if item["transfer_id"]:
             transfer_groups[str(item["transfer_id"])].append(item)
     account_by_id = {str(item["id"]): item for item in accounts}
-    for transfer_id, legs in transfer_groups.items():
+    for transfer_id, legs in ([] if persisted_reserve_events else transfer_groups.items()):
         if len(legs) != 2 or sum(int(item["amount_minor"]) for item in legs) != 0:
             raise LocalDeviceTransferError("Local Device transfer is incomplete or unbalanced")
         source = next(item for item in legs if int(item["amount_minor"]) < 0)
@@ -384,6 +421,7 @@ def convert_staged_local_device(root: Path, owner_email: str) -> tuple[dict[str,
         "allocation_operations": server_allocation_operations,
         "allocation_postings": server_allocation_postings,
         "transactions": server_transactions, "transaction_splits": server_splits,
+        "transaction_changes": server_transaction_changes,
         "transaction_attachments": attachment_rows,
         "credit_card_reserve_events": reserve_events,
     }

@@ -781,7 +781,11 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                 promotionalRateBasisPoints: item.promotionalRateBasisPoints.map(Int64.init),
                 promotionalEndsOn: item.promotionalEndsOn, updatedAt: ISO8601DateFormatter().string(from: now()))
         }
-        let value = try demo.localAuthoritySnapshot(identity: localIdentity, preservingAttachments: previous.attachments, debtTerms: debtTerms)
+        let value = try demo.localAuthoritySnapshot(
+            identity: localIdentity, preservingAttachments: previous.attachments,
+            debtTerms: debtTerms, transactionChanges: previous.transactionChanges,
+            creditReserveEvents: previous.creditReserveEvents
+        )
         try await localAuthority.replaceWorkspaceState(value)
         try await localAuthority.integrityCheck()
     }

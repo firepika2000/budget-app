@@ -454,7 +454,7 @@ The reverse direction now begins with an owner-only, server-authoritative compat
 screen evaluates that gate with the current rotated credential. A personal budget with no
 server-only records is identified as eligible for a future verified cutover; shared identities,
 invitations/access history, delegated requests or allowances, grants, unsupported audit/import
-history, non-owner financial attribution, and credit-reserve event history produce bounded,
+history and non-owner financial attribution produce bounded,
 human-readable blockers. Non-owners receive the same not-found response as an invisible budget.
 
 This is deliberately not a lossy exporter: it does not flatten a household into one person, discard
@@ -473,6 +473,15 @@ not exist. Any failure removes staging and leaves both the current phone authori
 unchanged. Network transport, server-ledger-to-local projection mapping, canonical financial
 observation comparison, Keychain handoff, and cold-launch activation remain the next integration
 checkpoint.
+
+Local schema v5 closes two ordinary-personal-budget fidelity gaps required by that mapping. It now
+persists immutable transaction change snapshots and the exact credit-card reserve event ledger in
+addition to current reserve attribution. Existing v4 phone authorities migrate additively. Workspace
+publication carries imported audit rows forward instead of clearing them, Local Device backup
+includes them automatically with SQLite, and the cross-language phone-to-server converter preserves
+v5 rows while remaining able to reconstruct reserve events from supported v4 authorities. Transfer
+eligibility therefore no longer rejects an otherwise personal budget merely because it contains an
+ordinary transaction edit or funded card purchase; non-owner actor attribution remains a blocker.
 
 ## Remaining implementation sequence
 

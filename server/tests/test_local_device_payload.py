@@ -8,7 +8,7 @@ import sqlite3
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from scripts.local_device_payload import convert_staged_local_device
+from scripts.local_device_payload import _id, convert_staged_local_device
 from scripts.local_device_transfer import (
     canonical_json, import_local_device_backup_into_server, LOCAL_APPLICATION_ID,
 )
@@ -25,7 +25,7 @@ def _authority(root: Path) -> Path:
     database_path = root / "authority.sqlite3"
     schema = f"""
     PRAGMA application_id={LOCAL_APPLICATION_ID};
-    PRAGMA user_version=4;
+    PRAGMA user_version=5;
     CREATE TABLE households(id TEXT,name TEXT,created_at TEXT);
     CREATE TABLE users(id TEXT,display_name TEXT,email TEXT);
     CREATE TABLE memberships(household_id TEXT,user_id TEXT,role TEXT,is_active INTEGER);
@@ -45,6 +45,8 @@ def _authority(root: Path) -> Path:
     CREATE TABLE account_debt_terms(account_id TEXT,terms_type TEXT,annual_rate_basis_points INTEGER,rate_type TEXT,payment_frequency TEXT,scheduled_payment_minor INTEGER,minimum_payment_rule TEXT,minimum_payment_minor INTEGER,minimum_payment_rate_basis_points INTEGER,due_day INTEGER,statement_day INTEGER,original_principal_minor INTEGER,original_term_months INTEGER,remaining_term_months INTEGER,promotional_rate_basis_points INTEGER,promotional_ends_on TEXT,updated_at TEXT);
     CREATE TABLE cash_rollover_policies(id TEXT,budget_id TEXT,effective_month TEXT,policy TEXT,version INTEGER,source TEXT,actor_user_id TEXT,created_at TEXT);
     CREATE TABLE credit_reserve_attributions(transaction_id TEXT,category_id TEXT,amount_minor INTEGER);
+    CREATE TABLE transaction_changes(id TEXT,budget_id TEXT,transaction_id TEXT,actor_user_id TEXT,action TEXT,before_json TEXT,after_json TEXT,created_at TEXT);
+    CREATE TABLE credit_reserve_events(id TEXT,budget_id TEXT,credit_account_id TEXT,payment_category_id TEXT,spending_category_id TEXT,source_transaction_id TEXT,transfer_id TEXT,occurred_on TEXT,amount_minor INTEGER,kind TEXT,actor_user_id TEXT,created_at TEXT);
     """
     stamp = "2026-10-01T12:00:00+00:00"
     with sqlite3.connect(database_path) as database:
@@ -74,6 +76,9 @@ def _authority(root: Path) -> Path:
         database.execute("INSERT INTO account_debt_terms VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", ("card", "credit_card", 1999, "variable", "monthly", None, "fixed", 25_00, None, 15, None, None, None, None, None, None, stamp))
         database.execute("INSERT INTO cash_rollover_policies VALUES(?,?,?,?,?,?,?,?)", ("rollover", "budget", "2026-11-01", "carry_category_deficit", 1, "local", None, stamp))
         database.execute("INSERT INTO credit_reserve_attributions VALUES(?,?,?)", ("purchase", "groceries", 5_00))
+        database.execute("INSERT INTO transaction_changes VALUES(?,?,?,?,?,?,?,?)", ("change", "budget", "purchase", "owner", "create", None, '{"amount_minor":-500}', stamp))
+        database.execute("INSERT INTO credit_reserve_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", ("reserve", "budget", "card", _id("budget", "credit-payment", "card"), "groceries", "purchase", None, "2026-10-02", 5_00, "funded_purchase", "owner", stamp))
+        database.execute("INSERT INTO credit_reserve_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", ("payment-reserve", "budget", "card", _id("budget", "credit-payment", "card"), None, None, "transfer", "2026-10-03", -3_00, "payment", "owner", stamp))
 
     attachment_key = bytes(range(32))
     (root / "attachment-key.bin").write_bytes(attachment_key)
@@ -129,6 +134,8 @@ def test_verified_local_device_converts_and_imports_complete_exact_authority(tmp
         database.execute("UPDATE transactions SET id=? WHERE id='purchase'", (legacy_transaction_id,))
         database.execute("UPDATE transaction_splits SET id=?, transaction_id=? WHERE id='split'", (legacy_split_id, legacy_transaction_id))
         database.execute("UPDATE credit_reserve_attributions SET transaction_id=? WHERE transaction_id='purchase'", (legacy_transaction_id,))
+        database.execute("UPDATE transaction_changes SET transaction_id=? WHERE transaction_id='purchase'", (legacy_transaction_id,))
+        database.execute("UPDATE credit_reserve_events SET source_transaction_id=? WHERE source_transaction_id='purchase'", (legacy_transaction_id,))
         database.execute("UPDATE attachments SET id=?, transaction_id=? WHERE id='attachment'", (legacy_attachment_id, legacy_transaction_id))
         database.execute("UPDATE payee_aliases SET id=? WHERE id='alias'", (legacy_alias_id,))
     payload, extracted = convert_staged_local_device(staged, "owner@example.com")
@@ -145,6 +152,12 @@ def test_verified_local_device_converts_and_imports_complete_exact_authority(tmp
     ) for item in payload[collection])
     converted_attachment = payload["transaction_attachments"][0]
     assert converted_attachment["transaction_id"] == payload["transaction_splits"][0]["transaction_id"]
+    assert payload["transaction_changes"][0]["transaction_id"] == converted_attachment["transaction_id"]
+    purchase_reserve = next(
+        item for item in payload["credit_card_reserve_events"] if item["source_transaction_id"] is not None
+    )
+    assert purchase_reserve["source_transaction_id"] == converted_attachment["transaction_id"]
+    assert purchase_reserve["payment_category_id"] == card["payment_category_id"]
     assert (extracted / "attachments" / converted_attachment["id"]).read_bytes() == b"local receipt"
 
     destination = LocalServerConfiguration.load_or_create(tmp_path / "server")
@@ -153,6 +166,9 @@ def test_verified_local_device_converts_and_imports_complete_exact_authority(tmp
     with sqlite3.connect(destination.database_path) as database:
         assert database.execute("SELECT COALESCE(SUM(amount_minor),0) FROM allocation_postings").fetchone() == (0,)
         assert database.execute("SELECT COUNT(*) FROM credit_card_reserve_events").fetchone() == (2,)
+        assert database.execute("SELECT action,after_json FROM transaction_changes").fetchone() == (
+            "create", '{"amount_minor":-500}'
+        )
         assert database.execute("SELECT payment_category_id FROM accounts WHERE id='card'").fetchone()[0]
         assert database.execute("SELECT amount_minor FROM transactions WHERE payee_name='Starting Balance'").fetchone() == (10_000,)
         assert database.execute("PRAGMA foreign_key_check").fetchall() == []
