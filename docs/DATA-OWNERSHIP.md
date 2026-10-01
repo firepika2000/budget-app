@@ -53,6 +53,11 @@ transaction replacement and deletion preserve immutable
 opening/creator facts and refuse missing records. Split totals are checked with overflow-safe integer
 math before any write, while balances, activity, reserves, and other accounting consequences remain
 the responsibility of the shared application-service layer.
+Local schema v4 persists the shared engine's signed per-transaction, per-category credit-card
+reserve attribution. Reopen replays the canonical transaction engine and rejects a non-empty durable
+attribution set if it differs. Databases migrated from v3 may derive it once and publish it on their
+next normal workspace save. This makes the observation explicit in backup and transfer data without
+moving reserve calculation into the storage layer.
 The native target links `BudgetStorage` through `LocalDeviceStorageComposition`. That composition
 opens the SQLite authority and encrypted attachment vault together beneath the app's private
 Application Support directory and supplies the vault only with the Keychain-held key. The canonical

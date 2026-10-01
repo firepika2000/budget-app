@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 3
+    public static let schemaVersion = 4
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -225,6 +225,21 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 4 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV4 { try execute(sql, on: database) }
+                try execute(
+                    "INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)",
+                    values: [.integer(4), .text(Self.timestamp())], on: database
+                )
+                try execute("PRAGMA user_version = 4", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -282,6 +297,11 @@ public actor LocalDatabase {
         "ALTER TABLE scheduled_transactions ADD COLUMN last_realized_on TEXT",
         "CREATE TABLE account_debt_terms (account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE, terms_type TEXT NOT NULL, annual_rate_basis_points INTEGER, rate_type TEXT, payment_frequency TEXT, scheduled_payment_minor INTEGER, minimum_payment_rule TEXT, minimum_payment_minor INTEGER, minimum_payment_rate_basis_points INTEGER, due_day INTEGER, statement_day INTEGER, original_principal_minor INTEGER, original_term_months INTEGER, remaining_term_months INTEGER, promotional_rate_basis_points INTEGER, promotional_ends_on TEXT, updated_at TEXT NOT NULL) STRICT",
         "CREATE TABLE cash_rollover_policies (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, effective_month TEXT NOT NULL, policy TEXT NOT NULL, version INTEGER NOT NULL, source TEXT NOT NULL, actor_user_id TEXT REFERENCES users(id), created_at TEXT NOT NULL, UNIQUE(budget_id,version)) STRICT"
+    ]
+
+    private static let schemaV4 = [
+        "CREATE TABLE credit_reserve_attributions (transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE, category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE RESTRICT, amount_minor INTEGER NOT NULL CHECK(amount_minor != 0), PRIMARY KEY(transaction_id,category_id)) STRICT",
+        "CREATE INDEX idx_credit_reserve_category ON credit_reserve_attributions(category_id,transaction_id)"
     ]
 
     private static func execute(

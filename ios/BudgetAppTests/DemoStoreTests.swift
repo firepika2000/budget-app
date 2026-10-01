@@ -2001,6 +2001,39 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalAuthorityPersistsCanonicalCreditReserveAttributionAndRejectsTampering() throws {
+        let identity = LocalAuthorityIdentity(
+            householdID: "local-household", householdName: "Local Household",
+            ownerUserID: "local-owner", ownerDisplayName: "Owner",
+            budgetID: "local-budget", budgetName: "Local Budget", currencyCode: "USD"
+        )
+        let source = DemoStore()
+        let snapshot = try source.localAuthoritySnapshot(identity: identity)
+        XCTAssertFalse(snapshot.creditReserveAttributions.isEmpty)
+
+        let reopened = DemoStore(fresh: true)
+        try reopened.loadLocalAuthority(snapshot)
+        let roundTrip = try reopened.localAuthoritySnapshot(identity: identity)
+        XCTAssertEqual(roundTrip.creditReserveAttributions, snapshot.creditReserveAttributions)
+
+        let first = try XCTUnwrap(snapshot.creditReserveAttributions.first)
+        let damaged = LocalAuthoritySnapshot(
+            identity: snapshot.identity, accounts: snapshot.accounts, groups: snapshot.groups,
+            categories: snapshot.categories, payees: snapshot.payees,
+            payeeAliases: snapshot.payeeAliases, transactions: snapshot.transactions,
+            allocations: snapshot.allocations, reconciliations: snapshot.reconciliations,
+            targets: snapshot.targets, schedules: snapshot.schedules,
+            attachments: snapshot.attachments, debtTerms: snapshot.debtTerms,
+            cashRolloverPolicies: snapshot.cashRolloverPolicies,
+            creditReserveAttributions: [
+                .init(transactionID: first.transactionID, categoryID: first.categoryID,
+                      amountMinor: first.amountMinor + 1)
+            ] + Array(snapshot.creditReserveAttributions.dropFirst())
+        )
+        XCTAssertThrowsError(try DemoStore(fresh: true).loadLocalAuthority(damaged))
+    }
+
+    @MainActor
     func testVerifiedLocalRestoreCutsOverOnlyAtNextCompositionAndRetainsRollback() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-device-cutover-\(UUID().uuidString)", isDirectory: true)

@@ -1111,6 +1111,18 @@ extension DemoStore {
             try applyCanonicalTransaction(transaction)
             transactions.append(transaction)
         }
+        if !value.creditReserveAttributions.isEmpty {
+            var persisted: [String: [String: Int64]] = [:]
+            for item in value.creditReserveAttributions {
+                guard persisted[item.transactionID]?[item.categoryID] == nil else {
+                    throw LocalStorageError.invalidSnapshot("Credit-card reserve attribution is duplicated")
+                }
+                persisted[item.transactionID, default: [:]][item.categoryID] = item.amountMinor
+            }
+            guard persisted == reserveAttribution else {
+                throw LocalStorageError.invalidSnapshot("Credit-card reserve attribution does not match canonical replay")
+            }
+        }
         transactions.sort { ($0.date, $0.id) > ($1.date, $1.id) }
         for reconciliation in value.reconciliations {
             if let index = accounts.firstIndex(where: { $0.id == reconciliation.accountID }) {
@@ -1160,6 +1172,12 @@ extension DemoStore {
             let audit = cashRolloverAudit[item.version]
             return LocalCashRolloverPolicyRecord(id: audit?.id ?? "local-rollover-\(item.version)", budgetID: identity.budgetID, effectiveMonth: item.effectiveMonth.iso, policy: item.policy.rawValue, version: Int64(item.version), source: audit?.source ?? "local", actorUserID: audit?.actorID, createdAt: audit?.createdAt ?? stamp)
         }
-        return LocalAuthoritySnapshot(identity: identity, accounts: accountRows, groups: groupRows, categories: categoryRows, payees: payeeRows, payeeAliases: aliases, transactions: transactionRows, allocations: allocationRows, reconciliations: reconciliations, targets: targets, schedules: scheduleRows, attachments: preservingAttachments, debtTerms: debtTerms, cashRolloverPolicies: rollover)
+        let reserveRows: [LocalCreditReserveAttributionRecord] = reserveAttribution.keys.sorted().flatMap { transactionID in
+            (reserveAttribution[transactionID] ?? [:]).keys.sorted().compactMap { categoryID -> LocalCreditReserveAttributionRecord? in
+                guard let amount = reserveAttribution[transactionID]?[categoryID], amount != 0 else { return nil }
+                return LocalCreditReserveAttributionRecord(transactionID: transactionID, categoryID: categoryID, amountMinor: amount)
+            }
+        }
+        return LocalAuthoritySnapshot(identity: identity, accounts: accountRows, groups: groupRows, categories: categoryRows, payees: payeeRows, payeeAliases: aliases, transactions: transactionRows, allocations: allocationRows, reconciliations: reconciliations, targets: targets, schedules: scheduleRows, attachments: preservingAttachments, debtTerms: debtTerms, cashRolloverPolicies: rollover, creditReserveAttributions: reserveRows)
     }
 }

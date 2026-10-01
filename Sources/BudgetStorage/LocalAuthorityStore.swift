@@ -261,6 +261,18 @@ public struct LocalAttachmentRecord: Equatable, Sendable {
     }
 }
 
+public struct LocalCreditReserveAttributionRecord: Equatable, Sendable {
+    public let transactionID: String
+    public let categoryID: String
+    public let amountMinor: Int64
+
+    public init(transactionID: String, categoryID: String, amountMinor: Int64) {
+        self.transactionID = transactionID
+        self.categoryID = categoryID
+        self.amountMinor = amountMinor
+    }
+}
+
 public struct LocalAuthoritySnapshot: Equatable, Sendable {
     public let identity: LocalAuthorityIdentity
     public let accounts: [LocalAccountRecord]
@@ -276,6 +288,7 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
     public let attachments: [LocalAttachmentRecord]
     public let debtTerms: [LocalAccountDebtTermsRecord]
     public let cashRolloverPolicies: [LocalCashRolloverPolicyRecord]
+    public let creditReserveAttributions: [LocalCreditReserveAttributionRecord]
 
     public init(identity: LocalAuthorityIdentity, accounts: [LocalAccountRecord],
                 groups: [LocalCategoryGroupRecord], categories: [LocalCategoryRecord],
@@ -284,13 +297,15 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
                 reconciliations: [LocalReconciliationRecord], targets: [LocalCategoryTargetRecord],
                 schedules: [LocalScheduleRecord], attachments: [LocalAttachmentRecord],
                 debtTerms: [LocalAccountDebtTermsRecord] = [],
-                cashRolloverPolicies: [LocalCashRolloverPolicyRecord] = []) {
+                cashRolloverPolicies: [LocalCashRolloverPolicyRecord] = [],
+                creditReserveAttributions: [LocalCreditReserveAttributionRecord] = []) {
         self.identity = identity; self.accounts = accounts; self.groups = groups
         self.categories = categories; self.payees = payees; self.payeeAliases = payeeAliases
         self.transactions = transactions; self.allocations = allocations
         self.reconciliations = reconciliations; self.targets = targets
         self.schedules = schedules; self.attachments = attachments
         self.debtTerms = debtTerms; self.cashRolloverPolicies = cashRolloverPolicies
+        self.creditReserveAttributions = creditReserveAttributions
     }
 }
 
@@ -533,10 +548,12 @@ public actor LocalAuthorityStore {
         let attachments = try await loadAttachments(transactionIDs: Set(transactions.map(\.id)))
         let debtTerms = try await loadDebtTerms(accountIDs: Set(accounts.map(\.id)))
         let rollover = try await loadCashRolloverPolicies(budgetID: budgetID)
+        let reserve = try await loadCreditReserveAttributions(transactionIDs: Set(transactions.map(\.id)))
         return .init(identity: identity, accounts: accounts, groups: groups, categories: categories,
                      payees: payees, payeeAliases: payeeAliases, transactions: transactions, allocations: allocations,
                      reconciliations: reconciliations, targets: targets, schedules: schedules,
-                     attachments: attachments, debtTerms: debtTerms, cashRolloverPolicies: rollover)
+                     attachments: attachments, debtTerms: debtTerms, cashRolloverPolicies: rollover,
+                     creditReserveAttributions: reserve)
     }
 
     public func integrityCheck() async throws { try await database.integrityCheck() }
@@ -550,6 +567,7 @@ public actor LocalAuthorityStore {
         var statements: [LocalSQLStatement] = [
             .init("DELETE FROM account_debt_terms WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM cash_rollover_policies WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM credit_reserve_attributions WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM attachments WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM reconciliations WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM category_targets WHERE category_id IN (SELECT id FROM categories WHERE budget_id=?)", values: [.text(budgetID)]),
@@ -579,6 +597,9 @@ public actor LocalAuthorityStore {
             .init("INSERT INTO payee_aliases(id,payee_id,display_name,normalized_name) VALUES (?,?,?,?)", values: [.text(item.id), .text(item.payeeID), .text(item.displayName), .text(item.normalizedName)])
         }
         for item in value.transactions { statements += [transactionInsert(item)] + splitInserts(item) }
+        statements += value.creditReserveAttributions.map { item in
+            .init("INSERT INTO credit_reserve_attributions(transaction_id,category_id,amount_minor) VALUES (?,?,?)", values: [.text(item.transactionID), .text(item.categoryID), .integer(item.amountMinor)])
+        }
         statements += value.allocations.map { item in
             .init("INSERT INTO allocation_operations(id,budget_id,category_id,amount_minor,occurred_on,kind,actor_user_id,note,created_at,operation_id,source_category_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), optionalText(item.categoryID), .integer(item.amountMinor), .text(item.occurredOn), .text(item.kind), .text(item.actorUserID), .text(item.note), .text(item.createdAt), .text(item.operationID), optionalText(item.sourceCategoryID)])
         }
@@ -695,6 +716,16 @@ public actor LocalAuthorityStore {
     private func loadCashRolloverPolicies(budgetID: String) async throws -> [LocalCashRolloverPolicyRecord] {
         try await database.rows(.init("SELECT * FROM cash_rollover_policies WHERE budget_id=? ORDER BY version", values: [.text(budgetID)])).map { row in
             try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), effectiveMonth: text(row, "effective_month"), policy: text(row, "policy"), version: integer(row, "version"), source: text(row, "source"), actorUserID: optionalText(row, "actor_user_id"), createdAt: text(row, "created_at"))
+        }
+    }
+
+    private func loadCreditReserveAttributions(transactionIDs: Set<String>) async throws -> [LocalCreditReserveAttributionRecord] {
+        guard !transactionIDs.isEmpty else { return [] }
+        let rows = try await database.rows(.init("SELECT * FROM credit_reserve_attributions ORDER BY transaction_id,category_id"))
+        return try rows.compactMap { row in
+            let transactionID = try text(row, "transaction_id")
+            guard transactionIDs.contains(transactionID) else { return nil }
+            return try .init(transactionID: transactionID, categoryID: text(row, "category_id"), amountMinor: integer(row, "amount_minor"))
         }
     }
 

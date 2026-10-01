@@ -28,6 +28,29 @@ final class LocalDatabaseTests: XCTestCase {
         try await reopened.integrityCheck()
     }
 
+    func testSchemaV3UpgradesInPlaceToV4WithoutChangingExistingFinancialRows() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("v3-upgrade.sqlite")
+        var database: LocalDatabase? = try LocalDatabase(fileURL: databaseURL)
+        try await database?.transaction(fixtureStatements)
+        try await database?.transaction([
+            .init("DROP TABLE credit_reserve_attributions"),
+            .init("DELETE FROM local_schema_migrations WHERE version = 4"),
+            .init("PRAGMA user_version = 3"),
+        ])
+        database = nil
+
+        let upgraded = try LocalDatabase(fileURL: databaseURL)
+        let version = try await upgraded.rows(.init("PRAGMA user_version"))
+        let transactions = try await upgraded.rows(.init("SELECT amount_minor,memo FROM transactions"))
+        let reserveAttribution = try await upgraded.rows(.init("SELECT * FROM credit_reserve_attributions"))
+        XCTAssertEqual(version.first?.values.values.first, .integer(4))
+        XCTAssertEqual(transactions, [
+            .init(values: ["amount_minor": .integer(-12_345), "memo": .text("Exact local purchase")])
+        ])
+        XCTAssertTrue(reserveAttribution.isEmpty)
+        try await upgraded.integrityCheck()
+    }
+
     func testFailedTransactionRollsBackEveryStatement() async throws {
         let database = try LocalDatabase(fileURL: try temporaryDirectory().appendingPathComponent("rollback.sqlite"))
         do {
@@ -94,7 +117,7 @@ final class LocalDatabaseTests: XCTestCase {
 
         let reopened = try LocalAuthorityStore(fileURL: databaseURL)
         var snapshot = try await reopened.snapshot(budgetID: "budget")
-        try await reopened.replaceWorkspaceState(.init(identity: snapshot.identity, accounts: snapshot.accounts, groups: snapshot.groups, categories: snapshot.categories, payees: snapshot.payees, payeeAliases: snapshot.payeeAliases, transactions: snapshot.transactions, allocations: snapshot.allocations, reconciliations: snapshot.reconciliations, targets: snapshot.targets, schedules: snapshot.schedules, attachments: snapshot.attachments, debtTerms: [.init(accountID: "checking", termsType: "credit_card", annualRateBasisPoints: 1999, minimumPaymentMinor: 25_00, dueDay: 15, updatedAt: timestamp)], cashRolloverPolicies: [.init(id: "rollover-1", budgetID: "budget", effectiveMonth: "2026-10-01", policy: "absorb_next_month", version: 1, source: "user_selection", actorUserID: "owner", createdAt: timestamp)]))
+        try await reopened.replaceWorkspaceState(.init(identity: snapshot.identity, accounts: snapshot.accounts, groups: snapshot.groups, categories: snapshot.categories, payees: snapshot.payees, payeeAliases: snapshot.payeeAliases, transactions: snapshot.transactions, allocations: snapshot.allocations, reconciliations: snapshot.reconciliations, targets: snapshot.targets, schedules: snapshot.schedules, attachments: snapshot.attachments, debtTerms: [.init(accountID: "checking", termsType: "credit_card", annualRateBasisPoints: 1999, minimumPaymentMinor: 25_00, dueDay: 15, updatedAt: timestamp)], cashRolloverPolicies: [.init(id: "rollover-1", budgetID: "budget", effectiveMonth: "2026-10-01", policy: "absorb_next_month", version: 1, source: "user_selection", actorUserID: "owner", createdAt: timestamp)], creditReserveAttributions: [.init(transactionID: "purchase", categoryID: "groceries", amountMinor: 12_345)]))
         snapshot = try await reopened.snapshot(budgetID: "budget")
         XCTAssertEqual(snapshot.identity.currencyCode, "USD")
         XCTAssertEqual(snapshot.accounts.map(\.openingBalanceMinor), [9_007_199_254_740_991])
@@ -121,6 +144,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(snapshot.attachments.map(\.objectName), ["objects/receipt.enc"])
         XCTAssertEqual(snapshot.debtTerms.first?.annualRateBasisPoints, 1999)
         XCTAssertEqual(snapshot.cashRolloverPolicies.first?.policy, "absorb_next_month")
+        XCTAssertEqual(snapshot.creditReserveAttributions, [.init(transactionID: "purchase", categoryID: "groceries", amountMinor: 12_345)])
         try await reopened.integrityCheck()
     }
 
@@ -149,7 +173,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertTrue(snapshot.transactions.isEmpty)
     }
 
-    func testLocalSchemaV3PreservesTransactionMetadataAndAllowsUncategorizedIncome() async throws {
+    func testLocalSchemaV4PreservesTransactionMetadataAndAllowsUncategorizedIncome() async throws {
         let databaseURL = try temporaryDirectory().appendingPathComponent("metadata.sqlite")
         let store = try LocalAuthorityStore(fileURL: databaseURL)
         let timestamp = "2026-09-30T12:00:00Z"
@@ -163,7 +187,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.tags, ["income", "monthly"])
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 3)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 4)
     }
 
     func testTypedAuthorityStoreUpdateAndDeleteLifecyclePersistsAcrossReopen() async throws {
