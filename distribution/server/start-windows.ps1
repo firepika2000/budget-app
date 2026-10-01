@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus", "Update")]
+    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ImportPortable", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus", "Update")]
     [string] $Operation = "Interactive"
 )
 
@@ -463,18 +463,32 @@ function Import-ClearPocketLocalDevice(
     Write-Host "Local Device budget imported and verified. Keep the iPhone backup until you have tested this server and created a server backup."
 }
 
-function Import-ClearPocketPortableArchive {
+function Import-ClearPocketPortableArchive(
+    [string] $ArchivePath = "",
+    [string] $IdentityPath = "",
+    [string] $Confirmation = "",
+    [string] $PasswordInput = ""
+) {
     Write-Host ""
     Write-Host "Move an encrypted portable household into this empty server"
     Write-Host "This validates the complete provider-neutral archive and never merges or replaces existing server data."
-    $archiveInput = Read-Host "Full path to the encrypted portable .tar.gz.age archive"
+    $archiveInput = $ArchivePath
+    if ([string]::IsNullOrWhiteSpace($archiveInput)) {
+        $archiveInput = Read-Host "Full path to the encrypted portable .tar.gz.age archive"
+    }
     if ([string]::IsNullOrWhiteSpace($archiveInput)) { throw "No portable archive was selected." }
     $archive = Get-Item -LiteralPath ([IO.Path]::GetFullPath($archiveInput)) -Force
     if ($archive.PSIsContainer -or ($archive.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
         -not $archive.Name.EndsWith(".tar.gz.age", [StringComparison]::OrdinalIgnoreCase)) {
         throw "The portable archive must be a regular, non-linked .tar.gz.age file."
     }
-    $identityInput = Read-Host "Full path to the age identity (leave blank for a passphrase archive)"
+    $identityInput = $IdentityPath
+    if ([string]::IsNullOrWhiteSpace($identityInput) -and [string]::IsNullOrEmpty($PasswordInput)) {
+        $identityInput = Read-Host "Full path to the age identity (leave blank for a passphrase archive)"
+    }
+    if (-not [string]::IsNullOrEmpty($PasswordInput) -and [string]::IsNullOrWhiteSpace($identityInput)) {
+        throw "The graphical portable import requires an age identity. Use Advanced for a passphrase archive."
+    }
     $identity = $null
     if (-not [string]::IsNullOrWhiteSpace($identityInput)) {
         $identity = Get-Item -LiteralPath ([IO.Path]::GetFullPath($identityInput)) -Force
@@ -482,8 +496,11 @@ function Import-ClearPocketPortableArchive {
             throw "The age identity must be a regular, non-linked file."
         }
     }
-    $confirmation = Read-Host "Type IMPORT to stop this server and initialize it from the portable archive"
-    if ($confirmation -cne "IMPORT") {
+    $confirmationValue = $Confirmation
+    if ([string]::IsNullOrWhiteSpace($confirmationValue)) {
+        $confirmationValue = Read-Host "Type IMPORT to stop this server and initialize it from the portable archive"
+    }
+    if ($confirmationValue -cne "IMPORT") {
         Write-Host "Import cancelled. The server and portable archive were not changed."
         return
     }
@@ -502,13 +519,19 @@ function Import-ClearPocketPortableArchive {
         )
         $prepare += " && install -m 600 -o budget -g budget /import/identity.txt /tmp/identity.txt"
     }
-    $arguments += @(
-        "api", "sh", "-c",
-        "$prepare && exec su -s /bin/sh budget -c 'alembic upgrade head && " +
-        "python scripts/portable_import.py /tmp/archive.age --server-environment'"
-    )
+    $command = "$prepare && exec su -s /bin/sh budget -c 'alembic upgrade head && " +
+        "python scripts/portable_import.py /tmp/archive.age --server-environment"
+    if ([string]::IsNullOrEmpty($PasswordInput)) {
+        $arguments += @("api", "sh", "-c", $command + "'")
+    } else {
+        $arguments += @("-T", "api", "sh", "-c", $command + " --owner-password-stdin'")
+    }
     try {
-        Invoke-ClearPocketCompose $arguments
+        if ([string]::IsNullOrEmpty($PasswordInput)) {
+            Invoke-ClearPocketCompose $arguments
+        } else {
+            Invoke-ClearPocketComposeWithPrivateInput $PasswordInput $arguments
+        }
     } catch {
         Write-Warning "Portable import failed. The API remains stopped so a partial authority is never served."
         Write-Warning "The source archive and identity were mounted read-only and were not changed."
@@ -718,6 +741,22 @@ if ($Operation -ne "Interactive") {
                     -PackagePath $env:CLEARPOCKET_LOCAL_IMPORT_PACKAGE `
                     -Confirmation $env:CLEARPOCKET_LOCAL_IMPORT_CONFIRMATION `
                     -CredentialsInput $privateInput
+            } finally {
+                Remove-Variable privateInput -ErrorAction SilentlyContinue
+            }
+        }
+        "ImportPortable" {
+            $privateInput = [Console]::In.ReadToEnd()
+            if ([string]::IsNullOrWhiteSpace($privateInput) -or $privateInput.Length -gt 16384 -or
+                $privateInput.Contains([char] 0)) {
+                throw "Private portable-import credentials are missing or invalid."
+            }
+            try {
+                Import-ClearPocketPortableArchive `
+                    -ArchivePath $env:CLEARPOCKET_PORTABLE_IMPORT_ARCHIVE `
+                    -IdentityPath $env:CLEARPOCKET_PORTABLE_IMPORT_IDENTITY `
+                    -Confirmation $env:CLEARPOCKET_PORTABLE_IMPORT_CONFIRMATION `
+                    -PasswordInput $privateInput
             } finally {
                 Remove-Variable privateInput -ErrorAction SilentlyContinue
             }

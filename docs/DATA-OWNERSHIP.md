@@ -497,9 +497,9 @@ hidden; daily start/open, health, safe stop, logs, redacted diagnostics, and coo
 backup use explicit non-interactive manager operations. The first graphical backup separately selects
 generation and recovery-key folders, confirms before adopting an existing identity, and delegates to
 the same verified capture/publication engine. Restore, transfer, update, scheduling, and Dropbox tools
-use the same command engine; recipient-encrypted restore is now graphical and still refuses anything
-but a new empty destination. Passphrase restore and portable import remain
-available through an advanced entry while their dedicated graphical forms are completed. Windows now
+use the same command engine; recipient-encrypted restore and identity-encrypted portable import are
+now graphical and still refuse anything but a new empty destination. Passphrase restore/import remain
+available through an advanced entry so their secrets travel directly to `age`. Windows now
 also exposes Local Device transfer in the graphical manager: the package is selected as a read-only
 folder, masked recovery/owner credentials cross only a private standard-input pipe, and the existing
 authenticated converter still owns empty-destination initialization and observation verification.
@@ -527,6 +527,11 @@ after destination observation checks pass. Failure leaves the API stopped and th
 It can likewise activate a provider-neutral encrypted portable archive in an empty destination, with
 the archive and optional age identity mounted read-only and all validation/password/observation gates
 executing inside the version-matched container.
+The graphical **Move Server Backup** flow selects the portable archive and age identity as regular
+read-only files, collects the replacement owner password in masked fields, and sends only the two
+password lines through private standard input. The same provider-neutral validate-then-commit importer
+owns all empty-authority, attachment, and financial-observation checks; no Windows-specific migration
+or merge implementation exists.
 It now creates full PostgreSQL-plus-attachment encrypted generations using only PowerShell and the
 pinned server containers. First use generates an owner-held age recovery identity and persists only
 its public recipient in server configuration. Capture uses the canonical manifest, atomic publication,

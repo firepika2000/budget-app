@@ -58,6 +58,7 @@ if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
           <Button Name="BackupButton" Content="Create Encrypted Backup" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="RestoreButton" Content="Restore Empty Server" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="ImportLocalButton" Content="Move iPhone Budget" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="ImportPortableButton" Content="Move Server Backup" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="DropboxButton" Content="Configure Dropbox Backup" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="DisconnectDropboxButton" Content="Disconnect Dropbox" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="ScheduleBackupButton" Content="Schedule Daily Backups" Padding="18,9" Margin="0,0,10,10"/>
@@ -93,7 +94,7 @@ $storageBox = $window.FindName("StorageBox")
 $hostBox = $window.FindName("HostBox")
 $outputBox = $window.FindName("OutputBox")
 $stateText = $window.FindName("StateText")
-$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "ImportLocalButton", "DropboxButton", "DisconnectDropboxButton", "ScheduleBackupButton", "ScheduleStatusButton", "RemoveScheduleButton", "UpdateServerButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
+$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "ImportLocalButton", "ImportPortableButton", "DropboxButton", "DisconnectDropboxButton", "ScheduleBackupButton", "ScheduleStatusButton", "RemoveScheduleButton", "UpdateServerButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
 $actionButtons = @{}
 foreach ($name in $actionNames) { $actionButtons[$name] = $window.FindName($name) }
 
@@ -190,6 +191,58 @@ function Read-LocalDeviceImportCredentials {
             OwnerEmail = $boxes[1].Text.Trim()
             Password = $boxes[2].Text
         }
+    } finally {
+        foreach ($box in $boxes) { $box.Text = "" }
+        $form.Dispose()
+    }
+}
+
+function Read-PortableImportPassword {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Move Server Backup"
+    $form.Width = 520
+    $form.Height = 250
+    $form.StartPosition = "CenterParent"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $labels = @("New server owner password", "Confirm password")
+    $boxes = @()
+    for ($index = 0; $index -lt $labels.Count; $index++) {
+        $label = New-Object System.Windows.Forms.Label
+        $label.Text = $labels[$index]
+        $label.SetBounds(24, 24 + ($index * 58), 450, 20)
+        $box = New-Object System.Windows.Forms.TextBox
+        $box.SetBounds(24, 44 + ($index * 58), 450, 24)
+        $box.UseSystemPasswordChar = $true
+        $form.Controls.AddRange(@($label, $box))
+        $boxes += $box
+    }
+    $guidance = New-Object System.Windows.Forms.Label
+    $guidance.Text = "Use at least 12 characters. All users will sign in again after the move."
+    $guidance.SetBounds(24, 142, 450, 30)
+    $ok = New-Object System.Windows.Forms.Button
+    $ok.Text = "Continue"
+    $ok.SetBounds(282, 176, 92, 30)
+    $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $cancel = New-Object System.Windows.Forms.Button
+    $cancel.Text = "Cancel"
+    $cancel.SetBounds(382, 176, 92, 30)
+    $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.AddRange(@($guidance, $ok, $cancel))
+    $form.AcceptButton = $ok
+    $form.CancelButton = $cancel
+    try {
+        if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
+        if ($boxes[0].Text.Length -lt 12) {
+            [System.Windows.MessageBox]::Show("The new owner password must contain at least 12 characters.", "Move Server Backup", "OK", "Warning") | Out-Null
+            return $null
+        }
+        if ($boxes[0].Text -cne $boxes[1].Text) {
+            [System.Windows.MessageBox]::Show("The owner passwords do not match.", "Move Server Backup", "OK", "Warning") | Out-Null
+            return $null
+        }
+        return $boxes[0].Text
     } finally {
         foreach ($box in $boxes) { $box.Text = "" }
         $form.Dispose()
@@ -465,6 +518,30 @@ $actionButtons["ImportLocalButton"].Add_Click({
     } ($privatePayload + "`n")
     $privatePayload = $null
     $credentials = $null
+})
+$actionButtons["ImportPortableButton"].Add_Click({
+    $archive = Select-ClearPocketFile "Choose an encrypted portable household" "Encrypted portable household (*.tar.gz.age)|*.tar.gz.age|All files (*.*)|*.*"
+    if ($null -eq $archive) { return }
+    $identity = Select-ClearPocketFile "Choose the age identity for this portable household" "Age identity (*.txt)|*.txt|All files (*.*)|*.*"
+    if ($null -eq $identity) { return }
+    $password = Read-PortableImportPassword
+    if ($null -eq $password) { return }
+    $decision = [System.Windows.MessageBox]::Show(
+        "This verifies the complete provider-neutral archive and initializes only an empty server. The source files stay read-only, existing server data is never merged or replaced, and all users must sign in again. Continue?",
+        "Move server backup?", "YesNo", "Warning"
+    )
+    if ($decision -ne [System.Windows.MessageBoxResult]::Yes) {
+        $password = $null
+        return
+    }
+    $privatePayload = $password + "`n" + $password + "`n"
+    $password = $null
+    Invoke-ManagerOperation "ImportPortable" @{
+        CLEARPOCKET_PORTABLE_IMPORT_ARCHIVE = $archive
+        CLEARPOCKET_PORTABLE_IMPORT_IDENTITY = $identity
+        CLEARPOCKET_PORTABLE_IMPORT_CONFIRMATION = "IMPORT"
+    } $privatePayload
+    $privatePayload = $null
 })
 $actionButtons["DropboxButton"].Add_Click({
     $configuration = Read-DropboxConfiguration

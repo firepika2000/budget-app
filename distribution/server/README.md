@@ -352,7 +352,7 @@ encrypted generation and separate identity, confirms the operation, and delegate
 verify-before-mutate recovery engine; populated database or attachment destinations are still refused.
 Passphrase-encrypted generations remain in the advanced terminal flow because `age` intentionally
 reads that secret from a real terminal. `start-windows.cmd` remains the advanced manager used by
-**Backup, Restore & Advanced** while the remaining migration and credential forms are brought into the graphical surface.
+**Backup, Restore & Advanced** for passphrase recovery and other expert operations.
 The graphical **Move iPhone Budget** action selects an exported `.clearpocketbackup` folder and uses
 masked recovery-key/password fields to initialize an empty server. Those private values travel only
 over redirected standard input to the version-matched converter—not in command arguments,
@@ -388,7 +388,11 @@ The Windows menu also accepts the provider-neutral encrypted portable archive pr
 ClearPocket Server. It mounts the archive and optional age identity read-only, prompts inside the
 version-matched container for a new owner password, and invokes the same validate-then-commit importer
 used by the shared manager. The destination database and attachment store must be empty; failure keeps
-the API stopped and never changes either source file.
+the API stopped and never changes either source file. Identity-encrypted portable archives are also
+available through graphical **Move Server Backup** file selection and masked password fields. The new
+owner password crosses only redirected standard input; it is never placed in arguments, environment
+variables, temporary files, logs, or diagnostics. Passphrase portable archives remain in the advanced
+terminal flow so `age` receives that passphrase directly from a terminal.
 
 The Windows menu can also create a complete encrypted server backup without installing Python,
 PostgreSQL tools, or `age` on Windows. On first use it creates an age recovery identity through the
@@ -439,7 +443,7 @@ into a new empty server instead. A signed installer package will eventually wrap
 
 Python and developer tools are not required. Docker Desktop is still required. Secure remote
 pairing/TLS is guided for a new installation, but automatic router/firewall configuration, platform
-signing, and a graphical form for portable import remain open product work.
+signing, and Windows runtime/accessibility acceptance remain open product work.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;

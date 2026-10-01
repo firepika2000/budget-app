@@ -351,6 +351,8 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert ":/import/identity.txt:ro" in portable_section
     assert "BUDGET_APP_BACKUP_AGE_IDENTITY=/tmp/identity.txt" in portable_section
     assert "scripts/portable_import.py /tmp/archive.age --server-environment" in portable_section
+    assert "--owner-password-stdin" in portable_section
+    assert "Invoke-ClearPocketComposeWithPrivateInput $PasswordInput $arguments" in portable_section
     assert "The API remains stopped" in portable_section
     assert '"9" {' in script
     assert 'backup-windows.ps1' in script
@@ -386,6 +388,7 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
 
     manager = (ROOT / "distribution" / "server" / "manager-windows.ps1").read_text()
     assert 'Content="Move iPhone Budget"' in manager
+    assert 'Content="Move Server Backup"' in manager
     assert "Read-LocalDeviceImportCredentials" in manager
     assert "UseSystemPasswordChar" in manager
     assert '$info.RedirectStandardInput = $null -ne $PrivateInput' in manager
@@ -468,7 +471,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert '$info.RedirectStandardOutput = $true' in manager
     assert '$info.RedirectStandardError = $true' in manager
     assert "Remove-Item" not in manager
-    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus", "Update")' in engine
+    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ImportPortable", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus", "Update")' in engine
     assert '$Operation -notin @("Configure", "Interactive")' in engine
     assert '$env:CLEARPOCKET_SETUP_STORAGE_ROOT' in engine
     assert '$env:CLEARPOCKET_SETUP_PUBLIC_HOST' in engine
@@ -478,7 +481,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
         "Move-Item -LiteralPath $temporary -Destination $environmentFile"
     )
     noninteractive = engine.split('if ($Operation -ne "Interactive")', 1)[1]
-    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus", "Update"):
+    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ImportPortable", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus", "Update"):
         assert f'"{operation}"' in noninteractive
     assert 'Invoke-ClearPocketCompose @("stop")' in noninteractive
     assert 'Operation = "Manager"' in noninteractive
@@ -490,6 +493,9 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert '[Console]::In.ReadToEnd()' in noninteractive
     assert '-PackagePath $env:CLEARPOCKET_LOCAL_IMPORT_PACKAGE' in noninteractive
     assert '-CredentialsInput $privateInput' in noninteractive
+    assert '-ArchivePath $env:CLEARPOCKET_PORTABLE_IMPORT_ARCHIVE' in noninteractive
+    assert '-IdentityPath $env:CLEARPOCKET_PORTABLE_IMPORT_IDENTITY' in noninteractive
+    assert '-PasswordInput $privateInput' in noninteractive
     assert '-Mode $env:CLEARPOCKET_DROPBOX_MODE' in noninteractive
     assert '-Folder $env:CLEARPOCKET_DROPBOX_FOLDER_INPUT' in noninteractive
     assert 'Disable-ClearPocketDropboxBackup -Confirmation $env:CLEARPOCKET_DROPBOX_CONFIRMATION' in noninteractive
@@ -508,6 +514,12 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert 'Invoke-ManagerOperation "BackupScheduleStatus"' in manager
     assert 'Invoke-ManagerOperation "RemoveBackupSchedule"' in manager
     assert 'Invoke-ManagerOperation "Update" $updateEnvironment' in manager
+    assert "Read-PortableImportPassword" in manager
+    assert 'Invoke-ManagerOperation "ImportPortable"' in manager
+    assert "CLEARPOCKET_PORTABLE_IMPORT_ARCHIVE" in manager
+    assert "CLEARPOCKET_PORTABLE_IMPORT_IDENTITY" in manager
+    assert "CLEARPOCKET_PORTABLE_IMPORT_PASSWORD" not in manager
+    assert '$info.RedirectStandardInput = $null -ne $PrivateInput' in manager
     assert 'CLEARPOCKET_UPDATE_CONFIRMATION = "UPDATE"' in manager
     assert 'CLEARPOCKET_UPDATE_BACKUP_DIRECTORY' in manager
     assert '-Confirmation $env:CLEARPOCKET_UPDATE_CONFIRMATION' in noninteractive

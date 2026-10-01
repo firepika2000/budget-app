@@ -1428,9 +1428,10 @@ existing identity; the canonical capture, encryption, health, retention, and opt
 publication engine remains singular. Restore, phone transfer, portable import, scheduling, update,
 and Dropbox configuration remain singular too; recipient-encrypted restore is now available in the
 graphical manager with native file selection and explicit confirmation, while the canonical two-stage
-empty-destination checks remain mandatory. Passphrase recovery remains terminal-bound so its secret
-continues to go directly to `age`; portable import remains under a clearly labeled advanced entry
-until its graphical form is implemented.
+empty-destination checks remain mandatory. Identity-encrypted portable import is now graphical as
+well: native archive/identity selection and masked replacement-owner fields feed the same importer,
+with passwords carried only by redirected standard input. Sources stay read-only and no merge is
+possible. Passphrase recovery/import remains terminal-bound so its secret continues directly to `age`.
 The iPhone Local Device transfer has also moved into the graphical manager. Masked recovery-key and
 new-owner password fields are sent to the container converter through redirected standard input only;
 they are absent from process arguments, environment variables, temporary files, output, and
@@ -1448,9 +1449,9 @@ The downloaded-version update path is now graphical. It collects the mandatory e
 recovery locations, refuses to proceed without explicit confirmation, then preserves the existing
 backup-before-pull-before-pin-before-health order. Pull failure leaves the active version untouched;
 post-migration failure stops the API and preserves the generation rather than risking an automatic
-binary downgrade against a newer schema. Portable import is now the principal Windows graphical gap.
+binary downgrade against a newer schema.
 
-All **58 distribution contract tests pass**, including the new graphical composition, hidden-process
+All focused distribution/import contract tests pass, including the graphical composition, hidden-process
 output/error handling, immutable-image-before-configuration ordering, installer allowlist, and
 non-destructive command assertions. The complete backend run was also attempted from its required
 working directory; unrelated clock-bound September 2026 fixtures now fail on October 1, the sandbox

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ from app.database import Base
 from app.main import create_app
 from scripts.local_server import LocalServerConfiguration, backup_status, migrate
 from scripts.portable_archive import stage_portable_payload
+import scripts.portable_import as portable_import_module
 from scripts.portable_import import (
     import_payload, import_portable_archive, import_portable_archive_into_server,
     PortableImportError,
@@ -24,6 +26,68 @@ from .test_budgeting_api import create_budget, create_budget_structure
 
 
 SERVER_ROOT = Path(__file__).parents[1]
+
+
+def test_portable_import_cli_reads_server_owner_credentials_from_stdin(
+    tmp_path, monkeypatch, capsys
+):
+    archive = tmp_path / "household.tar.gz.age"
+    archive.write_bytes(b"encrypted")
+    captured: dict[str, object] = {}
+
+    def import_server(source: Path, password: str) -> None:
+        captured.update(source=source, password=password)
+
+    monkeypatch.setattr(
+        portable_import_module, "import_portable_archive_into_server", import_server
+    )
+    monkeypatch.setattr(
+        portable_import_module.sys,
+        "stdin",
+        io.StringIO("private-owner-password\nprivate-owner-password\n"),
+    )
+
+    result = portable_import_module.main([
+        str(archive), "--server-environment", "--owner-password-stdin",
+    ])
+
+    assert result == 0
+    assert captured == {"source": archive, "password": "private-owner-password"}
+    output = capsys.readouterr()
+    assert "private-owner-password" not in output.out
+    assert "private-owner-password" not in output.err
+
+
+def test_portable_import_cli_rejects_mismatched_stdin_credentials(
+    tmp_path, monkeypatch, capsys
+):
+    archive = tmp_path / "household.tar.gz.age"
+    archive.write_bytes(b"encrypted")
+    called = False
+
+    def import_server(source: Path, password: str) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(
+        portable_import_module, "import_portable_archive_into_server", import_server
+    )
+    monkeypatch.setattr(
+        portable_import_module.sys,
+        "stdin",
+        io.StringIO("first-owner-password\nsecond-owner-password\n"),
+    )
+
+    result = portable_import_module.main([
+        str(archive), "--server-environment", "--owner-password-stdin",
+    ])
+
+    assert result == 1
+    assert called is False
+    output = capsys.readouterr()
+    assert "confirmation does not match" in output.err
+    assert "first-owner-password" not in output.err
+    assert "second-owner-password" not in output.err
 
 
 class ExportTransport:

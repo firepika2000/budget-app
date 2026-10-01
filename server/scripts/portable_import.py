@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import sys
 import tempfile
 from typing import Any
 from uuid import uuid4
@@ -349,10 +350,24 @@ def main(arguments: list[str] | None = None) -> int:
         "--server-environment", action="store_true",
         help="import into a new empty authority configured by BUDGET_APP_* environment variables",
     )
+    parser.add_argument(
+        "--owner-password-stdin", action="store_true",
+        help="read the new owner password and confirmation as two lines from standard input",
+    )
     args = parser.parse_args(arguments)
     try:
-        password = getpass.getpass("New local owner password: ")
-        confirmation = getpass.getpass("Confirm new local owner password: ")
+        if args.owner_password_stdin:
+            if not args.server_environment:
+                raise PortableImportError(
+                    "Standard-input credentials are supported only for a server import"
+                )
+            private_lines = sys.stdin.read().splitlines()
+            if len(private_lines) != 2 or not all(private_lines):
+                raise PortableImportError("Owner password and confirmation are required")
+            password, confirmation = private_lines
+        else:
+            password = getpass.getpass("New local owner password: ")
+            confirmation = getpass.getpass("Confirm new local owner password: ")
         if password != confirmation:
             raise PortableImportError("Owner password confirmation does not match")
         if args.server_environment:
