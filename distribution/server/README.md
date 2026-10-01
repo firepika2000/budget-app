@@ -306,6 +306,13 @@ inside the version-matched application container, and the API restarts only afte
 attachment verification succeeds. A failed transfer leaves the API stopped for inspection and never
 modifies the iPhone package.
 
+First-time setup also accepts an optional fully qualified public DNS hostname. When supplied, it
+activates the same pinned Caddy profile as the Docker installer, binds the raw API to PC loopback,
+publishes only TCP 80/443, obtains and renews the certificate, and configures native device pairing.
+The hostname must resolve to the PC and the router/firewall must allow those two ports. Leaving it
+blank remains PC-only. Existing `.env` files are preserved rather than silently changing network
+exposure; moving an existing install to public HTTPS remains an explicit administration task.
+
 The Windows menu also accepts the provider-neutral encrypted portable archive produced by another
 ClearPocket Server. It mounts the archive and optional age identity read-only, prompts inside the
 version-matched container for a new owner password, and invokes the same validate-then-commit importer
@@ -357,9 +364,9 @@ leaves configuration and running services unchanged. An unhealthy post-migration
 never automatically downgraded against a potentially newer database; recover the preserved generation
 into a new empty server instead. A signed installer package will eventually wrap this same per-user flow.
 
-Python and developer tools are not required. Docker Desktop is still required, and secure remote
-pairing/TLS is not yet guided, so this remains a preview rather than the final signed graphical server
-manager. Guided update and firewall guidance remain required.
+Python and developer tools are not required. Docker Desktop is still required. Secure remote
+pairing/TLS is guided for a new installation, but automatic router/firewall configuration and a signed
+graphical server manager remain open product work.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;

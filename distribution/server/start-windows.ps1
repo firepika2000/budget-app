@@ -26,6 +26,18 @@ function Assert-SafeValue([string] $Value, [string] $Label) {
     }
 }
 
+function ConvertTo-PublicHost([string] $Value) {
+    $hostName = $Value.Trim().TrimEnd('.').ToLowerInvariant()
+    $address = $null
+    if ([string]::IsNullOrWhiteSpace($hostName) -or $hostName.Length -gt 253 -or
+        $hostName -notmatch '^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$' -or
+        [Net.IPAddress]::TryParse($hostName, [ref] $address) -or
+        $hostName -eq "localhost" -or $hostName.EndsWith(".localhost")) {
+        throw "Public host must be a fully qualified DNS hostname, without a URL, path, or port."
+    }
+    return $hostName
+}
+
 function Read-PrivateValue([string] $Prompt, [bool] $AllowEmpty = $false) {
     $secure = Read-Host $Prompt -AsSecureString
     if ($secure.Length -eq 0 -and $AllowEmpty) { return "" }
@@ -77,9 +89,14 @@ if ($newInstall -and $Operation -eq "Start") {
 }
 if ($newInstall) {
     Write-Host "ClearPocket Server first-time setup"
-    Write-Host "The iPhone app requires HTTPS for remote servers. This preview starts a local server; do not expose port 8080 to the Internet."
-    $hostName = Read-Host "This PC's protected-LAN hostname or IP address"
-    Assert-SafeValue $hostName "Hostname"
+    Write-Host "Enter a public DNS hostname for automatic HTTPS and iPhone pairing."
+    Write-Host "The hostname must already point to this PC; your router must send TCP 80 and 443 here."
+    Write-Host "Leave it blank for a private, PC-only installation. Never expose raw port 8080."
+    $publicHostInput = Read-Host "Public HTTPS hostname [local only]"
+    $publicHost = ""
+    if (-not [string]::IsNullOrWhiteSpace($publicHostInput)) {
+        $publicHost = ConvertTo-PublicHost $publicHostInput
+    }
 
     $defaultRoot = Join-Path $env:LOCALAPPDATA "ClearPocket Server\Data"
     $storageRoot = Read-Host "Data folder [$defaultRoot]"
@@ -93,20 +110,29 @@ if ($newInstall) {
     $databaseDocker = $database.Replace('\', '/')
     $attachmentsDocker = $attachments.Replace('\', '/')
     $operationsDocker = $operations.Replace('\', '/')
+    $allowedHosts = if ($publicHost) { "localhost,127.0.0.1,$publicHost" } else { "localhost,127.0.0.1" }
 
     $lines = @(
         "CLEARPOCKET_SERVER_IMAGE=ghcr.io/firepika2000/budget-server",
         "CLEARPOCKET_SERVER_VERSION=$serverVersion",
-        "CLEARPOCKET_BIND_ADDRESS=0.0.0.0",
+        "CLEARPOCKET_BIND_ADDRESS=127.0.0.1",
         "CLEARPOCKET_PORT=8080",
         "CLEARPOCKET_DATABASE_STORAGE=$databaseDocker",
         "CLEARPOCKET_ATTACHMENTS_STORAGE=$attachmentsDocker",
         "CLEARPOCKET_OPERATIONS_STORAGE=$operationsDocker",
-        "BUDGET_APP_ALLOWED_HOSTS=$hostName,localhost,127.0.0.1",
+        "BUDGET_APP_ALLOWED_HOSTS=$allowedHosts",
         "BUDGET_APP_DB_PASSWORD=$(New-UrlSafeSecret 36)",
         "BUDGET_APP_JWT_SECRET=$(New-UrlSafeSecret 48)",
         "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=$(New-UrlSafeSecret 32)"
     )
+    if ($publicHost) {
+        $lines += @(
+            "COMPOSE_PROFILES=tls",
+            "CLEARPOCKET_PUBLIC_HOST=$publicHost",
+            "BUDGET_APP_PAIRING_PUBLIC_URL=https://$publicHost",
+            "BUDGET_APP_FORWARDED_ALLOW_IPS=*"
+        )
+    }
     $temporary = "$environmentFile.$([Guid]::NewGuid().ToString('N')).tmp"
     [IO.File]::WriteAllLines($temporary, $lines, [Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $temporary -Destination $environmentFile
@@ -122,6 +148,15 @@ if (-not [int]::TryParse($portSetting[0].Split('=', 2)[1], [ref] $serverPort) -o
 }
 $healthUrl = "http://127.0.0.1:$serverPort/api/v1/health"
 $adminUrl = "http://127.0.0.1:$serverPort/admin"
+$publicUrlSettings = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^BUDGET_APP_PAIRING_PUBLIC_URL=' })
+if ($publicUrlSettings.Count -gt 1) { throw "Private configuration has duplicate public URL settings." }
+if ($publicUrlSettings.Count -eq 1) {
+    $publicOrigin = $publicUrlSettings[0].Split('=', 2)[1]
+    if ($publicOrigin -notmatch '^https://[a-z0-9.-]+$') {
+        throw "Private configuration has an invalid public HTTPS origin."
+    }
+    $adminUrl = "$publicOrigin/admin"
+}
 
 function Invoke-ClearPocketCompose([string[]] $ComposeArguments) {
     & docker compose --env-file $environmentFile @ComposeArguments
@@ -146,6 +181,9 @@ function Start-ClearPocketServer {
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         if (Test-ClearPocketHealth) {
             Write-Host "ClearPocket Server is healthy."
+            if ($publicUrlSettings.Count -eq 1) {
+                Write-Host "Secure iPhone endpoint: $publicOrigin"
+            }
             return
         }
         Start-Sleep -Seconds 2

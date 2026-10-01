@@ -250,6 +250,13 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "powershell.exe" in command
     assert "python" not in command.lower()
     assert "RandomNumberGenerator" in script
+    assert "function ConvertTo-PublicHost" in script
+    assert "Public HTTPS hostname [local only]" in script
+    assert '"CLEARPOCKET_BIND_ADDRESS=127.0.0.1"' in script
+    assert '"COMPOSE_PROFILES=tls"' in script
+    assert '"CLEARPOCKET_PUBLIC_HOST=$publicHost"' in script
+    assert '"BUDGET_APP_PAIRING_PUBLIC_URL=https://$publicHost"' in script
+    assert '"BUDGET_APP_FORWARDED_ALLOW_IPS=*"' in script
     assert 'Join-Path $PSScriptRoot "VERSION"' in script
     assert '"CLEARPOCKET_SERVER_VERSION=$serverVersion"' in script
     assert "CLEARPOCKET_DATABASE_STORAGE" in script
@@ -264,6 +271,7 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "^CLEARPOCKET_PORT=" in script
     assert "$healthUrl" in script
     assert "Start-Process $adminUrl" in script
+    assert '$adminUrl = "$publicOrigin/admin"' in script
     assert "Write-ClearPocketDiagnostics" in script
     assert "Register-ScheduledTask" in script
     assert "New-ScheduledTaskPrincipal" in script
