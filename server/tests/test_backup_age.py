@@ -1,5 +1,6 @@
 """Real age envelope proof; Docker is explicitly a command double in these tests."""
 import errno
+import json
 import os
 from pathlib import Path
 import select
@@ -106,7 +107,10 @@ def test_real_age_backup_roundtrip_preserves_verified_payload_and_uses_terminal_
     (tmp_path / "tools" / "age").unlink()
     status, transcript = run_with_passphrase([str(RESTORE), "--yes", "--project-name", "disposable-recovery", str(archive)], environment)
     assert status == 0, transcript
-    assert len(log.read_text().splitlines()) == 8
+    assert len(log.read_text().splitlines()) == 9
+    recovery = json.loads(Path(environment["FAKE_STATUS_LOG"]).read_text())
+    assert recovery["state"] == "verified"
+    assert recovery["source_archive_sha256"]
 
 
 @pytest.mark.parametrize("failure", ["wrong-passphrase", "corrupted-ciphertext"])

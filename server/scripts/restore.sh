@@ -57,6 +57,35 @@ if [[ -n "$environment_file" ]]; then
   [[ -f "$environment_file" && ! -L "$environment_file" ]] || { echo "Private environment file must be a regular non-symlink file" >&2; exit 2; }
   compose=(docker compose --project-directory "$server_dir" --env-file "$environment_file" --project-name "$project_name")
 fi
+
+publish_recovery_status() {
+  local status_file="$work_dir/recovery-status.json"
+  python3 - "$backup_file" > "$status_file" <<'PY'
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+digest = hashlib.sha256()
+with source.open("rb") as stream:
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        digest.update(chunk)
+json.dump({
+    "state": "verified",
+    "verified_at": datetime.now(timezone.utc).isoformat(),
+    "source_provider": "shared_server_postgresql",
+    "source_archive_sha256": digest.hexdigest(),
+    "database_integrity": "ok",
+    "foreign_keys": "ok",
+}, sys.stdout, sort_keys=True, indent=2)
+sys.stdout.write("\n")
+PY
+  "${compose[@]}" exec -T api sh -c \
+    'umask 077; target=/var/lib/budget-app/operations/recovery-status.json; temporary="${target}.tmp.$$"; cat > "$temporary" && mv "$temporary" "$target"' \
+    < "$status_file"
+}
 # Never source recovery material or print secrets. A readable archive is not enough:
 # replacing objects with ciphertext for another key would make attachments unreadable.
 backup_key="$(<"$restore_dir/attachment-key-recovery.env")"
@@ -100,6 +129,11 @@ if ! "${compose[@]}" start api; then
     api_stopped=false
     echo "Unable to confirm recovery API is stopped. Keep the recovery deployment isolated and investigate." >&2
   fi
+  exit 1
+fi
+if ! publish_recovery_status; then
+  echo "Restored authority could not record recovery verification; stopping the recovery API." >&2
+  "${compose[@]}" stop api || true
   exit 1
 fi
 restore_complete=true

@@ -28,6 +28,8 @@ backup recovery material. Never commit it.
 The storage arguments may be Docker volume names or absolute host directories. When host directories
 are selected, create them on durable protected storage before starting the application. The database
 and encrypted attachments are a single recovery unit even though they use separate directories.
+The operations storage contains only persistent backup/recovery health documents shown to owners; it
+must remain durable across container replacement but is not a substitute for either authority volume.
 
 The default bind address is loopback. Put a supported TLS reverse proxy or private-network overlay in
 front of it. `0.0.0.0` is available for protected LAN testing, but the iPhone app deliberately rejects

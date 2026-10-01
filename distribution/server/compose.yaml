@@ -10,6 +10,8 @@ services:
       BUDGET_APP_ALLOWED_HOSTS: ${BUDGET_APP_ALLOWED_HOSTS}
       BUDGET_APP_ATTACHMENT_STORAGE_PATH: /var/lib/budget-app/attachments
       BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY: ${BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY}
+      BUDGET_APP_BACKUP_STATUS_PATH: /var/lib/budget-app/operations/backup-status.json
+      BUDGET_APP_RECOVERY_STATUS_PATH: /var/lib/budget-app/operations/recovery-status.json
     ports:
       - "${CLEARPOCKET_BIND_ADDRESS:-127.0.0.1}:${CLEARPOCKET_PORT:-8080}:8080"
     read_only: true
@@ -21,6 +23,7 @@ services:
       - ALL
     volumes:
       - "${CLEARPOCKET_ATTACHMENTS_STORAGE:-clearpocket_attachments}:/var/lib/budget-app/attachments"
+      - "${CLEARPOCKET_OPERATIONS_STORAGE:-clearpocket_operations}:/var/lib/budget-app/operations"
     depends_on:
       database:
         condition: service_healthy
@@ -51,3 +54,4 @@ services:
 volumes:
   clearpocket_database:
   clearpocket_attachments:
+  clearpocket_operations:

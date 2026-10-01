@@ -110,9 +110,12 @@ adapter owns no bearer token: each request resolves the current access token thr
 provider, rejects only the exact value that receives a 401, and retries once after rotation. This
 prevents a long-lived backup service from retaining an expired credential.
 
-Native Dropbox setup is not complete yet. The registered public app identity plus connection,
-revocation, destination, and retention controls still have to be connected to Backup & Recovery.
-No Dropbox credential belongs in SQLite, the encrypted generation, logs, or source control.
+Native Dropbox setup is implemented behind a registered public app identity. Connection, revocation,
+destination, retention, verified upload/list/download, and recovery handoff are connected to Backup &
+Recovery. A build without the public Dropbox app key fails closed while keeping local backup usable.
+No Dropbox credential belongs in SQLite, the encrypted generation, logs, or source control. Live
+Dropbox acceptance still requires registering the production app key/callback and exercising that
+external account flow.
 
 The reusable native OAuth credential layer is now implemented beneath that pending UI. It generates
 RFC 7636 S256 PKCE authorization requests for offline access with only Dropbox file-content and
@@ -381,19 +384,26 @@ also create encrypted, generation-based local backups and export them through th
 that share sheet can target Files, Dropbox, or another installed provider without granting the app
 ambient access to the user's cloud account.
 
-The repository now includes the first shared customer-server deployment contract under
-`distribution/server`: one pinned container image contract, PostgreSQL and attachment persistence,
-private secret generation, health checks, and hardened Compose defaults for Docker Desktop, QNAP
-Container Station, and other Compose-capable hosts. The GHCR publishing workflow builds the same
-image for ARM64 and AMD64. This is a packaging foundation, not yet the promised normal-user setup
-experience: the image has not been release-published and QNAP model validation is pending. The
-Windows helper now uses built-in PowerShell for cryptographic first-run configuration and selectable
-durable storage without Python, but still requires Docker Desktop and lacks the final signed manager.
+The repository now includes the shared customer-server deployment contract under
+`distribution/server`: one pinned container image contract, PostgreSQL, attachment and operations
+status persistence, private secret generation, health checks, and hardened Compose defaults for
+Docker Desktop, QNAP Container Station, and other Compose-capable hosts. The GHCR publishing workflow
+builds the same image for ARM64 and AMD64 and ships the canonical coordinated backup/restore tools.
+A data-preserving manager validates, starts, health-checks, stops, diagnoses, and creates encrypted
+database-plus-attachment generations. Backup capture success/failure and restore verification are
+persisted inside a dedicated operations volume and exposed through the existing owner-only API/UI.
 
-1. Connect the implemented native Dropbox destination/OAuth core to explicit setup/revocation and
-   retention controls after registering the public app key/callback. Dropbox remains a backup
-   destination, not a second authority.
-2. Build the normal-user server manager around the shared image/config contract: graphical storage
+The Windows helper uses built-in PowerShell for cryptographic first-run configuration and selectable
+durable storage without Python, and now provides start/open, status, data-preserving stop, redacted
+diagnostics and log actions. `distribution/qnap` contains a QDK-compatible package foundation that
+wraps the same Compose bundle in App Center lifecycle hooks while keeping authority outside the
+replaceable QPKG directory. These remain previews rather than the promised normal-user setup:
+release images/packages are unsigned, QNAP hardware validation is pending, Windows guided backup is
+pending, and secure pairing/TLS is not implemented.
+
+1. Register the production Dropbox public app key/callback and complete live external-account
+   acceptance. Dropbox remains a backup destination, not a second authority.
+2. Continue the normal-user server manager around the shared image/config contract: graphical storage
    selection, install/update/rollback, scheduled backup/restore, and actionable health reporting.
 3. Validate and package the manager for supported QNAP models and always-on Windows PCs, with signed
    installers and no command-line requirement for the normal path.

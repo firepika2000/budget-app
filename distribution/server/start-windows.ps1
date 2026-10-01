@@ -42,9 +42,11 @@ if ($newInstall) {
     Assert-SafeValue $storageRoot "Data folder"
     $database = Join-Path $storageRoot "database"
     $attachments = Join-Path $storageRoot "attachments"
-    New-Item -ItemType Directory -Force -Path $database, $attachments | Out-Null
+    $operations = Join-Path $storageRoot "operations"
+    New-Item -ItemType Directory -Force -Path $database, $attachments, $operations | Out-Null
     $databaseDocker = $database.Replace('\', '/')
     $attachmentsDocker = $attachments.Replace('\', '/')
+    $operationsDocker = $operations.Replace('\', '/')
 
     $lines = @(
         "CLEARPOCKET_SERVER_IMAGE=ghcr.io/firepika2000/budget-server",
@@ -53,6 +55,7 @@ if ($newInstall) {
         "CLEARPOCKET_PORT=8080",
         "CLEARPOCKET_DATABASE_STORAGE=$databaseDocker",
         "CLEARPOCKET_ATTACHMENTS_STORAGE=$attachmentsDocker",
+        "CLEARPOCKET_OPERATIONS_STORAGE=$operationsDocker",
         "BUDGET_APP_ALLOWED_HOSTS=$hostName,localhost,127.0.0.1",
         "BUDGET_APP_DB_PASSWORD=$(New-UrlSafeSecret 36)",
         "BUDGET_APP_JWT_SECRET=$(New-UrlSafeSecret 48)",

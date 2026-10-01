@@ -223,6 +223,17 @@ def test_backup_health_is_owner_only_bounded_and_sanitized(
     assert response.json()["last_restore_verification"]["source_provider"] == "portable_archive"
     assert "must-not-leak" not in response.text
 
+    backup.write_text(json.dumps({
+        "state": "failed", "completed_at": "2026-09-27T14:00:00Z",
+        "error": "Backup capture failed", "private_detail": "must-not-leak",
+    }))
+    failed = client.get(path, headers=auth(owner_token))
+    assert failed.status_code == 200
+    assert failed.json()["backup"] == {
+        "state": "failed", "completed_at": "2026-09-27T14:00:00Z",
+        "error": "Backup capture failed",
+    }
+
     child_id, child_token = add_child(session_factory, client)
     assert client.put(f"/api/v1/budgets/{budget['id']}/grants", headers=auth(owner_token), json={
         "user_id": child_id, "permission": "manage",

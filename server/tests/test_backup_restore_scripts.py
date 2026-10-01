@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -68,7 +69,9 @@ def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
     docker = tools / "docker"
     docker.write_text(
         '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$FAKE_DOCKER_LOG"\n'
-        'if [[ "$*" == *BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY* ]]; then\n'
+        'if [[ "$*" == *"recovery-status.json"* ]]; then\n'
+        '  cat > "$FAKE_STATUS_LOG"\n'
+        'elif [[ "$*" == *BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY* ]]; then\n'
         '  printf "%s\\n" "${RESTORE_TEST_KEY:-BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY=test-key}"\n'
         'elif [[ "$*" == *"exec -T database psql"* ]]; then\n'
         '  payload="$(cat)"\n'
@@ -88,6 +91,7 @@ def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
     environment = dict(os.environ)
     environment["PATH"] = f"{tools}:{environment['PATH']}"
     environment["FAKE_DOCKER_LOG"] = str(log)
+    environment["FAKE_STATUS_LOG"] = str(tmp_path / "recovery-status.json")
     return environment, log
 
 
@@ -98,7 +102,9 @@ def _backup_environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
     (tools / "docker").write_text(
         """#!/usr/bin/env bash
 printf "%s\\n" "$*" >> "$FAKE_DOCKER_LOG"
-if [[ "$*" == *"exec -T database pg_dump"* ]]; then
+if [[ "$*" == *"backup-status.json"* ]]; then
+  cat > "$FAKE_STATUS_LOG"
+elif [[ "$*" == *"exec -T database pg_dump"* ]]; then
   [[ "${BACKUP_TEST_FAIL_DUMP:-}" != 1 ]] || exit 1
   printf 'CREATE TABLE restored (id integer);\\n'
 elif [[ "$*" == *"SELECT version_num FROM alembic_version"* ]]; then
@@ -131,6 +137,7 @@ if [[ "${BACKUP_TEST_FAIL_AGE:-}" == "1" ]]; then exit 1; fi
     environment = dict(os.environ)
     environment["PATH"] = f"{tools}:{environment['PATH']}"
     environment["FAKE_DOCKER_LOG"] = str(log)
+    environment["FAKE_STATUS_LOG"] = str(tmp_path / "backup-status.json")
     return environment, log
 
 
@@ -153,13 +160,18 @@ def test_backup_targets_named_project_and_archives_database_objects_key_and_mani
     )
     assert result.returncode == 0, result.stderr
     calls = log.read_text().splitlines()
-    assert len(calls) == 6
+    assert len(calls) == 7
     assert all("--project-name budget-source" in call for call in calls)
     assert "exec -T api sh -c" in calls[0]
     assert "stop api" in calls[1]
     assert "pg_dump" in calls[2]
     assert "cp api:" in calls[4]
     assert "start api" in calls[5]
+    assert "backup-status.json" in calls[6]
+    status = json.loads(Path(environment["FAKE_STATUS_LOG"]).read_text())
+    assert status["state"] == "healthy"
+    assert status["destination"]["destination"] == "local_generation"
+    assert "test-key" not in json.dumps(status)
     archives = list(output.glob("budget-*.tar.gz.age"))
     assert len(archives) == 1
     with tarfile.open(archives[0], "r:gz") as tar:
@@ -221,14 +233,19 @@ def test_restore_verifies_archive_before_addressing_explicit_target(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     calls = log.read_text().splitlines()
-    assert len(calls) == 8
+    assert len(calls) == 9
     assert all("--project-name budget-recovery" in call for call in calls)
     assert "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY" in calls[0]
     assert "exec -T database psql --single-transaction --set ON_ERROR_STOP=on" in calls[1]
     assert "stop api" in calls[3]
     assert "run --rm --no-deps -T api" in calls[5]
     assert "psql --single-transaction --set ON_ERROR_STOP=on" in calls[6]
-    assert "start api" in calls[-1]
+    assert "start api" in calls[-2]
+    assert "recovery-status.json" in calls[-1]
+    recovery = json.loads(Path(environment["FAKE_STATUS_LOG"]).read_text())
+    assert recovery["state"] == "verified"
+    assert recovery["source_provider"] == "shared_server_postgresql"
+    assert "test-key" not in json.dumps(recovery)
     assert not any("-delete" in call for call in calls)
 
 
@@ -518,10 +535,13 @@ def test_backup_failure_resumes_only_a_source_it_attempted_to_pause(tmp_path, fa
     assert result.returncode != 0
     calls = log.read_text().splitlines()
     if failure == "SOURCE":
-        assert len(calls) == 1
+        assert len(calls) == 2
     else:
         assert any("stop api" in call for call in calls)
-        assert "start api" in calls[-1]
+        assert any("start api" in call for call in calls)
+    assert "backup-status.json" in calls[-1]
+    status = json.loads(Path(environment["FAKE_STATUS_LOG"]).read_text())
+    assert status["state"] == "failed"
     if failure == "START":
         assert "Unable to resume the source API" in result.stderr
     assert list(output.iterdir()) == []

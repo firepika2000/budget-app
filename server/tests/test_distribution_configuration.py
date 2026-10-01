@@ -43,6 +43,7 @@ def test_configuration_generates_independent_exact_secrets_without_placeholders(
     assert first["CLEARPOCKET_PORT"] == "8443"
     assert first["CLEARPOCKET_DATABASE_STORAGE"] == "clearpocket_database"
     assert first["CLEARPOCKET_ATTACHMENTS_STORAGE"] == "clearpocket_attachments"
+    assert first["CLEARPOCKET_OPERATIONS_STORAGE"] == "clearpocket_operations"
     assert len(first["BUDGET_APP_DB_PASSWORD"]) >= 32
     assert len(first["BUDGET_APP_JWT_SECRET"]) >= 32
     assert first["BUDGET_APP_DB_PASSWORD"] != first["BUDGET_APP_JWT_SECRET"]
@@ -104,6 +105,9 @@ def test_shared_compose_contract_preserves_security_and_persistent_authority():
     assert "cap_drop:" in compose and "- ALL" in compose
     assert "CLEARPOCKET_DATABASE_STORAGE:-clearpocket_database" in compose
     assert "CLEARPOCKET_ATTACHMENTS_STORAGE:-clearpocket_attachments" in compose
+    assert "CLEARPOCKET_OPERATIONS_STORAGE:-clearpocket_operations" in compose
+    assert "BUDGET_APP_BACKUP_STATUS_PATH" in compose
+    assert "BUDGET_APP_RECOVERY_STATUS_PATH" in compose
     assert "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY" in compose
     assert "CLEARPOCKET_BIND_ADDRESS:-127.0.0.1" in compose
 
@@ -118,6 +122,7 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert '"CLEARPOCKET_SERVER_VERSION=$serverVersion"' in script
     assert "CLEARPOCKET_DATABASE_STORAGE" in script
     assert "CLEARPOCKET_ATTACHMENTS_STORAGE" in script
+    assert "CLEARPOCKET_OPERATIONS_STORAGE" in script
     assert "Test-Path -LiteralPath $environmentFile" in script
     assert "Write-Host $lines" not in script
     assert "Start-ClearPocketServer" in script
@@ -299,6 +304,7 @@ def test_manager_diagnostics_are_allowlisted_and_never_contain_secrets_or_paths(
     report = json.loads(contents)
     assert report["attachment_storage"] == "host-directory"
     assert report["database_storage"] == "docker-volume"
+    assert report["operations_storage"] == "docker-volume"
     assert report["health"] == "healthy"
     assert report["services"] == [{"service": "api", "state": "running", "health": "healthy"}]
     for secret in manager.SECRET_KEYS:

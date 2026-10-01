@@ -105,7 +105,7 @@ def owner_backup_status(
     budget = find_visible_budget(db, user, budget_id)
     if budget is None or not is_household_owner(db, user, budget.household_id):
         raise HTTPException(status_code=404, detail="Budget not found")
-    backup = _health_document(settings.backup_status_path, {"healthy", "publication_failed"})
+    backup = _health_document(settings.backup_status_path, {"healthy", "failed", "publication_failed"})
     recovery = _health_document(settings.recovery_status_path, {"verified"})
     return {
         "configured": bool(settings.backup_status_path or settings.recovery_status_path),

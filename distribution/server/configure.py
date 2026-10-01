@@ -66,7 +66,8 @@ def _storage(value: str) -> str:
 def configuration(*, allowed_hosts: str, bind_address: str, port: int,
                   image: str, version: str,
                   database_storage: str = "clearpocket_database",
-                  attachments_storage: str = "clearpocket_attachments") -> str:
+                  attachments_storage: str = "clearpocket_attachments",
+                  operations_storage: str = "clearpocket_operations") -> str:
     if not 1 <= port <= 65535:
         raise ConfigurationError("Port must be between 1 and 65535")
     if not IMAGE.fullmatch(image) or ".." in image:
@@ -81,6 +82,7 @@ def configuration(*, allowed_hosts: str, bind_address: str, port: int,
         "CLEARPOCKET_PORT": str(port),
         "CLEARPOCKET_DATABASE_STORAGE": _storage(database_storage),
         "CLEARPOCKET_ATTACHMENTS_STORAGE": _storage(attachments_storage),
+        "CLEARPOCKET_OPERATIONS_STORAGE": _storage(operations_storage),
         "BUDGET_APP_ALLOWED_HOSTS": _hosts(allowed_hosts),
         "BUDGET_APP_DB_PASSWORD": secrets.token_urlsafe(36),
         "BUDGET_APP_JWT_SECRET": secrets.token_urlsafe(48),
@@ -123,6 +125,8 @@ def parser() -> argparse.ArgumentParser:
                        help="Docker volume name or absolute host directory for PostgreSQL")
     value.add_argument("--attachments-storage", default="clearpocket_attachments",
                        help="Docker volume name or absolute host directory for encrypted attachments")
+    value.add_argument("--operations-storage", default="clearpocket_operations",
+                       help="Docker volume name or absolute host directory for backup/recovery health")
     return value
 
 
@@ -133,7 +137,8 @@ def main() -> int:
             bind_address=arguments.bind_address, port=arguments.port,
             image=arguments.image, version=arguments.version,
             database_storage=arguments.database_storage,
-            attachments_storage=arguments.attachments_storage)
+            attachments_storage=arguments.attachments_storage,
+            operations_storage=arguments.operations_storage)
         write_configuration(arguments.output, contents)
     except (ConfigurationError, OSError) as error:
         parser().error(str(error))

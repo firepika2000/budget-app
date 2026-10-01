@@ -7,6 +7,7 @@ WORKDIR /app
 
 RUN addgroup --system budget && adduser --system --ingroup budget budget
 RUN install -d -m 0700 -o budget -g budget /var/lib/budget-app/attachments
+RUN install -d -m 0700 -o budget -g budget /var/lib/budget-app/operations
 
 COPY pyproject.toml README.md alembic.ini ./
 COPY app ./app

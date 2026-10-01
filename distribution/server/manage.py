@@ -199,6 +199,8 @@ def diagnostics(target: Deployment, destination: Path, runner: Runner = run) -> 
         "port": int(target.environment["CLEARPOCKET_PORT"]),
         "database_storage": storage_kind(target.environment["CLEARPOCKET_DATABASE_STORAGE"]),
         "attachment_storage": storage_kind(target.environment["CLEARPOCKET_ATTACHMENTS_STORAGE"]),
+        "operations_storage": storage_kind(target.environment.get(
+            "CLEARPOCKET_OPERATIONS_STORAGE", "clearpocket_operations")),
         "health": "healthy" if health(target.health_url) else "unreachable",
         "runtime": prerequisites,
         "runtime_available": runtime_available,

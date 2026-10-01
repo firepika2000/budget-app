@@ -52,6 +52,50 @@ mkdir -p "$backup_dir"
 work_dir="$(mktemp -d)"
 archive_dir=""
 resume_api=false
+capture_complete=false
+status_written=false
+destination_json=""
+
+publish_status() {
+  local state="$1"
+  local destination_payload="${2:-}"
+  local status_file="$work_dir/backup-status.json"
+  python3 - "$state" "$output_file" "$destination_payload" > "$status_file" <<'PY'
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+state, archive_name, destination_text = sys.argv[1:]
+archive = Path(archive_name)
+payload = {"state": state, "completed_at": datetime.now(timezone.utc).isoformat()}
+if archive.is_file():
+    digest = hashlib.sha256()
+    with archive.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    payload.update({"archive": str(archive), "size": archive.stat().st_size, "sha256": digest.hexdigest()})
+if destination_text:
+    try:
+        destination = json.loads(destination_text)
+    except json.JSONDecodeError:
+        destination = None
+    if isinstance(destination, dict):
+        payload["destination"] = destination
+elif archive.is_file():
+    payload["destination"] = {"destination": "local_generation", "path": str(archive)}
+if state != "healthy":
+    payload["error"] = "Backup capture failed" if state == "failed" else "Off-device backup publication failed"
+json.dump(payload, sys.stdout, sort_keys=True, indent=2)
+sys.stdout.write("\n")
+PY
+  "${compose[@]}" exec -T api sh -c \
+    'umask 077; target=/var/lib/budget-app/operations/backup-status.json; temporary="${target}.tmp.$$"; cat > "$temporary" && mv "$temporary" "$target"' \
+    < "$status_file"
+  status_written=true
+}
+
 cleanup() {
   result=$?
   if [[ "$resume_api" == true ]]; then
@@ -59,6 +103,10 @@ cleanup() {
       echo "Unable to resume the source API after backup failure. Check the named deployment; source data was not restored or erased." >&2
       result=1
     fi
+  fi
+  if [[ "$result" -ne 0 && "$status_written" != true ]]; then
+    if [[ "$capture_complete" == true ]]; then failure_state=publication_failed; else failure_state=failed; fi
+    publish_status "$failure_state" "" >/dev/null 2>&1 || true
   fi
   rm -rf "$work_dir"
   if [[ -n "$archive_dir" ]]; then rm -rf "$archive_dir"; fi
@@ -106,15 +154,17 @@ COPYFILE_DISABLE=1 tar -C "$work_dir" -czf - BACKUP-METADATA database.sql attach
 # Same-filesystem publication is atomic and refuses to overwrite an existing backup. A failed
 # tar/encryption operation leaves only private staging, removed by the exit trap.
 ln "$archive_dir/complete.age" "$output_file"
+capture_complete=true
 
 echo "Backup complete: $output_file"
 if [[ "$backup_destination" == local ]]; then
-  python3 "$script_dir/backup_destination.py" publish \
+  destination_json="$(python3 "$script_dir/backup_destination.py" publish \
     --destination local --directory "$BUDGET_APP_BACKUP_LOCAL_DIRECTORY" \
-    --keep "$backup_retention" "$output_file"
+    --keep "$backup_retention" "$output_file")"
 elif [[ "$backup_destination" == dropbox ]]; then
-  python3 "$script_dir/backup_destination.py" publish \
+  destination_json="$(python3 "$script_dir/backup_destination.py" publish \
     --destination dropbox --dropbox-folder "${BUDGET_APP_DROPBOX_FOLDER:-/Backups}" \
-    --keep "$backup_retention" "$output_file"
+    --keep "$backup_retention" "$output_file")"
 fi
+publish_status healthy "$destination_json"
 echo "Test restoring this file regularly and store its recovery identity or passphrase separately."
