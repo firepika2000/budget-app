@@ -22,6 +22,13 @@ command -v "$QBUILD" >/dev/null 2>&1 || {
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+IMAGE_DIGEST=${CLEARPOCKET_SERVER_IMAGE_DIGEST:-}
+if [ -n "$IMAGE_DIGEST" ]; then
+    case "$IMAGE_DIGEST" in sha256:*) ;; *) echo "Invalid server image digest" >&2; exit 2 ;; esac
+    DIGEST_VALUE=${IMAGE_DIGEST#sha256:}
+    case "$DIGEST_VALUE" in *[!0-9a-f]*) echo "Invalid server image digest" >&2; exit 2 ;; esac
+    [ "${#DIGEST_VALUE}" = "64" ] || { echo "Invalid server image digest" >&2; exit 2; }
+fi
 STAGE=$(mktemp -d "${TMPDIR:-/tmp}/clearpocket-qpkg.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT HUP INT TERM
 
@@ -50,6 +57,11 @@ cp "$PROJECT_ROOT/server/scripts/backup.sh" \
    "$PROJECT_ROOT/server/scripts/require_empty_restore.sql" \
    "$STAGE/shared/server/tools/"
 printf '%s\n' "$VERSION" > "$STAGE/shared/server/VERSION"
+if [ -n "$IMAGE_DIGEST" ]; then
+    SOURCE_COMMIT=${CLEARPOCKET_SOURCE_COMMIT:-$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || printf unknown)}
+    printf 'version=%s\ncommit=%s\nimage=ghcr.io/firepika2000/budget-server@%s\n' \
+        "$VERSION" "$SOURCE_COMMIT" "$IMAGE_DIGEST" > "$STAGE/shared/server/RELEASE-METADATA.txt"
+fi
 chmod 755 "$STAGE/shared/ClearPocketServer.sh" "$STAGE/shared/ClearPocketSetup.sh" \
     "$STAGE/shared/ClearPocketBackup.sh" \
     "$STAGE/shared/ClearPocketRestore.sh" \

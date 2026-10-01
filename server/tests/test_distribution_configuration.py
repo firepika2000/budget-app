@@ -513,9 +513,14 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "explicit final argument RESTORE" in service
     assert "explicit final argument UPGRADE" in service
     assert "automatic downgrade is disabled after migrations" in service
+    assert "ensure_release_image" in service
+    assert '"$DOCKER" pull "$PINNED"' in service
+    assert '"$DOCKER" tag "$PINNED" "$IMAGE:$VERSION"' in service
+    assert 'image inspect "$PINNED"' in service
+    assert "QNAP release metadata does not match the package version" in service
     upgrade_section = service.split("upgrade_server()", 1)[1].split("find_crontab()", 1)[0]
     backup_index = upgrade_section.index('ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT" || return 1')
-    pull_index = upgrade_section.index('"$DOCKER" pull "$IMAGE:$VERSION"')
+    pull_index = upgrade_section.index('ensure_release_image "$VERSION" "$IMAGE"')
     pin_index = upgrade_section.index('mv "$TEMP_ENV" "$ENV_FILE"')
     health_index = upgrade_section.index('if ! compose up -d || ! wait_healthy')
     assert backup_index < pull_index < pin_index < health_index
@@ -592,6 +597,8 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'distribution/server/Caddyfile.qnap' in builder
     assert 'distribution/server/manage.py' in builder
     assert '"${#VERSION}" -gt 10' in builder
+    assert "CLEARPOCKET_SERVER_IMAGE_DIGEST" in builder
+    assert 'RELEASE-METADATA.txt' in builder
 
 
 def test_qnap_builder_stages_a_versioned_shared_server_bundle(tmp_path: Path):
@@ -611,6 +618,9 @@ test -f shared/server/compose.yaml
 test -f shared/server/Caddyfile
 test -f shared/server/Caddyfile.qnap
 test -f shared/server/manage.py
+grep -q '^version=0.9.0$' shared/server/RELEASE-METADATA.txt
+grep -q '^commit=test-commit$' shared/server/RELEASE-METADATA.txt
+grep -q '^image=ghcr.io/firepika2000/budget-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$' shared/server/RELEASE-METADATA.txt
 test -f shared/server/tools/backup.sh
 test -f shared/server/tools/restore.sh
 test -f shared/server/tools/backup_schedule.py
@@ -619,9 +629,19 @@ mkdir -p build
 : > build/ClearPocketServer_0.9.0.qpkg
 """)
     fake_qbuild.chmod(0o755)
+    environment = dict(os.environ,
+                       CLEARPOCKET_SERVER_IMAGE_DIGEST="sha256:" + "a" * 64,
+                       CLEARPOCKET_SOURCE_COMMIT="test-commit")
     subprocess.run([distribution / "qnap" / "build.sh", "0.9.0", fake_qbuild],
-                   check=True, capture_output=True, text=True)
+                   env=environment, check=True, capture_output=True, text=True)
     assert (distribution / "qnap" / "build" / "ClearPocketServer_0.9.0.qpkg").is_file()
+    invalid_environment = dict(environment, CLEARPOCKET_SERVER_IMAGE_DIGEST="sha256:not-a-digest")
+    invalid = subprocess.run(
+        [distribution / "qnap" / "build.sh", "0.9.0", fake_qbuild],
+        env=invalid_environment, capture_output=True, text=True,
+    )
+    assert invalid.returncode == 2
+    assert "Invalid server image digest" in invalid.stderr
 
 
 def test_qnap_first_run_generates_private_exact_secrets_and_never_overwrites(tmp_path: Path):

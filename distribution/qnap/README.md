@@ -15,12 +15,15 @@ not delete that root or its configuration pointer.
 Install and enable QDK, then run:
 
 ```sh
-./build.sh 0.9.0 /path/to/qbuild
+CLEARPOCKET_SERVER_IMAGE_DIGEST=sha256:RELEASE_DIGEST \
+  ./build.sh 0.9.0 /path/to/qbuild
 ```
 
 QDK limits `QPKG_VER` to ten characters. The script stages a clean QDK project, inserts the shared
-versioned server bundle, and invokes QDK's `qbuild`. Do not build from a working directory containing
-a private `.env`.
+versioned server bundle, embeds the exact published multi-architecture server-image digest, and invokes
+QDK's `qbuild`. First start and explicit upgrades pull that digest and only then assign the local tag
+used by Compose. An engineering build may omit the digest, but it is not a customer release. Do not
+build from a working directory containing a private `.env`.
 
 The installer chooses the QNAP Public share as its initial durable root, generates independent
 database/JWT/attachment secrets from `/dev/urandom`, and refuses to replace an existing `.env`.

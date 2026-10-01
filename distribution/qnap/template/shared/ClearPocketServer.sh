@@ -69,6 +69,42 @@ wait_healthy() {
     return 1
 }
 
+ensure_release_image() {
+    VERSION=$1
+    IMAGE=$2
+    METADATA="$SERVER_ROOT/RELEASE-METADATA.txt"
+    [ -e "$METADATA" ] || return 0
+    [ -f "$METADATA" ] && [ ! -L "$METADATA" ] || {
+        log_error "QNAP release metadata is not a regular non-linked file"
+        return 1
+    }
+    [ "$(grep -c '^version=' "$METADATA")" = "1" ] && \
+        [ "$(sed -n 's/^version=//p' "$METADATA")" = "$VERSION" ] || {
+        log_error "QNAP release metadata does not match the package version"
+        return 1
+    }
+    [ "$(grep -c '^image=' "$METADATA")" = "1" ] || {
+        log_error "QNAP release metadata has an ambiguous image digest"
+        return 1
+    }
+    PINNED=$(sed -n 's/^image=//p' "$METADATA")
+    PREFIX="$IMAGE@sha256:"
+    case "$PINNED" in "$PREFIX"*) ;; *) log_error "QNAP release metadata has an unexpected image"; return 1 ;; esac
+    DIGEST=${PINNED#"$PREFIX"}
+    case "$DIGEST" in *[!0-9a-f]*) log_error "QNAP release metadata has an invalid image digest"; return 1 ;; esac
+    [ "${#DIGEST}" = "64" ] || { log_error "QNAP release metadata has an invalid image digest"; return 1; }
+    if ! "$DOCKER" image inspect "$PINNED" >/dev/null 2>&1; then
+        "$DOCKER" pull "$PINNED" || {
+            log_error "The immutable QNAP server image could not be downloaded"
+            return 1
+        }
+    fi
+    "$DOCKER" tag "$PINNED" "$IMAGE:$VERSION" || {
+        log_error "The immutable QNAP server image could not be assigned its local version tag"
+        return 1
+    }
+}
+
 local_device_package() {
     PACKAGE=$1
     case "$PACKAGE" in
@@ -178,10 +214,14 @@ upgrade_server() {
     [ -x "$QPKG_ROOT/ClearPocketBackup.sh" ] || { log_error "QNAP backup helper is missing"; return 1; }
     echo "Creating the required encrypted pre-update generation."
     "$QPKG_ROOT/ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT" || return 1
-    "$DOCKER" pull "$IMAGE:$VERSION" || {
-        log_error "Version $VERSION could not be downloaded; configuration and running services were not changed"
-        return 1
-    }
+    if [ -e "$SERVER_ROOT/RELEASE-METADATA.txt" ]; then
+        ensure_release_image "$VERSION" "$IMAGE" || return 1
+    else
+        "$DOCKER" pull "$IMAGE:$VERSION" || {
+            log_error "Version $VERSION could not be downloaded; configuration and running services were not changed"
+            return 1
+        }
+    fi
     TEMP_ENV="$ENV_FILE.update.$$"
     awk -v replacement="CLEARPOCKET_SERVER_VERSION=$VERSION" '
         BEGIN { count = 0 }
@@ -328,14 +368,18 @@ configure_qnap_https() {
 
 case "$1" in
     start)
-        compose config --quiet && compose up -d
+        START_VERSION=$(tr -d '\r\n' < "$SERVER_ROOT/VERSION")
+        START_IMAGE=$(sed -n 's/^CLEARPOCKET_SERVER_IMAGE=//p' "$ENV_FILE")
+        ensure_release_image "$START_VERSION" "$START_IMAGE" && compose config --quiet && compose up -d
         ;;
     stop)
         # Stop is intentionally non-destructive and never removes persistent volumes.
         compose stop
         ;;
     restart)
-        compose stop && compose config --quiet && compose up -d
+        START_VERSION=$(tr -d '\r\n' < "$SERVER_ROOT/VERSION")
+        START_IMAGE=$(sed -n 's/^CLEARPOCKET_SERVER_IMAGE=//p' "$ENV_FILE")
+        compose stop && ensure_release_image "$START_VERSION" "$START_IMAGE" && compose config --quiet && compose up -d
         ;;
     status)
         compose ps
