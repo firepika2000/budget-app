@@ -61,6 +61,7 @@ $requiredFiles = @(
     "backup-windows.ps1",
     "Caddyfile",
     "compose.yaml",
+    "manager-windows.ps1",
     "restore-windows.ps1",
     "start-windows.cmd",
     "start-windows.ps1",
@@ -99,7 +100,8 @@ foreach ($relative in $requiredFiles) {
     }
 }
 
-$manager = Join-Path $installRoot "start-windows.cmd"
+$manager = Join-Path $installRoot "manager-windows.ps1"
+$powershell = Join-Path $PSHOME "powershell.exe"
 $shell = New-Object -ComObject WScript.Shell
 $desktop = [Environment]::GetFolderPath("Desktop")
 $programs = [Environment]::GetFolderPath("Programs")
@@ -108,7 +110,8 @@ foreach ($shortcutPath in @(
     (Join-Path $programs "ClearPocket Server.lnk")
 )) {
     $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = $manager
+    $shortcut.TargetPath = $powershell
+    $shortcut.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$manager`""
     $shortcut.WorkingDirectory = $installRoot
     $shortcut.Description = "Manage the private ClearPocket household server"
     $shortcut.Save()
@@ -120,4 +123,6 @@ if ($isUpdate) {
 } else {
     Write-Host "ClearPocket Server manager $version installed for this Windows account."
 }
-Start-Process -FilePath $manager -WorkingDirectory $installRoot
+Start-Process -FilePath $powershell `
+    -ArgumentList "-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$manager`"" `
+    -WorkingDirectory $installRoot

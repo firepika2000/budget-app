@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Interactive", "Start")]
+    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup")]
     [string] $Operation = "Interactive"
 )
 
@@ -103,7 +103,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker Desktop is required. Install it, start it, then run this launcher again."
 }
 $dockerReady = $false
-$attemptLimit = if ($Operation -eq "Start") { 60 } else { 1 }
+$attemptLimit = if ($Operation -in @("Configure", "Start", "Open")) { 60 } else { 1 }
 for ($attempt = 0; $attempt -lt $attemptLimit; $attempt++) {
     docker info *> $null
     if ($LASTEXITCODE -eq 0) { $dockerReady = $true; break }
@@ -113,22 +113,29 @@ if (-not $dockerReady) { throw "Docker Desktop is installed but is not running."
 
 $environmentFile = Join-Path $PSScriptRoot ".env"
 $newInstall = -not (Test-Path -LiteralPath $environmentFile)
-if ($newInstall -and $Operation -eq "Start") {
-    throw "Automatic startup needs first-time setup. Run start-windows.cmd interactively once."
+if ($newInstall -and $Operation -notin @("Configure", "Interactive")) {
+    throw "ClearPocket Server needs first-time setup before this action is available."
 }
 if ($newInstall) {
-    Write-Host "ClearPocket Server first-time setup"
-    Write-Host "Enter a public DNS hostname for automatic HTTPS and iPhone pairing."
-    Write-Host "The hostname must already point to this PC; your router must send TCP 80 and 443 here."
-    Write-Host "Leave it blank for a private, PC-only installation. Never expose raw port 8080."
-    $publicHostInput = Read-Host "Public HTTPS hostname [local only]"
+    if ($Operation -eq "Configure") {
+        $publicHostInput = $env:CLEARPOCKET_SETUP_PUBLIC_HOST
+        $storageRoot = $env:CLEARPOCKET_SETUP_STORAGE_ROOT
+    } else {
+        Write-Host "ClearPocket Server first-time setup"
+        Write-Host "Enter a public DNS hostname for automatic HTTPS and iPhone pairing."
+        Write-Host "The hostname must already point to this PC; your router must send TCP 80 and 443 here."
+        Write-Host "Leave it blank for a private, PC-only installation. Never expose raw port 8080."
+        $publicHostInput = Read-Host "Public HTTPS hostname [local only]"
+        $defaultRoot = Join-Path $env:LOCALAPPDATA "ClearPocket Server\Data"
+        $storageRoot = Read-Host "Data folder [$defaultRoot]"
+        if ([string]::IsNullOrWhiteSpace($storageRoot)) { $storageRoot = $defaultRoot }
+    }
     $publicHost = ""
     if (-not [string]::IsNullOrWhiteSpace($publicHostInput)) {
         $publicHost = ConvertTo-PublicHost $publicHostInput
     }
 
     $defaultRoot = Join-Path $env:LOCALAPPDATA "ClearPocket Server\Data"
-    $storageRoot = Read-Host "Data folder [$defaultRoot]"
     if ([string]::IsNullOrWhiteSpace($storageRoot)) { $storageRoot = $defaultRoot }
     $storageRoot = [IO.Path]::GetFullPath($storageRoot)
     Assert-SafeValue $storageRoot "Data folder"
@@ -163,10 +170,18 @@ if ($newInstall) {
         )
     }
     $temporary = "$environmentFile.$([Guid]::NewGuid().ToString('N')).tmp"
-    [IO.File]::WriteAllLines($temporary, $lines, [Text.UTF8Encoding]::new($false))
-    Move-Item -LiteralPath $temporary -Destination $environmentFile
+    try {
+        [IO.File]::WriteAllLines($temporary, $lines, [Text.UTF8Encoding]::new($false))
+        # Do not publish a configured installation until the immutable application image is local.
+        # A failed download therefore returns to first-time setup instead of leaving an unusable
+        # authority that later Compose commands could resolve through a mutable tag.
+        Install-PinnedReleaseImage "ghcr.io/firepika2000/budget-server:$serverVersion"
+        Move-Item -LiteralPath $temporary -Destination $environmentFile
+    } finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    }
     Write-Host "Private configuration created. Keep the .env file with your encrypted backups; its secrets were not displayed."
-    Install-PinnedReleaseImage "ghcr.io/firepika2000/budget-server:$serverVersion"
+    if ($Operation -eq "Configure") { $Operation = "Open" }
 }
 
 $portSetting = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^CLEARPOCKET_PORT=' })
@@ -559,8 +574,30 @@ function Update-ClearPocketServer {
     Write-Host "ClearPocket Server updated and healthy at version $serverVersion."
 }
 
-if ($Operation -eq "Start") {
-    Start-ClearPocketServer
+if ($Operation -ne "Interactive") {
+    switch ($Operation) {
+        "Start" { Start-ClearPocketServer }
+        "Open" {
+            Start-ClearPocketServer
+            Start-Process $adminUrl
+        }
+        "Status" { Show-ClearPocketStatus }
+        "Stop" {
+            Invoke-ClearPocketCompose @("stop")
+            Write-Host "ClearPocket Server stopped. Database, attachments, and private configuration were preserved."
+        }
+        "Diagnostics" { Write-ClearPocketDiagnostics }
+        "Logs" { Invoke-ClearPocketCompose @("logs", "--no-color", "--tail", "200") }
+        "Backup" {
+            $backupScript = Join-Path $PSScriptRoot "backup-windows.ps1"
+            if (-not (Test-Path -LiteralPath $backupScript -PathType Leaf)) {
+                throw "Windows backup support is missing. Download the complete server package again."
+            }
+            & $backupScript -EnvironmentFile $environmentFile
+            if (-not $?) { throw "Windows backup did not complete." }
+        }
+        default { throw "Unsupported non-interactive manager operation." }
+    }
     exit 0
 }
 

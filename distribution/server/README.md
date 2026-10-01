@@ -341,10 +341,13 @@ backup data. Rerunning a newer installer preserves the stable manager/task path 
 to the backup-gated version action. No administrator account, Python, or development environment is
 required; Docker Desktop remains required.
 
-`start-windows.cmd` is the double-clickable Docker Desktop manager. Its built-in PowerShell
-setup asks for a durable data folder and creates independent cryptographic secrets without displaying
-them. Its menu can start and health-check the pinned Compose application, open local setup, show
-status, stop without deleting data, create a redacted diagnostics report, and display recent logs.
+The Desktop and Start Menu shortcuts open a native graphical manager. First-time setup selects a
+durable data folder and optional HTTPS hostname in that window, then creates independent cryptographic
+secrets without displaying them. The same window starts and health-checks the pinned Compose
+application, opens local setup, shows status, stops without deleting data, creates a redacted
+diagnostics report, and displays recent logs. `start-windows.cmd` remains the advanced manager used by
+**Backup, Restore & Advanced** while the remaining recovery and credential forms are brought into the
+graphical surface.
 It can also register or remove a limited current-user Task Scheduler entry that waits for Docker
 Desktop and starts the server after sign-in; the task contains only the manager path, never private
 configuration or credentials. The same menu can initialize a new empty Windows server from an iPhone
@@ -412,8 +415,8 @@ never automatically downgraded against a potentially newer database; recover the
 into a new empty server instead. A signed installer package will eventually wrap this same per-user flow.
 
 Python and developer tools are not required. Docker Desktop is still required. Secure remote
-pairing/TLS is guided for a new installation, but automatic router/firewall configuration and a signed
-graphical server manager remain open product work.
+pairing/TLS is guided for a new installation, but automatic router/firewall configuration, platform
+signing, and graphical forms for the advanced recovery/credential operations remain open product work.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;

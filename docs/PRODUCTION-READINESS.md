@@ -1412,3 +1412,24 @@ diff check pass. No native changes. This intentionally removes destructive in-pl
 documented mission requires new-destination recovery and preserves the original deployment/backup.
 Next operational gap: coordinate source database/object backup capture against concurrent writers;
 do not claim a hot cross-resource snapshot is atomic merely because its manifest is complete.
+
+### Windows graphical manager foundation — 2026-10-01
+
+The versioned Windows customer bundle now installs a native WPF manager instead of making the
+numbered PowerShell menu its ordinary entry point. Fresh installs choose durable authority storage
+and an optional HTTPS hostname in the graphical surface; everyday start/open, status, safe stop,
+recent-log, and redacted-diagnostics actions invoke explicit non-interactive operations in the same
+hardened engine. Configuration is published only after the immutable release image has downloaded,
+so a failed first-run pull cannot leave a half-configured authority that later resolves a mutable tag.
+No stop path deletes volumes, configuration, backups, or financial data. The existing verified
+backup/restore, phone transfer, portable import, scheduling, update, and Dropbox flows remain under a
+clearly labeled advanced entry until their graphical forms are implemented.
+
+All **58 distribution contract tests pass**, including the new graphical composition, hidden-process
+output/error handling, immutable-image-before-configuration ordering, installer allowlist, and
+non-destructive command assertions. The complete backend run was also attempted from its required
+working directory; unrelated clock-bound September 2026 fixtures now fail on October 1, the sandbox
+blocks a loopback socket and real `age` controlling terminal, and existing financial tests fail in
+those shifted periods. No application/backend financial code changed in this checkpoint. WPF runtime,
+Windows accessibility, Docker Desktop, and signed-installer acceptance require a Windows test host and
+remain open; source assertions are not represented as that acceptance.

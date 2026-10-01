@@ -354,7 +354,7 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "Show-ClearPocketBackupSchedule" in script
     assert "Update-ClearPocketServer" in script
     assert "Type UPDATE" in script
-    update_section = script.split("function Update-ClearPocketServer", 1)[1].split('if ($Operation -eq "Start")', 1)[0]
+    update_section = script.split("function Update-ClearPocketServer", 1)[1].split('if ($Operation -ne "Interactive")', 1)[0]
     backup_index = update_section.index('& $backupScript -EnvironmentFile $environmentFile')
     pull_index = update_section.index('Install-PinnedReleaseImage "${image}:$serverVersion"')
     pin_index = update_section.index('Move-Item -LiteralPath $temporary -Destination $environmentFile -Force')
@@ -393,7 +393,10 @@ def test_windows_per_user_installer_preserves_authority_and_publishes_only_allow
     assert "WScript.Shell" in installer
     assert 'GetFolderPath("Desktop")' in installer
     assert 'GetFolderPath("Programs")' in installer
-    assert 'Start-Process -FilePath $manager' in installer
+    assert '"manager-windows.ps1"' in installer
+    assert '$shortcut.TargetPath = $powershell' in installer
+    assert '-WindowStyle Hidden -File' in installer
+    assert 'Start-Process -FilePath $powershell' in installer
     assert "function Get-PinnedReleaseImage" in launcher
     assert "function Install-PinnedReleaseImage" in launcher
     assert "budget-server@sha256:[0-9a-f]{64}" in launcher
@@ -401,6 +404,45 @@ def test_windows_per_user_installer_preserves_authority_and_publishes_only_allow
     assert 'Join-Path $env:LOCALAPPDATA "ClearPocket Server\\Data"' in launcher
     for forbidden in ("database", "attachments", "clearpocket-recovery-key.txt", "Backups"):
         assert f'"{forbidden}"' not in installer
+
+
+def test_windows_graphical_manager_drives_explicit_safe_operations():
+    root = ROOT / "distribution" / "server"
+    manager = (root / "manager-windows.ps1").read_text()
+    engine = (root / "start-windows.ps1").read_text()
+    assert "PresentationFramework" in manager
+    assert 'Title="ClearPocket Server"' in manager
+    assert 'Text="First-time setup"' in manager
+    assert 'Text="Data folder"' in manager
+    assert 'Text="Public HTTPS hostname (optional)"' in manager
+    assert 'Content="Set Up and Open Server"' in manager
+    assert 'Content="Start &amp; Open"' in manager
+    assert 'Content="Stop Safely"' in manager
+    assert 'Content="Create Diagnostics"' in manager
+    assert 'Content="Backup, Restore &amp; Advanced…"' in manager
+    assert 'Invoke-ManagerOperation "Configure"' in manager
+    assert 'CLEARPOCKET_SETUP_STORAGE_ROOT' in manager
+    assert 'CLEARPOCKET_SETUP_PUBLIC_HOST' in manager
+    assert '$info.UseShellExecute = $false' in manager
+    assert '$info.CreateNoWindow = $true' in manager
+    assert '$info.RedirectStandardOutput = $true' in manager
+    assert '$info.RedirectStandardError = $true' in manager
+    assert "Remove-Item" not in manager
+    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup")' in engine
+    assert '$Operation -notin @("Configure", "Interactive")' in engine
+    assert '$env:CLEARPOCKET_SETUP_STORAGE_ROOT' in engine
+    assert '$env:CLEARPOCKET_SETUP_PUBLIC_HOST' in engine
+    assert 'if ($Operation -eq "Configure") { $Operation = "Open" }' in engine
+    setup = engine.split("if ($newInstall) {", 1)[1].split("$portSetting", 1)[0]
+    assert setup.index('Install-PinnedReleaseImage "ghcr.io/firepika2000/budget-server:$serverVersion"') < setup.index(
+        "Move-Item -LiteralPath $temporary -Destination $environmentFile"
+    )
+    noninteractive = engine.split('if ($Operation -ne "Interactive")', 1)[1]
+    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup"):
+        assert f'"{operation}"' in noninteractive
+    assert 'Invoke-ClearPocketCompose @("stop")' in noninteractive
+    assert "down -v" not in noninteractive
+    assert "docker volume rm" not in noninteractive
 
 
 def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():

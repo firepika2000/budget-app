@@ -491,6 +491,11 @@ unattended scheduler failure visible.
 The versioned Windows ZIP now includes a double-click per-user installer. It validates and atomically
 publishes an allowlisted manager payload to a stable `%LOCALAPPDATA%` program path, adds Desktop and
 Start Menu shortcuts, and preserves private configuration and every authority/recovery path on rerun.
+Those shortcuts now open a native graphical manager rather than a numbered terminal menu. A first-run
+window chooses durable authority storage and an optional HTTPS hostname, while generated secrets remain
+hidden; daily start/open, health, safe stop, logs, and redacted diagnostics use explicit non-interactive
+manager operations. The existing verified backup, restore, transfer, update, scheduling, and Dropbox
+tools remain available through an advanced entry while their dedicated graphical forms are completed.
 The Windows helper uses built-in PowerShell for cryptographic first-run configuration and selectable
 durable storage without Python, and now provides start/open, status, data-preserving stop, redacted
 diagnostics and log actions. It can register a limited current-user Task Scheduler entry that waits
