@@ -10,6 +10,33 @@ health checks, environment contract, and migration entry point are used on all s
 hosts. That keeps Docker, QNAP Container Station, and Docker Desktop on an always-on Windows PC from
 becoming three different servers.
 
+## Download and verify a release
+
+An immutable `server-v*` release publishes three customer assets:
+
+- `clearpocket-server-windows-VERSION.zip` for Windows with Docker Desktop;
+- `clearpocket-server-docker-VERSION.tar.gz` for Docker Engine hosts; and
+- `clearpocket-server-VERSION-SHA256SUMS.txt` containing both archive digests.
+
+Verify the downloaded archive before extracting it. On a Docker/Linux host, place the archive and
+checksum file together and run:
+
+```sh
+sha256sum --check clearpocket-server-VERSION-SHA256SUMS.txt --ignore-missing
+```
+
+On Windows PowerShell, compare the printed value with the matching line in the checksum file:
+
+```powershell
+Get-FileHash .\clearpocket-server-windows-VERSION.zip -Algorithm SHA256
+```
+
+Each extracted bundle also contains `RELEASE-METADATA.txt`, which records its version, source commit,
+and exact published multi-architecture container digest. The container build includes provenance and
+an SBOM. SHA-256 detects a corrupt or substituted download only when the checksum file came through a
+separately trusted GitHub release connection; it is not a replacement for the still-pending signed
+normal-user installers.
+
 ## Install on a Docker host
 
 For the normal first run on a Docker Engine or Docker Desktop host, extract the versioned bundle and

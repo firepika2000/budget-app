@@ -422,12 +422,24 @@ def test_publish_workflow_builds_versioned_customer_bundle():
     workflow = (ROOT / ".github" / "workflows" / "server-image.yml").read_text()
     assert "Build customer deployment bundle" in workflow
     assert "distribution/server/." in workflow
-    assert "clearpocket-server-$VERSION.zip" in workflow
-    assert "clearpocket-server-$VERSION.tar.gz" in workflow
+    assert "clearpocket-server-windows-$VERSION.zip" in workflow
+    assert "clearpocket-server-docker-$VERSION.tar.gz" in workflow
+    assert "clearpocket-server-$VERSION-SHA256SUMS.txt" in workflow
+    assert "RELEASE-METADATA.txt" in workflow
+    assert "${{ steps.image.outputs.digest }}" in workflow
+    assert "sha256sum" in workflow
     assert "actions/upload-artifact@v4" in workflow
+    assert 'gh release create "$GITHUB_REF_NAME" --verify-tag' in workflow
+    assert "if: startsWith(github.ref, 'refs/tags/server-v')" in workflow
     assert "server/scripts/backup.sh server/scripts/restore.sh" in workflow
     assert "server/scripts/backup_archive.py server/scripts/backup_destination.py" in workflow
     assert "server/scripts/backup_schedule.py" in workflow
+
+    readme = (ROOT / "distribution" / "server" / "README.md").read_text()
+    assert "sha256sum --check clearpocket-server-VERSION-SHA256SUMS.txt --ignore-missing" in readme
+    assert "Get-FileHash .\\clearpocket-server-windows-VERSION.zip -Algorithm SHA256" in readme
+    assert "RELEASE-METADATA.txt" in readme
+    assert "not a replacement for the still-pending signed" in readme
 
 
 def test_server_image_contains_portable_import_runtime_and_age_decryptor():

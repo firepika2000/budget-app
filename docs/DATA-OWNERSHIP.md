@@ -445,6 +445,13 @@ version setting changes atomically before activation; and an unhealthy post-migr
 never triggers an unsafe automatic image downgrade. The preserved generation instead anchors the
 new-destination recovery workflow.
 
+Tagged server builds now publish separately labeled Windows/Docker customer archives rather than a
+generic workflow artifact. Each bundle records the immutable version, source commit, and exact
+multi-architecture image digest; a release-level SHA-256 manifest covers both downloads, while the
+container build retains provenance and an SBOM. This supplies reproducible release identity and
+download-integrity checks, but does not claim the platform code-signing still required for final
+normal-user installers.
+
 The generic versioned Docker bundle now has a one-command first-run installer. It requires only a
 running Docker/Compose v2 installation, uses the exact immutable application image to execute the
 configuration generator under the host user's identity, creates private durable authority directories,
