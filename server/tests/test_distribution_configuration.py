@@ -108,6 +108,7 @@ def test_shared_compose_contract_preserves_security_and_persistent_authority():
     assert "CLEARPOCKET_OPERATIONS_STORAGE:-clearpocket_operations" in compose
     assert "BUDGET_APP_BACKUP_STATUS_PATH" in compose
     assert "BUDGET_APP_RECOVERY_STATUS_PATH" in compose
+    assert "BUDGET_APP_PAIRING_PUBLIC_URL" in compose
     assert "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY" in compose
     assert "CLEARPOCKET_BIND_ADDRESS:-127.0.0.1" in compose
 
@@ -139,6 +140,7 @@ def test_docker_only_backup_is_coordinated_encrypted_bounded_and_user_owned():
     assert "clearpocket-recovery-key.txt" in script
     assert 'compose stop api' in script and 'compose start api' in script
     assert "pg_dump --clean --if-exists" in script
+    assert "--exclude-table-data=pairing_codes" in script
     assert "scripts/backup_archive.py create-manifest" in script
     assert "age --recipient" in script
     assert "scripts/backup_health.py healthy" in script
@@ -311,6 +313,7 @@ def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():
     assert 'Add-EnvironmentSetting "BUDGET_APP_BACKUP_AGE_IDENTITY"' not in script
     assert '"stop", "api"' in script
     assert "pg_dump --clean --if-exists --no-owner --no-privileges" in script
+    assert "--exclude-table-data=pairing_codes" in script
     assert "api:/var/lib/budget-app/attachments/." in script
     assert '"start", "api"' in script
     assert 'scripts/backup_archive.py", "create-manifest"' in script
@@ -399,6 +402,7 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "backup-schedule-status" in service
     assert "# ClearPocketServerBackup" in service
     assert "Create one successful manual backup before enabling the schedule" in service
+    assert "--exclude-table-data=pairing_codes" in backup
     assert 'mv "$ORIGINAL" "$CRON_FILE"' in service
     assert "the prior crontab was restored" in service
     assert "verify-local-device" in service

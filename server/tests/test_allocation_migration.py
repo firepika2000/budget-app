@@ -59,12 +59,45 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
         favorite_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('category_favorites')"))}
         debt_term_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('account_debt_terms')"))}
         transaction_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('transactions')"))}
-        assert version == "0030_import_staging"
+        assert version == "0031_pairing_devices"
         assert attachment_count == 0
         assert "ix_transaction_budget_date_id" in report_indexes
         assert {"budget_id", "user_id", "category_id", "sort_order"} <= favorite_columns
         assert {"account_id", "budget_id", "terms_type", "annual_rate_basis_points"} <= debt_term_columns
         assert "financial_classification" in transaction_columns
+
+
+def test_0031_pairing_upgrade_preserves_existing_refresh_sessions(tmp_path, monkeypatch):
+    database_url = f"sqlite:///{tmp_path / 'pairing-upgrade.db'}"
+    monkeypatch.setenv("BUDGET_APP_DATABASE_URL", database_url)
+    monkeypatch.setenv("BUDGET_APP_JWT_SECRET", "migration-test-secret-that-is-longer-than-32-characters")
+    config = migration_config()
+    command.upgrade(config, "0030_import_staging")
+    engine = create_engine(database_url)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO users (id,email,display_name,password_hash,created_at) "
+            "VALUES ('pair-user','pair@example.com','Owner','hash',:now)"
+        ), {"now": now})
+        connection.execute(text(
+            "INSERT INTO refresh_sessions (id,user_id,token_hash,expires_at,created_at,revoked_at) "
+            "VALUES ('existing-device','pair-user',:token,:expires,:now,NULL)"
+        ), {"token": "a" * 64, "expires": datetime(2030, 1, 1, tzinfo=timezone.utc), "now": now})
+
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT id,user_id,token_hash,device_name FROM refresh_sessions"
+        )).one() == ("existing-device", "pair-user", "a" * 64, None)
+        assert connection.execute(text("SELECT COUNT(*) FROM pairing_codes")).scalar_one() == 0
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0031_pairing_devices"
+
+    command.downgrade(config, "0030_import_staging")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT id,token_hash FROM refresh_sessions")).one() == (
+            "existing-device", "a" * 64,
+        )
 
 
 def test_0026_debt_terms_populated_upgrade_and_downgrade_preserve_accounts(tmp_path, monkeypatch):
@@ -117,7 +150,7 @@ def test_0027_interest_classification_preserves_populated_history(tmp_path, monk
     with engine.connect() as connection:
         row = connection.execute(text("SELECT amount_minor, financial_classification FROM transactions WHERE id='t-interest'")).one()
         assert row == (-1234, None)
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0030_import_staging"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0031_pairing_devices"
     command.downgrade(config, "0026_debt_terms")
     with engine.connect() as connection:
         assert connection.execute(text("SELECT amount_minor FROM transactions WHERE id='t-interest'")).scalar_one() == -1234
@@ -148,7 +181,7 @@ def test_0028_snooze_upgrade_downgrade_preserves_populated_financial_rows(tmp_pa
             for table, rows in before.items():
                 assert connection.execute(text(f"SELECT * FROM {table}")).all() == rows
             if revision == "head":
-                assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0030_import_staging"
+                assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0031_pairing_devices"
                 assert connection.execute(text("SELECT COUNT(*) FROM category_target_snoozes")).scalar_one() == 0
 
 

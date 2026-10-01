@@ -391,6 +391,13 @@ def backup_local(
         snapshot = root / "database.sqlite3"
         with sqlite3.connect(configuration.database_path) as source, sqlite3.connect(snapshot) as destination:
             source.backup(destination)
+            # Pairing codes are short-lived bearer credentials. Preserve the table
+            # schema, but never let a valid code cross a backup boundary.
+            if destination.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pairing_codes'"
+            ).fetchone():
+                destination.execute("DELETE FROM pairing_codes")
+                destination.commit()
         _validate_sqlite_snapshot(snapshot)
         _copy_attachment_tree(configuration.attachment_path, root / "attachments")
         revision = migration_state(configuration, server_directory)

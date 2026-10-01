@@ -26,6 +26,7 @@ class BootstrapRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+    device_name: Optional[str] = Field(default=None, min_length=1, max_length=80)
 
 
 class TokenResponse(BaseModel):
@@ -44,6 +45,32 @@ class BootstrapStatusResponse(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=40, max_length=200)
+
+
+class PairingCodeResponse(BaseModel):
+    code: str
+    server_url: str
+    expires_at: datetime
+
+
+class PairingRedeemRequest(BaseModel):
+    code: str = Field(min_length=40, max_length=200)
+    device_name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("device_name")
+    @classmethod
+    def normalize_device_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("device name cannot be blank")
+        return normalized
+
+
+class DeviceSessionResponse(BaseModel):
+    id: str
+    device_name: str
+    created_at: datetime
+    expires_at: datetime
 
 
 class BudgetCreate(BaseModel):

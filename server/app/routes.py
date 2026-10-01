@@ -1,8 +1,12 @@
 from typing import Optional
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+from hashlib import sha256
+import ipaddress
+import secrets
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,6 +34,8 @@ from .models import (
     Membership,
     ResourceGrant,
     SetupState,
+    PairingCode,
+    RefreshSession,
     User,
     now_utc,
 )
@@ -43,6 +49,9 @@ from .schemas import (
     GrantResponse,
     GrantUpsert,
     LoginRequest,
+    DeviceSessionResponse,
+    PairingCodeResponse,
+    PairingRedeemRequest,
     RefreshRequest,
     TokenResponse,
 )
@@ -122,7 +131,7 @@ def login(
         rate_limiter.failed(rate_key)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     rate_limiter.succeeded(rate_key)
-    return issue_session(db, user, settings)
+    return issue_session(db, user, settings, body.device_name)
 
 
 @router.post("/auth/refresh", response_model=TokenResponse)
@@ -137,6 +146,141 @@ def refresh(
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(body: RefreshRequest, db: Session = Depends(get_db)) -> None:
     revoke_session(db, body.refresh_token)
+
+
+def _is_loopback(host: Optional[str]) -> bool:
+    if host is None:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _require_secure_pairing_request(request: Request) -> None:
+    if request.url.scheme.lower() != "https" and not _is_loopback(request.url.hostname):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Device pairing requires HTTPS")
+
+
+def _pairing_public_url(settings: Settings) -> str:
+    raw = (settings.pairing_public_url or "").strip().rstrip("/")
+    parsed = urlsplit(raw)
+    if (
+        not raw or parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname
+        or parsed.username is not None or parsed.password is not None
+        or parsed.query or parsed.fragment or parsed.path not in {"", "/"}
+        or (parsed.scheme.lower() != "https" and not _is_loopback(parsed.hostname))
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Secure device pairing is not configured",
+        )
+    return raw
+
+
+@router.post("/auth/pairing-code", response_model=PairingCodeResponse, status_code=status.HTTP_201_CREATED)
+def create_pairing_code(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> PairingCodeResponse:
+    _require_secure_pairing_request(request)
+    public_url = _pairing_public_url(settings)
+    now = datetime.now(timezone.utc)
+    # One active code per user limits accidental screenshots and makes regeneration revoke the old QR.
+    db.execute(delete(PairingCode).where(
+        (PairingCode.user_id == user.id) | (PairingCode.expires_at <= now)
+    ))
+    raw_code = secrets.token_urlsafe(48)
+    pairing = PairingCode(
+        user_id=user.id,
+        token_hash=sha256(raw_code.encode("utf-8")).hexdigest(),
+        expires_at=now + timedelta(minutes=settings.pairing_code_minutes),
+    )
+    db.add(pairing)
+    db.commit()
+    return PairingCodeResponse(code=raw_code, server_url=public_url, expires_at=pairing.expires_at)
+
+
+@router.post("/auth/pair", response_model=TokenResponse)
+def redeem_pairing_code(
+    body: PairingRedeemRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TokenResponse:
+    _require_secure_pairing_request(request)
+    _pairing_public_url(settings)
+    rate_limiter = request.app.state.auth_rate_limiter
+    rate_key = rate_limiter.key(request, "device-pairing")
+    rate_limiter.check(rate_key)
+    token_hash = sha256(body.code.encode("utf-8")).hexdigest()
+    pairing = db.scalar(select(PairingCode).where(PairingCode.token_hash == token_hash))
+    now = datetime.now(timezone.utc)
+    invalid = pairing is None or pairing.redeemed_at is not None
+    if pairing is not None:
+        expires_at = pairing.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        invalid = invalid or expires_at <= now
+    if invalid:
+        rate_limiter.failed(rate_key)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired pairing code")
+    claimed = db.execute(update(PairingCode).where(
+        PairingCode.id == pairing.id,
+        PairingCode.redeemed_at.is_(None),
+    ).values(redeemed_at=now))
+    if claimed.rowcount != 1:
+        db.rollback()
+        rate_limiter.failed(rate_key)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired pairing code")
+    user = db.get(User, pairing.user_id)
+    if user is None:
+        db.rollback()
+        rate_limiter.failed(rate_key)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired pairing code")
+    db.delete(pairing)
+    rate_limiter.succeeded(rate_key)
+    return issue_session(db, user, settings, body.device_name)
+
+
+@router.get("/auth/sessions", response_model=list[DeviceSessionResponse])
+def list_device_sessions(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[DeviceSessionResponse]:
+    now = datetime.now(timezone.utc)
+    sessions = list(db.scalars(select(RefreshSession).where(
+        RefreshSession.user_id == user.id,
+        RefreshSession.revoked_at.is_(None),
+        RefreshSession.expires_at > now,
+    ).order_by(RefreshSession.created_at.desc(), RefreshSession.id)))
+    return [DeviceSessionResponse(
+        id=item.id,
+        device_name=item.device_name or "Signed-in device",
+        created_at=item.created_at,
+        expires_at=item.expires_at,
+    ) for item in sessions]
+
+
+@router.delete("/auth/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_device_session(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    device_session = db.scalar(select(RefreshSession).where(
+        RefreshSession.id == session_id,
+        RefreshSession.user_id == user.id,
+    ))
+    if device_session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device session not found")
+    if device_session.revoked_at is None:
+        device_session.revoked_at = datetime.now(timezone.utc)
+        db.commit()
 
 
 @router.get("/budgets", response_model=list[BudgetResponse])

@@ -12,6 +12,7 @@ services:
       BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY: ${BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY}
       BUDGET_APP_BACKUP_STATUS_PATH: /var/lib/budget-app/operations/backup-status.json
       BUDGET_APP_RECOVERY_STATUS_PATH: /var/lib/budget-app/operations/recovery-status.json
+      BUDGET_APP_PAIRING_PUBLIC_URL: ${BUDGET_APP_PAIRING_PUBLIC_URL:-}
     ports:
       - "${CLEARPOCKET_BIND_ADDRESS:-127.0.0.1}:${CLEARPOCKET_PORT:-8080}:8080"
     read_only: true

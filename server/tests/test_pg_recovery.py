@@ -137,7 +137,7 @@ def test_real_dump_restore_preserves_rows_finances_and_encrypted_attachments(pg,
         subprocess.run(["psql", "--single-transaction", "--set", "ON_ERROR_STOP=on", "--dbname", destination_name], input=EMPTY_GUARD.read_bytes() + b"\n" + dump.read_bytes(), env=environment, check=True, capture_output=True)
         assert _rows(restored_engine) == expected
         with restored_engine.connect() as connection:
-            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0030_import_staging"
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0031_pairing_devices"
         restored_app = create_app(Settings(database_url=destination_url.render_as_string(hide_password=False), jwt_secret=source_settings.jwt_secret, attachment_storage_path=str(restored_objects)))
         restored_app.state.session_factory = sessionmaker(bind=restored_engine, expire_on_commit=False)
         with TestClient(restored_app) as client:

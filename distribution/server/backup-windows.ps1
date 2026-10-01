@@ -218,7 +218,7 @@ try {
     $apiPaused = $true
     Invoke-ClearPocketCompose @(
         "exec", "-T", "database", "sh", "-c",
-        "umask 077; pg_dump --clean --if-exists --no-owner --no-privileges " +
+        "umask 077; pg_dump --clean --if-exists --no-owner --no-privileges --exclude-table-data=pairing_codes " +
         "-U budget -d budget > '$databaseTemporary'"
     )
     Invoke-ClearPocketCompose @("cp", "database:${databaseTemporary}", (Join-Path $staging "database.sql"))

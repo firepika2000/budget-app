@@ -165,6 +165,7 @@ def test_backup_targets_named_project_and_archives_database_objects_key_and_mani
     assert "exec -T api sh -c" in calls[0]
     assert "stop api" in calls[1]
     assert "pg_dump" in calls[2]
+    assert "--exclude-table-data=pairing_codes" in calls[2]
     assert "cp api:" in calls[4]
     assert "start api" in calls[5]
     assert "backup-status.json" in calls[6]

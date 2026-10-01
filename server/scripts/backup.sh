@@ -134,7 +134,8 @@ unset recovery_key
 resume_api=true
 "${compose[@]}" stop api
 "${compose[@]}" exec -T database \
-  pg_dump --clean --if-exists --no-owner --no-privileges -U budget -d budget \
+  pg_dump --clean --if-exists --no-owner --no-privileges \
+    --exclude-table-data=pairing_codes -U budget -d budget \
   > "$work_dir/database.sql"
 database_revision="$("${compose[@]}" exec -T database psql -At -U budget -d budget -c 'SELECT version_num FROM alembic_version')"
 [[ -n "$database_revision" ]] || { echo "Unable to determine database migration revision" >&2; exit 1; }

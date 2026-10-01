@@ -15,6 +15,8 @@ class Settings:
     attachment_encryption_key: Optional[str] = None
     backup_status_path: Optional[str] = None
     recovery_status_path: Optional[str] = None
+    pairing_public_url: Optional[str] = None
+    pairing_code_minutes: int = 5
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -41,4 +43,5 @@ class Settings:
             attachment_encryption_key=os.environ.get("BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY"),
             backup_status_path=os.environ.get("BUDGET_APP_BACKUP_STATUS_PATH"),
             recovery_status_path=os.environ.get("BUDGET_APP_RECOVERY_STATUS_PATH"),
+            pairing_public_url=os.environ.get("BUDGET_APP_PAIRING_PUBLIC_URL"),
         )

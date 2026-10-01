@@ -59,7 +59,7 @@ def test_non_loopback_binding_requires_explicit_allowed_hosts(tmp_path):
 def test_local_mode_runs_full_migration_graph_and_preserves_populated_database(tmp_path):
     configuration = LocalServerConfiguration.load_or_create(tmp_path / "local")
     migrate(configuration, SERVER_ROOT)
-    assert "0030_import_staging (head)" in migration_state(configuration, SERVER_ROOT)
+    assert "0031_pairing_devices (head)" in migration_state(configuration, SERVER_ROOT)
     with sqlite3.connect(configuration.database_path) as database:
         database.execute("INSERT INTO users(id,email,password_hash,display_name,created_at) VALUES (?,?,?,?,?)",
                          ("owner", "owner@example.test", "hash", "Owner", "2026-09-27 00:00:00"))
@@ -99,6 +99,10 @@ cp "$input" "$output"
             "INSERT INTO refresh_sessions(id,user_id,token_hash,expires_at,created_at,revoked_at) VALUES (?,?,?,?,?,?)",
             ("session", "owner", "hash", "2030-01-01 00:00:00", "2026-09-27 00:00:00", None),
         )
+        database.execute(
+            "INSERT INTO pairing_codes(id,user_id,token_hash,expires_at,redeemed_at,created_at) VALUES (?,?,?,?,?,?)",
+            ("pairing", "owner", "pairing-hash", "2030-01-01 00:00:00", None, "2026-09-27 00:00:00"),
+        )
         database.commit()
     (source.attachment_path / "encrypted-object").write_bytes(b"ciphertext")
 
@@ -119,7 +123,10 @@ cp "$input" "$output"
     with sqlite3.connect(restored.database_path) as database:
         assert database.execute("SELECT display_name FROM users WHERE id='owner'").fetchone() == ("Owner",)
         assert database.execute("SELECT COUNT(*) FROM refresh_sessions").fetchone() == (0,)
+        assert database.execute("SELECT COUNT(*) FROM pairing_codes").fetchone() == (0,)
         assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    with sqlite3.connect(source.database_path) as database:
+        assert database.execute("SELECT COUNT(*) FROM pairing_codes").fetchone() == (1,)
     restored_status = backup_status(restored)
     assert restored_status["state"] == "never"
     assert restored_status["last_restore_verification"]["state"] == "verified"

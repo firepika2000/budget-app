@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import secrets
+from typing import Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, update
@@ -16,12 +17,13 @@ def refresh_token_hash(token: str) -> str:
     return sha256(token.encode("utf-8")).hexdigest()
 
 
-def issue_session(db: Session, user: User, settings: Settings) -> TokenResponse:
+def issue_session(db: Session, user: User, settings: Settings, device_name: Optional[str] = None) -> TokenResponse:
     raw_refresh_token = secrets.token_urlsafe(48)
     db.add(RefreshSession(
         user_id=user.id,
         token_hash=refresh_token_hash(raw_refresh_token),
         expires_at=datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_days),
+        device_name=device_name.strip() if device_name else None,
     ))
     db.commit()
     return TokenResponse(
@@ -59,7 +61,7 @@ def rotate_session(db: Session, raw_token: str, settings: Settings) -> TokenResp
     if user is None:
         raise unauthorized
     session.revoked_at = now
-    return issue_session(db, user, settings)
+    return issue_session(db, user, settings, session.device_name)
 
 
 def revoke_session(db: Session, raw_token: str) -> None:

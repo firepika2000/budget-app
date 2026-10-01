@@ -174,7 +174,7 @@ def test_structured_export_contract_covers_every_persistent_domain_model():
         "allowance_splits", "allowance_issuances", "financial_requests", "request_actions",
         "import_batches",
     }
-    deliberately_deployment_local = {"setup_state", "refresh_sessions"}
+    deliberately_deployment_local = {"setup_state", "refresh_sessions", "pairing_codes"}
 
     assert set(Base.metadata.tables) == exported_tables | deliberately_deployment_local
 

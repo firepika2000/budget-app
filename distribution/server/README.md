@@ -109,6 +109,13 @@ front of it. `0.0.0.0` is available for protected LAN testing, but the iPhone ap
 ordinary remote HTTP; secure pairing/TLS remains a release gate. Never forward raw port 8080 from a
 home router to the Internet.
 
+Advanced deployments that already terminate trusted HTTPS may set
+`BUDGET_APP_PAIRING_PUBLIC_URL=https://budget.example.com`. This enables the one-time pairing API only
+for that canonical origin; it does not configure certificates, open firewall ports, or make raw HTTP
+safe. Pairing secrets expire after five minutes, are stored only as hashes, redeem once into ordinary
+rotating sessions, and can be revoked through the session API. Native QR enrollment and guided TLS
+remain incomplete, so normal users should not be instructed to configure this manually.
+
 ## Safe server management
 
 Linux Docker Engine and QNAP administrators can use the bundled management command after generating

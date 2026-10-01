@@ -169,7 +169,7 @@ grep -Eq '^BUDGET_APP_(ATTACHMENT_ENCRYPTION_KEY|JWT_SECRET)=[^[:space:]]+$' "$S
 compose stop api
 API_PAUSED=true
 compose exec -T database sh -c \
-    "umask 077; pg_dump --clean --if-exists --no-owner --no-privileges -U budget -d budget > '$DATABASE_TEMPORARY'"
+    "umask 077; pg_dump --clean --if-exists --no-owner --no-privileges --exclude-table-data=pairing_codes -U budget -d budget > '$DATABASE_TEMPORARY'"
 compose cp "database:$DATABASE_TEMPORARY" "$STAGING/database.sql"
 REVISION=$(compose exec -T database psql -At -U budget -d budget -c 'SELECT version_num FROM alembic_version')
 printf '%s\n' "$REVISION" | grep -Eq '^[A-Za-z0-9_]+$' || { echo "Database revision is invalid" >&2; exit 1; }
