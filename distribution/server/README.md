@@ -45,6 +45,7 @@ Linux Docker Engine and QNAP administrators can use the bundled management comma
 ./manage.py status
 ./manage.py diagnostics
 ./manage.py logs --lines 200
+./manage.py backup --output /protected/path/clearpocket-backups
 ./manage.py stop
 ```
 
@@ -53,7 +54,20 @@ bounded time for the real API health endpoint. `stop` uses Compose's non-destruc
 it never removes containers, volumes, database files, attachments, or configuration. `diagnostics`
 writes a JSON support report containing only allowlisted runtime/status fields. It excludes secrets,
 allowed-host details, host storage paths, container environment, and application data. Review logs
-before sharing them because user-entered server activity may still be visible there.
+before sharing them because user-entered server activity may still be visible there. `backup` invokes
+the bundled, tested coordinated backup path: the API pauses, PostgreSQL and encrypted attachments are
+captured as one integrity manifest, the API resumes, and `age` publishes an immutable encrypted
+generation. Docker, Python 3, and `age` must be installed on the host. The recovery passphrase or age
+identity remains under the household owner's control.
+
+On a package host that keeps private settings outside the replaceable application directory, pass
+`--env-file /durable/private/path/.env` before the subcommand. The same explicit path is forwarded to
+Compose and the coordinated backup tool; it is never copied into diagnostics.
+
+The versioned bundle also includes `tools/restore.sh`. Restore is intentionally not a routine manager
+menu action: it accepts only a brand-new empty recovery deployment, verifies the encrypted archive and
+attachment key before mutation, and requires an explicit `--yes --project-name` target. Follow the
+recovery runbook and preserve the source authority until the restored destination is verified.
 
 ## Docker Engine
 

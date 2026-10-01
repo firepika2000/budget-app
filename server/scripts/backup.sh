@@ -5,15 +5,26 @@ umask 077
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 server_dir="$(cd "$script_dir/.." && pwd)"
 project_name=""
-if [[ "${1:-}" == "--project-name" ]]; then
-  [[ -n "${2:-}" ]] || { echo "--project-name requires a value" >&2; exit 2; }
-  project_name="$2"
-  shift 2
-fi
+environment_file=""
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --env-file)
+      [[ -n "${2:-}" ]] || { echo "--env-file requires a value" >&2; exit 2; }
+      environment_file="$2"; shift 2 ;;
+    --project-name)
+      [[ -n "${2:-}" ]] || { echo "--project-name requires a value" >&2; exit 2; }
+      project_name="$2"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
 [[ -n "$project_name" ]] || { echo "An explicit Docker Compose project name is required for coordinated backup" >&2; exit 2; }
 backup_dir="${1:-$server_dir/backups}"
-[[ $# -le 1 ]] || { echo "Usage: $0 --project-name NAME [backup-directory]" >&2; exit 2; }
+[[ $# -le 1 ]] || { echo "Usage: $0 [--env-file PATH] --project-name NAME [backup-directory]" >&2; exit 2; }
 compose=(docker compose --project-directory "$server_dir")
+if [[ -n "$environment_file" ]]; then
+  [[ -f "$environment_file" && ! -L "$environment_file" ]] || { echo "Private environment file must be a regular non-symlink file" >&2; exit 2; }
+  compose+=(--env-file "$environment_file")
+fi
 if [[ -n "$project_name" ]]; then
   [[ "$project_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo "Invalid Docker Compose project name" >&2; exit 2; }
   compose+=(--project-name "$project_name")

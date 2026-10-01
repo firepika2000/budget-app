@@ -36,9 +36,17 @@ cp "$PROJECT_ROOT/distribution/server/compose.yaml" \
    "$PROJECT_ROOT/distribution/server/.env.example" \
    "$PROJECT_ROOT/distribution/server/README.md" \
    "$STAGE/shared/server/"
+mkdir -p "$STAGE/shared/server/tools"
+cp "$PROJECT_ROOT/server/scripts/backup.sh" \
+   "$PROJECT_ROOT/server/scripts/restore.sh" \
+   "$PROJECT_ROOT/server/scripts/backup_archive.py" \
+   "$PROJECT_ROOT/server/scripts/backup_destination.py" \
+   "$PROJECT_ROOT/server/scripts/require_empty_restore.sql" \
+   "$STAGE/shared/server/tools/"
 printf '%s\n' "$VERSION" > "$STAGE/shared/server/VERSION"
 chmod 755 "$STAGE/shared/ClearPocketServer.sh" "$STAGE/shared/server/manage.py" \
-    "$STAGE/shared/server/configure.py"
+    "$STAGE/shared/server/configure.py" "$STAGE/shared/server/tools/backup.sh" \
+    "$STAGE/shared/server/tools/restore.sh"
 
 (cd "$STAGE" && "$QBUILD")
 mkdir -p "$SCRIPT_DIR/build"

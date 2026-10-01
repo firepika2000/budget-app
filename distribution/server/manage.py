@@ -38,6 +38,7 @@ class ManagerError(RuntimeError):
 @dataclass(frozen=True)
 class Deployment:
     root: Path
+    configuration_path: Path
     environment: dict[str, str]
 
     @property
@@ -46,7 +47,7 @@ class Deployment:
 
     @property
     def environment_file(self) -> Path:
-        return self.root / ".env"
+        return self.configuration_path
 
     @property
     def health_url(self) -> str:
@@ -91,11 +92,16 @@ def load_environment(path: Path) -> dict[str, str]:
     return values
 
 
-def deployment(root: Path) -> Deployment:
+def deployment(root: Path, environment_file: Path | None = None) -> Deployment:
     root = root.expanduser().resolve()
     if not (root / "compose.yaml").is_file():
         raise ManagerError(f"compose.yaml was not found in {root}")
-    return Deployment(root=root, environment=load_environment(root / ".env"))
+    configuration_candidate = (environment_file or (root / ".env")).expanduser()
+    if configuration_candidate.is_symlink() or not configuration_candidate.is_file():
+        raise ManagerError(f"Private configuration must be a regular non-symlink file: {configuration_candidate}")
+    configuration_path = configuration_candidate.resolve()
+    return Deployment(root=root, configuration_path=configuration_path,
+                      environment=load_environment(configuration_path))
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -208,10 +214,24 @@ def logs(target: Deployment, runner: Runner = run, lines: int = 200) -> str:
     return runner(target.compose_command("logs", "--no-color", "--tail", str(lines))).stdout
 
 
+def backup(target: Deployment, destination: Path, runner: Runner = run,
+           project_name: str = "clearpocket-server") -> None:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", project_name):
+        raise ManagerError("Backup project name is invalid")
+    tool = target.root / "tools" / "backup.sh"
+    if not tool.is_file():
+        raise ManagerError("Backup tools are missing. Download the complete versioned server bundle.")
+    destination = destination.expanduser().resolve()
+    runner([str(tool), "--env-file", str(target.environment_file),
+            "--project-name", project_name, str(destination)])
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="Safely operate a ClearPocket Server deployment")
     value.add_argument("--root", type=Path, default=Path(__file__).resolve().parent,
                        help="directory containing compose.yaml and the private .env")
+    value.add_argument("--env-file", type=Path,
+                       help="private configuration path when stored outside the bundle (for example QNAP)")
     commands = value.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor", help="validate Docker, Compose, and deployment configuration")
     commands.add_parser("status", help="show container and local API health")
@@ -220,6 +240,10 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("stop", help="stop services without deleting containers or data")
     log_command = commands.add_parser("logs", help="show recent service logs")
     log_command.add_argument("--lines", type=int, default=200)
+    backup_command = commands.add_parser("backup", help="create a full encrypted database and attachment backup")
+    backup_command.add_argument("--output", type=Path, required=True,
+                                help="private directory for immutable encrypted backup generations")
+    backup_command.add_argument("--project-name", default="clearpocket-server")
     diagnostic = commands.add_parser("diagnostics", help="write a redacted support report")
     diagnostic.add_argument("--output", type=Path, default=Path("clearpocket-diagnostics.json"))
     return value
@@ -228,7 +252,7 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     arguments = parser().parse_args()
     try:
-        target = deployment(arguments.root)
+        target = deployment(arguments.root, arguments.env_file)
         if arguments.command == "doctor":
             versions = inspect_prerequisites(target)
             print(f"Docker {versions['docker_server']}; Compose {versions['docker_compose']}; configuration valid")
@@ -252,6 +276,8 @@ def main() -> int:
             if not 1 <= arguments.lines <= 10_000:
                 raise ManagerError("Log line count must be between 1 and 10000")
             print(logs(target, lines=arguments.lines), end="")
+        elif arguments.command == "backup":
+            backup(target, arguments.output, project_name=arguments.project_name)
         elif arguments.command == "diagnostics":
             output = diagnostics(target, arguments.output)
             print(f"Redacted diagnostics written to {output}")

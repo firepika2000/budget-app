@@ -5,8 +5,14 @@ umask 077
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 server_dir="$(cd "$script_dir/.." && pwd)"
 
+environment_file=""
+if [[ "${1:-}" == "--env-file" ]]; then
+  [[ -n "${2:-}" ]] || { echo "--env-file requires a value" >&2; exit 2; }
+  environment_file="$2"
+  shift 2
+fi
 if [[ "${1:-}" != "--yes" || "${2:-}" != "--project-name" || -z "${3:-}" || -z "${4:-}" || -n "${5:-}" ]]; then
-  echo "Usage: $0 --yes --project-name NAME /path/to/budget-backup.tar.gz.age" >&2
+  echo "Usage: $0 [--env-file PATH] --yes --project-name NAME /path/to/budget-backup.tar.gz.age" >&2
   echo "Restore requires a new, empty recovery deployment; populated destinations are refused." >&2
   echo "The explicit Docker Compose project name is required to prevent restoring into an implicit target." >&2
   exit 2
@@ -47,6 +53,10 @@ fi
 age "${age_arguments[@]}" "$backup_file" > "$work_dir/archive.tar.gz"
 python3 "$script_dir/backup_archive.py" extract-verified "$work_dir/archive.tar.gz" "$restore_dir"
 compose=(docker compose --project-directory "$server_dir" --project-name "$project_name")
+if [[ -n "$environment_file" ]]; then
+  [[ -f "$environment_file" && ! -L "$environment_file" ]] || { echo "Private environment file must be a regular non-symlink file" >&2; exit 2; }
+  compose=(docker compose --project-directory "$server_dir" --env-file "$environment_file" --project-name "$project_name")
+fi
 # Never source recovery material or print secrets. A readable archive is not enough:
 # replacing objects with ciphertext for another key would make attachments unreadable.
 backup_key="$(<"$restore_dir/attachment-key-recovery.env")"

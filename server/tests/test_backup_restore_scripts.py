@@ -170,6 +170,21 @@ def test_backup_targets_named_project_and_archives_database_objects_key_and_mani
     assert verification.returncode == 0, verification.stderr
 
 
+def test_backup_forwards_explicit_external_environment_file_to_every_compose_call(tmp_path):
+    environment, log = _backup_environment(tmp_path)
+    private = tmp_path / "durable.env"
+    private.write_text("PRIVATE=configuration\n")
+    result = subprocess.run(
+        [str(BACKUP), "--env-file", str(private), "--project-name", "qnap-source",
+         str(tmp_path / "backups")],
+        env=environment, text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text().splitlines()
+    assert calls
+    assert all(f"--env-file {private}" in call for call in calls)
+
+
 def test_backup_recipient_mode_is_noninteractive_and_destination_configuration_fails_closed(tmp_path):
     environment, log = _backup_environment(tmp_path)
     age_log = tmp_path / "age.log"
@@ -215,6 +230,22 @@ def test_restore_verifies_archive_before_addressing_explicit_target(tmp_path):
     assert "psql --single-transaction --set ON_ERROR_STOP=on" in calls[6]
     assert "start api" in calls[-1]
     assert not any("-delete" in call for call in calls)
+
+
+def test_restore_forwards_explicit_external_environment_file_to_every_compose_call(tmp_path):
+    archive = _archive(tmp_path)
+    environment, log = _environment(tmp_path)
+    private = tmp_path / "recovery.env"
+    private.write_text("PRIVATE=configuration\n")
+    result = subprocess.run(
+        [str(RESTORE), "--env-file", str(private), "--yes", "--project-name",
+         "qnap-recovery", str(archive)],
+        env=environment, text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text().splitlines()
+    assert calls
+    assert all(f"--env-file {private}" in call for call in calls)
 
 
 def test_restore_uses_configured_age_identity_without_passphrase_prompt(tmp_path):

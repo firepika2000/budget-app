@@ -140,6 +140,8 @@ def test_publish_workflow_builds_versioned_customer_bundle():
     assert "clearpocket-server-$VERSION.zip" in workflow
     assert "clearpocket-server-$VERSION.tar.gz" in workflow
     assert "actions/upload-artifact@v4" in workflow
+    assert "server/scripts/backup.sh server/scripts/restore.sh" in workflow
+    assert "server/scripts/backup_archive.py server/scripts/backup_destination.py" in workflow
 
 
 def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority():
@@ -168,6 +170,7 @@ def test_qnap_builder_stages_a_versioned_shared_server_bundle(tmp_path: Path):
     distribution = tmp_path / "distribution"
     shutil.copytree(ROOT / "distribution" / "qnap", distribution / "qnap")
     shutil.copytree(ROOT / "distribution" / "server", distribution / "server")
+    shutil.copytree(ROOT / "server" / "scripts", tmp_path / "server" / "scripts")
     fake_qbuild = tmp_path / "qbuild"
     fake_qbuild.write_text("""#!/bin/sh
 set -eu
@@ -175,6 +178,8 @@ grep -q 'QPKG_VER=\"0.9.0\"' qpkg.cfg
 test -f shared/ClearPocketServer.sh
 test -f shared/server/compose.yaml
 test -f shared/server/manage.py
+test -f shared/server/tools/backup.sh
+test -f shared/server/tools/restore.sh
 test \"$(cat shared/server/VERSION)\" = \"0.9.0\"
 mkdir -p build
 : > build/ClearPocketServer_0.9.0.qpkg
@@ -217,6 +222,19 @@ def test_manager_rejects_duplicate_or_incomplete_private_configuration(tmp_path:
         manager.deployment(tmp_path)
 
 
+def test_manager_accepts_external_private_configuration_but_rejects_symlinks(tmp_path: Path):
+    (tmp_path / "compose.yaml").write_text("services: {}\n")
+    private = tmp_path / "durable" / ".env"
+    private.parent.mkdir()
+    private.write_text(module.configuration(allowed_hosts="localhost", bind_address="127.0.0.1",
+        port=8080, image="example/server", version="test"))
+    assert manager.deployment(tmp_path, private).environment_file == private.resolve()
+    link = tmp_path / ".env"
+    link.symlink_to(private)
+    with pytest.raises(manager.ManagerError, match="non-symlink"):
+        manager.deployment(tmp_path, link)
+
+
 def test_manager_start_validates_then_uses_compose_and_current_local_health(tmp_path: Path):
     target = manager_deployment(tmp_path)
     runner = RecordedRunner([(0, "27.0.0\n", ""), (0, "2.39.1\n", ""),
@@ -241,6 +259,22 @@ def test_manager_stop_is_data_preserving(tmp_path: Path):
     assert runner.commands[0][-1] == "stop"
     assert "down" not in runner.commands[0]
     assert "-v" not in runner.commands[0]
+
+
+def test_manager_backup_uses_bundled_coordinated_backup_and_explicit_target(tmp_path: Path):
+    target = manager_deployment(tmp_path)
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    script = tools / "backup.sh"
+    script.write_text("#!/bin/sh\n")
+    script.chmod(0o755)
+    runner = RecordedRunner()
+    destination = tmp_path / "private backups"
+    manager.backup(target, destination, runner, project_name="customer-home")
+    assert runner.commands == [[str(script), "--env-file", str(tmp_path / ".env"),
+                                "--project-name", "customer-home", str(destination)]]
+    with pytest.raises(manager.ManagerError, match="project name"):
+        manager.backup(target, destination, runner, project_name="unsafe target")
 
 
 def test_manager_accepts_array_and_line_delimited_compose_status(tmp_path: Path):
