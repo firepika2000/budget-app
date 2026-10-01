@@ -1953,6 +1953,42 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testProductionLocalWorkspaceCreatesRestorableEncryptedBackup() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-device-backup-ui-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let applicationSupport = root.appendingPathComponent("ApplicationSupport", isDirectory: true)
+        let exports = root.appendingPathComponent("Exports", isDirectory: true)
+        try FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
+        let keyManager = LocalDeviceKeyManager(store: InMemorySecretDataStore())
+        let store = BudgetWorkspaceStore.localDevice(
+            applicationSupportDirectory: applicationSupport,
+            keyManager: keyManager
+        )
+        await store.refresh()
+        try await store.createAccount(.init(
+            name: "Backup Checking", kind: "checking", isOnBudget: true,
+            openingBalanceMinor: 54_321
+        ))
+
+        let exported = try await store.createLocalDeviceBackup(in: exports)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: exported.packageURL.path))
+        XCTAssertGreaterThan(exported.encryptedBytes, 0)
+        XCTAssertEqual(try LocalDeviceBackupRecoveryKey(encoded: exported.recoveryKey).encoded, exported.recoveryKey)
+
+        let restored = root.appendingPathComponent("Restored", isDirectory: true)
+        _ = try await LocalDeviceBackupService.restore(
+            packageURL: exported.packageURL,
+            destinationRootURL: restored,
+            recoveryKey: try .init(encoded: exported.recoveryKey)
+        )
+        let authority = try LocalAuthorityStore(fileURL: restored.appendingPathComponent("authority.sqlite3"))
+        let snapshot = try await authority.snapshot(budgetID: store.budget.id)
+        XCTAssertEqual(snapshot.accounts.map(\.name), ["Backup Checking"])
+        XCTAssertEqual(snapshot.transactions.first(where: { $0.payeeName == "Starting Balance" })?.amountMinor, 54_321)
+    }
+
+    @MainActor
     func testEditingAssignmentTotalPreservesActivityAndAppliesOnlyExactDelta() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

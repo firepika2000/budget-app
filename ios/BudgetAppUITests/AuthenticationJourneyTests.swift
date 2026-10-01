@@ -23,6 +23,38 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertFalse(app.buttons["Household and access"].exists)
     }
 
+    func testLocalDeviceBackupUsesProductionProfileAndPublishesRecoveryMaterial() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--local", "--skip-guided-onboarding"]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["profile-settings-button"].waitForExistence(timeout: 8))
+        app.buttons["profile-settings-button"].tap()
+        let entry = app.buttons["local-backup-recovery-settings"]
+        for _ in 0..<5 where !entry.isHittable { app.swipeUp() }
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        entry.tap()
+
+        XCTAssertTrue(app.navigationBars["Backup & Recovery"].waitForExistence(timeout: 5))
+        let create = app.buttons["create-local-device-backup"]
+        XCTAssertTrue(create.waitForExistence(timeout: 5))
+        create.tap()
+        let recoveryKey = app.descendants(matching: .any)["local-backup-recovery-key"]
+        for _ in 0..<5 where !recoveryKey.exists { app.swipeDown() }
+        if !recoveryKey.waitForExistence(timeout: 10) {
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "Local backup production hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+            XCTFail("Local backup did not publish recovery material")
+        }
+        XCTAssertTrue(app.buttons["copy-local-backup-key"].exists)
+        XCTAssertTrue(app.buttons["share-local-device-backup"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["local-backup-error"].exists)
+        try app.performAccessibilityAudit(for: [.sufficientElementDescription, .trait])
+    }
+
     func testProductionPlanCostOverflowRendersValidationInsteadOfCrashing() {
         continueAfterFailure = false
         let app = XCUIApplication()

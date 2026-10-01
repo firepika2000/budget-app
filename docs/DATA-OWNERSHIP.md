@@ -70,6 +70,13 @@ destination. It never overwrites an existing authority. Manual native export/res
 off-device retention are the next product layers; until accepted, beta users should still treat local
 device data as disposable.
 
+The native Local Device profile now exposes **Backup & Recovery**. An owner can create one of these
+verified encrypted generations, copy its separately generated recovery key, and hand the package to
+Files, iCloud Drive, Dropbox, an external drive, or another destination offered by the iOS share
+sheet. The clipboard copy is device-local and expires after five minutes. This is manual export of an
+immutable backup generation; it does not turn the destination into a live database, move authority,
+or delete the local source. In-app restore/cutover and automatic retained publication remain gated.
+
 ## Implemented personal desktop-local backend
 
 `./budget local` now provides a self-contained local authority for personal/development use through

@@ -25,6 +25,7 @@ struct LocalDeviceStorageComposition {
     let paths: LocalDeviceStoragePaths
     let authority: LocalAuthorityStore
     let attachments: LocalAttachmentVault
+    let attachmentKey: Data
 
     init(
         applicationSupportDirectory: URL,
@@ -33,6 +34,7 @@ struct LocalDeviceStorageComposition {
         let paths = LocalDeviceStoragePaths(applicationSupportDirectory: applicationSupportDirectory)
         let key = try keyManager.loadOrCreateAttachmentKey()
         self.paths = paths
+        attachmentKey = key
         authority = try LocalAuthorityStore(fileURL: paths.database)
         attachments = try LocalAttachmentVault(directoryURL: paths.attachments, keyData: key)
     }
@@ -48,6 +50,13 @@ struct LocalDeviceStorageComposition {
             keyManager: LocalDeviceKeyManager()
         )
     }
+}
+
+struct LocalDeviceBackupExport: Equatable {
+    let packageURL: URL
+    let recoveryKey: String
+    let createdAt: String
+    let encryptedBytes: Int64
 }
 
 enum LocalDeviceStorageCompositionError: LocalizedError {

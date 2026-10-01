@@ -2095,11 +2095,13 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published private(set) var workspaceAccessDenied = false
     private var privacyPreferenceKey: String?
     private var onboardingPreferencePrefix: String?
+    private var localStorageComposition: LocalDeviceStorageComposition?
 
-    init(budget: APIBudget) { self.budget = budget; dataSource = nil; commandRepository = nil; applicationServices = nil }
-    private init(dataSource: DemoWorkspaceDataSource) {
+    init(budget: APIBudget) { self.budget = budget; dataSource = nil; commandRepository = nil; applicationServices = nil; localStorageComposition = nil }
+    private init(dataSource: DemoWorkspaceDataSource, localStorageComposition: LocalDeviceStorageComposition? = nil) {
         self.budget = dataSource.budget
         self.dataSource = dataSource
+        self.localStorageComposition = localStorageComposition
         commandRepository = dataSource
         applicationServices = BudgetApplicationServices(repository: dataSource)
         configurePrivacy(userID: "deterministic-demo-user")
@@ -2127,6 +2129,7 @@ final class BudgetWorkspaceStore: ObservableObject {
             effectivePermission: .owner
         )
         let source: DemoWorkspaceDataSource
+        var localStorage: LocalDeviceStorageComposition?
         do {
             let composition: LocalDeviceStorageComposition
             if let applicationSupportDirectory {
@@ -2134,17 +2137,44 @@ final class BudgetWorkspaceStore: ObservableObject {
             } else {
                 composition = try LocalDeviceStorageComposition.production(fileManager: fileManager)
             }
+            localStorage = composition
             source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget, localAuthority: composition.authority, localAttachmentVault: composition.attachments, localIdentity: identity)
         } catch {
             source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget,
                                              storageUnavailableMessage: "Local storage could not be opened. No changes will be accepted until device storage is available.")
         }
-        let store = BudgetWorkspaceStore(dataSource: source)
+        let store = BudgetWorkspaceStore(dataSource: source, localStorageComposition: localStorage)
         if source.localIdentity == nil {
             store.errorMessage = "Local storage could not be opened. Changes will not be accepted until the device storage is available."
         }
         store.configurePrivacy(userID: "local-device-owner")
         return store
+    }
+
+    func createLocalDeviceBackup(in directory: URL = FileManager.default.temporaryDirectory) async throws -> LocalDeviceBackupExport {
+        guard let localStorageComposition else {
+            throw LocalStorageError.operationFailed("Encrypted backup is available only for a Local Device budget")
+        }
+        let recoveryKey = try LocalDeviceBackupRecoveryKey.generate()
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+        let packageURL = directory.appendingPathComponent(
+            "ClearPocket-\(formatter.string(from: Date()))-\(UUID().uuidString.prefix(8)).clearpocketbackup",
+            isDirectory: true
+        )
+        let manifest = try await LocalDeviceBackupService.create(
+            authority: localStorageComposition.authority,
+            budgetID: budget.id,
+            attachmentsDirectory: localStorageComposition.paths.attachments,
+            attachmentKey: localStorageComposition.attachmentKey,
+            destinationURL: packageURL,
+            recoveryKey: recoveryKey
+        )
+        return .init(packageURL: packageURL, recoveryKey: recoveryKey.encoded,
+                     createdAt: manifest.createdAt,
+                     encryptedBytes: manifest.files.reduce(0) { $0 + $1.encryptedBytes })
     }
     static func production(context: WorkspaceRouteContext, clientFactory: @escaping (URL) throws -> APIClient = { try APIClient(baseURL: $0) }) -> BudgetWorkspaceStore {
         if case .localDevice = context { return .localDevice() }
@@ -2934,6 +2964,7 @@ private struct WorkspaceProfileView: View {
     @State private var showAppearance = false
     @State private var showRollover = false
     @State private var showBackupHealth = false
+    @State private var showLocalBackup = false
 
     var body: some View {
         NavigationStack {
@@ -2996,8 +3027,12 @@ private struct WorkspaceProfileView: View {
                     } else if session.sourceMode == .localDevice {
                         Section("Data Ownership") {
                             LabeledContent("Authority", value: "This iPhone")
+                            Button("Backup & Recovery", systemImage: "externaldrive.badge.plus") {
+                                showLocalBackup = true
+                            }
+                            .accessibilityIdentifier("local-backup-recovery-settings")
                             Button("Server & Transfer Options", systemImage: "arrow.left.arrow.right") { showConnection = true }
-                            Text("Your complete budget works offline on this iPhone. Moving this budget to a personal server will be added in a later beta; connecting today never deletes the local copy.")
+                            Text("Your complete budget works offline on this iPhone. Create an encrypted backup before moving or restoring data; connecting to a server never deletes the local copy.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                     }
@@ -3034,6 +3069,9 @@ private struct WorkspaceProfileView: View {
             .navigationDestination(isPresented: $showBackupHealth) {
                 BackupRecoverySettingsView(budgetID: store.budget.id)
             }
+            .navigationDestination(isPresented: $showLocalBackup) {
+                LocalDeviceBackupRecoveryView(store: store)
+            }
             .sheet(isPresented: $showCreate) {
                 BudgetCreationView(households: session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? [])
             }
@@ -3061,6 +3099,92 @@ private struct WorkspaceProfileView: View {
 
         What I expected:
         """
+    }
+}
+
+private struct LocalDeviceBackupRecoveryView: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    @State private var backup: LocalDeviceBackupExport?
+    @State private var creating = false
+    @State private var errorMessage: String?
+    @State private var copied = false
+
+    var body: some View {
+        Form {
+            Section {
+                Label("Encrypted on this iPhone", systemImage: "lock.shield")
+                Text("The backup contains the complete local budget and its encrypted attachments. It can be saved to Files, iCloud Drive, Dropbox, an external drive, or another location offered by iOS.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+
+            if let backup {
+                Section("Recovery Key") {
+                    Text(backup.recoveryKey)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("local-backup-recovery-key")
+                    Button(copied ? "Copied" : "Copy Recovery Key", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                        UIPasteboard.general.setItems(
+                            [[UTType.plainText.identifier: backup.recoveryKey]],
+                            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(300)]
+                        )
+                        copied = true
+                    }
+                    .accessibilityIdentifier("copy-local-backup-key")
+                    Label("Store this key separately from the backup. There is no account recovery if the only copy is lost.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
+                Section("Backup Generation") {
+                    LabeledContent("Created", value: readableDate(backup.createdAt))
+                    LabeledContent("Encrypted size", value: ByteCountFormatter.string(fromByteCount: backup.encryptedBytes, countStyle: .file))
+                    ShareLink(item: backup.packageURL) {
+                        Label("Save or Share Encrypted Backup", systemImage: "square.and.arrow.up")
+                    }
+                    .accessibilityIdentifier("share-local-device-backup")
+                }
+            }
+
+            Section {
+                Button {
+                    Task { await createBackup() }
+                } label: {
+                    if creating { ProgressView() } else { Label(backup == nil ? "Create Encrypted Backup" : "Create New Backup", systemImage: "externaldrive.badge.plus") }
+                }
+                .disabled(creating)
+                .accessibilityIdentifier("create-local-device-backup")
+                Text("Creating a new generation does not change, move, or delete the budget on this iPhone.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+
+            if let errorMessage {
+                Section {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("local-backup-error")
+                }
+            }
+        }
+        .navigationTitle("Backup & Recovery")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func createBackup() async {
+        guard !creating else { return }
+        creating = true
+        copied = false
+        errorMessage = nil
+        defer { creating = false }
+        do {
+            if let prior = backup?.packageURL { try? FileManager.default.removeItem(at: prior) }
+            backup = try await store.createLocalDeviceBackup()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func readableDate(_ value: String) -> String {
+        guard let date = ISO8601DateFormatter().date(from: value) else { return value }
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 }
 
