@@ -1,4 +1,6 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+
+from app import budgeting_routes, delegated_routes, request_routes
 
 from app.models import (
     AllocationOperation,
@@ -12,7 +14,7 @@ from app.models import (
 )
 from app.security import create_access_token, hash_password
 
-from .conftest import auth
+from .conftest import auth, freeze_today
 from .test_advanced_ledger import add_category, record
 from .test_budgeting_api import create_budget, create_budget_structure
 
@@ -149,8 +151,15 @@ def test_scoped_child_cannot_discover_hidden_financial_resources(
 
 
 def test_partial_request_approval_moves_existing_allocation_once_and_is_auditable(
-    client, owner_token, session_factory
+    client, owner_token, session_factory, monkeypatch
 ):
+    freeze_today(
+        monkeypatch,
+        date(2026, 9, 15),
+        budgeting_routes,
+        delegated_routes,
+        request_routes,
+    )
     budget = create_budget(client, owner_token, session_factory)
     checking, _ = create_budget_structure(client, owner_token, budget["id"])
     source = add_category(client, owner_token, budget["id"], "Family", "Allowance Pool")
@@ -395,8 +404,15 @@ def test_request_approval_capability_does_not_reveal_or_change_hidden_requests(c
 
 
 def test_delegated_member_can_create_only_own_scoped_category(
-    client, owner_token, session_factory
+    client, owner_token, session_factory, monkeypatch
 ):
+    freeze_today(
+        monkeypatch,
+        date(2026, 9, 15),
+        budgeting_routes,
+        delegated_routes,
+        request_routes,
+    )
     budget = create_budget(client, owner_token, session_factory)
     checking, _ = create_budget_structure(client, owner_token, budget["id"])
     seed = add_category(client, owner_token, budget["id"], "Delegated", "Alex Other")
@@ -670,8 +686,15 @@ def test_delegated_member_cannot_commit_smart_funding_against_household_rta(
 
 
 def test_double_approval_with_same_initial_version_has_exactly_one_winner(
-    client, owner_token, session_factory
+    client, owner_token, session_factory, monkeypatch
 ):
+    freeze_today(
+        monkeypatch,
+        date(2026, 9, 15),
+        budgeting_routes,
+        delegated_routes,
+        request_routes,
+    )
     budget = create_budget(client, owner_token, session_factory)
     checking, _ = create_budget_structure(client, owner_token, budget["id"])
     source = add_category(client, owner_token, budget["id"], "Family", "Allowance Pool")

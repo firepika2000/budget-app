@@ -9,10 +9,13 @@ the same accounting engine as manual entry and cannot double-post an occurrence.
 
 from datetime import date, timedelta
 
+import pytest
+
+from app import planning_routes
 from app.models import AllocationPosting, Membership, Payee, Transaction
 from app.planning import next_occurrence
 
-from .conftest import auth
+from .conftest import auth, freeze_today
 from .test_advanced_ledger import add_category
 from .test_allocation_ledger import fund
 from .test_budgeting_api import create_budget, create_budget_structure
@@ -20,9 +23,17 @@ from .test_credit_cards import create_credit_card
 from .test_delegated_access import add_child
 
 
-PAST = "2026-09-01"  # <= test clock (>= 2026-09-05), so realizable
-def future(days=20): return (date.today() + timedelta(days=days)).isoformat()
-def horizon(days=60): return (date.today() + timedelta(days=days)).isoformat()
+CONTRACT_TODAY = date(2026, 9, 5)
+PAST = "2026-09-01"  # <= the pinned contract clock, so realizable
+
+
+@pytest.fixture(autouse=True)
+def fixed_scheduled_contract_clock(monkeypatch):
+    freeze_today(monkeypatch, CONTRACT_TODAY, planning_routes)
+
+
+def future(days=20): return (CONTRACT_TODAY + timedelta(days=days)).isoformat()
+def horizon(days=60): return (CONTRACT_TODAY + timedelta(days=days)).isoformat()
 
 
 def sched_url(b): return f"/api/v1/budgets/{b}/scheduled-transactions"

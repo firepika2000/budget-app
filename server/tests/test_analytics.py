@@ -1,6 +1,10 @@
+from datetime import date
+
 import pytest
 
-from .conftest import auth
+from app import analytics_routes, budgeting_routes
+
+from .conftest import auth, freeze_today
 from .test_advanced_ledger import add_category, record
 from .test_budgeting_api import create_budget, create_budget_structure
 
@@ -454,8 +458,9 @@ def test_net_worth_preserves_ledger_semantics_across_liabilities_payments_and_bo
 
 
 def test_net_worth_counts_reconciliation_adjustments_and_void_reversals_once(
-    client, owner_token, session_factory
+    client, owner_token, session_factory, monkeypatch
 ):
+    freeze_today(monkeypatch, date(2026, 9, 15), analytics_routes, budgeting_routes)
     budget = create_budget(client, owner_token, session_factory)
     checking = client.post(
         f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
@@ -556,7 +561,10 @@ def test_debt_history_is_exact_for_loans_cards_and_payments(
     assert card_only["principal_reduction_minor"] == -5000
 
 
-def test_recorded_interest_is_explicit_split_aware_filterable_and_netted(client, owner_token, session_factory):
+def test_recorded_interest_is_explicit_split_aware_filterable_and_netted(
+    client, owner_token, session_factory, monkeypatch
+):
+    freeze_today(monkeypatch, date(2026, 9, 15), analytics_routes, budgeting_routes)
     budget = create_budget(client, owner_token, session_factory)
     _, category = create_budget_structure(client, owner_token, budget["id"])
     second = add_category(client, owner_token, budget["id"], "Debt", "Interest")
