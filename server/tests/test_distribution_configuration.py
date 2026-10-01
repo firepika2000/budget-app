@@ -153,6 +153,13 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert 'Create an encrypted server backup' in script
     assert 'restore-windows.ps1' in script
     assert 'Restore an encrypted backup into this empty server' in script
+    assert "Install-ClearPocketBackupSchedule" in script
+    assert "ClearPocket Server Backup" in script
+    assert "New-ScheduledTaskTrigger -Daily" in script
+    assert "-StartWhenAvailable" in script
+    assert "-MultipleInstances IgnoreNew" in script
+    assert "Remove-ClearPocketBackupSchedule" in script
+    assert "Show-ClearPocketBackupSchedule" in script
     task_section = script.split("function Install-ClearPocketAutoStart", 1)[1]
     assert "BUDGET_APP_DB_PASSWORD" not in task_section
     assert "BUDGET_APP_JWT_SECRET" not in task_section
@@ -164,6 +171,14 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
 def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():
     script = (ROOT / "distribution" / "server" / "backup-windows.ps1").read_text()
     assert "BUDGET_APP_BACKUP_AGE_RECIPIENT" in script
+    assert '[IO.FileShare]::None' in script
+    assert "Another ClearPocket backup is already running" in script
+    assert '[ValidateSet("Interactive", "Scheduled")]' in script
+    assert "Scheduled backup requires an explicit destination folder" in script
+    assert "BUDGET_APP_BACKUP_RETENTION" in script
+    assert "Invoke-BackupRetention" in script
+    assert "Select-Object -Skip $Retention" in script
+    assert "FileAttributes]::ReparsePoint" in script
     assert "clearpocket-recovery-key.txt" in script
     assert "age-keygen" in script
     assert "Type USE to adopt it without replacing it" in script

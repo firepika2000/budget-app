@@ -220,6 +220,69 @@ function Import-ClearPocketLocalDevice {
     Write-Host "Local Device budget imported and verified. Keep the iPhone backup until you have tested this server and created a server backup."
 }
 
+function Install-ClearPocketBackupSchedule {
+    $backupScript = Join-Path $PSScriptRoot "backup-windows.ps1"
+    if (-not (Test-Path -LiteralPath $backupScript -PathType Leaf)) {
+        throw "Windows backup support is missing. Download the complete server package again."
+    }
+    $recipients = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^BUDGET_APP_BACKUP_AGE_RECIPIENT=age1[0-9a-z]+$' })
+    if ($recipients.Count -ne 1) {
+        throw "Create one successful interactive backup and preserve its recovery identity before scheduling."
+    }
+    $defaultBackup = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Backups"
+    $backupDirectory = Read-Host "Scheduled encrypted-backup folder [$defaultBackup]"
+    if ([string]::IsNullOrWhiteSpace($backupDirectory)) { $backupDirectory = $defaultBackup }
+    $backupDirectory = [IO.Path]::GetFullPath($backupDirectory)
+    if ($backupDirectory -match '[\r\n"]') { throw "Scheduled backup folder contains unsupported characters." }
+    if ($backupScript -match '[\r\n"]' -or $environmentFile -match '[\r\n"]') {
+        throw "ClearPocket was installed in a path that Task Scheduler cannot safely use."
+    }
+    New-Item -ItemType Directory -Force -Path $backupDirectory | Out-Null
+    $timeText = Read-Host "Daily backup time in 24-hour HH:mm format [03:00]"
+    if ([string]::IsNullOrWhiteSpace($timeText)) { $timeText = "03:00" }
+    $backupTime = [DateTime]::MinValue
+    if (-not [DateTime]::TryParseExact(
+        $timeText, "HH:mm", [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::None, [ref] $backupTime
+    )) { throw "Backup time must use 24-hour HH:mm format." }
+
+    $powershell = Join-Path $PSHOME "powershell.exe"
+    $arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass " +
+        "-File `"$backupScript`" -EnvironmentFile `"$environmentFile`" " +
+        "-Operation Scheduled -BackupDirectory `"$backupDirectory`""
+    $action = New-ScheduledTaskAction -Execute $powershell -Argument $arguments
+    $trigger = New-ScheduledTaskTrigger -Daily -At $backupTime
+    $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
+        -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 6)
+    Register-ScheduledTask -TaskName "ClearPocket Server Backup" -Action $action -Trigger $trigger `
+        -Principal $principal -Settings $settings `
+        -Description "Create a coordinated encrypted ClearPocket Server backup." -Force | Out-Null
+    Write-Host "Daily encrypted backup scheduled for $timeText."
+    Write-Host "The task contains paths only. Recovery and server credentials are not stored in Task Scheduler."
+}
+
+function Remove-ClearPocketBackupSchedule {
+    $task = Get-ScheduledTask -TaskName "ClearPocket Server Backup" -ErrorAction SilentlyContinue
+    if ($null -ne $task) {
+        Unregister-ScheduledTask -TaskName "ClearPocket Server Backup" -Confirm:$false
+    }
+    Write-Host "Scheduled backup disabled. Existing generations and the recovery identity were preserved."
+}
+
+function Show-ClearPocketBackupSchedule {
+    $task = Get-ScheduledTask -TaskName "ClearPocket Server Backup" -ErrorAction SilentlyContinue
+    if ($null -eq $task) {
+        Write-Host "No scheduled ClearPocket backup is installed."
+        return
+    }
+    $info = Get-ScheduledTaskInfo -TaskName "ClearPocket Server Backup"
+    Write-Host "Backup task state: $($task.State)"
+    Write-Host "Next run: $($info.NextRunTime)"
+    Write-Host "Last result: $($info.LastTaskResult)"
+}
+
 if ($Operation -eq "Start") {
     Start-ClearPocketServer
     exit 0
@@ -237,6 +300,9 @@ Write-Host "  7. Disable automatic startup"
 Write-Host "  8. Move an iPhone Local Device budget to this server"
 Write-Host "  9. Create an encrypted server backup"
 Write-Host " 10. Restore an encrypted backup into this empty server"
+Write-Host " 11. Schedule daily encrypted backups"
+Write-Host " 12. Disable scheduled backups"
+Write-Host " 13. Show backup schedule status"
 Write-Host ""
 $choice = if ($newInstall) { "1" } else { Read-Host "Choose an option [1]" }
 if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
@@ -272,5 +338,8 @@ switch ($choice) {
         & $restoreScript -EnvironmentFile $environmentFile
         if (-not $?) { throw "Windows recovery did not complete." }
     }
-    default { throw "Unknown option. Run the launcher again and choose 1 through 10." }
+    "11" { Install-ClearPocketBackupSchedule }
+    "12" { Remove-ClearPocketBackupSchedule }
+    "13" { Show-ClearPocketBackupSchedule }
+    default { throw "Unknown option. Run the launcher again and choose 1 through 13." }
 }

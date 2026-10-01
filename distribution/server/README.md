@@ -216,6 +216,19 @@ the API, adopts the authenticated attachment key only for that empty destination
 one guarded transaction. The API is force-recreated with the recovered key and must pass its health
 check; otherwise it remains stopped for inspection.
 
+After one successful interactive backup has created the recovery identity, the Windows menu can
+install a daily current-user Task Scheduler job. The owner chooses a destination and `HH:mm` time;
+the task stores only the manager, environment-file, and destination paths—never the age identity,
+database secret, JWT secret, or attachment key. It runs with limited privileges, starts a missed run
+when the signed-in PC becomes available, ignores overlapping instances, and has a six-hour ceiling.
+The backup script also holds an exclusive filesystem lock, so scheduled and manual captures cannot
+overlap. Separate menu actions show its state/last result or remove only the schedule while preserving
+all generations and recovery material. Because Docker Desktop runs in the interactive user session,
+the user must be signed in and Docker Desktop must be running when the task executes.
+Completed generations are bounded to the newest 10 by default. Advanced owners can set a positive
+`BUDGET_APP_BACKUP_RETENTION` value in the private `.env`; rotation runs only after a new encrypted
+generation has been published successfully and never follows links or removes unrelated files.
+
 Python and developer tools are not required. Docker Desktop is still required, and secure remote
 pairing/TLS is not yet guided, so this remains a preview rather than the final signed graphical server
 manager. Guided update and firewall guidance remain required.

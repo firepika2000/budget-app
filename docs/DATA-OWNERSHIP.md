@@ -298,8 +298,8 @@ captured consistently, then resumes it before archive encryption/publication.
 The versioned customer bundle ships the same scheduler for Linux Docker Engine. Its
 `install-systemd` command installs a persistent daily user timer. An external Compose `.env` (as used
 by packaged/NAS deployments) can be supplied with `--compose-env-file`; both private files must be
-regular, owner-only files, and only their paths enter the unit. QNAP App Center scheduling and the
-Windows Task Scheduler still require their final no-terminal manager integration.
+regular, owner-only files, and only their paths enter the unit. QNAP App Center and the Windows manager
+provide their corresponding no-terminal schedule controls.
 
 For Dropbox, create a least-privilege app-folder Dropbox application. Configure either a temporary
 access token or, for durable operation, its refresh credentials outside the repository:
@@ -458,6 +458,13 @@ verifies in isolated staging, refuses nonempty database/object destinations twic
 destination's attachment key with the authenticated recovered key, restores PostgreSQL in one guarded
 transaction, and serves only after a force-recreated API passes health. Failure leaves the recovery
 API stopped and never modifies the source archive.
+After the first successful interactive Windows generation, the same manager can install, inspect, or
+remove a daily limited-user Task Scheduler job. Only script/configuration/destination paths enter the
+task; credentials and the recovery identity do not. Start-when-available, IgnoreNew, an execution limit,
+and the backup process's exclusive lock prevent missed wakeups and overlapping manual/scheduled capture.
+The newest 10 completed Windows generations are retained by default (owner-configurable with a positive
+`BUDGET_APP_BACKUP_RETENTION` setting); rotation occurs only after successful atomic publication and
+matches regular ClearPocket generation files only.
 `distribution/qnap` contains a QDK-compatible package foundation that
 wraps the same Compose bundle in App Center lifecycle hooks while keeping authority outside the
 replaceable QPKG directory. Its install routine chooses a durable QNAP shared-folder root, creates

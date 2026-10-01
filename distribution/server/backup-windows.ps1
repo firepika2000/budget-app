@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string] $EnvironmentFile
+    [string] $EnvironmentFile,
+    [ValidateSet("Interactive", "Scheduled")]
+    [string] $Operation = "Interactive",
+    [string] $BackupDirectory = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,6 +13,15 @@ $EnvironmentFile = [IO.Path]::GetFullPath($EnvironmentFile)
 if (-not (Test-Path -LiteralPath $EnvironmentFile -PathType Leaf)) {
     throw "Private server configuration was not found."
 }
+$lockPath = Join-Path $PSScriptRoot ".clearpocket-backup.lock"
+try {
+    $lockStream = [IO.File]::Open(
+        $lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None
+    )
+} catch [IO.IOException] {
+    throw "Another ClearPocket backup is already running."
+}
+try {
 
 function Invoke-ClearPocketCompose([string[]] $ComposeArguments) {
     & docker compose --env-file $EnvironmentFile @ComposeArguments
@@ -77,8 +89,23 @@ function Add-EnvironmentSetting([string] $Name, [string] $Value) {
     }
 }
 
+function Invoke-BackupRetention([string] $Directory, [int] $Retention) {
+    $generations = @(Get-ChildItem -LiteralPath $Directory -File |
+        Where-Object {
+            $_.Name -match '^budget-[0-9]{8}T[0-9]{6}Z\.tar\.gz\.age$' -and
+            -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        } |
+        Sort-Object -Property LastWriteTimeUtc -Descending)
+    foreach ($generation in @($generations | Select-Object -Skip $Retention)) {
+        Remove-Item -LiteralPath $generation.FullName -Force
+    }
+}
+
 $recipient = Read-EnvironmentSetting "BUDGET_APP_BACKUP_AGE_RECIPIENT"
 if (-not $recipient) {
+    if ($Operation -eq "Scheduled") {
+        throw "Run one interactive backup to create and preserve the recovery identity before scheduling."
+    }
     Write-Host "ClearPocket encrypted-backup recovery setup"
     Write-Host "A private recovery identity will be created. Anyone with this file can decrypt your backup."
     $defaultRecovery = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Recovery"
@@ -113,11 +140,20 @@ if (-not $recipient) {
 if ($recipient -notmatch '^age1[0-9a-z]+$') {
     throw "BUDGET_APP_BACKUP_AGE_RECIPIENT is invalid."
 }
+$retentionText = Read-EnvironmentSetting "BUDGET_APP_BACKUP_RETENTION"
+if (-not $retentionText) { $retentionText = "10" }
+$retention = 0
+if (-not [int]::TryParse($retentionText, [ref] $retention) -or $retention -lt 1) {
+    throw "BUDGET_APP_BACKUP_RETENTION must be a positive integer."
+}
 
 $defaultBackup = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Backups"
-$backupDirectory = Read-Host "Encrypted backup folder [$defaultBackup]"
-if ([string]::IsNullOrWhiteSpace($backupDirectory)) { $backupDirectory = $defaultBackup }
-$backupDirectory = [IO.Path]::GetFullPath($backupDirectory)
+if ([string]::IsNullOrWhiteSpace($BackupDirectory)) {
+    if ($Operation -eq "Scheduled") { throw "Scheduled backup requires an explicit destination folder." }
+    $BackupDirectory = Read-Host "Encrypted backup folder [$defaultBackup]"
+    if ([string]::IsNullOrWhiteSpace($BackupDirectory)) { $BackupDirectory = $defaultBackup }
+}
+$backupDirectory = [IO.Path]::GetFullPath($BackupDirectory)
 New-Item -ItemType Directory -Force -Path $backupDirectory | Out-Null
 $timestamp = [DateTime]::UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'")
 $filename = "budget-$timestamp.tar.gz.age"
@@ -182,6 +218,7 @@ try {
         throw "Encrypted backup publication did not produce a file."
     }
     Move-Item -LiteralPath $partial -Destination $final
+    Invoke-BackupRetention $backupDirectory $retention
     Save-BackupStatus "healthy" $final
     Write-Host "Encrypted backup complete: $final"
     Write-Host "Test recovery regularly and keep the recovery identity separate from this PC."
@@ -197,4 +234,7 @@ try {
     catch { }
     Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+}
+} finally {
+    $lockStream.Dispose()
 }
