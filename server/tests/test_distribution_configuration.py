@@ -138,6 +138,16 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "-RunLevel Limited" in script
     assert 'Unregister-ScheduledTask -TaskName "ClearPocket Server"' in script
     assert '-Operation Start' in script
+    assert "function Import-ClearPocketLocalDevice" in script
+    assert 'Type IMPORT to stop this server and verify the transfer' in script
+    assert 'Test-Path -LiteralPath (Join-Path $package.FullName "manifest.json") -PathType Leaf' in script
+    assert '[IO.FileAttributes]::ReparsePoint' in script
+    assert '"stop", "api"' in script
+    assert '"up", "-d", "database"' in script
+    assert ':/import/package:ro' in script
+    assert "scripts/local_device_transfer.py /tmp/local-device-package --server-environment" in script
+    assert "The API remains stopped" in script
+    assert '"8" { Import-ClearPocketLocalDevice }' in script
     task_section = script.split("function Install-ClearPocketAutoStart", 1)[1]
     assert "BUDGET_APP_DB_PASSWORD" not in task_section
     assert "BUDGET_APP_JWT_SECRET" not in task_section

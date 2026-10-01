@@ -187,9 +187,13 @@ them. Its menu can start and health-check the pinned Compose application, open l
 status, stop without deleting data, create a redacted diagnostics report, and display recent logs.
 It can also register or remove a limited current-user Task Scheduler entry that waits for Docker
 Desktop and starts the server after sign-in; the task contains only the manager path, never private
-configuration or credentials. Python and developer tools are not required. Docker Desktop is still required, and secure remote
+configuration or credentials. The same menu can initialize a new empty Windows server from an iPhone
+Local Device `.clearpocketbackup` folder. The package is mounted read-only, authenticated and converted
+inside the version-matched application container, and the API restarts only after exact financial and
+attachment verification succeeds. A failed transfer leaves the API stopped for inspection and never
+modifies the iPhone package. Python and developer tools are not required. Docker Desktop is still required, and secure remote
 pairing/TLS is not yet guided, so this remains a preview rather than the final signed graphical server
-manager. Guided update, firewall guidance, and backup/restore remain required.
+manager. Guided update, firewall guidance, and server backup/restore remain required.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;

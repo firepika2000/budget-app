@@ -442,8 +442,12 @@ new-destination recovery workflow.
 The Windows helper uses built-in PowerShell for cryptographic first-run configuration and selectable
 durable storage without Python, and now provides start/open, status, data-preserving stop, redacted
 diagnostics and log actions. It can register a limited current-user Task Scheduler entry that waits
-for Docker Desktop and starts the server after sign-in without embedding credentials. `distribution/qnap`
-contains a QDK-compatible package foundation that
+for Docker Desktop and starts the server after sign-in without embedding credentials.
+The Windows menu can also activate an authenticated iPhone Local Device backup through the same
+version-matched converter used by the shared manager. It requires explicit `IMPORT` confirmation,
+mounts the source package read-only, starts only PostgreSQL during conversion, and serves the API only
+after destination observation checks pass. Failure leaves the API stopped and the phone backup intact.
+`distribution/qnap` contains a QDK-compatible package foundation that
 wraps the same Compose bundle in App Center lifecycle hooks while keeping authority outside the
 replaceable QPKG directory. Its install routine chooses a durable QNAP shared-folder root, creates
 separate database/attachment/operations directories, generates independent kernel-random secrets,

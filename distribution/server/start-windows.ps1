@@ -172,6 +172,54 @@ function Remove-ClearPocketAutoStart {
     Write-Host "Automatic startup disabled. Server data and configuration were not changed."
 }
 
+function Import-ClearPocketLocalDevice {
+    Write-Host ""
+    Write-Host "Move an iPhone Local Device budget to this server"
+    Write-Host "This initializes a new, empty server from an authenticated .clearpocketbackup folder."
+    Write-Host "It does not erase the iPhone copy. Existing server data is never merged or replaced."
+    $enteredPath = Read-Host "Full path to the .clearpocketbackup folder"
+    if ([string]::IsNullOrWhiteSpace($enteredPath)) {
+        throw "No Local Device backup folder was selected."
+    }
+    $resolved = Resolve-Path -LiteralPath $enteredPath -ErrorAction Stop
+    if ($resolved.Count -ne 1) {
+        throw "Select exactly one Local Device backup folder."
+    }
+    $package = Get-Item -LiteralPath $resolved.Path -Force
+    if (-not $package.PSIsContainer -or ($package.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "The Local Device backup must be a regular, non-linked folder."
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $package.FullName "manifest.json") -PathType Leaf)) {
+        throw "The selected folder is not a complete Local Device backup package."
+    }
+    $confirmation = Read-Host "Type IMPORT to stop this server and verify the transfer"
+    if ($confirmation -cne "IMPORT") {
+        Write-Host "Import cancelled. The server and iPhone data were not changed."
+        return
+    }
+
+    Invoke-ClearPocketCompose @("stop", "api")
+    Invoke-ClearPocketCompose @("up", "-d", "database")
+    $mount = "$($package.FullName):/import/package:ro"
+    try {
+        Invoke-ClearPocketCompose @(
+            "run", "--rm", "--no-deps", "--user", "root",
+            "--volume", $mount,
+            "api", "sh", "-c",
+            "cp -R /import/package /tmp/local-device-package && " +
+            "chown -R budget:budget /tmp/local-device-package && " +
+            "exec su -s /bin/sh budget -c 'alembic upgrade head && " +
+            "python scripts/local_device_transfer.py /tmp/local-device-package --server-environment'"
+        )
+    } catch {
+        Write-Warning "Import failed. The API remains stopped so a partial authority is never served."
+        Write-Warning "The source iPhone backup was mounted read-only and was not changed."
+        throw
+    }
+    Start-ClearPocketServer
+    Write-Host "Local Device budget imported and verified. Keep the iPhone backup until you have tested this server and created a server backup."
+}
+
 if ($Operation -eq "Start") {
     Start-ClearPocketServer
     exit 0
@@ -186,6 +234,7 @@ Write-Host "  4. Create redacted diagnostics"
 Write-Host "  5. Show recent logs"
 Write-Host "  6. Start automatically when I sign in"
 Write-Host "  7. Disable automatic startup"
+Write-Host "  8. Move an iPhone Local Device budget to this server"
 Write-Host ""
 $choice = if ($newInstall) { "1" } else { Read-Host "Choose an option [1]" }
 if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
@@ -204,5 +253,6 @@ switch ($choice) {
     "5" { Invoke-ClearPocketCompose @("logs", "--no-color", "--tail", "200") }
     "6" { Install-ClearPocketAutoStart }
     "7" { Remove-ClearPocketAutoStart }
-    default { throw "Unknown option. Run the launcher again and choose 1 through 7." }
+    "8" { Import-ClearPocketLocalDevice }
+    default { throw "Unknown option. Run the launcher again and choose 1 through 8." }
 }
