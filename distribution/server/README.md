@@ -48,6 +48,7 @@ Linux Docker Engine and QNAP administrators can use the bundled management comma
 ./manage.py diagnostics
 ./manage.py logs --lines 200
 ./manage.py backup --output /protected/path/clearpocket-backups
+./manage.py restore --project-name clearpocket-recovery /protected/path/budget-generation.tar.gz.age
 ./manage.py stop
 ```
 
@@ -66,10 +67,17 @@ On a package host that keeps private settings outside the replaceable applicatio
 `--env-file /durable/private/path/.env` before the subcommand. The same explicit path is forwarded to
 Compose and the coordinated backup tool; it is never copied into diagnostics.
 
-The versioned bundle also includes `tools/restore.sh`. Restore is intentionally not a routine manager
-menu action: it accepts only a brand-new empty recovery deployment, verifies the encrypted archive and
-attachment key before mutation, and requires an explicit `--yes --project-name` target. Follow the
-recovery runbook and preserve the source authority until the restored destination is verified.
+Restore is deliberately a **new empty deployment** operation, never an in-place overwrite. Configure
+this bundle's `.env` and empty database/attachment paths as the recovery destination. Its attachment
+encryption secret must match the recovery material captured inside the backup. Set
+`BUDGET_APP_BACKUP_AGE_IDENTITY` to the separately retained age identity when recipient encryption was
+used; omit it for an interactive passphrase generation. The manager delegates to the bundled restore
+tool with an explicit recovery project. It decrypts in private staging, verifies the complete manifest,
+database and object payload, checks destination emptiness and the attachment key before stopping its
+API, then rechecks emptiness and restores PostgreSQL transactionally. It starts the recovery API only
+after success and records owner-visible verification. Failure leaves the recovery API stopped; the
+source deployment and encrypted generation are never modified. Preserve both until the recovered
+authority has been tested and backed up again.
 
 ### Start a new server from a portable household
 

@@ -346,6 +346,46 @@ def test_manager_backup_uses_bundled_coordinated_backup_and_explicit_target(tmp_
         manager.backup(target, destination, runner, project_name="unsafe target")
 
 
+def test_manager_restore_uses_bundled_verified_new_destination_flow(tmp_path: Path):
+    target = manager_deployment(tmp_path)
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    script = tools / "restore.sh"
+    script.write_text("#!/bin/sh\n")
+    script.chmod(0o755)
+    archive = tmp_path / "budget recovery.tar.gz.age"
+    archive.write_bytes(b"encrypted")
+    runner = RecordedRunner()
+
+    manager.restore(target, archive, runner, project_name="customer-recovery")
+
+    assert runner.commands == [[
+        str(script), "--env-file", str(tmp_path / ".env"), "--yes",
+        "--project-name", "customer-recovery", str(archive.resolve()),
+    ]]
+    with pytest.raises(manager.ManagerError, match="project name"):
+        manager.restore(target, archive, runner, project_name="unsafe target")
+
+
+def test_manager_restore_refuses_links_missing_archives_and_missing_tool(tmp_path: Path):
+    target = manager_deployment(tmp_path)
+    archive = tmp_path / "backup.age"
+    archive.write_bytes(b"encrypted")
+    with pytest.raises(manager.ManagerError, match="tools are missing"):
+        manager.restore(target, archive, RecordedRunner())
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "restore.sh").write_text("#!/bin/sh\n")
+    link = tmp_path / "backup-link.age"
+    link.symlink_to(archive)
+    runner = RecordedRunner()
+    with pytest.raises(manager.ManagerError, match="non-symlink"):
+        manager.restore(target, link, runner)
+    with pytest.raises(manager.ManagerError, match="non-symlink"):
+        manager.restore(target, tmp_path / "missing.age", runner)
+    assert runner.commands == []
+
+
 def upgrade_deployment(tmp_path: Path):
     target = manager_deployment(tmp_path)
     tools = tmp_path / "tools"

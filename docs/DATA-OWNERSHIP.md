@@ -430,8 +430,10 @@ The repository now includes the shared customer-server deployment contract under
 status persistence, private secret generation, health checks, and hardened Compose defaults for
 Docker Desktop, QNAP Container Station, and other Compose-capable hosts. The GHCR publishing workflow
 builds the same image for ARM64 and AMD64 and ships the canonical coordinated backup/restore tools.
-A data-preserving manager validates, starts, health-checks, stops, diagnoses, and creates encrypted
-database-plus-attachment generations. Backup capture success/failure and restore verification are
+A data-preserving manager validates, starts, health-checks, stops, diagnoses, creates encrypted
+database-plus-attachment generations, and restores them only into an explicitly configured empty
+recovery deployment through the bundled verify-before-mutate tool. It never offers in-place
+overwrite. Backup capture success/failure and restore verification are
 persisted inside a dedicated operations volume and exposed through the existing owner-only API/UI.
 For advanced Docker/QNAP administration, a versioned bundle can now apply its immutable image only
 after completing a coordinated encrypted backup. Pull failure leaves configuration unchanged; the

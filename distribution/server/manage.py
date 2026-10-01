@@ -240,6 +240,23 @@ def backup(target: Deployment, destination: Path, runner: Runner = run,
             "--project-name", project_name, str(destination)])
 
 
+def restore(target: Deployment, archive: Path, runner: Runner = run,
+            project_name: str = "clearpocket-recovery") -> None:
+    """Restore a verified generation into this explicitly configured empty deployment."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", project_name):
+        raise ManagerError("Recovery project name is invalid")
+    tool = target.root / "tools" / "restore.sh"
+    if not tool.is_file():
+        raise ManagerError("Restore tools are missing. Download the complete versioned server bundle.")
+    archive = archive.expanduser()
+    if archive.is_symlink() or not archive.is_file():
+        raise ManagerError("Recovery archive must be a regular non-symlink file")
+    runner([
+        str(tool), "--env-file", str(target.environment_file), "--yes",
+        "--project-name", project_name, str(archive.resolve()),
+    ])
+
+
 def bundle_version(target: Deployment) -> str:
     version_file = target.root / "VERSION"
     try:
@@ -420,6 +437,11 @@ def parser() -> argparse.ArgumentParser:
     backup_command.add_argument("--output", type=Path, required=True,
                                 help="private directory for immutable encrypted backup generations")
     backup_command.add_argument("--project-name", default="clearpocket-server")
+    restore_command = commands.add_parser(
+        "restore", help="restore an encrypted backup into this configured empty recovery deployment",
+    )
+    restore_command.add_argument("archive", type=Path)
+    restore_command.add_argument("--project-name", default="clearpocket-recovery")
     upgrade_command = commands.add_parser("upgrade", help="back up, apply the bundle version, and verify health")
     upgrade_command.add_argument("--backup-output", type=Path, required=True)
     upgrade_command.add_argument("--project-name", default="clearpocket-server")
@@ -479,6 +501,9 @@ def main() -> int:
             print(logs(target, lines=arguments.lines), end="")
         elif arguments.command == "backup":
             backup(target, arguments.output, project_name=arguments.project_name)
+        elif arguments.command == "restore":
+            restore(target, arguments.archive, project_name=arguments.project_name)
+            print("Encrypted authority restored and recovery server started")
         elif arguments.command == "upgrade":
             if arguments.timeout <= 0:
                 raise ManagerError("Upgrade timeout must be positive")
