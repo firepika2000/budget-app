@@ -395,6 +395,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var membershipVersions: [DemoPersona: Int] = [:]
     private let localAuthority: LocalAuthorityStore?
     private let localAttachmentVault: LocalAttachmentVault?
+    private let localOperationGate: LocalDeviceOperationGate?
     fileprivate let localIdentity: LocalAuthorityIdentity?
     private let storageUnavailableMessage: String?
     private var localAuthorityLoaded = false
@@ -413,6 +414,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         budgetOverride: APIBudget? = nil,
         localAuthority: LocalAuthorityStore? = nil,
         localAttachmentVault: LocalAttachmentVault? = nil,
+        localOperationGate: LocalDeviceOperationGate? = nil,
         localIdentity: LocalAuthorityIdentity? = nil,
         storageUnavailableMessage: String? = nil,
         now: @escaping () -> Date = Date.init
@@ -420,6 +422,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         self.now = now
         self.localAuthority = localAuthority
         self.localAttachmentVault = localAttachmentVault
+        self.localOperationGate = localOperationGate
         self.localIdentity = localIdentity
         self.storageUnavailableMessage = storageUnavailableMessage
         let store = DemoStore(fresh: fresh || ProcessInfo.processInfo.arguments.contains("--demo-fresh-budget"), cashRolloverPolicies: cashRolloverPolicies)
@@ -719,6 +722,27 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     }
 
     private func synchronizeLocalAuthority() async throws {
+        guard let localOperationGate else {
+            try await synchronizeLocalAuthorityWhileExclusive()
+            return
+        }
+        await localOperationGate.acquire()
+        do {
+            try await synchronizeLocalAuthorityWhileExclusive()
+            await localOperationGate.release()
+        } catch {
+            await localOperationGate.release()
+            throw error
+        }
+    }
+
+    /// The caller must hold `localOperationGate`. Used to flush the canonical in-memory model before
+    /// a backup captures SQLite and attachment storage under the same exclusive lease.
+    fileprivate func synchronizeLocalAuthorityForBackup() async throws {
+        try await synchronizeLocalAuthorityWhileExclusive()
+    }
+
+    private func synchronizeLocalAuthorityWhileExclusive() async throws {
         guard let localAuthority, let localIdentity else { return }
         if !localAuthorityLoaded {
             let value: LocalAuthoritySnapshot
@@ -1401,14 +1425,21 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard transaction.status != "reversal" else { throw APIClientError.server(status: 409, message: "Attach supporting documents to the original transaction") }
         guard let index = demo.transactions.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found") }
         if let localAuthority, let localAttachmentVault {
-            let stored = try await localAttachmentVault.store(data)
+            if let localOperationGate { await localOperationGate.acquire() }
             do {
-                try await localAuthority.insertAttachment(.init(id: UUID().uuidString, transactionID: id, filename: filename, contentType: contentType, sizeBytes: stored.plaintextSize, sha256: stored.plaintextSHA256, objectName: stored.objectName, createdAt: ISO8601DateFormatter().string(from: now())))
+                let stored = try await localAttachmentVault.store(data)
+                do {
+                    try await localAuthority.insertAttachment(.init(id: UUID().uuidString, transactionID: id, filename: filename, contentType: contentType, sizeBytes: stored.plaintextSize, sha256: stored.plaintextSHA256, objectName: stored.objectName, createdAt: ISO8601DateFormatter().string(from: now())))
+                } catch {
+                    _ = try? await localAttachmentVault.tombstone(objectName: stored.objectName)
+                    throw error
+                }
+                demo.transactions[index].attachmentName = filename
+                if let localOperationGate { await localOperationGate.release() }
             } catch {
-                _ = try? await localAttachmentVault.tombstone(objectName: stored.objectName)
+                if let localOperationGate { await localOperationGate.release() }
                 throw error
             }
-            demo.transactions[index].attachmentName = filename
             return
         }
         demo.transactions[index].attachmentName = filename
@@ -1431,14 +1462,21 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try requireActiveMembership();
         let transaction = try attachmentTransaction(id: transactionID, editing: true)
         if let localAuthority, let localAttachmentVault, let localIdentity {
-            let snapshot = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
-            guard let item = snapshot.attachments.first(where: { $0.id == attachmentID && $0.transactionID == transactionID }) else {
-                throw APIClientError.server(status: 404, message: "Attachment not found")
-            }
-            _ = try await localAttachmentVault.tombstone(objectName: item.objectName)
-            try await localAuthority.deleteAttachment(id: item.id, transactionID: transactionID)
-            if let index = demo.transactions.firstIndex(where: { $0.id == transactionID }) {
-                demo.transactions[index].attachmentName = snapshot.attachments.first(where: { $0.transactionID == transactionID && $0.id != attachmentID })?.filename
+            if let localOperationGate { await localOperationGate.acquire() }
+            do {
+                let snapshot = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
+                guard let item = snapshot.attachments.first(where: { $0.id == attachmentID && $0.transactionID == transactionID }) else {
+                    throw APIClientError.server(status: 404, message: "Attachment not found")
+                }
+                _ = try await localAttachmentVault.tombstone(objectName: item.objectName)
+                try await localAuthority.deleteAttachment(id: item.id, transactionID: transactionID)
+                if let index = demo.transactions.firstIndex(where: { $0.id == transactionID }) {
+                    demo.transactions[index].attachmentName = snapshot.attachments.first(where: { $0.transactionID == transactionID && $0.id != attachmentID })?.filename
+                }
+                if let localOperationGate { await localOperationGate.release() }
+            } catch {
+                if let localOperationGate { await localOperationGate.release() }
+                throw error
             }
             return
         }
@@ -2158,7 +2196,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 composition = try LocalDeviceStorageComposition.production(fileManager: fileManager)
             }
             localStorage = composition
-            source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget, localAuthority: composition.authority, localAttachmentVault: composition.attachments, localIdentity: identity)
+            source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget, localAuthority: composition.authority, localAttachmentVault: composition.attachments, localOperationGate: composition.operationGate, localIdentity: identity)
         } catch {
             print("[BudgetApp] local storage composition failed: \(error)")
             source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget,
@@ -2185,14 +2223,23 @@ final class BudgetWorkspaceStore: ObservableObject {
             "ClearPocket-\(formatter.string(from: Date()))-\(UUID().uuidString.prefix(8)).clearpocketbackup",
             isDirectory: true
         )
-        let manifest = try await LocalDeviceBackupService.create(
-            authority: localStorageComposition.authority,
-            budgetID: budget.id,
-            attachmentsDirectory: localStorageComposition.paths.attachments,
-            attachmentKey: localStorageComposition.attachmentKey,
-            destinationURL: packageURL,
-            recoveryKey: recoveryKey
-        )
+        await localStorageComposition.operationGate.acquire()
+        let manifest: LocalDeviceBackupManifest
+        do {
+            try await (dataSource as? DemoWorkspaceDataSource)?.synchronizeLocalAuthorityForBackup()
+            manifest = try await LocalDeviceBackupService.create(
+                authority: localStorageComposition.authority,
+                budgetID: budget.id,
+                attachmentsDirectory: localStorageComposition.paths.attachments,
+                attachmentKey: localStorageComposition.attachmentKey,
+                destinationURL: packageURL,
+                recoveryKey: recoveryKey
+            )
+            await localStorageComposition.operationGate.release()
+        } catch {
+            await localStorageComposition.operationGate.release()
+            throw error
+        }
         return .init(packageURL: packageURL, recoveryKey: recoveryKey.encoded,
                      createdAt: manifest.createdAt,
                      encryptedBytes: manifest.files.reduce(0) { $0 + $1.encryptedBytes })

@@ -74,7 +74,11 @@ and the complete encrypted attachment object/tombstone set. Each payload is chun
 independent 256-bit recovery key; the authenticated manifest records exact plaintext and ciphertext
 sizes and SHA-256 values. Restore authenticates every payload, verifies database integrity and foreign
 keys, reopens the authority, and decrypts/verifies every active attachment before publishing to a new
-destination. It never overwrites an existing authority.
+destination. It never overwrites an existing authority. A shared FIFO operation gate now spans
+workspace publication, attachment add/detach, and capture: backup first flushes the canonical local
+workspace and then holds the same exclusive lease while snapshotting SQLite and encrypting the object
+set. Swift actor reentrancy therefore cannot produce a generation whose attachment metadata and
+encrypted objects came from different moments.
 
 The native Local Device profile now exposes **Backup & Recovery**. An owner can create one of these
 verified encrypted generations, copy its separately generated recovery key, and hand the package to

@@ -27,6 +27,7 @@ struct LocalDeviceStorageComposition {
     let attachments: LocalAttachmentVault
     let attachmentKey: Data
     let keyManager: LocalDeviceKeyManager
+    let operationGate: LocalDeviceOperationGate
 
     init(
         applicationSupportDirectory: URL,
@@ -41,6 +42,7 @@ struct LocalDeviceStorageComposition {
         self.paths = paths
         attachmentKey = key
         self.keyManager = keyManager
+        operationGate = LocalDeviceOperationGate()
         authority = try LocalAuthorityStore(fileURL: paths.database)
         attachments = try LocalAttachmentVault(directoryURL: paths.attachments, keyData: key)
     }
