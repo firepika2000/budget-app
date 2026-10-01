@@ -57,6 +57,7 @@ from .schemas import (
 )
 from .security import hash_password, verify_password
 from .sessions import issue_session, revoke_session, rotate_session
+from .starter_plan import install_starter_plan
 
 
 router = APIRouter(prefix="/api/v1")
@@ -307,8 +308,10 @@ def create_budget(
         currency_code=body.currency_code,
     )
     db.add(budget)
+    db.flush()
+    if body.starter_template:
+        install_starter_plan(db, budget.id)
     if body.cash_rollover_policy is not None:
-        db.flush()
         db.add(CashRolloverPolicyChange(
             budget_id=budget.id, effective_month=date.min, policy=body.cash_rollover_policy,
             version=0, source="budget_creation", actor_user_id=user.id,

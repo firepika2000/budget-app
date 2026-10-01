@@ -749,7 +749,11 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             do {
                 value = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
             } catch LocalStorageError.recordNotFound("budget") {
-                try await localAuthority.bootstrap(localIdentity, createdAt: ISO8601DateFormatter().string(from: now()))
+                try await localAuthority.bootstrap(
+                    localIdentity,
+                    createdAt: ISO8601DateFormatter().string(from: now()),
+                    installStarterPlan: true
+                )
                 value = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
             }
             try demo.loadLocalAuthority(value)
@@ -4333,7 +4337,7 @@ private struct GuidedOnboardingView: View {
     }
     private static let lessons = [
         Lesson(title: "Where money lives", symbol: "building.columns", explanation: "Accounts answer where your money is. Add real checking, savings, cash, and card balances in Accounts.", consequence: "Creating an account with an opening balance changes authoritative account and Ready to Assign values.", action: "Open Accounts", tab: 3),
-        Lesson(title: "What money is for", symbol: "square.grid.2x2", explanation: "Your Plan gives current money a purpose. Categories do not create money; assigning moves Ready to Assign into a purpose.", consequence: "Creating groups/categories is organizational. Assigning money changes the Plan, not the bank balance.", action: "Open Plan", tab: 1),
+        Lesson(title: "What money is for", symbol: "square.grid.2x2", explanation: "Your new Plan starts with editable examples for monthly bills, everyday spending, true expenses, and goals. Rename, move, add, or remove them so the Plan fits your life.", consequence: "The starter template contains no dollar amounts, targets, accounts, or activity. Categories are only organization; assigning money changes the Plan, not the bank balance.", action: "Open Plan", tab: 1),
         Lesson(title: "Record real activity", symbol: "plus.circle", explanation: "Transactions belong to accounts and spending categories. Posted spending reduces both the account balance and category Available.", consequence: "Saving a transaction changes authoritative financial data. Canceling its editor changes nothing.", action: "Open Activity", tab: 2),
         Lesson(title: "Adjust the plan", symbol: "arrow.left.arrow.right", explanation: "When priorities change, move available money between categories. A move conserves the total amount of household money.", consequence: "A move changes category purposes but not account balances or Ready to Assign.", action: "Open Plan", tab: 1),
         Lesson(title: "Plan ahead safely", symbol: "calendar.badge.clock", explanation: "Targets and schedules guide future decisions. Credit-card reserves protect funded purchases, and reconciliation confirms cleared reality.", consequence: "Targets and schedules are guidance only. Scheduled money becomes actual only when entered; reconciliation finalizes observed cleared activity.", action: "Open Plan", tab: 1),
@@ -4344,7 +4348,7 @@ private struct GuidedOnboardingView: View {
     private var completionText: String {
         switch step {
         case 0: return store.accounts.isEmpty ? "Next useful action: add your first real account." : "You have \(store.accounts.filter { !$0.isClosed }.count) open account(s)."
-        case 1: return store.categories.isEmpty ? "Next useful action: create a category group and category." : "Your Plan has \(store.categories.filter { !$0.isArchived }.count) active categories."
+        case 1: return store.categories.isEmpty ? "Next useful action: create a category group and category." : "Your starter Plan has \(store.categories.filter { !$0.isArchived }.count) editable categories and no money assigned yet."
         case 2: return store.transactions.isEmpty ? "Next useful action: record your first transaction when real activity occurs." : "Your budget contains posted activity."
         default: return "Explore this in the production workspace whenever it is useful."
         }

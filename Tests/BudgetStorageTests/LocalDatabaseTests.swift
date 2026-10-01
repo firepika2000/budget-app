@@ -9,6 +9,36 @@ final class LocalDatabaseTests: XCTestCase {
         return value
     }
 
+    func testFreshLocalAuthorityInstallsStarterPlanWithoutFinancialStateOrDuplication() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("starter.sqlite")
+        let store = try LocalAuthorityStore(fileURL: databaseURL)
+        let identity = LocalAuthorityIdentity(
+            householdID: "household", householdName: "My Household", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "budget", budgetName: "My Budget", currencyCode: "USD"
+        )
+        try await store.bootstrap(identity, createdAt: "2026-10-01T12:00:00Z", installStarterPlan: true)
+
+        let snapshot = try await store.snapshot(budgetID: identity.budgetID)
+        XCTAssertEqual(snapshot.groups.map(\.name), LocalAuthorityStore.starterPlan.map(\.group))
+        let groupNames = Dictionary(uniqueKeysWithValues: snapshot.groups.map { ($0.id, $0.name) })
+        let actualCategories = Dictionary(grouping: snapshot.categories, by: { groupNames[$0.groupID] ?? "" })
+            .mapValues { Set($0.map(\.name)) }
+        let expectedCategories = Dictionary(uniqueKeysWithValues: LocalAuthorityStore.starterPlan.map {
+            ($0.group, Set($0.categories))
+        })
+        XCTAssertEqual(actualCategories, expectedCategories)
+        XCTAssertTrue(snapshot.accounts.isEmpty)
+        XCTAssertTrue(snapshot.transactions.isEmpty)
+        XCTAssertTrue(snapshot.allocations.isEmpty)
+        XCTAssertTrue(snapshot.targets.isEmpty)
+        XCTAssertTrue(snapshot.schedules.isEmpty)
+
+        let reopened = try LocalAuthorityStore(fileURL: databaseURL)
+        let afterRelaunch = try await reopened.snapshot(budgetID: identity.budgetID)
+        XCTAssertEqual(afterRelaunch.groups.count, 4)
+        XCTAssertEqual(afterRelaunch.categories.count, 11)
+    }
+
     func testSchemaPersistsExactMoneyAndRelationshipsAcrossDestructiveReopen() async throws {
         let directory = try temporaryDirectory()
         let databaseURL = directory.appendingPathComponent("household.sqlite")

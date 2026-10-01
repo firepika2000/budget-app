@@ -79,6 +79,9 @@ class BudgetCreate(BaseModel):
     currency_code: str = Field(min_length=3, max_length=3)
     # Omission preserves older clients' legacy carry behavior. New clients send an explicit choice.
     cash_rollover_policy: Optional[Literal["absorb_next_month", "carry_category_deficit"]] = None
+    # Production clients receive an editable zero-money starter Plan. Test/import callers may
+    # explicitly opt out when constructing an already-defined budget structure.
+    starter_template: bool = True
 
     @field_validator("currency_code")
     @classmethod

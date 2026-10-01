@@ -2099,6 +2099,36 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testProductionLocalWorkspaceFirstLaunchPublishesZeroMoneyStarterPlanOnce() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-device-starter-ui-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let keyManager = LocalDeviceKeyManager(store: InMemorySecretDataStore())
+
+        let firstLaunch = BudgetWorkspaceStore.localDevice(
+            applicationSupportDirectory: root,
+            keyManager: keyManager
+        )
+        await firstLaunch.refresh()
+        XCTAssertNil(firstLaunch.errorMessage)
+        XCTAssertEqual(firstLaunch.groups.map(\.name), LocalAuthorityStore.starterPlan.map(\.group))
+        XCTAssertEqual(Set(firstLaunch.categories.map(\.name)), Set(LocalAuthorityStore.starterPlan.flatMap(\.categories)))
+        XCTAssertEqual(firstLaunch.summary?.readyToAssignMinor, 0)
+        XCTAssertTrue(firstLaunch.accounts.isEmpty)
+        XCTAssertTrue(firstLaunch.transactions.isEmpty)
+        XCTAssertTrue(firstLaunch.targets.isEmpty)
+
+        let relaunch = BudgetWorkspaceStore.localDevice(
+            applicationSupportDirectory: root,
+            keyManager: keyManager
+        )
+        await relaunch.refresh()
+        XCTAssertNil(relaunch.errorMessage)
+        XCTAssertEqual(relaunch.groups.count, 4)
+        XCTAssertEqual(relaunch.categories.count, 11)
+    }
+
+    @MainActor
     func testLocalAuthorityPersistsCanonicalCreditReserveAttributionAndRejectsTampering() throws {
         let identity = LocalAuthorityIdentity(
             householdID: "local-household", householdName: "Local Household",

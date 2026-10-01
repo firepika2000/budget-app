@@ -13,9 +13,48 @@ def create_budget(client, owner_token, session_factory, name="Family"):
         "household_id": household_id,
         "name": name,
         "currency_code": "USD",
+        "starter_template": False,
     })
     assert response.status_code == 201
     return response.json()
+
+
+def test_new_budget_installs_zero_money_starter_plan(client, owner_token, session_factory):
+    with session_factory() as db:
+        household_id = db.query(Household.id).scalar()
+    response = client.post("/api/v1/budgets", headers=auth(owner_token), json={
+        "household_id": household_id,
+        "name": "Fresh Budget",
+        "currency_code": "USD",
+    })
+    assert response.status_code == 201
+    budget_id = response.json()["id"]
+
+    groups = client.get(f"/api/v1/budgets/{budget_id}/category-groups", headers=auth(owner_token))
+    categories = client.get(f"/api/v1/budgets/{budget_id}/categories", headers=auth(owner_token))
+    summary = client.get(f"/api/v1/budgets/{budget_id}/months/2026-10-01", headers=auth(owner_token))
+
+    assert groups.status_code == categories.status_code == summary.status_code == 200
+    assert [item["name"] for item in groups.json()] == [
+        "Monthly Bills", "Everyday Spending", "True Expenses", "Goals",
+    ]
+    assert {item["name"] for item in categories.json()} == {
+        "Housing", "Utilities", "Phone & Internet",
+        "Groceries", "Transportation", "Dining & Fun",
+        "Medical", "Home & Car Maintenance", "Annual Bills",
+        "Emergency Fund", "Savings Goals",
+    }
+    assert summary.json()["ready_to_assign_minor"] == 0
+    assert all(item["assigned_minor"] == 0 and item["activity_minor"] == 0 for item in summary.json()["categories"])
+
+
+def test_budget_creation_can_explicitly_skip_starter_plan(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory, name="Imported Structure")
+    groups = client.get(f"/api/v1/budgets/{budget['id']}/category-groups", headers=auth(owner_token))
+    categories = client.get(f"/api/v1/budgets/{budget['id']}/categories", headers=auth(owner_token))
+    assert groups.status_code == categories.status_code == 200
+    assert groups.json() == []
+    assert categories.json() == []
 
 
 def create_budget_structure(client, owner_token, budget_id):

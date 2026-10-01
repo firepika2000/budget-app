@@ -362,20 +362,43 @@ public actor LocalAuthorityStore {
         try await database.snapshot(to: destinationURL)
     }
 
-    public func bootstrap(_ identity: LocalAuthorityIdentity, createdAt: String) async throws {
+    public func bootstrap(_ identity: LocalAuthorityIdentity, createdAt: String, installStarterPlan: Bool = false) async throws {
         guard !identity.householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !identity.ownerDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !identity.budgetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               identity.currencyCode.count == 3 else {
             throw LocalStorageError.operationFailed("Local authority identity is invalid")
         }
-        try await database.transaction([
+        var statements: [LocalSQLStatement] = [
             .init("INSERT INTO households(id,name,created_at) VALUES (?,?,?)", values: [.text(identity.householdID), .text(identity.householdName), .text(createdAt)]),
             .init("INSERT INTO users(id,display_name,email) VALUES (?,?,NULL)", values: [.text(identity.ownerUserID), .text(identity.ownerDisplayName)]),
             .init("INSERT INTO memberships(household_id,user_id,role,is_active) VALUES (?,?,?,1)", values: [.text(identity.householdID), .text(identity.ownerUserID), .text("owner")]),
             .init("INSERT INTO budgets(id,household_id,name,currency_code,cash_rollover_policy,created_at) VALUES (?,?,?,?,?,?)", values: [.text(identity.budgetID), .text(identity.householdID), .text(identity.budgetName), .text(identity.currencyCode.uppercased()), .text("carry_category_deficit"), .text(createdAt)])
-        ])
+        ]
+        if installStarterPlan {
+            for (groupIndex, template) in Self.starterPlan.enumerated() {
+                let groupID = UUID().uuidString.lowercased()
+                statements.append(.init(
+                    "INSERT INTO category_groups(id,budget_id,name,sort_order,is_archived) VALUES (?,?,?,?,0)",
+                    values: [.text(groupID), .text(identity.budgetID), .text(template.group), .integer(Int64((groupIndex + 1) * 100))]
+                ))
+                for (categoryIndex, categoryName) in template.categories.enumerated() {
+                    statements.append(.init(
+                        "INSERT INTO categories(id,budget_id,group_id,name,delegated_user_id,is_archived,sort_order,is_favorite,favorite_sort_order) VALUES (?,?,?,?,NULL,0,?,0,0)",
+                        values: [.text(UUID().uuidString.lowercased()), .text(identity.budgetID), .text(groupID), .text(categoryName), .integer(Int64((categoryIndex + 1) * 100))]
+                    ))
+                }
+            }
+        }
+        try await database.transaction(statements)
     }
+
+    public static let starterPlan: [(group: String, categories: [String])] = [
+        ("Monthly Bills", ["Housing", "Utilities", "Phone & Internet"]),
+        ("Everyday Spending", ["Groceries", "Transportation", "Dining & Fun"]),
+        ("True Expenses", ["Medical", "Home & Car Maintenance", "Annual Bills"]),
+        ("Goals", ["Emergency Fund", "Savings Goals"]),
+    ]
 
     public func insertAccount(_ value: LocalAccountRecord) async throws {
         try await database.execute(.init(
