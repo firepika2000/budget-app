@@ -3954,6 +3954,33 @@ private struct BackupRecoverySettingsView: View {
                         description: Text("Configure encrypted backups on this Budget Server to publish health here.")
                     )
                 } else {
+                    Section("Automatic Backup") {
+                        if let schedule = status.schedule {
+                            LabeledContent("Status", value: schedule.state.capitalized)
+                            if let message = schedule.message {
+                                Label(message, systemImage: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                            }
+                            if let hour = schedule.hour, let minute = schedule.minute {
+                                LabeledContent(
+                                    "Schedule",
+                                    value: String(format: "Daily at %02d:%02d (server local time)", hour, minute)
+                                )
+                            }
+                            if let retention = schedule.retention {
+                                LabeledContent("Retention", value: "\(retention) generations")
+                            }
+                            if let provider = schedule.provider {
+                                LabeledContent(
+                                    "Host scheduler",
+                                    value: provider.replacingOccurrences(of: "_", with: " ").capitalized
+                                )
+                            }
+                        } else {
+                            Label("No automatic backup schedule is published by this server.", systemImage: "calendar.badge.exclamationmark")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Section("Latest Backup") {
                         LabeledContent("Status", value: status.backup.state.replacingOccurrences(of: "_", with: " ").capitalized)
                         if let completed = status.backup.completedAt { LabeledContent("Completed", value: readableDate(completed)) }

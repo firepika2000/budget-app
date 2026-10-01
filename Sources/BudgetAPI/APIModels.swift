@@ -1949,10 +1949,27 @@ public struct APIBackupHealth: Decodable, Equatable, Sendable {
 public struct APIServerBackupStatus: Decodable, Equatable, Sendable {
     public let configured: Bool
     public let backup: APIBackupHealth
+    public let schedule: APIBackupSchedule?
     public let lastRestoreVerification: APIBackupHealth?
 
     enum CodingKeys: String, CodingKey {
-        case configured, backup
+        case configured, backup, schedule
         case lastRestoreVerification = "last_restore_verification"
+    }
+}
+
+public struct APIBackupSchedule: Decodable, Equatable, Sendable {
+    public let state: String
+    public let message: String?
+    public let provider: String?
+    public let frequency: String?
+    public let hour: Int?
+    public let minute: Int?
+    public let retention: Int?
+    public let updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case state, message, provider, frequency, hour, minute, retention
+        case updatedAt = "updated_at"
     }
 }

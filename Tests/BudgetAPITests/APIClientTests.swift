@@ -1182,7 +1182,7 @@ final class APIClientTests: XCTestCase {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/backup-status")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
-            let body = Data(#"{"configured":true,"backup":{"state":"healthy","archive":"/private/backup.age","completed_at":"2026-09-27T12:00:00Z","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":9007199254740993,"destination":{"destination":"dropbox","path":"/Backups/backup.age","size":9007199254740993,"content_hash":"hash"}},"last_restore_verification":{"state":"verified","verified_at":"2026-09-27T13:00:00Z","source_provider":"portable_archive","source_archive_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","database_integrity":"ok","foreign_keys":"ok"}}"#.utf8)
+            let body = Data(#"{"configured":true,"backup":{"state":"healthy","archive":"/private/backup.age","completed_at":"2026-09-27T12:00:00Z","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":9007199254740993,"destination":{"destination":"dropbox","path":"/Backups/backup.age","size":9007199254740993,"content_hash":"hash"}},"schedule":{"state":"enabled","provider":"systemd","frequency":"daily","hour":3,"minute":15,"retention":12,"updated_at":"2026-09-27T11:00:00Z"},"last_restore_verification":{"state":"verified","verified_at":"2026-09-27T13:00:00Z","source_provider":"portable_archive","source_archive_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","database_integrity":"ok","foreign_keys":"ok"}}"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
@@ -1192,6 +1192,9 @@ final class APIClientTests: XCTestCase {
         XCTAssertTrue(result.configured)
         XCTAssertEqual(result.backup.size, 9_007_199_254_740_993)
         XCTAssertEqual(result.backup.destination?.destination, "dropbox")
+        XCTAssertEqual(result.schedule?.provider, "systemd")
+        XCTAssertEqual(result.schedule?.hour, 3)
+        XCTAssertEqual(result.schedule?.retention, 12)
         XCTAssertEqual(result.lastRestoreVerification?.sourceProvider, "portable_archive")
         XCTAssertEqual(result.lastRestoreVerification?.databaseIntegrity, "ok")
     }

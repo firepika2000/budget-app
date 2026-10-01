@@ -513,6 +513,13 @@ target. It completes and retains local capture before attempting Dropbox, record
 allowlisted remote metadata on success, and records `publication_failed` with the retained local
 generation on network/OAuth failure. This preserves a recoverable generation while still making an
 unattended scheduler failure visible.
+The owner-only server Backup & Recovery route now combines three independently bounded documents:
+the latest coordinated backup, the installed daily host schedule, and the most recent verified restore.
+Only schedule state, provider, local wall-clock time, retention, and update time cross the API; task
+commands, filesystem paths, environment values, and credentials are never returned. The iPhone shows
+that contract in one recovery screen. Windows Task Scheduler and QNAP cron publish/remove the schedule
+document atomically, while launchd/systemd installers accept an explicit operations-volume status path.
+Missing metadata remains backward compatible and invalid or linked metadata fails closed.
 
 The versioned Windows ZIP now includes a double-click per-user installer. It validates and atomically
 publishes an allowlisted manager payload to a stable `%LOCALAPPDATA%` program path, adds Desktop and

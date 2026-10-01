@@ -586,9 +586,31 @@ function Install-ClearPocketBackupSchedule(
         -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
         -ExecutionTimeLimit (New-TimeSpan -Hours 6)
+    $operationsSettings = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^CLEARPOCKET_OPERATIONS_STORAGE=' })
+    if ($operationsSettings.Count -ne 1) { throw "Private configuration has an invalid operations storage setting." }
+    $operationsDirectory = [IO.Path]::GetFullPath($operationsSettings[0].Split('=', 2)[1])
+    New-Item -ItemType Directory -Force -Path $operationsDirectory | Out-Null
+    $retentionSettings = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^BUDGET_APP_BACKUP_RETENTION=' })
+    if ($retentionSettings.Count -gt 1) { throw "Private configuration has duplicate backup retention settings." }
+    $retention = if ($retentionSettings.Count -eq 1) { [int]$retentionSettings[0].Split('=', 2)[1] } else { 10 }
+    if ($retention -lt 1) { throw "Backup retention must be positive." }
     Register-ScheduledTask -TaskName "ClearPocket Server Backup" -Action $action -Trigger $trigger `
         -Principal $principal -Settings $settings `
         -Description "Create a coordinated encrypted ClearPocket Server backup." -Force | Out-Null
+    $scheduleStatus = Join-Path $operationsDirectory "backup-schedule.json"
+    $temporaryStatus = "$scheduleStatus.$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        @{
+            state = "enabled"; provider = "windows_task"; frequency = "daily"
+            hour = $backupTime.Hour; minute = $backupTime.Minute; retention = $retention
+            updated_at = [DateTime]::UtcNow.ToString("o")
+        } | ConvertTo-Json | Set-Content -LiteralPath $temporaryStatus -Encoding utf8NoBOM
+        Move-Item -LiteralPath $temporaryStatus -Destination $scheduleStatus -Force
+    } catch {
+        Remove-Item -LiteralPath $temporaryStatus -Force -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName "ClearPocket Server Backup" -Confirm:$false -ErrorAction SilentlyContinue
+        throw
+    }
     Write-Host "Daily encrypted backup scheduled for $timeText."
     Write-Host "The task contains paths only. Recovery and server credentials are not stored in Task Scheduler."
 }
@@ -597,6 +619,11 @@ function Remove-ClearPocketBackupSchedule {
     $task = Get-ScheduledTask -TaskName "ClearPocket Server Backup" -ErrorAction SilentlyContinue
     if ($null -ne $task) {
         Unregister-ScheduledTask -TaskName "ClearPocket Server Backup" -Confirm:$false
+    }
+    $operationsSettings = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^CLEARPOCKET_OPERATIONS_STORAGE=' })
+    if ($operationsSettings.Count -eq 1) {
+        $scheduleStatus = Join-Path ([IO.Path]::GetFullPath($operationsSettings[0].Split('=', 2)[1])) "backup-schedule.json"
+        Remove-Item -LiteralPath $scheduleStatus -Force -ErrorAction SilentlyContinue
     }
     Write-Host "Scheduled backup disabled. Existing generations and the recovery identity were preserved."
 }

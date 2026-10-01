@@ -93,10 +93,47 @@ def validate_private_compose_environment(path: Path) -> Path:
 
 
 def _atomic_status(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
     os.chmod(temporary, 0o600)
     os.replace(temporary, path)
+
+
+def record_schedule_status(
+    path: Path, provider: str, hour: int, minute: int, retention: int | None = None,
+) -> None:
+    if provider not in {"launchd", "systemd", "windows_task", "qnap_cron"}:
+        raise BackupScheduleError("Backup schedule provider is invalid")
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise BackupScheduleError("Backup schedule time is invalid")
+    payload: dict[str, object] = {
+        "state": "enabled",
+        "provider": provider,
+        "frequency": "daily",
+        "hour": hour,
+        "minute": minute,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if retention is not None:
+        if retention < 1:
+            raise BackupScheduleError("Backup retention is invalid")
+        payload["retention"] = retention
+    candidate = path.expanduser()
+    if candidate.is_symlink():
+        raise BackupScheduleError("Backup schedule status cannot be a symbolic link")
+    _atomic_status(candidate.resolve(), payload)
+
+
+def configured_retention(environment_file: Path) -> int:
+    raw = load_private_environment(environment_file).get("BUDGET_APP_BACKUP_RETENTION", "10")
+    try:
+        retention = int(raw)
+    except ValueError as failure:
+        raise BackupScheduleError("Backup retention is invalid") from failure
+    if retention < 1:
+        raise BackupScheduleError("Backup retention is invalid")
+    return retention
 
 
 def run_scheduled_backup(
@@ -184,7 +221,7 @@ def launch_agent_payload(
 def install_launch_agent(
     project_name: str, backup_directory: Path, environment_file: Path,
     hour: int, minute: int, launch_agents_directory: Path | None = None,
-    compose_environment_file: Path | None = None,
+    compose_environment_file: Path | None = None, schedule_status_file: Path | None = None,
 ) -> Path:
     if sys.platform != "darwin":
         raise BackupScheduleError("launchd scheduling is available only on macOS")
@@ -203,6 +240,17 @@ def install_launch_agent(
     subprocess.run(["launchctl", "bootout", domain, str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if subprocess.run(["launchctl", "bootstrap", domain, str(target)]).returncode != 0:
         raise BackupScheduleError("launchd could not activate the backup schedule")
+    if schedule_status_file is not None:
+        try:
+            record_schedule_status(
+                schedule_status_file, "launchd", hour, minute, configured_retention(environment_file)
+            )
+        except (BackupScheduleError, OSError):
+            subprocess.run(
+                ["launchctl", "bootout", domain, str(target)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            raise
     return target
 
 
@@ -242,7 +290,7 @@ def systemd_user_payload(
 def install_systemd_user_timer(
     project_name: str, backup_directory: Path, environment_file: Path,
     hour: int, minute: int, unit_directory: Path | None = None,
-    compose_environment_file: Path | None = None,
+    compose_environment_file: Path | None = None, schedule_status_file: Path | None = None,
 ) -> Path:
     if not sys.platform.startswith("linux"):
         raise BackupScheduleError("systemd user scheduling is available only on Linux")
@@ -263,6 +311,17 @@ def install_systemd_user_timer(
     timer_name = f"{name}.timer"
     if subprocess.run(["systemctl", "--user", "enable", "--now", timer_name]).returncode != 0:
         raise BackupScheduleError("systemd could not enable the backup timer")
+    if schedule_status_file is not None:
+        try:
+            record_schedule_status(
+                schedule_status_file, "systemd", hour, minute, configured_retention(environment_file)
+            )
+        except (BackupScheduleError, OSError):
+            subprocess.run(
+                ["systemctl", "--user", "disable", "--now", timer_name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            raise
     return directory / timer_name
 
 
@@ -279,8 +338,10 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--compose-env-file", type=Path)
     install.add_argument("--hour", type=int, default=3)
     install.add_argument("--minute", type=int, default=0)
+    install.add_argument("--schedule-status-file", type=Path)
     install_systemd.add_argument("--hour", type=int, default=3)
     install_systemd.add_argument("--minute", type=int, default=0)
+    install_systemd.add_argument("--schedule-status-file", type=Path)
     status = commands.add_parser("status")
     status.add_argument("--backup-directory", type=Path, required=True)
     return value
@@ -300,6 +361,7 @@ def main(arguments: list[str] | None = None) -> int:
                 args.project_name, args.backup_directory, args.environment_file,
                 args.hour, args.minute,
                 compose_environment_file=args.compose_env_file,
+                schedule_status_file=args.schedule_status_file,
             )
             print(f"Automatic backup schedule installed: {target}")
             return 0
@@ -307,6 +369,7 @@ def main(arguments: list[str] | None = None) -> int:
             target = install_systemd_user_timer(
                 args.project_name, args.backup_directory, args.environment_file,
                 args.hour, args.minute, compose_environment_file=args.compose_env_file,
+                schedule_status_file=args.schedule_status_file,
             )
             print(f"Automatic backup schedule installed: {target}")
             return 0

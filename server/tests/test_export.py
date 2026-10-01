@@ -197,6 +197,7 @@ def test_backup_health_is_owner_only_bounded_and_sanitized(
     from .test_budgeting_api import create_budget
     budget = create_budget(client, owner_token, session_factory)
     backup = tmp_path / "backup-status.json"
+    schedule = tmp_path / "backup-schedule.json"
     recovery = tmp_path / "recovery-status.json"
     backup.write_text(json.dumps({
         "state": "healthy", "archive": "/private/backup.age", "completed_at": "2026-09-27T12:00:00Z",
@@ -209,9 +210,15 @@ def test_backup_health_is_owner_only_bounded_and_sanitized(
         "source_provider": "portable_archive", "source_archive_sha256": "b" * 64,
         "database_integrity": "ok", "foreign_keys": "ok",
     }))
+    schedule.write_text(json.dumps({
+        "state": "enabled", "provider": "systemd", "frequency": "daily",
+        "hour": 3, "minute": 15, "retention": 12,
+        "updated_at": "2026-09-27T11:00:00Z", "command": "must-not-leak",
+    }))
     client.app.state.settings = replace(
         client.app.state.settings,
-        backup_status_path=str(backup), recovery_status_path=str(recovery),
+        backup_status_path=str(backup), backup_schedule_status_path=str(schedule),
+        recovery_status_path=str(recovery),
     )
     path = f"/api/v1/budgets/{budget['id']}/backup-status"
 
@@ -220,8 +227,21 @@ def test_backup_health_is_owner_only_bounded_and_sanitized(
     assert response.status_code == 200
     assert response.json()["backup"]["state"] == "healthy"
     assert response.json()["backup"]["destination"]["destination"] == "dropbox"
+    assert response.json()["schedule"] == {
+        "state": "enabled", "provider": "systemd", "frequency": "daily",
+        "hour": 3, "minute": 15, "retention": 12,
+        "updated_at": "2026-09-27T11:00:00Z",
+    }
     assert response.json()["last_restore_verification"]["source_provider"] == "portable_archive"
     assert "must-not-leak" not in response.text
+
+    schedule.write_text(json.dumps({
+        "state": "enabled", "provider": "systemd", "frequency": "daily",
+        "hour": 99, "minute": 0,
+    }))
+    invalid_schedule = client.get(path, headers=auth(owner_token))
+    assert invalid_schedule.status_code == 200
+    assert invalid_schedule.json()["schedule"]["state"] == "invalid"
 
     backup.write_text(json.dumps({
         "state": "failed", "completed_at": "2026-09-27T14:00:00Z",

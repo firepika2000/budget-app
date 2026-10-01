@@ -288,11 +288,15 @@ python3 tools/backup_schedule.py install-systemd \
   --project-name clearpocket-server \
   --backup-directory /protected/path/clearpocket-backups \
   --environment-file /protected/path/backup.env \
-  --compose-env-file .env --hour 3 --minute 0
+  --compose-env-file .env --hour 3 --minute 0 \
+  --schedule-status-file /protected/operations/backup-schedule.json
 ```
 
 The scheduler uses a nonblocking lock to prevent overlapping captures and records a bounded health
-document for every run. Host Python 3 and `age` remain requirements for this advanced path. The
+document for every run. When the schedule status file is the host directory mounted as
+`CLEARPOCKET_OPERATIONS_STORAGE`, owners can also see the schedule, retention, last backup, and
+restore verification in the app's Backup & Recovery screen. Host Python 3 and `age` remain
+requirements for this advanced path. The
 normal-user graphical scheduling experience is not complete.
 
 ## Docker Engine

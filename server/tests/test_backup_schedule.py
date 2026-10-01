@@ -8,7 +8,8 @@ import pytest
 
 from scripts.backup_schedule import (
     BackupScheduleError, launch_agent_payload, load_private_environment,
-    run_scheduled_backup, systemd_user_payload, validate_private_compose_environment,
+    record_schedule_status, run_scheduled_backup, systemd_user_payload,
+    validate_private_compose_environment,
 )
 
 
@@ -99,6 +100,30 @@ def test_scheduled_failure_is_visible_and_returns_failure(tmp_path):
     recorded = json.loads((backup_directory / "scheduled-backup-status.json").read_text())
     assert recorded["state"] == "failed"
     assert recorded["exit_code"] == 7
+
+
+def test_schedule_status_is_bounded_owner_visible_metadata(tmp_path):
+    path = tmp_path / "operations" / "backup-schedule.json"
+
+    record_schedule_status(path, "systemd", 3, 15, 12)
+
+    recorded = json.loads(path.read_text())
+    assert recorded["state"] == "enabled"
+    assert recorded["provider"] == "systemd"
+    assert recorded["frequency"] == "daily"
+    assert recorded["hour"] == 3
+    assert recorded["minute"] == 15
+    assert recorded["retention"] == 12
+    assert "updated_at" in recorded
+    assert path.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(BackupScheduleError, match="provider"):
+        record_schedule_status(path, "shell", 3, 15)
+    with pytest.raises(BackupScheduleError, match="time"):
+        record_schedule_status(path, "systemd", 24, 0)
+    linked = tmp_path / "linked-schedule.json"
+    linked.symlink_to(path)
+    with pytest.raises(BackupScheduleError, match="symbolic link"):
+        record_schedule_status(linked, "systemd", 3, 15)
 
 
 def test_external_compose_environment_is_private_and_forwarded_without_embedding_secrets(tmp_path, monkeypatch):

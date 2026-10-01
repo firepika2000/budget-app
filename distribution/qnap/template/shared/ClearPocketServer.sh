@@ -272,7 +272,12 @@ update_backup_schedule() {
             log_error "Backup recovery recipient is not configured"
             return 1
         }
+        RETENTION=$(sed -n 's/^BUDGET_APP_BACKUP_RETENTION=//p' "$ENV_FILE")
+        [ -n "$RETENTION" ] || RETENTION=10
+        case "$RETENTION" in ''|*[!0-9]*) log_error "Backup retention is invalid"; return 1 ;; esac
+        [ "$RETENTION" -ge 1 ] || { log_error "Backup retention is invalid"; return 1; }
     fi
+    SCHEDULE_STATUS="$CLEARPOCKET_DATA_ROOT/operations/backup-schedule.json"
     ORIGINAL="$CRON_FILE.clearpocket-original.$$"
     TEMPORARY="$CRON_FILE.clearpocket-new.$$"
     cp "$CRON_FILE" "$ORIGINAL" || return 1
@@ -297,8 +302,24 @@ update_backup_schedule() {
     rm -f "$ORIGINAL"
     trap - EXIT HUP INT TERM
     if [ "$mode" = install ]; then
+        STATUS_TEMPORARY="$SCHEDULE_STATUS.$$"
+        umask 077
+        printf '{"state":"enabled","provider":"qnap_cron","frequency":"daily","hour":%s,"minute":%s,"retention":%s,"updated_at":"%s"}\n' \
+            "$hour" "$minute" "$RETENTION" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$STATUS_TEMPORARY"
+        mv "$STATUS_TEMPORARY" "$SCHEDULE_STATUS"
+        compose exec -T -u root api chown budget:budget /var/lib/budget-app/operations/backup-schedule.json || {
+            rm -f "$SCHEDULE_STATUS"
+            ROLLBACK_TEMPORARY="$CRON_FILE.clearpocket-status-rollback.$$"
+            awk 'index($0, "# ClearPocketServerBackup") == 0' "$CRON_FILE" > "$ROLLBACK_TEMPORARY" && \
+                chmod 600 "$ROLLBACK_TEMPORARY" && mv "$ROLLBACK_TEMPORARY" "$CRON_FILE" && \
+                "$CRONTAB" "$CRON_FILE" >/dev/null 2>&1 || true
+            rm -f "$ROLLBACK_TEMPORARY"
+            log_error "Backup schedule activation was rolled back because owner-visible status could not be published"
+            return 1
+        }
         echo "Daily encrypted backup scheduled for hour $hour, minute $minute."
     else
+        rm -f "$SCHEDULE_STATUS"
         echo "Scheduled ClearPocket backup removed. Existing generations were preserved."
     fi
 }

@@ -14,6 +14,7 @@ class Settings:
     attachment_storage_path: str = "attachments"
     attachment_encryption_key: Optional[str] = None
     backup_status_path: Optional[str] = None
+    backup_schedule_status_path: Optional[str] = None
     recovery_status_path: Optional[str] = None
     pairing_public_url: Optional[str] = None
     pairing_code_minutes: int = 5
@@ -42,6 +43,7 @@ class Settings:
             attachment_storage_path=os.environ.get("BUDGET_APP_ATTACHMENT_STORAGE_PATH", "attachments"),
             attachment_encryption_key=os.environ.get("BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY"),
             backup_status_path=os.environ.get("BUDGET_APP_BACKUP_STATUS_PATH"),
+            backup_schedule_status_path=os.environ.get("BUDGET_APP_BACKUP_SCHEDULE_STATUS_PATH"),
             recovery_status_path=os.environ.get("BUDGET_APP_RECOVERY_STATUS_PATH"),
             pairing_public_url=os.environ.get("BUDGET_APP_PAIRING_PUBLIC_URL"),
         )

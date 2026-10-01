@@ -11,6 +11,7 @@ services:
       BUDGET_APP_ATTACHMENT_STORAGE_PATH: /var/lib/budget-app/attachments
       BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY: ${BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY}
       BUDGET_APP_BACKUP_STATUS_PATH: /var/lib/budget-app/operations/backup-status.json
+      BUDGET_APP_BACKUP_SCHEDULE_STATUS_PATH: /var/lib/budget-app/operations/backup-schedule.json
       BUDGET_APP_RECOVERY_STATUS_PATH: /var/lib/budget-app/operations/recovery-status.json
       BUDGET_APP_PAIRING_PUBLIC_URL: ${BUDGET_APP_PAIRING_PUBLIC_URL:-}
       BUDGET_APP_FORWARDED_ALLOW_IPS: ${BUDGET_APP_FORWARDED_ALLOW_IPS:-127.0.0.1}

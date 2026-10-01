@@ -95,6 +95,40 @@ def _health_document(path_value: str | None, expected_states: set[str]) -> dict 
     return result
 
 
+def _schedule_document(path_value: str | None) -> dict | None:
+    """Read the owner-visible scheduler contract without exposing host configuration."""
+    if not path_value:
+        return None
+    configured = Path(path_value).expanduser()
+    if configured.is_symlink():
+        return {"state": "invalid", "message": "Backup schedule metadata is unreadable"}
+    path = configured.resolve()
+    if not path.exists():
+        return None
+    try:
+        metadata = path.lstat()
+        if not path.is_file() or metadata.st_size > 16 * 1024:
+            raise ValueError
+        value = json.loads(path.read_text())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"state": "invalid", "message": "Backup schedule metadata is unreadable"}
+    if not isinstance(value, dict) or value.get("state") not in {"enabled", "disabled"}:
+        return {"state": "invalid", "message": "Backup schedule metadata is invalid"}
+    allowed = {"state", "provider", "frequency", "hour", "minute", "retention", "updated_at"}
+    result = {key: value[key] for key in allowed if key in value}
+    if result.get("provider") not in {"launchd", "systemd", "windows_task", "qnap_cron"}:
+        return {"state": "invalid", "message": "Backup schedule metadata is invalid"}
+    if result.get("frequency") != "daily":
+        return {"state": "invalid", "message": "Backup schedule metadata is invalid"}
+    if type(result.get("hour")) is not int or not 0 <= result["hour"] <= 23:
+        return {"state": "invalid", "message": "Backup schedule metadata is invalid"}
+    if type(result.get("minute")) is not int or not 0 <= result["minute"] <= 59:
+        return {"state": "invalid", "message": "Backup schedule metadata is invalid"}
+    if "retention" in result and (type(result["retention"]) is not int or result["retention"] < 1):
+        return {"state": "invalid", "message": "Backup schedule metadata is invalid"}
+    return result
+
+
 @router.get("/backup-status")
 def owner_backup_status(
     budget_id: str,
@@ -106,10 +140,16 @@ def owner_backup_status(
     if budget is None or not is_household_owner(db, user, budget.household_id):
         raise HTTPException(status_code=404, detail="Budget not found")
     backup = _health_document(settings.backup_status_path, {"healthy", "failed", "publication_failed"})
+    schedule = _schedule_document(settings.backup_schedule_status_path)
     recovery = _health_document(settings.recovery_status_path, {"verified"})
     return {
-        "configured": bool(settings.backup_status_path or settings.recovery_status_path),
+        "configured": bool(
+            settings.backup_status_path
+            or settings.backup_schedule_status_path
+            or settings.recovery_status_path
+        ),
         "backup": backup or {"state": "never"},
+        "schedule": schedule,
         "last_restore_verification": recovery,
     }
 
