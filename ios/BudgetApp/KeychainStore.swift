@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import BudgetStorage
 
 /// Minimal token persistence surface used by `AppSession`. Abstracted so credential storage can be
 /// faked deterministically in tests without touching the real Keychain.
@@ -26,7 +27,7 @@ final class UITestSecretDataStore: SecretDataStoring {
 }
 #endif
 
-struct KeychainStore: TokenStoring, SecretDataStoring {
+struct KeychainStore: TokenStoring, SecretDataStoring, Sendable {
     private let service: String
 
     init(service: String = "com.firepika.BudgetApp") {
@@ -87,6 +88,18 @@ struct KeychainStore: TokenStoring, SecretDataStoring {
         ]
         SecItemDelete(query as CFDictionary)
     }
+}
+
+/// Dropbox refresh credentials remain device-only Keychain data. Access tokens are deliberately
+/// memory-only and are resolved/refreshed by `DropboxOAuthCredential` for every transport request.
+struct DropboxRefreshTokenKeychainStore: DropboxRefreshTokenStoring, Sendable {
+    static let account = "dropbox-refresh-token-v1"
+    private let keychain: KeychainStore
+
+    init(keychain: KeychainStore = KeychainStore()) { self.keychain = keychain }
+    func loadRefreshToken() throws -> String? { keychain.read(account: Self.account) }
+    func saveRefreshToken(_ value: String) throws { try keychain.save(value, account: Self.account) }
+    func deleteRefreshToken() { keychain.delete(account: Self.account) }
 }
 
 @MainActor

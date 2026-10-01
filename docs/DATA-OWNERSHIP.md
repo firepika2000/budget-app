@@ -110,9 +110,18 @@ adapter owns no bearer token: each request resolves the current access token thr
 provider, rejects only the exact value that receives a 401, and retries once after rotation. This
 prevents a long-lived backup service from retaining an expired credential.
 
-Native Dropbox setup is not complete yet. PKCE authorization, a Keychain-held refresh credential,
-connection/revocation UI, and retention controls still have to be connected to Backup & Recovery.
+Native Dropbox setup is not complete yet. The registered public app identity plus connection,
+revocation, destination, and retention controls still have to be connected to Backup & Recovery.
 No Dropbox credential belongs in SQLite, the encrypted generation, logs, or source control.
+
+The reusable native OAuth credential layer is now implemented beneath that pending UI. It generates
+RFC 7636 S256 PKCE authorization requests for offline access with only Dropbox file-content and
+metadata scopes, validates the exact callback and unpredictable state, exchanges authorization codes,
+and single-flights concurrent refreshes. Refresh-token rotation is committed to a dedicated
+device-only Keychain account; access tokens remain memory-only. A 401 invalidates only the rejected
+access-token value, and disconnect removes the Dropbox credential without touching the Local Device
+authority, attachment key, server login, or encrypted generations. The release build still needs a
+registered public Dropbox app key/callback before the connection UI can be enabled.
 
 ## Implemented personal desktop-local backend
 
@@ -371,9 +380,9 @@ experience: the image has not been release-published and QNAP model validation i
 Windows helper now uses built-in PowerShell for cryptographic first-run configuration and selectable
 durable storage without Python, but still requires Docker Desktop and lacks the final signed manager.
 
-1. Connect the implemented native Dropbox destination core to explicit OAuth setup/revocation and
-   retention controls without placing provider secrets in the iOS database or logs. Dropbox remains
-   a backup destination, not a second authority.
+1. Connect the implemented native Dropbox destination/OAuth core to explicit setup/revocation and
+   retention controls after registering the public app key/callback. Dropbox remains a backup
+   destination, not a second authority.
 2. Build the normal-user server manager around the shared image/config contract: graphical storage
    selection, install/update/rollback, scheduled backup/restore, and actionable health reporting.
 3. Validate and package the manager for supported QNAP models and always-on Windows PCs, with signed

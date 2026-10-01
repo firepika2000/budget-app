@@ -1907,6 +1907,18 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(secrets.saveCount, 1, "Reloading must not rotate the authority key")
     }
 
+    func testDropboxRefreshTokenUsesDedicatedDeviceOnlyKeychainAccountAcrossReconstruction() throws {
+        let keychain = KeychainStore(service: "BudgetAppTests.Dropbox.\(UUID().uuidString)")
+        let first = DropboxRefreshTokenKeychainStore(keychain: keychain)
+        defer { first.deleteRefreshToken() }
+
+        try first.saveRefreshToken("refresh-token")
+        let reconstructed = DropboxRefreshTokenKeychainStore(keychain: keychain)
+        XCTAssertEqual(try reconstructed.loadRefreshToken(), "refresh-token")
+        reconstructed.deleteRefreshToken()
+        XCTAssertNil(try reconstructed.loadRefreshToken())
+    }
+
     @MainActor
     func testMalformedLocalDeviceAttachmentKeyFailsClosedWithoutReplacement() throws {
         let malformed = Data(repeating: 4, count: 31)
