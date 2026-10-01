@@ -71,6 +71,26 @@ menu action: it accepts only a brand-new empty recovery deployment, verifies the
 attachment key before mutation, and requires an explicit `--yes --project-name` target. Follow the
 recovery runbook and preserve the source authority until the restored destination is verified.
 
+### Start a new server from a portable household
+
+A portable archive can initialize a newly installed customer server without merging into or
+overwriting another household:
+
+```sh
+./manage.py portable-import \
+  --age-identity /private/path/age-identity.txt \
+  /private/path/budget-portable-YYYYMMDDTHHMMSSZ.tar.gz.age
+```
+
+The manager stops the API, starts only PostgreSQL, mounts the selected archive read-only into a
+one-shot application container, and prompts twice for the new owner password. The importer verifies
+the encrypted archive and every active attachment, requires both the database and attachment store
+to be empty, commits the complete household in one database transaction, re-encrypts attachments
+under this deployment's key, checks exact financial observations, writes owner-visible recovery
+health, and starts the API only after success. A failed import never overlays existing data and
+leaves the API stopped for inspection. The age identity file is mounted read-only for the one-shot
+operation; its contents are never placed on a command line or copied into the authority.
+
 ## Versioned update safety
 
 A newly downloaded immutable bundle can update an existing advanced Docker/QNAP deployment only after

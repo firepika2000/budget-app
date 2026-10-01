@@ -158,6 +158,12 @@ def test_publish_workflow_builds_versioned_customer_bundle():
     assert "server/scripts/backup_schedule.py" in workflow
 
 
+def test_server_image_contains_portable_import_runtime_and_age_decryptor():
+    dockerfile = (ROOT / "server" / "Dockerfile").read_text()
+    assert "apt-get install --no-install-recommends -y age" in dockerfile
+    assert "COPY scripts ./scripts" in dockerfile
+
+
 def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority():
     root = ROOT / "distribution" / "qnap"
     config = (root / "template" / "qpkg.cfg").read_text()
@@ -380,6 +386,47 @@ def test_manager_upgrade_never_auto_downgrades_after_unhealthy_migration(tmp_pat
         manager.upgrade(target, tmp_path / "backups", runner=RecordedRunner(),
                         health_check=lambda _url, _timeout: False, timeout=0.001)
     assert manager.load_environment(target.environment_file)["CLEARPOCKET_SERVER_VERSION"] == "1.0.0"
+
+
+def test_manager_portable_import_stops_api_uses_read_only_archive_and_restarts_after_success(tmp_path: Path):
+    target = manager_deployment(tmp_path)
+    archive = tmp_path / "household export.age"
+    archive.write_bytes(b"encrypted")
+    identity = tmp_path / "age identity.txt"
+    identity.write_text("AGE-SECRET-KEY-test\n")
+    runner = RecordedRunner()
+    interactive = RecordedRunner()
+    manager.portable_import(
+        target, archive, runner=runner, interactive_runner=interactive,
+        health_check=lambda _url, _timeout: True, timeout=1, age_identity=identity,
+    )
+    stop = next(command for command in runner.commands if command[-2:] == ["stop", "api"])
+    database = next(command for command in runner.commands if command[-3:] == ["up", "-d", "database"])
+    assert runner.commands.index(stop) < runner.commands.index(database)
+    assert len(interactive.commands) == 1
+    command = interactive.commands[0]
+    assert f"{archive.resolve()}:/import/archive.age:ro" in command
+    assert f"{identity.resolve()}:/import/age-identity.txt:ro" in command
+    assert "BUDGET_APP_BACKUP_AGE_IDENTITY=/tmp/age-identity.txt" in command
+    assert "--user" in command and "root" in command
+    assert command[-3:-1] == ["sh", "-c"]
+    assert "install -m 600 -o budget -g budget /import/archive.age /tmp/archive.age" in command[-1]
+    assert "exec su -s /bin/sh budget" in command[-1]
+    assert "python scripts/portable_import.py /tmp/archive.age --server-environment" in command[-1]
+    assert any(item[-2:] == ["up", "-d"] for item in runner.commands)
+    assert all("down" not in item and "-v" not in item for item in runner.commands)
+
+
+def test_manager_portable_import_refuses_archive_symlink_before_docker(tmp_path: Path):
+    target = manager_deployment(tmp_path)
+    archive = tmp_path / "archive.age"
+    archive.write_bytes(b"encrypted")
+    link = tmp_path / "archive-link.age"
+    link.symlink_to(archive)
+    runner = RecordedRunner()
+    with pytest.raises(manager.ManagerError, match="non-symlink"):
+        manager.portable_import(target, link, runner=runner)
+    assert runner.commands == []
 
 
 def test_manager_accepts_array_and_line_delimited_compose_status(tmp_path: Path):

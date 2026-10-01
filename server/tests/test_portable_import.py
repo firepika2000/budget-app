@@ -7,13 +7,17 @@ import sqlite3
 import tarfile
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.config import Settings
 from app.database import Base
 from app.main import create_app
 from scripts.local_server import LocalServerConfiguration, backup_status, migrate
 from scripts.portable_archive import stage_portable_payload
-from scripts.portable_import import import_payload, import_portable_archive
+from scripts.portable_import import (
+    import_payload, import_portable_archive, import_portable_archive_into_server,
+    PortableImportError,
+)
 from scripts.portable_import import SECTION_TABLE_ORDER
 from .conftest import auth
 from .test_budgeting_api import create_budget, create_budget_structure
@@ -90,6 +94,17 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
         assert database.execute("SELECT COALESCE(SUM(amount_minor),0) FROM allocation_postings").fetchone() == (0,)
         assert database.execute("PRAGMA foreign_key_check").fetchall() == []
 
+    with pytest.raises(PortableImportError, match="new empty authority"):
+        import_payload(
+            payload | {"attachment_payloads_included": True}, extracted, destination,
+            "replacement-owner-password",
+        )
+    with sqlite3.connect(destination.database_path) as database:
+        assert database.execute(
+            "SELECT amount_minor FROM transactions WHERE id=?", (transaction.json()["id"],)
+        ).fetchone() == (-12_345,)
+        assert database.execute("SELECT COUNT(*) FROM budgets").fetchone() == (1,)
+
     owner = payload["user_directory"][0]
     imported_app = create_app(Settings(
         database_url=f"sqlite:///{destination.database_path}",
@@ -145,3 +160,24 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
     with sqlite3.connect(imported.database_path) as database:
         assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert database.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    server_target = LocalServerConfiguration.load_or_create(tmp_path / "empty-server-authority")
+    migrate(server_target, SERVER_ROOT)
+    monkeypatch.setenv("BUDGET_APP_DATABASE_URL", server_target.environment()["BUDGET_APP_DATABASE_URL"])
+    monkeypatch.setenv("BUDGET_APP_JWT_SECRET", server_target.jwt_secret)
+    monkeypatch.setenv("BUDGET_APP_ATTACHMENT_STORAGE_PATH", str(server_target.attachment_path))
+    monkeypatch.setenv("BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY", server_target.attachment_encryption_key)
+    monkeypatch.setenv("BUDGET_APP_RECOVERY_STATUS_PATH", str(server_target.recovery_status_path))
+    import_portable_archive_into_server(
+        encrypted, "server-owner-password",
+    )
+    with sqlite3.connect(server_target.database_path) as database:
+        assert database.execute("SELECT COUNT(*) FROM budgets").fetchone() == (1,)
+        assert database.execute(
+            "SELECT amount_minor FROM transactions WHERE id=?", (transaction.json()["id"],)
+        ).fetchone() == (-12_345,)
+    assert backup_status(server_target)["last_restore_verification"]["source_provider"] == "portable_archive"
+    with pytest.raises(PortableImportError, match="new empty authority"):
+        import_portable_archive_into_server(
+            encrypted, "server-owner-password",
+        )

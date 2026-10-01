@@ -5,13 +5,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN addgroup --system budget && adduser --system --ingroup budget budget
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y age \
+    && rm -rf /var/lib/apt/lists/* \
+    && addgroup --system budget && adduser --system --ingroup budget budget
 RUN install -d -m 0700 -o budget -g budget /var/lib/budget-app/attachments
 RUN install -d -m 0700 -o budget -g budget /var/lib/budget-app/operations
 
 COPY pyproject.toml README.md alembic.ini ./
 COPY app ./app
 COPY migrations ./migrations
+COPY scripts ./scripts
 COPY web ./web
 
 RUN pip install --no-cache-dir .

@@ -119,6 +119,16 @@ def run(command: Sequence[str], *, check: bool = True) -> subprocess.CompletedPr
         raise ManagerError(detail) from error
 
 
+def run_interactive(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    """Run a command attached to the operator terminal for secret prompts."""
+    try:
+        return subprocess.run(command, check=True, text=True)
+    except FileNotFoundError as error:
+        raise ManagerError("Docker was not found. Install and start Docker or QNAP Container Station.") from error
+    except subprocess.CalledProcessError as error:
+        raise ManagerError("Portable import failed; the server remains stopped for inspection") from error
+
+
 def inspect_prerequisites(target: Deployment, runner: Runner = run) -> dict[str, str]:
     docker = runner(["docker", "version", "--format", "{{.Server.Version}}"])
     compose = runner(["docker", "compose", "version", "--short"])
@@ -296,6 +306,49 @@ def upgrade(
     return intended
 
 
+def portable_import(
+    target: Deployment, archive: Path, *, runner: Runner = run,
+    interactive_runner: Callable[[Sequence[str]], subprocess.CompletedProcess[str]] = run_interactive,
+    health_check: Callable[[str, float], bool] = health, timeout: float = 120.0,
+    age_identity: Path | None = None,
+) -> None:
+    """Import into a new empty authority without exposing credentials or overlaying data."""
+    archive = archive.expanduser()
+    if archive.is_symlink() or not archive.is_file():
+        raise ManagerError("Portable import archive must be a regular non-symlink file")
+    archive = archive.resolve()
+    if age_identity is not None:
+        age_identity = age_identity.expanduser()
+        if age_identity.is_symlink() or not age_identity.is_file():
+            raise ManagerError("Age identity must be a regular non-symlink file")
+        age_identity = age_identity.resolve()
+    inspect_prerequisites(target, runner)
+    runner(target.compose_command("stop", "api"), check=False)
+    runner(target.compose_command("up", "-d", "database"))
+    run_arguments = [
+        "run", "--rm", "--no-deps", "--user", "root",
+        "--volume", f"{archive}:/import/archive.age:ro",
+    ]
+    prepare = "install -m 600 -o budget -g budget /import/archive.age /tmp/archive.age"
+    if age_identity is not None:
+        run_arguments += [
+            "--volume", f"{age_identity}:/import/age-identity.txt:ro",
+            "--env", "BUDGET_APP_BACKUP_AGE_IDENTITY=/tmp/age-identity.txt",
+        ]
+        prepare += " && install -m 600 -o budget -g budget /import/age-identity.txt /tmp/age-identity.txt"
+    operation = (
+        "alembic upgrade head && python scripts/portable_import.py "
+        "/tmp/archive.age --server-environment"
+    )
+    command = target.compose_command(
+        *run_arguments, "api", "sh", "-c",
+        f"{prepare} && exec su -s /bin/sh budget -c '{operation}'",
+    )
+    interactive_runner(command)
+    refreshed = deployment(target.root, target.environment_file)
+    start(refreshed, runner=runner, health_check=health_check, timeout=timeout, pause=2.0)
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="Safely operate a ClearPocket Server deployment")
     value.add_argument("--root", type=Path, default=Path(__file__).resolve().parent,
@@ -318,6 +371,16 @@ def parser() -> argparse.ArgumentParser:
     upgrade_command.add_argument("--backup-output", type=Path, required=True)
     upgrade_command.add_argument("--project-name", default="clearpocket-server")
     upgrade_command.add_argument("--timeout", type=float, default=120.0)
+    import_command = commands.add_parser(
+        "portable-import",
+        help="restore a portable archive into a new empty customer server",
+    )
+    import_command.add_argument("archive", type=Path)
+    import_command.add_argument(
+        "--age-identity", type=Path,
+        help="private age identity file mounted read-only for recipient-encrypted archives",
+    )
+    import_command.add_argument("--timeout", type=float, default=120.0)
     diagnostic = commands.add_parser("diagnostics", help="write a redacted support report")
     diagnostic.add_argument("--output", type=Path, default=Path("clearpocket-diagnostics.json"))
     return value
@@ -358,6 +421,14 @@ def main() -> int:
             version = upgrade(target, arguments.backup_output,
                               project_name=arguments.project_name, timeout=arguments.timeout)
             print(f"ClearPocket Server upgraded and healthy at version {version}")
+        elif arguments.command == "portable-import":
+            if arguments.timeout <= 0:
+                raise ManagerError("Import health timeout must be positive")
+            portable_import(
+                target, arguments.archive, timeout=arguments.timeout,
+                age_identity=arguments.age_identity,
+            )
+            print("Portable household imported; ClearPocket Server is healthy")
         elif arguments.command == "diagnostics":
             output = diagnostics(target, arguments.output)
             print(f"Redacted diagnostics written to {output}")

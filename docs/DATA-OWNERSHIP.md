@@ -383,6 +383,15 @@ the on-device iPhone authority remains gated on the production `LocalDeviceRepos
 is not a substitute for same-provider operational backup because detached tombstone payload bytes
 and deployment configuration remain intentionally provider-local.
 
+The same validated portable archive can now initialize a **new empty customer Docker/QNAP server**.
+The customer manager stops the API, brings up PostgreSQL alone, mounts the archive read-only into a
+one-shot version-matched application container, and prompts interactively for a new owner password.
+The database and attachment store must both be empty. All rows commit in one transaction, active
+attachments are re-encrypted with the destination key before commit, financial observations are
+compared exactly, and any failure removes newly written objects without overlaying an existing
+household. Recovery verification becomes visible through the existing owner-only health contract.
+This is an initialization/migration path, not an in-place merge.
+
 ## Remaining implementation sequence
 
 The production on-device authority and persistence/reopen coverage are implemented. The iOS app can
