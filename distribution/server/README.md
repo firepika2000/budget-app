@@ -9,9 +9,22 @@ health checks, environment contract, and migration entry point are used on all s
 hosts. That keeps Docker, QNAP Container Station, and Docker Desktop on an always-on Windows PC from
 becoming three different servers.
 
-## Generate private configuration
+## Install on a Docker host
 
-From this directory:
+For the normal first run on a Docker Engine or Docker Desktop host, extract the versioned bundle and
+run:
+
+```sh
+./install-docker.sh
+```
+
+The installer requires Docker only. It pulls the exact immutable image, runs the bundled configuration
+generator inside that image as the current host user, creates three private durable data directories,
+validates Compose, starts the services, and waits for the real health endpoint. It binds to loopback
+because guided TLS/pairing is not complete. Rerunning it preserves `.env` and every authority directory;
+it never offers reset or overwrite.
+
+Advanced administrators may instead generate configuration directly from this directory:
 
 ```sh
 python3 configure.py --allowed-hosts budget.example.com --version VERSION \
@@ -60,7 +73,8 @@ allowed-host details, host storage paths, container environment, and application
 before sharing them because user-entered server activity may still be visible there. `backup` invokes
 the bundled, tested coordinated backup path: the API pauses, PostgreSQL and encrypted attachments are
 captured as one integrity manifest, the API resumes, and `age` publishes an immutable encrypted
-generation. Docker, Python 3, and `age` must be installed on the host. The recovery passphrase or age
+generation. Docker, Python 3, and `age` must be installed on the host for these advanced manager backup
+commands. The guided first-run installer itself requires Docker only. The recovery passphrase or age
 identity remains under the household owner's control.
 
 On a package host that keeps private settings outside the replaceable application directory, pass

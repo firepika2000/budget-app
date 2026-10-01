@@ -441,6 +441,12 @@ version setting changes atomically before activation; and an unhealthy post-migr
 never triggers an unsafe automatic image downgrade. The preserved generation instead anchors the
 new-destination recovery workflow.
 
+The generic versioned Docker bundle now has a one-command first-run installer. It requires only a
+running Docker/Compose v2 installation, uses the exact immutable application image to execute the
+configuration generator under the host user's identity, creates private durable authority directories,
+starts Compose, and requires API health. It binds to loopback until TLS/pairing exists and refuses to
+replace an existing `.env` or authority on rerun.
+
 The versioned Windows ZIP now includes a double-click per-user installer. It validates and atomically
 publishes an allowlisted manager payload to a stable `%LOCALAPPDATA%` program path, adds Desktop and
 Start Menu shortcuts, and preserves private configuration and every authority/recovery path on rerun.

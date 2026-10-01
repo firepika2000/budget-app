@@ -112,6 +112,25 @@ def test_shared_compose_contract_preserves_security_and_persistent_authority():
     assert "CLEARPOCKET_BIND_ADDRESS:-127.0.0.1" in compose
 
 
+def test_docker_installer_uses_immutable_image_without_host_python_and_never_overwrites():
+    script = (ROOT / "distribution" / "server" / "install-docker.sh").read_text()
+    assert script.startswith("#!/bin/sh\nset -eu\n")
+    assert "command -v docker" in script
+    assert "command -v python" not in script
+    assert 'case "$VERSION" in \'\'|edge|' in script
+    assert 'docker pull "$IMAGE"' in script
+    assert '--entrypoint python "$IMAGE"' in script
+    assert '--user "$USER_ID:$GROUP_ID"' in script
+    assert '/bundle/configure.py --output /bundle/.env' in script
+    assert '--bind-address 127.0.0.1' in script
+    assert 'if [ ! -e "$ENV_FILE" ]' in script
+    assert "Existing private configuration preserved" in script
+    assert 'compose.yaml" config --quiet' in script
+    assert 'compose.yaml" up -d' in script
+    assert "urlopen('http://127.0.0.1:8080/api/v1/health'" in script
+    assert "down -v" not in script and "docker volume rm" not in script
+
+
 def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     command = (ROOT / "distribution" / "server" / "start-windows.cmd").read_text()
     script = (ROOT / "distribution" / "server" / "start-windows.ps1").read_text()
