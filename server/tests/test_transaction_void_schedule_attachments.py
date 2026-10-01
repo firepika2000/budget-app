@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from app.models import CreditCardReserveEvent, Transaction, TransactionAttachment, TransactionChange
 from app.attachment_storage import AttachmentStorage
+import app.budgeting_routes as budgeting_routes
 
 from .conftest import auth
 from .test_advanced_ledger import add_category, record
@@ -25,14 +26,14 @@ def test_void_cash_split_is_one_way_current_dated_and_exact(client, owner_token,
     original = record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=-1500,
                       payee_name="Market", splits=[{"category_id": groceries["id"], "amount_minor": -1000},
                                                     {"category_id": dining["id"], "amount_minor": -500}])
-    utc_date_before = datetime.now(timezone.utc).date().isoformat()
+    local_date_before = date.today().isoformat()
     response = client.post(endpoint(budget["id"], original["id"], "void"), headers=auth(owner_token), json={"reason": "Duplicate charge"})
-    utc_date_after = datetime.now(timezone.utc).date().isoformat()
+    local_date_after = date.today().isoformat()
     assert response.status_code == 201, response.text
     reversal = response.json()
     assert reversal["status"] == "reversal"
     assert reversal["amount_minor"] == 1500
-    assert reversal["occurred_on"] in {utc_date_before, utc_date_after}
+    assert reversal["occurred_on"] in {local_date_before, local_date_after}
     assert reversal["reversal_of_transaction_id"] == original["id"]
     assert sum(item["amount_minor"] for item in reversal["splits"]) == 1500
     rows = {item["id"]: item for item in client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()}
@@ -71,16 +72,34 @@ def test_void_rejects_reconciled_transfer_and_reversal(client, owner_token, sess
     assert client.post(endpoint(budget["id"], original["id"], "void"), headers=auth(owner_token), json={}).status_code == 409
 
 
-def test_void_income_and_categorized_refund_net_exactly(client, owner_token, session_factory):
+def test_void_income_and_categorized_refund_net_exactly_across_utc_midnight(
+    client, owner_token, session_factory, monkeypatch
+):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])
-    income = record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=9000, payee_name="Income", occurred_on=date.today().isoformat())
-    refund = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=1200, payee_name="Refund", occurred_on=date.today().isoformat())
+    local_today = date(2026, 9, 30)
+    income = record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=9000, payee_name="Income", occurred_on=local_today.isoformat())
+    refund = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=1200, payee_name="Refund", occurred_on=local_today.isoformat())
+
+    class LocalDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 9, 30)
+
+    class NextUTCDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 1, 1, 30, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(budgeting_routes, "date", LocalDate)
+    monkeypatch.setattr(budgeting_routes, "datetime", NextUTCDateTime)
     for transaction in (income, refund):
-        assert client.post(endpoint(budget["id"], transaction["id"], "void"), headers=auth(owner_token), json={}).status_code == 201
+        response = client.post(endpoint(budget["id"], transaction["id"], "void"), headers=auth(owner_token), json={})
+        assert response.status_code == 201
+        assert response.json()["occurred_on"] == local_today.isoformat()
     balance = client.get(f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/balance", headers=auth(owner_token)).json()
     assert balance["working_balance_minor"] == 0
-    summary = client.get(f"/api/v1/budgets/{budget['id']}/months/{date.today().replace(day=1).isoformat()}", headers=auth(owner_token)).json()
+    summary = client.get(f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)).json()
     assert next(item for item in summary["categories"] if item["category_id"] == category["id"])["activity_minor"] == 0
 
 

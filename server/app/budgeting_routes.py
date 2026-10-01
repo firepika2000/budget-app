@@ -1621,7 +1621,7 @@ def void_transaction(
     now = datetime.now(timezone.utc)
     reversal = Transaction(
         budget_id=budget_id, account_id=original.account_id, category_id=original.category_id,
-        payee_id=original.payee_id, amount_minor=-original.amount_minor, occurred_on=now.date(),
+        payee_id=original.payee_id, amount_minor=-original.amount_minor, occurred_on=date.today(),
         payee_name=f"Reversal: {original.payee_name or 'Transaction'}"[:150],
         memo=(f"Void reversal. {body.reason}" if body.reason else "Void reversal.")[:500],
         financial_classification=original.financial_classification,
