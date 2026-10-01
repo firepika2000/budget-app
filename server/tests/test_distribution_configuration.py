@@ -358,6 +358,8 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert 'restore-windows.ps1' in script
     assert 'Restore an encrypted backup into this empty server' in script
     assert "Install-ClearPocketBackupSchedule" in script
+    assert '[string] $BackupDirectory = ""' in script
+    assert '[string] $TimeText = ""' in script
     assert "ClearPocket Server Backup" in script
     assert "New-ScheduledTaskTrigger -Daily" in script
     assert "-StartWhenAvailable" in script
@@ -445,6 +447,9 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert 'Content="Create Encrypted Backup"' in manager
     assert 'Content="Configure Dropbox Backup"' in manager
     assert 'Content="Disconnect Dropbox"' in manager
+    assert 'Content="Schedule Daily Backups"' in manager
+    assert 'Content="Backup Schedule Status"' in manager
+    assert 'Content="Disable Backup Schedule"' in manager
     assert 'Content="Create Diagnostics"' in manager
     assert 'Content="Backup, Restore &amp; Advanced…"' in manager
     assert 'Invoke-ManagerOperation "Configure"' in manager
@@ -460,7 +465,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert '$info.RedirectStandardOutput = $true' in manager
     assert '$info.RedirectStandardError = $true' in manager
     assert "Remove-Item" not in manager
-    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox")' in engine
+    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus")' in engine
     assert '$Operation -notin @("Configure", "Interactive")' in engine
     assert '$env:CLEARPOCKET_SETUP_STORAGE_ROOT' in engine
     assert '$env:CLEARPOCKET_SETUP_PUBLIC_HOST' in engine
@@ -470,7 +475,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
         "Move-Item -LiteralPath $temporary -Destination $environmentFile"
     )
     noninteractive = engine.split('if ($Operation -ne "Interactive")', 1)[1]
-    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox"):
+    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus"):
         assert f'"{operation}"' in noninteractive
     assert 'Invoke-ClearPocketCompose @("stop")' in noninteractive
     assert 'Operation = "Manager"' in noninteractive
@@ -485,6 +490,8 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert '-Mode $env:CLEARPOCKET_DROPBOX_MODE' in noninteractive
     assert '-Folder $env:CLEARPOCKET_DROPBOX_FOLDER_INPUT' in noninteractive
     assert 'Disable-ClearPocketDropboxBackup -Confirmation $env:CLEARPOCKET_DROPBOX_CONFIRMATION' in noninteractive
+    assert '-BackupDirectory $env:CLEARPOCKET_SCHEDULE_BACKUP_DIRECTORY' in noninteractive
+    assert '-TimeText $env:CLEARPOCKET_SCHEDULE_BACKUP_TIME' in noninteractive
     assert "down -v" not in noninteractive
     assert "docker volume rm" not in noninteractive
     assert "Read-DropboxConfiguration" in manager
@@ -493,6 +500,11 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert "CLEARPOCKET_DROPBOX_ACCESS_TOKEN" not in manager
     assert "CLEARPOCKET_DROPBOX_REFRESH_TOKEN" not in manager
     assert "CLEARPOCKET_DROPBOX_APP_SECRET" not in manager
+    assert "Read-BackupSchedule" in manager
+    assert 'Invoke-ManagerOperation "ScheduleBackup"' in manager
+    assert 'Invoke-ManagerOperation "BackupScheduleStatus"' in manager
+    assert 'Invoke-ManagerOperation "RemoveBackupSchedule"' in manager
+    assert '$dockerIndependentOperations = @("DisconnectDropbox", "RemoveBackupSchedule", "BackupScheduleStatus")' in engine
 
 
 def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():

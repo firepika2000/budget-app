@@ -60,6 +60,9 @@ if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
           <Button Name="ImportLocalButton" Content="Move iPhone Budget" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="DropboxButton" Content="Configure Dropbox Backup" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="DisconnectDropboxButton" Content="Disconnect Dropbox" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="ScheduleBackupButton" Content="Schedule Daily Backups" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="ScheduleStatusButton" Content="Backup Schedule Status" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="RemoveScheduleButton" Content="Disable Backup Schedule" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="DiagnosticsButton" Content="Create Diagnostics" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="LogsButton" Content="Recent Logs" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="AdvancedButton" Content="Backup, Restore &amp; Advanced…" Padding="18,9" Margin="0,0,10,10"/>
@@ -89,7 +92,7 @@ $storageBox = $window.FindName("StorageBox")
 $hostBox = $window.FindName("HostBox")
 $outputBox = $window.FindName("OutputBox")
 $stateText = $window.FindName("StateText")
-$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "ImportLocalButton", "DropboxButton", "DisconnectDropboxButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
+$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "ImportLocalButton", "DropboxButton", "DisconnectDropboxButton", "ScheduleBackupButton", "ScheduleStatusButton", "RemoveScheduleButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
 $actionButtons = @{}
 foreach ($name in $actionNames) { $actionButtons[$name] = $window.FindName($name) }
 
@@ -271,6 +274,48 @@ function Read-DropboxConfiguration {
     }
 }
 
+function Read-BackupSchedule {
+    $defaultDirectory = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Backups"
+    $directory = Select-ClearPocketFolder "Choose the daily encrypted-backup folder" $defaultDirectory
+    if ($null -eq $directory) { return $null }
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Schedule Daily Backups"
+    $form.Width = 430
+    $form.Height = 190
+    $form.StartPosition = "CenterParent"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = "Daily time (24-hour HH:mm)"
+    $label.SetBounds(24, 24, 350, 20)
+    $time = New-Object System.Windows.Forms.TextBox
+    $time.Text = "03:00"
+    $time.SetBounds(24, 48, 350, 26)
+    $ok = New-Object System.Windows.Forms.Button
+    $ok.Text = "Schedule"
+    $ok.SetBounds(190, 96, 88, 30)
+    $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $cancel = New-Object System.Windows.Forms.Button
+    $cancel.Text = "Cancel"
+    $cancel.SetBounds(286, 96, 88, 30)
+    $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.AddRange(@($label, $time, $ok, $cancel))
+    $form.AcceptButton = $ok
+    $form.CancelButton = $cancel
+    try {
+        if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
+        if ($time.Text -notmatch '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$') {
+            [System.Windows.MessageBox]::Show("Use 24-hour HH:mm format, such as 03:00 or 21:30.", "Schedule Daily Backups", "OK", "Warning") | Out-Null
+            return $null
+        }
+        return [pscustomobject]@{ Directory = $directory; Time = $time.Text }
+    } finally {
+        $time.Text = ""
+        $form.Dispose()
+    }
+}
+
 function Invoke-ManagerOperation(
     [string] $Operation,
     [hashtable] $Environment = @{},
@@ -445,6 +490,23 @@ $actionButtons["DisconnectDropboxButton"].Add_Click({
     Invoke-ManagerOperation "DisconnectDropbox" @{
         CLEARPOCKET_DROPBOX_CONFIRMATION = "DISCONNECT"
     }
+})
+$actionButtons["ScheduleBackupButton"].Add_Click({
+    $schedule = Read-BackupSchedule
+    if ($null -eq $schedule) { return }
+    Invoke-ManagerOperation "ScheduleBackup" @{
+        CLEARPOCKET_SCHEDULE_BACKUP_DIRECTORY = $schedule.Directory
+        CLEARPOCKET_SCHEDULE_BACKUP_TIME = $schedule.Time
+    }
+})
+$actionButtons["ScheduleStatusButton"].Add_Click({ Invoke-ManagerOperation "BackupScheduleStatus" })
+$actionButtons["RemoveScheduleButton"].Add_Click({
+    $decision = [System.Windows.MessageBox]::Show(
+        "Disable the daily backup schedule? Existing encrypted generations and the recovery key are preserved.",
+        "Disable backup schedule?", "YesNo", "Warning"
+    )
+    if ($decision -ne [System.Windows.MessageBoxResult]::Yes) { return }
+    Invoke-ManagerOperation "RemoveBackupSchedule"
 })
 $actionButtons["DiagnosticsButton"].Add_Click({ Invoke-ManagerOperation "Diagnostics" })
 $actionButtons["LogsButton"].Add_Click({ Invoke-ManagerOperation "Logs" })

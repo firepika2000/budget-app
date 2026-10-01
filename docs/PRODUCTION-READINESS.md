@@ -1440,6 +1440,11 @@ Windows Dropbox backup setup now uses the graphical manager, masked credential f
 private standard-input channel. A live create/list preflight of the intended least-privilege app folder
 must pass before replacing the user-only credential file. Disconnect preserves local and remote
 generations. Browser-based public-app OAuth and Windows runtime acceptance remain open.
+Windows daily encrypted-backup scheduling is now graphical too. It still requires a verified manual
+generation/recovery identity first and retains the limited current-user task, start-when-available,
+IgnoreNew, six-hour limit, capture lock, and success-only retention behavior. Status and disable work
+without a running Docker daemon and never delete backup or recovery material. Portable import and
+update remain the principal Windows graphical-manager gaps.
 
 All **58 distribution contract tests pass**, including the new graphical composition, hidden-process
 output/error handling, immutable-image-before-configuration ordering, installer allowlist, and

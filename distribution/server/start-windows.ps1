@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox")]
+    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox", "ScheduleBackup", "RemoveBackupSchedule", "BackupScheduleStatus")]
     [string] $Operation = "Interactive"
 )
 
@@ -104,17 +104,20 @@ function Set-PrivateEnvironmentSetting([string] $Name, [string] $Value) {
     }
 }
 
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    throw "Docker Desktop is required. Install it, start it, then run this launcher again."
+$dockerIndependentOperations = @("DisconnectDropbox", "RemoveBackupSchedule", "BackupScheduleStatus")
+if ($Operation -notin $dockerIndependentOperations) {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        throw "Docker Desktop is required. Install it, start it, then run this launcher again."
+    }
+    $dockerReady = $false
+    $attemptLimit = if ($Operation -in @("Configure", "Start", "Open")) { 60 } else { 1 }
+    for ($attempt = 0; $attempt -lt $attemptLimit; $attempt++) {
+        docker info *> $null
+        if ($LASTEXITCODE -eq 0) { $dockerReady = $true; break }
+        if ($attempt + 1 -lt $attemptLimit) { Start-Sleep -Seconds 2 }
+    }
+    if (-not $dockerReady) { throw "Docker Desktop is installed but is not running." }
 }
-$dockerReady = $false
-$attemptLimit = if ($Operation -in @("Configure", "Start", "Open")) { 60 } else { 1 }
-for ($attempt = 0; $attempt -lt $attemptLimit; $attempt++) {
-    docker info *> $null
-    if ($LASTEXITCODE -eq 0) { $dockerReady = $true; break }
-    if ($attempt + 1 -lt $attemptLimit) { Start-Sleep -Seconds 2 }
-}
-if (-not $dockerReady) { throw "Docker Desktop is installed but is not running." }
 
 $environmentFile = Join-Path $PSScriptRoot ".env"
 $newInstall = -not (Test-Path -LiteralPath $environmentFile)
@@ -515,7 +518,10 @@ function Import-ClearPocketPortableArchive {
     Write-Host "Portable household imported and verified. All users must sign in again against this new authority."
 }
 
-function Install-ClearPocketBackupSchedule {
+function Install-ClearPocketBackupSchedule(
+    [string] $BackupDirectory = "",
+    [string] $TimeText = ""
+) {
     $backupScript = Join-Path $PSScriptRoot "backup-windows.ps1"
     if (-not (Test-Path -LiteralPath $backupScript -PathType Leaf)) {
         throw "Windows backup support is missing. Download the complete server package again."
@@ -525,7 +531,10 @@ function Install-ClearPocketBackupSchedule {
         throw "Create one successful interactive backup and preserve its recovery identity before scheduling."
     }
     $defaultBackup = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Backups"
-    $backupDirectory = Read-Host "Scheduled encrypted-backup folder [$defaultBackup]"
+    $backupDirectory = $BackupDirectory
+    if ([string]::IsNullOrWhiteSpace($backupDirectory)) {
+        $backupDirectory = Read-Host "Scheduled encrypted-backup folder [$defaultBackup]"
+    }
     if ([string]::IsNullOrWhiteSpace($backupDirectory)) { $backupDirectory = $defaultBackup }
     $backupDirectory = [IO.Path]::GetFullPath($backupDirectory)
     if ($backupDirectory -match '[\r\n"]') { throw "Scheduled backup folder contains unsupported characters." }
@@ -533,7 +542,10 @@ function Install-ClearPocketBackupSchedule {
         throw "ClearPocket was installed in a path that Task Scheduler cannot safely use."
     }
     New-Item -ItemType Directory -Force -Path $backupDirectory | Out-Null
-    $timeText = Read-Host "Daily backup time in 24-hour HH:mm format [03:00]"
+    $timeText = $TimeText
+    if ([string]::IsNullOrWhiteSpace($timeText)) {
+        $timeText = Read-Host "Daily backup time in 24-hour HH:mm format [03:00]"
+    }
     if ([string]::IsNullOrWhiteSpace($timeText)) { $timeText = "03:00" }
     $backupTime = [DateTime]::MinValue
     if (-not [DateTime]::TryParseExact(
@@ -710,6 +722,13 @@ if ($Operation -ne "Interactive") {
         "DisconnectDropbox" {
             Disable-ClearPocketDropboxBackup -Confirmation $env:CLEARPOCKET_DROPBOX_CONFIRMATION
         }
+        "ScheduleBackup" {
+            Install-ClearPocketBackupSchedule `
+                -BackupDirectory $env:CLEARPOCKET_SCHEDULE_BACKUP_DIRECTORY `
+                -TimeText $env:CLEARPOCKET_SCHEDULE_BACKUP_TIME
+        }
+        "RemoveBackupSchedule" { Remove-ClearPocketBackupSchedule }
+        "BackupScheduleStatus" { Show-ClearPocketBackupSchedule }
         default { throw "Unsupported non-interactive manager operation." }
     }
     exit 0

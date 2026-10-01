@@ -507,6 +507,10 @@ Windows server Dropbox setup is graphical as well. Tokens and secrets are masked
 boundary only through private standard input; the app-folder path is non-secret configuration. The
 candidate grant must successfully create/list that app folder before its user-only ACL credential file
 replaces the current one. Disconnect removes only the local grant, never encrypted generations.
+Daily Windows backup scheduling is graphical after the required first successful manual generation.
+The owner selects a destination and time, can inspect next/last-run state, and can disable only the task
+while retaining generations and recovery material. Schedule status, removal, and Dropbox disconnect do
+not depend on Docker being healthy, so an outage cannot trap those local administration controls.
 The Windows helper uses built-in PowerShell for cryptographic first-run configuration and selectable
 durable storage without Python, and now provides start/open, status, data-preserving stop, redacted
 diagnostics and log actions. It can register a limited current-user Task Scheduler entry that waits

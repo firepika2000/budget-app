@@ -364,6 +364,11 @@ sends them to the manager only over redirected standard input. ClearPocket verif
 the intended app-folder path before replacing the current user-only credential file; an invalid or
 unreachable grant leaves the prior configuration intact. Disconnect removes only this PC's grant and
 preserves every local and remote encrypted generation.
+After one successful manual generation establishes the recovery identity, the graphical manager can
+also choose a destination and daily `HH:mm` time, inspect Task Scheduler state/last result, or disable
+the schedule without deleting generations or recovery material. Status and disable remain available
+even when Docker Desktop is stopped; scheduled capture retains the existing limited-user, missed-run,
+overlap-lock, execution-limit, health-reporting, and post-success retention rules.
 It can also register or remove a limited current-user Task Scheduler entry that waits for Docker
 Desktop and starts the server after sign-in; the task contains only the manager path, never private
 configuration or credentials. The same menu can initialize a new empty Windows server from an iPhone
@@ -432,7 +437,7 @@ into a new empty server instead. A signed installer package will eventually wrap
 
 Python and developer tools are not required. Docker Desktop is still required. Secure remote
 pairing/TLS is guided for a new installation, but automatic router/firewall configuration, platform
-signing, and graphical forms for portable import/scheduling/update remain open product work.
+signing, and graphical forms for portable import/update remain open product work.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;
