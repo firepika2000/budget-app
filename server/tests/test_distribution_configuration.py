@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -139,6 +140,49 @@ def test_publish_workflow_builds_versioned_customer_bundle():
     assert "clearpocket-server-$VERSION.zip" in workflow
     assert "clearpocket-server-$VERSION.tar.gz" in workflow
     assert "actions/upload-artifact@v4" in workflow
+
+
+def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority():
+    root = ROOT / "distribution" / "qnap"
+    config = (root / "template" / "qpkg.cfg").read_text()
+    routines = (root / "template" / "package_routines").read_text()
+    service = (root / "template" / "shared" / "ClearPocketServer.sh").read_text()
+    builder = (root / "build.sh").read_text()
+    assert 'QPKG_NAME="ClearPocketServer"' in config
+    assert 'QPKG_SERVICE_PROGRAM="ClearPocketServer.sh"' in config
+    assert "Container Station must be installed" in routines
+    assert "CLEARPOCKET_DATA_ROOT" in routines
+    assert "PKG_MAIN_REMOVE" not in routines
+    assert "CLEARPOCKET_DATA_ROOT" in service
+    assert 'compose up -d' in service
+    assert 'compose stop' in service
+    assert 'compose ps' in service
+    assert "down -v" not in service
+    assert "docker volume rm" not in service
+    assert 'distribution/server/compose.yaml' in builder
+    assert 'distribution/server/manage.py' in builder
+    assert '"${#VERSION}" -gt 10' in builder
+
+
+def test_qnap_builder_stages_a_versioned_shared_server_bundle(tmp_path: Path):
+    distribution = tmp_path / "distribution"
+    shutil.copytree(ROOT / "distribution" / "qnap", distribution / "qnap")
+    shutil.copytree(ROOT / "distribution" / "server", distribution / "server")
+    fake_qbuild = tmp_path / "qbuild"
+    fake_qbuild.write_text("""#!/bin/sh
+set -eu
+grep -q 'QPKG_VER=\"0.9.0\"' qpkg.cfg
+test -f shared/ClearPocketServer.sh
+test -f shared/server/compose.yaml
+test -f shared/server/manage.py
+test \"$(cat shared/server/VERSION)\" = \"0.9.0\"
+mkdir -p build
+: > build/ClearPocketServer_0.9.0.qpkg
+""")
+    fake_qbuild.chmod(0o755)
+    subprocess.run([distribution / "qnap" / "build.sh", "0.9.0", fake_qbuild],
+                   check=True, capture_output=True, text=True)
+    assert (distribution / "qnap" / "build" / "ClearPocketServer_0.9.0.qpkg").is_file()
 
 
 def manager_deployment(tmp_path: Path):

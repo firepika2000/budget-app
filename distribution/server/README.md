@@ -73,6 +73,11 @@ published image (`linux/amd64` or `linux/arm64`). A QPKG-style guided installer,
 certificate/pairing UI, upgrade safety, and tested model matrix remain required before this becomes a
 normal-user QNAP package.
 
+The repository also contains a QDK-compatible engineering package under `distribution/qnap`. It adds
+App Center lifecycle integration around this exact bundle while keeping customer authority outside
+the replaceable QPKG directory. It remains a preview until its documented setup, signing, and
+hardware-validation gates are complete.
+
 ## Always-on Windows PC
 
 `start-windows.cmd` is an early double-clickable Docker Desktop manager. Its built-in PowerShell

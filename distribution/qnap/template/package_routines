@@ -1,0 +1,25 @@
+CLEARPOCKET_SYSTEM_CONFIG=/etc/config/clearpocket-server.conf
+
+pkg_check_requirement() {
+    CONTAINER_STATION_PATH=$($CMD_GETCFG container-station Install_Path -f /etc/config/qpkg.conf)
+    if [ -z "$CONTAINER_STATION_PATH" ]; then
+        CONTAINER_STATION_PATH=$($CMD_GETCFG ContainerStation Install_Path -f /etc/config/qpkg.conf)
+    fi
+    if [ -z "$CONTAINER_STATION_PATH" ]; then
+        err_log "QNAP Container Station must be installed before ClearPocket Server."
+        return 1
+    fi
+    return 0
+}
+
+pkg_install() {
+    if [ ! -f "$CLEARPOCKET_SYSTEM_CONFIG" ]; then
+        DATA_ROOT="${SYS_PUBLIC_SHARE}/ClearPocketServer"
+        [ -n "$SYS_PUBLIC_SHARE" ] || DATA_ROOT="/share/Public/ClearPocketServer"
+        $CMD_ECHO "CLEARPOCKET_DATA_ROOT=$DATA_ROOT" > "$CLEARPOCKET_SYSTEM_CONFIG"
+        $CMD_CHMOD 600 "$CLEARPOCKET_SYSTEM_CONFIG"
+    fi
+}
+
+# Deliberately do not define a remove routine for the system configuration or data root. Removing
+# the QPKG removes replaceable program files only; customer database and attachments remain.
