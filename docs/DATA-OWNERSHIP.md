@@ -447,6 +447,22 @@ private disposable staging, then re-encrypted by the destination attachment serv
 requires an empty database and object store, compares exact financial observations after commit,
 records owner-visible recovery health, and leaves the source authority untouched.
 
+### Server to Local Device compatibility gate
+
+The reverse direction now begins with an owner-only, server-authoritative compatibility gate at
+`GET /api/v1/budgets/{budget_id}/local-device-transfer-eligibility`. The Live Backup & Recovery
+screen evaluates that gate with the current rotated credential. A personal budget with no
+server-only records is identified as eligible for a future verified cutover; shared identities,
+invitations/access history, delegated requests or allowances, grants, unsupported audit/import
+history, non-owner financial attribution, and credit-reserve event history produce bounded,
+human-readable blockers. Non-owners receive the same not-found response as an invisible budget.
+
+This is deliberately not a lossy exporter: it does not flatten a household into one person, discard
+attribution, or imply that eligibility has already copied data. The next checkpoint must transport
+and validate every eligible financial record and attachment into a brand-new private Local Device
+authority, compare canonical observations, and only then offer cold-launch activation while leaving
+the server unchanged.
+
 ## Remaining implementation sequence
 
 The production on-device authority and persistence/reopen coverage are implemented. The iOS app can

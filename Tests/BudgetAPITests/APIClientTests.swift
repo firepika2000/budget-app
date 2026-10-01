@@ -1200,6 +1200,28 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(result.lastRestoreVerification?.sourceProvider, "portable_archive")
         XCTAssertEqual(result.lastRestoreVerification?.databaseIntegrity, "ok")
     }
+
+    func testLocalDeviceTransferEligibilityUsesOwnerRouteAndDecodesLosslessBlockers() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/local-device-transfer-eligibility")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            let body = Data(#"{"target_provider":"local_device","eligible":false,"budget_id":"b1","budget_name":"Family","blockers":[{"code":"shared_household_history","title":"Shared history requires Budget Server.","record_count":2}],"source_unchanged":true,"requires_new_local_authority":true}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+
+        let result = try await client.localDeviceTransferEligibility(budgetID: "b1", token: "current")
+
+        XCTAssertFalse(result.eligible)
+        XCTAssertEqual(result.targetProvider, "local_device")
+        XCTAssertEqual(result.blockers.first?.code, "shared_household_history")
+        XCTAssertEqual(result.blockers.first?.recordCount, 2)
+        XCTAssertTrue(result.sourceUnchanged)
+        XCTAssertTrue(result.requiresNewLocalAuthority)
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

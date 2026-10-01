@@ -1960,6 +1960,36 @@ public struct APIServerBackupStatus: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APILocalDeviceTransferBlocker: Decodable, Equatable, Sendable {
+    public let code: String
+    public let title: String
+    public let recordCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case code, title
+        case recordCount = "record_count"
+    }
+}
+
+public struct APILocalDeviceTransferEligibility: Decodable, Equatable, Sendable {
+    public let targetProvider: String
+    public let eligible: Bool
+    public let budgetID: String
+    public let budgetName: String
+    public let blockers: [APILocalDeviceTransferBlocker]
+    public let sourceUnchanged: Bool
+    public let requiresNewLocalAuthority: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case eligible, blockers
+        case targetProvider = "target_provider"
+        case budgetID = "budget_id"
+        case budgetName = "budget_name"
+        case sourceUnchanged = "source_unchanged"
+        case requiresNewLocalAuthority = "requires_new_local_authority"
+    }
+}
+
 public struct APIBackupSchedule: Decodable, Equatable, Sendable {
     public let state: String
     public let message: String?

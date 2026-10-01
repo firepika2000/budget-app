@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import inspect, select
+from sqlalchemy import func, inspect, select
 from sqlalchemy.orm import Session
 
 from .access import find_visible_budget, has_capability, is_household_owner, visible_resource_ids
@@ -174,6 +174,86 @@ def row_data(item) -> dict:
     return {
         attribute.key: getattr(item, attribute.key)
         for attribute in inspect(item).mapper.column_attrs
+    }
+
+
+@router.get("/local-device-transfer-eligibility")
+def local_device_transfer_eligibility(
+    budget_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Describe whether a server budget can move to the single-user phone authority losslessly.
+
+    This is intentionally stricter than ordinary export. Local Device must never silently flatten
+    household authorization or discard audit history merely because the financial snapshot fits.
+    """
+    budget = find_visible_budget(db, user, budget_id)
+    if budget is None or not is_household_owner(db, user, budget.household_id):
+        raise HTTPException(status_code=404, detail="Budget not found")
+    household = db.get(Household, budget.household_id)
+    if household is None:
+        raise HTTPException(status_code=404, detail="Budget not found")
+
+    blockers: list[dict[str, object]] = []
+
+    def add(code: str, title: str, count: int) -> None:
+        if count > 0:
+            blockers.append({"code": code, "title": title, "record_count": count})
+
+    def count(model, *criteria) -> int:
+        return int(db.scalar(select(func.count()).select_from(model).where(*criteria)) or 0)
+
+    add(
+        "shared_household_history",
+        "This household contains another member's identity or access history.",
+        count(Membership, Membership.household_id == household.id, Membership.user_id != household.owner_user_id)
+        + count(Invitation, Invitation.household_id == household.id)
+        + count(HouseholdAccessEvent, HouseholdAccessEvent.household_id == household.id),
+    )
+    add(
+        "delegation_and_requests",
+        "Delegated budgets, requests, or allowances require Budget Server.",
+        count(DelegatedBudgetPolicy, DelegatedBudgetPolicy.budget_id == budget.id)
+        + count(FinancialRequest, FinancialRequest.budget_id == budget.id)
+        + count(AllowancePlan, AllowancePlan.budget_id == budget.id)
+        + count(AllowanceIssuance, AllowanceIssuance.budget_id == budget.id),
+    )
+    add(
+        "authorization_policy",
+        "Budget access grants cannot be represented by single-user Local Device mode.",
+        count(BudgetGrant, BudgetGrant.budget_id == budget.id, BudgetGrant.user_id != household.owner_user_id)
+        + count(BudgetAccessProfile, BudgetAccessProfile.budget_id == budget.id)
+        + count(CapabilityGrant, CapabilityGrant.budget_id == budget.id)
+        + count(ResourceGrant, ResourceGrant.budget_id == budget.id),
+    )
+    add(
+        "unsupported_audit_history",
+        "This budget has server audit or import history not yet represented on Local Device.",
+        count(TransactionChange, TransactionChange.budget_id == budget.id)
+        + count(ImportBatch, ImportBatch.budget_id == budget.id)
+        + count(MonthlyAssignment, MonthlyAssignment.budget_id == budget.id),
+    )
+    add(
+        "credit_reserve_event_history",
+        "Credit-card reserve event history is not yet portable to Local Device.",
+        count(CreditCardReserveEvent, CreditCardReserveEvent.budget_id == budget.id),
+    )
+    add(
+        "non_owner_financial_attribution",
+        "Financial records attributed to another household member cannot be flattened to one owner.",
+        count(Transaction, Transaction.budget_id == budget.id, Transaction.created_by_user_id != household.owner_user_id)
+        + count(AllocationOperation, AllocationOperation.budget_id == budget.id, AllocationOperation.actor_user_id != household.owner_user_id),
+    )
+
+    return {
+        "target_provider": "local_device",
+        "eligible": not blockers,
+        "budget_id": budget.id,
+        "budget_name": budget.name,
+        "blockers": blockers,
+        "source_unchanged": True,
+        "requires_new_local_authority": True,
     }
 
 

@@ -749,6 +749,10 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/backup-status", token: token)
     }
 
+    public func localDeviceTransferEligibility(budgetID: String, token: String) async throws -> APILocalDeviceTransferEligibility {
+        try await send(path: "api/v1/budgets/\(budgetID)/local-device-transfer-eligibility", token: token)
+    }
+
     private func send<Response: Decodable>(
         path: String,
         queryItems: [URLQueryItem],

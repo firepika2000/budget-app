@@ -89,6 +89,46 @@ def test_unknown_budget_export_does_not_disclose_existence(client, owner_token):
     assert response.status_code == 404
 
 
+def test_local_device_transfer_eligibility_is_owner_only_and_refuses_shared_history(
+    client, owner_token, session_factory
+):
+    from .test_budgeting_api import create_budget
+
+    budget = create_budget(client, owner_token, session_factory)
+    path = f"/api/v1/budgets/{budget['id']}/local-device-transfer-eligibility"
+
+    clean = client.get(path, headers=auth(owner_token))
+    assert clean.status_code == 200, clean.text
+    assert clean.json() == {
+        "target_provider": "local_device",
+        "eligible": True,
+        "budget_id": budget["id"],
+        "budget_name": budget["name"],
+        "blockers": [],
+        "source_unchanged": True,
+        "requires_new_local_authority": True,
+    }
+
+    child_id, child_token = add_child(session_factory, client)
+    client.put(
+        f"/api/v1/budgets/{budget['id']}/grants",
+        headers=auth(owner_token),
+        json={"user_id": child_id, "permission": "view"},
+    )
+    shared = client.get(path, headers=auth(owner_token))
+    assert shared.status_code == 200
+    assert shared.json()["eligible"] is False
+    assert {item["code"] for item in shared.json()["blockers"]} >= {
+        "shared_household_history", "authorization_policy"
+    }
+    # Eligibility itself is sensitive household administration metadata.
+    assert client.get(path, headers=auth(child_token)).status_code == 404
+    assert client.get(
+        "/api/v1/budgets/not-visible/local-device-transfer-eligibility",
+        headers=auth(owner_token),
+    ).status_code == 404
+
+
 def test_structured_export_contains_reconstructable_audit_data_and_requires_capability(
     client, owner_token, session_factory
 ):
