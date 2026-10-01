@@ -135,6 +135,113 @@ def test_local_device_transfer_eligibility_is_owner_only_and_refuses_shared_hist
     ).status_code == 404
 
 
+def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
+    client, owner_token, session_factory
+):
+    from .test_advanced_ledger import record
+    from .test_budgeting_api import create_budget, create_budget_structure
+
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    path = f"/api/v1/budgets/{budget['id']}"
+    income = record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        amount_minor=10_000, occurred_on="2026-09-01", payee_name="Payroll",
+        is_cleared=True,
+    )
+    assignment = client.put(
+        f"{path}/categories/{category['id']}/assignment", headers=auth(owner_token),
+        json={"month": "2026-09-01", "assigned_minor": 4_000},
+    )
+    assert assignment.status_code == 200, assignment.text
+    purchase = record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=category["id"], amount_minor=-1_250,
+        occurred_on="2026-09-02", payee_name="Market", memo="groceries",
+    )
+    receipt = b"%PDF-1.4\nlocal-device-transfer-receipt\n%%EOF"
+    uploaded = client.post(
+        f"{path}/transactions/{purchase['id']}/attachments",
+        headers={**auth(owner_token), "X-Attachment-Filename": "receipt.pdf",
+                 "X-Attachment-Content-Type": "application/pdf",
+                 "Content-Type": "application/octet-stream"},
+        content=receipt,
+    )
+    assert uploaded.status_code == 201, uploaded.text
+
+    response = client.get(f"{path}/local-device-transfer", headers=auth(owner_token))
+
+    assert response.status_code == 200, response.text
+    value = response.json()
+    assert value["format"] == "com.clearpocket.local-device-transfer"
+    assert value["version"] == 1
+    assert len(value["source_revision"]) == 64
+    assert value["identity"]["budget_id"] == budget["id"]
+    assert value["accounts"][0]["opening_balance_minor"] == 0
+    transactions = {item["id"]: item for item in value["transactions"]}
+    assert transactions[income["id"]]["splits"] == []
+    assert transactions[purchase["id"]]["splits"][0]["category_id"] == category["id"]
+    assert transactions[purchase["id"]]["splits"][0]["amount_minor"] == -1_250
+    assert value["allocations"][0]["category_id"] == category["id"]
+    assert value["allocations"][0]["source_category_id"] is None
+    assert value["allocations"][0]["amount_minor"] == 4_000
+    assert value["attachments"] == [{
+        "id": uploaded.json()["id"], "transaction_id": purchase["id"],
+        "filename": "receipt.pdf", "content_type": "application/pdf",
+        "size_bytes": len(receipt), "sha256": uploaded.json()["sha256"],
+        "object_name": uploaded.json()["id"], "created_at": uploaded.json()["created_at"],
+    }]
+    observations = value["observations"]
+    assert observations["transaction_count"] == 2
+    assert observations["transactions"] == [{
+        "account_id": account["id"], "status": "posted", "amount_minor": 8_750,
+    }]
+    assert observations["allocation_count"] == 2
+    assert sum(item["amount_minor"] for item in observations["allocations"]) == 0
+    assert observations["reserve_count"] == 0
+
+
+def test_local_device_transfer_fails_closed_for_detached_history_and_non_owner(
+    client, owner_token, session_factory
+):
+    from .test_advanced_ledger import record
+    from .test_budgeting_api import create_budget, create_budget_structure
+
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    transaction = record(
+        client, owner_token, budget["id"], account_id=account["id"],
+        category_id=category["id"], amount_minor=-500, occurred_on="2026-09-01",
+    )
+    path = f"/api/v1/budgets/{budget['id']}"
+    uploaded = client.post(
+        f"{path}/transactions/{transaction['id']}/attachments",
+        headers={**auth(owner_token), "X-Attachment-Filename": "receipt.pdf",
+                 "X-Attachment-Content-Type": "application/pdf",
+                 "Content-Type": "application/octet-stream"},
+        content=b"%PDF-1.4\nreceipt\n%%EOF",
+    ).json()
+    assert client.delete(
+        f"{path}/transactions/{transaction['id']}/attachments/{uploaded['id']}",
+        headers=auth(owner_token),
+    ).status_code == 204
+
+    eligibility = client.get(
+        f"{path}/local-device-transfer-eligibility", headers=auth(owner_token)
+    ).json()
+    assert {item["code"] for item in eligibility["blockers"]} == {"detached_attachment_history"}
+    blocked = client.get(f"{path}/local-device-transfer", headers=auth(owner_token))
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["blockers"] == eligibility["blockers"]
+
+    child_id, child_token = add_child(session_factory, client)
+    client.put(
+        f"{path}/grants", headers=auth(owner_token),
+        json={"user_id": child_id, "permission": "view"},
+    )
+    assert client.get(f"{path}/local-device-transfer", headers=auth(child_token)).status_code == 404
+
+
 def test_structured_export_contains_reconstructable_audit_data_and_requires_capability(
     client, owner_token, session_factory
 ):

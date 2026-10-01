@@ -1222,6 +1222,31 @@ final class APIClientTests: XCTestCase {
         XCTAssertTrue(result.sourceUnchanged)
         XCTAssertTrue(result.requiresNewLocalAuthority)
     }
+
+    func testLocalDeviceTransferProjectionDownloadsOpaqueAuthenticatedContract() async throws {
+        let body = Data(#"{"format":"com.clearpocket.local-device-transfer","version":1}"#.utf8)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        var captured: URLRequest?
+        MockURLProtocol.handler = { request in
+            captured = request
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(
+            baseURL: URL(string: "https://budget.example.com")!,
+            session: URLSession(configuration: configuration)
+        )
+
+        let result = try await client.localDeviceTransferProjectionData(
+            budgetID: "budget-1", token: "rotated-current-token"
+        )
+
+        XCTAssertEqual(result, body)
+        let request = try XCTUnwrap(captured)
+        XCTAssertEqual(request.url?.path, "/api/v1/budgets/budget-1/local-device-transfer")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated-current-token")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/json")
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

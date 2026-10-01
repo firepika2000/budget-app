@@ -753,6 +753,17 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/local-device-transfer-eligibility", token: token)
     }
 
+    /// Downloads the complete point-in-time transfer projection without interpreting financial
+    /// semantics in the HTTP layer. BudgetStorage owns strict decoding and candidate validation.
+    public func localDeviceTransferProjectionData(budgetID: String, token: String) async throws -> Data {
+        var request = URLRequest(url: baseURL.appending(path: "api/v1/budgets/\(budgetID)/local-device-transfer"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (body, response) = try await session.data(for: request)
+        try validate(response: response, data: body)
+        return body
+    }
+
     private func send<Response: Decodable>(
         path: String,
         queryItems: [URLQueryItem],

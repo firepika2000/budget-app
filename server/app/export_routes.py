@@ -22,6 +22,7 @@ from .models import (
     AllowanceIssuance,
     AllowancePlan,
     AllowanceSplit,
+    Budget,
     BudgetGrant,
     BudgetAccessProfile,
     CashRolloverPolicyChange,
@@ -54,6 +55,7 @@ from .models import (
     User,
 )
 from .portable_data import FORMAT_NAME, FORMAT_VERSION, section_manifest
+from .local_device_export import build_local_device_projection, unsupported_allocation_operation_count
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
@@ -234,6 +236,38 @@ def local_device_transfer_eligibility(
         + count(MonthlyAssignment, MonthlyAssignment.budget_id == budget.id),
     )
     add(
+        "unsupported_allocation_shape",
+        "This budget contains allocation history that Local Device cannot represent losslessly yet.",
+        unsupported_allocation_operation_count(db, budget.id),
+    )
+    add(
+        "detached_attachment_history",
+        "Detached attachment retention history must remain on Budget Server.",
+        count(
+            TransactionAttachment,
+            TransactionAttachment.budget_id == budget.id,
+            TransactionAttachment.detached_at.is_not(None),
+        ),
+    )
+    add(
+        "scheduled_realization_history",
+        "Realized schedule lineage is not represented by the current Local Device schema yet.",
+        count(
+            Transaction,
+            Transaction.budget_id == budget.id,
+            Transaction.scheduled_transaction_id.is_not(None),
+        ),
+    )
+    add(
+        "merged_payee_history",
+        "Merged Payee identity history is not represented by the current Local Device schema yet.",
+        count(
+            Payee,
+            Payee.household_id == household.id,
+            Payee.merged_into_payee_id.is_not(None),
+        ),
+    )
+    add(
         "non_owner_financial_attribution",
         "Financial records attributed to another household member cannot be flattened to one owner.",
         count(Transaction, Transaction.budget_id == budget.id, Transaction.created_by_user_id != household.owner_user_id)
@@ -251,6 +285,34 @@ def local_device_transfer_eligibility(
         "source_unchanged": True,
         "requires_new_local_authority": True,
     }
+
+
+@router.get("/local-device-transfer")
+def local_device_transfer(
+    budget_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return a complete immutable-point-in-time projection for native candidate staging."""
+    eligibility = local_device_transfer_eligibility(budget_id, user, db)
+    if not eligibility["eligible"]:
+        raise HTTPException(status_code=409, detail={
+            "message": "Budget is not eligible for Local Device transfer",
+            "blockers": eligibility["blockers"],
+        })
+    budget = db.get(Budget, budget_id)
+    household = db.get(Household, budget.household_id) if budget is not None else None
+    owner = db.get(User, household.owner_user_id) if household is not None else None
+    if budget is None or household is None or owner is None or owner.id != user.id:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    try:
+        return jsonable_encoder(build_local_device_projection(
+            db, budget=budget, household=household, owner=owner
+        ))
+    except ValueError as error:
+        # Eligibility and projection share the same representation rules. Fail closed if state
+        # changes or an invariant violation appears between those two checks.
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/export.json")
