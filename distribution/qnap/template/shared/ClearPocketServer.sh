@@ -193,6 +193,12 @@ case "$1" in
         [ -x "$QPKG_ROOT/ClearPocketBackup.sh" ] || { log_error "QNAP backup helper is missing"; exit 1; }
         "$QPKG_ROOT/ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT"
         ;;
+    restore)
+        [ "$#" -eq 4 ] || { echo "Usage: $0 restore /share/path/backup.tar.gz.age /share/path/identity.txt RESTORE" >&2; exit 2; }
+        [ "$4" = "RESTORE" ] || { log_error "QNAP recovery requires the explicit final argument RESTORE"; exit 1; }
+        [ -x "$QPKG_ROOT/ClearPocketRestore.sh" ] || { log_error "QNAP recovery helper is missing"; exit 1; }
+        "$QPKG_ROOT/ClearPocketRestore.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT" "$2" "$3"
+        ;;
     install-backup-schedule)
         [ "$#" -eq 3 ] || { echo "Usage: $0 install-backup-schedule HOUR MINUTE" >&2; exit 2; }
         update_backup_schedule install "$2" "$3"
@@ -214,7 +220,7 @@ case "$1" in
         import_local_device "$2" "$3"
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|backup|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device}" >&2
+        echo "Usage: $0 {start|stop|restart|status|backup|restore|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device}" >&2
         exit 2
         ;;
 esac

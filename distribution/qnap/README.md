@@ -85,6 +85,23 @@ file if QNAP rejects the reload. The entry calls the package by absolute path an
 that executable is absent. The backup's own lock prevents overlaps after delayed boots or long runs.
 Remove the schedule before uninstalling the preview QPKG so the marker does not remain in QNAP cron.
 
+Restore is intentionally limited to a newly installed, empty QNAP authority. Copy both a completed
+generation and its separately retained age identity into a protected QNAP share, then invoke:
+
+```sh
+/etc/init.d/ClearPocketServer.sh restore \
+  /share/Private/budget-YYYYMMDDTHHMMSSZ.tar.gz.age \
+  /share/Private/clearpocket-recovery-key.txt RESTORE
+```
+
+The helper mounts both inputs read-only, decrypts and validates the complete integrity manifest in
+private durable staging, and refuses a populated database or attachment store both before and after
+stopping the API. Only an empty destination adopts the authenticated attachment key. Attachment
+objects and the SQL guard/restore are then installed through the version-matched containers, recovery
+health is recorded, and service resumes only after the real API health check passes. Any failure keeps
+the API stopped for inspection and never modifies the source archive or identity. No host Python,
+PostgreSQL client, or `age` installation is required.
+
 Before this package is customer-ready it still needs the signed QPKG release pipeline, supported-model
 matrix, a graphical first-run storage/host/TLS setup screen, and hardware validation on current QTS and
 QuTS hero. Until those gates pass, prefer the documented Container Station import path.

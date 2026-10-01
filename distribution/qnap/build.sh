@@ -32,6 +32,7 @@ cp "$SCRIPT_DIR/template/package_routines" "$STAGE/package_routines"
 cp "$SCRIPT_DIR/template/shared/ClearPocketServer.sh" "$STAGE/shared/ClearPocketServer.sh"
 cp "$SCRIPT_DIR/template/shared/ClearPocketSetup.sh" "$STAGE/shared/ClearPocketSetup.sh"
 cp "$SCRIPT_DIR/template/shared/ClearPocketBackup.sh" "$STAGE/shared/ClearPocketBackup.sh"
+cp "$SCRIPT_DIR/template/shared/ClearPocketRestore.sh" "$STAGE/shared/ClearPocketRestore.sh"
 cp "$PROJECT_ROOT/distribution/server/compose.yaml" \
    "$PROJECT_ROOT/distribution/server/configure.py" \
    "$PROJECT_ROOT/distribution/server/manage.py" \
@@ -49,6 +50,7 @@ cp "$PROJECT_ROOT/server/scripts/backup.sh" \
 printf '%s\n' "$VERSION" > "$STAGE/shared/server/VERSION"
 chmod 755 "$STAGE/shared/ClearPocketServer.sh" "$STAGE/shared/ClearPocketSetup.sh" \
     "$STAGE/shared/ClearPocketBackup.sh" \
+    "$STAGE/shared/ClearPocketRestore.sh" \
     "$STAGE/shared/server/manage.py" \
     "$STAGE/shared/server/configure.py" "$STAGE/shared/server/tools/backup.sh" \
     "$STAGE/shared/server/tools/restore.sh"

@@ -1,5 +1,5 @@
 #!/bin/sh
-set -u
+set -eu
 
 umask 077
 

@@ -239,6 +239,7 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     service = (root / "template" / "shared" / "ClearPocketServer.sh").read_text()
     setup = (root / "template" / "shared" / "ClearPocketSetup.sh").read_text()
     backup = (root / "template" / "shared" / "ClearPocketBackup.sh").read_text()
+    restore = (root / "template" / "shared" / "ClearPocketRestore.sh").read_text()
     builder = (root / "build.sh").read_text()
     assert 'QPKG_NAME="ClearPocketServer"' in config
     assert 'QPKG_SERVICE_PROGRAM="ClearPocketServer.sh"' in config
@@ -251,6 +252,8 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'compose stop' in service
     assert 'compose ps' in service
     assert 'ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT"' in service
+    assert 'ClearPocketRestore.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT"' in service
+    assert "explicit final argument RESTORE" in service
     assert "install-backup-schedule" in service
     assert "remove-backup-schedule" in service
     assert "backup-schedule-status" in service
@@ -274,6 +277,7 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "docker volume rm" not in service
     assert "/dev/urandom" in setup
     assert "scripts/backup_archive.py create-manifest" in backup
+    assert backup.startswith("#!/bin/sh\nset -eu\n")
     assert "scripts/backup_health.py healthy" in backup
     assert "age --recipient" in backup
     assert "qnap-backup.lock" in backup
@@ -282,6 +286,20 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "apply_retention" in backup
     assert "compose stop api" in backup and "compose start api" in backup
     assert "down -v" not in backup and "docker volume rm" not in backup
+    assert "extract-verified" in restore
+    assert restore.startswith("#!/bin/sh\nset -eu\n")
+    assert "require_empty_restore.sql" in restore
+    assert "attachment-key-recovery.env" in restore
+    assert "--force-recreate api" in restore
+    assert "recovery-status.json" in restore
+    assert ':/input/archive.age:ro' in restore
+    assert ':/input/identity.txt:ro' in restore
+    assert "Another QNAP recovery is already running" in restore
+    assert "DESTINATION_MUTATION_STARTED" in restore
+    assert ".env.restore-original" in restore
+    assert "Could not remove recovery attachment staging" in restore
+    assert 'find /var/lib/budget-app/attachments -mindepth 1' in restore
+    assert "down -v" not in restore and "docker volume rm" not in restore
     assert "Existing private ClearPocket configuration preserved" in setup
     assert "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY" in setup
     assert "CLEARPOCKET_OPERATIONS_STORAGE" in setup
@@ -302,6 +320,7 @@ grep -q 'QPKG_VER=\"0.9.0\"' qpkg.cfg
 test -f shared/ClearPocketServer.sh
 test -x shared/ClearPocketSetup.sh
 test -x shared/ClearPocketBackup.sh
+test -x shared/ClearPocketRestore.sh
 test -f shared/server/compose.yaml
 test -f shared/server/manage.py
 test -f shared/server/tools/backup.sh

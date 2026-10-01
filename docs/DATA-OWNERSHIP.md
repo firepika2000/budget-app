@@ -480,7 +480,11 @@ Python or age. Completed generations have bounded post-success retention that ne
 unrelated files. After the first successful manual generation, an administrator can atomically install,
 inspect, or remove a daily QNAP cron entry containing only the absolute package action and no credentials;
 failed crontab reload restores the prior system file, while the capture lock prevents overlap. The identity
-must still be copied off the NAS, and off-NAS publication remains open.
+must still be copied off the NAS, and off-NAS publication remains open. The package can restore a
+generation with that separately retained identity into a new empty QNAP authority without host tools:
+both inputs are mounted read-only, integrity is checked in private staging, emptiness is checked before
+and after API quiescence, the authenticated attachment key is adopted only for that empty destination,
+and the service returns only after recovery health and the API health gate succeed.
 These remain previews rather
 than the promised normal-user setup:
 release images/packages are unsigned, QNAP hardware validation is pending, and secure pairing/TLS is

@@ -185,7 +185,8 @@ normal-user QNAP package.
 The repository also contains a QDK-compatible engineering package under `distribution/qnap`. It adds
 App Center lifecycle integration around this exact bundle while keeping customer authority outside
 the replaceable QPKG directory. It remains a preview until its documented setup, signing, and
-hardware-validation gates are complete.
+hardware-validation gates are complete. Its service actions include the same guarded empty-destination
+restore using the package containers, so recovery does not require host Python, PostgreSQL, or `age`.
 
 ## Always-on Windows PC
 
