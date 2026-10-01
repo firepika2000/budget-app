@@ -20,7 +20,7 @@ services:
     cap_drop:
       - ALL
     volumes:
-      - clearpocket_attachments:/var/lib/budget-app/attachments
+      - "${CLEARPOCKET_ATTACHMENTS_STORAGE:-clearpocket_attachments}:/var/lib/budget-app/attachments"
     depends_on:
       database:
         condition: service_healthy
@@ -39,7 +39,7 @@ services:
       POSTGRES_USER: budget
       POSTGRES_PASSWORD: ${BUDGET_APP_DB_PASSWORD}
     volumes:
-      - clearpocket_database:/var/lib/postgresql/data
+      - "${CLEARPOCKET_DATABASE_STORAGE:-clearpocket_database}:/var/lib/postgresql/data"
     security_opt:
       - no-new-privileges:true
     healthcheck:

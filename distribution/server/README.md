@@ -14,7 +14,9 @@ becoming three different servers.
 From this directory:
 
 ```sh
-python3 configure.py --allowed-hosts budget.example.com --version VERSION
+python3 configure.py --allowed-hosts budget.example.com --version VERSION \
+  --database-storage /srv/clearpocket/database \
+  --attachments-storage /srv/clearpocket/attachments
 docker compose --env-file .env up -d
 ```
 
@@ -22,6 +24,10 @@ The generator creates independent database, JWT, and 256-bit attachment-encrypti
 printing them, writes the file atomically with private POSIX permissions, and refuses to overwrite an
 existing configuration. Preserve `.env` in a password manager alongside the separately encrypted
 backup recovery material. Never commit it.
+
+The storage arguments may be Docker volume names or absolute host directories. When host directories
+are selected, create them on durable protected storage before starting the application. The database
+and encrypted attachments are a single recovery unit even though they use separate directories.
 
 The default bind address is loopback. Put a supported TLS reverse proxy or private-network overlay in
 front of it. `0.0.0.0` is available for protected LAN testing, but the iPhone app deliberately rejects
@@ -36,8 +42,9 @@ configured HTTPS endpoint and perform First Setup.
 
 ## QNAP NAS
 
-Container Station can import `compose.yaml` as an application. Upload this directory, generate or
-enter the `.env` values, and store both named volumes on protected NAS storage. Use QNAP's supported
+Container Station can import `compose.yaml` as an application. Download and unpack the versioned
+server bundle, then generate `.env` with database and attachment paths under the same protected QNAP
+shared folder. Import `compose.yaml` and `.env`; do not copy secrets into the Compose file. Use QNAP's supported
 reverse-proxy/certificate workflow or a private VPN. QNAP model architecture must be supported by the
 published image (`linux/amd64` or `linux/arm64`). A QPKG-style guided installer, storage-volume picker,
 certificate/pairing UI, upgrade safety, and tested model matrix remain required before this becomes a
@@ -45,12 +52,17 @@ normal-user QNAP package.
 
 ## Always-on Windows PC
 
-`start-windows.cmd` is an early double-clickable Docker Desktop launcher. It checks Docker, creates
-configuration once, starts the pinned Compose application, and opens the local admin page. It still
-depends on Docker Desktop and Python for first configuration, so it does **not** satisfy the roadmap's
-final no-development-infrastructure requirement. The production Windows deliverable will wrap this
-contract in a signed graphical installer/manager with secure secret storage, automatic start/update,
-firewall guidance, backup/restore, diagnostics, and explicit data-preserving uninstall.
+`start-windows.cmd` is an early double-clickable Docker Desktop launcher. Its built-in PowerShell
+setup asks for a durable data folder, creates independent cryptographic secrets without displaying
+them, starts the pinned Compose application, and opens the local admin page. Python and developer
+tools are not required. Docker Desktop is still required, and secure remote pairing/TLS is not yet
+guided, so this remains a preview rather than the final signed graphical server manager. The final
+manager must also provide automatic start/update, firewall guidance, backup/restore, diagnostics,
+and explicit data-preserving uninstall.
+
+Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
+or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;
+do not edit paths while containers are running.
 
 ## Data and recovery invariants
 

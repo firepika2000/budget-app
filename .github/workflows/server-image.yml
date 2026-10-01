@@ -56,3 +56,20 @@ jobs:
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
           provenance: mode=max
           sbom: true
+      - name: Build customer deployment bundle
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          mkdir -p release/clearpocket-server
+          cp -R distribution/server/. release/clearpocket-server/
+          printf '%s\n' "$VERSION" > release/clearpocket-server/VERSION
+          sed -i "s/^CLEARPOCKET_SERVER_VERSION=.*/CLEARPOCKET_SERVER_VERSION=$VERSION/" release/clearpocket-server/.env.example
+          (cd release && zip -r "clearpocket-server-$VERSION.zip" clearpocket-server)
+          tar -C release -czf "release/clearpocket-server-$VERSION.tar.gz" clearpocket-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clearpocket-server-${{ steps.version.outputs.value }}
+          path: |
+            release/clearpocket-server-${{ steps.version.outputs.value }}.zip
+            release/clearpocket-server-${{ steps.version.outputs.value }}.tar.gz
+          if-no-files-found: error
