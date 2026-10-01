@@ -456,6 +456,13 @@ staging, checks destination emptiness before and after quiescence, adopts the au
 key only for that empty destination, restores SQL in one transaction, records recovery health, and
 serves only after API health. Pre-commit failure rolls back only that attempt's key/object staging;
 post-commit failure preserves the recovered authority and leaves its API stopped.
+The generic Docker bundle can now publish, list, and retrieve those encrypted generations in a
+least-privilege Dropbox app folder using the pinned container. Its small owner-only credential file is
+mounted read-only and parsed as data rather than shell code; only the four supported Dropbox OAuth
+settings are accepted. Uploads retain the existing bounded-session, content-hash-before-promotion,
+no-overwrite, and remote-retention guarantees, while downloads are verified before atomic visibility.
+The host still needs only Docker, and the recovery identity remains deliberately separate from the
+Dropbox destination.
 
 The versioned Windows ZIP now includes a double-click per-user installer. It validates and atomically
 publishes an allowlisted manager payload to a stable `%LOCALAPPDATA%` program path, adds Desktop and

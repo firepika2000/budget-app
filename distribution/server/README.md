@@ -52,6 +52,25 @@ commit SQL transactionally. Pre-commit failures remove only objects staged by th
 the prior empty configuration; post-commit activation failures preserve the recovered authority with
 the API stopped. Recovery status and real API health are required before success is reported.
 
+Publish, inspect, or retrieve encrypted generations in a least-privilege Dropbox app folder without
+installing Python or Dropbox tooling on the host:
+
+```sh
+chmod 600 /protected/dropbox.env
+./dropbox-docker.sh publish /protected/budget-20261001T030000Z.tar.gz.age \
+  /protected/dropbox.env /Backups 10
+./dropbox-docker.sh list /protected/dropbox.env /Backups
+./dropbox-docker.sh fetch /Backups/budget-20261001T030000Z.tar.gz.age \
+  /protected/retrieved-budget.tar.gz.age /protected/dropbox.env /Backups
+```
+
+The credential file is declarative, owner-only, mounted read-only, and parsed without shell execution.
+Use either `BUDGET_APP_DROPBOX_ACCESS_TOKEN`, or the durable pair
+`BUDGET_APP_DROPBOX_REFRESH_TOKEN` and `BUDGET_APP_DROPBOX_APP_KEY` (plus the optional
+`BUDGET_APP_DROPBOX_APP_SECRET`). The encrypted generation is verified by Dropbox content hash before
+promotion, remote retention is bounded, and downloads are verified before becoming visible locally.
+Keep the age recovery identity outside Dropbox and on a separately protected device.
+
 Advanced administrators may instead generate configuration directly from this directory:
 
 ```sh

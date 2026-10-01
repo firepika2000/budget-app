@@ -169,6 +169,21 @@ def test_docker_only_restore_is_guarded_transactional_and_health_gated():
     assert "down -v" not in script and "docker volume rm" not in script
 
 
+def test_docker_dropbox_tool_uses_pinned_container_and_read_only_credentials():
+    script = (ROOT / "distribution" / "server" / "dropbox-docker.sh").read_text()
+    assert script.startswith("#!/bin/sh\nset -eu\n")
+    assert "command -v python" not in script
+    assert "publish|list|fetch" in script
+    assert ':/run/secrets/dropbox.env:ro' in script
+    assert ':/input/archive.age:ro' in script
+    assert "--credentials-file /run/secrets/dropbox.env" in script
+    assert "scripts/backup_destination.py publish" in script
+    assert "scripts/backup_destination.py list" in script
+    assert "scripts/backup_destination.py fetch-dropbox" in script
+    assert "BUDGET_APP_DROPBOX_ACCESS_TOKEN=" not in script
+    assert "down -v" not in script and "docker volume rm" not in script
+
+
 def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     command = (ROOT / "distribution" / "server" / "start-windows.cmd").read_text()
     script = (ROOT / "distribution" / "server" / "start-windows.ps1").read_text()

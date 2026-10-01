@@ -13,8 +13,53 @@ from scripts.backup_destination import (
     DropboxDestination,
     LocalDirectoryDestination,
     dropbox_content_hash,
+    load_dropbox_credentials,
     sha256_file,
 )
+
+
+def test_dropbox_credentials_file_is_strict_private_and_declarative(tmp_path):
+    credentials = tmp_path / "dropbox.env"
+    credentials.write_text(
+        "# owner-held Dropbox grant\n"
+        "BUDGET_APP_DROPBOX_REFRESH_TOKEN=refresh=value\n"
+        "BUDGET_APP_DROPBOX_APP_KEY=public-app-key\n"
+    )
+    credentials.chmod(0o600)
+    assert load_dropbox_credentials(credentials) == {
+        "BUDGET_APP_DROPBOX_REFRESH_TOKEN": "refresh=value",
+        "BUDGET_APP_DROPBOX_APP_KEY": "public-app-key",
+    }
+
+    credentials.write_text("BUDGET_APP_DROPBOX_ACCESS_TOKEN=token\nUNSAFE_COMMAND=anything\n")
+    with pytest.raises(DestinationError, match="Unsupported"):
+        load_dropbox_credentials(credentials)
+    credentials.write_text("BUDGET_APP_DROPBOX_ACCESS_TOKEN=one\nBUDGET_APP_DROPBOX_ACCESS_TOKEN=two\n")
+    with pytest.raises(DestinationError, match="Duplicate"):
+        load_dropbox_credentials(credentials)
+    credentials.write_text("BUDGET_APP_DROPBOX_ACCESS_TOKEN=token\n")
+    credentials.chmod(0o644)
+    with pytest.raises(DestinationError, match="owner-only"):
+        load_dropbox_credentials(credentials)
+    credentials.chmod(0o600)
+    credentials.write_text("BUDGET_APP_DROPBOX_ACCESS_TOKEN= token\n")
+    with pytest.raises(DestinationError, match="Invalid Dropbox credential value"):
+        load_dropbox_credentials(credentials)
+
+
+def test_dropbox_credentials_reject_ambiguous_or_incomplete_authentication(tmp_path):
+    credentials = tmp_path / "dropbox.env"
+    credentials.write_text(
+        "BUDGET_APP_DROPBOX_ACCESS_TOKEN=direct\n"
+        "BUDGET_APP_DROPBOX_REFRESH_TOKEN=refresh\n"
+        "BUDGET_APP_DROPBOX_APP_KEY=key\n"
+    )
+    credentials.chmod(0o600)
+    with pytest.raises(DestinationError, match="either"):
+        load_dropbox_credentials(credentials)
+    credentials.write_text("BUDGET_APP_DROPBOX_REFRESH_TOKEN=refresh\n")
+    with pytest.raises(DestinationError, match="refresh token plus app key"):
+        load_dropbox_credentials(credentials)
 
 
 def encrypted_backup(directory: Path, name: str = "budget-20260927T120000Z.tar.gz.age", size: int = 64) -> Path:

@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import sys
 import time
 from typing import BinaryIO, Protocol
@@ -23,10 +24,59 @@ import uuid
 
 DROPBOX_CONTENT_BLOCK_SIZE = 4 * 1024 * 1024
 DROPBOX_UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
+DROPBOX_CREDENTIAL_KEYS = frozenset({
+    "BUDGET_APP_DROPBOX_ACCESS_TOKEN",
+    "BUDGET_APP_DROPBOX_REFRESH_TOKEN",
+    "BUDGET_APP_DROPBOX_APP_KEY",
+    "BUDGET_APP_DROPBOX_APP_SECRET",
+})
+DROPBOX_CREDENTIAL_FILE_LIMIT = 16 * 1024
 
 
 class DestinationError(RuntimeError):
     pass
+
+
+def load_dropbox_credentials(path: Path) -> dict[str, str]:
+    """Read a small declarative credential file without executing it as shell code."""
+    path = path.expanduser()
+    try:
+        metadata = path.lstat()
+    except OSError as failure:
+        raise DestinationError("Dropbox credential file is unavailable") from failure
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise DestinationError("Dropbox credential file must be a regular non-linked file")
+    if metadata.st_size > DROPBOX_CREDENTIAL_FILE_LIMIT:
+        raise DestinationError("Dropbox credential file is too large")
+    if os.name != "nt" and metadata.st_mode & 0o077:
+        raise DestinationError("Dropbox credential file must be owner-only (mode 0600)")
+    try:
+        contents = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as failure:
+        raise DestinationError("Dropbox credential file could not be read") from failure
+    credentials: dict[str, str] = {}
+    for number, raw_line in enumerate(contents.splitlines(), 1):
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        if "=" not in raw_line:
+            raise DestinationError(f"Invalid Dropbox credential line {number}")
+        key, value = raw_line.split("=", 1)
+        if key not in DROPBOX_CREDENTIAL_KEYS:
+            raise DestinationError(f"Unsupported Dropbox credential setting on line {number}")
+        if key in credentials:
+            raise DestinationError(f"Duplicate Dropbox credential setting: {key}")
+        if not value or value != value.strip() or any(ord(character) < 0x20 for character in value):
+            raise DestinationError(f"Invalid Dropbox credential value for {key}")
+        credentials[key] = value
+    # Validate the supported credential shapes without making a network request.
+    direct = credentials.get("BUDGET_APP_DROPBOX_ACCESS_TOKEN", "")
+    refresh = credentials.get("BUDGET_APP_DROPBOX_REFRESH_TOKEN", "")
+    app_key = credentials.get("BUDGET_APP_DROPBOX_APP_KEY", "")
+    if direct and (refresh or app_key or credentials.get("BUDGET_APP_DROPBOX_APP_SECRET")):
+        raise DestinationError("Use either a Dropbox access token or refresh credentials, not both")
+    if not direct and not (refresh and app_key):
+        raise DestinationError("Dropbox credentials require an access token or refresh token plus app key")
+    return credentials
 
 
 def _require_encrypted_backup(path: Path) -> Path:
@@ -393,14 +443,17 @@ def _parser() -> argparse.ArgumentParser:
     publish.add_argument("--directory", type=Path)
     publish.add_argument("--dropbox-folder", default="/Backups")
     publish.add_argument("--keep", type=int, default=10)
+    publish.add_argument("--credentials-file", type=Path)
     fetch = subparsers.add_parser("fetch-dropbox")
     fetch.add_argument("remote_path")
     fetch.add_argument("output", type=Path)
     fetch.add_argument("--dropbox-folder", default="/Backups")
+    fetch.add_argument("--credentials-file", type=Path)
     listing = subparsers.add_parser("list")
     listing.add_argument("--destination", choices=("local", "dropbox"), required=True)
     listing.add_argument("--directory", type=Path)
     listing.add_argument("--dropbox-folder", default="/Backups")
+    listing.add_argument("--credentials-file", type=Path)
     return parser
 
 
@@ -413,7 +466,10 @@ def main(arguments: list[str] | None = None) -> int:
             destination = LocalDirectoryDestination(args.directory, getattr(args, "keep", 10))
             result = destination.publish(args.backup) if args.command == "publish" else destination.list_generations()
         else:
-            transport = DropboxHTTPTransport(dropbox_access_token())
+            environment = dict(os.environ)
+            if args.credentials_file is not None:
+                environment.update(load_dropbox_credentials(args.credentials_file))
+            transport = DropboxHTTPTransport(dropbox_access_token(environment))
             destination = DropboxDestination(transport, args.dropbox_folder, getattr(args, "keep", 10))
             if args.command == "publish":
                 result = destination.publish(args.backup)
