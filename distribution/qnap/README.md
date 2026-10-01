@@ -76,8 +76,18 @@ to the durable `backups` directory, and records owner-visible health. It removes
 records failure if capture or publication does not finish. Completed local generations retain the ten
 newest by default; an administrator may set `BUDGET_APP_BACKUP_RETENTION` to another positive count in
 the private `.env`. Rotation runs only after the new generation and health record succeed and touches
-only completed `budget-*.tar.gz.age` files. Graphical schedule controls and off-NAS/Dropbox publication
-remain part of the graphical QNAP management work.
+only completed `budget-*.tar.gz.age` files.
+
+The command-line package path can publish every completed generation off-NAS to a least-privilege
+Dropbox app folder. Create a regular `0600` file named `dropbox.env` in the durable data root selected
+during install. It must contain either `BUDGET_APP_DROPBOX_ACCESS_TOKEN`, or
+`BUDGET_APP_DROPBOX_REFRESH_TOKEN` plus `BUDGET_APP_DROPBOX_APP_KEY` and the optional app secret.
+The file is mounted read-only and parsed without shell execution. Set `BUDGET_APP_DROPBOX_FOLDER` in
+the private server `.env` to change `/Backups`. Manual and scheduled capture retain the local encrypted
+generation first, verify Dropbox size/content hash before promotion, and apply the same bounded
+retention remotely. Publication failure records `publication_failed`, preserves the local generation,
+and makes the scheduled action fail visibly. Keep the age identity off the NAS and outside Dropbox.
+Graphical Dropbox setup remains part of the normal-user QNAP manager work.
 
 After one successful manual backup has created and validated the recovery identity, an administrator
 can install a persistent daily QNAP schedule. For example, run at 03:15:

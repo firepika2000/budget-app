@@ -521,11 +521,17 @@ Python or age. Completed generations have bounded post-success retention that ne
 unrelated files. After the first successful manual generation, an administrator can atomically install,
 inspect, or remove a daily QNAP cron entry containing only the absolute package action and no credentials;
 failed crontab reload restores the prior system file, while the capture lock prevents overlap. The identity
-must still be copied off the NAS, and off-NAS publication remains open. The package can restore a
+must still be copied off the NAS. The package can restore a
 generation with that separately retained identity into a new empty QNAP authority without host tools:
 both inputs are mounted read-only, integrity is checked in private staging, emptiness is checked before
 and after API quiescence, the authenticated attachment key is adopted only for that empty destination,
 and the service returns only after recovery health and the API health gate succeed.
+When the QNAP durable data root contains a strict owner-only `dropbox.env`, both manual and scheduled
+capture publish the completed encrypted generation to the configured least-privilege Dropbox app
+folder. The credential file is mounted read-only and parsed as data in the pinned container. Remote
+promotion follows size/content-hash verification and bounded retention; failure retains the local
+generation, records `publication_failed`, and returns an error to QNAP scheduling rather than claiming
+healthy off-NAS protection.
 After a newer versioned QPKG is installed, its explicit package update action applies the same shared
 manager invariant: create the encrypted generation first, pull the exact immutable image before changing
 the version setting, atomically pin it, and require API health. Pull failure changes nothing; unhealthy

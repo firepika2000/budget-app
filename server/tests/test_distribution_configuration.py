@@ -415,6 +415,11 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "age --recipient" in backup
     assert "qnap-backup.lock" in backup
     assert "BUDGET_APP_BACKUP_RETENTION" in backup
+    assert 'DROPBOX_CREDENTIALS="$DATA_ROOT/dropbox.env"' in backup
+    assert ':/run/secrets/dropbox.env:ro' in backup
+    assert "scripts/backup_destination.py publish" in backup
+    assert "record_status publication_failed" in backup
+    assert "backup_health.py publication_failed" in backup
     assert "budget-*.tar.gz.age" in backup
     assert "apply_retention" in backup
     assert "compose stop api" in backup and "compose start api" in backup

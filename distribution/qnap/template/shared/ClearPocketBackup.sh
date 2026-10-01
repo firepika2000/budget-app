@@ -14,6 +14,7 @@ SERVER_ROOT=$3
 ENV_FILE="$DATA_ROOT/.env"
 BACKUP_DIR="$DATA_ROOT/backups"
 RECOVERY_DIR="$DATA_ROOT/recovery"
+DROPBOX_CREDENTIALS="$DATA_ROOT/dropbox.env"
 LOCK_DIR="$DATA_ROOT/operations/qnap-backup.lock"
 
 case "$DATA_ROOT" in /share/*) ;; *) echo "Invalid QNAP data root" >&2; exit 2 ;; esac
@@ -48,9 +49,19 @@ DATABASE_TEMPORARY="/tmp/clearpocket-backup-$$.sql"
 
 record_status() {
     state=$1
-    if [ "$state" = healthy ]; then
+    destination_json=${2:-}
+    if [ "$state" = healthy ] && [ -n "$destination_json" ]; then
+        compose run --rm --no-deps --user root --volume "$BACKUP_DIR:/backup:ro" \
+            --volume "$destination_json:/status/destination.json:ro" api sh -c \
+            'python scripts/backup_health.py healthy "/backup/$1" --reported-path "$2" --destination-json /status/destination.json && chown budget:budget "$BUDGET_APP_BACKUP_STATUS_PATH"' \
+            backup-health "$FILENAME" "$FINAL"
+    elif [ "$state" = healthy ]; then
         compose run --rm --no-deps --user root --volume "$BACKUP_DIR:/backup:ro" api sh -c \
             'python scripts/backup_health.py healthy "/backup/$1" --reported-path "$2" && chown budget:budget "$BUDGET_APP_BACKUP_STATUS_PATH"' \
+            backup-health "$FILENAME" "$FINAL"
+    elif [ "$state" = publication_failed ]; then
+        compose run --rm --no-deps --user root --volume "$BACKUP_DIR:/backup:ro" api sh -c \
+            'python scripts/backup_health.py publication_failed "/backup/$1" --reported-path "$2" && chown budget:budget "$BUDGET_APP_BACKUP_STATUS_PATH"' \
             backup-health "$FILENAME" "$FINAL"
     else
         compose run --rm --no-deps --user root api sh -c \
@@ -116,6 +127,17 @@ RETENTION_COUNT=$(grep -c '^BUDGET_APP_BACKUP_RETENTION=' "$ENV_FILE" || true)
 }
 [ -n "$RETENTION" ] || RETENTION=10
 case "$RETENTION" in ''|*[!0-9]*|0) echo "Backup retention must be a positive integer" >&2; exit 1 ;; esac
+DROPBOX_FOLDER=$(sed -n 's/^BUDGET_APP_DROPBOX_FOLDER=//p' "$ENV_FILE")
+DROPBOX_FOLDER_COUNT=$(grep -c '^BUDGET_APP_DROPBOX_FOLDER=' "$ENV_FILE" || true)
+[ "$DROPBOX_FOLDER_COUNT" -le 1 ] || { echo "Duplicate Dropbox folder setting" >&2; exit 1; }
+[ -n "$DROPBOX_FOLDER" ] || DROPBOX_FOLDER=/Backups
+case "$DROPBOX_FOLDER" in /*) [ "$DROPBOX_FOLDER" != / ] || { echo "Dropbox folder cannot be the account root" >&2; exit 1; } ;; *) echo "Dropbox folder must be absolute" >&2; exit 1 ;; esac
+if [ -e "$DROPBOX_CREDENTIALS" ]; then
+    [ -f "$DROPBOX_CREDENTIALS" ] && [ ! -L "$DROPBOX_CREDENTIALS" ] || {
+        echo "Dropbox credential file is unsafe" >&2
+        exit 1
+    }
+fi
 
 apply_retention() {
     count=0
@@ -169,7 +191,23 @@ compose run --rm --no-deps --user root --volume "$STAGING:/capture:ro" \
 [ -f "$PARTIAL" ] || { echo "Encrypted backup publication failed" >&2; exit 1; }
 mv "$PARTIAL" "$FINAL"
 PARTIAL=""
-record_status healthy
+if [ -f "$DROPBOX_CREDENTIALS" ]; then
+    DROPBOX_RESULT="$STAGING/dropbox-publication.json"
+    if ! compose run --rm --no-deps --user root \
+        --volume "$FINAL:/input/archive.age:ro" \
+        --volume "$DROPBOX_CREDENTIALS:/run/secrets/dropbox.env:ro" api \
+        python scripts/backup_destination.py publish /input/archive.age \
+        --destination dropbox --credentials-file /run/secrets/dropbox.env \
+        --dropbox-folder "$DROPBOX_FOLDER" --keep "$RETENTION" > "$DROPBOX_RESULT"; then
+        record_status publication_failed
+        STATUS_RECORDED=true
+        echo "Encrypted QNAP backup was retained locally, but Dropbox publication failed" >&2
+        exit 1
+    fi
+    record_status healthy "$DROPBOX_RESULT"
+else
+    record_status healthy
+fi
 STATUS_RECORDED=true
 apply_retention
 echo "Encrypted QNAP backup complete: $FINAL"
