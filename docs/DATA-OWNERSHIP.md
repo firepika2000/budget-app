@@ -320,14 +320,26 @@ and deployment configuration remain intentionally provider-local.
 
 ## Remaining implementation sequence
 
-1. Add the production `LocalDeviceRepository` adapter above `BudgetStorage` and route every mutation
-   through the shared accounting-command boundary.
-2. Prove account, category, assignment, expense/refund, transfer, reconciliation, schedule, payee,
-   attachment, and audit persistence after every repository/service object is destroyed and reopened.
-3. Extend the implemented validate-then-commit desktop-local import to the production on-device
-   repository, and compare the complete canonical workspace/report projections before cutover.
-4. Add a graphical server manager and pairing/TLS workflow. Scheduling plus backup/restore health are
-   implemented, but the developer CLI is not the normal-user v1.0 server experience.
-5. Add Dropbox OAuth setup/revocation UI without placing provider secrets in the iOS app database or
-   logs. Keep Dropbox as a backup destination unless a separately designed synchronization authority
-   is approved.
+The production on-device authority and persistence/reopen coverage are implemented. The iOS app can
+also create encrypted, generation-based local backups and export them through the system share sheet;
+that share sheet can target Files, Dropbox, or another installed provider without granting the app
+ambient access to the user's cloud account.
+
+The repository now includes the first shared customer-server deployment contract under
+`distribution/server`: one pinned container image contract, PostgreSQL and attachment persistence,
+private secret generation, health checks, and hardened Compose defaults for Docker Desktop, QNAP
+Container Station, and other Compose-capable hosts. The GHCR publishing workflow builds the same
+image for ARM64 and AMD64. This is a packaging foundation, not yet the promised normal-user setup
+experience: the image has not been release-published, QNAP model validation is pending, and the
+Windows helper still requires Docker Desktop and Python for first-run configuration.
+
+1. Add safe in-app verify/restore and explicit authority cutover for on-device backup generations,
+   comparing complete canonical workspace/report projections before committing the replacement.
+2. Add explicit Dropbox OAuth setup/revocation and retention controls without placing provider
+   secrets in the iOS database or logs. Dropbox remains a backup destination, not a second authority.
+3. Build the normal-user server manager around the shared image/config contract: graphical storage
+   selection, install/update/rollback, scheduled backup/restore, and actionable health reporting.
+4. Validate and package the manager for supported QNAP models and always-on Windows PCs, with signed
+   installers and no command-line requirement for the normal path.
+5. Add secure pairing and TLS for remote clients. Until that exists, keep the default loopback bind
+   and never expose the raw API port directly to the Internet.
