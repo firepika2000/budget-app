@@ -1,14 +1,15 @@
 # Data ownership, local operation, and backup destinations
 
-Updated 2026-09-27. This document tracks the v0.14 data-ownership implementation. It does not
+Updated 2026-09-30. This document tracks the v0.14 data-ownership implementation. It does not
 claim that incomplete providers are production-ready.
 
 ## Authority and destination are separate
 
 - **Budget Server** is currently the production authority for shared households. PostgreSQL and
   the encrypted attachment object store move together.
-- **Local Device** will be a single-user, single-writer SQLite authority. It is not implemented yet
-  and must not be represented by deterministic Demo data or a SQLite file opened from Dropbox.
+- **Local Device** is the default single-user, single-writer SQLite authority in the native app. It
+  uses the production workspace/application-service path and is neither deterministic Demo data nor
+  a SQLite file opened from Dropbox.
 - **Dropbox** is an encrypted backup/snapshot destination and migration transport. It is not a live
   database or household synchronization authority.
 - **Local directory** is an encrypted backup destination suitable for an external disk, a private
@@ -33,9 +34,8 @@ The `BudgetStorage` package now owns the low-level private SQLite boundary:
   from overwriting a known-good generation.
 
 Focused tests destroy every repository object, reopen the file, and prove exact money/relationship
-persistence. They also prove atomic rollback and verified snapshot reopen. This is storage
-infrastructure, not yet a selectable product provider: it deliberately does not duplicate server or
-Demo accounting calculations.
+persistence. They also prove atomic rollback and verified snapshot reopen. Local Device is now a
+selectable production provider and deliberately does not duplicate server accounting calculations.
 
 `LocalAuthorityStore` now adds the first typed repository boundary above raw SQLite. It atomically
 bootstraps the single-owner authority and persists account, category-group, category, payee, and
@@ -53,15 +53,22 @@ transaction replacement and deletion preserve immutable
 opening/creator facts and refuse missing records. Split totals are checked with overflow-safe integer
 math before any write, while balances, activity, reserves, and other accounting consequences remain
 the responsibility of the shared application-service layer.
-The native target now links `BudgetStorage` through `LocalDeviceStorageComposition`. That composition
+The native target links `BudgetStorage` through `LocalDeviceStorageComposition`. That composition
 opens the SQLite authority and encrypted attachment vault together beneath the app's private
-Application Support directory and supplies the vault only with the Keychain-held key. This is an
-internal durability boundary, not a selectable provider: activation remains gated until a complete
-workspace adapter implements every production read and command contract.
+Application Support directory and supplies the vault only with the Keychain-held key. The canonical
+workspace adapter implements production reads and commands against this durable boundary; Demo stays
+an explicitly labelled training/example source.
 Destructive-reopen tests prove stable IDs, relationships, lifecycle changes, and exact `Int64` values
-survive repository reconstruction. This boundary is not yet wired into the app's data-source selector;
-the remaining domain records and application-service adapter must be completed first so users cannot
-enter a partially functional Local Device mode.
+survive repository reconstruction.
+
+The storage package also creates immutable `.clearpocketbackup` generations with SQLite online backup
+and the complete encrypted attachment object/tombstone set. Each payload is chunked AES-GCM under an
+independent 256-bit recovery key; the authenticated manifest records exact plaintext and ciphertext
+sizes and SHA-256 values. Restore authenticates every payload, verifies database integrity and foreign
+keys, reopens the authority, and decrypts/verifies every active attachment before publishing to a new
+destination. It never overwrites an existing authority. Manual native export/restore UI and automatic
+off-device retention are the next product layers; until accepted, beta users should still treat local
+device data as disposable.
 
 ## Implemented personal desktop-local backend
 

@@ -306,6 +306,12 @@ public actor LocalAuthorityStore {
         database = try LocalDatabase(fileURL: fileURL)
     }
 
+    /// Produces a transactionally consistent SQLite image without exposing the live database file.
+    /// Backup/transfer code must use this online snapshot rather than copying a WAL-backed file.
+    public func snapshotDatabase(to destinationURL: URL) async throws {
+        try await database.snapshot(to: destinationURL)
+    }
+
     public func bootstrap(_ identity: LocalAuthorityIdentity, createdAt: String) async throws {
         guard !identity.householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !identity.ownerDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
