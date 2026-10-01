@@ -36,5 +36,32 @@ pkg_install() {
     }
 }
 
+pkg_post_install() {
+    WEB_LINK=/home/httpd/cgi-bin/qpkg/ClearPocketServer
+    WEB_ROOT="$SYS_QPKG_DIR/management"
+    if [ ! -x "$WEB_ROOT/index.cgi" ]; then
+        err_log "ClearPocket management interface is missing."
+        return 1
+    fi
+    if [ ! -f "$WEB_ROOT/.csrf-token" ]; then
+        umask 077
+        od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$WEB_ROOT/.csrf-token" || {
+            err_log "ClearPocket management protection could not be initialized."
+            return 1
+        }
+    fi
+    $CMD_CHMOD 600 "$WEB_ROOT/.csrf-token"
+    $CMD_MKDIR -p /home/httpd/cgi-bin/qpkg
+    $CMD_RM -f "$WEB_LINK"
+    $CMD_LN -s "$WEB_ROOT" "$WEB_LINK" || {
+        err_log "ClearPocket management interface could not be registered with QTS."
+        return 1
+    }
+}
+
+PKG_PRE_REMOVE="{
+    /bin/rm -f /home/httpd/cgi-bin/qpkg/ClearPocketServer
+}"
+
 # Deliberately do not define a remove routine for the system configuration or data root. Removing
 # the QPKG removes replaceable program files only; customer database and attachments remain.

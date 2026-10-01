@@ -4,7 +4,8 @@ This directory builds a QDK/QPKG wrapper around the same server bundle used by D
 Windows. It follows QNAP's package lifecycle rather than creating a separate server implementation.
 
 The package is currently an engineering preview. It provides App Center install, cryptographic
-no-overwrite first-run configuration, enable/start, disable/stop, restart, and status integration.
+no-overwrite first-run configuration, enable/start, disable/stop, restart, status integration, and
+an administrator-only QTS desktop manager.
 Customer authority is deliberately external to the
 replaceable QPKG directory: `/etc/config/clearpocket-server.conf` points to a durable QNAP shared-folder
 deployment root containing `.env`, PostgreSQL data, and encrypted attachments. Package removal does
@@ -69,7 +70,32 @@ Both operations mount the source package read-only and perform authentication/de
 container staging. Import stops the API, starts only PostgreSQL, requires empty database and attachment
 destinations, compares exact financial observations, and restarts the server only after success. A
 failure leaves the API stopped for inspection and never modifies the phone backup. This remains an
-administrator action pending the graphical QNAP setup/restore surface.
+administrator action while the graphical import/restore workflow is completed.
+
+## QTS management interface
+
+Open **ClearPocket Server** from the QTS administrator desktop. The manager shows the installed
+server version, NAS host, container status, health output, recent bounded logs, and backup schedule
+state. It can create an encrypted backup or restart the ClearPocket containers. Its terminal-style
+command field deliberately accepts only these exact commands:
+
+```text
+help
+status
+health
+version
+logs
+backup
+restart
+backup-schedule-status
+```
+
+It is not a general NAS shell. The CGI never evaluates user input, POST actions require an
+installation-specific CSRF token, command output is HTML-escaped, responses are not cached, and the
+QPKG is registered as visible to QTS administrators only. Use SSH for NAS administration outside
+ClearPocket. QTS/QuTS hero hardware acceptance must confirm the platform's administrator-session
+enforcement at the `/cgi-bin/qpkg/ClearPocketServer` boundary before the package is promoted beyond
+beta.
 
 A provider-neutral encrypted archive from another ClearPocket Server can initialize the same empty
 QNAP destination. Use the separately retained age identity, or `-` for a passphrase archive:
@@ -163,5 +189,6 @@ run forward migrations but fails health, the API remains stopped and the version
 downgraded against the newer database; recover the preserved generation into a new empty authority.
 
 Before this package is customer-ready, the hardware-acceptance artifact still needs QNAP signing,
-a supported-model matrix, a graphical first-run host/TLS setup screen, and validation on current QTS
-and QuTS hero. Until those gates pass, prefer the documented Container Station import path.
+a supported-model matrix, graphical first-run host/TLS and import/restore workflows, and validation
+of the new manager on current QTS and QuTS hero. Until those gates pass, prefer the documented
+Container Station import path.

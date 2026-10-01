@@ -36,7 +36,7 @@ fi
 STAGE=$(mktemp -d "${TMPDIR:-/tmp}/clearpocket-qpkg.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT HUP INT TERM
 
-mkdir -p "$STAGE/shared/server"
+mkdir -p "$STAGE/shared/server" "$STAGE/shared/management"
 awk -v version="$QPKG_VERSION" '{ gsub(/@VERSION@/, version); print }' \
     "$SCRIPT_DIR/template/qpkg.cfg" > "$STAGE/qpkg.cfg"
 cp "$SCRIPT_DIR/template/package_routines" "$STAGE/package_routines"
@@ -44,6 +44,7 @@ cp "$SCRIPT_DIR/template/shared/ClearPocketServer.sh" "$STAGE/shared/ClearPocket
 cp "$SCRIPT_DIR/template/shared/ClearPocketSetup.sh" "$STAGE/shared/ClearPocketSetup.sh"
 cp "$SCRIPT_DIR/template/shared/ClearPocketBackup.sh" "$STAGE/shared/ClearPocketBackup.sh"
 cp "$SCRIPT_DIR/template/shared/ClearPocketRestore.sh" "$STAGE/shared/ClearPocketRestore.sh"
+cp "$SCRIPT_DIR/template/shared/management/index.cgi" "$STAGE/shared/management/index.cgi"
 cp "$PROJECT_ROOT/distribution/server/compose.yaml" \
    "$PROJECT_ROOT/distribution/server/Caddyfile" \
    "$PROJECT_ROOT/distribution/server/Caddyfile.qnap" \
@@ -70,7 +71,8 @@ chmod 755 "$STAGE/shared/ClearPocketServer.sh" "$STAGE/shared/ClearPocketSetup.s
     "$STAGE/shared/ClearPocketBackup.sh" \
     "$STAGE/shared/ClearPocketRestore.sh" \
     "$STAGE/shared/server/manage.py" \
-    "$STAGE/shared/server/configure.py" "$STAGE/shared/server/tools/backup.sh" \
+    "$STAGE/shared/server/configure.py" "$STAGE/shared/management/index.cgi" \
+    "$STAGE/shared/server/tools/backup.sh" \
     "$STAGE/shared/server/tools/restore.sh"
 
 (cd "$STAGE" && "$QBUILD")

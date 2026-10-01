@@ -659,6 +659,7 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     config = (root / "template" / "qpkg.cfg").read_text()
     routines = (root / "template" / "package_routines").read_text()
     service = (root / "template" / "shared" / "ClearPocketServer.sh").read_text()
+    manager = (root / "template" / "shared" / "management" / "index.cgi").read_text()
     setup = (root / "template" / "shared" / "ClearPocketSetup.sh").read_text()
     backup = (root / "template" / "shared" / "ClearPocketBackup.sh").read_text()
     restore = (root / "template" / "shared" / "ClearPocketRestore.sh").read_text()
@@ -668,6 +669,10 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'QPKG_VOLUME_SELECT="3"' in config
     assert 'QPKG_TIMEOUT="300,120"' in config
     assert 'QPKG_DISTRIBUTION_TYPE="1"' in config
+    assert 'QPKG_WEBUI="/cgi-bin/qpkg/ClearPocketServer/index.cgi"' in config
+    assert 'QPKG_DESKTOP_APP="1"' in config
+    assert 'QPKG_VISIBLE="0"' in config
+    assert 'QPKG_FORCE_VISIBLE="1"' in config
     assert "Container Station must be installed" in routines
     assert "ClearPocketSetup.sh" in routines
     assert "CLEARPOCKET_DATA_ROOT" in routines
@@ -707,6 +712,12 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "import-local-device" in service
     assert "import-portable" in service
     assert "configure-qnap-https" in service
+    assert "compose logs --no-color --tail 200 api database" in service
+    assert "status|health|version|logs|backup|restart|backup-schedule-status" in manager
+    assert "eval" not in manager
+    assert "Content-Security-Policy" in manager
+    assert 'name="csrf"' in manager
+    assert "QTS administrators" in manager
     assert "COMPOSE_PROFILES=qnap-tls" in service
     assert "CLEARPOCKET_BIND_ADDRESS=127.0.0.1" in service
     assert "BUDGET_APP_PAIRING_PUBLIC_URL=https://%s" in service
@@ -791,6 +802,7 @@ grep -q 'QPKG_VER="'"$EXPECTED_QPKG_VERSION"'"' qpkg.cfg
 grep -q 'QPKG_VOLUME_SELECT=\"3\"' qpkg.cfg
 grep -q 'QPKG_TIMEOUT=\"300,120\"' qpkg.cfg
 test -f shared/ClearPocketServer.sh
+test -x shared/management/index.cgi
 test -x shared/ClearPocketSetup.sh
 test -x shared/ClearPocketBackup.sh
 test -x shared/ClearPocketRestore.sh
@@ -831,6 +843,50 @@ mkdir -p build
     )
     assert invalid.returncode == 2
     assert "Invalid server image digest" in invalid.stderr
+
+
+def test_qnap_management_console_executes_only_allowlisted_csrf_protected_commands(tmp_path: Path):
+    root = tmp_path / "qpkg"
+    management = root / "management"
+    server = root / "server"
+    management.mkdir(parents=True)
+    server.mkdir()
+    token = "a" * 64
+    (management / ".csrf-token").write_text(token)
+    (server / "VERSION").write_text("0.9.0\n")
+    calls = tmp_path / "calls"
+    service = root / "ClearPocketServer.sh"
+    service.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$1\" >> '{calls}'\n"
+        "printf 'service output <private>\\n'\n"
+    )
+    service.chmod(0o755)
+    manager = ROOT / "distribution" / "qnap" / "template" / "shared" / "management" / "index.cgi"
+
+    body = f"csrf={token}&command=health"
+    environment = dict(
+        os.environ,
+        CLEARPOCKET_QPKG_ROOT=str(root),
+        REQUEST_METHOD="POST",
+        CONTENT_LENGTH=str(len(body)),
+    )
+    result = subprocess.run([manager], input=body, text=True, capture_output=True, env=environment, check=True)
+    assert "Content-Security-Policy:" in result.stdout
+    assert "service output &lt;private&gt;" in result.stdout
+    assert calls.read_text().splitlines() == ["health"]
+
+    invalid = f"csrf={token}&command=status%3Brm+-rf"
+    environment["CONTENT_LENGTH"] = str(len(invalid))
+    result = subprocess.run([manager], input=invalid, text=True, capture_output=True, env=environment, check=True)
+    assert "Allowed commands:" in result.stdout
+    assert calls.read_text().splitlines() == ["health"]
+
+    denied = "csrf=wrong&command=restart"
+    environment["CONTENT_LENGTH"] = str(len(denied))
+    result = subprocess.run([manager], input=denied, text=True, capture_output=True, env=environment, check=True)
+    assert "403 Forbidden" in result.stdout
+    assert calls.read_text().splitlines() == ["health"]
 
 
 def test_qnap_first_run_generates_private_exact_secrets_and_never_overwrites(tmp_path: Path):

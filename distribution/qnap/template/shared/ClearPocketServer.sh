@@ -405,6 +405,24 @@ case "$1" in
     status)
         compose ps
         ;;
+    health)
+        [ "$#" -eq 1 ] || { echo "Usage: $0 health" >&2; exit 2; }
+        if compose exec -T api python -c \
+            "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/api/v1/health', timeout=3).read().decode())"; then
+            echo "ClearPocket API is healthy."
+        else
+            log_error "ClearPocket API health check failed"
+            exit 1
+        fi
+        ;;
+    version)
+        [ "$#" -eq 1 ] || { echo "Usage: $0 version" >&2; exit 2; }
+        printf 'ClearPocket Server %s\n' "$(tr -d '\r\n' < "$SERVER_ROOT/VERSION")"
+        ;;
+    logs)
+        [ "$#" -eq 1 ] || { echo "Usage: $0 logs" >&2; exit 2; }
+        compose logs --no-color --tail 200 api database
+        ;;
     backup)
         [ "$#" -eq 1 ] || { echo "Usage: $0 backup" >&2; exit 2; }
         [ -x "$QPKG_ROOT/ClearPocketBackup.sh" ] || { log_error "QNAP backup helper is missing"; exit 1; }
@@ -450,7 +468,7 @@ case "$1" in
         configure_qnap_https "$2" "$3"
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|backup|restore|upgrade|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device|import-portable|configure-qnap-https}" >&2
+        echo "Usage: $0 {start|stop|restart|status|health|version|logs|backup|restore|upgrade|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device|import-portable|configure-qnap-https}" >&2
         exit 2
         ;;
 esac
