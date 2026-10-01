@@ -70,6 +70,12 @@ struct LocalDevicePreparedRestore: Equatable {
     let createdAt: String
 }
 
+struct LocalDeviceRollbackGeneration: Identifiable, Equatable {
+    let id: String
+    let retainedAt: Date
+    let storedBytes: Int64
+}
+
 /// Crash-recoverable handoff from a verified backup into the production Local Device authority.
 ///
 /// Restore never mutates an open SQLite authority. It decrypts into a new private directory and
@@ -191,11 +197,110 @@ enum LocalDeviceRestoreCoordinator {
         }
         try fileManager.removeItem(at: markerURL)
         keyManager.clearPendingRestoreKey()
+        if marker.candidateName.hasPrefix("LocalDevice-Rollback-") {
+            keyManager.deleteRollbackKey(identifier: marker.candidateName)
+        }
         return true
     }
 
     static func hasPendingRestore(applicationDirectory: URL) -> Bool {
         FileManager.default.fileExists(atPath: applicationDirectory.appendingPathComponent(markerName).path)
+    }
+
+    static func rollbackGenerations(
+        applicationDirectory: URL,
+        keyManager: LocalDeviceKeyManager
+    ) throws -> [LocalDeviceRollbackGeneration] {
+        let directory = applicationDirectory.standardizedFileURL
+        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ).compactMap { url in
+            let name = url.lastPathComponent
+            let kind = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard name.hasPrefix("LocalDevice-Rollback-"), safeComponent(name),
+                  kind.isDirectory == true, kind.isSymbolicLink != true else { return nil }
+            _ = try keyManager.rollbackKey(identifier: name)
+            let retained = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return LocalDeviceRollbackGeneration(id: name, retainedAt: retained, storedBytes: directorySize(url))
+        }.sorted { $0.retainedAt > $1.retainedAt }
+    }
+
+    static func prepareRollback(
+        _ generation: LocalDeviceRollbackGeneration,
+        applicationDirectory: URL,
+        keyManager: LocalDeviceKeyManager
+    ) throws -> LocalDevicePreparedRestore {
+        let directory = applicationDirectory.standardizedFileURL
+        let markerURL = directory.appendingPathComponent(markerName)
+        guard !FileManager.default.fileExists(atPath: markerURL.path) else {
+            throw LocalStorageError.operationFailed("A verified restore is already waiting for the app to restart")
+        }
+        guard generation.id.hasPrefix("LocalDevice-Rollback-"), safeComponent(generation.id) else {
+            throw LocalStorageError.invalidSnapshot("The rollback generation identifier is invalid")
+        }
+        let candidate = directory.appendingPathComponent(generation.id, isDirectory: true)
+        let kind = try candidate.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard kind.isDirectory == true, kind.isSymbolicLink != true else {
+            throw LocalStorageError.invalidSnapshot("The rollback generation is no longer available")
+        }
+        let replacementKey = try keyManager.rollbackKey(identifier: generation.id)
+        try keyManager.prepareRestoreKey(replacementKey)
+        var published = false
+        defer {
+            if !published {
+                keyManager.clearPendingRestoreKey()
+                try? FileManager.default.removeItem(at: markerURL)
+            }
+        }
+        let newRollback = "LocalDevice-Rollback-\(UUID().uuidString)"
+        let createdAt = ISO8601DateFormatter().string(from: generation.retainedAt)
+        let marker = Marker(candidateName: generation.id, rollbackName: newRollback,
+                            budgetID: "local-device-budget", createdAt: createdAt)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(marker).write(
+            to: markerURL,
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        )
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: markerURL.path)
+        published = true
+        return .init(budgetID: marker.budgetID, createdAt: marker.createdAt)
+    }
+
+    static func deleteRollback(
+        _ generation: LocalDeviceRollbackGeneration,
+        applicationDirectory: URL,
+        keyManager: LocalDeviceKeyManager
+    ) throws {
+        let directory = applicationDirectory.standardizedFileURL
+        guard !hasPendingRestore(applicationDirectory: directory) else {
+            throw LocalStorageError.operationFailed("Finish the pending restore before removing rollback generations")
+        }
+        guard generation.id.hasPrefix("LocalDevice-Rollback-"), safeComponent(generation.id) else {
+            throw LocalStorageError.invalidSnapshot("The rollback generation identifier is invalid")
+        }
+        let target = directory.appendingPathComponent(generation.id, isDirectory: true)
+        _ = try keyManager.rollbackKey(identifier: generation.id)
+        try FileManager.default.removeItem(at: target)
+        keyManager.deleteRollbackKey(identifier: generation.id)
+    }
+
+    private static func directorySize(_ directory: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileAllocatedSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in enumerator {
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileAllocatedSizeKey]),
+                  values.isRegularFile == true else { continue }
+            total += Int64(values.fileAllocatedSize ?? 0)
+        }
+        return total
     }
 
     private static func safeComponent(_ value: String) -> Bool {

@@ -2090,6 +2090,62 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertFalse(LocalDeviceRestoreCoordinator.hasPendingRestore(applicationDirectory: applicationDirectory))
         XCTAssertTrue(FileManager.default.fileExists(atPath: applicationDirectory.appendingPathComponent(rollbackName).path))
         XCTAssertEqual(targetSecrets.readData(account: LocalDeviceKeyManager.rollbackKeyAccount(for: rollbackName)), oldKey)
+
+        let generations = try LocalDeviceRestoreCoordinator.rollbackGenerations(
+            applicationDirectory: applicationDirectory, keyManager: targetKeyManager
+        )
+        let prior = try XCTUnwrap(generations.first(where: { $0.id == rollbackName }))
+        XCTAssertGreaterThan(prior.storedBytes, 0)
+        _ = try LocalDeviceRestoreCoordinator.prepareRollback(
+            prior, applicationDirectory: applicationDirectory, keyManager: targetKeyManager
+        )
+        XCTAssertTrue(LocalDeviceRestoreCoordinator.hasPendingRestore(applicationDirectory: applicationDirectory))
+        XCTAssertTrue(try LocalDeviceRestoreCoordinator.applyPendingRestore(
+            applicationDirectory: applicationDirectory, keyManager: targetKeyManager
+        ))
+        let switchedBack = try LocalAuthorityStore(
+            fileURL: applicationDirectory.appendingPathComponent("LocalDevice/authority.sqlite3")
+        )
+        let original = try await switchedBack.snapshot(budgetID: identity.budgetID)
+        XCTAssertEqual(original.identity.budgetName, "Current Budget")
+        XCTAssertEqual(original.accounts.map(\.name), ["Current Checking"])
+        XCTAssertEqual(try targetKeyManager.loadOrCreateAttachmentKey(), oldKey)
+        XCTAssertNil(targetSecrets.readData(account: LocalDeviceKeyManager.rollbackKeyAccount(for: rollbackName)),
+                     "A consumed rollback generation must not leave an orphaned key")
+
+    }
+
+    @MainActor
+    func testRollbackCleanupRequiresMatchingKeyAndRemovesGenerationAndKey() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-device-rollback-cleanup-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let name = "LocalDevice-Rollback-\(UUID().uuidString)"
+        let generationDirectory = root.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: generationDirectory, withIntermediateDirectories: true)
+        try Data("retained authority".utf8).write(to: generationDirectory.appendingPathComponent("authority.sqlite3"))
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("LocalDevice-Rollback-Symlink"),
+            withDestinationURL: generationDirectory
+        )
+        let secrets = InMemorySecretDataStore()
+        try secrets.saveData(Data(repeating: 31, count: 32),
+                             account: LocalDeviceKeyManager.rollbackKeyAccount(for: name))
+        let manager = LocalDeviceKeyManager(store: secrets)
+
+        let generations = try LocalDeviceRestoreCoordinator.rollbackGenerations(
+            applicationDirectory: root, keyManager: manager
+        )
+        let generation = try XCTUnwrap(generations.first)
+        XCTAssertEqual(generations.count, 1, "Symbolic links must never become recovery generations")
+        XCTAssertEqual(generation.id, name)
+        XCTAssertGreaterThan(generation.storedBytes, 0)
+        try LocalDeviceRestoreCoordinator.deleteRollback(
+            generation, applicationDirectory: root, keyManager: manager
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: generationDirectory.path))
+        XCTAssertNil(secrets.readData(account: LocalDeviceKeyManager.rollbackKeyAccount(for: name)))
     }
 
     @MainActor

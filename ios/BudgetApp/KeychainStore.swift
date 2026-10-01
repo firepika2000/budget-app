@@ -15,6 +15,17 @@ protocol SecretDataStoring {
     func deleteData(account: String)
 }
 
+#if DEBUG
+/// Process-local secret scope for UI automation that runs an unsigned Simulator application.
+/// Production Local Device composition always uses the device-only Keychain store.
+final class UITestSecretDataStore: SecretDataStoring {
+    private var values: [String: Data] = [:]
+    func saveData(_ value: Data, account: String) throws { values[account] = value }
+    func readData(account: String) -> Data? { values[account] }
+    func deleteData(account: String) { values.removeValue(forKey: account) }
+}
+#endif
+
 struct KeychainStore: TokenStoring, SecretDataStoring {
     private let service: String
 
@@ -129,6 +140,17 @@ final class LocalDeviceKeyManager {
 
     nonisolated static func rollbackKeyAccount(for identifier: String) -> String {
         rollbackKeyAccountPrefix + identifier
+    }
+
+    func rollbackKey(identifier: String) throws -> Data {
+        guard let value = store.readData(account: Self.rollbackKeyAccount(for: identifier)), value.count == 32 else {
+            throw KeychainError.invalidSecret
+        }
+        return value
+    }
+
+    func deleteRollbackKey(identifier: String) {
+        store.deleteData(account: Self.rollbackKeyAccount(for: identifier))
     }
 
     func clearPendingRestoreKey() {

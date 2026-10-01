@@ -6,6 +6,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--local", "--skip-guided-onboarding"]
+        app.launchEnvironment["BUDGETAPP_UI_TEST_LOCAL_ID"] = UUID().uuidString
         app.launch()
 
         XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 8))
@@ -27,6 +28,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--local", "--skip-guided-onboarding"]
+        app.launchEnvironment["BUDGETAPP_UI_TEST_LOCAL_ID"] = UUID().uuidString
         app.launch()
 
         XCTAssertTrue(app.buttons["profile-settings-button"].waitForExistence(timeout: 8))
@@ -55,6 +57,9 @@ final class AuthenticationJourneyTests: XCTestCase {
         let restore = app.buttons["choose-local-device-restore"]
         for _ in 0..<6 where !restore.isHittable { app.swipeUp() }
         XCTAssertTrue(restore.waitForExistence(timeout: 5), "The production backup screen must expose verified restore, not export only")
+        let rollbacks = app.staticTexts["Rollback Generations"]
+        for _ in 0..<4 where !rollbacks.exists { app.swipeUp() }
+        XCTAssertTrue(rollbacks.waitForExistence(timeout: 3), "The production recovery screen must expose retained rollback management")
         try app.performAccessibilityAudit(for: [.sufficientElementDescription, .trait])
     }
 

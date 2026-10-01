@@ -83,8 +83,14 @@ On the next cold app launch, the journal promotes the verified directory before 
 rename sequence is resumable after interruption, the prior authority is retained as a rollback
 generation, and its exact attachment key is retained separately in the device-only Keychain. A wrong
 key or damaged generation leaves no pending cutover and does not alter the current budget. The beta
-workflow currently requires the user to close the app fully and reopen it after verification;
-automatic retained publication and a graphical rollback browser remain gated.
+workflow currently requires the user to close the app fully and reopen it after verification.
+
+Backup & Recovery also lists retained rollback generations with their retention date and allocated
+size. Switching back requires explicit confirmation and schedules the same cold-launch journal; it
+does not rename or open SQLite while the app is running, and the version being left becomes a new
+rollback generation with its matching device-only key. Permanent cleanup separately confirms before
+removing both a retained authority and its key, refuses cleanup while any restore is pending, and
+never treats a missing/malformed key as permission to delete data.
 
 ## Implemented personal desktop-local backend
 
@@ -339,16 +345,15 @@ The repository now includes the first shared customer-server deployment contract
 private secret generation, health checks, and hardened Compose defaults for Docker Desktop, QNAP
 Container Station, and other Compose-capable hosts. The GHCR publishing workflow builds the same
 image for ARM64 and AMD64. This is a packaging foundation, not yet the promised normal-user setup
-experience: the image has not been release-published, QNAP model validation is pending, and the
-Windows helper still requires Docker Desktop and Python for first-run configuration.
+experience: the image has not been release-published and QNAP model validation is pending. The
+Windows helper now uses built-in PowerShell for cryptographic first-run configuration and selectable
+durable storage without Python, but still requires Docker Desktop and lacks the final signed manager.
 
-1. Add a graphical rollback-generation browser and post-cutover acceptance/cleanup flow; keep every
-   authority/key pair recoverable until the owner explicitly removes it.
-2. Add explicit Dropbox OAuth setup/revocation and retention controls without placing provider
+1. Add explicit Dropbox OAuth setup/revocation and retention controls without placing provider
    secrets in the iOS database or logs. Dropbox remains a backup destination, not a second authority.
-3. Build the normal-user server manager around the shared image/config contract: graphical storage
+2. Build the normal-user server manager around the shared image/config contract: graphical storage
    selection, install/update/rollback, scheduled backup/restore, and actionable health reporting.
-4. Validate and package the manager for supported QNAP models and always-on Windows PCs, with signed
+3. Validate and package the manager for supported QNAP models and always-on Windows PCs, with signed
    installers and no command-line requirement for the normal path.
-5. Add secure pairing and TLS for remote clients. Until that exists, keep the default loopback bind
+4. Add secure pairing and TLS for remote clients. Until that exists, keep the default loopback bind
    and never expose the raw API port directly to the Internet.

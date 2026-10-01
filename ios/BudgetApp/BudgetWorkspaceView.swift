@@ -2132,14 +2132,34 @@ final class BudgetWorkspaceStore: ObservableObject {
         var localStorage: LocalDeviceStorageComposition?
         do {
             let composition: LocalDeviceStorageComposition
-            if let applicationSupportDirectory {
-                composition = try LocalDeviceStorageComposition(applicationSupportDirectory: applicationSupportDirectory, keyManager: keyManager ?? LocalDeviceKeyManager())
+            #if DEBUG
+            let uiTestIdentifier = ProcessInfo.processInfo.environment["BUDGETAPP_UI_TEST_LOCAL_ID"].flatMap { identifier -> String? in
+                let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-"))
+                guard !identifier.isEmpty, identifier.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }
+                return identifier
+            }
+            let uiTestDirectory = uiTestIdentifier.map {
+                FileManager.default.temporaryDirectory.appendingPathComponent("BudgetApp-UI-\($0)", isDirectory: true)
+            }
+            let uiTestKeyManager = uiTestIdentifier.map {
+                _ in LocalDeviceKeyManager(store: UITestSecretDataStore())
+            }
+            #else
+            let uiTestDirectory: URL? = nil
+            let uiTestKeyManager: LocalDeviceKeyManager? = nil
+            #endif
+            if let applicationSupportDirectory = applicationSupportDirectory ?? uiTestDirectory {
+                composition = try LocalDeviceStorageComposition(
+                    applicationSupportDirectory: applicationSupportDirectory,
+                    keyManager: keyManager ?? uiTestKeyManager ?? LocalDeviceKeyManager()
+                )
             } else {
                 composition = try LocalDeviceStorageComposition.production(fileManager: fileManager)
             }
             localStorage = composition
             source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget, localAuthority: composition.authority, localAttachmentVault: composition.attachments, localIdentity: identity)
         } catch {
+            print("[BudgetApp] local storage composition failed: \(error)")
             source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget,
                                              storageUnavailableMessage: "Local storage could not be opened. No changes will be accepted until device storage is available.")
         }
@@ -2184,6 +2204,38 @@ final class BudgetWorkspaceStore: ObservableObject {
         return try await LocalDeviceRestoreCoordinator.prepare(
             packageURL: packageURL,
             recoveryKey: try LocalDeviceBackupRecoveryKey(encoded: recoveryKey),
+            applicationDirectory: localStorageComposition.paths.rootDirectory.deletingLastPathComponent(),
+            keyManager: localStorageComposition.keyManager
+        )
+    }
+
+    func localDeviceRollbackGenerations() throws -> [LocalDeviceRollbackGeneration] {
+        guard let localStorageComposition else {
+            throw LocalStorageError.operationFailed("Rollback is available only for a Local Device budget")
+        }
+        return try LocalDeviceRestoreCoordinator.rollbackGenerations(
+            applicationDirectory: localStorageComposition.paths.rootDirectory.deletingLastPathComponent(),
+            keyManager: localStorageComposition.keyManager
+        )
+    }
+
+    func prepareLocalDeviceRollback(_ generation: LocalDeviceRollbackGeneration) throws -> LocalDevicePreparedRestore {
+        guard let localStorageComposition else {
+            throw LocalStorageError.operationFailed("Rollback is available only for a Local Device budget")
+        }
+        return try LocalDeviceRestoreCoordinator.prepareRollback(
+            generation,
+            applicationDirectory: localStorageComposition.paths.rootDirectory.deletingLastPathComponent(),
+            keyManager: localStorageComposition.keyManager
+        )
+    }
+
+    func deleteLocalDeviceRollback(_ generation: LocalDeviceRollbackGeneration) throws {
+        guard let localStorageComposition else {
+            throw LocalStorageError.operationFailed("Rollback is available only for a Local Device budget")
+        }
+        try LocalDeviceRestoreCoordinator.deleteRollback(
+            generation,
             applicationDirectory: localStorageComposition.paths.rootDirectory.deletingLastPathComponent(),
             keyManager: localStorageComposition.keyManager
         )
@@ -3126,6 +3178,9 @@ private struct LocalDeviceBackupRecoveryView: View {
     @State private var preparingRestore = false
     @State private var confirmingRestore = false
     @State private var preparedRestore: LocalDevicePreparedRestore?
+    @State private var rollbackGenerations: [LocalDeviceRollbackGeneration] = []
+    @State private var selectedRollback: LocalDeviceRollbackGeneration?
+    @State private var deletingRollback: LocalDeviceRollbackGeneration?
 
     var body: some View {
         Form {
@@ -3207,6 +3262,33 @@ private struct LocalDeviceBackupRecoveryView: View {
                 }
             }
 
+            Section("Rollback Generations") {
+                if rollbackGenerations.isEmpty {
+                    Text("A rollback generation appears here after a restored backup becomes active.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    ForEach(rollbackGenerations) { generation in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(generation.retainedAt.formatted(date: .abbreviated, time: .shortened),
+                                  systemImage: "clock.arrow.circlepath")
+                            Text(ByteCountFormatter.string(fromByteCount: generation.storedBytes, countStyle: .file))
+                                .font(.caption).foregroundStyle(.secondary)
+                            HStack {
+                                Button("Switch Back") { selectedRollback = generation }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityIdentifier("prepare-local-device-rollback")
+                                Spacer()
+                                Button("Delete", role: .destructive) { deletingRollback = generation }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("Delete rollback generation")
+                            }
+                        }
+                    }
+                }
+                Text("Switching back uses the same cold-launch cutover. The currently active version becomes a new rollback generation.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+
             if let errorMessage {
                 Section {
                     Label(errorMessage, systemImage: "exclamationmark.triangle")
@@ -3217,6 +3299,7 @@ private struct LocalDeviceBackupRecoveryView: View {
         }
         .navigationTitle("Backup & Recovery")
         .navigationBarTitleDisplayMode(.inline)
+        .task { refreshRollbacks() }
         .fileImporter(isPresented: $choosingRestore, allowedContentTypes: [.folder]) { result in
             switch result {
             case let .success(url):
@@ -3237,6 +3320,45 @@ private struct LocalDeviceBackupRecoveryView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Nothing changes now. After verification, the restored authority will replace the active one only when ClearPocket is fully closed and reopened. The current authority is retained for rollback.")
+        }
+        .confirmationDialog(
+            "Switch back to this retained version?",
+            isPresented: Binding(
+                get: { selectedRollback != nil },
+                set: { if !$0 { selectedRollback = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Prepare Switch Back") {
+                guard let generation = selectedRollback else { return }
+                do {
+                    preparedRestore = try store.prepareLocalDeviceRollback(generation)
+                    selectedRollback = nil
+                } catch { errorMessage = error.localizedDescription }
+            }
+            Button("Cancel", role: .cancel) { selectedRollback = nil }
+        } message: {
+            Text("The retained version becomes active only after ClearPocket is fully closed and reopened. Your current version will then be retained for rollback.")
+        }
+        .confirmationDialog(
+            "Permanently delete this rollback generation?",
+            isPresented: Binding(
+                get: { deletingRollback != nil },
+                set: { if !$0 { deletingRollback = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Rollback", role: .destructive) {
+                guard let generation = deletingRollback else { return }
+                do {
+                    try store.deleteLocalDeviceRollback(generation)
+                    deletingRollback = nil
+                    refreshRollbacks()
+                } catch { errorMessage = error.localizedDescription }
+            }
+            Button("Cancel", role: .cancel) { deletingRollback = nil }
+        } message: {
+            Text("This removes the retained database, encrypted attachments, and matching device-only key. It cannot be undone.")
         }
     }
 
@@ -3275,6 +3397,11 @@ private struct LocalDeviceBackupRecoveryView: View {
     private func readableDate(_ value: String) -> String {
         guard let date = ISO8601DateFormatter().date(from: value) else { return value }
         return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func refreshRollbacks() {
+        do { rollbackGenerations = try store.localDeviceRollbackGenerations() }
+        catch { errorMessage = error.localizedDescription }
     }
 }
 
