@@ -498,8 +498,11 @@ backup use explicit non-interactive manager operations. The first graphical back
 generation and recovery-key folders, confirms before adopting an existing identity, and delegates to
 the same verified capture/publication engine. Restore, transfer, update, scheduling, and Dropbox tools
 use the same command engine; recipient-encrypted restore is now graphical and still refuses anything
-but a new empty destination. Passphrase restore, transfer, update, scheduling, and Dropbox setup remain
-available through an advanced entry while their dedicated graphical forms are completed.
+but a new empty destination. Passphrase restore, portable import, update, scheduling, and Dropbox setup remain
+available through an advanced entry while their dedicated graphical forms are completed. Windows now
+also exposes Local Device transfer in the graphical manager: the package is selected as a read-only
+folder, masked recovery/owner credentials cross only a private standard-input pipe, and the existing
+authenticated converter still owns empty-destination initialization and observation verification.
 The Windows helper uses built-in PowerShell for cryptographic first-run configuration and selectable
 durable storage without Python, and now provides start/open, status, data-preserving stop, redacted
 diagnostics and log actions. It can register a limited current-user Task Scheduler entry that waits

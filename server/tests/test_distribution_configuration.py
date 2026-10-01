@@ -316,6 +316,8 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert 'Unregister-ScheduledTask -TaskName "ClearPocket Server"' in script
     assert '-Operation Start' in script
     assert "function Import-ClearPocketLocalDevice" in script
+    assert "function Invoke-ClearPocketComposeWithPrivateInput" in script
+    assert '$PrivateInput | & docker compose --env-file $environmentFile' in script
     assert "function Import-ClearPocketPortableArchive" in script
     assert 'Type IMPORT to stop this server and verify the transfer' in script
     assert 'Test-Path -LiteralPath (Join-Path $package.FullName "manifest.json") -PathType Leaf' in script
@@ -324,6 +326,7 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert '"up", "-d", "database"' in script
     assert ':/import/package:ro' in script
     assert "scripts/local_device_transfer.py /tmp/local-device-package --server-environment" in script
+    assert "--server-credentials-stdin" in script
     assert "The API remains stopped" in script
     assert '"8" { Import-ClearPocketLocalDevice }' in script
     assert '"15" { Import-ClearPocketPortableArchive }' in script
@@ -367,6 +370,18 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "BUDGET_APP_JWT_SECRET" not in script.split("function Write-ClearPocketDiagnostics", 1)[1]
     assert "down -v" not in script
     assert "docker volume rm" not in script
+
+    manager = (ROOT / "distribution" / "server" / "manager-windows.ps1").read_text()
+    assert 'Content="Move iPhone Budget"' in manager
+    assert "Read-LocalDeviceImportCredentials" in manager
+    assert "UseSystemPasswordChar" in manager
+    assert '$info.RedirectStandardInput = $null -ne $PrivateInput' in manager
+    assert '$process.StandardInput.Write($PrivateInput)' in manager
+    assert 'CLEARPOCKET_LOCAL_IMPORT_PACKAGE' in manager
+    assert 'CLEARPOCKET_LOCAL_IMPORT_CONFIRMATION = "IMPORT"' in manager
+    assert 'Invoke-ManagerOperation "ImportLocal"' in manager
+    assert "CLEARPOCKET_LOCAL_IMPORT_RECOVERY" not in manager
+    assert "CLEARPOCKET_LOCAL_IMPORT_PASSWORD" not in manager
 
 
 def test_windows_per_user_installer_preserves_authority_and_publishes_only_allowlisted_program_files():
@@ -434,7 +449,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert '$info.RedirectStandardOutput = $true' in manager
     assert '$info.RedirectStandardError = $true' in manager
     assert "Remove-Item" not in manager
-    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore")' in engine
+    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal")' in engine
     assert '$Operation -notin @("Configure", "Interactive")' in engine
     assert '$env:CLEARPOCKET_SETUP_STORAGE_ROOT' in engine
     assert '$env:CLEARPOCKET_SETUP_PUBLIC_HOST' in engine
@@ -444,7 +459,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
         "Move-Item -LiteralPath $temporary -Destination $environmentFile"
     )
     noninteractive = engine.split('if ($Operation -ne "Interactive")', 1)[1]
-    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore"):
+    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal"):
         assert f'"{operation}"' in noninteractive
     assert 'Invoke-ClearPocketCompose @("stop")' in noninteractive
     assert 'Operation = "Manager"' in noninteractive
@@ -453,6 +468,9 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert '-ArchivePath $env:CLEARPOCKET_RESTORE_ARCHIVE' in noninteractive
     assert '-IdentityPath $env:CLEARPOCKET_RESTORE_IDENTITY' in noninteractive
     assert '-Confirmation $env:CLEARPOCKET_RESTORE_CONFIRMATION' in noninteractive
+    assert '[Console]::In.ReadToEnd()' in noninteractive
+    assert '-PackagePath $env:CLEARPOCKET_LOCAL_IMPORT_PACKAGE' in noninteractive
+    assert '-CredentialsInput $privateInput' in noninteractive
     assert "down -v" not in noninteractive
     assert "docker volume rm" not in noninteractive
 

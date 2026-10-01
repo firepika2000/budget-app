@@ -1429,8 +1429,13 @@ publication engine remains singular. Restore, phone transfer, portable import, s
 and Dropbox configuration remain singular too; recipient-encrypted restore is now available in the
 graphical manager with native file selection and explicit confirmation, while the canonical two-stage
 empty-destination checks remain mandatory. Passphrase recovery remains terminal-bound so its secret
-continues to go directly to `age`; phone transfer, portable import, scheduling, update, and Dropbox
+continues to go directly to `age`; portable import, scheduling, update, and Dropbox
 configuration remain under a clearly labeled advanced entry until their graphical forms are implemented.
+The iPhone Local Device transfer has also moved into the graphical manager. Masked recovery-key and
+new-owner password fields are sent to the container converter through redirected standard input only;
+they are absent from process arguments, environment variables, temporary files, output, and
+diagnostics. The exported package remains a read-only mount, the phone authority remains intact, and
+the server API still starts only after canonical conversion and financial/attachment verification.
 
 All **58 distribution contract tests pass**, including the new graphical composition, hidden-process
 output/error handling, immutable-image-before-configuration ordering, installer allowlist, and

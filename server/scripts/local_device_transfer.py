@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 import shutil
 import sqlite3
 import struct
+import sys
 import tempfile
 from typing import Any
 
@@ -310,13 +311,32 @@ def main(arguments: list[str] | None = None) -> int:
         "--server-environment", action="store_true",
         help="initialize the new empty authority configured by BUDGET_APP_* variables",
     )
+    parser.add_argument(
+        "--server-credentials-stdin", action="store_true",
+        help="read recovery key, owner email, password, and confirmation from private standard input",
+    )
     args = parser.parse_args(arguments)
     try:
-        recovery_key = getpass.getpass("Local Device backup recovery key: ")
+        if args.server_credentials_stdin:
+            if not args.server_environment:
+                raise LocalDeviceTransferError(
+                    "Private server credential input requires --server-environment"
+                )
+            values = []
+            for label in ("recovery key", "owner email", "owner password", "password confirmation"):
+                value = sys.stdin.readline()
+                if value == "":
+                    raise LocalDeviceTransferError(f"Private {label} input is missing")
+                values.append(value.rstrip("\r\n"))
+            recovery_key, owner_email, password, confirmation = values
+            owner_email = owner_email.strip()
+        else:
+            recovery_key = getpass.getpass("Local Device backup recovery key: ")
         if args.server_environment:
-            owner_email = input("New server owner email: ").strip()
-            password = getpass.getpass("New server owner password: ")
-            confirmation = getpass.getpass("Confirm new server owner password: ")
+            if not args.server_credentials_stdin:
+                owner_email = input("New server owner email: ").strip()
+                password = getpass.getpass("New server owner password: ")
+                confirmation = getpass.getpass("Confirm new server owner password: ")
             if password != confirmation:
                 raise LocalDeviceTransferError("Owner password confirmation does not match")
             manifest = import_local_device_backup_into_server(

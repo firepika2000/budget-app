@@ -353,6 +353,11 @@ verify-before-mutate recovery engine; populated database or attachment destinati
 Passphrase-encrypted generations remain in the advanced terminal flow because `age` intentionally
 reads that secret from a real terminal. `start-windows.cmd` remains the advanced manager used by
 **Backup, Restore & Advanced** while the remaining migration and credential forms are brought into the graphical surface.
+The graphical **Move iPhone Budget** action selects an exported `.clearpocketbackup` folder and uses
+masked recovery-key/password fields to initialize an empty server. Those private values travel only
+over redirected standard input to the version-matched converter—not in command arguments,
+environment variables, files, logs, or diagnostics. The package remains read-only, the phone authority
+is retained, and the API starts only after the converter's financial and attachment checks pass.
 It can also register or remove a limited current-user Task Scheduler entry that waits for Docker
 Desktop and starts the server after sign-in; the task contains only the manager path, never private
 configuration or credentials. The same menu can initialize a new empty Windows server from an iPhone

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore")]
+    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal")]
     [string] $Operation = "Interactive"
 )
 
@@ -210,6 +210,17 @@ function Invoke-ClearPocketCompose([string[]] $ComposeArguments) {
     }
 }
 
+function Invoke-ClearPocketComposeWithPrivateInput([string] $PrivateInput, [string[]] $ComposeArguments) {
+    try {
+        $PrivateInput | & docker compose --env-file $environmentFile @ComposeArguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "Docker Compose private-input operation failed. Choose Diagnostics for support information."
+        }
+    } finally {
+        Remove-Variable PrivateInput -ErrorAction SilentlyContinue
+    }
+}
+
 function Test-ClearPocketHealth {
     try {
         $response = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 3
@@ -351,12 +362,19 @@ function Disable-ClearPocketDropboxBackup {
     Write-Host "Dropbox backup publication disabled. Existing local and remote generations were preserved."
 }
 
-function Import-ClearPocketLocalDevice {
+function Import-ClearPocketLocalDevice(
+    [string] $PackagePath = "",
+    [string] $Confirmation = "",
+    [string] $CredentialsInput = ""
+) {
     Write-Host ""
     Write-Host "Move an iPhone Local Device budget to this server"
     Write-Host "This initializes a new, empty server from an authenticated .clearpocketbackup folder."
     Write-Host "It does not erase the iPhone copy. Existing server data is never merged or replaced."
-    $enteredPath = Read-Host "Full path to the .clearpocketbackup folder"
+    $enteredPath = $PackagePath
+    if ([string]::IsNullOrWhiteSpace($enteredPath)) {
+        $enteredPath = Read-Host "Full path to the .clearpocketbackup folder"
+    }
     if ([string]::IsNullOrWhiteSpace($enteredPath)) {
         throw "No Local Device backup folder was selected."
     }
@@ -371,8 +389,11 @@ function Import-ClearPocketLocalDevice {
     if (-not (Test-Path -LiteralPath (Join-Path $package.FullName "manifest.json") -PathType Leaf)) {
         throw "The selected folder is not a complete Local Device backup package."
     }
-    $confirmation = Read-Host "Type IMPORT to stop this server and verify the transfer"
-    if ($confirmation -cne "IMPORT") {
+    $confirmationValue = $Confirmation
+    if ([string]::IsNullOrWhiteSpace($confirmationValue)) {
+        $confirmationValue = Read-Host "Type IMPORT to stop this server and verify the transfer"
+    }
+    if ($confirmationValue -cne "IMPORT") {
         Write-Host "Import cancelled. The server and iPhone data were not changed."
         return
     }
@@ -381,15 +402,18 @@ function Import-ClearPocketLocalDevice {
     Invoke-ClearPocketCompose @("up", "-d", "database")
     $mount = "$($package.FullName):/import/package:ro"
     try {
-        Invoke-ClearPocketCompose @(
-            "run", "--rm", "--no-deps", "--user", "root",
-            "--volume", $mount,
-            "api", "sh", "-c",
-            "cp -R /import/package /tmp/local-device-package && " +
+        $arguments = @("run", "--rm", "--no-deps", "--user", "root", "--volume", $mount)
+        $command = "cp -R /import/package /tmp/local-device-package && " +
             "chown -R budget:budget /tmp/local-device-package && " +
             "exec su -s /bin/sh budget -c 'alembic upgrade head && " +
-            "python scripts/local_device_transfer.py /tmp/local-device-package --server-environment'"
-        )
+            "python scripts/local_device_transfer.py /tmp/local-device-package --server-environment"
+        if ([string]::IsNullOrEmpty($CredentialsInput)) {
+            $arguments += @("api", "sh", "-c", $command + "'")
+            Invoke-ClearPocketCompose $arguments
+        } else {
+            $arguments += @("-T", "api", "sh", "-c", $command + " --server-credentials-stdin'")
+            Invoke-ClearPocketComposeWithPrivateInput $CredentialsInput $arguments
+        }
     } catch {
         Write-Warning "Import failed. The API remains stopped so a partial authority is never served."
         Write-Warning "The source iPhone backup was mounted read-only and was not changed."
@@ -615,6 +639,21 @@ if ($Operation -ne "Interactive") {
                 -IdentityPath $env:CLEARPOCKET_RESTORE_IDENTITY `
                 -Confirmation $env:CLEARPOCKET_RESTORE_CONFIRMATION
             if (-not $?) { throw "Windows recovery did not complete." }
+        }
+        "ImportLocal" {
+            $privateInput = [Console]::In.ReadToEnd()
+            if ([string]::IsNullOrWhiteSpace($privateInput) -or $privateInput.Length -gt 16384 -or
+                $privateInput.Contains([char] 0)) {
+                throw "Private Local Device transfer credentials are missing or invalid."
+            }
+            try {
+                Import-ClearPocketLocalDevice `
+                    -PackagePath $env:CLEARPOCKET_LOCAL_IMPORT_PACKAGE `
+                    -Confirmation $env:CLEARPOCKET_LOCAL_IMPORT_CONFIRMATION `
+                    -CredentialsInput $privateInput
+            } finally {
+                Remove-Variable privateInput -ErrorAction SilentlyContinue
+            }
         }
         default { throw "Unsupported non-interactive manager operation." }
     }

@@ -57,6 +57,7 @@ if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
           <Button Name="StopButton" Content="Stop Safely" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="BackupButton" Content="Create Encrypted Backup" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="RestoreButton" Content="Restore Empty Server" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="ImportLocalButton" Content="Move iPhone Budget" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="DiagnosticsButton" Content="Create Diagnostics" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="LogsButton" Content="Recent Logs" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="AdvancedButton" Content="Backup, Restore &amp; Advanced…" Padding="18,9" Margin="0,0,10,10"/>
@@ -86,7 +87,7 @@ $storageBox = $window.FindName("StorageBox")
 $hostBox = $window.FindName("HostBox")
 $outputBox = $window.FindName("OutputBox")
 $stateText = $window.FindName("StateText")
-$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
+$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "ImportLocalButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
 $actionButtons = @{}
 foreach ($name in $actionNames) { $actionButtons[$name] = $window.FindName($name) }
 
@@ -123,7 +124,74 @@ function Select-ClearPocketFile([string] $Title, [string] $Filter) {
     return $null
 }
 
-function Invoke-ManagerOperation([string] $Operation, [hashtable] $Environment = @{}) {
+function Read-LocalDeviceImportCredentials {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Move iPhone Budget"
+    $form.Width = 520
+    $form.Height = 350
+    $form.StartPosition = "CenterParent"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $labels = @("Backup recovery key", "New server owner email", "New server owner password", "Confirm password")
+    $boxes = @()
+    for ($index = 0; $index -lt $labels.Count; $index++) {
+        $label = New-Object System.Windows.Forms.Label
+        $label.Text = $labels[$index]
+        $label.Left = 24
+        $label.Top = 24 + ($index * 58)
+        $label.Width = 440
+        $form.Controls.Add($label) | Out-Null
+        $box = New-Object System.Windows.Forms.TextBox
+        $box.Left = 24
+        $box.Top = 43 + ($index * 58)
+        $box.Width = 450
+        if ($index -ne 1) { $box.UseSystemPasswordChar = $true }
+        $form.Controls.Add($box) | Out-Null
+        $boxes += $box
+    }
+    $ok = New-Object System.Windows.Forms.Button
+    $ok.Text = "Continue"
+    $ok.Left = 282
+    $ok.Top = 270
+    $ok.Width = 92
+    $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $cancel = New-Object System.Windows.Forms.Button
+    $cancel.Text = "Cancel"
+    $cancel.Left = 382
+    $cancel.Top = 270
+    $cancel.Width = 92
+    $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.Add($ok) | Out-Null
+    $form.Controls.Add($cancel) | Out-Null
+    $form.AcceptButton = $ok
+    $form.CancelButton = $cancel
+    try {
+        if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
+        if ($boxes | Where-Object { [string]::IsNullOrWhiteSpace($_.Text) }) {
+            [System.Windows.MessageBox]::Show("All transfer fields are required.", "Move iPhone Budget", "OK", "Warning") | Out-Null
+            return $null
+        }
+        if ($boxes[2].Text -cne $boxes[3].Text) {
+            [System.Windows.MessageBox]::Show("The owner passwords do not match.", "Move iPhone Budget", "OK", "Warning") | Out-Null
+            return $null
+        }
+        return [pscustomobject]@{
+            RecoveryKey = $boxes[0].Text
+            OwnerEmail = $boxes[1].Text.Trim()
+            Password = $boxes[2].Text
+        }
+    } finally {
+        foreach ($box in $boxes) { $box.Text = "" }
+        $form.Dispose()
+    }
+}
+
+function Invoke-ManagerOperation(
+    [string] $Operation,
+    [hashtable] $Environment = @{},
+    [string] $PrivateInput = $null
+) {
     Set-ActionsEnabled $false
     $stateText.Text = "$Operation in progress…"
     $outputBox.Text = ""
@@ -136,6 +204,7 @@ function Invoke-ManagerOperation([string] $Operation, [hashtable] $Environment =
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    $info.RedirectStandardInput = $null -ne $PrivateInput
     foreach ($entry in $Environment.GetEnumerator()) { $info.EnvironmentVariables[$entry.Key] = [string] $entry.Value }
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $info
@@ -172,6 +241,11 @@ function Invoke-ManagerOperation([string] $Operation, [hashtable] $Environment =
     }.GetNewClosure())
     try {
         if (-not $process.Start()) { throw "The server manager process could not start." }
+        if ($null -ne $PrivateInput) {
+            $process.StandardInput.Write($PrivateInput)
+            $process.StandardInput.Close()
+            $PrivateInput = $null
+        }
         $process.BeginOutputReadLine()
         $process.BeginErrorReadLine()
     } catch {
@@ -240,6 +314,27 @@ $actionButtons["RestoreButton"].Add_Click({
         CLEARPOCKET_RESTORE_IDENTITY = $identity
         CLEARPOCKET_RESTORE_CONFIRMATION = "RESTORE"
     }
+})
+$actionButtons["ImportLocalButton"].Add_Click({
+    $package = Select-ClearPocketFolder "Choose the exported .clearpocketbackup folder" ([Environment]::GetFolderPath("MyDocuments"))
+    if ($null -eq $package) { return }
+    $credentials = Read-LocalDeviceImportCredentials
+    if ($null -eq $credentials) { return }
+    $decision = [System.Windows.MessageBox]::Show(
+        "This verifies the iPhone backup and initializes only an empty server. The iPhone copy is retained and existing server data is never merged or replaced. Continue?",
+        "Move iPhone budget?", "YesNo", "Warning"
+    )
+    if ($decision -ne [System.Windows.MessageBoxResult]::Yes) { return }
+    $privatePayload = @(
+        $credentials.RecoveryKey, $credentials.OwnerEmail,
+        $credentials.Password, $credentials.Password
+    ) -join "`n"
+    Invoke-ManagerOperation "ImportLocal" @{
+        CLEARPOCKET_LOCAL_IMPORT_PACKAGE = $package
+        CLEARPOCKET_LOCAL_IMPORT_CONFIRMATION = "IMPORT"
+    } ($privatePayload + "`n")
+    $privatePayload = $null
+    $credentials = $null
 })
 $actionButtons["DiagnosticsButton"].Add_Click({ Invoke-ManagerOperation "Diagnostics" })
 $actionButtons["LogsButton"].Add_Click({ Invoke-ManagerOperation "Logs" })

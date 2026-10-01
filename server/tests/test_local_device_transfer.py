@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import io
 import json
 from pathlib import Path
 import sqlite3
@@ -10,6 +11,7 @@ import struct
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import pytest
+import scripts.local_device_transfer as transfer
 
 from scripts.local_device_transfer import (
     canonical_json, LocalDeviceTransferError, LOCAL_APPLICATION_ID,
@@ -129,3 +131,41 @@ def test_authenticated_local_device_manifest_still_rejects_unsafe_restore_path(t
     with pytest.raises(LocalDeviceTransferError, match="restore path"):
         stage_local_device_backup(package, tmp_path / "unsafe", _encoded(key))
     assert not (tmp_path / "unsafe").exists()
+
+
+def test_server_import_accepts_private_credentials_on_stdin_without_echo(monkeypatch, tmp_path, capsys):
+    captured = {}
+
+    def fake_import(package, recovery_key, owner_email, owner_password):
+        captured.update(
+            package=package, recovery_key=recovery_key,
+            owner_email=owner_email, owner_password=owner_password,
+        )
+        return {"budget_id": "budget"}
+
+    monkeypatch.setattr(transfer, "import_local_device_backup_into_server", fake_import)
+    monkeypatch.setattr(
+        transfer.sys, "stdin",
+        io.StringIO("private-recovery\nowner@example.com\nprivate-password\nprivate-password\n"),
+    )
+    package = tmp_path / "phone.clearpocketbackup"
+    assert transfer.main([
+        str(package), "--server-environment", "--server-credentials-stdin",
+    ]) == 0
+    assert captured == {
+        "package": package,
+        "recovery_key": "private-recovery",
+        "owner_email": "owner@example.com",
+        "owner_password": "private-password",
+    }
+    output = capsys.readouterr()
+    assert "private-recovery" not in output.out + output.err
+    assert "private-password" not in output.out + output.err
+
+
+def test_private_stdin_mode_requires_complete_matching_credentials(monkeypatch, tmp_path):
+    monkeypatch.setattr(transfer.sys, "stdin", io.StringIO("key\nowner@example.com\none\ntwo\n"))
+    assert transfer.main([
+        str(tmp_path / "phone.clearpocketbackup"),
+        "--server-environment", "--server-credentials-stdin",
+    ]) == 1
