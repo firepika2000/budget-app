@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -64,3 +65,36 @@ class AttachmentStorage:
             (self.root / storage_key).unlink()
         except FileNotFoundError:
             pass
+
+    def quarantine(self, storage_keys: list[str], operation_id: str) -> Path:
+        """Atomically hide budget objects before the matching database delete commits."""
+        if not operation_id or Path(operation_id).name != operation_id:
+            raise ValueError("Attachment deletion operation is invalid")
+        quarantine = self.root / f".budget-delete-{operation_id}"
+        quarantine.mkdir(mode=0o700)
+        try:
+            for storage_key in storage_keys:
+                if not storage_key or Path(storage_key).name != storage_key:
+                    raise ValueError("Attachment storage key is invalid")
+                source = self.root / storage_key
+                if source.exists():
+                    source.replace(quarantine / storage_key)
+        except Exception:
+            self.restore_quarantine(quarantine)
+            raise
+        return quarantine
+
+    def restore_quarantine(self, quarantine: Path) -> None:
+        if quarantine.parent != self.root or not quarantine.name.startswith(".budget-delete-"):
+            raise ValueError("Attachment deletion quarantine is invalid")
+        if not quarantine.exists():
+            return
+        for item in quarantine.iterdir():
+            item.replace(self.root / item.name)
+        quarantine.rmdir()
+
+    def purge_quarantine(self, quarantine: Path) -> None:
+        if quarantine.parent != self.root or not quarantine.name.startswith(".budget-delete-"):
+            raise ValueError("Attachment deletion quarantine is invalid")
+        if quarantine.exists():
+            shutil.rmtree(quarantine)

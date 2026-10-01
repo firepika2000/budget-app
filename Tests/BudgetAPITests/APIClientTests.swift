@@ -53,6 +53,24 @@ final class APIClientTests: XCTestCase {
         }
     }
 
+    func testBudgetDeletionSendsExactTypedConfirmation() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "DELETE")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            let body = try JSONSerialization.jsonObject(with: requestBody(request)) as! [String: Any]
+            XCTAssertEqual(body as NSDictionary, ["confirmation_name": "My Budget"] as NSDictionary)
+            return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        let client = try APIClient(
+            baseURL: URL(string: "https://budget.example.com")!,
+            session: URLSession(configuration: configuration)
+        )
+        try await client.deleteBudget(budgetID: "b1", confirmationName: "My Budget", token: "current")
+    }
+
     func testCashRolloverPolicyContractUsesExactVersionedSelectionAndBoundedHistory() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

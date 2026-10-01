@@ -248,7 +248,7 @@ final class AppSessionRefreshTests: XCTestCase {
 
         XCTAssertEqual(session.sourceMode, .localDevice)
         XCTAssertEqual(session.connectionStatus, .localDevice)
-        XCTAssertEqual(session.route, .workspace(.localDevice))
+        XCTAssertEqual(session.route, .workspace(.localDevice(revision: 0)))
         XCTAssertNil(session.serverURL)
         XCTAssertNil(session.token)
     }
@@ -907,7 +907,7 @@ final class AppSessionRefreshTests: XCTestCase {
 
         XCTAssertEqual(session.sourceMode, .localDevice)
         XCTAssertEqual(session.connectionStatus, .localDevice)
-        XCTAssertEqual(session.route, .workspace(.localDevice))
+        XCTAssertEqual(session.route, .workspace(.localDevice(revision: 0)))
         XCTAssertEqual(session.token, "A1")
         XCTAssertEqual(session.refreshToken, "R1")
         XCTAssertTrue(session.canReturnToSavedServer)
@@ -934,7 +934,7 @@ final class AppSessionRefreshTests: XCTestCase {
         await session.returnToSavedServer(expectedBudgetID: "b1")
 
         XCTAssertEqual(session.sourceMode, .localDevice)
-        XCTAssertEqual(session.route, .workspace(.localDevice))
+        XCTAssertEqual(session.route, .workspace(.localDevice(revision: 0)))
         XCTAssertEqual(session.token, "A2", "Rotated credentials must remain durable for a later retry")
         XCTAssertEqual(session.refreshToken, "R2")
         XCTAssertTrue(session.errorMessage?.contains("no longer exposes this budget") == true)

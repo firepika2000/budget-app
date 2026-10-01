@@ -88,6 +88,13 @@ public actor LocalDatabase {
         if let handle { sqlite3_close_v2(handle) }
     }
 
+    public func close() {
+        if let handle {
+            sqlite3_close_v2(handle)
+            self.handle = nil
+        }
+    }
+
     public func execute(_ statement: LocalSQLStatement) throws {
         try Self.execute(statement.sql, values: statement.values, on: requireHandle())
     }

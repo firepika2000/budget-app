@@ -201,6 +201,13 @@ public struct APIClient {
         let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/debt-terms", method: "DELETE", token: token)
     }
 
+    public func deleteBudget(budgetID: String, confirmationName: String, token: String) async throws {
+        let _: EmptyResponse = try await send(
+            path: "api/v1/budgets/\(budgetID)", method: "DELETE", token: token,
+            body: APIBudgetDeleteConfirmation(confirmationName: confirmationName)
+        )
+    }
+
     public func categoryGroups(budgetID: String, token: String) async throws -> [APICategoryGroup] {
         try await send(path: "api/v1/budgets/\(budgetID)/category-groups", token: token)
     }

@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 from app.models import Budget, BudgetGrant, Household, Membership, User
 from app.security import create_access_token, hash_password
@@ -55,6 +56,41 @@ def test_budget_creation_can_explicitly_skip_starter_plan(client, owner_token, s
     assert groups.status_code == categories.status_code == 200
     assert groups.json() == []
     assert categories.json() == []
+
+
+def test_owner_can_confirm_and_completely_delete_one_populated_budget(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory, name="Delete Me")
+    retained = create_budget(client, owner_token, session_factory, name="Keep Me")
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    transaction = client.post(
+        f"/api/v1/budgets/{budget['id']}/transactions",
+        headers=auth(owner_token),
+        json={"account_id": account["id"], "category_id": category["id"], "amount_minor": -1234,
+              "occurred_on": "2026-10-01", "payee_name": "Delete Test"},
+    )
+    assert transaction.status_code == 201, transaction.text
+    attachment = client.post(
+        f"/api/v1/budgets/{budget['id']}/transactions/{transaction.json()['id']}/attachments",
+        headers={**auth(owner_token), "X-Attachment-Filename": "receipt.jpg",
+                 "X-Attachment-Content-Type": "image/jpeg", "Content-Type": "application/octet-stream"},
+        content=b"\xff\xd8\xfftest-receipt",
+    )
+    assert attachment.status_code == 201, attachment.text
+    attachment_root = client.app.state.settings.attachment_storage_path
+    assert list(Path(attachment_root).iterdir())
+
+    viewer_token = add_member(session_factory, client, "view", budget["id"])
+    assert client.request("DELETE", f"/api/v1/budgets/{budget['id']}", headers=auth(viewer_token),
+                          json={"confirmation_name": "Delete Me"}).status_code == 404
+    assert client.request("DELETE", f"/api/v1/budgets/{budget['id']}", headers=auth(owner_token),
+                          json={"confirmation_name": "delete me"}).status_code == 422
+
+    deleted = client.request("DELETE", f"/api/v1/budgets/{budget['id']}", headers=auth(owner_token),
+                             json={"confirmation_name": "Delete Me"})
+    assert deleted.status_code == 204, deleted.text
+    listed = client.get("/api/v1/budgets", headers=auth(owner_token))
+    assert [item["id"] for item in listed.json()] == [retained["id"]]
+    assert list(Path(attachment_root).iterdir()) == []
 
 
 def create_budget_structure(client, owner_token, budget_id):

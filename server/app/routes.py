@@ -28,6 +28,7 @@ from .models import (
     BudgetGrant,
     CapabilityGrant,
     Category,
+    ImportBatch,
     Household,
     HouseholdAccessEvent,
     HouseholdRole,
@@ -36,6 +37,7 @@ from .models import (
     SetupState,
     PairingCode,
     RefreshSession,
+    TransactionAttachment,
     User,
     now_utc,
 )
@@ -45,6 +47,7 @@ from .schemas import (
     BootstrapRequest,
     BootstrapStatusResponse,
     BudgetCreate,
+    BudgetDeleteConfirmation,
     BudgetResponse,
     GrantResponse,
     GrantUpsert,
@@ -58,6 +61,7 @@ from .schemas import (
 from .security import hash_password, verify_password
 from .sessions import issue_session, revoke_session, rotate_session
 from .starter_plan import install_starter_plan
+from .attachment_storage import AttachmentStorage
 
 
 router = APIRouter(prefix="/api/v1")
@@ -331,6 +335,45 @@ def get_budget(
     if budget is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
     return budget_response(db, user, budget)
+
+
+@router.delete("/budgets/{budget_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_budget(
+    request: Request,
+    budget_id: str,
+    body: BudgetDeleteConfirmation,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    budget = db.get(Budget, budget_id)
+    if budget is None or not is_household_owner(db, user, budget.household_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
+    if not secrets.compare_digest(body.confirmation_name, budget.name):
+        raise HTTPException(status_code=422, detail="Type the exact budget name to confirm deletion")
+
+    settings = request.app.state.settings
+    storage = AttachmentStorage(
+        settings.attachment_storage_path,
+        settings.jwt_secret,
+        settings.attachment_encryption_key,
+    )
+    storage_keys = list(db.scalars(select(TransactionAttachment.storage_key).where(
+        TransactionAttachment.budget_id == budget_id
+    )))
+    quarantine = storage.quarantine(storage_keys, secrets.token_hex(16))
+    try:
+        # Import review rows deliberately use RESTRICT so normal ledger deletion cannot erase a
+        # pending import. Whole-budget deletion is the explicit exception and removes them first.
+        db.execute(delete(ImportBatch).where(ImportBatch.budget_id == budget_id))
+        # Break the account/payment-category cycle before the database cascades all budget rows.
+        db.execute(update(Account).where(Account.budget_id == budget_id).values(payment_category_id=None))
+        db.delete(budget)
+        db.commit()
+    except Exception:
+        db.rollback()
+        storage.restore_quarantine(quarantine)
+        raise
+    storage.purge_quarantine(quarantine)
 
 
 def budget_response(db: Session, user: User, budget: Budget) -> dict:

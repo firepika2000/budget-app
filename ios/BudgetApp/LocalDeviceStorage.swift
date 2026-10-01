@@ -61,6 +61,68 @@ struct LocalDeviceStorageComposition {
     }
 }
 
+enum LocalDeviceEraseCoordinator {
+    /// Irreversibly removes the active authority, pending imports/restores, retained rollback
+    /// generations, encrypted attachment objects, and every matching device-only key. Exported
+    /// Files/Dropbox packages remain external artifacts and are intentionally outside this sandbox.
+    @MainActor
+    static func erase(_ composition: LocalDeviceStorageComposition, fileManager: FileManager = .default) async throws {
+        await composition.operationGate.acquire()
+        var stagedEntries: [(original: URL, staged: URL)] = []
+        do {
+            await composition.authority.close()
+            let applicationDirectory = composition.paths.rootDirectory.deletingLastPathComponent()
+            let quarantineDirectory = applicationDirectory
+                .appendingPathComponent(".LocalDevice-Erase-\(UUID().uuidString)", isDirectory: true)
+            let entries = try fileManager.contentsOfDirectory(
+                at: applicationDirectory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ) + (try fileManager.contentsOfDirectory(
+                at: applicationDirectory,
+                includingPropertiesForKeys: nil,
+                options: []
+            ).filter { $0.lastPathComponent.hasPrefix(".") })
+            let uniqueEntries = entries.reduce(into: [String: URL]()) { result, entry in
+                result[entry.standardizedFileURL.path] = entry
+            }.values
+            let rollbackIdentifiers = uniqueEntries.map(\.lastPathComponent).filter { $0.hasPrefix("LocalDevice-Rollback-") }
+            let eraseEntries = uniqueEntries.filter { entry in
+                let name = entry.lastPathComponent
+                return name == "LocalDevice"
+                        || name == "pending-local-restore.json"
+                        || name.hasPrefix("LocalDevice-Rollback-")
+                        || name.hasPrefix(".LocalDevice-Restore-")
+                        || name.hasPrefix(".LocalDevice-Transfer-")
+            }
+            if !eraseEntries.isEmpty {
+                try fileManager.createDirectory(at: quarantineDirectory, withIntermediateDirectories: false)
+            }
+            do {
+                for entry in eraseEntries {
+                    let staged = quarantineDirectory.appendingPathComponent(entry.lastPathComponent)
+                    try fileManager.moveItem(at: entry, to: staged)
+                    stagedEntries.append((entry, staged))
+                }
+            } catch {
+                for item in stagedEntries.reversed() where fileManager.fileExists(atPath: item.staged.path) {
+                    try? fileManager.moveItem(at: item.staged, to: item.original)
+                }
+                try? fileManager.removeItem(at: quarantineDirectory)
+                throw error
+            }
+            composition.keyManager.deleteLocalAuthorityKeys(rollbackIdentifiers: rollbackIdentifiers)
+            if fileManager.fileExists(atPath: quarantineDirectory.path) {
+                try fileManager.removeItem(at: quarantineDirectory)
+            }
+            await composition.operationGate.release()
+        } catch {
+            await composition.operationGate.release()
+            throw error
+        }
+    }
+}
+
 struct LocalDeviceBackupExport: Equatable {
     let packageURL: URL
     let recoveryKey: String

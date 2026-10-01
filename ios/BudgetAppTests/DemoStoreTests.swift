@@ -2129,6 +2129,38 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testConfirmedLocalEraseRemovesAuthorityAttachmentsKeysAndReopensFreshStarterPlan() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-device-erase-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let secrets = InMemorySecretDataStore()
+        let keyManager = LocalDeviceKeyManager(store: secrets)
+        let composition = try LocalDeviceStorageComposition(applicationSupportDirectory: root, keyManager: keyManager)
+        let identity = LocalAuthorityIdentity(
+            householdID: "local-device-household", householdName: "My Household",
+            ownerUserID: "local-device-owner", ownerDisplayName: "You",
+            budgetID: "local-device-budget", budgetName: "My Budget", currencyCode: "USD"
+        )
+        try await composition.authority.bootstrap(identity, createdAt: "2026-10-01T12:00:00Z", installStarterPlan: true)
+        _ = try await composition.attachments.store(Data("private receipt".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: composition.paths.database.path))
+        XCTAssertNotNil(secrets.readData(account: LocalDeviceKeyManager.attachmentKeyAccount))
+
+        try await LocalDeviceEraseCoordinator.erase(composition)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: composition.paths.rootDirectory.path))
+        XCTAssertNil(secrets.readData(account: LocalDeviceKeyManager.attachmentKeyAccount))
+        XCTAssertNil(secrets.readData(account: LocalDeviceKeyManager.dropboxBackupRecoveryKeyAccount))
+
+        let reopened = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: root, keyManager: keyManager)
+        await reopened.refresh()
+        XCTAssertNil(reopened.errorMessage)
+        XCTAssertEqual(reopened.groups.count, 4)
+        XCTAssertEqual(reopened.categories.count, 11)
+        XCTAssertTrue(reopened.accounts.isEmpty)
+        XCTAssertTrue(reopened.transactions.isEmpty)
+    }
+
+    @MainActor
     func testLocalAuthorityPersistsCanonicalCreditReserveAttributionAndRejectsTampering() throws {
         let identity = LocalAuthorityIdentity(
             householdID: "local-household", householdName: "Local Household",

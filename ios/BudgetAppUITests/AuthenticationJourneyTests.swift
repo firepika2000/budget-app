@@ -24,6 +24,37 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertFalse(app.buttons["Household and access"].exists)
     }
 
+    func testOwnerCanConfirmLocalBudgetDeletionAndReturnsToFreshStarterBudget() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--local", "--skip-guided-onboarding"]
+        app.launchEnvironment["BUDGETAPP_UI_TEST_LOCAL_ID"] = UUID().uuidString
+        app.launch()
+
+        XCTAssertTrue(app.buttons["profile-settings-button"].waitForExistence(timeout: 8))
+        app.buttons["profile-settings-button"].tap()
+        let delete = app.buttons["delete-budget-action"]
+        for _ in 0..<8 where !delete.isHittable { app.swipeUp() }
+        XCTAssertTrue(delete.waitForExistence(timeout: 5))
+        delete.tap()
+
+        XCTAssertTrue(app.navigationBars["Delete Budget"].waitForExistence(timeout: 5))
+        let confirm = app.buttons["confirm-delete-budget"]
+        XCTAssertFalse(confirm.isEnabled)
+        let name = app.textFields["delete-budget-confirmation-name"]
+        name.tap()
+        name.typeText("My Budget")
+        XCTAssertTrue(confirm.isEnabled)
+        confirm.tap()
+
+        XCTAssertTrue(app.tabBars.buttons["Plan"].waitForExistence(timeout: 8))
+        app.tabBars.buttons["Plan"].tap()
+        XCTAssertTrue(app.staticTexts["Monthly Bills"].waitForExistence(timeout: 5))
+        let everyday = app.staticTexts["Everyday Spending"]
+        for _ in 0..<3 where !everyday.exists { app.swipeUp() }
+        XCTAssertTrue(everyday.waitForExistence(timeout: 3))
+    }
+
     func testLocalDeviceBackupUsesProductionProfileAndPublishesRecoveryMaterial() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

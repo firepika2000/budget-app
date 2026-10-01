@@ -362,6 +362,8 @@ public actor LocalAuthorityStore {
         try await database.snapshot(to: destinationURL)
     }
 
+    public func close() async { await database.close() }
+
     public func bootstrap(_ identity: LocalAuthorityIdentity, createdAt: String, installStarterPlan: Bool = false) async throws {
         guard !identity.householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !identity.ownerDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

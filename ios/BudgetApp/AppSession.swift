@@ -19,12 +19,12 @@ enum AppDataSourceMode: String, CaseIterable, Identifiable {
 enum AppComposition: Equatable { case localDevice, deterministic, liveServer }
 
 enum WorkspaceRouteContext: Equatable {
-    case localDevice
+    case localDevice(revision: Int)
     case deterministic
     case live(budget: APIBudget, serverURL: URL, token: String)
     var identity: String {
         switch self {
-        case .localDevice: "local-device-workspace"
+        case let .localDevice(revision): "local-device-workspace-\(revision)"
         case .deterministic: "deterministic-workspace"
         case let .live(budget, _, _): budget.id
         }
@@ -78,6 +78,7 @@ final class AppSession: ObservableObject {
     @Published var isWorking = false
     @Published var errorMessage: String?
     @Published private(set) var activeBudgetID: String?
+    @Published private(set) var localDeviceRevision = 0
 
     var composition: AppComposition {
         switch sourceMode {
@@ -383,10 +384,22 @@ final class AppSession: ObservableObject {
         }
     }
 
+    func deleteLiveBudget(id: String, confirmationName: String) async throws {
+        guard sourceMode == .liveServer else {
+            throw APIClientError.server(status: 409, message: "A connected Budget Server is required")
+        }
+        let (serverURL, token) = try await currentLiveCredentials(caller: "deleteBudget")
+        let client = try clientFactory(serverURL)
+        try await client.deleteBudget(budgetID: id, confirmationName: confirmationName, token: token)
+        budgets = try await client.budgets(token: token)
+        if activeBudgetID == id { clearActiveBudget() }
+        reconcileActiveBudget()
+    }
+
     var activeBudget: APIBudget? { budgets.first { $0.id == activeBudgetID } }
 
     var route: ApplicationRoute {
-        if composition == .localDevice { return .workspace(.localDevice) }
+        if composition == .localDevice { return .workspace(.localDevice(revision: localDeviceRevision)) }
         if composition == .deterministic { return .workspace(.deterministic) }
         guard serverURL != nil else { return .serverSetup }
         switch connectionStatus {
@@ -414,6 +427,13 @@ final class AppSession: ObservableObject {
         guard budgets.contains(where: { $0.id == id }) else { return }
         activeBudgetID = id
         defaults.set(id, forKey: activeBudgetKey)
+    }
+
+    func reopenFreshLocalDeviceAfterErase() {
+        guard sourceMode == .localDevice else { return }
+        localDeviceRevision += 1
+        connectionStatus = .localDevice
+        errorMessage = nil
     }
 
     private func reconcileActiveBudget() {
@@ -592,7 +612,7 @@ final class AppSession: ObservableObject {
             resolution = "unresolved_multiple_budget_chooser"
         case .budgetSelection:
             resolution = "unresolved_budget_chooser"
-        case .workspace(.localDevice):
+        case .workspace(.localDevice(_)):
             resolution = "local_device_workspace"
         case .workspace(.deterministic):
             resolution = "deterministic_workspace"
@@ -615,7 +635,7 @@ final class AppSession: ObservableObject {
         case .serverBootstrap: return "serverBootstrap"
         case .authentication: return "authentication"
         case .budgetSelection: return "budgetSelection"
-        case .workspace(.localDevice): return "workspace.localDevice"
+        case .workspace(.localDevice(_)): return "workspace.localDevice"
         case .workspace(.deterministic): return "workspace.deterministic"
         case .workspace(.live): return "workspace.live"
         }

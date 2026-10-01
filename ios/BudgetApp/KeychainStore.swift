@@ -192,6 +192,13 @@ final class LocalDeviceKeyManager {
     func clearPendingRestoreKey() {
         store.deleteData(account: Self.pendingRestoreKeyAccount)
     }
+
+    func deleteLocalAuthorityKeys(rollbackIdentifiers: [String]) {
+        store.deleteData(account: Self.attachmentKeyAccount)
+        store.deleteData(account: Self.dropboxBackupRecoveryKeyAccount)
+        store.deleteData(account: Self.pendingRestoreKeyAccount)
+        rollbackIdentifiers.forEach { store.deleteData(account: Self.rollbackKeyAccount(for: $0)) }
+    }
 }
 
 enum KeychainError: Error {

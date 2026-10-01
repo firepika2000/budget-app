@@ -2218,6 +2218,14 @@ final class BudgetWorkspaceStore: ObservableObject {
         return store
     }
 
+    func eraseLocalDeviceBudget() async throws {
+        guard let localStorageComposition else {
+            throw LocalStorageError.operationFailed("The on-device authority is unavailable")
+        }
+        try await LocalDeviceEraseCoordinator.erase(localStorageComposition)
+        self.localStorageComposition = nil
+    }
+
     func createLocalDeviceBackup(
         in directory: URL = FileManager.default.temporaryDirectory,
         recoveryKey suppliedRecoveryKey: LocalDeviceBackupRecoveryKey? = nil
@@ -3152,6 +3160,7 @@ private struct WorkspaceProfileView: View {
     @State private var showBackupHealth = false
     @State private var showLocalBackup = false
     @State private var showDevices = false
+    @State private var showDeleteBudget = false
 
     var body: some View {
         NavigationStack {
@@ -3235,6 +3244,16 @@ private struct WorkspaceProfileView: View {
                     }
                     Section("Household") { Button("Household and access", systemImage: "person.3") { showHousehold = true } }
                 }
+                if store.budget.effectivePermission == .owner && session.sourceMode != .deterministic {
+                    Section("Danger Zone") {
+                        Button("Delete This Budget", systemImage: "trash", role: .destructive) {
+                            showDeleteBudget = true
+                        }
+                        .accessibilityIdentifier("delete-budget-action")
+                        Text("Permanently removes this budget and its financial records. This cannot be undone.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 Section("Connection") {
                     LabeledContent("Source", value: session.sourceMode.title)
                         .accessibilityIdentifier("data-source-mode")
@@ -3271,6 +3290,10 @@ private struct WorkspaceProfileView: View {
             .sheet(isPresented: $showCreate) {
                 BudgetCreationView(households: session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? [])
             }
+            .sheet(isPresented: $showDeleteBudget) {
+                DeleteBudgetConfirmationView(store: store)
+                    .environmentObject(session)
+            }
         }
     }
 
@@ -3295,6 +3318,75 @@ private struct WorkspaceProfileView: View {
 
         What I expected:
         """
+    }
+}
+
+private struct DeleteBudgetConfirmationView: View {
+    @EnvironmentObject private var session: AppSession
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var store: BudgetWorkspaceStore
+    @State private var confirmationName = ""
+    @State private var isDeleting = false
+    @State private var errorMessage: String?
+
+    private var matches: Bool { confirmationName == store.budget.name }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Label("This permanently deletes \(store.budget.name).", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Text("Accounts, transactions, Plan history, schedules, attachments, and settings owned by this budget will be removed.")
+                    if session.sourceMode == .localDevice {
+                        Text("On-device rollback copies and device-held recovery keys are also removed. Exported backup packages are not deleted from Files or Dropbox, but they require a recovery key you saved separately.")
+                    } else {
+                        Text("Server backups are managed separately by the server administrator and are not rewritten by this operation.")
+                    }
+                } header: { Text("Delete Budget") }
+                Section {
+                    Text("Type \(store.budget.name) to confirm.")
+                    TextField("Budget name", text: $confirmationName)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("delete-budget-confirmation-name")
+                }
+                Section {
+                    Button("Permanently Delete Budget", role: .destructive) {
+                        Task { await deleteBudget() }
+                    }
+                    .disabled(!matches || isDeleting)
+                    .accessibilityIdentifier("confirm-delete-budget")
+                }
+            }
+            .navigationTitle("Delete Budget")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(isDeleting) } }
+            .overlay { if isDeleting { ProgressView("Deleting…") } }
+            .alert("Budget Was Not Deleted", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
+        }
+        .interactiveDismissDisabled(isDeleting)
+    }
+
+    @MainActor
+    private func deleteBudget() async {
+        guard matches, !isDeleting else { return }
+        isDeleting = true
+        defer { isDeleting = false }
+        do {
+            if session.sourceMode == .localDevice {
+                try await store.eraseLocalDeviceBudget()
+                session.reopenFreshLocalDeviceAfterErase()
+            } else {
+                try await session.deleteLiveBudget(id: store.budget.id, confirmationName: confirmationName)
+            }
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

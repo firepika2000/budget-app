@@ -332,6 +332,12 @@ public struct APIBudgetCreate: Encodable, Sendable {
     }
 }
 
+public struct APIBudgetDeleteConfirmation: Encodable, Sendable {
+    public let confirmationName: String
+    public init(confirmationName: String) { self.confirmationName = confirmationName }
+    enum CodingKeys: String, CodingKey { case confirmationName = "confirmation_name" }
+}
+
 public struct APIScheduledTransaction: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
