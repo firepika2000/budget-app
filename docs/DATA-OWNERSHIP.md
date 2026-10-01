@@ -92,6 +92,23 @@ rollback generation with its matching device-only key. Permanent cleanup separat
 removing both a retained authority and its key, refuses cleanup while any restore is pending, and
 never treats a missing/malformed key as permission to delete data.
 
+The native storage package now also contains the provider-neutral Dropbox destination application
+service for these same encrypted `.clearpocketbackup` generations. It deliberately receives a narrow
+transport interface rather than OAuth credentials or an open database. Publication uploads into a
+private temporary folder, uses bounded 8 MiB upload-session chunks for large ciphertext payloads,
+checks Dropbox's size and content-hash metadata for every file, and only then promotes the complete
+folder to its immutable generation name. Listing consumes every page and retention deletes only
+older `.clearpocketbackup` folders. Download retrieves and verifies the manifest first, requires the
+remote file set to match it exactly, verifies every ciphertext size and Dropbox content hash, and
+publishes locally only after the whole generation succeeds. Corrupt or incomplete transfers cannot
+replace or become a Local Device authority; the existing recovery-key authentication and isolated
+restore/cutover path remains the sole activation mechanism.
+
+This is the destination core, not a claim that native Dropbox setup is complete. A production
+Dropbox HTTP/OAuth adapter, Keychain-held refresh credential, connection/revocation UI, and retention
+controls still have to be connected to Backup & Recovery. No Dropbox credential belongs in SQLite,
+the encrypted generation, logs, or source control.
+
 ## Implemented personal desktop-local backend
 
 `./budget local` now provides a self-contained local authority for personal/development use through
@@ -349,8 +366,9 @@ experience: the image has not been release-published and QNAP model validation i
 Windows helper now uses built-in PowerShell for cryptographic first-run configuration and selectable
 durable storage without Python, but still requires Docker Desktop and lacks the final signed manager.
 
-1. Add explicit Dropbox OAuth setup/revocation and retention controls without placing provider
-   secrets in the iOS database or logs. Dropbox remains a backup destination, not a second authority.
+1. Connect the implemented native Dropbox destination core to explicit OAuth setup/revocation and
+   retention controls without placing provider secrets in the iOS database or logs. Dropbox remains
+   a backup destination, not a second authority.
 2. Build the normal-user server manager around the shared image/config contract: graphical storage
    selection, install/update/rollback, scheduled backup/restore, and actionable health reporting.
 3. Validate and package the manager for supported QNAP models and always-on Windows PCs, with signed
