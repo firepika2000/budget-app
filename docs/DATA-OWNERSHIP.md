@@ -463,6 +463,11 @@ settings are accepted. Uploads retain the existing bounded-session, content-hash
 no-overwrite, and remote-retention guarantees, while downloads are verified before atomic visibility.
 The host still needs only Docker, and the recovery identity remains deliberately separate from the
 Dropbox destination.
+The coordinated Docker backup accepts the same owner-only credential file as an optional publication
+target. It completes and retains local capture before attempting Dropbox, records only verified and
+allowlisted remote metadata on success, and records `publication_failed` with the retained local
+generation on network/OAuth failure. This preserves a recoverable generation while still making an
+unattended scheduler failure visible.
 
 The versioned Windows ZIP now includes a double-click per-user installer. It validates and atomically
 publishes an allowlisted manager payload to a stable `%LOCALAPPDATA%` program path, adds Desktop and

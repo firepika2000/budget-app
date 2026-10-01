@@ -18,6 +18,8 @@ DEFAULT_BACKUP="${XDG_DATA_HOME:-$HOME/.local/share}/clearpocket-server/backups"
 DEFAULT_RECOVERY="${XDG_CONFIG_HOME:-$HOME/.config}/clearpocket-server/recovery"
 BACKUP_DIR=${1:-}
 RECOVERY_DIR=${2:-}
+DROPBOX_CREDENTIALS=${3:-}
+DROPBOX_FOLDER=${4:-/Backups}
 if [ -z "$BACKUP_DIR" ]; then
     printf 'Encrypted backup folder [%s]: ' "$DEFAULT_BACKUP"
     IFS= read -r BACKUP_DIR || BACKUP_DIR=""
@@ -31,6 +33,14 @@ fi
 case "$BACKUP_DIR" in /*) ;; *) echo "Backup folder must be an absolute path." >&2; exit 1 ;; esac
 case "$RECOVERY_DIR" in /*) ;; *) echo "Recovery folder must be an absolute path." >&2; exit 1 ;; esac
 [ "$BACKUP_DIR" != "$RECOVERY_DIR" ] || { echo "Keep the recovery identity separate from backup generations." >&2; exit 1; }
+if [ -n "$DROPBOX_CREDENTIALS" ]; then
+    case "$DROPBOX_CREDENTIALS" in /*) ;; *) echo "Dropbox credential file must be an absolute path." >&2; exit 1 ;; esac
+    [ -f "$DROPBOX_CREDENTIALS" ] && [ ! -L "$DROPBOX_CREDENTIALS" ] || {
+        echo "Dropbox credential file must be a regular non-linked file." >&2
+        exit 1
+    }
+    [ -x "$SCRIPT_DIR/dropbox-docker.sh" ] || { echo "Dropbox backup helper is missing." >&2; exit 1; }
+fi
 mkdir -p "$BACKUP_DIR" "$RECOVERY_DIR"
 [ -d "$BACKUP_DIR" ] && [ ! -L "$BACKUP_DIR" ] || { echo "Backup folder is unsafe." >&2; exit 1; }
 [ -d "$RECOVERY_DIR" ] && [ ! -L "$RECOVERY_DIR" ] || { echo "Recovery folder is unsafe." >&2; exit 1; }
@@ -63,9 +73,19 @@ DATABASE_TEMPORARY="/tmp/clearpocket-backup-$$.sql"
 
 record_status() {
     state=$1
-    if [ "$state" = healthy ]; then
+    destination_json=${2:-}
+    if [ "$state" = healthy ] && [ -n "$destination_json" ]; then
+        compose run --rm --no-deps --user root --volume "$BACKUP_DIR:/backup:ro" \
+            --volume "$destination_json:/status/destination.json:ro" api sh -c \
+            'python scripts/backup_health.py healthy "/backup/$1" --reported-path "$2" --destination-json /status/destination.json && chown budget:budget "$BUDGET_APP_BACKUP_STATUS_PATH"' \
+            backup-health "$FILENAME" "$FINAL"
+    elif [ "$state" = healthy ]; then
         compose run --rm --no-deps --user root --volume "$BACKUP_DIR:/backup:ro" api sh -c \
             'python scripts/backup_health.py healthy "/backup/$1" --reported-path "$2" && chown budget:budget "$BUDGET_APP_BACKUP_STATUS_PATH"' \
+            backup-health "$FILENAME" "$FINAL"
+    elif [ "$state" = publication_failed ]; then
+        compose run --rm --no-deps --user root --volume "$BACKUP_DIR:/backup:ro" api sh -c \
+            'python scripts/backup_health.py publication_failed "/backup/$1" --reported-path "$2" && chown budget:budget "$BUDGET_APP_BACKUP_STATUS_PATH"' \
             backup-health "$FILENAME" "$FINAL"
     else
         compose run --rm --no-deps --user root api sh -c \
@@ -166,7 +186,19 @@ compose run --rm --no-deps --user root --volume "$STAGING:/capture:ro" \
 [ -f "$PARTIAL" ] || { echo "Encrypted backup publication failed." >&2; exit 1; }
 mv "$PARTIAL" "$FINAL"
 PARTIAL=""
-record_status healthy
+if [ -n "$DROPBOX_CREDENTIALS" ]; then
+    DROPBOX_RESULT="$STAGING/dropbox-publication.json"
+    if ! "$SCRIPT_DIR/dropbox-docker.sh" publish "$FINAL" "$DROPBOX_CREDENTIALS" \
+        "$DROPBOX_FOLDER" "$RETENTION" > "$DROPBOX_RESULT"; then
+        record_status publication_failed
+        STATUS_RECORDED=true
+        echo "Encrypted backup was retained locally, but Dropbox publication failed." >&2
+        exit 1
+    fi
+    record_status healthy "$DROPBOX_RESULT"
+else
+    record_status healthy
+fi
 STATUS_RECORDED=true
 count=0
 for generation in $(ls -1t "$BACKUP_DIR"/budget-*.tar.gz.age 2>/dev/null); do

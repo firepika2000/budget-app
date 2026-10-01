@@ -71,6 +71,19 @@ Use either `BUDGET_APP_DROPBOX_ACCESS_TOKEN`, or the durable pair
 promotion, remote retention is bounded, and downloads are verified before becoming visible locally.
 Keep the age recovery identity outside Dropbox and on a separately protected device.
 
+To make each coordinated Docker backup publish off-device automatically, pass that credential file
+and optional app-folder path after the two local paths:
+
+```sh
+./backup-docker.sh /protected/local-generations /separate/recovery-key \
+  /protected/dropbox.env /Backups
+```
+
+Capture and encryption always complete locally first. A Dropbox failure retains that local generation,
+records `publication_failed` in owner-visible backup health, and exits unsuccessfully so a scheduler can
+alert; it never reports the capture as absent or deletes the recovery artifact. Successful publication
+records only allowlisted remote path, size, hashes, and verification time—never OAuth credentials.
+
 Advanced administrators may instead generate configuration directly from this directory:
 
 ```sh

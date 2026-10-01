@@ -144,6 +144,10 @@ def test_docker_only_backup_is_coordinated_encrypted_bounded_and_user_owned():
     assert "scripts/backup_health.py healthy" in script
     assert ".clearpocket-backup.lock" in script
     assert "BUDGET_APP_BACKUP_RETENTION" in script
+    assert "DROPBOX_CREDENTIALS" in script
+    assert 'dropbox-docker.sh" publish' in script
+    assert "record_status publication_failed" in script
+    assert "backup_health.py publication_failed" in script
     assert 'budget-*.tar.gz.age' in script
     assert "chown '$USER_ID:$GROUP_ID'" in script
     assert "down -v" not in script and "docker volume rm" not in script
