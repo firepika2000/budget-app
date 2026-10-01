@@ -155,10 +155,12 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     config = (root / "template" / "qpkg.cfg").read_text()
     routines = (root / "template" / "package_routines").read_text()
     service = (root / "template" / "shared" / "ClearPocketServer.sh").read_text()
+    setup = (root / "template" / "shared" / "ClearPocketSetup.sh").read_text()
     builder = (root / "build.sh").read_text()
     assert 'QPKG_NAME="ClearPocketServer"' in config
     assert 'QPKG_SERVICE_PROGRAM="ClearPocketServer.sh"' in config
     assert "Container Station must be installed" in routines
+    assert "ClearPocketSetup.sh" in routines
     assert "CLEARPOCKET_DATA_ROOT" in routines
     assert "PKG_MAIN_REMOVE" not in routines
     assert "CLEARPOCKET_DATA_ROOT" in service
@@ -167,6 +169,10 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'compose ps' in service
     assert "down -v" not in service
     assert "docker volume rm" not in service
+    assert "/dev/urandom" in setup
+    assert "Existing private ClearPocket configuration preserved" in setup
+    assert "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY" in setup
+    assert "CLEARPOCKET_OPERATIONS_STORAGE" in setup
     assert 'distribution/server/compose.yaml' in builder
     assert 'distribution/server/manage.py' in builder
     assert '"${#VERSION}" -gt 10' in builder
@@ -182,6 +188,7 @@ def test_qnap_builder_stages_a_versioned_shared_server_bundle(tmp_path: Path):
 set -eu
 grep -q 'QPKG_VER=\"0.9.0\"' qpkg.cfg
 test -f shared/ClearPocketServer.sh
+test -x shared/ClearPocketSetup.sh
 test -f shared/server/compose.yaml
 test -f shared/server/manage.py
 test -f shared/server/tools/backup.sh
@@ -195,6 +202,37 @@ mkdir -p build
     subprocess.run([distribution / "qnap" / "build.sh", "0.9.0", fake_qbuild],
                    check=True, capture_output=True, text=True)
     assert (distribution / "qnap" / "build" / "ClearPocketServer_0.9.0.qpkg").is_file()
+
+
+def test_qnap_first_run_generates_private_exact_secrets_and_never_overwrites(tmp_path: Path):
+    package = tmp_path / "package"
+    server = package / "server"
+    server.mkdir(parents=True)
+    setup = package / "ClearPocketSetup.sh"
+    shutil.copy2(ROOT / "distribution" / "qnap" / "template" / "shared" / "ClearPocketSetup.sh", setup)
+    setup.chmod(0o755)
+    (server / "VERSION").write_text("0.9.0\n")
+    share = tmp_path / "share"
+    data = share / "Public" / "ClearPocketServer"
+    environment = dict(os.environ, CLEARPOCKET_QNAP_SHARE_ROOT=str(share))
+
+    first = subprocess.run([setup, data], env=environment, check=True, capture_output=True, text=True)
+    private = data / ".env"
+    values = parsed(private.read_text())
+    assert values["CLEARPOCKET_SERVER_VERSION"] == "0.9.0"
+    assert values["CLEARPOCKET_DATABASE_STORAGE"] == f"{data}/database"
+    assert values["CLEARPOCKET_ATTACHMENTS_STORAGE"] == f"{data}/attachments"
+    assert values["CLEARPOCKET_OPERATIONS_STORAGE"] == f"{data}/operations"
+    assert len(values["BUDGET_APP_DB_PASSWORD"]) >= 36
+    assert len(values["BUDGET_APP_JWT_SECRET"]) >= 48
+    assert len(base64.urlsafe_b64decode(values["BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY"])) == 32
+    assert private.stat().st_mode & 0o777 == 0o600
+    assert values["BUDGET_APP_DB_PASSWORD"] not in first.stdout
+    original = private.read_bytes()
+
+    second = subprocess.run([setup, data], env=environment, check=True, capture_output=True, text=True)
+    assert private.read_bytes() == original
+    assert "preserved" in second.stdout
 
 
 def manager_deployment(tmp_path: Path):

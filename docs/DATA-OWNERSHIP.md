@@ -403,7 +403,10 @@ The Windows helper uses built-in PowerShell for cryptographic first-run configur
 durable storage without Python, and now provides start/open, status, data-preserving stop, redacted
 diagnostics and log actions. `distribution/qnap` contains a QDK-compatible package foundation that
 wraps the same Compose bundle in App Center lifecycle hooks while keeping authority outside the
-replaceable QPKG directory. These remain previews rather than the promised normal-user setup:
+replaceable QPKG directory. Its install routine chooses a durable QNAP shared-folder root, creates
+separate database/attachment/operations directories, generates independent kernel-random secrets,
+and atomically creates but never overwrites the private configuration. These remain previews rather
+than the promised normal-user setup:
 release images/packages are unsigned, QNAP hardware validation is pending, Windows guided backup is
 pending, and secure pairing/TLS is not implemented.
 

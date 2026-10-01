@@ -19,6 +19,15 @@ pkg_install() {
         $CMD_ECHO "CLEARPOCKET_DATA_ROOT=$DATA_ROOT" > "$CLEARPOCKET_SYSTEM_CONFIG"
         $CMD_CHMOD 600 "$CLEARPOCKET_SYSTEM_CONFIG"
     fi
+    DATA_ROOT=$($CMD_SED -n 's/^CLEARPOCKET_DATA_ROOT=//p' "$CLEARPOCKET_SYSTEM_CONFIG")
+    if [ -z "$DATA_ROOT" ] || [ ! -x "$SYS_QPKG_DIR/ClearPocketSetup.sh" ]; then
+        err_log "ClearPocket persistent data configuration could not be initialized."
+        return 1
+    fi
+    "$SYS_QPKG_DIR/ClearPocketSetup.sh" "$DATA_ROOT" || {
+        err_log "ClearPocket private server setup failed."
+        return 1
+    }
 }
 
 # Deliberately do not define a remove routine for the system configuration or data root. Removing
