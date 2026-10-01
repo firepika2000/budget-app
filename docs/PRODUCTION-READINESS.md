@@ -1418,12 +1418,16 @@ do not claim a hot cross-resource snapshot is atomic merely because its manifest
 The versioned Windows customer bundle now installs a native WPF manager instead of making the
 numbered PowerShell menu its ordinary entry point. Fresh installs choose durable authority storage
 and an optional HTTPS hostname in the graphical surface; everyday start/open, status, safe stop,
-recent-log, and redacted-diagnostics actions invoke explicit non-interactive operations in the same
+recent-log, redacted-diagnostics, and coordinated encrypted-backup actions invoke explicit
+non-interactive operations in the same
 hardened engine. Configuration is published only after the immutable release image has downloaded,
 so a failed first-run pull cannot leave a half-configured authority that later resolves a mutable tag.
-No stop path deletes volumes, configuration, backups, or financial data. The existing verified
-backup/restore, phone transfer, portable import, scheduling, update, and Dropbox flows remain under a
-clearly labeled advanced entry until their graphical forms are implemented.
+No stop path deletes volumes, configuration, backups, or financial data. Graphical backup selects the
+generation and separate recovery-key locations, warns about key loss, and confirms before adopting an
+existing identity; the canonical capture, encryption, health, retention, and optional Dropbox
+publication engine remains singular. Restore, phone transfer, portable import, scheduling, update,
+and Dropbox configuration remain under a clearly labeled advanced entry until their graphical forms
+are implemented.
 
 All **58 distribution contract tests pass**, including the new graphical composition, hidden-process
 output/error handling, immutable-image-before-configuration ordering, installer allowlist, and

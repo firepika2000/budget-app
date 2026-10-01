@@ -593,7 +593,16 @@ if ($Operation -ne "Interactive") {
             if (-not (Test-Path -LiteralPath $backupScript -PathType Leaf)) {
                 throw "Windows backup support is missing. Download the complete server package again."
             }
-            & $backupScript -EnvironmentFile $environmentFile
+            $backupArguments = @{
+                EnvironmentFile = $environmentFile
+                Operation = "Manager"
+                BackupDirectory = $env:CLEARPOCKET_BACKUP_DIRECTORY
+                RecoveryDirectory = $env:CLEARPOCKET_RECOVERY_DIRECTORY
+            }
+            if ($env:CLEARPOCKET_ALLOW_EXISTING_RECOVERY -ceq "USE") {
+                $backupArguments["AllowExistingRecoveryIdentity"] = $true
+            }
+            & $backupScript @backupArguments
             if (-not $?) { throw "Windows backup did not complete." }
         }
         default { throw "Unsupported non-interactive manager operation." }

@@ -55,6 +55,7 @@ if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
           <Button Name="OpenButton" Content="Start &amp; Open" Padding="18,9" Margin="0,0,10,10" Background="#2563EB" Foreground="White" FontWeight="SemiBold"/>
           <Button Name="StatusButton" Content="Refresh Status" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="StopButton" Content="Stop Safely" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="BackupButton" Content="Create Encrypted Backup" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="DiagnosticsButton" Content="Create Diagnostics" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="LogsButton" Content="Recent Logs" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="AdvancedButton" Content="Backup, Restore &amp; Advanced…" Padding="18,9" Margin="0,0,10,10"/>
@@ -84,7 +85,7 @@ $storageBox = $window.FindName("StorageBox")
 $hostBox = $window.FindName("HostBox")
 $outputBox = $window.FindName("OutputBox")
 $stateText = $window.FindName("StateText")
-$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
+$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
 $actionButtons = @{}
 foreach ($name in $actionNames) { $actionButtons[$name] = $window.FindName($name) }
 
@@ -97,6 +98,18 @@ function Set-ConfiguredView([bool] $Configured) {
 
 function Set-ActionsEnabled([bool] $Enabled) {
     foreach ($button in $actionButtons.Values) { $button.IsEnabled = $Enabled }
+}
+
+function Select-ClearPocketFolder([string] $Description, [string] $InitialPath) {
+    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description = $Description
+    $dialog.SelectedPath = $InitialPath
+    try {
+        if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { return $dialog.SelectedPath }
+        return $null
+    } finally {
+        $dialog.Dispose()
+    }
 }
 
 function Invoke-ManagerOperation([string] $Operation, [hashtable] $Environment = @{}) {
@@ -159,11 +172,8 @@ function Invoke-ManagerOperation([string] $Operation, [hashtable] $Environment =
 }
 
 $actionButtons["BrowseButton"].Add_Click({
-    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = "Choose durable ClearPocket Server storage"
-    $dialog.SelectedPath = $storageBox.Text
-    if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $storageBox.Text = $dialog.SelectedPath }
-    $dialog.Dispose()
+    $selected = Select-ClearPocketFolder "Choose durable ClearPocket Server storage" $storageBox.Text
+    if ($null -ne $selected) { $storageBox.Text = $selected }
 })
 $actionButtons["ConfigureButton"].Add_Click({
     if ([string]::IsNullOrWhiteSpace($storageBox.Text)) {
@@ -178,6 +188,32 @@ $actionButtons["ConfigureButton"].Add_Click({
 $actionButtons["OpenButton"].Add_Click({ Invoke-ManagerOperation "Open" })
 $actionButtons["StatusButton"].Add_Click({ Invoke-ManagerOperation "Status" })
 $actionButtons["StopButton"].Add_Click({ Invoke-ManagerOperation "Stop" })
+$actionButtons["BackupButton"].Add_Click({
+    $backupDirectory = Select-ClearPocketFolder "Choose where encrypted backup generations will be stored" (Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Backups")
+    if ($null -eq $backupDirectory) { return }
+    $backupEnvironment = @{ CLEARPOCKET_BACKUP_DIRECTORY = $backupDirectory }
+    $hasRecipient = @(Get-Content -LiteralPath $environmentFile -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match '^BUDGET_APP_BACKUP_AGE_RECIPIENT=age1[0-9a-z]+$' }).Count -eq 1
+    if (-not $hasRecipient) {
+        [System.Windows.MessageBox]::Show(
+            "ClearPocket will create a separate recovery key. Keep a copy away from this PC; the encrypted backup cannot be restored without it.",
+            "Backup recovery key", "OK", "Information"
+        ) | Out-Null
+        $recoveryDirectory = Select-ClearPocketFolder "Choose a separate folder for the recovery key" (Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Recovery")
+        if ($null -eq $recoveryDirectory) { return }
+        $identity = Join-Path $recoveryDirectory "clearpocket-recovery-key.txt"
+        if (Test-Path -LiteralPath $identity -PathType Leaf) {
+            $decision = [System.Windows.MessageBox]::Show(
+                "A ClearPocket recovery key already exists in this folder. Use that existing key without replacing it?",
+                "Use existing recovery key?", "YesNo", "Warning"
+            )
+            if ($decision -ne [System.Windows.MessageBoxResult]::Yes) { return }
+            $backupEnvironment["CLEARPOCKET_ALLOW_EXISTING_RECOVERY"] = "USE"
+        }
+        $backupEnvironment["CLEARPOCKET_RECOVERY_DIRECTORY"] = $recoveryDirectory
+    }
+    Invoke-ManagerOperation "Backup" $backupEnvironment
+})
 $actionButtons["DiagnosticsButton"].Add_Click({ Invoke-ManagerOperation "Diagnostics" })
 $actionButtons["LogsButton"].Add_Click({ Invoke-ManagerOperation "Logs" })
 $actionButtons["AdvancedButton"].Add_Click({

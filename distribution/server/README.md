@@ -344,8 +344,10 @@ required; Docker Desktop remains required.
 The Desktop and Start Menu shortcuts open a native graphical manager. First-time setup selects a
 durable data folder and optional HTTPS hostname in that window, then creates independent cryptographic
 secrets without displaying them. The same window starts and health-checks the pinned Compose
-application, opens local setup, shows status, stops without deleting data, creates a redacted
-diagnostics report, and displays recent logs. `start-windows.cmd` remains the advanced manager used by
+application, opens local setup, shows status, stops without deleting data, creates a coordinated
+encrypted backup through graphical destination/recovery-key selection, creates a redacted diagnostics
+report, and displays recent logs. The first backup makes the separate recovery key impossible to miss
+and never replaces an existing key without confirmation. `start-windows.cmd` remains the advanced manager used by
 **Backup, Restore & Advanced** while the remaining recovery and credential forms are brought into the
 graphical surface.
 It can also register or remove a limited current-user Task Scheduler entry that waits for Docker
@@ -416,7 +418,7 @@ into a new empty server instead. A signed installer package will eventually wrap
 
 Python and developer tools are not required. Docker Desktop is still required. Secure remote
 pairing/TLS is guided for a new installation, but automatic router/firewall configuration, platform
-signing, and graphical forms for the advanced recovery/credential operations remain open product work.
+signing, and graphical forms for restore/import/scheduling/update/Dropbox credentials remain open product work.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;

@@ -418,9 +418,15 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert 'Content="Set Up and Open Server"' in manager
     assert 'Content="Start &amp; Open"' in manager
     assert 'Content="Stop Safely"' in manager
+    assert 'Content="Create Encrypted Backup"' in manager
     assert 'Content="Create Diagnostics"' in manager
     assert 'Content="Backup, Restore &amp; Advanced…"' in manager
     assert 'Invoke-ManagerOperation "Configure"' in manager
+    assert 'Invoke-ManagerOperation "Backup" $backupEnvironment' in manager
+    assert "CLEARPOCKET_BACKUP_DIRECTORY" in manager
+    assert "CLEARPOCKET_RECOVERY_DIRECTORY" in manager
+    assert "CLEARPOCKET_ALLOW_EXISTING_RECOVERY" in manager
+    assert "Use existing recovery key?" in manager
     assert 'CLEARPOCKET_SETUP_STORAGE_ROOT' in manager
     assert 'CLEARPOCKET_SETUP_PUBLIC_HOST' in manager
     assert '$info.UseShellExecute = $false' in manager
@@ -441,6 +447,9 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup"):
         assert f'"{operation}"' in noninteractive
     assert 'Invoke-ClearPocketCompose @("stop")' in noninteractive
+    assert 'Operation = "Manager"' in noninteractive
+    assert 'BackupDirectory = $env:CLEARPOCKET_BACKUP_DIRECTORY' in noninteractive
+    assert 'RecoveryDirectory = $env:CLEARPOCKET_RECOVERY_DIRECTORY' in noninteractive
     assert "down -v" not in noninteractive
     assert "docker volume rm" not in noninteractive
 
@@ -450,7 +459,11 @@ def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():
     assert "BUDGET_APP_BACKUP_AGE_RECIPIENT" in script
     assert '[IO.FileShare]::None' in script
     assert "Another ClearPocket backup is already running" in script
-    assert '[ValidateSet("Interactive", "Scheduled")]' in script
+    assert '[ValidateSet("Interactive", "Manager", "Scheduled")]' in script
+    assert '[switch] $AllowExistingRecoveryIdentity' in script
+    assert 'Graphical backup requires a separate recovery-key folder' in script
+    assert 'Graphical backup requires an explicit destination folder' in script
+    assert '$reuseApproved = $AllowExistingRecoveryIdentity.IsPresent' in script
     assert "Scheduled backup requires an explicit destination folder" in script
     assert "BUDGET_APP_BACKUP_RETENTION" in script
     assert "Invoke-BackupRetention" in script

@@ -2,9 +2,11 @@
 param(
     [Parameter(Mandatory = $true)]
     [string] $EnvironmentFile,
-    [ValidateSet("Interactive", "Scheduled")]
+    [ValidateSet("Interactive", "Manager", "Scheduled")]
     [string] $Operation = "Interactive",
-    [string] $BackupDirectory = ""
+    [string] $BackupDirectory = "",
+    [string] $RecoveryDirectory = "",
+    [switch] $AllowExistingRecoveryIdentity
 )
 
 $ErrorActionPreference = "Stop"
@@ -131,14 +133,21 @@ if (-not $recipient) {
     Write-Host "ClearPocket encrypted-backup recovery setup"
     Write-Host "A private recovery identity will be created. Anyone with this file can decrypt your backup."
     $defaultRecovery = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Recovery"
-    $recoveryDirectory = Read-Host "Separate recovery-key folder [$defaultRecovery]"
-    if ([string]::IsNullOrWhiteSpace($recoveryDirectory)) { $recoveryDirectory = $defaultRecovery }
-    $recoveryDirectory = [IO.Path]::GetFullPath($recoveryDirectory)
+    if ([string]::IsNullOrWhiteSpace($RecoveryDirectory)) {
+        if ($Operation -eq "Manager") { throw "Graphical backup requires a separate recovery-key folder." }
+        $RecoveryDirectory = Read-Host "Separate recovery-key folder [$defaultRecovery]"
+        if ([string]::IsNullOrWhiteSpace($RecoveryDirectory)) { $RecoveryDirectory = $defaultRecovery }
+    }
+    $recoveryDirectory = [IO.Path]::GetFullPath($RecoveryDirectory)
     New-Item -ItemType Directory -Force -Path $recoveryDirectory | Out-Null
     $identity = Join-Path $recoveryDirectory "clearpocket-recovery-key.txt"
     if (Test-Path -LiteralPath $identity) {
-        $reuse = Read-Host "A recovery identity already exists there. Type USE to adopt it without replacing it"
-        if ($reuse -cne "USE") {
+        $reuseApproved = $AllowExistingRecoveryIdentity.IsPresent
+        if ($Operation -ne "Manager") {
+            $reuse = Read-Host "A recovery identity already exists there. Type USE to adopt it without replacing it"
+            $reuseApproved = $reuse -ceq "USE"
+        }
+        if (-not $reuseApproved) {
             throw "The existing recovery identity was not used or replaced."
         }
     } else {
@@ -184,6 +193,7 @@ if (Test-Path -LiteralPath $dropboxCredentials) {
 $defaultBackup = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "ClearPocket Backups"
 if ([string]::IsNullOrWhiteSpace($BackupDirectory)) {
     if ($Operation -eq "Scheduled") { throw "Scheduled backup requires an explicit destination folder." }
+    if ($Operation -eq "Manager") { throw "Graphical backup requires an explicit destination folder." }
     $BackupDirectory = Read-Host "Encrypted backup folder [$defaultBackup]"
     if ([string]::IsNullOrWhiteSpace($BackupDirectory)) { $BackupDirectory = $defaultBackup }
 }
