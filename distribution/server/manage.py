@@ -31,6 +31,7 @@ SECRET_KEYS = {
 }
 SAFE_VALUE = re.compile(r"^[^\x00-\x1f\x7f]+$")
 VERSION_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+IMAGE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class ManagerError(RuntimeError):
@@ -268,6 +269,37 @@ def bundle_version(target: Deployment) -> str:
     return value
 
 
+def bundle_image_reference(target: Deployment, version: str) -> tuple[str, str]:
+    """Return the immutable pull reference and the local Compose tag for this bundle."""
+    image = target.environment["CLEARPOCKET_SERVER_IMAGE"]
+    tagged = f"{image}:{version}"
+    metadata = target.root / "RELEASE-METADATA.txt"
+    if not metadata.exists():
+        # Source/development bundles predate release metadata and remain usable for operators.
+        return tagged, tagged
+    if metadata.is_symlink() or not metadata.is_file():
+        raise ManagerError("Release metadata must be a regular non-symlink file")
+    try:
+        lines = metadata.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise ManagerError("Release metadata could not be read") from error
+    values: dict[str, str] = {}
+    for line in lines:
+        if "=" not in line:
+            raise ManagerError("Release metadata is invalid")
+        key, value = line.split("=", 1)
+        if key in values or key not in {"version", "commit", "image"} or not value:
+            raise ManagerError("Release metadata is invalid or ambiguous")
+        values[key] = value
+    if values.get("version") != version:
+        raise ManagerError("Release metadata does not match the bundle version")
+    reference = values.get("image", "")
+    prefix = f"{image}@"
+    if not reference.startswith(prefix) or not IMAGE_DIGEST.fullmatch(reference.removeprefix(prefix)):
+        raise ManagerError("Release metadata does not contain the expected immutable image digest")
+    return reference, tagged
+
+
 def replace_environment_version(target: Deployment, version: str) -> None:
     if not VERSION_VALUE.fullmatch(version) or version == "edge":
         raise ManagerError("Refusing an invalid or mutable server version")
@@ -306,10 +338,12 @@ def upgrade(
     intended = bundle_version(target)
     if intended == current:
         raise ManagerError(f"Server is already configured for version {intended}")
+    pull_reference, tagged_reference = bundle_image_reference(target, intended)
     inspect_prerequisites(target, runner)
     backup(target, backup_destination, runner, project_name)
-    image = target.environment["CLEARPOCKET_SERVER_IMAGE"]
-    runner(["docker", "pull", f"{image}:{intended}"])
+    runner(["docker", "pull", pull_reference])
+    if pull_reference != tagged_reference:
+        runner(["docker", "tag", pull_reference, tagged_reference])
     replace_environment_version(target, intended)
     upgraded = deployment(target.root, target.environment_file)
     try:

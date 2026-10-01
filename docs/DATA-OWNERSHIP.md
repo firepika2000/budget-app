@@ -450,9 +450,10 @@ generic workflow artifact. Each bundle records the immutable version, source com
 multi-architecture image digest; a release-level SHA-256 manifest covers both downloads, while the
 container build retains provenance and an SBOM. The released Docker and Windows installers verify the
 extracted file manifest, pull the recorded registry digest rather than trusting a mutable version tag,
-and only then assign the local tag consumed by Compose. This supplies reproducible release identity
-and download-integrity checks, but does not claim the platform code-signing still required for final
-normal-user installers.
+and only then assign the local tag consumed by Compose. The backup-gated advanced Docker upgrade path
+now enforces the same metadata binding. This supplies reproducible release identity and download-
+integrity checks, but does not claim the platform code-signing still required for final normal-user
+installers.
 
 The generic versioned Docker bundle now has a one-command first-run installer. It requires only a
 running Docker/Compose v2 installation, uses the exact immutable application image to execute the

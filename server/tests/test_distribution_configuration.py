@@ -790,6 +790,10 @@ def upgrade_deployment(tmp_path: Path):
     script.write_text("#!/bin/sh\n")
     script.chmod(0o755)
     (tmp_path / "VERSION").write_text("1.0.0\n")
+    (tmp_path / "RELEASE-METADATA.txt").write_text(
+        "version=1.0.0\ncommit=test-commit\n"
+        f"image=example/server@sha256:{'a' * 64}\n"
+    )
     return target
 
 
@@ -808,10 +812,12 @@ def test_manager_upgrade_requires_backup_then_atomically_pins_and_health_checks_
         assert updated[secret] == original[secret]
     backup_index = next(index for index, command in enumerate(runner.commands)
                         if command[0].endswith("backup.sh"))
-    pull_index = runner.commands.index(["docker", "pull", "example/server:1.0.0"])
+    pinned = f"example/server@sha256:{'a' * 64}"
+    pull_index = runner.commands.index(["docker", "pull", pinned])
+    tag_index = runner.commands.index(["docker", "tag", pinned, "example/server:1.0.0"])
     up_index = next(index for index, command in enumerate(runner.commands)
                     if command[-2:] == ["up", "-d"])
-    assert backup_index < pull_index < up_index
+    assert backup_index < pull_index < tag_index < up_index
     assert not list(tmp_path.glob("..env.*.update"))
 
 
@@ -824,6 +830,28 @@ def test_manager_upgrade_pull_failure_leaves_private_version_unchanged(tmp_path:
     with pytest.raises(manager.ManagerError, match="image unavailable"):
         manager.upgrade(target, tmp_path / "backups", runner=runner)
     assert manager.load_environment(target.environment_file)["CLEARPOCKET_SERVER_VERSION"] == "test"
+
+
+def test_manager_upgrade_rejects_mismatched_or_linked_release_metadata_before_pull(tmp_path: Path):
+    target = upgrade_deployment(tmp_path)
+    metadata = tmp_path / "RELEASE-METADATA.txt"
+    metadata.write_text(
+        "version=1.0.0\ncommit=test\n"
+        f"image=unexpected/server@sha256:{'a' * 64}\n"
+    )
+    runner = RecordedRunner()
+    with pytest.raises(manager.ManagerError, match="expected immutable image digest"):
+        manager.upgrade(target, tmp_path / "backups", runner=runner)
+    assert not any(command[:2] == ["docker", "pull"] for command in runner.commands)
+    metadata.unlink()
+    outside = tmp_path.parent / f"{tmp_path.name}-metadata"
+    outside.write_text("version=1.0.0\n")
+    metadata.symlink_to(outside)
+    try:
+        with pytest.raises(manager.ManagerError, match="non-symlink"):
+            manager.upgrade(target, tmp_path / "backups", runner=RecordedRunner())
+    finally:
+        outside.unlink()
 
 
 def test_manager_upgrade_never_auto_downgrades_after_unhealthy_migration(tmp_path: Path):

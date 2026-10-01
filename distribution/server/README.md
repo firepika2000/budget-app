@@ -36,7 +36,9 @@ and exact published multi-architecture container digest. `PACKAGE-CONTENTS-SHA25
 the expected bytes of every extracted program file against the archive; both first-run installers
 verify it before copying files or starting Docker. Released Docker and Windows installers then pull
 that exact registry digest and assign the package's version tag locally; they never trust the remote
-tag alone to select executable server bytes. The container build includes provenance and an SBOM.
+tag alone to select executable server bytes. The advanced `manage.py upgrade` path enforces the same
+release-metadata binding after completing its mandatory encrypted backup. The container build includes
+provenance and an SBOM.
 SHA-256 detects a corrupt or substituted download only when the release checksum came through a
 separately trusted GitHub connection; it is not a replacement for the still-pending signed normal-user
 installers.
