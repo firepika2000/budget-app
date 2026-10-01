@@ -349,6 +349,27 @@ def portable_import(
     start(refreshed, runner=runner, health_check=health_check, timeout=timeout, pause=2.0)
 
 
+def verify_local_device_backup(
+    target: Deployment, package: Path, *, runner: Runner = run,
+    interactive_runner: Callable[[Sequence[str]], subprocess.CompletedProcess[str]] = run_interactive,
+) -> None:
+    """Authenticate an iPhone backup in isolated staging without touching server authority."""
+    package = package.expanduser()
+    if package.is_symlink() or not package.is_dir():
+        raise ManagerError("Local Device backup must be a regular non-symlink package directory")
+    package = package.resolve()
+    inspect_prerequisites(target, runner)
+    command = target.compose_command(
+        "run", "--rm", "--no-deps", "--user", "root",
+        "--volume", f"{package}:/import/package:ro", "api", "sh", "-c",
+        "cp -R /import/package /tmp/local-device-package && "
+        "chown -R budget:budget /tmp/local-device-package && "
+        "exec su -s /bin/sh budget -c 'python scripts/local_device_transfer.py "
+        "/tmp/local-device-package'",
+    )
+    interactive_runner(command)
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="Safely operate a ClearPocket Server deployment")
     value.add_argument("--root", type=Path, default=Path(__file__).resolve().parent,
@@ -381,6 +402,11 @@ def parser() -> argparse.ArgumentParser:
         help="private age identity file mounted read-only for recipient-encrypted archives",
     )
     import_command.add_argument("--timeout", type=float, default=120.0)
+    local_verify = commands.add_parser(
+        "verify-local-device",
+        help="authenticate an iPhone Local Device backup without modifying this server",
+    )
+    local_verify.add_argument("package", type=Path)
     diagnostic = commands.add_parser("diagnostics", help="write a redacted support report")
     diagnostic.add_argument("--output", type=Path, default=Path("clearpocket-diagnostics.json"))
     return value
@@ -429,6 +455,8 @@ def main() -> int:
                 age_identity=arguments.age_identity,
             )
             print("Portable household imported; ClearPocket Server is healthy")
+        elif arguments.command == "verify-local-device":
+            verify_local_device_backup(target, arguments.package)
         elif arguments.command == "diagnostics":
             output = diagnostics(target, arguments.output)
             print(f"Redacted diagnostics written to {output}")

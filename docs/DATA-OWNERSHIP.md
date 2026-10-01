@@ -392,6 +392,15 @@ compared exactly, and any failure removes newly written objects without overlayi
 household. Recovery verification becomes visible through the existing owner-only health contract.
 This is an initialization/migration path, not an in-place merge.
 
+Customer server packages can also perform a non-mutating preflight of a native iPhone Local Device
+`.clearpocketbackup`. The version-matched container accepts the package read-only, prompts for its
+separate recovery key, authenticates the HMAC manifest and every chunk/hash, and verifies the local
+SQLite application identity, schema, integrity, foreign keys, attachment-key presence, and budget
+identity entirely in disposable plaintext staging. Only bounded table counts are reported. This
+proves cross-language package readability without activating or mutating a server. Actual Local
+Device → server cutover remains gated on a canonical converter for server-derived accounting facts
+(especially card reserve attribution) and must not be approximated by copying only visible rows.
+
 ## Remaining implementation sequence
 
 The production on-device authority and persistence/reopen coverage are implemented. The iOS app can

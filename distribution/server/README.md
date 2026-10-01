@@ -91,6 +91,23 @@ health, and starts the API only after success. A failed import never overlays ex
 leaves the API stopped for inspection. The age identity file is mounted read-only for the one-shot
 operation; its contents are never placed on a command line or copied into the authority.
 
+### Verify an iPhone Local Device backup
+
+Before moving a phone-local household, an administrator can perform a non-mutating compatibility
+check with the same versioned customer image:
+
+```sh
+./manage.py verify-local-device /private/path/generation.clearpocketbackup
+```
+
+The package is mounted read-only and copied into private container staging so its owner-only host
+permissions remain intact. The verifier prompts for the separate Local Device recovery key and then
+authenticates the manifest, decrypts and authenticates every bounded chunk, checks every size/hash,
+and verifies the SQLite application identity, supported schema, integrity, foreign keys, and exact
+budget identity. It prints only bounded record counts and destroys plaintext staging on exit. It
+does not start PostgreSQL or modify any server authority. Final activation remains deliberately
+unavailable until the Local Device → server converter proves all derived accounting state.
+
 ## Versioned update safety
 
 A newly downloaded immutable bundle can update an existing advanced Docker/QNAP deployment only after

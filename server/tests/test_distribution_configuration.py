@@ -429,6 +429,25 @@ def test_manager_portable_import_refuses_archive_symlink_before_docker(tmp_path:
     assert runner.commands == []
 
 
+def test_manager_local_device_verification_is_isolated_and_never_starts_database(tmp_path: Path):
+    target = manager_deployment(tmp_path)
+    package = tmp_path / "phone backup.clearpocketbackup"
+    package.mkdir()
+    (package / "manifest.json").write_text("{}")
+    runner = RecordedRunner()
+    interactive = RecordedRunner()
+    manager.verify_local_device_backup(
+        target, package, runner=runner, interactive_runner=interactive,
+    )
+    assert len(interactive.commands) == 1
+    command = interactive.commands[0]
+    assert f"{package.resolve()}:/import/package:ro" in command
+    assert "scripts/local_device_transfer.py /tmp/local-device-package" in command[-1]
+    assert "--user" in command and "root" in command
+    assert all("up" not in item and "stop" not in item for item in runner.commands)
+    assert all("down" not in item and "-v" not in item for item in runner.commands)
+
+
 def test_manager_accepts_array_and_line_delimited_compose_status(tmp_path: Path):
     target = manager_deployment(tmp_path)
     array = RecordedRunner([(0, '[{"Service":"api","State":"running","Health":"healthy"}]', "")])
