@@ -160,6 +160,15 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert "-MultipleInstances IgnoreNew" in script
     assert "Remove-ClearPocketBackupSchedule" in script
     assert "Show-ClearPocketBackupSchedule" in script
+    assert "Update-ClearPocketServer" in script
+    assert "Type UPDATE" in script
+    update_section = script.split("function Update-ClearPocketServer", 1)[1].split('if ($Operation -eq "Start")', 1)[0]
+    backup_index = update_section.index('& $backupScript -EnvironmentFile $environmentFile')
+    pull_index = update_section.index('& docker pull "${image}:$serverVersion"')
+    pin_index = update_section.index('Move-Item -LiteralPath $temporary -Destination $environmentFile -Force')
+    health_index = update_section.index("Start-ClearPocketServer")
+    assert backup_index < pull_index < pin_index < health_index
+    assert "automatic downgrade is disabled after migrations" in update_section
     task_section = script.split("function Install-ClearPocketAutoStart", 1)[1]
     assert "BUDGET_APP_DB_PASSWORD" not in task_section
     assert "BUDGET_APP_JWT_SECRET" not in task_section

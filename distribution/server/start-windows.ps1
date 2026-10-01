@@ -283,6 +283,62 @@ function Show-ClearPocketBackupSchedule {
     Write-Host "Last result: $($info.LastTaskResult)"
 }
 
+function Update-ClearPocketServer {
+    if ($serverVersion -eq "edge") {
+        throw "This folder is not an immutable release bundle. Download a versioned ClearPocket Server package."
+    }
+    $versionSettings = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^CLEARPOCKET_SERVER_VERSION=' })
+    $imageSettings = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^CLEARPOCKET_SERVER_IMAGE=' })
+    if ($versionSettings.Count -ne 1 -or $imageSettings.Count -ne 1) {
+        throw "Private configuration has an ambiguous server image or version."
+    }
+    $currentVersion = $versionSettings[0].Split('=', 2)[1]
+    $image = $imageSettings[0].Split('=', 2)[1]
+    if ($currentVersion -eq "edge" -or $currentVersion -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
+        throw "Update requires a currently pinned immutable server version."
+    }
+    if ($image -notmatch '^[A-Za-z0-9][A-Za-z0-9._/@:-]{0,254}$') {
+        throw "Private configuration has an invalid server image."
+    }
+    if ($currentVersion -eq $serverVersion) {
+        Write-Host "ClearPocket Server is already configured for version $serverVersion."
+        return
+    }
+    $confirmation = Read-Host "Type UPDATE to back up and apply server version $serverVersion"
+    if ($confirmation -cne "UPDATE") {
+        Write-Host "Update cancelled. Server configuration and data were not changed."
+        return
+    }
+    $backupScript = Join-Path $PSScriptRoot "backup-windows.ps1"
+    if (-not (Test-Path -LiteralPath $backupScript -PathType Leaf)) {
+        throw "Windows backup support is missing. Download the complete server package again."
+    }
+    & $backupScript -EnvironmentFile $environmentFile
+    if (-not $?) { throw "Required pre-update backup did not complete." }
+
+    & docker pull "${image}:$serverVersion"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Version $serverVersion could not be downloaded. Configuration and running services were not changed."
+    }
+    $lines = @(Get-Content -LiteralPath $environmentFile | ForEach-Object {
+        if ($_ -match '^CLEARPOCKET_SERVER_VERSION=') { "CLEARPOCKET_SERVER_VERSION=$serverVersion" } else { $_ }
+    })
+    $temporary = "$environmentFile.$([Guid]::NewGuid().ToString('N')).update"
+    try {
+        [IO.File]::WriteAllLines($temporary, $lines, [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporary -Destination $environmentFile -Force
+    } finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    }
+    try {
+        Start-ClearPocketServer
+    } catch {
+        try { Invoke-ClearPocketCompose @("stop", "api") } catch { }
+        throw "Version $serverVersion did not become healthy. The pre-update backup was preserved; automatic downgrade is disabled after migrations."
+    }
+    Write-Host "ClearPocket Server updated and healthy at version $serverVersion."
+}
+
 if ($Operation -eq "Start") {
     Start-ClearPocketServer
     exit 0
@@ -303,6 +359,7 @@ Write-Host " 10. Restore an encrypted backup into this empty server"
 Write-Host " 11. Schedule daily encrypted backups"
 Write-Host " 12. Disable scheduled backups"
 Write-Host " 13. Show backup schedule status"
+Write-Host " 14. Apply this downloaded server version"
 Write-Host ""
 $choice = if ($newInstall) { "1" } else { Read-Host "Choose an option [1]" }
 if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
@@ -341,5 +398,6 @@ switch ($choice) {
     "11" { Install-ClearPocketBackupSchedule }
     "12" { Remove-ClearPocketBackupSchedule }
     "13" { Show-ClearPocketBackupSchedule }
-    default { throw "Unknown option. Run the launcher again and choose 1 through 13." }
+    "14" { Update-ClearPocketServer }
+    default { throw "Unknown option. Run the launcher again and choose 1 through 14." }
 }

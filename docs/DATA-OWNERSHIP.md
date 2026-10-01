@@ -465,6 +465,10 @@ and the backup process's exclusive lock prevent missed wakeups and overlapping m
 The newest 10 completed Windows generations are retained by default (owner-configurable with a positive
 `BUDGET_APP_BACKUP_RETENTION` setting); rotation occurs only after successful atomic publication and
 matches regular ClearPocket generation files only.
+The Windows manager can also apply the immutable version in a newly downloaded bundle over an existing
+manager folder. It requires explicit confirmation, completes the encrypted backup first, pulls the exact
+image before atomically pinning the new version, and serves only after health. Pull failure changes
+nothing; failed post-migration activation stops the API and never attempts an unsafe automatic downgrade.
 `distribution/qnap` contains a QDK-compatible package foundation that
 wraps the same Compose bundle in App Center lifecycle hooks while keeping authority outside the
 replaceable QPKG directory. Its install routine chooses a durable QNAP shared-folder root, creates

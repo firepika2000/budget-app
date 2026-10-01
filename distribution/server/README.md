@@ -231,6 +231,14 @@ Completed generations are bounded to the newest 10 by default. Advanced owners c
 `BUDGET_APP_BACKUP_RETENTION` value in the private `.env`; rotation runs only after a new encrypted
 generation has been published successfully and never follows links or removes unrelated files.
 
+For an existing pinned installation, extract a newer versioned bundle over the same manager folder
+without deleting its hidden `.env`, rerun `start-windows.cmd`, and choose **Apply this downloaded server
+version**. The manager requires an explicit `UPDATE`, completes the encrypted backup first, pulls the
+exact image before atomically changing only the version setting, and requires API health. Pull failure
+leaves configuration and running services unchanged. An unhealthy post-migration image is stopped and
+never automatically downgraded against a potentially newer database; recover the preserved generation
+into a new empty server instead. A signed installer will replace this manual bundle-overlay step.
+
 Python and developer tools are not required. Docker Desktop is still required, and secure remote
 pairing/TLS is not yet guided, so this remains a preview rather than the final signed graphical server
 manager. Guided update and firewall guidance remain required.
