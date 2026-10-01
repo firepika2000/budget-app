@@ -136,9 +136,12 @@ registered public Dropbox app key/callback before the connection UI can be enabl
 
 The Local Device **Backup & Recovery** production screen now hosts the destination controls. A
 configured build can connect through the system authentication session, choose bounded retention,
-upload the currently displayed encrypted generation, list remote generations, download and verify a
+create a fresh authenticated generation and publish it through one **Back Up Now to Dropbox** action,
+show the durable time of the last verified success, list remote generations, download and verify a
 generation into private temporary storage, and hand it to the exact same recovery-key validation and
-cold-launch cutover used by Files. Disconnect first asks Dropbox to revoke the grant and only removes
+cold-launch cutover used by Files. A failed upload keeps the newly created local generation and its
+separate recovery key available for another destination rather than claiming off-device success.
+Disconnect first asks Dropbox to revoke the grant and only removes
 the Keychain refresh token after remote confirmation. Builds without the registered public app key
 fail closed with an explicit configuration message while local backup, Files export/import, and
 rollback remain available. Temporary Dropbox restore downloads are removed after preparation or when

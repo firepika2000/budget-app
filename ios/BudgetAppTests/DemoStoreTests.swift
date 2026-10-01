@@ -1927,6 +1927,21 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDropboxSuccessfulBackupStatusPersistsAcrossCoordinatorReconstruction() {
+        let suite = "BudgetAppTests.DropboxStatus.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let completedAt = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let first = DropboxBackupCoordinator(appKey: nil, defaults: defaults)
+        first.recordSuccessfulBackup(at: completedAt)
+        XCTAssertEqual(first.lastSuccessfulBackupAt, completedAt)
+
+        let reconstructed = DropboxBackupCoordinator(appKey: nil, defaults: defaults)
+        XCTAssertEqual(reconstructed.lastSuccessfulBackupAt, completedAt)
+    }
+
+    @MainActor
     func testMalformedLocalDeviceAttachmentKeyFailsClosedWithoutReplacement() throws {
         let malformed = Data(repeating: 4, count: 31)
         let secrets = InMemorySecretDataStore(initial: malformed)

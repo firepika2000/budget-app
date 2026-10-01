@@ -47,3 +47,6 @@ the workspace fails closed instead of accepting changes into volatile memory.
 8. In **Backup & Recovery**, create a backup and confirm **Move to a Server** exposes the package,
    separate transfer key, ordered import instructions, and a server connection action only after the
    generation exists. Cancel without connecting and confirm the local budget remains available.
+9. In a build configured with the production Dropbox app identity, connect Dropbox and choose
+   **Back Up Now to Dropbox**. Confirm a fresh recovery key appears, the verified generation is listed,
+   and **Last successful backup** survives leaving and reopening Backup & Recovery.

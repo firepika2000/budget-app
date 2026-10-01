@@ -3360,21 +3360,17 @@ private struct LocalDeviceBackupRecoveryView: View {
                     Picker("Retain generations", selection: $dropbox.retention) {
                         ForEach([3, 5, 10, 20], id: \.self) { Text("\($0)").tag($0) }
                     }
-                    if let backup {
-                        Button("Upload Current Generation", systemImage: "arrow.up.doc") {
-                            Task {
-                                do {
-                                    let publication = try await dropbox.upload(packageURL: backup.packageURL)
-                                    dropboxMessage = "Uploaded \(publication.fileCount) encrypted files."
-                                } catch { dropboxMessage = nil }
-                            }
-                        }
-                        .disabled(dropbox.isWorking)
-                        .accessibilityIdentifier("upload-dropbox-backup")
-                    } else {
-                        Text("Create an encrypted backup on this screen before uploading it.")
-                            .font(.footnote).foregroundStyle(.secondary)
+                    Button("Back Up Now to Dropbox", systemImage: "arrow.up.doc") {
+                        Task { await createAndUploadDropboxBackup() }
                     }
+                    .disabled(creating || dropbox.isWorking)
+                    .accessibilityIdentifier("backup-now-dropbox")
+                    if let completedAt = dropbox.lastSuccessfulBackupAt {
+                        LabeledContent("Last successful backup", value: completedAt.formatted(date: .abbreviated, time: .shortened))
+                            .accessibilityIdentifier("dropbox-last-success")
+                    }
+                    Text("ClearPocket always creates a fresh encrypted generation first. If Dropbox is unavailable, that generation and its separate recovery key remain available below for another destination.")
+                        .font(.footnote).foregroundStyle(.secondary)
                     if dropbox.generations.isEmpty {
                         Text("No encrypted Dropbox generations found.")
                             .font(.footnote).foregroundStyle(.secondary)
@@ -3543,7 +3539,10 @@ private struct LocalDeviceBackupRecoveryView: View {
         .navigationTitle("Backup & Recovery")
         .navigationBarTitleDisplayMode(.inline)
         .task { refreshRollbacks(); await dropbox.refresh() }
-        .onDisappear { removeDropboxRestoreDownload() }
+        .onDisappear {
+            removeDropboxRestoreDownload()
+            removeTemporaryBackup()
+        }
         .fileImporter(isPresented: $choosingRestore, allowedContentTypes: [.folder]) { result in
             switch result {
             case let .success(url):
@@ -3622,12 +3621,28 @@ private struct LocalDeviceBackupRecoveryView: View {
         creating = true
         copied = false
         errorMessage = nil
+        dropboxMessage = nil
         defer { creating = false }
         do {
             if let prior = backup?.packageURL { try? FileManager.default.removeItem(at: prior) }
+            backup = nil
             backup = try await store.createLocalDeviceBackup()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func createAndUploadDropboxBackup() async {
+        guard !creating, !dropbox.isWorking else { return }
+        await createBackup()
+        guard let backup else { return }
+        do {
+            let publication = try await dropbox.upload(packageURL: backup.packageURL)
+            dropboxMessage = "Backup verified in Dropbox (\(publication.fileCount) encrypted files)."
+        } catch {
+            dropboxMessage = nil
+            // The coordinator owns the actionable provider error. Keep the new local generation
+            // and recovery key visible so the owner can save it elsewhere without recreating it.
         }
     }
 
@@ -3679,6 +3694,12 @@ private struct LocalDeviceBackupRecoveryView: View {
         try? FileManager.default.removeItem(at: dropboxRestorePackage)
         self.dropboxRestorePackage = nil
         if restorePackage == dropboxRestorePackage { restorePackage = nil }
+    }
+
+    private func removeTemporaryBackup() {
+        guard let backup else { return }
+        try? FileManager.default.removeItem(at: backup.packageURL)
+        self.backup = nil
     }
 
     private func readableDate(_ value: String) -> String {

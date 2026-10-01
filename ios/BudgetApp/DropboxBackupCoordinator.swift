@@ -14,6 +14,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     @Published private(set) var isConnected = false
     @Published private(set) var generations: [DropboxBackupEntry] = []
     @Published private(set) var isWorking = false
+    @Published private(set) var lastSuccessfulBackupAt: Date?
     @Published var errorMessage: String?
     @Published var retention: Int {
         didSet { defaults.set(retention, forKey: retentionKey) }
@@ -21,6 +22,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
 
     private let defaults: UserDefaults
     private let retentionKey = "backup.dropbox.retention"
+    private let lastSuccessfulBackupKey = "backup.dropbox.last-success"
     private let credential: DropboxOAuthCredential?
     private var authenticationSession: ASWebAuthenticationSession?
     private var pendingAuthorization: DropboxPKCEAuthorization?
@@ -33,6 +35,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         self.defaults = defaults
         let savedRetention = defaults.integer(forKey: retentionKey)
         retention = [3, 5, 10, 20].contains(savedRetention) ? savedRetention : 10
+        lastSuccessfulBackupAt = defaults.object(forKey: lastSuccessfulBackupKey) as? Date
         #if DEBUG
         let environmentKey = ProcessInfo.processInfo.environment["BUDGETAPP_DROPBOX_APP_KEY"]
         #else
@@ -93,6 +96,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         do {
             let result = try await destination.publish(packageURL: packageURL)
             generations = try await destination.generations()
+            recordSuccessfulBackup()
             return result
         } catch {
             errorMessage = error.localizedDescription
@@ -130,6 +134,11 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         guard let destination = try? destination() else { return }
         do { generations = try await destination.generations() }
         catch { errorMessage = error.localizedDescription }
+    }
+
+    func recordSuccessfulBackup(at completedAt: Date = Date()) {
+        lastSuccessfulBackupAt = completedAt
+        defaults.set(completedAt, forKey: lastSuccessfulBackupKey)
     }
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
