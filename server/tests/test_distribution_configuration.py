@@ -147,6 +147,9 @@ def test_shared_compose_contract_preserves_security_and_persistent_authority():
     assert "clearpocket_caddy_data:/data" in compose
     assert "clearpocket_caddy_config:/config" in compose
     assert "BUDGET_APP_FORWARDED_ALLOW_IPS" in compose
+    assert 'profiles: ["qnap-tls"]' in compose
+    assert '"127.0.0.1:${CLEARPOCKET_QNAP_PROXY_PORT:-8443}:8080"' in compose
+    assert "./Caddyfile.qnap:/etc/caddy/Caddyfile:ro" in compose
 
 
 def test_bundled_caddy_is_the_public_tls_boundary():
@@ -161,6 +164,11 @@ def test_bundled_caddy_is_the_public_tls_boundary():
     assert "--proxy-headers" in dockerfile
     assert '--forwarded-allow-ips' in dockerfile
     assert "BUDGET_APP_FORWARDED_ALLOW_IPS:-127.0.0.1" in dockerfile
+    qnap = (ROOT / "distribution" / "server" / "Caddyfile.qnap").read_text()
+    assert "auto_https off" in qnap
+    assert "reverse_proxy api:8080" in qnap
+    assert "header_up X-Forwarded-Proto https" in qnap
+    assert "header_up Host {$CLEARPOCKET_PUBLIC_HOST}" in qnap
 
 
 def test_docker_installer_uses_immutable_image_without_host_python_and_never_overwrites():
@@ -469,6 +477,11 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "verify-local-device" in service
     assert "import-local-device" in service
     assert "import-portable" in service
+    assert "configure-qnap-https" in service
+    assert "COMPOSE_PROFILES=qnap-tls" in service
+    assert "CLEARPOCKET_BIND_ADDRESS=127.0.0.1" in service
+    assert "BUDGET_APP_PAIRING_PUBLIC_URL=https://%s" in service
+    assert "QNAP HTTPS setup requires the explicit final argument CONFIGURE" in service
     assert "Portable import requires the explicit final argument IMPORT" in service
     portable_section = service.split("portable_archive()", 1)[1].split("upgrade_server()", 1)[0]
     assert ':/import/archive.age:ro' in portable_section
@@ -523,6 +536,7 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "CLEARPOCKET_OPERATIONS_STORAGE" in setup
     assert 'distribution/server/compose.yaml' in builder
     assert 'distribution/server/Caddyfile' in builder
+    assert 'distribution/server/Caddyfile.qnap' in builder
     assert 'distribution/server/manage.py' in builder
     assert '"${#VERSION}" -gt 10' in builder
 
@@ -542,6 +556,7 @@ test -x shared/ClearPocketBackup.sh
 test -x shared/ClearPocketRestore.sh
 test -f shared/server/compose.yaml
 test -f shared/server/Caddyfile
+test -f shared/server/Caddyfile.qnap
 test -f shared/server/manage.py
 test -f shared/server/tools/backup.sh
 test -f shared/server/tools/restore.sh

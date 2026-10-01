@@ -272,9 +272,23 @@ server bundle, then generate `.env` with database and attachment paths under the
 shared folder. Import `compose.yaml` and `.env`; do not copy secrets into the Compose file. When SSH
 administration is enabled, `manage.py` provides the same non-destructive status/start/stop/diagnostics
 contract as a Linux Docker host. Use QNAP's supported reverse-proxy/certificate workflow or a private
-VPN. QNAP model architecture must be supported by the
-published image (`linux/amd64` or `linux/arm64`). A QPKG-style guided installer, storage-volume picker,
-certificate/pairing UI, and tested model matrix remain required before this becomes a
+VPN. The engineering QPKG provides a guarded bridge for QTS without competing for its management
+ports:
+
+```sh
+/path/to/ClearPocketServer.sh configure-qnap-https budget.example.com CONFIGURE
+```
+
+Then use QTS **Control Panel → Applications → Reverse Proxy** to send the public HTTPS hostname on
+port 443 to `http://127.0.0.1:8443`, and assign the matching QTS-managed certificate. The command
+validates and atomically publishes the hostname, binds raw API port 8080 to NAS loopback, starts a
+loopback-only internal bridge, forces the trusted upstream scheme to HTTPS, and enables native device
+pairing. It deliberately does not bind another process to QTS ports 80/443. Do not make port 8443 or
+8080 reachable from the LAN/router; only QTS should reach them.
+
+QNAP model architecture must be supported by the published image (`linux/amd64` or `linux/arm64`). A
+QPKG-style guided installer, storage-volume picker, graphical certificate/pairing UI, and tested model
+matrix remain required before this becomes a
 normal-user QNAP package.
 
 The repository also contains a QDK-compatible engineering package under `distribution/qnap`. It adds

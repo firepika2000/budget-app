@@ -35,6 +35,7 @@ cp "$SCRIPT_DIR/template/shared/ClearPocketBackup.sh" "$STAGE/shared/ClearPocket
 cp "$SCRIPT_DIR/template/shared/ClearPocketRestore.sh" "$STAGE/shared/ClearPocketRestore.sh"
 cp "$PROJECT_ROOT/distribution/server/compose.yaml" \
    "$PROJECT_ROOT/distribution/server/Caddyfile" \
+   "$PROJECT_ROOT/distribution/server/Caddyfile.qnap" \
    "$PROJECT_ROOT/distribution/server/configure.py" \
    "$PROJECT_ROOT/distribution/server/manage.py" \
    "$PROJECT_ROOT/distribution/server/.env.example" \

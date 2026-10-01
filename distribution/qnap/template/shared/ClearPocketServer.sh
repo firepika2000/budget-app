@@ -263,6 +263,69 @@ update_backup_schedule() {
     fi
 }
 
+configure_qnap_https() {
+    PUBLIC_HOST=$(printf '%s' "$1" | tr 'A-Z' 'a-z' | sed 's/\.$//')
+    [ "$2" = "CONFIGURE" ] || {
+        log_error "QNAP HTTPS setup requires the explicit final argument CONFIGURE"
+        return 1
+    }
+    if ! printf '%s\n' "$PUBLIC_HOST" | awk -F. '
+        NF < 2 { exit 1 }
+        {
+            numeric = 1
+            for (i = 1; i <= NF; i++) {
+                if (length($i) < 1 || length($i) > 63 ||
+                    ($i !~ /^[a-z0-9][a-z0-9-]*[a-z0-9]$/ && $i !~ /^[a-z0-9]$/)) exit 1
+                if ($i !~ /^[0-9]+$/) numeric = 0
+            }
+            if (numeric) exit 1
+        }
+    '; then
+        log_error "Public host must be a fully qualified DNS hostname without a URL, path, or port"
+        return 1
+    fi
+    case "$PUBLIC_HOST" in localhost|*.localhost) log_error "Public host cannot be localhost"; return 1 ;; esac
+
+    for key in CLEARPOCKET_BIND_ADDRESS COMPOSE_PROFILES CLEARPOCKET_PUBLIC_HOST \
+        CLEARPOCKET_QNAP_PROXY_PORT BUDGET_APP_ALLOWED_HOSTS BUDGET_APP_PAIRING_PUBLIC_URL \
+        BUDGET_APP_FORWARDED_ALLOW_IPS; do
+        [ "$(grep -c "^$key=" "$ENV_FILE")" -le 1 ] || {
+            log_error "Private configuration contains duplicate $key settings"
+            return 1
+        }
+    done
+
+    TEMP_ENV="$ENV_FILE.qnap-https.$$"
+    trap 'rm -f "$TEMP_ENV"' EXIT HUP INT TERM
+    awk '
+        !/^(CLEARPOCKET_BIND_ADDRESS|COMPOSE_PROFILES|CLEARPOCKET_PUBLIC_HOST|CLEARPOCKET_QNAP_PROXY_PORT|BUDGET_APP_ALLOWED_HOSTS|BUDGET_APP_PAIRING_PUBLIC_URL|BUDGET_APP_FORWARDED_ALLOW_IPS)=/ { print }
+    ' "$ENV_FILE" > "$TEMP_ENV"
+    {
+        printf 'CLEARPOCKET_BIND_ADDRESS=127.0.0.1\n'
+        printf 'COMPOSE_PROFILES=qnap-tls\n'
+        printf 'CLEARPOCKET_PUBLIC_HOST=%s\n' "$PUBLIC_HOST"
+        printf 'CLEARPOCKET_QNAP_PROXY_PORT=8443\n'
+        printf 'BUDGET_APP_ALLOWED_HOSTS=%s,localhost,127.0.0.1\n' "$PUBLIC_HOST"
+        printf 'BUDGET_APP_PAIRING_PUBLIC_URL=https://%s\n' "$PUBLIC_HOST"
+        printf 'BUDGET_APP_FORWARDED_ALLOW_IPS=*\n'
+    } >> "$TEMP_ENV"
+    chmod 600 "$TEMP_ENV"
+    "$DOCKER" compose --project-directory "$SERVER_ROOT" --env-file "$TEMP_ENV" \
+        -f "$SERVER_ROOT/compose.yaml" config --quiet || {
+        log_error "Generated QNAP HTTPS configuration is invalid; existing configuration was preserved"
+        return 1
+    }
+    mv "$TEMP_ENV" "$ENV_FILE"
+    trap - EXIT HUP INT TERM
+    if ! compose up -d || ! wait_healthy; then
+        log_error "HTTPS proxy configuration was saved, but services are not healthy; inspect Container Station logs"
+        return 1
+    fi
+    echo "QNAP HTTPS bridge is ready on NAS loopback port 8443."
+    echo "In QTS, proxy https://$PUBLIC_HOST:443 to http://127.0.0.1:8443 and assign its public certificate."
+    echo "Raw API port 8080 is now bound to NAS loopback only."
+}
+
 case "$1" in
     start)
         compose config --quiet && compose up -d
@@ -317,8 +380,12 @@ case "$1" in
         [ "$4" = "IMPORT" ] || { log_error "Portable import requires the explicit final argument IMPORT"; exit 1; }
         portable_archive "$2" "$3"
         ;;
+    configure-qnap-https)
+        [ "$#" -eq 3 ] || { echo "Usage: $0 configure-qnap-https budget.example.com CONFIGURE" >&2; exit 2; }
+        configure_qnap_https "$2" "$3"
+        ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|backup|restore|upgrade|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device|import-portable}" >&2
+        echo "Usage: $0 {start|stop|restart|status|backup|restore|upgrade|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device|import-portable|configure-qnap-https}" >&2
         exit 2
         ;;
 esac
