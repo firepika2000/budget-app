@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal")]
+    [ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox")]
     [string] $Operation = "Interactive"
 )
 
@@ -67,6 +67,14 @@ function ConvertTo-PublicHost([string] $Value) {
     return $hostName
 }
 
+function Assert-PrivateValue([string] $Value, [string] $Label, [bool] $AllowEmpty = $false) {
+    if ([string]::IsNullOrEmpty($Value) -and $AllowEmpty) { return $Value }
+    if ([string]::IsNullOrWhiteSpace($value) -or $value -ne $value.Trim() -or $value -match '[\x00-\x1f]') {
+        throw "$Label is empty or contains unsupported whitespace."
+    }
+    return $Value
+}
+
 function Read-PrivateValue([string] $Prompt, [bool] $AllowEmpty = $false) {
     $secure = Read-Host $Prompt -AsSecureString
     if ($secure.Length -eq 0 -and $AllowEmpty) { return "" }
@@ -76,10 +84,7 @@ function Read-PrivateValue([string] $Prompt, [bool] $AllowEmpty = $false) {
     } finally {
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
     }
-    if ([string]::IsNullOrWhiteSpace($value) -or $value -ne $value.Trim() -or $value -match '[\x00-\x1f]') {
-        throw "Private Dropbox value is empty or contains unsupported whitespace."
-    }
-    return $value
+    return Assert-PrivateValue $value "Private Dropbox value" $AllowEmpty
 }
 
 function Set-PrivateEnvironmentSetting([string] $Name, [string] $Value) {
@@ -298,25 +303,45 @@ function Remove-ClearPocketAutoStart {
     Write-Host "Automatic startup disabled. Server data and configuration were not changed."
 }
 
-function Configure-ClearPocketDropboxBackup {
+function Configure-ClearPocketDropboxBackup(
+    [string] $Mode = "",
+    [string] $Folder = "",
+    [string] $PrivateInput = ""
+) {
     Write-Host ""
     Write-Host "Configure encrypted Dropbox backup publication"
     Write-Host "Dropbox stores only completed age-encrypted generations, never the live database."
     Write-Host "Use a least-privilege Dropbox app-folder grant. Private values will not be displayed."
-    $mode = Read-Host "Use 1 for a temporary access token or 2 for durable refresh credentials [2]"
-    if ([string]::IsNullOrWhiteSpace($mode)) { $mode = "2" }
+    $mode = $Mode
+    $privateValues = $null
+    if (-not [string]::IsNullOrEmpty($PrivateInput)) {
+        try { $privateValues = $PrivateInput | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw "Private Dropbox configuration input is invalid." }
+    }
+    if ([string]::IsNullOrWhiteSpace($mode)) {
+        $mode = Read-Host "Use 1 for a temporary access token or 2 for durable refresh credentials [2]"
+        if ([string]::IsNullOrWhiteSpace($mode)) { $mode = "2" }
+    }
     $credentialLines = @()
     if ($mode -eq "1") {
-        $credentialLines += "BUDGET_APP_DROPBOX_ACCESS_TOKEN=$(Read-PrivateValue 'Dropbox access token')"
+        $accessToken = if ($null -ne $privateValues) { [string] $privateValues.access_token } else { Read-PrivateValue 'Dropbox access token' }
+        $accessToken = Assert-PrivateValue $accessToken "Dropbox access token"
+        $credentialLines += "BUDGET_APP_DROPBOX_ACCESS_TOKEN=$accessToken"
     } elseif ($mode -eq "2") {
-        $credentialLines += "BUDGET_APP_DROPBOX_REFRESH_TOKEN=$(Read-PrivateValue 'Dropbox refresh token')"
-        $credentialLines += "BUDGET_APP_DROPBOX_APP_KEY=$(Read-PrivateValue 'Dropbox app key')"
-        $secret = Read-PrivateValue "Dropbox app secret (leave blank for a PKCE/native app)" $true
+        $refreshToken = if ($null -ne $privateValues) { [string] $privateValues.refresh_token } else { Read-PrivateValue 'Dropbox refresh token' }
+        $appKey = if ($null -ne $privateValues) { [string] $privateValues.app_key } else { Read-PrivateValue 'Dropbox app key' }
+        $secret = if ($null -ne $privateValues) { [string] $privateValues.app_secret } else { Read-PrivateValue "Dropbox app secret (leave blank for a PKCE/native app)" $true }
+        $refreshToken = Assert-PrivateValue $refreshToken "Dropbox refresh token"
+        $appKey = Assert-PrivateValue $appKey "Dropbox app key"
+        $secret = Assert-PrivateValue $secret "Dropbox app secret" $true
+        $credentialLines += "BUDGET_APP_DROPBOX_REFRESH_TOKEN=$refreshToken"
+        $credentialLines += "BUDGET_APP_DROPBOX_APP_KEY=$appKey"
         if ($secret) { $credentialLines += "BUDGET_APP_DROPBOX_APP_SECRET=$secret" }
     } else {
         throw "Choose 1 or 2 for the Dropbox credential type."
     }
-    $folder = Read-Host "Dropbox app-folder path [/Backups]"
+    $folder = $Folder
+    if ([string]::IsNullOrWhiteSpace($folder)) { $folder = Read-Host "Dropbox app-folder path [/Backups]" }
     if ([string]::IsNullOrWhiteSpace($folder)) { $folder = "/Backups" }
     if ($folder -notmatch '^/(?!$)[A-Za-z0-9._/-]+$') {
         throw "Dropbox folder must be a non-root app-folder path using letters, numbers, dots, dashes, or underscores."
@@ -335,26 +360,38 @@ function Configure-ClearPocketDropboxBackup {
         )
         $acl.AddAccessRule($rule)
         Set-Acl -LiteralPath $temporary -AclObject $acl
+        Invoke-ClearPocketCompose @(
+            "run", "--rm", "--no-deps", "--user", "root",
+            "--volume", "${temporary}:/input/dropbox.env:ro",
+            "api", "sh", "-c",
+            'install -m 600 -o budget -g budget /input/dropbox.env /tmp/dropbox.env && exec python scripts/backup_destination.py list --destination dropbox --credentials-file /tmp/dropbox.env --dropbox-folder "$1"',
+            "dropbox-preflight", $folder
+        )
         Move-Item -LiteralPath $temporary -Destination $credentialFile -Force
         Set-Acl -LiteralPath $credentialFile -AclObject $acl
         Set-PrivateEnvironmentSetting "BUDGET_APP_DROPBOX_FOLDER" $folder
     } finally {
         Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
         $credentialLines = @()
+        $privateValues = $null
+        Remove-Variable accessToken, refreshToken, appKey -ErrorAction SilentlyContinue
         Remove-Variable secret -ErrorAction SilentlyContinue
     }
     Write-Host "Dropbox publication configured. The next manual or scheduled backup will test and use it."
     Write-Warning "Keep the age recovery identity on a separate protected device, not in Dropbox."
 }
 
-function Disable-ClearPocketDropboxBackup {
+function Disable-ClearPocketDropboxBackup([string] $Confirmation = "") {
     $credentialFile = Join-Path $PSScriptRoot "dropbox.env"
     if (-not (Test-Path -LiteralPath $credentialFile -PathType Leaf)) {
         Write-Host "Dropbox backup publication is not configured."
         return
     }
-    $confirmation = Read-Host "Type DISCONNECT to remove the local Dropbox grant (remote backups remain)"
-    if ($confirmation -cne "DISCONNECT") {
+    $confirmationValue = $Confirmation
+    if ([string]::IsNullOrWhiteSpace($confirmationValue)) {
+        $confirmationValue = Read-Host "Type DISCONNECT to remove the local Dropbox grant (remote backups remain)"
+    }
+    if ($confirmationValue -cne "DISCONNECT") {
         Write-Host "Dropbox backup publication was not changed."
         return
     }
@@ -654,6 +691,24 @@ if ($Operation -ne "Interactive") {
             } finally {
                 Remove-Variable privateInput -ErrorAction SilentlyContinue
             }
+        }
+        "ConfigureDropbox" {
+            $privateInput = [Console]::In.ReadToEnd()
+            if ([string]::IsNullOrWhiteSpace($privateInput) -or $privateInput.Length -gt 16384 -or
+                $privateInput.Contains([char] 0)) {
+                throw "Private Dropbox configuration is missing or invalid."
+            }
+            try {
+                Configure-ClearPocketDropboxBackup `
+                    -Mode $env:CLEARPOCKET_DROPBOX_MODE `
+                    -Folder $env:CLEARPOCKET_DROPBOX_FOLDER_INPUT `
+                    -PrivateInput $privateInput
+            } finally {
+                Remove-Variable privateInput -ErrorAction SilentlyContinue
+            }
+        }
+        "DisconnectDropbox" {
+            Disable-ClearPocketDropboxBackup -Confirmation $env:CLEARPOCKET_DROPBOX_CONFIRMATION
         }
         default { throw "Unsupported non-interactive manager operation." }
     }

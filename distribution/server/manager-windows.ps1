@@ -58,6 +58,8 @@ if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
           <Button Name="BackupButton" Content="Create Encrypted Backup" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="RestoreButton" Content="Restore Empty Server" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="ImportLocalButton" Content="Move iPhone Budget" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="DropboxButton" Content="Configure Dropbox Backup" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="DisconnectDropboxButton" Content="Disconnect Dropbox" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="DiagnosticsButton" Content="Create Diagnostics" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="LogsButton" Content="Recent Logs" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="AdvancedButton" Content="Backup, Restore &amp; Advanced…" Padding="18,9" Margin="0,0,10,10"/>
@@ -87,7 +89,7 @@ $storageBox = $window.FindName("StorageBox")
 $hostBox = $window.FindName("HostBox")
 $outputBox = $window.FindName("OutputBox")
 $stateText = $window.FindName("StateText")
-$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "ImportLocalButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
+$actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "ImportLocalButton", "DropboxButton", "DisconnectDropboxButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
 $actionButtons = @{}
 foreach ($name in $actionNames) { $actionButtons[$name] = $window.FindName($name) }
 
@@ -96,6 +98,9 @@ $storageBox.Text = Join-Path $env:LOCALAPPDATA "ClearPocket Server\Data"
 function Set-ConfiguredView([bool] $Configured) {
     $setupPanel.Visibility = if ($Configured) { [Windows.Visibility]::Collapsed } else { [Windows.Visibility]::Visible }
     $managePanel.Visibility = if ($Configured) { [Windows.Visibility]::Visible } else { [Windows.Visibility]::Collapsed }
+    if ($Configured) {
+        $actionButtons["DisconnectDropboxButton"].IsEnabled = Test-Path -LiteralPath (Join-Path $PSScriptRoot "dropbox.env") -PathType Leaf
+    }
 }
 
 function Set-ActionsEnabled([bool] $Enabled) {
@@ -183,6 +188,85 @@ function Read-LocalDeviceImportCredentials {
         }
     } finally {
         foreach ($box in $boxes) { $box.Text = "" }
+        $form.Dispose()
+    }
+}
+
+function Read-DropboxConfiguration {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Configure Dropbox Backup"
+    $form.Width = 560
+    $form.Height = 490
+    $form.StartPosition = "CenterParent"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $typeLabel = New-Object System.Windows.Forms.Label
+    $typeLabel.Text = "Credential type"
+    $typeLabel.SetBounds(24, 20, 480, 20)
+    $typeBox = New-Object System.Windows.Forms.ComboBox
+    $typeBox.SetBounds(24, 42, 490, 28)
+    $typeBox.DropDownStyle = "DropDownList"
+    [void] $typeBox.Items.Add("Durable refresh credentials")
+    [void] $typeBox.Items.Add("Temporary access token")
+    $typeBox.SelectedIndex = 0
+    $form.Controls.AddRange(@($typeLabel, $typeBox))
+
+    $fieldLabels = @("Dropbox app-folder path", "Temporary access token", "Refresh token", "App key", "App secret (optional for PKCE/native app)")
+    $defaults = @("/Backups", "", "", "", "")
+    $fields = @()
+    for ($index = 0; $index -lt $fieldLabels.Count; $index++) {
+        $label = New-Object System.Windows.Forms.Label
+        $label.Text = $fieldLabels[$index]
+        $label.SetBounds(24, 86 + ($index * 58), 490, 20)
+        $box = New-Object System.Windows.Forms.TextBox
+        $box.SetBounds(24, 106 + ($index * 58), 490, 24)
+        $box.Text = $defaults[$index]
+        if ($index -in @(1, 2, 4)) { $box.UseSystemPasswordChar = $true }
+        $form.Controls.AddRange(@($label, $box))
+        $fields += $box
+    }
+    $updateMode = {
+        $temporary = $typeBox.SelectedIndex -eq 1
+        $fields[1].Enabled = $temporary
+        $fields[2].Enabled = -not $temporary
+        $fields[3].Enabled = -not $temporary
+        $fields[4].Enabled = -not $temporary
+    }
+    $typeBox.Add_SelectedIndexChanged($updateMode)
+    & $updateMode
+
+    $ok = New-Object System.Windows.Forms.Button
+    $ok.Text = "Verify & Save"
+    $ok.SetBounds(314, 400, 100, 30)
+    $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $cancel = New-Object System.Windows.Forms.Button
+    $cancel.Text = "Cancel"
+    $cancel.SetBounds(422, 400, 92, 30)
+    $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.AddRange(@($ok, $cancel))
+    $form.AcceptButton = $ok
+    $form.CancelButton = $cancel
+    try {
+        if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
+        $mode = if ($typeBox.SelectedIndex -eq 1) { "1" } else { "2" }
+        if ([string]::IsNullOrWhiteSpace($fields[0].Text) -or
+            ($mode -eq "1" -and [string]::IsNullOrWhiteSpace($fields[1].Text)) -or
+            ($mode -eq "2" -and ([string]::IsNullOrWhiteSpace($fields[2].Text) -or [string]::IsNullOrWhiteSpace($fields[3].Text)))) {
+            [System.Windows.MessageBox]::Show("Complete the required Dropbox fields.", "Configure Dropbox Backup", "OK", "Warning") | Out-Null
+            return $null
+        }
+        return [pscustomobject]@{
+            Mode = $mode
+            Folder = $fields[0].Text.Trim()
+            AccessToken = $fields[1].Text
+            RefreshToken = $fields[2].Text
+            AppKey = $fields[3].Text.Trim()
+            AppSecret = $fields[4].Text
+        }
+    } finally {
+        foreach ($field in $fields) { $field.Text = "" }
         $form.Dispose()
     }
 }
@@ -335,6 +419,32 @@ $actionButtons["ImportLocalButton"].Add_Click({
     } ($privatePayload + "`n")
     $privatePayload = $null
     $credentials = $null
+})
+$actionButtons["DropboxButton"].Add_Click({
+    $configuration = Read-DropboxConfiguration
+    if ($null -eq $configuration) { return }
+    $privatePayload = @{
+        access_token = $configuration.AccessToken
+        refresh_token = $configuration.RefreshToken
+        app_key = $configuration.AppKey
+        app_secret = $configuration.AppSecret
+    } | ConvertTo-Json -Compress
+    Invoke-ManagerOperation "ConfigureDropbox" @{
+        CLEARPOCKET_DROPBOX_MODE = $configuration.Mode
+        CLEARPOCKET_DROPBOX_FOLDER_INPUT = $configuration.Folder
+    } $privatePayload
+    $privatePayload = $null
+    $configuration = $null
+})
+$actionButtons["DisconnectDropboxButton"].Add_Click({
+    $decision = [System.Windows.MessageBox]::Show(
+        "Remove this PC's Dropbox grant? Existing local and remote encrypted generations are preserved.",
+        "Disconnect Dropbox?", "YesNo", "Warning"
+    )
+    if ($decision -ne [System.Windows.MessageBoxResult]::Yes) { return }
+    Invoke-ManagerOperation "DisconnectDropbox" @{
+        CLEARPOCKET_DROPBOX_CONFIRMATION = "DISCONNECT"
+    }
 })
 $actionButtons["DiagnosticsButton"].Add_Click({ Invoke-ManagerOperation "Diagnostics" })
 $actionButtons["LogsButton"].Add_Click({ Invoke-ManagerOperation "Logs" })

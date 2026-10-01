@@ -331,12 +331,21 @@ def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     assert '"8" { Import-ClearPocketLocalDevice }' in script
     assert '"15" { Import-ClearPocketPortableArchive }' in script
     assert "function Configure-ClearPocketDropboxBackup" in script
+    assert "function Assert-PrivateValue" in script
     assert "Read-Host $Prompt -AsSecureString" in script
     assert "Security.AccessControl.FileSystemAccessRule" in script
     assert 'Join-Path $PSScriptRoot "dropbox.env"' in script
     assert '"16" { Configure-ClearPocketDropboxBackup }' in script
     assert '"17" { Disable-ClearPocketDropboxBackup }' in script
     assert "remote backups remain" in script
+    dropbox_section = script.split("function Configure-ClearPocketDropboxBackup", 1)[1].split(
+        "function Disable-ClearPocketDropboxBackup", 1
+    )[0]
+    assert "ConvertFrom-Json" in dropbox_section
+    assert "backup_destination.py list --destination dropbox" in dropbox_section
+    assert dropbox_section.index("backup_destination.py list --destination dropbox") < dropbox_section.index(
+        "Move-Item -LiteralPath $temporary -Destination $credentialFile -Force"
+    )
     portable_section = script.split("function Import-ClearPocketPortableArchive", 1)[1].split("function Install-ClearPocketBackupSchedule", 1)[0]
     assert ":/import/archive.age:ro" in portable_section
     assert ":/import/identity.txt:ro" in portable_section
@@ -434,6 +443,8 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert 'Content="Start &amp; Open"' in manager
     assert 'Content="Stop Safely"' in manager
     assert 'Content="Create Encrypted Backup"' in manager
+    assert 'Content="Configure Dropbox Backup"' in manager
+    assert 'Content="Disconnect Dropbox"' in manager
     assert 'Content="Create Diagnostics"' in manager
     assert 'Content="Backup, Restore &amp; Advanced…"' in manager
     assert 'Invoke-ManagerOperation "Configure"' in manager
@@ -449,7 +460,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert '$info.RedirectStandardOutput = $true' in manager
     assert '$info.RedirectStandardError = $true' in manager
     assert "Remove-Item" not in manager
-    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal")' in engine
+    assert 'ValidateSet("Interactive", "Configure", "Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox")' in engine
     assert '$Operation -notin @("Configure", "Interactive")' in engine
     assert '$env:CLEARPOCKET_SETUP_STORAGE_ROOT' in engine
     assert '$env:CLEARPOCKET_SETUP_PUBLIC_HOST' in engine
@@ -459,7 +470,7 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
         "Move-Item -LiteralPath $temporary -Destination $environmentFile"
     )
     noninteractive = engine.split('if ($Operation -ne "Interactive")', 1)[1]
-    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal"):
+    for operation in ("Start", "Open", "Status", "Stop", "Diagnostics", "Logs", "Backup", "Restore", "ImportLocal", "ConfigureDropbox", "DisconnectDropbox"):
         assert f'"{operation}"' in noninteractive
     assert 'Invoke-ClearPocketCompose @("stop")' in noninteractive
     assert 'Operation = "Manager"' in noninteractive
@@ -471,8 +482,17 @@ def test_windows_graphical_manager_drives_explicit_safe_operations():
     assert '[Console]::In.ReadToEnd()' in noninteractive
     assert '-PackagePath $env:CLEARPOCKET_LOCAL_IMPORT_PACKAGE' in noninteractive
     assert '-CredentialsInput $privateInput' in noninteractive
+    assert '-Mode $env:CLEARPOCKET_DROPBOX_MODE' in noninteractive
+    assert '-Folder $env:CLEARPOCKET_DROPBOX_FOLDER_INPUT' in noninteractive
+    assert 'Disable-ClearPocketDropboxBackup -Confirmation $env:CLEARPOCKET_DROPBOX_CONFIRMATION' in noninteractive
     assert "down -v" not in noninteractive
     assert "docker volume rm" not in noninteractive
+    assert "Read-DropboxConfiguration" in manager
+    assert 'Invoke-ManagerOperation "ConfigureDropbox"' in manager
+    assert 'Invoke-ManagerOperation "DisconnectDropbox"' in manager
+    assert "CLEARPOCKET_DROPBOX_ACCESS_TOKEN" not in manager
+    assert "CLEARPOCKET_DROPBOX_REFRESH_TOKEN" not in manager
+    assert "CLEARPOCKET_DROPBOX_APP_SECRET" not in manager
 
 
 def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():

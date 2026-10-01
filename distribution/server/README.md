@@ -358,6 +358,12 @@ masked recovery-key/password fields to initialize an empty server. Those private
 over redirected standard input to the version-matched converter—not in command arguments,
 environment variables, files, logs, or diagnostics. The package remains read-only, the phone authority
 is retained, and the API starts only after the converter's financial and attachment checks pass.
+Dropbox backup configuration is also available in the graphical manager. It defaults to durable
+refresh credentials, supports a temporary token when explicitly selected, masks private values, and
+sends them to the manager only over redirected standard input. ClearPocket verifies the grant against
+the intended app-folder path before replacing the current user-only credential file; an invalid or
+unreachable grant leaves the prior configuration intact. Disconnect removes only this PC's grant and
+preserves every local and remote encrypted generation.
 It can also register or remove a limited current-user Task Scheduler entry that waits for Docker
 Desktop and starts the server after sign-in; the task contains only the manager path, never private
 configuration or credentials. The same menu can initialize a new empty Windows server from an iPhone
@@ -414,8 +420,8 @@ Docker Desktop receives that file read-only and copies it to a private in-contai
 strict shared parser uses it. Manual and scheduled backups then retain the completed local generation,
 verify Dropbox content before promotion, and report either verified remote metadata or
 `publication_failed` without recording OAuth material. Disabling Dropbox removes only the local grant;
-existing local and remote generations remain. Public-app OAuth onboarding is still required before this
-can become a one-click consumer flow.
+existing local and remote generations remain. Public-app OAuth onboarding is still required before
+customers can replace manual app-folder credential entry with a one-click browser connection.
 
 For an existing pinned installation, run `install-windows.cmd` from the newer downloaded bundle, then
 choose **Apply this downloaded server version**. The manager requires an explicit `UPDATE`, completes the encrypted backup first, pulls the
@@ -426,7 +432,7 @@ into a new empty server instead. A signed installer package will eventually wrap
 
 Python and developer tools are not required. Docker Desktop is still required. Secure remote
 pairing/TLS is guided for a new installation, but automatic router/firewall configuration, platform
-signing, and graphical forms for import/scheduling/update/Dropbox credentials remain open product work.
+signing, and graphical forms for portable import/scheduling/update remain open product work.
 
 Rerunning the launcher reuses the existing `.env` and data folders. It never replaces configuration
 or deletes data. To move storage, use an exported encrypted backup and the documented restore flow;
