@@ -2176,6 +2176,18 @@ final class BudgetWorkspaceStore: ObservableObject {
                      createdAt: manifest.createdAt,
                      encryptedBytes: manifest.files.reduce(0) { $0 + $1.encryptedBytes })
     }
+
+    func prepareLocalDeviceRestore(packageURL: URL, recoveryKey: String) async throws -> LocalDevicePreparedRestore {
+        guard let localStorageComposition else {
+            throw LocalStorageError.operationFailed("Encrypted restore is available only for a Local Device budget")
+        }
+        return try await LocalDeviceRestoreCoordinator.prepare(
+            packageURL: packageURL,
+            recoveryKey: try LocalDeviceBackupRecoveryKey(encoded: recoveryKey),
+            applicationDirectory: localStorageComposition.paths.rootDirectory.deletingLastPathComponent(),
+            keyManager: localStorageComposition.keyManager
+        )
+    }
     static func production(context: WorkspaceRouteContext, clientFactory: @escaping (URL) throws -> APIClient = { try APIClient(baseURL: $0) }) -> BudgetWorkspaceStore {
         if case .localDevice = context { return .localDevice() }
         guard case let .live(budget, serverURL, token) = context else { return .demo() }
@@ -3108,6 +3120,12 @@ private struct LocalDeviceBackupRecoveryView: View {
     @State private var creating = false
     @State private var errorMessage: String?
     @State private var copied = false
+    @State private var choosingRestore = false
+    @State private var restorePackage: URL?
+    @State private var restoreKey = ""
+    @State private var preparingRestore = false
+    @State private var confirmingRestore = false
+    @State private var preparedRestore: LocalDevicePreparedRestore?
 
     var body: some View {
         Form {
@@ -3156,6 +3174,39 @@ private struct LocalDeviceBackupRecoveryView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
 
+            Section("Restore Existing Budget") {
+                Button("Choose Encrypted Backup", systemImage: "folder.badge.plus") {
+                    choosingRestore = true
+                }
+                .disabled(preparingRestore || preparedRestore != nil)
+                .accessibilityIdentifier("choose-local-device-restore")
+                if let restorePackage {
+                    LabeledContent("Selected", value: restorePackage.lastPathComponent)
+                        .accessibilityIdentifier("selected-local-device-restore")
+                    TextField("Recovery Key", text: $restoreKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(.footnote, design: .monospaced))
+                        .accessibilityIdentifier("local-device-restore-key")
+                    Button("Verify and Prepare Restore", systemImage: "checkmark.shield") {
+                        confirmingRestore = true
+                    }
+                    .disabled(preparingRestore || restoreKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("prepare-local-device-restore")
+                }
+                if let preparedRestore {
+                    Label("Restore verified and ready", systemImage: "checkmark.seal.fill")
+                        .foregroundStyle(.green)
+                        .accessibilityIdentifier("local-device-restore-ready")
+                    Text("Fully close ClearPocket from the app switcher, then reopen it. The restored budget will become active before its database opens. Your current authority is retained privately as a rollback generation.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    LabeledContent("Backup created", value: readableDate(preparedRestore.createdAt))
+                } else {
+                    Text("The backup is authenticated and restored into a separate private staging area first. Your current budget remains active and unchanged until the next cold launch.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+
             if let errorMessage {
                 Section {
                     Label(errorMessage, systemImage: "exclamationmark.triangle")
@@ -3166,6 +3217,27 @@ private struct LocalDeviceBackupRecoveryView: View {
         }
         .navigationTitle("Backup & Recovery")
         .navigationBarTitleDisplayMode(.inline)
+        .fileImporter(isPresented: $choosingRestore, allowedContentTypes: [.folder]) { result in
+            switch result {
+            case let .success(url):
+                restorePackage = url
+                restoreKey = ""
+                preparedRestore = nil
+                errorMessage = nil
+            case let .failure(error):
+                errorMessage = error.localizedDescription
+            }
+        }
+        .confirmationDialog(
+            "Prepare this backup for restore?",
+            isPresented: $confirmingRestore,
+            titleVisibility: .visible
+        ) {
+            Button("Verify and Prepare Restore") { Task { await prepareRestore() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Nothing changes now. After verification, the restored authority will replace the active one only when ClearPocket is fully closed and reopened. The current authority is retained for rollback.")
+        }
     }
 
     private func createBackup() async {
@@ -3177,6 +3249,24 @@ private struct LocalDeviceBackupRecoveryView: View {
         do {
             if let prior = backup?.packageURL { try? FileManager.default.removeItem(at: prior) }
             backup = try await store.createLocalDeviceBackup()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func prepareRestore() async {
+        guard !preparingRestore, let restorePackage else { return }
+        preparingRestore = true
+        errorMessage = nil
+        defer { preparingRestore = false }
+        let scoped = restorePackage.startAccessingSecurityScopedResource()
+        defer { if scoped { restorePackage.stopAccessingSecurityScopedResource() } }
+        do {
+            preparedRestore = try await store.prepareLocalDeviceRestore(
+                packageURL: restorePackage,
+                recoveryKey: restoreKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            restoreKey = ""
         } catch {
             errorMessage = error.localizedDescription
         }

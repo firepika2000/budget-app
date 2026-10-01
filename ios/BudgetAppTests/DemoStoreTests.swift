@@ -1989,6 +1989,110 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testVerifiedLocalRestoreCutsOverOnlyAtNextCompositionAndRetainsRollback() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-device-cutover-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceSupport = root.appendingPathComponent("SourceSupport", isDirectory: true)
+        let targetSupport = root.appendingPathComponent("TargetSupport", isDirectory: true)
+        let exportDirectory = root.appendingPathComponent("Exports", isDirectory: true)
+        try FileManager.default.createDirectory(at: exportDirectory, withIntermediateDirectories: true)
+        let identity = LocalAuthorityIdentity(
+            householdID: "local-device-household", householdName: "Restored Household",
+            ownerUserID: "local-device-owner", ownerDisplayName: "You",
+            budgetID: "local-device-budget", budgetName: "Restored Budget", currencyCode: "USD"
+        )
+
+        let sourceSecrets = InMemorySecretDataStore()
+        let source = try LocalDeviceStorageComposition(
+            applicationSupportDirectory: sourceSupport,
+            keyManager: LocalDeviceKeyManager(store: sourceSecrets)
+        )
+        try await source.authority.bootstrap(identity, createdAt: "2026-09-30T12:00:00Z")
+        try await source.authority.insertAccount(.init(
+            id: "restored-account", budgetID: identity.budgetID, name: "Restored Checking",
+            kind: "checking", isOnBudget: true, openingBalanceMinor: 87_654,
+            createdAt: "2026-09-30T12:00:00Z"
+        ))
+        let recoveryKey = try LocalDeviceBackupRecoveryKey(data: Data(repeating: 23, count: 32))
+        let package = exportDirectory.appendingPathComponent("generation.clearpocketbackup", isDirectory: true)
+        _ = try await LocalDeviceBackupService.create(
+            authority: source.authority, budgetID: identity.budgetID,
+            attachmentsDirectory: source.paths.attachments, attachmentKey: source.attachmentKey,
+            destinationURL: package, recoveryKey: recoveryKey
+        )
+
+        let targetSecrets = InMemorySecretDataStore()
+        let targetKeyManager = LocalDeviceKeyManager(store: targetSecrets)
+        let target = try LocalDeviceStorageComposition(
+            applicationSupportDirectory: targetSupport,
+            keyManager: targetKeyManager
+        )
+        let oldKey = target.attachmentKey
+        try await target.authority.bootstrap(
+            .init(householdID: "local-device-household", householdName: "Current Household",
+                  ownerUserID: "local-device-owner", ownerDisplayName: "You",
+                  budgetID: "local-device-budget", budgetName: "Current Budget", currencyCode: "USD"),
+            createdAt: "2026-09-29T12:00:00Z"
+        )
+        try await target.authority.insertAccount(.init(
+            id: "current-account", budgetID: identity.budgetID, name: "Current Checking",
+            kind: "checking", isOnBudget: true, openingBalanceMinor: 12_345,
+            createdAt: "2026-09-29T12:00:00Z"
+        ))
+
+        let applicationDirectory = target.paths.rootDirectory.deletingLastPathComponent()
+        do {
+            _ = try await LocalDeviceRestoreCoordinator.prepare(
+                packageURL: package,
+                recoveryKey: try .init(data: Data(repeating: 99, count: 32)),
+                applicationDirectory: applicationDirectory, keyManager: targetKeyManager
+            )
+            XCTFail("A backup with the wrong recovery key must not be scheduled")
+        } catch {}
+        XCTAssertFalse(LocalDeviceRestoreCoordinator.hasPendingRestore(applicationDirectory: applicationDirectory))
+        XCTAssertNil(targetSecrets.readData(account: LocalDeviceKeyManager.pendingRestoreKeyAccount))
+
+        let prepared = try await LocalDeviceRestoreCoordinator.prepare(
+            packageURL: package, recoveryKey: recoveryKey,
+            applicationDirectory: applicationDirectory, keyManager: targetKeyManager
+        )
+        XCTAssertEqual(prepared.budgetID, identity.budgetID)
+        XCTAssertTrue(LocalDeviceRestoreCoordinator.hasPendingRestore(applicationDirectory: applicationDirectory))
+        let stillCurrent = try await target.authority.snapshot(budgetID: identity.budgetID)
+        XCTAssertEqual(stillCurrent.accounts.map(\.name), ["Current Checking"],
+                       "Preparing must not mutate the open authority")
+        XCTAssertFalse(try LocalDeviceRestoreCoordinator.applyPendingRestoreBeforeOpening(
+            applicationDirectory: applicationDirectory, keyManager: targetKeyManager
+        ), "A same-process composition rebuild must not promote a restore over an open authority")
+        XCTAssertTrue(LocalDeviceRestoreCoordinator.hasPendingRestore(applicationDirectory: applicationDirectory))
+
+        let candidateName = try XCTUnwrap(FileManager.default.contentsOfDirectory(atPath: applicationDirectory.path)
+            .first(where: { $0.hasPrefix(".LocalDevice-Restore-") }))
+        let rollbackName = candidateName.replacingOccurrences(of: ".LocalDevice-Restore-", with: "LocalDevice-Rollback-")
+        // Model termination after the current authority was preserved but before the candidate was
+        // promoted. The next cold composition must resume this journal state safely.
+        try FileManager.default.moveItem(
+            at: applicationDirectory.appendingPathComponent("LocalDevice"),
+            to: applicationDirectory.appendingPathComponent(rollbackName)
+        )
+        XCTAssertTrue(try LocalDeviceRestoreCoordinator.applyPendingRestore(
+            applicationDirectory: applicationDirectory, keyManager: targetKeyManager
+        ))
+        let reopened = try LocalDeviceStorageComposition(
+            applicationSupportDirectory: targetSupport,
+            keyManager: targetKeyManager
+        )
+        let restored = try await reopened.authority.snapshot(budgetID: identity.budgetID)
+        XCTAssertEqual(restored.identity.budgetName, "Restored Budget")
+        XCTAssertEqual(restored.accounts.map(\.name), ["Restored Checking"])
+        XCTAssertEqual(reopened.attachmentKey, source.attachmentKey)
+        XCTAssertFalse(LocalDeviceRestoreCoordinator.hasPendingRestore(applicationDirectory: applicationDirectory))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: applicationDirectory.appendingPathComponent(rollbackName).path))
+        XCTAssertEqual(targetSecrets.readData(account: LocalDeviceKeyManager.rollbackKeyAccount(for: rollbackName)), oldKey)
+    }
+
+    @MainActor
     func testEditingAssignmentTotalPreservesActivityAndAppliesOnlyExactDelta() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

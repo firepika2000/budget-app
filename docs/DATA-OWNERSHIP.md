@@ -66,16 +66,25 @@ and the complete encrypted attachment object/tombstone set. Each payload is chun
 independent 256-bit recovery key; the authenticated manifest records exact plaintext and ciphertext
 sizes and SHA-256 values. Restore authenticates every payload, verifies database integrity and foreign
 keys, reopens the authority, and decrypts/verifies every active attachment before publishing to a new
-destination. It never overwrites an existing authority. Manual native export/restore UI and automatic
-off-device retention are the next product layers; until accepted, beta users should still treat local
-device data as disposable.
+destination. It never overwrites an existing authority.
 
 The native Local Device profile now exposes **Backup & Recovery**. An owner can create one of these
 verified encrypted generations, copy its separately generated recovery key, and hand the package to
 Files, iCloud Drive, Dropbox, an external drive, or another destination offered by the iOS share
 sheet. The clipboard copy is device-local and expires after five minutes. This is manual export of an
 immutable backup generation; it does not turn the destination into a live database, move authority,
-or delete the local source. In-app restore/cutover and automatic retained publication remain gated.
+or delete the local source.
+
+The same production screen can now select an exported package from Files or an installed document
+provider and accept its separate recovery key. Restore is validate-then-commit: it authenticates and
+decrypts the entire generation into a new private directory, performs database/foreign-key and active
+attachment verification, and records a private cutover journal without touching the open authority.
+On the next cold app launch, the journal promotes the verified directory before SQLite opens. The
+rename sequence is resumable after interruption, the prior authority is retained as a rollback
+generation, and its exact attachment key is retained separately in the device-only Keychain. A wrong
+key or damaged generation leaves no pending cutover and does not alter the current budget. The beta
+workflow currently requires the user to close the app fully and reopen it after verification;
+automatic retained publication and a graphical rollback browser remain gated.
 
 ## Implemented personal desktop-local backend
 
@@ -333,8 +342,8 @@ image for ARM64 and AMD64. This is a packaging foundation, not yet the promised 
 experience: the image has not been release-published, QNAP model validation is pending, and the
 Windows helper still requires Docker Desktop and Python for first-run configuration.
 
-1. Add safe in-app verify/restore and explicit authority cutover for on-device backup generations,
-   comparing complete canonical workspace/report projections before committing the replacement.
+1. Add a graphical rollback-generation browser and post-cutover acceptance/cleanup flow; keep every
+   authority/key pair recoverable until the owner explicitly removes it.
 2. Add explicit Dropbox OAuth setup/revocation and retention controls without placing provider
    secrets in the iOS database or logs. Dropbox remains a backup destination, not a second authority.
 3. Build the normal-user server manager around the shared image/config contract: graphical storage

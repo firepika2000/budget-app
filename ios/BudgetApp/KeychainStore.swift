@@ -32,7 +32,12 @@ struct KeychainStore: TokenStoring, SecretDataStoring {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(query as CFDictionary)
+        let updateStatus = SecItemUpdate(
+            query as CFDictionary,
+            [kSecValueData as String: value] as CFDictionary
+        )
+        if updateStatus == errSecSuccess { return }
+        guard updateStatus == errSecItemNotFound else { throw KeychainError.unhandled(updateStatus) }
         var insert = query
         insert[kSecValueData as String] = value
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -75,7 +80,9 @@ struct KeychainStore: TokenStoring, SecretDataStoring {
 
 @MainActor
 final class LocalDeviceKeyManager {
-    static let attachmentKeyAccount = "local-device-attachment-key-v1"
+    nonisolated static let attachmentKeyAccount = "local-device-attachment-key-v1"
+    nonisolated static let pendingRestoreKeyAccount = "local-device-pending-restore-key-v1"
+    nonisolated static let rollbackKeyAccountPrefix = "local-device-rollback-key-v1-"
     private let store: SecretDataStoring
 
     init(store: SecretDataStoring = KeychainStore()) {
@@ -94,6 +101,38 @@ final class LocalDeviceKeyManager {
         guard status == errSecSuccess else { throw KeychainError.unhandled(status) }
         try store.saveData(bytes, account: Self.attachmentKeyAccount)
         return bytes
+    }
+
+    func prepareRestoreKey(_ value: Data) throws {
+        guard value.count == 32 else { throw KeychainError.invalidSecret }
+        try store.saveData(value, account: Self.pendingRestoreKeyAccount)
+    }
+
+    func pendingRestoreKey() throws -> Data {
+        guard let value = store.readData(account: Self.pendingRestoreKeyAccount), value.count == 32 else {
+            throw KeychainError.invalidSecret
+        }
+        return value
+    }
+
+    func activatePendingRestoreKey(rollbackIdentifier: String) throws {
+        let replacement = try pendingRestoreKey()
+        let current = try loadOrCreateAttachmentKey()
+        let rollbackAccount = Self.rollbackKeyAccountPrefix + rollbackIdentifier
+        if let existingRollback = store.readData(account: rollbackAccount) {
+            guard existingRollback.count == 32 else { throw KeychainError.invalidSecret }
+        } else {
+            try store.saveData(current, account: rollbackAccount)
+        }
+        try store.saveData(replacement, account: Self.attachmentKeyAccount)
+    }
+
+    nonisolated static func rollbackKeyAccount(for identifier: String) -> String {
+        rollbackKeyAccountPrefix + identifier
+    }
+
+    func clearPendingRestoreKey() {
+        store.deleteData(account: Self.pendingRestoreKeyAccount)
     }
 }
 
