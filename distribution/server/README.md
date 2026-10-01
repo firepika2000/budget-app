@@ -24,6 +24,20 @@ validates Compose, starts the services, and waits for the real health endpoint. 
 because guided TLS/pairing is not complete. Rerunning it preserves `.env` and every authority directory;
 it never offers reset or overwrite.
 
+Create a coordinated encrypted backup with Docker alone:
+
+```sh
+./backup-docker.sh
+```
+
+The first run asks for separate generation and recovery-key folders, creates an age identity inside
+the pinned application container, and stores only its public recipient in `.env`. Capture briefly
+quiesces the API, dumps PostgreSQL and encrypted attachments as one manifest, resumes service before
+encryption, and atomically publishes a user-owned `0600` generation. It records owner-visible health,
+prevents overlapping runs, and retains the newest 10 completed generations by default. Copy the
+identity to a different protected device; a backup and its only decryption key on one disk are not a
+recovery plan.
+
 Advanced administrators may instead generate configuration directly from this directory:
 
 ```sh
@@ -74,7 +88,7 @@ before sharing them because user-entered server activity may still be visible th
 the bundled, tested coordinated backup path: the API pauses, PostgreSQL and encrypted attachments are
 captured as one integrity manifest, the API resumes, and `age` publishes an immutable encrypted
 generation. Docker, Python 3, and `age` must be installed on the host for these advanced manager backup
-commands. The guided first-run installer itself requires Docker only. The recovery passphrase or age
+commands. The guided installer and `backup-docker.sh` path require Docker only. The recovery passphrase or age
 identity remains under the household owner's control.
 
 On a package host that keeps private settings outside the replaceable application directory, pass

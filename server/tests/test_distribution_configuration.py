@@ -131,6 +131,24 @@ def test_docker_installer_uses_immutable_image_without_host_python_and_never_ove
     assert "down -v" not in script and "docker volume rm" not in script
 
 
+def test_docker_only_backup_is_coordinated_encrypted_bounded_and_user_owned():
+    script = (ROOT / "distribution" / "server" / "backup-docker.sh").read_text()
+    assert script.startswith("#!/bin/sh\nset -eu\n")
+    assert "command -v python" not in script and "command -v age" not in script
+    assert "BUDGET_APP_BACKUP_AGE_RECIPIENT" in script
+    assert "clearpocket-recovery-key.txt" in script
+    assert 'compose stop api' in script and 'compose start api' in script
+    assert "pg_dump --clean --if-exists" in script
+    assert "scripts/backup_archive.py create-manifest" in script
+    assert "age --recipient" in script
+    assert "scripts/backup_health.py healthy" in script
+    assert ".clearpocket-backup.lock" in script
+    assert "BUDGET_APP_BACKUP_RETENTION" in script
+    assert 'budget-*.tar.gz.age' in script
+    assert "chown '$USER_ID:$GROUP_ID'" in script
+    assert "down -v" not in script and "docker volume rm" not in script
+
+
 def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     command = (ROOT / "distribution" / "server" / "start-windows.cmd").read_text()
     script = (ROOT / "distribution" / "server" / "start-windows.ps1").read_text()

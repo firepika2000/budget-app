@@ -446,6 +446,11 @@ running Docker/Compose v2 installation, uses the exact immutable application ima
 configuration generator under the host user's identity, creates private durable authority directories,
 starts Compose, and requires API health. It binds to loopback until TLS/pairing exists and refuses to
 replace an existing `.env` or authority on rerun.
+The same generic bundle now performs coordinated encrypted backup entirely through the pinned
+containers, including age identity creation, PostgreSQL dump, attachment capture, canonical manifest,
+atomic publication, health reporting, overlap exclusion, and bounded post-success retention. The
+generation and identity remain owner-selected host paths and the resulting files are returned to the
+invoking host user; no host Python, PostgreSQL client, or age binary is required.
 
 The versioned Windows ZIP now includes a double-click per-user installer. It validates and atomically
 publishes an allowlisted manager payload to a stable `%LOCALAPPDATA%` program path, adds Desktop and
