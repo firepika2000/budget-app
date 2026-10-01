@@ -3168,6 +3168,7 @@ private struct WorkspaceProfileView: View {
 
 private struct LocalDeviceBackupRecoveryView: View {
     @ObservedObject var store: BudgetWorkspaceStore
+    @StateObject private var dropbox = DropboxBackupCoordinator()
     @State private var backup: LocalDeviceBackupExport?
     @State private var creating = false
     @State private var errorMessage: String?
@@ -3181,6 +3182,9 @@ private struct LocalDeviceBackupRecoveryView: View {
     @State private var rollbackGenerations: [LocalDeviceRollbackGeneration] = []
     @State private var selectedRollback: LocalDeviceRollbackGeneration?
     @State private var deletingRollback: LocalDeviceRollbackGeneration?
+    @State private var dropboxMessage: String?
+    @State private var confirmingDropboxDisconnect = false
+    @State private var dropboxRestorePackage: URL?
 
     var body: some View {
         Form {
@@ -3188,6 +3192,71 @@ private struct LocalDeviceBackupRecoveryView: View {
                 Label("Encrypted on this iPhone", systemImage: "lock.shield")
                 Text("The backup contains the complete local budget and its encrypted attachments. It can be saved to Files, iCloud Drive, Dropbox, an external drive, or another location offered by iOS.")
                     .font(.footnote).foregroundStyle(.secondary)
+            }
+
+            Section("Dropbox Backup Destination") {
+                if !dropbox.isConfigured {
+                    Label("Dropbox is unavailable in this build", systemImage: "shippingbox")
+                        .accessibilityIdentifier("dropbox-not-configured")
+                    Text("The release must be built with ClearPocket's registered Dropbox app key. Local encrypted backup and restore remain fully available.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else if !dropbox.isConnected {
+                    Button("Connect Dropbox", systemImage: "link") { dropbox.connect() }
+                        .disabled(dropbox.isWorking)
+                        .accessibilityIdentifier("connect-dropbox-backup")
+                    Text("Dropbox receives only immutable encrypted backup generations. Your live budget database never runs from Dropbox.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    Label("Connected", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .accessibilityIdentifier("dropbox-backup-connected")
+                    Picker("Retain generations", selection: $dropbox.retention) {
+                        ForEach([3, 5, 10, 20], id: \.self) { Text("\($0)").tag($0) }
+                    }
+                    if let backup {
+                        Button("Upload Current Generation", systemImage: "arrow.up.doc") {
+                            Task {
+                                do {
+                                    let publication = try await dropbox.upload(packageURL: backup.packageURL)
+                                    dropboxMessage = "Uploaded \(publication.fileCount) encrypted files."
+                                } catch { dropboxMessage = nil }
+                            }
+                        }
+                        .disabled(dropbox.isWorking)
+                        .accessibilityIdentifier("upload-dropbox-backup")
+                    } else {
+                        Text("Create an encrypted backup on this screen before uploading it.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if dropbox.generations.isEmpty {
+                        Text("No encrypted Dropbox generations found.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(dropbox.generations, id: \.path) { generation in
+                            Button {
+                                Task { await chooseDropboxGeneration(generation) }
+                            } label: {
+                                Label(generation.name, systemImage: "externaldrive.badge.icloud")
+                                    .lineLimit(2)
+                            }
+                            .disabled(dropbox.isWorking || preparedRestore != nil)
+                            .accessibilityLabel("Choose Dropbox backup \(generation.name)")
+                        }
+                    }
+                    Button("Disconnect Dropbox", role: .destructive) { confirmingDropboxDisconnect = true }
+                        .disabled(dropbox.isWorking)
+                        .accessibilityIdentifier("disconnect-dropbox-backup")
+                }
+                if dropbox.isWorking { ProgressView().accessibilityLabel("Dropbox backup in progress") }
+                if let dropboxMessage {
+                    Label(dropboxMessage, systemImage: "checkmark.circle")
+                        .font(.footnote).foregroundStyle(.green)
+                }
+                if let error = dropbox.errorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(.red)
+                        .accessibilityIdentifier("dropbox-backup-error")
+                }
             }
 
             if let backup {
@@ -3299,10 +3368,12 @@ private struct LocalDeviceBackupRecoveryView: View {
         }
         .navigationTitle("Backup & Recovery")
         .navigationBarTitleDisplayMode(.inline)
-        .task { refreshRollbacks() }
+        .task { refreshRollbacks(); await dropbox.refresh() }
+        .onDisappear { removeDropboxRestoreDownload() }
         .fileImporter(isPresented: $choosingRestore, allowedContentTypes: [.folder]) { result in
             switch result {
             case let .success(url):
+                removeDropboxRestoreDownload()
                 restorePackage = url
                 restoreKey = ""
                 preparedRestore = nil
@@ -3360,6 +3431,16 @@ private struct LocalDeviceBackupRecoveryView: View {
         } message: {
             Text("This removes the retained database, encrypted attachments, and matching device-only key. It cannot be undone.")
         }
+        .confirmationDialog(
+            "Disconnect Dropbox?",
+            isPresented: $confirmingDropboxDisconnect,
+            titleVisibility: .visible
+        ) {
+            Button("Revoke and Disconnect", role: .destructive) { Task { await dropbox.revoke() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("ClearPocket will ask Dropbox to revoke access, then remove its device-only refresh credential. Existing encrypted generations remain in your Dropbox until you delete them.")
+        }
     }
 
     private func createBackup() async {
@@ -3389,9 +3470,33 @@ private struct LocalDeviceBackupRecoveryView: View {
                 recoveryKey: restoreKey.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             restoreKey = ""
+            if dropboxRestorePackage == restorePackage {
+                removeDropboxRestoreDownload()
+                self.restorePackage = nil
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func chooseDropboxGeneration(_ generation: DropboxBackupEntry) async {
+        do {
+            removeDropboxRestoreDownload()
+            let downloaded = try await dropbox.download(generation)
+            dropboxRestorePackage = downloaded
+            restorePackage = downloaded
+            restoreKey = ""
+            preparedRestore = nil
+            errorMessage = nil
+            dropboxMessage = "Downloaded and verified. Enter its separate recovery key below."
+        } catch { dropboxMessage = nil }
+    }
+
+    private func removeDropboxRestoreDownload() {
+        guard let dropboxRestorePackage else { return }
+        try? FileManager.default.removeItem(at: dropboxRestorePackage)
+        self.dropboxRestorePackage = nil
+        if restorePackage == dropboxRestorePackage { restorePackage = nil }
     }
 
     private func readableDate(_ value: String) -> String {

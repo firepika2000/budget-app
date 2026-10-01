@@ -73,6 +73,7 @@ public actor DropboxOAuthCredential: DropboxAccessTokenProviding {
     private let store: DropboxRefreshTokenStoring
     private let session: URLSession
     private let tokenURL: URL
+    private let revokeURL: URL
     private let now: @Sendable () -> Date
     private var accessToken: AccessToken?
     private var refreshTask: Task<TokenResponse, Error>?
@@ -83,12 +84,14 @@ public actor DropboxOAuthCredential: DropboxAccessTokenProviding {
         store: DropboxRefreshTokenStoring,
         session: URLSession = .shared,
         tokenURL: URL = URL(string: "https://api.dropboxapi.com/oauth2/token")!,
+        revokeURL: URL = URL(string: "https://api.dropboxapi.com/2/auth/token/revoke")!,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.configuration = configuration
         self.store = store
         self.session = session
         self.tokenURL = tokenURL
+        self.revokeURL = revokeURL
         self.now = now
     }
 
@@ -192,6 +195,23 @@ public actor DropboxOAuthCredential: DropboxAccessTokenProviding {
         store.deleteRefreshToken()
     }
 
+    /// Revokes the grant at Dropbox before removing the local refresh credential. If Dropbox cannot
+    /// confirm revocation, local custody is retained so the user can retry rather than receive a
+    /// false disconnected state while a remote grant remains active.
+    public func revoke() async throws {
+        var token = try await validAccessToken()
+        var response = try await revokeRequest(token: token)
+        if response.statusCode == 401 {
+            rejectAccessToken(token)
+            token = try await validAccessToken()
+            response = try await revokeRequest(token: token)
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            throw DropboxOAuthError.httpStatus(response.statusCode, "Dropbox did not confirm revocation.")
+        }
+        disconnect()
+    }
+
     public func isConnected() -> Bool { (try? store.loadRefreshToken())?.isEmpty == false }
 
     private func finish(_ task: Task<TokenResponse, Error>, id: UUID?) async throws -> TokenResponse {
@@ -215,6 +235,15 @@ public actor DropboxOAuthCredential: DropboxAccessTokenProviding {
 
     private func exchange(_ parameters: [String: String]) async throws -> TokenResponse {
         try await Self.exchange(parameters, session: session, tokenURL: tokenURL)
+    }
+
+    private func revokeRequest(token: String) async throws -> HTTPURLResponse {
+        var request = URLRequest(url: revokeURL)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (_, rawResponse) = try await session.data(for: request)
+        guard let response = rawResponse as? HTTPURLResponse else { throw DropboxOAuthError.invalidResponse }
+        return response
     }
 
     private nonisolated static func exchange(

@@ -123,6 +123,16 @@ access-token value, and disconnect removes the Dropbox credential without touchi
 authority, attachment key, server login, or encrypted generations. The release build still needs a
 registered public Dropbox app key/callback before the connection UI can be enabled.
 
+The Local Device **Backup & Recovery** production screen now hosts the destination controls. A
+configured build can connect through the system authentication session, choose bounded retention,
+upload the currently displayed encrypted generation, list remote generations, download and verify a
+generation into private temporary storage, and hand it to the exact same recovery-key validation and
+cold-launch cutover used by Files. Disconnect first asks Dropbox to revoke the grant and only removes
+the Keychain refresh token after remote confirmation. Builds without the registered public app key
+fail closed with an explicit configuration message while local backup, Files export/import, and
+rollback remain available. Temporary Dropbox restore downloads are removed after preparation or when
+leaving the screen.
+
 ## Implemented personal desktop-local backend
 
 `./budget local` now provides a self-contained local authority for personal/development use through

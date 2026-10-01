@@ -39,6 +39,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         entry.tap()
 
         XCTAssertTrue(app.navigationBars["Backup & Recovery"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["dropbox-not-configured"].exists,
+                      "A build without a registered public Dropbox key must fail closed without hiding local recovery")
         let create = app.buttons["create-local-device-backup"]
         XCTAssertTrue(create.waitForExistence(timeout: 5))
         create.tap()
@@ -61,6 +63,28 @@ final class AuthenticationJourneyTests: XCTestCase {
         for _ in 0..<4 where !rollbacks.exists { app.swipeUp() }
         XCTAssertTrue(rollbacks.waitForExistence(timeout: 3), "The production recovery screen must expose retained rollback management")
         try app.performAccessibilityAudit(for: [.sufficientElementDescription, .trait])
+    }
+
+    func testConfiguredDropboxDestinationIsReachableFromProductionLocalBackupScreen() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--local", "--skip-guided-onboarding"]
+        app.launchEnvironment["BUDGETAPP_UI_TEST_LOCAL_ID"] = UUID().uuidString
+        app.launchEnvironment["BUDGETAPP_DROPBOX_APP_KEY"] = "ui-test-public-app-key"
+        app.launch()
+
+        XCTAssertTrue(app.buttons["profile-settings-button"].waitForExistence(timeout: 8))
+        app.buttons["profile-settings-button"].tap()
+        let entry = app.buttons["local-backup-recovery-settings"]
+        for _ in 0..<5 where !entry.isHittable { app.swipeUp() }
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        entry.tap()
+
+        XCTAssertTrue(app.navigationBars["Backup & Recovery"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["connect-dropbox-backup"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["dropbox-not-configured"].exists)
+        XCTAssertTrue(app.buttons["create-local-device-backup"].exists,
+                      "Adding Dropbox must not replace the Local Device backup path")
     }
 
     func testProductionPlanCostOverflowRendersValidationInsteadOfCrashing() {

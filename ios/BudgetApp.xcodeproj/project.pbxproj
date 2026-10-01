@@ -15,6 +15,7 @@
 		AA0000150000000000000015 /* BudgetCore in Frameworks */ = {isa = PBXBuildFile; productRef = BB0000150000000000000015 /* BudgetCore */; };
 		AA0000190000000000000019 /* BudgetStorage in Frameworks */ = {isa = PBXBuildFile; productRef = BB0000190000000000000019 /* BudgetStorage */; };
 		AA0000200000000000000020 /* LocalDeviceStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000200000000000000020 /* LocalDeviceStorage.swift */; };
+		AA0000210000000000000021 /* DropboxBackupCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000210000000000000021 /* DropboxBackupCoordinator.swift */; };
 		F7F6130787A7D2A0DAF13030 /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10F6752E4E2DAAB5F30C155 /* AppSession.swift */; };
 		AA0000010000000000000001 /* DemoModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000010000000000000001 /* DemoModels.swift */; };
 		AA0000020000000000000002 /* DemoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000020000000000000002 /* DemoStore.swift */; };
@@ -70,6 +71,7 @@
 		BB0000160000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BB0000180000000000000018 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		BB0000200000000000000020 /* LocalDeviceStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDeviceStorage.swift; sourceTree = "<group>"; };
+		BB0000210000000000000021 /* DropboxBackupCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropboxBackupCoordinator.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -152,6 +154,7 @@
 				B0E14E75380CB2C219F61828 /* EditingViews.swift */,
 				DEFFDD801DC18A01D2C2C6FF /* KeychainStore.swift */,
 				BB0000200000000000000020 /* LocalDeviceStorage.swift */,
+				BB0000210000000000000021 /* DropboxBackupCoordinator.swift */,
 				601308601949744C902D3365 /* RootView.swift */,
 				BB0000010000000000000001 /* DemoModels.swift */,
 				BB0000020000000000000002 /* DemoStore.swift */,
@@ -323,6 +326,7 @@
 				983A5654DFC35D2D8A62DEF3 /* EditingViews.swift in Sources */,
 				75327D5040AB839F991E0054 /* KeychainStore.swift in Sources */,
 				AA0000200000000000000020 /* LocalDeviceStorage.swift in Sources */,
+				AA0000210000000000000021 /* DropboxBackupCoordinator.swift in Sources */,
 				924CF4BFFBE2D5F48825FA53 /* RootView.swift in Sources */,
 				AA0000010000000000000001 /* DemoModels.swift in Sources */,
 				AA0000020000000000000002 /* DemoStore.swift in Sources */,
@@ -415,8 +419,10 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
+				DROPBOX_APP_KEY = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ClearPocket;
+				INFOPLIST_KEY_ClearPocketDropboxAppKey = "$(DROPBOX_APP_KEY)";
 				INFOPLIST_KEY_NSCameraUsageDescription = "ClearPocket Budget uses the camera only when you choose to photograph a transaction attachment.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
@@ -504,8 +510,10 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
+				DROPBOX_APP_KEY = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ClearPocket;
+				INFOPLIST_KEY_ClearPocketDropboxAppKey = "$(DROPBOX_APP_KEY)";
 				INFOPLIST_KEY_NSCameraUsageDescription = "ClearPocket Budget uses the camera only when you choose to photograph a transaction attachment.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;

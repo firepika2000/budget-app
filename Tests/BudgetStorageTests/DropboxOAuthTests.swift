@@ -117,6 +117,25 @@ final class DropboxOAuthTests: XCTestCase {
         XCTAssertFalse(connected)
     }
 
+    func testRevokeConfirmsRemoteGrantRemovalBeforeDeletingKeychainRefreshToken() async throws {
+        let store = MemoryDropboxRefreshStore("refresh-A")
+        let recorder = OAuthRequestRecorder()
+        DropboxOAuthMockURLProtocol.handler = { request in
+            recorder.append(request)
+            if request.url?.path == "/2/auth/token/revoke" {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access-A")
+                return Self.response(request, body: "")
+            }
+            return Self.response(request, body: #"{"access_token":"access-A","expires_in":14400}"#)
+        }
+        let credential = try makeCredential(store: store)
+
+        try await credential.revoke()
+
+        XCTAssertNil(store.value())
+        XCTAssertEqual(recorder.count(), 2)
+    }
+
     private func makeCredential(store: MemoryDropboxRefreshStore) throws -> DropboxOAuthCredential {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [DropboxOAuthMockURLProtocol.self]
@@ -125,6 +144,7 @@ final class DropboxOAuthTests: XCTestCase {
             store: store,
             session: URLSession(configuration: configuration),
             tokenURL: URL(string: "https://api.dropbox.test/oauth2/token")!,
+            revokeURL: URL(string: "https://api.dropbox.test/2/auth/token/revoke")!,
             now: { Date(timeIntervalSince1970: 1_800_000_000) }
         )
     }
