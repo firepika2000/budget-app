@@ -1914,6 +1914,28 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(secrets.saveCount, 1, "Reloading must not rotate the authority key")
     }
 
+    @MainActor
+    func testDropboxBackupRecoveryKeyIsStableSeparateAndMalformedMaterialFailsClosed() throws {
+        let secrets = InMemorySecretDataStore()
+        let firstManager = LocalDeviceKeyManager(store: secrets)
+        let attachmentKey = try firstManager.loadOrCreateAttachmentKey()
+        let first = try firstManager.loadOrCreateDropboxBackupRecoveryKey()
+
+        XCTAssertEqual(first.data.count, 32)
+        XCTAssertNotEqual(first.data, attachmentKey, "Backup recovery must not reuse the live attachment key")
+        let reconstructed = try LocalDeviceKeyManager(store: secrets).loadOrCreateDropboxBackupRecoveryKey()
+        XCTAssertEqual(reconstructed, first)
+        XCTAssertEqual(secrets.saveCount, 2, "Reconstruction must not rotate either device-held key")
+
+        let damaged = InMemorySecretDataStore()
+        try damaged.saveData(Data(repeating: 9, count: 31),
+                             account: LocalDeviceKeyManager.dropboxBackupRecoveryKeyAccount)
+        XCTAssertThrowsError(try LocalDeviceKeyManager(store: damaged).loadOrCreateDropboxBackupRecoveryKey())
+        XCTAssertEqual(damaged.readData(account: LocalDeviceKeyManager.dropboxBackupRecoveryKeyAccount),
+                       Data(repeating: 9, count: 31))
+        XCTAssertEqual(damaged.saveCount, 1, "Malformed recovery material must never be replaced silently")
+    }
+
     func testDropboxRefreshTokenUsesDedicatedDeviceOnlyKeychainAccountAcrossReconstruction() throws {
         let keychain = KeychainStore(service: "BudgetAppTests.Dropbox.\(UUID().uuidString)")
         let first = DropboxRefreshTokenKeychainStore(keychain: keychain)
@@ -2005,10 +2027,12 @@ final class DemoStoreTests: XCTestCase {
             openingBalanceMinor: 54_321
         ))
 
-        let exported = try await store.createLocalDeviceBackup(in: exports)
+        let dropboxRecovery = try store.localDeviceDropboxRecoveryKey()
+        let exported = try await store.createLocalDeviceBackup(in: exports, recoveryKey: dropboxRecovery)
         XCTAssertTrue(FileManager.default.fileExists(atPath: exported.packageURL.path))
         XCTAssertGreaterThan(exported.encryptedBytes, 0)
         XCTAssertEqual(try LocalDeviceBackupRecoveryKey(encoded: exported.recoveryKey).encoded, exported.recoveryKey)
+        XCTAssertEqual(exported.recoveryKey, dropboxRecovery.encoded)
 
         let restored = root.appendingPathComponent("Restored", isDirectory: true)
         _ = try await LocalDeviceBackupService.restore(

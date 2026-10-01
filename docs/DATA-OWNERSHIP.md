@@ -129,6 +129,13 @@ No Dropbox credential belongs in SQLite, the encrypted generation, logs, or sour
 Dropbox acceptance still requires registering the production app key/callback and exercising that
 external account flow.
 
+Dropbox generations now use a dedicated 256-bit recovery key retained as device-only Keychain data,
+separate from both the live attachment key and Dropbox OAuth credentials. The owner can re-copy the
+same key after relaunch, and every newly retained Dropbox generation remains recoverable with that
+one separately stored secret. The key is never uploaded to Dropbox or embedded in a generation.
+Manual Files/share-sheet generations continue to receive independent per-generation keys. A malformed
+stored key fails closed rather than silently rotating and making earlier Dropbox generations unusable.
+
 The reusable native OAuth credential layer is now implemented beneath that pending UI. It generates
 RFC 7636 S256 PKCE authorization requests for offline access with only Dropbox file-content and
 metadata scopes, validates the exact callback and unpredictable state, exchanges authorization codes,

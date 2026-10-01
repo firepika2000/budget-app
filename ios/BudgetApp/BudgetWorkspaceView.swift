@@ -2210,11 +2210,14 @@ final class BudgetWorkspaceStore: ObservableObject {
         return store
     }
 
-    func createLocalDeviceBackup(in directory: URL = FileManager.default.temporaryDirectory) async throws -> LocalDeviceBackupExport {
+    func createLocalDeviceBackup(
+        in directory: URL = FileManager.default.temporaryDirectory,
+        recoveryKey suppliedRecoveryKey: LocalDeviceBackupRecoveryKey? = nil
+    ) async throws -> LocalDeviceBackupExport {
         guard let localStorageComposition else {
             throw LocalStorageError.operationFailed("Encrypted backup is available only for a Local Device budget")
         }
-        let recoveryKey = try LocalDeviceBackupRecoveryKey.generate()
+        let recoveryKey = try suppliedRecoveryKey ?? LocalDeviceBackupRecoveryKey.generate()
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
@@ -2243,6 +2246,13 @@ final class BudgetWorkspaceStore: ObservableObject {
         return .init(packageURL: packageURL, recoveryKey: recoveryKey.encoded,
                      createdAt: manifest.createdAt,
                      encryptedBytes: manifest.files.reduce(0) { $0 + $1.encryptedBytes })
+    }
+
+    func localDeviceDropboxRecoveryKey() throws -> LocalDeviceBackupRecoveryKey {
+        guard let localStorageComposition else {
+            throw LocalStorageError.operationFailed("Dropbox backup is available only for a Local Device budget")
+        }
+        return try localStorageComposition.keyManager.loadOrCreateDropboxBackupRecoveryKey()
     }
 
     func prepareLocalDeviceRestore(packageURL: URL, recoveryKey: String) async throws -> LocalDevicePreparedRestore {
@@ -3379,6 +3389,8 @@ private struct LocalDeviceBackupRecoveryView: View {
     @State private var dropboxMessage: String?
     @State private var confirmingDropboxDisconnect = false
     @State private var dropboxRestorePackage: URL?
+    @State private var dropboxRecoveryKey: String?
+    @State private var dropboxKeyCopied = false
 
     var body: some View {
         Form {
@@ -3416,7 +3428,15 @@ private struct LocalDeviceBackupRecoveryView: View {
                         LabeledContent("Last successful backup", value: completedAt.formatted(date: .abbreviated, time: .shortened))
                             .accessibilityIdentifier("dropbox-last-success")
                     }
-                    Text("ClearPocket always creates a fresh encrypted generation first. If Dropbox is unavailable, that generation and its separate recovery key remain available below for another destination.")
+                    if let dropboxRecoveryKey {
+                        Button(dropboxKeyCopied ? "Recovery Key Copied" : "Copy Dropbox Recovery Key",
+                               systemImage: dropboxKeyCopied ? "checkmark" : "key") {
+                            copyRecoveryKey(dropboxRecoveryKey)
+                            dropboxKeyCopied = true
+                        }
+                        .accessibilityIdentifier("copy-dropbox-backup-key")
+                    }
+                    Text("ClearPocket creates each new encrypted generation using your dedicated Dropbox recovery key. Save that key somewhere outside this iPhone and outside Dropbox; ClearPocket cannot recover it after device loss. Backups made by an older app version may still require the recovery key shown when that backup was created.")
                         .font(.footnote).foregroundStyle(.secondary)
                     if dropbox.generations.isEmpty {
                         Text("No encrypted Dropbox generations found.")
@@ -3585,7 +3605,15 @@ private struct LocalDeviceBackupRecoveryView: View {
         }
         .navigationTitle("Backup & Recovery")
         .navigationBarTitleDisplayMode(.inline)
-        .task { refreshRollbacks(); await dropbox.refresh() }
+        .task {
+            refreshRollbacks()
+            await dropbox.refresh()
+            if dropbox.isConnected { loadDropboxRecoveryKey() }
+        }
+        .onChange(of: dropbox.isConnected) { _, connected in
+            if connected { loadDropboxRecoveryKey() }
+            else { dropboxRecoveryKey = nil; dropboxKeyCopied = false }
+        }
         .onDisappear {
             removeDropboxRestoreDownload()
             removeTemporaryBackup()
@@ -3663,7 +3691,7 @@ private struct LocalDeviceBackupRecoveryView: View {
         }
     }
 
-    private func createBackup() async {
+    private func createBackup(recoveryKey: LocalDeviceBackupRecoveryKey? = nil) async {
         guard !creating else { return }
         creating = true
         copied = false
@@ -3673,7 +3701,7 @@ private struct LocalDeviceBackupRecoveryView: View {
         do {
             if let prior = backup?.packageURL { try? FileManager.default.removeItem(at: prior) }
             backup = nil
-            backup = try await store.createLocalDeviceBackup()
+            backup = try await store.createLocalDeviceBackup(recoveryKey: recoveryKey)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -3681,7 +3709,15 @@ private struct LocalDeviceBackupRecoveryView: View {
 
     private func createAndUploadDropboxBackup() async {
         guard !creating, !dropbox.isWorking else { return }
-        await createBackup()
+        let recoveryKey: LocalDeviceBackupRecoveryKey
+        do {
+            recoveryKey = try store.localDeviceDropboxRecoveryKey()
+            dropboxRecoveryKey = recoveryKey.encoded
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        await createBackup(recoveryKey: recoveryKey)
         guard let backup else { return }
         do {
             let publication = try await dropbox.upload(packageURL: backup.packageURL)
@@ -3699,6 +3735,11 @@ private struct LocalDeviceBackupRecoveryView: View {
             options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(300)]
         )
         copied = true
+    }
+
+    private func loadDropboxRecoveryKey() {
+        do { dropboxRecoveryKey = try store.localDeviceDropboxRecoveryKey().encoded }
+        catch { errorMessage = error.localizedDescription }
     }
 
     private func prepareRestore() async {
@@ -3729,10 +3770,12 @@ private struct LocalDeviceBackupRecoveryView: View {
             let downloaded = try await dropbox.download(generation)
             dropboxRestorePackage = downloaded
             restorePackage = downloaded
-            restoreKey = ""
+            restoreKey = dropboxRecoveryKey ?? ""
             preparedRestore = nil
             errorMessage = nil
-            dropboxMessage = "Downloaded and verified. Enter its separate recovery key below."
+            dropboxMessage = dropboxRecoveryKey == nil
+                ? "Downloaded and verified. Enter its separate recovery key below."
+                : "Downloaded and verified. This iPhone's Dropbox recovery key is ready below."
         } catch { dropboxMessage = nil }
     }
 

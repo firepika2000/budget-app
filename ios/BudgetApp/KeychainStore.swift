@@ -105,6 +105,7 @@ struct DropboxRefreshTokenKeychainStore: DropboxRefreshTokenStoring, Sendable {
 @MainActor
 final class LocalDeviceKeyManager {
     nonisolated static let attachmentKeyAccount = "local-device-attachment-key-v1"
+    nonisolated static let dropboxBackupRecoveryKeyAccount = "local-device-dropbox-recovery-key-v1"
     nonisolated static let pendingRestoreKeyAccount = "local-device-pending-restore-key-v1"
     nonisolated static let rollbackKeyAccountPrefix = "local-device-rollback-key-v1-"
     private let store: SecretDataStoring
@@ -114,7 +115,20 @@ final class LocalDeviceKeyManager {
     }
 
     func loadOrCreateAttachmentKey() throws -> Data {
-        if let existing = store.readData(account: Self.attachmentKeyAccount) {
+        try loadOrCreateKey(account: Self.attachmentKeyAccount)
+    }
+
+    /// Stable recovery material for immutable Dropbox generations.
+    ///
+    /// Manual Files exports intentionally receive a fresh per-generation key. Dropbox backups use
+    /// one separately exportable key so retained generations remain recoverable after the UI that
+    /// created them has gone away. It is never included in the backup or sent to Dropbox.
+    func loadOrCreateDropboxBackupRecoveryKey() throws -> LocalDeviceBackupRecoveryKey {
+        try .init(data: loadOrCreateKey(account: Self.dropboxBackupRecoveryKeyAccount))
+    }
+
+    private func loadOrCreateKey(account: String) throws -> Data {
+        if let existing = store.readData(account: account) {
             guard existing.count == 32 else { throw KeychainError.invalidSecret }
             return existing
         }
@@ -123,7 +137,7 @@ final class LocalDeviceKeyManager {
             SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
         }
         guard status == errSecSuccess else { throw KeychainError.unhandled(status) }
-        try store.saveData(bytes, account: Self.attachmentKeyAccount)
+        try store.saveData(bytes, account: account)
         return bytes
     }
 
