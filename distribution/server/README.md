@@ -179,14 +179,15 @@ administration is enabled, `manage.py` provides the same non-destructive status/
 contract as a Linux Docker host. Use QNAP's supported reverse-proxy/certificate workflow or a private
 VPN. QNAP model architecture must be supported by the
 published image (`linux/amd64` or `linux/arm64`). A QPKG-style guided installer, storage-volume picker,
-certificate/pairing UI, upgrade safety, and tested model matrix remain required before this becomes a
+certificate/pairing UI, and tested model matrix remain required before this becomes a
 normal-user QNAP package.
 
 The repository also contains a QDK-compatible engineering package under `distribution/qnap`. It adds
 App Center lifecycle integration around this exact bundle while keeping customer authority outside
 the replaceable QPKG directory. It remains a preview until its documented setup, signing, and
 hardware-validation gates are complete. Its service actions include the same guarded empty-destination
-restore using the package containers, so recovery does not require host Python, PostgreSQL, or `age`.
+restore using the package containers, so recovery does not require host Python, PostgreSQL, or `age`,
+plus backup-before-update activation of the immutable version bundled by the QPKG.
 
 ## Always-on Windows PC
 

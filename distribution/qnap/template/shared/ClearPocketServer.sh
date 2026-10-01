@@ -117,6 +117,64 @@ import_local_device() {
     fi
 }
 
+upgrade_server() {
+    [ "$1" = "UPGRADE" ] || {
+        log_error "QNAP update requires the explicit final argument UPGRADE"
+        return 1
+    }
+    VERSION_FILE="$SERVER_ROOT/VERSION"
+    [ -f "$VERSION_FILE" ] && [ ! -L "$VERSION_FILE" ] || {
+        log_error "Versioned QNAP server bundle is incomplete"
+        return 1
+    }
+    VERSION=$(cat "$VERSION_FILE")
+    case "$VERSION" in ''|edge|*[!A-Za-z0-9._-]*) log_error "QNAP server version is not an immutable release"; return 1 ;; esac
+    [ "${#VERSION}" -le 63 ] || { log_error "QNAP server version is invalid"; return 1; }
+    CURRENT=$(sed -n 's/^CLEARPOCKET_SERVER_VERSION=//p' "$ENV_FILE")
+    [ "$(grep -c '^CLEARPOCKET_SERVER_VERSION=' "$ENV_FILE")" = "1" ] || {
+        log_error "Private configuration has an ambiguous server version"
+        return 1
+    }
+    [ "$CURRENT" != "$VERSION" ] || {
+        echo "ClearPocket Server is already configured for version $VERSION."
+        return 0
+    }
+    IMAGE=$(sed -n 's/^CLEARPOCKET_SERVER_IMAGE=//p' "$ENV_FILE")
+    [ "$(grep -c '^CLEARPOCKET_SERVER_IMAGE=' "$ENV_FILE")" = "1" ] && [ -n "$IMAGE" ] || {
+        log_error "Private configuration has an ambiguous server image"
+        return 1
+    }
+    [ -x "$QPKG_ROOT/ClearPocketBackup.sh" ] || { log_error "QNAP backup helper is missing"; return 1; }
+    echo "Creating the required encrypted pre-update generation."
+    "$QPKG_ROOT/ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT" || return 1
+    "$DOCKER" pull "$IMAGE:$VERSION" || {
+        log_error "Version $VERSION could not be downloaded; configuration and running services were not changed"
+        return 1
+    }
+    TEMP_ENV="$ENV_FILE.update.$$"
+    awk -v replacement="CLEARPOCKET_SERVER_VERSION=$VERSION" '
+        BEGIN { count = 0 }
+        /^CLEARPOCKET_SERVER_VERSION=/ { print replacement; count += 1; next }
+        { print }
+        END { if (count != 1) exit 42 }
+    ' "$ENV_FILE" > "$TEMP_ENV" || {
+        rm -f "$TEMP_ENV"
+        log_error "Private server version could not be updated"
+        return 1
+    }
+    if ! chmod 600 "$TEMP_ENV" || ! mv "$TEMP_ENV" "$ENV_FILE"; then
+        rm -f "$TEMP_ENV"
+        log_error "Private server version could not be published"
+        return 1
+    fi
+    if ! compose up -d || ! wait_healthy; then
+        compose stop api >/dev/null 2>&1 || true
+        log_error "Version $VERSION did not become healthy. The pre-update backup was preserved; automatic downgrade is disabled after migrations."
+        return 1
+    fi
+    echo "ClearPocket Server updated and healthy at version $VERSION."
+}
+
 find_crontab() {
     command -v crontab 2>/dev/null && return 0
     [ -x /usr/bin/crontab ] && { echo /usr/bin/crontab; return 0; }
@@ -199,6 +257,10 @@ case "$1" in
         [ -x "$QPKG_ROOT/ClearPocketRestore.sh" ] || { log_error "QNAP recovery helper is missing"; exit 1; }
         "$QPKG_ROOT/ClearPocketRestore.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT" "$2" "$3"
         ;;
+    upgrade)
+        [ "$#" -eq 2 ] || { echo "Usage: $0 upgrade UPGRADE" >&2; exit 2; }
+        upgrade_server "$2"
+        ;;
     install-backup-schedule)
         [ "$#" -eq 3 ] || { echo "Usage: $0 install-backup-schedule HOUR MINUTE" >&2; exit 2; }
         update_backup_schedule install "$2" "$3"
@@ -220,7 +282,7 @@ case "$1" in
         import_local_device "$2" "$3"
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|backup|restore|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device}" >&2
+        echo "Usage: $0 {start|stop|restart|status|backup|restore|upgrade|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device}" >&2
         exit 2
         ;;
 esac

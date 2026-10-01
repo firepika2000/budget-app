@@ -254,6 +254,14 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT"' in service
     assert 'ClearPocketRestore.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT"' in service
     assert "explicit final argument RESTORE" in service
+    assert "explicit final argument UPGRADE" in service
+    assert "automatic downgrade is disabled after migrations" in service
+    upgrade_section = service.split("upgrade_server()", 1)[1].split("find_crontab()", 1)[0]
+    backup_index = upgrade_section.index('ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT" || return 1')
+    pull_index = upgrade_section.index('"$DOCKER" pull "$IMAGE:$VERSION"')
+    pin_index = upgrade_section.index('mv "$TEMP_ENV" "$ENV_FILE"')
+    health_index = upgrade_section.index('if ! compose up -d || ! wait_healthy')
+    assert backup_index < pull_index < pin_index < health_index
     assert "install-backup-schedule" in service
     assert "remove-backup-schedule" in service
     assert "backup-schedule-status" in service

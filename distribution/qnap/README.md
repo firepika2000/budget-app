@@ -102,6 +102,18 @@ health is recorded, and service resumes only after the real API health check pas
 the API stopped for inspection and never modifies the source archive or identity. No host Python,
 PostgreSQL client, or `age` installation is required.
 
+When a newer signed/versioned QPKG has replaced the package files, apply its pinned server image with:
+
+```sh
+/etc/init.d/ClearPocketServer.sh upgrade UPGRADE
+```
+
+The service refuses an unpinned or unchanged version, completes an encrypted generation first, pulls
+the exact new image before atomically changing only the version setting, and then requires the real API
+health gate. Pull failure leaves both configuration and running services untouched. If a new image has
+run forward migrations but fails health, the API remains stopped and the version is not silently
+downgraded against the newer database; recover the preserved generation into a new empty authority.
+
 Before this package is customer-ready it still needs the signed QPKG release pipeline, supported-model
 matrix, a graphical first-run storage/host/TLS setup screen, and hardware validation on current QTS and
 QuTS hero. Until those gates pass, prefer the documented Container Station import path.

@@ -485,6 +485,10 @@ generation with that separately retained identity into a new empty QNAP authorit
 both inputs are mounted read-only, integrity is checked in private staging, emptiness is checked before
 and after API quiescence, the authenticated attachment key is adopted only for that empty destination,
 and the service returns only after recovery health and the API health gate succeed.
+After a newer versioned QPKG is installed, its explicit package update action applies the same shared
+manager invariant: create the encrypted generation first, pull the exact immutable image before changing
+the version setting, atomically pin it, and require API health. Pull failure changes nothing; unhealthy
+post-migration activation keeps the API stopped and never attempts an unsafe automatic downgrade.
 These remain previews rather
 than the promised normal-user setup:
 release images/packages are unsigned, QNAP hardware validation is pending, and secure pairing/TLS is
