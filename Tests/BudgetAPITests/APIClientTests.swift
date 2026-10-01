@@ -2,6 +2,44 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testDevicePairingAndSessionManagementUseCanonicalContracts() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        var requests: [String] = []
+        MockURLProtocol.handler = { request in
+            requests.append("\(request.httpMethod ?? "") \(request.url?.path ?? "")")
+            let response = HTTPURLResponse(url: request.url!, statusCode: request.httpMethod == "POST" && request.url!.path.hasSuffix("pairing-code") ? 201 : 200, httpVersion: nil, headerFields: nil)!
+            switch request.url!.path {
+            case "/api/v1/auth/login":
+                let body = try JSONSerialization.jsonObject(with: requestBody(request)) as! [String: Any]
+                XCTAssertEqual(body["device_name"] as? String, "Rey's iPhone")
+                return (response, Data(#"{"access_token":"A","refresh_token":"R"}"#.utf8))
+            case "/api/v1/auth/pairing-code":
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+                return (response, Data(#"{"code":"secret","server_url":"https://budget.example.com","expires_at":"2026-10-01T12:05:00Z"}"#.utf8))
+            case "/api/v1/auth/pair":
+                let body = try JSONSerialization.jsonObject(with: requestBody(request)) as! [String: Any]
+                XCTAssertEqual(body as NSDictionary, ["code": "secret", "device_name": "Second iPhone"] as NSDictionary)
+                return (response, Data(#"{"access_token":"B","refresh_token":"R2"}"#.utf8))
+            case "/api/v1/auth/sessions":
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+                return (response, Data(#"[{"id":"s1","device_name":"Second iPhone","created_at":"2026-10-01T12:00:00Z","expires_at":"2026-10-31T12:00:00Z"}]"#.utf8))
+            case "/api/v1/auth/sessions/s1":
+                XCTAssertEqual(request.httpMethod, "DELETE")
+                return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data())
+            default: XCTFail("Unexpected request"); return (response, Data())
+            }
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        _ = try await client.login(email: "owner@example.com", password: "password", deviceName: "Rey's iPhone")
+        let pairing = try await client.createPairingCode(token: "current")
+        XCTAssertEqual(pairing.serverURL, "https://budget.example.com")
+        _ = try await client.redeemPairingCode(pairing.code, deviceName: "Second iPhone")
+        let sessions = try await client.deviceSessions(token: "current")
+        XCTAssertEqual(sessions.first?.deviceName, "Second iPhone")
+        try await client.revokeDeviceSession("s1", token: "current")
+        XCTAssertEqual(requests, ["POST /api/v1/auth/login", "POST /api/v1/auth/pairing-code", "POST /api/v1/auth/pair", "GET /api/v1/auth/sessions", "DELETE /api/v1/auth/sessions/s1"])
+    }
     func testBudgetCreationPolicyIsExplicitAndLegacyOmissionIsPreserved() throws {
         let encoder = JSONEncoder()
         let legacy = try JSONSerialization.jsonObject(with: encoder.encode(APIBudgetCreate(householdID: "h1", name: "Legacy", currencyCode: "USD"))) as! [String: Any]

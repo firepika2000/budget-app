@@ -232,7 +232,8 @@ def redeem_pairing_code(
     claimed = db.execute(update(PairingCode).where(
         PairingCode.id == pairing.id,
         PairingCode.redeemed_at.is_(None),
-    ).values(redeemed_at=now))
+        PairingCode.expires_at > now,
+    ).values(redeemed_at=now).execution_options(synchronize_session=False))
     if claimed.rowcount != 1:
         db.rollback()
         rate_limiter.failed(rate_key)

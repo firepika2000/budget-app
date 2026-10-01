@@ -547,13 +547,15 @@ than the promised normal-user setup:
 release images/packages are unsigned, QNAP hardware validation is pending, and complete guided
 pairing/TLS is not implemented.
 
-The first secure-pairing backend foundation is implemented behind an explicitly configured canonical
+The first secure-pairing foundation is implemented behind an explicitly configured canonical
 HTTPS origin. Authenticated users can generate one active five-minute, high-entropy pairing secret
 whose hash alone is persisted; atomic one-time redemption consumes it and creates the same rotating refresh session
 used by password sign-in and assigns a device label. Users can list and revoke only their own active
 refresh sessions. Insecure non-loopback requests and deployments without a canonical pairing origin
-fail closed. Native QR enrollment, graphical device management, supported TLS provisioning, and
-immediate invalidation of already-issued short-lived access tokens remain open; see
+fail closed. The production iOS settings now render the QR locally, offer native camera scanning plus
+manual fallback, enter the canonical Live application route after redemption, and provide labeled
+device-session listing and confirmed revocation. Supported TLS provisioning, real-network human
+acceptance, and immediate invalidation of already-issued short-lived access tokens remain open; see
 `PAIRING-SECURITY.md`.
 
 1. Register the production Dropbox public app key/callback and complete live external-account

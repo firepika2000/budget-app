@@ -44,11 +44,33 @@ public struct APIClient {
         try await send(path: "api/v1/bootstrap/status")
     }
 
-    public func login(email: String, password: String) async throws -> APIAuthTokens {
+    public func login(email: String, password: String, deviceName: String? = nil) async throws -> APIAuthTokens {
         try await send(
             path: "api/v1/auth/login",
             method: "POST",
-            body: LoginRequest(email: email, password: password)
+            body: LoginRequest(email: email, password: password, deviceName: deviceName)
+        )
+    }
+
+    public func createPairingCode(token: String) async throws -> APIPairingCode {
+        try await send(path: "api/v1/auth/pairing-code", method: "POST", token: token)
+    }
+
+    public func redeemPairingCode(_ code: String, deviceName: String) async throws -> APIAuthTokens {
+        try await send(
+            path: "api/v1/auth/pair",
+            method: "POST",
+            body: APIPairingRedeemRequest(code: code, deviceName: deviceName)
+        )
+    }
+
+    public func deviceSessions(token: String) async throws -> [APIDeviceSession] {
+        try await send(path: "api/v1/auth/sessions", token: token)
+    }
+
+    public func revokeDeviceSession(_ sessionID: String, token: String) async throws {
+        let _: EmptyResponse = try await send(
+            path: "api/v1/auth/sessions/\(sessionID)", method: "DELETE", token: token
         )
     }
 

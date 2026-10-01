@@ -1,5 +1,6 @@
 import Foundation
 import BudgetAPI
+import UIKit
 
 enum AppDataSourceMode: String, CaseIterable, Identifiable {
     case localDevice
@@ -236,12 +237,32 @@ final class AppSession: ObservableObject {
         await configureServer(serverURL.absoluteString)
     }
 
-    func login(email: String, password: String) async { await authenticate { try await $0.login(email: email, password: password) } }
+    func login(email: String, password: String) async {
+        let deviceName = UIDevice.current.name
+        await authenticate { try await $0.login(email: email, password: password, deviceName: deviceName) }
+    }
     func bootstrap(email: String, password: String, displayName: String, householdName: String) async {
         await authenticate { try await $0.bootstrap(BootstrapRequest(email: email, password: password, displayName: displayName, householdName: householdName)) }
     }
     func acceptInvitation(token invitationToken: String, password: String, displayName: String) async {
         await authenticate { try await $0.acceptInvitation(APIInvitationAccept(invitationToken: invitationToken, password: password, displayName: displayName)) }
+    }
+
+    func pairWithCurrentServer(code: String) async {
+        let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            errorMessage = "Scan or enter a valid pairing code."
+            return
+        }
+        let deviceName = UIDevice.current.name
+        await authenticate { try await $0.redeemPairingCode(normalized, deviceName: deviceName) }
+    }
+
+    func pairDevice(serverAddress: String, code: String) async {
+        await configureServer(serverAddress)
+        guard sourceMode == .liveServer,
+              connectionStatus == .authenticationRequired else { return }
+        await pairWithCurrentServer(code: code)
     }
 
     func loadBudgets(caller: String = "unspecified") async {

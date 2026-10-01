@@ -9,6 +9,8 @@ import PhotosUI
 import AVFoundation
 import UIKit
 import Accessibility
+import CoreImage
+import CoreImage.CIFilterBuiltins
 
 enum Theme {
     static let accent = Color.teal
@@ -3028,6 +3030,7 @@ private struct WorkspaceProfileView: View {
     @State private var showRollover = false
     @State private var showBackupHealth = false
     @State private var showLocalBackup = false
+    @State private var showDevices = false
 
     var body: some View {
         NavigationStack {
@@ -3101,6 +3104,14 @@ private struct WorkspaceProfileView: View {
                     }
                 }
                 if session.sourceMode == .liveServer {
+                    Section("Devices") {
+                        Button("Pair & Manage Devices", systemImage: "iphone.gen3.radiowaves.left.and.right") {
+                            showDevices = true
+                        }
+                        .accessibilityIdentifier("device-access-settings")
+                        Text("Add another device without sharing your password, or revoke an existing device session.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     Section("Household") { Button("Household and access", systemImage: "person.3") { showHousehold = true } }
                 }
                 Section("Connection") {
@@ -3135,6 +3146,7 @@ private struct WorkspaceProfileView: View {
             .navigationDestination(isPresented: $showLocalBackup) {
                 LocalDeviceBackupRecoveryView(store: store)
             }
+            .navigationDestination(isPresented: $showDevices) { DeviceAccessSettingsView() }
             .sheet(isPresented: $showCreate) {
                 BudgetCreationView(households: session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? [])
             }
@@ -3162,6 +3174,142 @@ private struct WorkspaceProfileView: View {
 
         What I expected:
         """
+    }
+}
+
+private struct DeviceAccessSettingsView: View {
+    @EnvironmentObject private var session: AppSession
+    @State private var deviceSessions: [APIDeviceSession] = []
+    @State private var pairingCode: APIPairingCode?
+    @State private var loading = false
+    @State private var error: String?
+    @State private var pendingRevocation: APIDeviceSession?
+
+    var body: some View {
+        Form {
+            Section("Add a Device") {
+                if let pairingCode,
+                   let encoded = DevicePairingPayload(
+                    version: 1,
+                    serverURL: pairingCode.serverURL,
+                    code: pairingCode.code
+                   ).encoded,
+                   let image = qrImage(encoded) {
+                    VStack(spacing: 14) {
+                        Image(uiImage: image)
+                            .interpolation(.none)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 240)
+                            .accessibilityLabel("Device pairing QR code")
+                            .accessibilityIdentifier("device-pairing-qr")
+                        Text("Expires \(readableDate(pairingCode.expiresAt))")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Button("Copy Manual Code", systemImage: "doc.on.doc") {
+                            UIPasteboard.general.string = pairingCode.code
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    Text("On the other iPhone, choose Pair This iPhone and scan this code. Creating a new code invalidates the previous one.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    Button("Create Five-Minute Pairing Code", systemImage: "qrcode") {
+                        Task { await createPairingCode() }
+                    }
+                    .disabled(loading)
+                    .accessibilityIdentifier("create-device-pairing-code")
+                }
+            }
+            Section("Signed-In Devices") {
+                if deviceSessions.isEmpty && !loading {
+                    Text("No active device sessions were returned.").foregroundStyle(.secondary)
+                }
+                ForEach(deviceSessions) { item in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.deviceName).font(.headline)
+                        Text("Signed in \(readableDate(item.createdAt))")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("Session expires \(readableDate(item.expiresAt))")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .swipeActions {
+                        Button("Revoke", role: .destructive) { pendingRevocation = item }
+                    }
+                    .accessibilityAction(named: "Revoke device session") { pendingRevocation = item }
+                }
+                Button("Refresh", systemImage: "arrow.clockwise") { Task { await load() } }
+                    .disabled(loading)
+            }
+            if let error {
+                Section { Text(error).foregroundStyle(.red) }
+            }
+        }
+        .navigationTitle("Devices")
+        .navigationBarTitleDisplayMode(.inline)
+        .overlay { if loading { ProgressView() } }
+        .task { await load() }
+        .confirmationDialog(
+            "Revoke \(pendingRevocation?.deviceName ?? "this device")?",
+            isPresented: Binding(
+                get: { pendingRevocation != nil },
+                set: { if !$0 { pendingRevocation = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingRevocation
+        ) { item in
+            Button("Revoke Device", role: .destructive) { Task { await revoke(item) } }
+            Button("Cancel", role: .cancel) { pendingRevocation = nil }
+        } message: { _ in
+            Text("That device will be unable to refresh its session. An already issued access token may remain valid briefly.")
+        }
+    }
+
+    private func load() async {
+        guard !loading else { return }
+        loading = true; error = nil
+        defer { loading = false }
+        do {
+            let (url, token) = try await session.currentLiveCredentials(caller: "deviceAccessSettings.load")
+            deviceSessions = try await APIClient(baseURL: url).deviceSessions(token: token)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func createPairingCode() async {
+        guard !loading else { return }
+        loading = true; error = nil
+        defer { loading = false }
+        do {
+            let (url, token) = try await session.currentLiveCredentials(caller: "deviceAccessSettings.pair")
+            pairingCode = try await APIClient(baseURL: url).createPairingCode(token: token)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func revoke(_ item: APIDeviceSession) async {
+        pendingRevocation = nil
+        guard !loading else { return }
+        loading = true; error = nil
+        defer { loading = false }
+        do {
+            let (url, token) = try await session.currentLiveCredentials(caller: "deviceAccessSettings.revoke")
+            try await APIClient(baseURL: url).revokeDeviceSession(item.id, token: token)
+            deviceSessions.removeAll { $0.id == item.id }
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func qrImage(_ value: String) -> UIImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(value.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage,
+              let cgImage = CIContext(options: nil).createCGImage(output, from: output.extent) else { return nil }
+        return UIImage(cgImage: cgImage)
+    }
+
+    private func readableDate(_ value: String) -> String {
+        let withFractional = ISO8601DateFormatter()
+        withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = withFractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        return date?.formatted(date: .abbreviated, time: .shortened) ?? value
     }
 }
 

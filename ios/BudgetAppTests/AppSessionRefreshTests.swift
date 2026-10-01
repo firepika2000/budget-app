@@ -12,6 +12,64 @@ import UIKit
 /// user-visible "Invalid or expired refresh token" alert even though the winning refresh had already
 /// recovered the session. These tests lock in the single-flight fix and the clean sign-in transition.
 final class AppSessionRefreshTests: XCTestCase {
+    func testPairingPayloadRequiresVersionedHTTPSOrigin() throws {
+        let valid = DevicePairingPayload(version: 1, serverURL: "https://budget.example.com", code: "secret")
+        XCTAssertEqual(DevicePairingPayload.parse(try XCTUnwrap(valid.encoded)), valid)
+        XCTAssertNil(DevicePairingPayload.parse(#"{"v":1,"server_url":"http://budget.example.com","code":"secret"}"#))
+        XCTAssertNotNil(DevicePairingPayload.parse(#"{"v":1,"server_url":"http://127.0.0.1:8000","code":"secret"}"#))
+        XCTAssertNil(DevicePairingPayload.parse(#"{"v":2,"server_url":"https://budget.example.com","code":"secret"}"#))
+        XCTAssertNil(DevicePairingPayload.parse(#"{"v":1,"server_url":"https://user:pass@budget.example.com","code":"secret"}"#))
+        XCTAssertNil(DevicePairingPayload.parse(#"{"v":1,"server_url":"https://budget.example.com/untrusted-path","code":"secret"}"#))
+    }
+
+    @MainActor
+    func testPairingConfiguresServerStoresSessionAndHydratesCanonicalWorkspace() async throws {
+        let paths = CredentialRequestRecorder()
+        RefreshMockURLProtocol.handler = { request in
+            paths.append(path: request.url!.path, authorization: request.value(forHTTPHeaderField: "Authorization") ?? "")
+            switch request.url!.path {
+            case "/api/v1/health": return Self.json(200, #"{"status":"ok"}"#)
+            case "/api/v1/bootstrap/status": return Self.json(200, #"{"initialized":true,"authentication_required":true,"api_version":"v1"}"#)
+            case "/api/v1/auth/pair":
+                let body = try! JSONSerialization.jsonObject(with: Self.requestBody(request)) as! [String: Any]
+                XCTAssertEqual(body["code"] as? String, "one-time-code")
+                XCTAssertFalse((body["device_name"] as? String ?? "").isEmpty)
+                return Self.json(200, #"{"access_token":"paired-access","refresh_token":"paired-refresh","token_type":"bearer"}"#)
+            case "/api/v1/me": return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
+            case "/api/v1/budgets": return Self.json(200, #"[{"id":"b1","household_id":"h1","name":"Home","currency_code":"USD","effective_permission":"owner","allocation_version":0}]"#)
+            default: return Self.json(404, #"{"detail":"not found"}"#)
+            }
+        }
+        let suite = "AppSessionPairingTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let session = AppSession(
+            defaults: defaults,
+            keychain: InMemoryTokenStore([:]),
+            clientFactory: {
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.protocolClasses = [RefreshMockURLProtocol.self]
+                return try APIClient(baseURL: $0, session: URLSession(configuration: configuration))
+            },
+            initialMode: .localDevice
+        )
+
+        await session.pairDevice(serverAddress: "https://budget.example.com", code: "one-time-code")
+
+        XCTAssertEqual(session.token, "paired-access")
+        XCTAssertEqual(session.refreshToken, "paired-refresh")
+        XCTAssertEqual(session.activeBudget?.id, "b1")
+        XCTAssertEqual(session.connectionStatus, .connected)
+        if case let .workspace(.live(budget, serverURL, token)) = session.route {
+            XCTAssertEqual(budget.id, "b1")
+            XCTAssertEqual(serverURL.absoluteString, "https://budget.example.com")
+            XCTAssertEqual(token, "paired-access")
+        } else {
+            XCTFail("Pairing must enter the canonical Live workspace")
+        }
+        XCTAssertEqual(paths.paths, ["/api/v1/health", "/api/v1/bootstrap/status", "/api/v1/auth/pair", "/api/v1/me", "/api/v1/budgets"])
+    }
+
     private static func workspaceResponse(_ path: String) -> (Int, Data) {
         if path.contains("/months/") {
             return json(200, #"{"month":"2026-09-01","currency_code":"USD","ready_to_assign_minor":42,"total_assigned_minor":0,"total_overspent_minor":0,"allocation_version":0,"categories":[]}"#)
@@ -149,6 +207,19 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     private static func json(_ status: Int, _ body: String) -> (Int, Data) { (status, Data(body.utf8)) }
+    private static func requestBody(_ request: URLRequest) throws -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { throw URLError(.cannotDecodeContentData) }
+        stream.open(); defer { stream.close() }
+        var result = Data(), buffer = [UInt8](repeating: 0, count: 1024)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count < 0 { throw stream.streamError ?? URLError(.cannotDecodeContentData) }
+            if count == 0 { break }
+            result.append(buffer, count: count)
+        }
+        return result
+    }
     private static let rotated = #"{"access_token":"A2","refresh_token":"R2","token_type":"bearer"}"#
 
     private static func jwt(expiration: TimeInterval) -> String {

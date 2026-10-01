@@ -1,6 +1,7 @@
 # Secure device pairing foundation
 
-Status: backend foundation implemented; native QR enrollment and guided TLS provisioning remain open.
+Status: backend and native QR/device-management foundation implemented; guided TLS provisioning and
+real-network human acceptance remain open.
 
 ## Trust boundary
 
@@ -30,6 +31,12 @@ QR payload construction belongs to the native client so the server never renders
 content or sends the pairing secret to another service. Passwords, refresh tokens, and financial data
 must never appear in a QR payload.
 
+The iOS client encodes a versioned JSON payload containing only the canonical origin and one-time code.
+Its scanner independently rejects noncanonical origins and non-loopback HTTP before configuring the
+application session. Manual entry remains available when camera access is unavailable or denied. A
+successful redemption persists the normal rotating credentials and enters the same Live workspace
+route used by password authentication; there is no paired-device-only product hierarchy.
+
 ## Device sessions and revocation
 
 `GET /api/v1/auth/sessions` returns only the current user's active refresh sessions. A user may revoke
@@ -49,8 +56,8 @@ but deliberately omit all pairing-code rows, so restoring an archive can never r
 
 ## Remaining completion gates
 
-- Native scan/display flow, explicit user confirmation, accessibility, and human acceptance.
-- Consumer server discovery and a graphical device/session manager.
+- Real-device scan/display, accessibility, revocation, and multi-device human acceptance.
+- Consumer server discovery and graphical server installation/configuration.
 - Supported automatic TLS/certificate provisioning for Docker, QNAP, and Windows.
 - Session-bound access tokens if immediate device revocation is required.
 - Abuse, concurrent redemption, proxy-boundary, and real-network integration review.

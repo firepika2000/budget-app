@@ -90,6 +90,48 @@ public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
 struct LoginRequest: Encodable {
     let email: String
     let password: String
+    let deviceName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case email, password
+        case deviceName = "device_name"
+    }
+}
+
+public struct APIPairingCode: Decodable, Equatable, Sendable {
+    public let code: String
+    public let serverURL: String
+    public let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case code
+        case serverURL = "server_url"
+        case expiresAt = "expires_at"
+    }
+}
+
+struct APIPairingRedeemRequest: Encodable {
+    let code: String
+    let deviceName: String
+
+    enum CodingKeys: String, CodingKey {
+        case code
+        case deviceName = "device_name"
+    }
+}
+
+public struct APIDeviceSession: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let deviceName: String
+    public let createdAt: String
+    public let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case deviceName = "device_name"
+        case createdAt = "created_at"
+        case expiresAt = "expires_at"
+    }
 }
 
 public struct BootstrapRequest: Encodable, Sendable {

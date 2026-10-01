@@ -1,5 +1,41 @@
 import BudgetAPI
 import SwiftUI
+import VisionKit
+import UIKit
+import AVFoundation
+
+struct DevicePairingPayload: Codable, Equatable {
+    let version: Int
+    let serverURL: String
+    let code: String
+
+    enum CodingKeys: String, CodingKey {
+        case version = "v"
+        case serverURL = "server_url"
+        case code
+    }
+
+    var encoded: String? {
+        guard let data = try? JSONEncoder().encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func parse(_ value: String) -> DevicePairingPayload? {
+        guard let data = value.data(using: .utf8),
+              let payload = try? JSONDecoder().decode(Self.self, from: data),
+              payload.version == 1,
+              let url = URL(string: payload.serverURL),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "https" || (scheme == "http" && ["localhost", "127.0.0.1", "::1"].contains(url.host?.lowercased() ?? "")),
+              url.user == nil,
+              url.password == nil,
+              url.query == nil,
+              url.fragment == nil,
+              url.path.isEmpty || url.path == "/",
+              !payload.code.isEmpty else { return nil }
+        return payload
+    }
+}
 
 struct RootView: View {
     @EnvironmentObject private var session: AppSession
@@ -88,6 +124,7 @@ private struct WorkspaceCompositionRoot: View {
 private struct ServerSetupView: View {
     @EnvironmentObject private var session: AppSession
     @State private var address = "https://"
+    @State private var showingPairing = false
 
     var body: some View {
         NavigationStack {
@@ -115,10 +152,18 @@ private struct ServerSetupView: View {
                     Task { await session.configureServer(address) }
                 }
                 .disabled(session.isWorking || address.isEmpty)
+                Section("Pair This iPhone") {
+                    Button("Scan Pairing Code", systemImage: "qrcode.viewfinder") {
+                        showingPairing = true
+                    }
+                    Text("On an already connected device, open Profile & Settings → Devices to create a five-minute pairing code.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("Connect Budget App")
             .overlay { if session.isWorking { ProgressView() } }
             .onAppear { if let url = session.serverURL { address = url.absoluteString } }
+            .sheet(isPresented: $showingPairing) { PairingJoinView() }
         }
     }
 
@@ -131,6 +176,146 @@ private struct ServerSetupView: View {
         case .setupRequired: "sparkles"
         case .deterministic: "shippingbox"
         case .unreachable, .invalidConfiguration: "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+struct PairingJoinView: View {
+    @EnvironmentObject private var session: AppSession
+    @Environment(\.dismiss) private var dismiss
+    @State private var serverAddress = "https://"
+    @State private var code = ""
+    @State private var showingScanner = false
+    @State private var validationMessage: String?
+
+    init(serverAddress: String? = nil) {
+        _serverAddress = State(initialValue: serverAddress ?? "https://")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Button("Scan QR Code", systemImage: "qrcode.viewfinder") {
+                        openScanner()
+                    }
+                    .accessibilityIdentifier("scan-device-pairing-code")
+                } footer: {
+                    Text("The QR contains only the secure server address and a one-time five-minute code. It never contains your password or budget data.")
+                }
+                Section("Manual Entry") {
+                    TextField("https://budget.example.com", text: $serverAddress)
+                        .textInputAutocapitalization(.never).keyboardType(.URL).autocorrectionDisabled()
+                    TextField("Pairing code", text: $code, axis: .vertical)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .textContentType(.oneTimeCode)
+                    if let validationMessage { Text(validationMessage).font(.footnote).foregroundStyle(.red) }
+                    Button("Pair This iPhone") { pair() }
+                        .disabled(session.isWorking || serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("pair-this-device")
+                }
+            }
+            .navigationTitle("Pair Device")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .overlay { if session.isWorking { ProgressView() } }
+            .sheet(isPresented: $showingScanner) {
+                PairingCodeScanner { value in
+                    showingScanner = false
+                    guard let payload = DevicePairingPayload.parse(value) else {
+                        validationMessage = "That QR code is not a valid ClearPocket device pairing code."
+                        return
+                    }
+                    serverAddress = payload.serverURL
+                    code = payload.code
+                    pair()
+                }
+                .ignoresSafeArea()
+            }
+        }
+    }
+
+    private func pair() {
+        validationMessage = nil
+        Task {
+            await session.pairDevice(serverAddress: serverAddress, code: code)
+            // A successful redemption changes the authoritative application route to the Live
+            // workspace. Let that route replacement tear down this sheet once; explicitly
+            // dismissing at the same time can race SwiftUI's presentation coordinator.
+        }
+    }
+
+    private func openScanner() {
+        guard DataScannerViewController.isSupported else {
+            validationMessage = "QR scanning is unavailable on this device. Enter the server and pairing code instead."
+            return
+        }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            guard DataScannerViewController.isAvailable else {
+                validationMessage = "The camera is currently unavailable. Enter the pairing details manually or try again later."
+                return
+            }
+            showingScanner = true
+        case .notDetermined:
+            Task {
+                if await AVCaptureDevice.requestAccess(for: .video) {
+                    if DataScannerViewController.isAvailable { showingScanner = true }
+                    else { validationMessage = "The camera is currently unavailable. Enter the pairing details manually or try again later." }
+                } else {
+                    validationMessage = "Camera access was denied. You can enter the pairing details manually or enable Camera access in Settings."
+                }
+            }
+        case .denied, .restricted:
+            validationMessage = "Camera access is unavailable. Enter the pairing details manually or enable Camera access in Settings."
+        @unknown default:
+            validationMessage = "QR scanning is unavailable. Enter the pairing details manually."
+        }
+    }
+}
+
+private struct PairingCodeScanner: UIViewControllerRepresentable {
+    let completion: (String) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(completion: completion) }
+
+    func makeUIViewController(context: Context) -> DataScannerViewController {
+        let scanner = DataScannerViewController(
+            recognizedDataTypes: [.barcode(symbologies: [.qr])],
+            qualityLevel: .balanced,
+            recognizesMultipleItems: false,
+            isHighFrameRateTrackingEnabled: false,
+            isPinchToZoomEnabled: true,
+            isGuidanceEnabled: true,
+            isHighlightingEnabled: true
+        )
+        scanner.delegate = context.coordinator
+        DispatchQueue.main.async { try? scanner.startScanning() }
+        return scanner
+    }
+
+    func updateUIViewController(_ controller: DataScannerViewController, context: Context) {
+        if !controller.isScanning { try? controller.startScanning() }
+    }
+
+    static func dismantleUIViewController(_ controller: DataScannerViewController, coordinator: Coordinator) {
+        controller.stopScanning()
+    }
+
+    final class Coordinator: NSObject, DataScannerViewControllerDelegate {
+        private let completion: (String) -> Void
+        private var completed = false
+        init(completion: @escaping (String) -> Void) { self.completion = completion }
+        func dataScanner(_ dataScanner: DataScannerViewController, didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
+            guard !completed else { return }
+            for item in addedItems {
+                guard case let .barcode(barcode) = item,
+                      let value = barcode.payloadStringValue else { continue }
+                completed = true
+                dataScanner.stopScanning()
+                completion(value)
+                return
+            }
         }
     }
 }
@@ -215,6 +400,7 @@ struct AuthenticationView: View {
     @EnvironmentObject private var session: AppSession
     let firstRun: Bool
     @ObservedObject var form: AuthenticationFormState
+    @State private var showingPairing = false
 
     var body: some View {
         NavigationStack {
@@ -289,10 +475,22 @@ struct AuthenticationView: View {
                 }
                 .disabled(session.isWorking || !formIsValid)
                 Button("Use a different server", role: .cancel) { session.changeServer() }
+                if !firstRun {
+                    Section("Pairing") {
+                        Button("Pair with Another Device", systemImage: "qrcode.viewfinder") {
+                            showingPairing = true
+                        }
+                        Text("Use a one-time code created by an already signed-in device. No password is shared.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
             }
             .navigationTitle(firstRun ? "First-Time Setup" : "Budget App")
             .overlay { if session.isWorking { ProgressView() } }
             .onAppear { if firstRun && form.mode == 0 { form.mode = 1 } }
+            .sheet(isPresented: $showingPairing) {
+                PairingJoinView(serverAddress: session.serverURL?.absoluteString)
+            }
         }
     }
 
