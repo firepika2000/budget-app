@@ -51,7 +51,7 @@ Status meanings:
 | Reconciliation | IMPLEMENTED | Explicit adjustment only; native comparison preview. |
 | Search and filters | IMPLEMENTED | Native transaction search/filter plus server-derived Insights dimensions. Server pagination remains future scale work. |
 | Flags/tags | IMPLEMENTED | Persisted production metadata and shared editor. |
-| Receipt/photo/file attachment | PARTIALLY IMPLEMENTED | Attachment metadata persists; encrypted binary storage/upload remains future work. |
+| Receipt/photo/file attachment | IMPLEMENTED | Camera, Photos, and Files share one validated application-service path; local content is encrypted at rest with a Keychain-protected key. |
 | Edit and delete/void | IMPLEMENTED | Production edit/delete with immutable before/after/delete audit history. A dedicated void UX remains future work. |
 | Duplicate detection | FUTURE | Required before imports; no import pipeline in v0.4.0. |
 | Recurring transactions | IMPLEMENTED | Scheduled transaction planning/forecast API. Materialization UI remains limited. |

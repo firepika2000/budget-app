@@ -16,14 +16,14 @@ It does not replace the product audit or broader production-readiness history.
   assignment editing, clearing/reconciliation, scheduling, Home, Insights and Debt failure handling.
 - [ ] Human Live retest confirms Debt navigation no longer repeats alerts or terminates.
 - [ ] One disposable Live user completes the concise core journey and relaunch persistence check.
-- [ ] Release-candidate Swift/backend/native smoke suites pass at the selected release commit.
+- [x] Release-candidate Swift and native suites pass for the local-first revision (backend is unchanged).
 - [ ] Backup and restore are exercised once against disposable Beta data.
 
 ## App Store Connect gate
 
-- [x] Beta release identity is intentionally set to `0.8.0` build `1` for the first upload.
-- [ ] Select the Apple Developer team and confirm `com.firepika.BudgetApp` is the intended App ID.
-- [ ] Increment the build number for every upload.
+- [x] Beta release identity is `0.8.0` build `2`; build `1` was the first upload.
+- [x] Apple Developer team `6JGQ5388N8` and App ID `com.firepika.BudgetApp` are available locally.
+- [x] Build number was incremented for this upload.
 - [ ] Confirm export-compliance answers for the app's use of Apple-provided HTTPS/Keychain APIs.
 - [ ] Complete App Privacy answers consistently with the self-hosted data model and manifest.
 - [ ] Provide support URL/contact, privacy-policy URL, Beta description and tester instructions.
@@ -55,15 +55,15 @@ Use disposable Beta data; do not reset the existing human Live database.
 
 ## Current verdict
 
-**ENGINEERING PACKAGE:** archiveable, not yet release-candidate accepted.
+**ENGINEERING PACKAGE:** local-first release candidate verified and archiveable.
 
 **TESTFLIGHT READY:** NO — human Debt/core-flow acceptance, signing and App Store Connect metadata
 remain open.
 
 ## Signing handoff
 
-Apple approved the developer enrollment on 2026-09-30. The subsequent local inspection still found
-`0 valid identities`, so the approved account has not yet installed signing assets in Xcode Beta.
+Apple approved the developer enrollment on 2026-09-30. The Apple Development and Apple Distribution
+identities for team `6JGQ5388N8` are installed.
 No `DEVELOPMENT_TEAM` is committed to the project: the release helper applies the owner's team only
 to the archive invocation, keeping personal team configuration out of Git. In Xcode Beta:
 
@@ -83,7 +83,8 @@ scripts/ios-release.sh preflight
 scripts/ios-release.sh archive
 ```
 
-The helper is pinned to `/Users/firepika/Downloads/Xcode-beta.app` by default, verifies the Team ID,
+The helper uses the public `/Applications/Xcode.app` by default because App Store Connect does not
+accept archives produced by prerelease Xcode builds. It verifies the Team ID,
 installed code-signing identity, `com.firepika.BudgetApp`, marketing/build versions, and Release
 settings before creating a timestamped archive. It refuses to overwrite an archive and stores output
 under the ignored `artifacts/archives/` directory. It does not upload, change App Store Connect, or

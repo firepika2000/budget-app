@@ -446,8 +446,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         debtTermsValues["auto"] = .init(termsType: "installment_loan", annualRateBasisPoints: 625, rateType: "fixed", paymentFrequency: "monthly", scheduledPaymentMinor: 41200, dueDay: 1)
     }
 
-    func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
-        try requireActiveMembership()
+    func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot { try requireActiveMembership();
         try await synchronizeLocalAuthority()
         let planningPoints = try planPerformancePoints(start: report.start, end: report.end)
         let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"

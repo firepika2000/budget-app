@@ -2,7 +2,9 @@
 set -euo pipefail
 
 REPOSITORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-XCODE_APP="${BUDGET_APP_XCODE_APP:-/Users/firepika/Downloads/Xcode-beta.app}"
+# App Store Connect rejects archives produced by prerelease Xcode builds. Native development and
+# Simulator verification may use Xcode Beta, but release archives default to the public toolchain.
+XCODE_APP="${BUDGET_APP_XCODE_APP:-/Applications/Xcode.app}"
 DEVELOPER_DIR="${XCODE_APP}/Contents/Developer"
 PROJECT="${REPOSITORY_ROOT}/ios/BudgetApp.xcodeproj"
 SCHEME="BudgetApp"
