@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -177,6 +178,8 @@ def test_docker_installer_uses_immutable_image_without_host_python_and_never_ove
     assert "command -v docker" in script
     assert "command -v python" not in script
     assert 'case "$VERSION" in \'\'|edge|' in script
+    assert 'sha256sum --check --strict --quiet PACKAGE-CONTENTS-SHA256.txt' in script
+    assert 'Release package content verification failed' in script
     assert 'docker pull "$IMAGE"' in script
     assert '--entrypoint python "$IMAGE"' in script
     assert '--user "$USER_ID:$GROUP_ID"' in script
@@ -191,6 +194,29 @@ def test_docker_installer_uses_immutable_image_without_host_python_and_never_ove
     assert 'compose.yaml" up -d' in script
     assert "urlopen('http://127.0.0.1:8080/api/v1/health'" in script
     assert "down -v" not in script and "docker volume rm" not in script
+
+
+def test_docker_release_installer_rejects_corrupt_extracted_content(tmp_path: Path):
+    installer = tmp_path / "install-docker.sh"
+    shutil.copy2(ROOT / "distribution" / "server" / "install-docker.sh", installer)
+    (tmp_path / "VERSION").write_text("0.9.0\n")
+    (tmp_path / "RELEASE-METADATA.txt").write_text(
+        "version=0.9.0\ncommit=test\nimage=example.invalid/server@sha256:test\n"
+    )
+    payload = tmp_path / "README.md"
+    payload.write_text("expected release content\n")
+    records = []
+    for item in (installer, tmp_path / "VERSION", tmp_path / "RELEASE-METADATA.txt", payload):
+        digest = hashlib.sha256(item.read_bytes()).hexdigest()
+        records.append(f"{digest}  ./{item.name}\n")
+    (tmp_path / "PACKAGE-CONTENTS-SHA256.txt").write_text("".join(records))
+    payload.write_text("tampered after extraction\n")
+
+    result = subprocess.run([installer], capture_output=True, text=True)
+
+    assert result.returncode == 1
+    assert "Release package content verification failed" in result.stderr
+    assert "Docker Engine or Docker Desktop is required" not in result.stderr
 
 
 def test_docker_only_backup_is_coordinated_encrypted_bounded_and_user_owned():
@@ -348,6 +374,9 @@ def test_windows_per_user_installer_preserves_authority_and_publishes_only_allow
     assert "install-windows.ps1" in command
     assert 'Programs\\ClearPocket Server' in installer
     assert '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' in installer
+    assert 'PACKAGE-CONTENTS-SHA256.txt' in installer
+    assert 'Get-FileHash -LiteralPath $candidate -Algorithm SHA256' in installer
+    assert 'release package integrity manifest contains an unsafe path' in installer
     assert '$requiredFiles = @(' in installer
     assert 'tools\\backup_archive.py' in installer
     assert 'tools\\require_empty_restore.sql' in installer
@@ -426,6 +455,8 @@ def test_publish_workflow_builds_versioned_customer_bundle():
     assert "clearpocket-server-docker-$VERSION.tar.gz" in workflow
     assert "clearpocket-server-$VERSION-SHA256SUMS.txt" in workflow
     assert "RELEASE-METADATA.txt" in workflow
+    assert "PACKAGE-CONTENTS-SHA256.txt" in workflow
+    assert "find . -type f ! -name PACKAGE-CONTENTS-SHA256.txt" in workflow
     assert "${{ steps.image.outputs.digest }}" in workflow
     assert "sha256sum" in workflow
     assert "actions/upload-artifact@v4" in workflow

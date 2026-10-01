@@ -74,6 +74,9 @@ jobs:
             "$VERSION" "$GITHUB_SHA" "$IMAGE_DIGEST" \
             > release/clearpocket-server/RELEASE-METADATA.txt
           sed -i "s/^CLEARPOCKET_SERVER_VERSION=.*/CLEARPOCKET_SERVER_VERSION=$VERSION/" release/clearpocket-server/.env.example
+          (cd release/clearpocket-server && \
+            find . -type f ! -name PACKAGE-CONTENTS-SHA256.txt -print0 | sort -z | \
+            xargs -0 sha256sum > PACKAGE-CONTENTS-SHA256.txt)
           (cd release && zip -r "clearpocket-server-windows-$VERSION.zip" clearpocket-server)
           tar -C release -czf "release/clearpocket-server-docker-$VERSION.tar.gz" clearpocket-server
           (cd release && sha256sum \

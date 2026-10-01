@@ -13,6 +13,23 @@ ENV_FILE="$SCRIPT_DIR/.env"
 VERSION=$(tr -d '\r\n' < "$VERSION_FILE")
 case "$VERSION" in ''|edge|*[!A-Za-z0-9._-]*) echo "Server package version is invalid or not immutable." >&2; exit 1 ;; esac
 [ "${#VERSION}" -le 64 ] || { echo "Server package version is invalid." >&2; exit 1; }
+RELEASE_METADATA="$SCRIPT_DIR/RELEASE-METADATA.txt"
+CONTENT_MANIFEST="$SCRIPT_DIR/PACKAGE-CONTENTS-SHA256.txt"
+if [ -f "$RELEASE_METADATA" ]; then
+    [ -f "$CONTENT_MANIFEST" ] && [ ! -L "$CONTENT_MANIFEST" ] || {
+        echo "The release package integrity manifest is missing or unsafe. Download it again." >&2
+        exit 1
+    }
+    command -v sha256sum >/dev/null 2>&1 || {
+        echo "sha256sum is required to verify this release package." >&2
+        exit 1
+    }
+    (cd "$SCRIPT_DIR" && sha256sum --check --strict --quiet PACKAGE-CONTENTS-SHA256.txt) || {
+        echo "Release package content verification failed. Download it again." >&2
+        exit 1
+    }
+    echo "Release package contents verified."
+fi
 command -v docker >/dev/null 2>&1 || { echo "Docker Engine or Docker Desktop is required." >&2; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Docker is installed but is not running." >&2; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required." >&2; exit 1; }

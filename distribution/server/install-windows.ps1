@@ -13,6 +13,38 @@ if ($version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or $version -eq "edg
     throw "The ClearPocket Server package version is invalid or not an immutable release."
 }
 
+$releaseMetadata = Join-Path $sourceRoot "RELEASE-METADATA.txt"
+$contentManifest = Join-Path $sourceRoot "PACKAGE-CONTENTS-SHA256.txt"
+if (Test-Path -LiteralPath $releaseMetadata -PathType Leaf) {
+    if (-not (Test-Path -LiteralPath $contentManifest -PathType Leaf)) {
+        throw "The release package integrity manifest is missing. Download it again."
+    }
+    $verifiedFiles = 0
+    foreach ($line in Get-Content -LiteralPath $contentManifest) {
+        if ($line -notmatch '^([0-9a-f]{64})  \./(.+)$') {
+            throw "The release package integrity manifest is invalid."
+        }
+        $expectedHash = $Matches[1]
+        $relative = $Matches[2].Replace('/', [IO.Path]::DirectorySeparatorChar)
+        if ([IO.Path]::IsPathRooted($relative) -or $relative.Split([IO.Path]::DirectorySeparatorChar) -contains '..') {
+            throw "The release package integrity manifest contains an unsafe path."
+        }
+        $candidate = Join-Path $sourceRoot $relative
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            throw "The release package is incomplete: $relative is missing."
+        }
+        $actualHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -ne $expectedHash) {
+            throw "Release package content verification failed for $relative. Download it again."
+        }
+        $verifiedFiles += 1
+    }
+    if ($verifiedFiles -eq 0) {
+        throw "The release package integrity manifest is empty."
+    }
+    Write-Host "Release package contents verified."
+}
+
 $requiredFiles = @(
     ".env.example",
     "README.md",

@@ -32,10 +32,12 @@ Get-FileHash .\clearpocket-server-windows-VERSION.zip -Algorithm SHA256
 ```
 
 Each extracted bundle also contains `RELEASE-METADATA.txt`, which records its version, source commit,
-and exact published multi-architecture container digest. The container build includes provenance and
-an SBOM. SHA-256 detects a corrupt or substituted download only when the checksum file came through a
-separately trusted GitHub release connection; it is not a replacement for the still-pending signed
-normal-user installers.
+and exact published multi-architecture container digest. `PACKAGE-CONTENTS-SHA256.txt` authenticates
+the expected bytes of every extracted program file against the archive; both first-run installers
+verify it before copying files or starting Docker. The container build includes provenance and an
+SBOM. SHA-256 detects a corrupt or substituted download only when the release checksum came through a
+separately trusted GitHub connection; it is not a replacement for the still-pending signed normal-user
+installers.
 
 ## Install on a Docker host
 
