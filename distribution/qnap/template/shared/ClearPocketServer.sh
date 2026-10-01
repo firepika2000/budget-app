@@ -131,6 +131,11 @@ case "$1" in
     status)
         compose ps
         ;;
+    backup)
+        [ "$#" -eq 1 ] || { echo "Usage: $0 backup" >&2; exit 2; }
+        [ -x "$QPKG_ROOT/ClearPocketBackup.sh" ] || { log_error "QNAP backup helper is missing"; exit 1; }
+        "$QPKG_ROOT/ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT"
+        ;;
     verify-local-device)
         [ "$#" -eq 2 ] || { echo "Usage: $0 verify-local-device /share/path/generation.clearpocketbackup" >&2; exit 2; }
         verify_local_device "$2"
@@ -140,7 +145,7 @@ case "$1" in
         import_local_device "$2" "$3"
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|verify-local-device|import-local-device}" >&2
+        echo "Usage: $0 {start|stop|restart|status|backup|verify-local-device|import-local-device}" >&2
         exit 2
         ;;
 esac

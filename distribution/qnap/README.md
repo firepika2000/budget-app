@@ -47,6 +47,21 @@ destinations, compares exact financial observations, and restarts the server onl
 failure leaves the API stopped for inspection and never modifies the phone backup. This remains an
 administrator action pending the graphical QNAP setup/restore surface.
 
+The QPKG can create a coordinated encrypted backup without installing Python or `age` on the NAS:
+
+```sh
+/etc/init.d/ClearPocketServer.sh backup
+```
+
+The first run generates `recovery/clearpocket-recovery-key.txt` under the durable data root and stores
+only its public age recipient in `.env`. Copy the identity immediately to a separate protected device
+or offline location; keeping its only copy on the NAS does not protect against disk or NAS loss. The
+backup helper prevents overlapping captures, briefly pauses the API, captures PostgreSQL and encrypted
+attachments under the canonical integrity manifest, resumes the API, encrypts and atomically publishes
+to the durable `backups` directory, and records owner-visible health. It removes partial output and
+records failure if capture or publication does not finish. Scheduled and off-NAS/Dropbox publication
+remain part of the graphical QNAP management work.
+
 Before this package is customer-ready it still needs the signed QPKG release pipeline, supported-model
 matrix, a graphical first-run storage/host/TLS setup screen, and hardware validation on current QTS and
 QuTS hero. Until those gates pass, prefer the documented Container Station import path.

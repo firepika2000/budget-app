@@ -466,6 +466,11 @@ and atomically creates but never overwrites the private configuration. QNAP admi
 preflight or activate a phone Local Device generation directly through the package service without
 host Python: the source must be a regular package under `/share`, is mounted read-only, and import
 restarts the API only after the same canonical conversion and observation verification succeeds.
+The QPKG service also performs coordinated encrypted database-plus-attachment capture entirely through
+the pinned containers, generates an owner-held age identity on first use, prevents overlap, publishes
+atomically to durable QNAP storage, and updates the owner-visible backup-health contract without host
+Python or age. The identity must still be copied off the NAS, and scheduled/off-NAS publication remains
+open.
 These remain previews rather
 than the promised normal-user setup:
 release images/packages are unsigned, QNAP hardware validation is pending, and secure pairing/TLS is

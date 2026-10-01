@@ -223,6 +223,7 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     routines = (root / "template" / "package_routines").read_text()
     service = (root / "template" / "shared" / "ClearPocketServer.sh").read_text()
     setup = (root / "template" / "shared" / "ClearPocketSetup.sh").read_text()
+    backup = (root / "template" / "shared" / "ClearPocketBackup.sh").read_text()
     builder = (root / "build.sh").read_text()
     assert 'QPKG_NAME="ClearPocketServer"' in config
     assert 'QPKG_SERVICE_PROGRAM="ClearPocketServer.sh"' in config
@@ -234,6 +235,7 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'compose up -d' in service
     assert 'compose stop' in service
     assert 'compose ps' in service
+    assert 'ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT"' in service
     assert "verify-local-device" in service
     assert "import-local-device" in service
     assert '/share/*' in service
@@ -249,6 +251,12 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "down -v" not in service
     assert "docker volume rm" not in service
     assert "/dev/urandom" in setup
+    assert "scripts/backup_archive.py create-manifest" in backup
+    assert "scripts/backup_health.py healthy" in backup
+    assert "age --recipient" in backup
+    assert "qnap-backup.lock" in backup
+    assert "compose stop api" in backup and "compose start api" in backup
+    assert "down -v" not in backup and "docker volume rm" not in backup
     assert "Existing private ClearPocket configuration preserved" in setup
     assert "BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY" in setup
     assert "CLEARPOCKET_OPERATIONS_STORAGE" in setup
@@ -268,6 +276,7 @@ set -eu
 grep -q 'QPKG_VER=\"0.9.0\"' qpkg.cfg
 test -f shared/ClearPocketServer.sh
 test -x shared/ClearPocketSetup.sh
+test -x shared/ClearPocketBackup.sh
 test -f shared/server/compose.yaml
 test -f shared/server/manage.py
 test -f shared/server/tools/backup.sh
