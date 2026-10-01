@@ -451,6 +451,11 @@ containers, including age identity creation, PostgreSQL dump, attachment capture
 atomic publication, health reporting, overlap exclusion, and bounded post-success retention. The
 generation and identity remain owner-selected host paths and the resulting files are returned to the
 invoking host user; no host Python, PostgreSQL client, or age binary is required.
+Its paired Docker-only restore mounts both source files read-only, verifies in private container
+staging, checks destination emptiness before and after quiescence, adopts the authenticated attachment
+key only for that empty destination, restores SQL in one transaction, records recovery health, and
+serves only after API health. Pre-commit failure rolls back only that attempt's key/object staging;
+post-commit failure preserves the recovered authority and leaves its API stopped.
 
 The versioned Windows ZIP now includes a double-click per-user installer. It validates and atomically
 publishes an allowlisted manager payload to a stable `%LOCALAPPDATA%` program path, adds Desktop and

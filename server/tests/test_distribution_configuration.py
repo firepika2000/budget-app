@@ -149,6 +149,26 @@ def test_docker_only_backup_is_coordinated_encrypted_bounded_and_user_owned():
     assert "down -v" not in script and "docker volume rm" not in script
 
 
+def test_docker_only_restore_is_guarded_transactional_and_health_gated():
+    script = (ROOT / "distribution" / "server" / "restore-docker.sh").read_text()
+    assert script.startswith("#!/bin/sh\nset -eu\n")
+    assert "command -v python" not in script and "command -v age" not in script
+    assert "Type RESTORE" in script
+    assert ':/input/archive.age:ro' in script
+    assert ':/input/identity.txt:ro' in script
+    assert "extract-verified" in script
+    assert "require_empty_restore.sql" in script
+    assert script.count("assert_empty_destination") >= 3
+    assert "DESTINATION_MUTATION_STARTED" in script
+    assert ".env.restore-original" in script
+    assert 'find /var/lib/budget-app/attachments -mindepth 1' in script
+    assert 'psql --single-transaction --set ON_ERROR_STOP=on' in script
+    assert "compose up -d --force-recreate api" in script
+    assert "recovery-status.json" in script
+    assert "API remains stopped for inspection" in script
+    assert "down -v" not in script and "docker volume rm" not in script
+
+
 def test_windows_launcher_uses_platform_crypto_and_has_no_python_dependency():
     command = (ROOT / "distribution" / "server" / "start-windows.cmd").read_text()
     script = (ROOT / "distribution" / "server" / "start-windows.ps1").read_text()

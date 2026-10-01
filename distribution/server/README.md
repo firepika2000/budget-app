@@ -38,6 +38,20 @@ prevents overlapping runs, and retains the newest 10 completed generations by de
 identity to a different protected device; a backup and its only decryption key on one disk are not a
 recovery plan.
 
+Recover that generation only into a newly configured empty Docker destination:
+
+```sh
+./restore-docker.sh /protected/budget-YYYYMMDDTHHMMSSZ.tar.gz.age \
+  /separate/clearpocket-recovery-key.txt RESTORE
+```
+
+The archive and identity are mounted read-only. The pinned container decrypts into private staging,
+verifies the complete manifest, and the script refuses database or attachment content both before and
+after API quiescence. Only then does the empty destination adopt the authenticated attachment key and
+commit SQL transactionally. Pre-commit failures remove only objects staged by that attempt and restore
+the prior empty configuration; post-commit activation failures preserve the recovered authority with
+the API stopped. Recovery status and real API health are required before success is reported.
+
 Advanced administrators may instead generate configuration directly from this directory:
 
 ```sh
