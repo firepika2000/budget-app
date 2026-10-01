@@ -60,6 +60,69 @@ def _digest(path: Path) -> str:
     return value.hexdigest()
 
 
+def _safe_success(value: object, *, permit_publication_failure: bool = False) -> dict[str, object] | None:
+    if not isinstance(value, dict) or value.get("state") not in (
+        {"healthy", "publication_failed"} if permit_publication_failure else {"healthy"}
+    ):
+        return None
+    completed_at = value.get("completed_at")
+    archive = value.get("archive")
+    size = value.get("size")
+    digest = value.get("sha256")
+    destination = value.get("destination")
+    if not isinstance(completed_at, str) or not completed_at or len(completed_at) > 64:
+        return None
+    if not isinstance(archive, str) or not archive or len(archive) > 4096 or any(
+        character in archive for character in "\r\n\0"
+    ):
+        return None
+    if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+        return None
+    if not isinstance(digest, str) or len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
+        return None
+    if not isinstance(destination, dict) or destination.get("destination") not in {
+        "local_generation", "dropbox",
+    }:
+        return None
+    allowed_destination = {
+        key: destination[key]
+        for key in ("destination", "path", "filename", "size", "sha256", "content_hash", "verified_at")
+        if key in destination
+    }
+    path = allowed_destination.get("path")
+    if not isinstance(path, str) or not path or len(path) > 4096 or any(
+        character in path for character in "\r\n\0"
+    ):
+        return None
+    return {
+        "state": "healthy", "completed_at": completed_at, "archive": archive,
+        "size": size, "sha256": digest, "destination": allowed_destination,
+    }
+
+
+def carry_last_successful(target: Path, payload: dict[str, object]) -> dict[str, object]:
+    """Preserve a bounded success observation when the latest attempt fails."""
+    if payload.get("state") == "healthy":
+        return payload
+    current_capture = _safe_success(payload, permit_publication_failure=True)
+    if current_capture is not None:
+        payload["last_successful"] = current_capture
+        return payload
+    if target.is_file() and not target.is_symlink() and target.stat().st_size <= 64 * 1024:
+        try:
+            previous = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            previous = None
+        success = _safe_success(previous)
+        if success is None and isinstance(previous, dict):
+            success = _safe_success(previous.get("last_successful"))
+        if success is not None:
+            payload["last_successful"] = success
+    return payload
+
+
 def record(state: str, archive: Path | None = None, reported_path: str | None = None,
            destination: object | None = None) -> dict[str, object]:
     configured = os.environ.get("BUDGET_APP_BACKUP_STATUS_PATH", "").strip()
@@ -99,6 +162,8 @@ def record(state: str, archive: Path | None = None, reported_path: str | None = 
     else:
         payload["error"] = "Backup capture failed"
 
+    carry_last_successful(target, payload)
+
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -121,7 +186,7 @@ def record(state: str, archive: Path | None = None, reported_path: str | None = 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("state", choices=("healthy", "failed"))
+    parser.add_argument("state", choices=("healthy", "failed", "publication_failed"))
     parser.add_argument("archive", type=Path, nargs="?")
     parser.add_argument("--reported-path")
     parser.add_argument("--destination-json", type=Path)

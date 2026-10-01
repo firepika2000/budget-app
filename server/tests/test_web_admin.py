@@ -28,3 +28,5 @@ def test_admin_backup_panel_uses_owner_scoped_health_contract(client):
     assert "state.backupStatus.schedule" in script
     assert "server local time" in script
     assert "schedule.provider.replaceAll" in script
+    assert "last_successful_backup" in script
+    assert "Last successful backup" in script

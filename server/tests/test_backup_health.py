@@ -37,6 +37,36 @@ def test_backup_health_failure_never_records_secrets_or_untrusted_details(tmp_pa
     assert "archive" not in payload
 
 
+def test_failure_preserves_only_the_last_bounded_success(tmp_path: Path, monkeypatch):
+    status = tmp_path / "backup-status.json"
+    archive = tmp_path / "generation.age"
+    archive.write_bytes(b"encrypted generation")
+    monkeypatch.setenv("BUDGET_APP_BACKUP_STATUS_PATH", str(status))
+    successful = record("healthy", archive, "/protected/generation.age")
+
+    failed = record("failed")
+
+    assert failed["state"] == "failed"
+    assert failed["last_successful"] == {
+        key: successful[key]
+        for key in ("state", "completed_at", "archive", "size", "sha256", "destination")
+    }
+    assert "error" not in failed["last_successful"]
+
+
+def test_publication_failure_records_current_local_capture_as_last_success(tmp_path: Path, monkeypatch):
+    status = tmp_path / "backup-status.json"
+    archive = tmp_path / "generation.age"
+    archive.write_bytes(b"encrypted generation")
+    monkeypatch.setenv("BUDGET_APP_BACKUP_STATUS_PATH", str(status))
+
+    failed = record("publication_failed", archive, "/protected/generation.age")
+
+    assert failed["last_successful"]["completed_at"] == failed["completed_at"]
+    assert failed["last_successful"]["destination"]["destination"] == "local_generation"
+    assert failed["last_successful"]["state"] == "healthy"
+
+
 def test_backup_health_records_verified_dropbox_publication_without_credentials(tmp_path: Path, monkeypatch):
     status = tmp_path / "backup-status.json"
     archive = tmp_path / "budget-20261001T030000Z.tar.gz.age"

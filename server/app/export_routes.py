@@ -59,6 +59,31 @@ from .portable_data import FORMAT_NAME, FORMAT_VERSION, section_manifest
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
 
 
+def _sanitized_health(value: object, expected_states: set[str], include_prior: bool = True) -> dict | None:
+    if not isinstance(value, dict) or value.get("state") not in expected_states:
+        return None
+    allowed = {
+        "state", "archive", "completed_at", "sha256", "size", "destination", "error",
+        "verified_at", "source_provider", "source_archive_sha256", "database_integrity",
+        "foreign_keys",
+    }
+    result = {key: value[key] for key in allowed if key in value}
+    if isinstance(result.get("destination"), dict):
+        destination_allowed = {
+            "destination", "path", "filename", "size", "sha256", "content_hash",
+            "verified_at", "removed_generations",
+        }
+        result["destination"] = {
+            key: result["destination"][key]
+            for key in destination_allowed if key in result["destination"]
+        }
+    if include_prior and "last_successful" in value:
+        prior = _sanitized_health(value["last_successful"], {"healthy"}, include_prior=False)
+        if prior is not None:
+            result["last_successful"] = prior
+    return result
+
+
 def _health_document(path_value: str | None, expected_states: set[str]) -> dict | None:
     if not path_value:
         return None
@@ -75,24 +100,8 @@ def _health_document(path_value: str | None, expected_states: set[str]) -> dict 
         value = json.loads(path.read_text())
     except (OSError, ValueError, json.JSONDecodeError):
         return {"state": "invalid", "message": "Backup health metadata is unreadable"}
-    if not isinstance(value, dict) or value.get("state") not in expected_states:
-        return {"state": "invalid", "message": "Backup health metadata is invalid"}
-    allowed = {
-        "state", "archive", "completed_at", "sha256", "size", "destination", "error",
-        "verified_at", "source_provider", "source_archive_sha256", "database_integrity",
-        "foreign_keys",
-    }
-    result = {key: value[key] for key in allowed if key in value}
-    if isinstance(result.get("destination"), dict):
-        destination_allowed = {
-            "destination", "path", "filename", "size", "sha256", "content_hash",
-            "verified_at", "removed_generations",
-        }
-        result["destination"] = {
-            key: result["destination"][key]
-            for key in destination_allowed if key in result["destination"]
-        }
-    return result
+    result = _sanitized_health(value, expected_states)
+    return result or {"state": "invalid", "message": "Backup health metadata is invalid"}
 
 
 def _schedule_document(path_value: str | None) -> dict | None:
@@ -142,6 +151,12 @@ def owner_backup_status(
     backup = _health_document(settings.backup_status_path, {"healthy", "failed", "publication_failed"})
     schedule = _schedule_document(settings.backup_schedule_status_path)
     recovery = _health_document(settings.recovery_status_path, {"verified"})
+    last_successful = None
+    if backup is not None:
+        if backup.get("state") == "healthy":
+            last_successful = {key: value for key, value in backup.items() if key != "last_successful"}
+        elif isinstance(backup.get("last_successful"), dict):
+            last_successful = backup["last_successful"]
     return {
         "configured": bool(
             settings.backup_status_path
@@ -149,6 +164,7 @@ def owner_backup_status(
             or settings.recovery_status_path
         ),
         "backup": backup or {"state": "never"},
+        "last_successful_backup": last_successful,
         "schedule": schedule,
         "last_restore_verification": recovery,
     }

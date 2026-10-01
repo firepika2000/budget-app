@@ -3994,6 +3994,27 @@ private struct BackupRecoverySettingsView: View {
                             Label(failure, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                         }
                     }
+                    Section("Last Successful Backup") {
+                        if let successful = status.lastSuccessfulBackup {
+                            if let completed = successful.completedAt {
+                                LabeledContent("Completed", value: readableDate(completed))
+                            }
+                            if let destination = successful.destination?.destination {
+                                LabeledContent(
+                                    "Destination",
+                                    value: destination.replacingOccurrences(of: "_", with: " ").capitalized
+                                )
+                            }
+                            if let size = successful.size {
+                                LabeledContent(
+                                    "Encrypted size",
+                                    value: ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+                                )
+                            }
+                        } else {
+                            Text("No successful backup has been recorded.").foregroundStyle(.secondary)
+                        }
+                    }
                     Section("Restore Verification") {
                         if let recovery = status.lastRestoreVerification {
                             LabeledContent("Status", value: recovery.state.capitalized)

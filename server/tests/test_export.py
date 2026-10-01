@@ -246,10 +246,22 @@ def test_backup_health_is_owner_only_bounded_and_sanitized(
     backup.write_text(json.dumps({
         "state": "failed", "completed_at": "2026-09-27T14:00:00Z",
         "error": "Backup capture failed", "private_detail": "must-not-leak",
+        "last_successful": {
+            "state": "healthy", "completed_at": "2026-09-27T12:00:00Z",
+            "archive": "/private/backup.age", "sha256": "a" * 64, "size": 123,
+            "destination": {"destination": "local_generation", "path": "/private/backup.age"},
+            "credential": "must-not-leak",
+        },
     }))
     failed = client.get(path, headers=auth(owner_token))
     assert failed.status_code == 200
-    assert failed.json()["backup"] == {
+    assert failed.json()["backup"]["state"] == "failed"
+    assert failed.json()["backup"]["completed_at"] == "2026-09-27T14:00:00Z"
+    assert failed.json()["backup"]["error"] == "Backup capture failed"
+    assert failed.json()["last_successful_backup"]["completed_at"] == "2026-09-27T12:00:00Z"
+    assert failed.json()["last_successful_backup"]["destination"]["destination"] == "local_generation"
+    assert "must-not-leak" not in failed.text
+    assert {key: failed.json()["backup"][key] for key in ("state", "completed_at", "error")} == {
         "state": "failed", "completed_at": "2026-09-27T14:00:00Z",
         "error": "Backup capture failed",
     }

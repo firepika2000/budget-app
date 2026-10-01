@@ -299,6 +299,15 @@
       if (backup.completed_at) content.append(labelBlock("Last completed", new Date(backup.completed_at).toLocaleString()));
       if (backup.destination?.destination) content.append(labelBlock("Destination", backup.destination.destination));
       if (backup.error) content.append(labelBlock("Attention required", backup.error));
+      const successful = state.backupStatus.last_successful_backup;
+      if (successful) {
+        content.append(labelBlock("Last successful backup", new Date(successful.completed_at).toLocaleString()));
+        if (successful.destination?.destination) {
+          content.append(labelBlock("Successful destination", successful.destination.destination.replaceAll("_", " ")));
+        }
+      } else {
+        content.append(labelBlock("Last successful backup", "None recorded"));
+      }
       const recovery = state.backupStatus.last_restore_verification;
       if (recovery) {
         content.append(labelBlock("Last restore verified", new Date(recovery.verified_at).toLocaleString()));

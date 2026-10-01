@@ -1950,10 +1950,12 @@ public struct APIServerBackupStatus: Decodable, Equatable, Sendable {
     public let configured: Bool
     public let backup: APIBackupHealth
     public let schedule: APIBackupSchedule?
+    public let lastSuccessfulBackup: APIBackupHealth?
     public let lastRestoreVerification: APIBackupHealth?
 
     enum CodingKeys: String, CodingKey {
         case configured, backup, schedule
+        case lastSuccessfulBackup = "last_successful_backup"
         case lastRestoreVerification = "last_restore_verification"
     }
 }

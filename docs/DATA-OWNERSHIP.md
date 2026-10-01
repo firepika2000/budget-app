@@ -520,6 +520,12 @@ commands, filesystem paths, environment values, and credentials are never return
 that contract in one recovery screen. Windows Task Scheduler and QNAP cron publish/remove the schedule
 document atomically, while launchd/systemd installers accept an explicit operations-volume status path.
 Missing metadata remains backward compatible and invalid or linked metadata fails closed.
+Backup-health writers now retain a separate bounded last-success observation when a later capture or
+off-device publication fails. A publication failure records the newly completed local encrypted
+generation as recoverable while still surfacing the remote failure; a capture failure carries the
+prior verified destination forward. Windows now delegates every status transition to the same strict
+container writer as Docker/QNAP, including the previously unreachable `publication_failed` CLI state.
+Both owner interfaces therefore show the latest attempt and last successful backup independently.
 
 The versioned Windows ZIP now includes a double-click per-user installer. It validates and atomically
 publishes an allowlisted manager payload to a stable `%LOCALAPPDATA%` program path, adds Desktop and

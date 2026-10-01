@@ -60,38 +60,24 @@ function Save-BackupStatus([string] $State, [string] $Archive = "", [string] $De
         )
         return
     }
-    $status = [ordered]@{
-        state = $State
-        completed_at = [DateTimeOffset]::UtcNow.ToString("o")
-    }
     if ($Archive -and (Test-Path -LiteralPath $Archive -PathType Leaf)) {
-        $file = Get-Item -LiteralPath $Archive
-        $status["archive"] = $file.FullName
-        $status["size"] = $file.Length
-        $status["sha256"] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        $status["destination"] = [ordered]@{
-            destination = "local_generation"
-            path = $file.FullName
-        }
-        if ($State -eq "publication_failed") {
-            $status["error"] = "Off-device backup publication failed"
-        }
-    } else {
-        $status["error"] = "Backup capture failed"
-    }
-    $statusFile = Join-Path $env:TEMP "clearpocket-backup-status-$([Guid]::NewGuid().ToString('N')).json"
-    try {
-        Write-PrivateText $statusFile (($status | ConvertTo-Json -Depth 4) + "`n")
-        $mount = "${statusFile}:/input/backup-status.json:ro"
+        $archiveName = [IO.Path]::GetFileName($Archive)
         Invoke-ClearPocketCompose @(
-            "run", "--rm", "--no-deps", "--user", "root", "--volume", $mount,
-            "api", "sh", "-c",
-            "install -m 600 -o budget -g budget /input/backup-status.json " +
-            "/var/lib/budget-app/operations/backup-status.json"
+            "run", "--rm", "--no-deps", "--user", "root",
+            "--volume", "${Archive}:/input/${archiveName}:ro",
+            "api", "python", "scripts/backup_health.py", $State, "/input/$archiveName",
+            "--reported-path", $Archive
         )
-    } finally {
-        Remove-Item -LiteralPath $statusFile -Force -ErrorAction SilentlyContinue
+    } else {
+        Invoke-ClearPocketCompose @(
+            "run", "--rm", "--no-deps", "--user", "root",
+            "api", "python", "scripts/backup_health.py", "failed"
+        )
     }
+    Invoke-ClearPocketCompose @(
+        "run", "--rm", "--no-deps", "--user", "root", "api", "sh", "-c",
+        'chown budget:budget "$BUDGET_APP_BACKUP_STATUS_PATH"'
+    )
 }
 
 function Read-EnvironmentSetting([string] $Name) {

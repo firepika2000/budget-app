@@ -575,7 +575,7 @@ def test_windows_backup_is_coordinated_encrypted_atomic_and_health_visible():
     assert 'Save-BackupStatus "publication_failed" $final' in script
     assert "scripts/backup_health.py" in script
     assert '/input/$filename' in script
-    assert "/var/lib/budget-app/operations/backup-status.json" in script
+    assert 'chown budget:budget "$BUDGET_APP_BACKUP_STATUS_PATH"' in script
     assert "Remove-Item -LiteralPath $partial" in script
     assert "down -v" not in script
     assert "docker volume rm" not in script

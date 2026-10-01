@@ -28,12 +28,14 @@ from typing import Iterator
 
 try:
     from .backup_archive import create_manifest, extract_verified
+    from .backup_health import carry_last_successful
     from .backup_destination import (
         DestinationError, DropboxDestination, DropboxHTTPTransport,
         LocalDirectoryDestination, dropbox_access_token, sha256_file,
     )
 except ImportError:  # Direct script execution places this directory on sys.path.
     from backup_archive import create_manifest, extract_verified
+    from backup_health import carry_last_successful
     from backup_destination import (
         DestinationError, DropboxDestination, DropboxHTTPTransport,
         LocalDirectoryDestination, dropbox_access_token, sha256_file,
@@ -326,6 +328,7 @@ def _write_backup_status(
     configuration: LocalServerConfiguration, payload: dict[str, object],
 ) -> None:
     status = configuration.backup_status_path
+    carry_last_successful(status, payload)
     temporary = status.with_name(f".{status.name}.{secrets.token_hex(8)}.tmp")
     temporary.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
     os.chmod(temporary, 0o600)
@@ -431,6 +434,7 @@ def backup_local(
     except LocalServerError as failure:
         _write_backup_status(configuration, {
             **base_status, "state": "publication_failed", "error": str(failure),
+            "destination": {"destination": "local_generation", "path": str(final)},
         })
         raise
     _write_backup_status(configuration, {
