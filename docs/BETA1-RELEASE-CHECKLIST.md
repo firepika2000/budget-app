@@ -28,7 +28,7 @@ It does not replace the product audit or broader production-readiness history.
 - [ ] Complete App Privacy answers consistently with the self-hosted data model and manifest.
 - [ ] Provide support URL/contact, privacy-policy URL, Beta description and tester instructions.
 - [ ] Produce required screenshots from the approved Release candidate.
-- [ ] Create a signed archive, run Xcode validation, then upload to closed TestFlight.
+- [x] Public Xcode 27.0 signed, validated, and uploaded `0.8.0 (2)`; App Store Connect accepted the package for processing.
 - [ ] Add internal testers and verify install, launch, server connection and feedback path.
 
 The prepared Beta description, test focus and known boundaries are in
@@ -57,8 +57,9 @@ Use disposable Beta data; do not reset the existing human Live database.
 
 **ENGINEERING PACKAGE:** local-first release candidate verified and archiveable.
 
-**TESTFLIGHT READY:** NO — human Debt/core-flow acceptance, signing and App Store Connect metadata
-remain open.
+**TESTFLIGHT READY:** BUILD UPLOADED — `0.8.0 (2)` is processing in App Store Connect. Human
+local-first acceptance and tester-group availability remain open; no human acceptance is inferred
+from a successful upload.
 
 ## Signing handoff
 
