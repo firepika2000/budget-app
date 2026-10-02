@@ -25,7 +25,10 @@ any later spreadsheet export still requires its own formula-injection defenses.
 
 ## Required next dependencies
 
-1. Further date/amount mapping options and adapters for OFX/QFX/QIF with bounded, safe parsing.
+1. PDF extraction and additional bank-specific mapping profiles. Arbitrary PDF layout is not
+   trusted as structured financial data: extraction must show the exact recognized date, signed
+   amount and description for review, and unsupported/scanned statements must fail clearly rather
+   than silently inventing transactions.
 2. Provider-neutral staged batch/candidate contracts; durable staging must remain money-neutral.
 3. Current resource authorization before matching, suggestions, duplicate counts or preview.
 4. Stable external identity/fingerprints and bounded canonical-transaction matching. Ambiguous
@@ -43,6 +46,20 @@ any later spreadsheet export still requires its own formula-injection defenses.
 Verification: 22 focused parser tests cover quoted/BOM inputs, refunds, currency scales, exact
 limits, ambiguous/overflow amounts, malformed dates/records, private-content-safe errors and
 10,000-row bounded output. These tests prove parsing only, not authorized posting or full import.
+
+### OFX/QFX and QIF adapters
+
+`import_formats.py` adds bounded OFX/QFX and QIF adapters. Both produce the same money-neutral
+`ImportCandidate` records as CSV and preserve exact integer minor units. OFX 1.x SGML and OFX 2.x
+XML-style transaction records are supported without invoking an XML entity resolver; document type
+and entity declarations are refused. Posted timestamps retain the institution-provided calendar
+date rather than applying a device timezone. QIF requires an explicit m/d/y or d/m/y selection and
+never guesses locale. Common grouped QIF amounts are normalized only after strict validation.
+
+Both adapters enforce the shared 10 MiB / 10,000-row / bounded-description limits, use private-text-
+safe validation errors and perform no matching, payee creation, clearing, reconciliation or posting.
+PDF remains planned for the review UI because reliable extraction requires bank-template selection
+or explicit field mapping; accepting arbitrary PDF text as ledger evidence would be unsafe.
 
 ### Explicit bank CSV mapping
 
