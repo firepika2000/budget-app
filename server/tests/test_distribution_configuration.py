@@ -672,7 +672,7 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'QPKG_TIMEOUT="300,120"' in config
     assert 'QPKG_DISTRIBUTION_TYPE="1"' in config
     assert 'QPKG_WEBUI="/cgi-bin/qpkg/ClearPocketServer/index.cgi"' in config
-    assert 'QPKG_DESKTOP_APP="1"' in config
+    assert 'QPKG_DESKTOP_APP="0"' in config
     assert 'QPKG_VISIBLE="0"' in config
     assert 'QPKG_FORCE_VISIBLE="1"' in config
     assert "Container Station must be installed" in routines
@@ -734,6 +734,10 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "Content-Security-Policy" in manager
     assert 'name="csrf"' in manager
     assert "QTS administrators" in manager
+    assert "require_qts_administrator" in manager
+    assert "QTS_SSL_SSID QTS_SSID NAS_SID" in manager
+    assert "authLogin.cgi" in manager
+    assert "<isAdmin>" in manager
     assert "COMPOSE_PROFILES=qnap-tls" in service
     assert "CLEARPOCKET_BIND_ADDRESS=127.0.0.1" in service
     assert "BUDGET_APP_PAIRING_PUBLIC_URL=https://%s" in service
@@ -935,11 +939,20 @@ def test_qnap_management_console_executes_only_allowlisted_csrf_protected_comman
     )
     service.chmod(0o755)
     manager = ROOT / "distribution" / "qnap" / "template" / "shared" / "management" / "index.cgi"
+    auth = tmp_path / "qts-auth"
+    auth.write_text(
+        "#!/bin/sh\n"
+        "printf '%s' '<QDocRoot><authPassed>1</authPassed><isAdmin>1</isAdmin></QDocRoot>'\n"
+    )
+    auth.chmod(0o755)
 
     body = f"csrf={token}&command=health"
     environment = dict(
         os.environ,
         CLEARPOCKET_QPKG_ROOT=str(root),
+        CLEARPOCKET_AUTH_CURL=str(auth),
+        HTTP_COOKIE="QTS_SSL_SSID=validsid",
+        REMOTE_ADDR="192.168.4.20",
         REQUEST_METHOD="POST",
         CONTENT_LENGTH=str(len(body)),
     )
@@ -947,6 +960,28 @@ def test_qnap_management_console_executes_only_allowlisted_csrf_protected_comman
     assert "Content-Security-Policy:" in result.stdout
     assert "service output &lt;private&gt;" in result.stdout
     assert calls.read_text().splitlines() == ["health"]
+
+    anonymous_environment = dict(environment)
+    anonymous_environment.pop("HTTP_COOKIE")
+    result = subprocess.run(
+        [manager], text=True, capture_output=True, env=anonymous_environment, check=True
+    )
+    assert "401 Unauthorized" in result.stdout
+    assert "valid QTS administrator session" in result.stdout
+    assert calls.read_text().splitlines() == ["health"]
+
+    auth.write_text(
+        "#!/bin/sh\n"
+        "printf '%s' '<QDocRoot><authPassed>1</authPassed><isAdmin>0</isAdmin></QDocRoot>'\n"
+    )
+    result = subprocess.run([manager], text=True, capture_output=True, env=environment, check=True)
+    assert "401 Unauthorized" in result.stdout
+    assert calls.read_text().splitlines() == ["health"]
+
+    auth.write_text(
+        "#!/bin/sh\n"
+        "printf '%s' '<QDocRoot><authPassed>1</authPassed><isAdmin>1</isAdmin></QDocRoot>'\n"
+    )
 
     invalid = f"csrf={token}&command=status%3Brm+-rf"
     environment["CONTENT_LENGTH"] = str(len(invalid))

@@ -5,6 +5,7 @@ GETCFG=${CLEARPOCKET_GETCFG:-/sbin/getcfg}
 QPKG_ROOT=${CLEARPOCKET_QPKG_ROOT:-$($GETCFG "$QPKG_NAME" Install_Path -f /etc/config/qpkg.conf 2>/dev/null)}
 SERVICE="$QPKG_ROOT/ClearPocketServer.sh"
 TOKEN_FILE="$QPKG_ROOT/management/.csrf-token"
+AUTH_CURL=${CLEARPOCKET_AUTH_CURL:-/usr/bin/curl}
 
 escape_html() {
     sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g"
@@ -14,6 +15,35 @@ fail_page() {
     printf 'Status: %s\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\n%s\n' "$1" "$2"
     exit 0
 }
+
+cookie_value() {
+    printf '%s' "${HTTP_COOKIE:-}" | tr ';' '\n' | \
+        sed -n "s/^[[:space:]]*$1=//p" | head -n 1
+}
+
+require_qts_administrator() {
+    [ -x "$AUTH_CURL" ] || fail_page "503 Service Unavailable" "QTS session validation is unavailable."
+    CLIENT_IP=${REMOTE_ADDR:-127.0.0.1}
+    case "$CLIENT_IP" in *[!0-9A-Fa-f:.]*) fail_page "401 Unauthorized" "A valid QTS administrator session is required." ;; esac
+    for COOKIE_NAME in QTS_SSL_SSID QTS_SSID NAS_SID; do
+        SID=$(cookie_value "$COOKIE_NAME")
+        case "$SID" in ''|*[!A-Za-z0-9]*) continue ;; esac
+        [ "${#SID}" -le 128 ] || continue
+        AUTH_RESPONSE=$(
+            "$AUTH_CURL" -k -fsS --max-time 5 --get \
+                --data-urlencode "sid=$SID" \
+                --data-urlencode "service=101" \
+                --data-urlencode "remote_ip=$CLIENT_IP" \
+                https://127.0.0.1/cgi-bin/authLogin.cgi 2>/dev/null
+        ) || continue
+        printf '%s' "$AUTH_RESPONSE" | grep -Eq '<authPassed>(<!\[CDATA\[)?1(\]\]>)?</authPassed>' || continue
+        printf '%s' "$AUTH_RESPONSE" | grep -Eq '<isAdmin>(<!\[CDATA\[)?1(\]\]>)?</isAdmin>' || continue
+        return 0
+    done
+    fail_page "401 Unauthorized" "A valid QTS administrator session is required. Open ClearPocket Server from an authenticated QTS administrator session."
+}
+
+require_qts_administrator
 
 [ -n "$QPKG_ROOT" ] && [ -x "$SERVICE" ] && [ -r "$TOKEN_FILE" ] || \
     fail_page "503 Service Unavailable" "ClearPocket Server management is not available."

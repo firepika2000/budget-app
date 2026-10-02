@@ -81,7 +81,11 @@ administrator action while the graphical import/restore workflow is completed.
 
 ## QTS management interface
 
-Open **ClearPocket Server** from the QTS administrator desktop. The manager shows the installed
+Open **ClearPocket Server** from the QTS administrator desktop. Like other server applications, its
+manager opens in a normal browser tab rather than a QTS desktop iframe. Every request validates the
+current QTS session through QNAP's local authentication endpoint and requires `isAdmin=1`; a direct
+anonymous request is rejected before the manager reads its CSRF token or invokes any service command.
+The manager shows the installed
 server version, NAS host, container status, health output, recent bounded logs, and backup schedule
 state. It can create an encrypted backup or restart the ClearPocket containers. Its terminal-style
 command field deliberately accepts only these exact commands:
