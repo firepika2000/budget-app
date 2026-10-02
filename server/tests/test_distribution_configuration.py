@@ -737,6 +737,8 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'name="csrf"' in manager
     assert "QTS administrators" in manager
     assert "require_qts_administrator" in manager
+    assert "redirect_to_https" in manager
+    assert "Location: https://%s/cgi-bin/qpkg/ClearPocketServer/index.cgi" in manager
     assert "QTS_SSL_SSID QTS_SSID NAS_SID" in manager
     assert "authLogin.cgi" in manager
     assert "<isAdmin>" in manager
@@ -960,12 +962,23 @@ def test_qnap_management_console_executes_only_allowlisted_csrf_protected_comman
         CLEARPOCKET_AUTH_FETCH=str(auth),
         HTTP_COOKIE="QTS_SSL_SSID=validsid",
         REMOTE_ADDR="192.168.4.20",
+        HTTPS="on",
         REQUEST_METHOD="POST",
         CONTENT_LENGTH=str(len(body)),
     )
     result = subprocess.run([manager], input=body, text=True, capture_output=True, env=environment, check=True)
     assert "Content-Security-Policy:" in result.stdout
     assert "service output &lt;private&gt;" in result.stdout
+    assert calls.read_text().splitlines() == ["health"]
+
+    insecure_environment = dict(environment)
+    insecure_environment.pop("HTTPS")
+    insecure_environment["HTTP_HOST"] = "192.168.4.84:8080"
+    result = subprocess.run(
+        [manager], text=True, capture_output=True, env=insecure_environment, check=True
+    )
+    assert "302 Found" in result.stdout
+    assert "Location: https://192.168.4.84/cgi-bin/qpkg/ClearPocketServer/index.cgi" in result.stdout
     assert calls.read_text().splitlines() == ["health"]
 
     anonymous_environment = dict(environment)

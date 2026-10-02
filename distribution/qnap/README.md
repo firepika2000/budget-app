@@ -92,6 +92,9 @@ native `wget`, or the firmware's BusyBox `wget`; it does not weaken authenticati
 binary path is absent.
 The package declares HTTP unsupported and uses the QTS system HTTPS port, preventing App Center from
 constructing an unreachable or downgrade-prone plain-HTTP management link on HTTPS-only systems.
+Because current QuTS hero may nevertheless construct an external App Center link on its HTTP port,
+the CGI performs an immediate no-cache redirect to the same NAS's HTTPS endpoint before reading any
+session or management state. Secure QTS session cookies are therefore never requested over HTTP.
 The manager shows the installed
 server version, NAS host, container status, health output, recent bounded logs, and backup schedule
 state. It can create an encrypted backup or restart the ClearPocket containers. Its terminal-style

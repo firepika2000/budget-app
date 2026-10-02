@@ -16,6 +16,21 @@ fail_page() {
     exit 0
 }
 
+redirect_to_https() {
+    case "${HTTPS:-}" in on|ON|1) return 0 ;; esac
+    REQUEST_HOST=${HTTP_HOST:-${SERVER_NAME:-}}
+    case "$REQUEST_HOST" in
+        *:*) REQUEST_HOST=${REQUEST_HOST%%:*} ;;
+    esac
+    case "$REQUEST_HOST" in
+        ''|*[!A-Za-z0-9.-]*) fail_page "400 Bad Request" "Invalid management host." ;;
+    esac
+    printf 'Status: 302 Found\r\nLocation: https://%s/cgi-bin/qpkg/ClearPocketServer/index.cgi\r\nCache-Control: no-store\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nRedirecting to secure ClearPocket management.\n' "$REQUEST_HOST"
+    exit 0
+}
+
+redirect_to_https
+
 cookie_value() {
     printf '%s' "${HTTP_COOKIE:-}" | tr ';' '\n' | \
         sed -n "s/^[[:space:]]*$1=//p" | head -n 1
