@@ -740,6 +740,9 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "QTS_SSL_SSID QTS_SSID NAS_SID" in manager
     assert "authLogin.cgi" in manager
     assert "<isAdmin>" in manager
+    assert "command -v curl" in manager
+    assert "command -v wget" in manager
+    assert "/bin/busybox wget" in manager
     assert "COMPOSE_PROFILES=qnap-tls" in service
     assert "CLEARPOCKET_BIND_ADDRESS=127.0.0.1" in service
     assert "BUDGET_APP_PAIRING_PUBLIC_URL=https://%s" in service
@@ -952,7 +955,7 @@ def test_qnap_management_console_executes_only_allowlisted_csrf_protected_comman
     environment = dict(
         os.environ,
         CLEARPOCKET_QPKG_ROOT=str(root),
-        CLEARPOCKET_AUTH_CURL=str(auth),
+        CLEARPOCKET_AUTH_FETCH=str(auth),
         HTTP_COOKIE="QTS_SSL_SSID=validsid",
         REMOTE_ADDR="192.168.4.20",
         REQUEST_METHOD="POST",
