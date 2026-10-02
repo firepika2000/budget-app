@@ -1392,6 +1392,10 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(source.contains("StatementImportFlowView"))
         XCTAssertTrue(source.contains("Possible duplicate — skipped by default"))
         XCTAssertTrue(source.contains("APIStatementImportApprovalItem"))
+        XCTAssertTrue(source.contains("Separate debit and credit"))
+        XCTAssertTrue(source.contains("Year-Month-Day"))
+        XCTAssertTrue(source.contains("debitColumn: splitMoney ? debitColumn : nil"))
+        XCTAssertTrue(source.contains("creditColumn: splitMoney ? creditColumn : nil"))
     }
 
     @MainActor

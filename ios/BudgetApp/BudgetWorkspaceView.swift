@@ -6142,7 +6142,8 @@ private struct StatementImportFlowView: View {
     let budget: APIBudget; let account: APIAccount; let file: StatementImportFile
     @Environment(\.dismiss) private var dismiss
     @State private var staged: APIStatementImport?
-    @State private var dateColumn = ""; @State private var amountColumn = ""; @State private var payeeColumn = ""; @State private var memoColumn = ""
+    @State private var dateColumn = ""; @State private var amountColumn = ""; @State private var debitColumn = ""; @State private var creditColumn = ""; @State private var payeeColumn = ""; @State private var memoColumn = ""
+    @State private var csvAmountLayout = "amount"
     @State private var dateOrder = "mdy"; @State private var postRows: Set<Int> = []; @State private var categoryByRow: [Int: String] = [:]
     @State private var isWorking = false; @State private var errorMessage: String?
     private var headers: [String] { file.format == "csv" ? Self.csvHeaders(file.data) : [] }
@@ -6155,7 +6156,24 @@ private struct StatementImportFlowView: View {
     } }
     @ViewBuilder private var setup: some View {
         Section("File") { LabeledContent("Statement", value: file.name); LabeledContent("Format", value: file.format.uppercased()); Text("Nothing changes until you review every recognized row and post your selection.").font(.footnote).foregroundStyle(.secondary) }
-        if file.format == "csv" { Section("CSV columns") { Picker("Date", selection: $dateColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }; Picker("Amount", selection: $amountColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }; Picker("Payee", selection: $payeeColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }; Picker("Memo", selection: $memoColumn) { Text("None").tag(""); ForEach(headers, id: \.self) { Text($0).tag($0) } } } }
+        if file.format == "csv" {
+            Section("CSV format") {
+                Picker("Date order", selection: $dateOrder) { Text("Year-Month-Day").tag("ymd"); Text("Month / Day / Year").tag("mdy"); Text("Day / Month / Year").tag("dmy") }
+                Picker("Money columns", selection: $csvAmountLayout) { Text("One signed amount").tag("amount"); Text("Separate debit and credit").tag("debit-credit") }
+            }
+            Section("CSV columns") {
+                Picker("Date", selection: $dateColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }
+                if csvAmountLayout == "amount" {
+                    Picker("Amount", selection: $amountColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }
+                } else {
+                    Picker("Debit", selection: $debitColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }
+                    Picker("Credit", selection: $creditColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }
+                }
+                Picker("Payee", selection: $payeeColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }
+                Picker("Memo", selection: $memoColumn) { Text("None").tag(""); ForEach(headers, id: \.self) { Text($0).tag($0) } }
+                Text(csvAmountLayout == "amount" ? "Expenses must be negative and deposits positive." : "Debit values become outflows; credit values become inflows.").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
         if ["qif", "pdf"].contains(file.format) { Section("Date format") { Picker("Order", selection: $dateOrder) { Text("Month / Day / Year").tag("mdy"); Text("Day / Month / Year").tag("dmy") } } }
         if file.format == "pdf" { Section { Label("PDF safety", systemImage: "checkmark.shield"); Text("Only text rows with an explicit date and signed or parenthesized amount are recognized. Scanned and ambiguous statements are rejected.").font(.footnote).foregroundStyle(.secondary) } }
     }
@@ -6163,9 +6181,23 @@ private struct StatementImportFlowView: View {
         Section { LabeledContent("Recognized", value: "\(batch.candidateCount) transactions"); Text("Possible duplicates start skipped. Review the category and choice for every row.").font(.footnote).foregroundStyle(.secondary) }
         ForEach(batch.candidates) { row in Section { Toggle(isOn: Binding(get: { postRows.contains(row.sourceRow) }, set: { enabled in if enabled { postRows.insert(row.sourceRow) } else { postRows.remove(row.sourceRow) } })) { VStack(alignment: .leading) { Text(row.payee.isEmpty ? "No payee" : row.payee); Text("\(row.occurredOn) · \(CurrencyText.display(row.amountMinor, currencyCode: budget.currencyCode))").font(.caption).foregroundStyle(.secondary) } }; if postRows.contains(row.sourceRow), row.amountMinor < 0 { Picker("Category", selection: Binding(get: { categoryByRow[row.sourceRow] ?? "" }, set: { categoryByRow[row.sourceRow] = $0 })) { Text("Uncategorized").tag(""); ForEach(workspace.categories.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } } }; if !row.exactTransactionIDs.isEmpty || !row.possibleTransactionIDs.isEmpty || row.duplicateSourceRow != nil { Label("Possible duplicate — skipped by default", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange) }; if !row.memo.isEmpty { Text(row.memo).font(.footnote).foregroundStyle(.secondary) } } }
     }
-    private var mappingReady: Bool { file.format != "csv" || (!dateColumn.isEmpty && !amountColumn.isEmpty && !payeeColumn.isEmpty && Set([dateColumn, amountColumn, payeeColumn]).count == 3) }
-    private func configureDefaults() { guard file.format == "csv", !headers.isEmpty else { return }; dateColumn = Self.preferred(headers, ["date", "posted date", "transaction date"]); amountColumn = Self.preferred(headers, ["amount"]); payeeColumn = Self.preferred(headers, ["payee", "description", "merchant"]); memoColumn = Self.preferred(headers, ["memo", "notes"]) }
-    private func stage() async { isWorking = true; defer { isWorking = false }; do { let mapping = APIStatementImportMapping(sourceFormat: file.format, currencyCode: budget.currencyCode, dateColumn: file.format == "csv" ? dateColumn : nil, amountColumn: file.format == "csv" ? amountColumn : nil, payeeColumn: file.format == "csv" ? payeeColumn : nil, memoColumn: file.format == "csv" && !memoColumn.isEmpty ? memoColumn : nil, dateOrder: file.format == "csv" ? "ymd" : dateOrder); let result = try await workspace.stageStatementImport(accountID: account.id, data: file.data, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)) } catch { errorMessage = error.localizedDescription } }
+    private var mappingReady: Bool {
+        guard file.format == "csv" else { return true }
+        let moneyColumns = csvAmountLayout == "amount" ? [amountColumn] : [debitColumn, creditColumn]
+        let required = [dateColumn, payeeColumn] + moneyColumns
+        return required.allSatisfy { !$0.isEmpty } && Set(required).count == required.count
+    }
+    private func configureDefaults() {
+        guard file.format == "csv", !headers.isEmpty else { return }
+        dateColumn = Self.preferred(headers, ["date", "posted date", "transaction date"])
+        amountColumn = Self.preferred(headers, ["amount", "transaction amount"])
+        debitColumn = Self.preferred(headers, ["debit", "withdrawal", "money out"])
+        creditColumn = Self.preferred(headers, ["credit", "deposit", "money in"])
+        payeeColumn = Self.preferred(headers, ["payee", "description", "merchant", "name"])
+        memoColumn = Self.preferred(headers, ["memo", "notes", "details"])
+        if amountColumn.isEmpty, !debitColumn.isEmpty, !creditColumn.isEmpty { csvAmountLayout = "debit-credit" }
+    }
+    private func stage() async { isWorking = true; defer { isWorking = false }; do { let csv = file.format == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; let mapping = APIStatementImportMapping(sourceFormat: file.format, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder); let result = try await workspace.stageStatementImport(accountID: account.id, data: file.data, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)) } catch { errorMessage = error.localizedDescription } }
     private func approve(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { let items = batch.candidates.map { row in APIStatementImportApprovalItem(sourceRow: row.sourceRow, action: postRows.contains(row.sourceRow) ? "post" : "skip", categoryID: postRows.contains(row.sourceRow) ? categoryByRow[row.sourceRow].flatMap { $0.isEmpty ? nil : $0 } : nil) }; _ = try await workspace.approveStatementImport(accountID: account.id, batchID: batch.id, approval: .init(expectedVersion: batch.version, items: items)); dismiss() } catch { errorMessage = error.localizedDescription } }
     private static func preferred(_ headers: [String], _ names: [String]) -> String { for name in names { if let match = headers.first(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == name }) { return match } }; return "" }
     private static func csvHeaders(_ data: Data) -> [String] { guard let text = String(data: data.prefix(64 * 1024), encoding: .utf8), let line = text.split(whereSeparator: \.isNewline).first else { return [] }; var values: [String] = [], value = "", quoted = false; let chars = Array(line); var index = 0; while index < chars.count { let char = chars[index]; if char == "\"" { if quoted && index + 1 < chars.count && chars[index + 1] == "\"" { value.append("\""); index += 1 } else { quoted.toggle() } } else if char == "," && !quoted { values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); value = "" } else { value.append(char) }; index += 1 }; values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); return values.filter { !$0.isEmpty } }
