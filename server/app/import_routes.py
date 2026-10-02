@@ -15,7 +15,14 @@ from .import_matching import review_candidates
 from .import_review import load_match_observations
 from .import_staging import cancel_staged_batch, get_staged_batch, stage_candidates
 from .models import ImportBatch, User
-from .schemas import StatementImportCancelRequest, StatementImportResponse
+from .schemas import (
+    StatementImportApproveRequest,
+    StatementImportCancelRequest,
+    StatementImportResponse,
+    TransactionCreate,
+)
+from .budgeting_routes import create_transaction_in_session
+from .import_staging import claim_staged_batch_for_approval
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/accounts/{account_id}/statement-imports")
@@ -64,7 +71,9 @@ def _response(db: Session, user: User, budget_id: str, batch: ImportBatch,
             "possible_transaction_ids": list(reviews[row.source_row].possible_transaction_ids),
             "suggestions_truncated": reviews[row.source_row].suggestions_truncated,
             "duplicate_source_row": reviews[row.source_row].duplicate_source_row,
-        } for row in candidates],
+            "approval_action": batch.candidates[index].get("approval_action"),
+            "posted_transaction_id": batch.candidates[index].get("posted_transaction_id"),
+        } for index, row in enumerate(candidates)],
     }
 
 
@@ -138,6 +147,49 @@ def cancel_statement_import(
         db, user=user, budget_id=budget_id, batch_id=batch_id,
         expected_version=body.expected_version,
     )
+    response = _response(db, user, budget_id, batch, 2)
+    db.commit()
+    return response
+
+
+@router.post("/{batch_id}/approve", response_model=StatementImportResponse)
+def approve_statement_import(
+    budget_id: str, account_id: str, batch_id: str, body: StatementImportApproveRequest,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> dict:
+    batch = get_staged_batch(db, user=user, budget_id=budget_id, batch_id=batch_id)
+    if batch.account_id != account_id:
+        raise HTTPException(status_code=404, detail="Import batch not found")
+    candidates = {row.source_row: row for row in _candidates(batch)}
+    if set(candidates) != {item.source_row for item in body.items}:
+        raise HTTPException(status_code=422, detail="Review every imported row before approval")
+    # Claim before any financial write. A rollback restores review state if any
+    # canonical transaction fails validation or authorization.
+    batch = claim_staged_batch_for_approval(
+        db, user=user, budget_id=budget_id, batch_id=batch_id,
+        expected_version=body.expected_version,
+    )
+    choices = {item.source_row: item for item in body.items}
+    stored_rows = []
+    for stored in batch.candidates:
+        candidate = candidates[stored["source_row"]]
+        choice = choices[candidate.source_row]
+        approved = dict(stored)
+        approved["approval_action"] = choice.action
+        if choice.action == "post":
+            transaction = create_transaction_in_session(
+                budget_id,
+                TransactionCreate(
+                    account_id=account_id, category_id=choice.category_id,
+                    amount_minor=candidate.amount_minor, occurred_on=candidate.occurred_on,
+                    payee_name=candidate.payee, memo=candidate.memo, is_cleared=True,
+                ),
+                user=user, db=db,
+            )
+            approved["posted_transaction_id"] = transaction.id
+        stored_rows.append(approved)
+    batch.candidates = stored_rows
+    db.flush()
     response = _response(db, user, budget_id, batch, 2)
     db.commit()
     return response

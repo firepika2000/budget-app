@@ -1062,6 +1062,8 @@ class ImportCandidateResponse(BaseModel):
     possible_transaction_ids: list[str] = Field(default_factory=list)
     suggestions_truncated: bool = False
     duplicate_source_row: Optional[int] = None
+    approval_action: Optional[Literal["post", "skip"]] = None
+    posted_transaction_id: Optional[str] = None
 
 
 class StatementImportResponse(BaseModel):
@@ -1078,6 +1080,24 @@ class StatementImportResponse(BaseModel):
 
 class StatementImportCancelRequest(BaseModel):
     expected_version: int = Field(ge=0)
+
+
+class StatementImportApprovalItem(BaseModel):
+    source_row: int = Field(ge=1)
+    action: Literal["post", "skip"]
+    category_id: Optional[str] = None
+
+
+class StatementImportApproveRequest(BaseModel):
+    expected_version: int = Field(ge=0)
+    items: list[StatementImportApprovalItem] = Field(min_length=1, max_length=10000)
+
+    @field_validator("items")
+    @classmethod
+    def require_unique_rows(cls, value: list[StatementImportApprovalItem]) -> list[StatementImportApprovalItem]:
+        if len({item.source_row for item in value}) != len(value):
+            raise ValueError("source rows must be unique")
+        return value
 
 
 class FinancialRequestCreate(BaseModel):

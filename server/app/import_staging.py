@@ -75,3 +75,24 @@ def cancel_staged_batch(db: Session, *, user: User, budget_id: str, batch_id: st
         raise HTTPException(status_code=409, detail="Import review changed; refresh before continuing")
     db.refresh(batch)
     return batch
+
+
+def claim_staged_batch_for_approval(db: Session, *, user: User, budget_id: str,
+                                    batch_id: str, expected_version: int) -> ImportBatch:
+    """Atomically claim a review before canonical writes in the same transaction.
+
+    Setting the final state first is safe because the caller owns the transaction:
+    any posting failure rolls the claim back. On PostgreSQL a concurrent replay
+    blocks on this update and then observes rowcount zero.
+    """
+    batch = get_staged_batch(db, user=user, budget_id=budget_id, batch_id=batch_id)
+    if type(expected_version) is not int or expected_version < 0:
+        raise HTTPException(status_code=422, detail="Invalid import version")
+    changed = db.execute(update(ImportBatch).where(
+        ImportBatch.id == batch.id, ImportBatch.version == expected_version,
+        ImportBatch.status == "review",
+    ).values(status="approved", version=expected_version + 1).execution_options(synchronize_session=False))
+    if changed.rowcount != 1:
+        raise HTTPException(status_code=409, detail="Import review changed; refresh before continuing")
+    db.refresh(batch)
+    return batch

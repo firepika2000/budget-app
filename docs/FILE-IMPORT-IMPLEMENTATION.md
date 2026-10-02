@@ -1,18 +1,22 @@
 # File import implementation
 
 Status: IN PROGRESS. The authenticated server API exposes money-neutral statement staging,
-duplicate review, reload, and cancellation for CSV, OFX, QFX, and QIF. Explicit approval and
-the native reconciliation UI remain gated work; no import endpoint posts ledger rows.
+duplicate review, reload, cancellation, and explicit approval for CSV, OFX, QFX, and QIF.
+The native reconciliation UI remains gated work. Only explicit approval can post ledger rows.
 
 Current endpoints:
 
 - `POST /api/v1/budgets/{budget}/accounts/{account}/statement-imports`
 - `GET /api/v1/budgets/{budget}/accounts/{account}/statement-imports/{batch}`
 - `POST /api/v1/budgets/{budget}/accounts/{account}/statement-imports/{batch}/cancel`
+- `POST /api/v1/budgets/{budget}/accounts/{account}/statement-imports/{batch}/approve`
 
 Uploads use a bounded raw body and explicit format/currency/mapping headers. CSV column and
 date-order selection is never guessed. Structured formats normalize through the same owned
 staging boundary. Responses contain authorized, bounded duplicate suggestions.
+Approval requires a `post` or `skip` decision for every source row, atomically claims the review
+version before writing, and sends selected rows through canonical transaction creation. Any failed
+row rolls back the entire claim and write set; a concurrent or replayed approval returns 409.
 
 ## Implemented foundation
 
@@ -44,12 +48,12 @@ any later spreadsheet export still requires its own formula-injection defenses.
 3. Current resource authorization before matching, suggestions, duplicate counts or preview.
 4. Stable external identity/fingerprints and bounded canonical-transaction matching. Ambiguous
    candidates remain explicitly reviewable; no silent merge or payee creation.
-5. Explicit approval with idempotent canonical transaction commands, concurrent replay protection,
-   audit attribution and unchanged reconciliation/transfer/credit-reserve protections.
+5. Continue hardening explicit approval with PostgreSQL concurrency coverage and authorized undo.
+   Canonical transaction commands, optimistic replay protection, audit attribution and unchanged
+   reconciliation/credit-reserve protections are active.
    `budgeting_routes.create_transaction_in_session` now owns authorization, payee resolution,
    reserve events and audit without committing; the existing HTTP route commits the returned
-   transaction. Reuse this operation with deliberate caller commit/rollback rather than copying
-   accounting logic or looping auto-committing routes. Durable idempotency and approval remain open.
+   transaction. Approval reuses this operation inside one caller-owned transaction.
 6. Native mapping/preview/review/history UX, cancellation, partial-error policy and authorized undo.
 7. Live/Demo/Local Device adapters through the same application-service boundary, full privacy,
    migration/recovery and financial-observation tests before claiming workflow completion.
