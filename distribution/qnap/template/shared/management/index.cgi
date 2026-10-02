@@ -86,6 +86,7 @@ case "$TOKEN" in ''|*[!A-Za-z0-9_-]*) fail_page "503 Service Unavailable" "Manag
 [ "${#TOKEN}" -eq 43 ] || fail_page "503 Service Unavailable" "Management protection is invalid."
 
 COMMAND=status
+FORMAT=page
 OUTPUT=""
 RESULT_CLASS=ok
 if [ "${REQUEST_METHOD:-GET}" = POST ]; then
@@ -93,6 +94,9 @@ if [ "${REQUEST_METHOD:-GET}" = POST ]; then
     [ "$CONTENT_LENGTH" -le 4096 ] || fail_page "413 Payload Too Large" "Request is too large."
     BODY=$(dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null)
     COMMAND=$(printf '%s' "$BODY" | tr '&' '\n' | sed -n 's/^command=//p')
+    FORMAT=$(printf '%s' "$BODY" | tr '&' '\n' | sed -n 's/^format=//p')
+    [ -n "$FORMAT" ] || FORMAT=page
+    case "$FORMAT" in page|terminal) ;; *) fail_page "400 Bad Request" "Invalid response format." ;; esac
     SUBMITTED_TOKEN=$(printf '%s' "$BODY" | tr '&' '\n' | sed -n 's/^csrf=//p')
     [ "$SUBMITTED_TOKEN" = "$TOKEN" ] || fail_page "403 Forbidden" "Request protection failed. Reopen the app from QTS."
     case "$COMMAND" in
@@ -134,6 +138,18 @@ configure-tailscale'
         ;;
 esac
 
+if [ "$FORMAT" = terminal ]; then
+    [ "$COMMAND" = logs ] || fail_page "400 Bad Request" "Live terminal supports recent logs only."
+    if [ "$RESULT_CLASS" = error ]; then
+        printf 'Status: 503 Service Unavailable\r\n'
+    fi
+    printf 'Content-Type: text/plain; charset=utf-8\r\n'
+    printf 'Cache-Control: no-store\r\n'
+    printf 'X-Content-Type-Options: nosniff\r\n\r\n'
+    printf '%s\n' "$OUTPUT"
+    exit 0
+fi
+
 SAFE_OUTPUT=$(printf '%s\n' "$OUTPUT" | escape_html)
 SAFE_COMMAND=$(printf '%s' "$COMMAND" | escape_html)
 VERSION=$(tr -d '\r\n' < "$QPKG_ROOT/server/VERSION" 2>/dev/null | escape_html)
@@ -153,18 +169,26 @@ else
     DISPLAY_URL="Enable Tailscale HTTPS below"
     CONNECTION_CLASS=attention
 fi
+case "$PUBLIC_URL" in
+    https://*.ts.net)
+        TAILSCALE_ACTION='<div class="badge">Tailscale HTTPS is enabled</div><p class="note">ClearPocket is using the private HTTPS address shown above. No router forwarding is required.</p>'
+        ;;
+    *)
+        TAILSCALE_ACTION='<form method="post"><input type="hidden" name="csrf" value="'"$TOKEN"'"><input type="hidden" name="command" value="configure-tailscale"><label class="note"><input type="checkbox" required> I have completed the Tailscale prerequisites.</label><div style="margin-top:10px"><button>Enable Tailscale HTTPS</button></div></form>'
+        ;;
+esac
 CONNECTION_INFO=$("$SERVICE" connection-info 2>&1 || true)
 SAFE_CONNECTION_INFO=$(printf '%s\n' "$CONNECTION_INFO" | escape_html)
 
 printf 'Content-Type: text/html; charset=utf-8\r\n'
 printf 'Cache-Control: no-store\r\n'
-printf 'Content-Security-Policy: default-src '\''none'\''; style-src '\''unsafe-inline'\''; form-action '\''self'\''; frame-ancestors '\''self'\''\r\n'
+printf 'Content-Security-Policy: default-src '\''none'\''; style-src '\''unsafe-inline'\''; script-src '\''nonce-%s'\''; connect-src '\''self'\''; form-action '\''self'\''; frame-ancestors '\''self'\''\r\n' "$TOKEN"
 printf 'Referrer-Policy: no-referrer\r\n'
 printf 'X-Content-Type-Options: nosniff\r\n\r\n'
 cat <<EOF
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ClearPocket Server</title><style>
-:root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--green:#28785d;--green2:#195d49;--ink:#14212b;--muted:#627080;--line:#dae2e7;--panel:#fff;--bg:#f4f7f6;--soft:#edf7f3;--warn:#a45b12}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);line-height:1.45}main{max-width:1120px;margin:auto;padding:34px 26px 64px}.hero{display:flex;justify-content:space-between;align-items:center;gap:22px;margin-bottom:24px}.brand{display:flex;align-items:center;gap:14px}.mark{width:48px;height:48px;border-radius:15px;background:linear-gradient(145deg,var(--green),var(--green2));display:grid;place-items:center;color:white;font-size:25px;font-weight:800;box-shadow:0 8px 24px #195d4930}.eyebrow{color:var(--green);font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em}h1{font-size:2rem;line-height:1.1;margin:4px 0}h2{font-size:1.25rem;margin:0 0 8px}h3{font-size:1rem;margin:0 0 6px}.subtitle,.muted{color:var(--muted)}.badge{border-radius:999px;padding:8px 12px;font-size:.85rem;font-weight:750;background:var(--soft);color:var(--green2)}.badge.attention{background:#fff3df;color:var(--warn)}.meta,.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.meta{margin-bottom:28px}.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:19px;box-shadow:0 8px 28px #14202b0b}.label{font-size:.76rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em}.value{font-size:1.02rem;font-weight:720;margin-top:5px;overflow-wrap:anywhere}.section{margin-top:28px}.section-head{display:flex;justify-content:space-between;align-items:end;gap:12px;margin-bottom:12px}.connection{grid-column:span 2;background:linear-gradient(145deg,var(--soft),var(--panel))}.url{margin:15px 0 7px;padding:12px 14px;background:#10211b;color:#dff9ee;border-radius:10px;font:600 .93rem ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}.steps{margin:14px 0 0;padding-left:22px}.steps li{margin:9px 0}.option{display:flex;flex-direction:column;min-height:230px}.option.recommended{border-color:#84b8a5;box-shadow:0 10px 32px #28785d16}.option .tag{align-self:flex-start;margin-bottom:13px;padding:4px 8px;border-radius:999px;background:var(--soft);color:var(--green2);font-size:.72rem;font-weight:800}.option form{margin-top:auto}.note{font-size:.86rem;color:var(--muted)}button{appearance:none;border:0;border-radius:10px;padding:11px 15px;background:var(--green);color:white;font:700 .9rem inherit;cursor:pointer}button:hover{background:var(--green2)}button.secondary{background:#e8efec;color:var(--green2)}.quick{display:flex;flex-wrap:wrap;gap:9px}.quick form{display:inline}.danger button{background:#a43b35}.console{background:#0d151a;color:#d9f5e8;border-radius:16px;padding:18px}.console pre{white-space:pre-wrap;margin:0;max-height:360px;overflow:auto;font:500 .85rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}.console form{display:flex;gap:8px;margin-top:14px}.console input[type=text]{flex:1;background:#19232a;color:#fff;border:1px solid #40515c;border-radius:9px;padding:11px;font:inherit}.error{color:#ff9b91}details{margin-top:18px}summary{cursor:pointer;font-weight:750;color:var(--muted);padding:6px 0}.connection-data{white-space:pre-wrap;font:500 .82rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);margin:10px 0 0}a{color:var(--green);font-weight:650}@media(max-width:800px){.meta,.grid{grid-template-columns:1fr}.connection{grid-column:auto}.hero{align-items:flex-start;flex-direction:column}.badge{align-self:flex-start}}@media(prefers-color-scheme:dark){:root{--ink:#edf3f7;--muted:#9eabb6;--line:#27343c;--panel:#121b21;--bg:#091015;--soft:#142a23}.badge.attention{background:#332511;color:#ffc477}.url{background:#07110d}.console{background:#060c10}.secondary{color:#d7ebe3!important;background:#243630!important}}
+:root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--green:#28785d;--green2:#195d49;--ink:#14212b;--muted:#627080;--line:#dae2e7;--panel:#fff;--bg:#f4f7f6;--soft:#edf7f3;--warn:#a45b12}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);line-height:1.45}main{max-width:1120px;margin:auto;padding:34px 26px 64px}.hero{display:flex;justify-content:space-between;align-items:center;gap:22px;margin-bottom:24px}.brand{display:flex;align-items:center;gap:14px}.mark{width:48px;height:48px;border-radius:15px;background:linear-gradient(145deg,var(--green),var(--green2));display:grid;place-items:center;color:white;font-size:25px;font-weight:800;box-shadow:0 8px 24px #195d4930}.eyebrow{color:var(--green);font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em}h1{font-size:2rem;line-height:1.1;margin:4px 0}h2{font-size:1.25rem;margin:0 0 8px}h3{font-size:1rem;margin:0 0 6px}.subtitle,.muted{color:var(--muted)}.badge{border-radius:999px;padding:8px 12px;font-size:.85rem;font-weight:750;background:var(--soft);color:var(--green2)}.badge.attention{background:#fff3df;color:var(--warn)}.meta,.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.meta{margin-bottom:28px}.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:19px;box-shadow:0 8px 28px #14202b0b}.label{font-size:.76rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em}.value{font-size:1.02rem;font-weight:720;margin-top:5px;overflow-wrap:anywhere}.section{margin-top:28px}.section-head{display:flex;justify-content:space-between;align-items:end;gap:12px;margin-bottom:12px}.connection{grid-column:span 2;background:linear-gradient(145deg,var(--soft),var(--panel))}.url{margin:15px 0 7px;padding:12px 14px;background:#10211b;color:#dff9ee;border-radius:10px;font:600 .93rem ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}.steps{margin:14px 0 0;padding-left:22px}.steps li{margin:9px 0}.option{display:flex;flex-direction:column;min-height:230px}.option.recommended{border-color:#84b8a5;box-shadow:0 10px 32px #28785d16}.option .tag{align-self:flex-start;margin-bottom:13px;padding:4px 8px;border-radius:999px;background:var(--soft);color:var(--green2);font-size:.72rem;font-weight:800}.option form{margin-top:auto}.note{font-size:.86rem;color:var(--muted)}button{appearance:none;border:0;border-radius:10px;padding:11px 15px;background:var(--green);color:white;font:700 .9rem inherit;cursor:pointer}button:hover{background:var(--green2)}button.secondary{background:#e8efec;color:var(--green2)}button[aria-pressed=true]{background:#76531d}.quick{display:flex;flex-wrap:wrap;gap:9px}.quick form{display:inline}.danger button{background:#a43b35}.console{background:#0d151a;color:#d9f5e8;border-radius:16px;padding:18px}.console pre{white-space:pre-wrap;margin:0;max-height:360px;overflow:auto;font:500 .85rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}.live-console pre{height:430px;max-height:58vh}.console form{display:flex;gap:8px;margin-top:14px}.console input[type=text]{flex:1;background:#19232a;color:#fff;border:1px solid #40515c;border-radius:9px;padding:11px;font:inherit}.error{color:#ff9b91}details{margin-top:18px}summary{cursor:pointer;font-weight:750;color:var(--muted);padding:6px 0}.connection-data{white-space:pre-wrap;font:500 .82rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);margin:10px 0 0}a{color:var(--green);font-weight:650}@media(max-width:800px){.meta,.grid{grid-template-columns:1fr}.connection{grid-column:auto}.hero{align-items:flex-start;flex-direction:column}.badge{align-self:flex-start}.live-console pre{height:340px}}@media(prefers-color-scheme:dark){:root{--ink:#edf3f7;--muted:#9eabb6;--line:#27343c;--panel:#121b21;--bg:#091015;--soft:#142a23}.badge.attention{background:#332511;color:#ffc477}.url{background:#07110d}.console{background:#060c10}.secondary{color:#d7ebe3!important;background:#243630!important}}
 </style></head><body><main>
 <header class="hero"><div class="brand"><div class="mark">C</div><div><div class="eyebrow">Private household server</div><h1>ClearPocket</h1><div class="subtitle">Connection, protection, and QNAP operations</div></div></div><div class="badge $CONNECTION_CLASS">$CONNECTION_STATE</div></header>
 <section class="meta"><div class="card"><div class="label">Server</div><div class="value">$VERSION</div></div><div class="card"><div class="label">QNAP</div><div class="value">$HOST</div></div><div class="card"><div class="label">Administration</div><div class="value">QTS administrators only</div></div></section>
@@ -175,7 +199,7 @@ cat <<EOF
 </div></section>
 
 <section class="section"><div class="section-head"><div><h2>Secure hosting</h2><div class="muted">Choose how family devices reach this server. Never forward the raw API port.</div></div></div><div class="grid">
-<article class="card option recommended"><div class="tag">Recommended</div><h3>Tailscale private HTTPS</h3><p>Encrypted access at home, on cellular, and while traveling without opening router ports. Tailscale access rules still control which devices can reach the server.</p><p class="note">Before enabling: connect the QNAP Tailscale app, enable MagicDNS and HTTPS certificates in your tailnet, and choose a NAS device name that contains no sensitive information.</p><form method="post"><input type="hidden" name="csrf" value="$TOKEN"><input type="hidden" name="command" value="configure-tailscale"><label class="note"><input type="checkbox" required> I have completed the Tailscale prerequisites.</label><div style="margin-top:10px"><button>Enable Tailscale HTTPS</button></div></form></article>
+<article class="card option recommended"><div class="tag">Recommended</div><h3>Tailscale private HTTPS</h3><p>Encrypted access at home, on cellular, and while traveling without opening router ports. Tailscale access rules still control which devices can reach the server.</p><p class="note">Before enabling: connect the QNAP Tailscale app, enable MagicDNS and HTTPS certificates in your tailnet, and choose a NAS device name that contains no sensitive information.</p>$TAILSCALE_ACTION</article>
 <article class="card option"><div class="tag">Home network</div><h3>Private DNS + valid certificate</h3><p>For customers who prefer direct LAN access, use a hostname you control, a publicly trusted certificate, and a QTS reverse proxy to ClearPocket’s loopback bridge.</p><p class="note">This requires router/DNS and certificate administration. Self-signed certificates are not suitable for ordinary iPhone connections.</p><div class="note">Advanced administrators can configure this through the QNAP service CLI with <strong>configure-qnap-https HOSTNAME CONFIGURE</strong>.</div></article>
 <article class="card option"><div class="tag">Safety boundary</div><h3>Raw LAN port</h3><p>Port $PORT exists for local diagnostics and initial setup. It is not a secure remote endpoint and must never be forwarded through the router or exposed to the internet.</p><p class="note">Tailscale setup automatically rebinds it to NAS loopback so only the private HTTPS proxy can reach it.</p></article>
 </div></section>
@@ -188,5 +212,49 @@ cat <<EOF
 <form method="post" class="danger"><input type="hidden" name="csrf" value="$TOKEN"><input type="hidden" name="command" value="restart"><button>Restart services</button></form>
 </div><details open><summary>Latest result</summary><section class="console"><pre class="$RESULT_CLASS" aria-live="polite"><strong>\$ $SAFE_COMMAND</strong>
 $SAFE_OUTPUT</pre></section></details><details><summary>Advanced management console</summary><section class="console"><form method="post"><input type="hidden" name="csrf" value="$TOKEN"><input type="text" name="command" aria-label="Management command" autocomplete="off" spellcheck="false" placeholder="Type help for allowed commands"><button>Run</button></form></section></details></div></section>
+<section class="section"><div class="section-head"><div><h2>Live server terminal</h2><div class="muted">Read-only, automatically refreshed container logs for troubleshooting.</div></div><div class="quick"><button id="live-toggle" type="button" aria-pressed="false">Pause</button><button id="live-refresh" type="button" class="secondary">Refresh now</button></div></div><section class="console live-console"><pre id="live-output" tabindex="0">Connecting to ClearPocket logs…</pre></section><p class="note" id="live-status">Updates every 3 seconds while this page is visible. The terminal is bounded to recent logs and cannot execute NAS commands.</p></section>
+<script nonce="$TOKEN">
+(() => {
+  const output = document.getElementById('live-output');
+  const status = document.getElementById('live-status');
+  const toggle = document.getElementById('live-toggle');
+  const refresh = document.getElementById('live-refresh');
+  let paused = false;
+  let timer;
+  let activeRequest;
+  async function loadLogs() {
+    clearTimeout(timer);
+    if (paused || document.hidden) { schedule(); return; }
+    if (activeRequest) activeRequest.abort();
+    activeRequest = new AbortController();
+    try {
+      const body = new URLSearchParams({csrf:'$TOKEN', command:'logs', format:'terminal'});
+      const response = await fetch(location.pathname, {method:'POST', body, credentials:'same-origin', cache:'no-store', signal:activeRequest.signal});
+      const text = await response.text();
+      if (!response.ok) throw new Error(text || 'Server returned HTTP ' + response.status);
+      const follow = output.scrollTop + output.clientHeight >= output.scrollHeight - 24;
+      output.textContent = text;
+      if (follow) output.scrollTop = output.scrollHeight;
+      status.textContent = 'Updated ' + new Date().toLocaleTimeString() + ' · refreshes every 3 seconds while visible.';
+    } catch (error) {
+      if (error.name !== 'AbortError') status.textContent = 'Live logs unavailable: ' + error.message;
+    } finally {
+      activeRequest = undefined;
+      schedule();
+    }
+  }
+  function schedule() { clearTimeout(timer); timer = setTimeout(loadLogs, 3000); }
+  toggle.addEventListener('click', () => {
+    paused = !paused;
+    toggle.textContent = paused ? 'Resume' : 'Pause';
+    toggle.setAttribute('aria-pressed', String(paused));
+    status.textContent = paused ? 'Live updates paused.' : 'Resuming live updates…';
+    if (!paused) loadLogs();
+  });
+  refresh.addEventListener('click', loadLogs);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !paused) loadLogs(); });
+  loadLogs();
+})();
+</script>
 </main></body></html>
 EOF

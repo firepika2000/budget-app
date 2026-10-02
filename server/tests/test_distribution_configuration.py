@@ -755,6 +755,8 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "configure-tailscale" in manager
     assert "Connect ClearPocket on iPhone" in manager
     assert "Tailscale private HTTPS" in manager
+    assert "Live server terminal" in manager
+    assert "format:'terminal'" in manager
     assert "eval" not in manager
     assert "Content-Security-Policy" in manager
     assert 'name="csrf"' in manager
@@ -1006,11 +1008,14 @@ def test_qnap_management_console_executes_only_allowlisted_csrf_protected_comman
     )
     result = subprocess.run([manager], input=body, text=True, capture_output=True, env=environment, check=True)
     assert "Content-Security-Policy:" in result.stdout
+    assert "script-src 'nonce-" in result.stdout
     assert "service output &lt;private&gt;" in result.stdout
     assert "Connect ClearPocket on iPhone" in result.stdout
     assert "Tailscale private HTTPS" in result.stdout
     assert "https://qnap.example.ts.net" in result.stdout
-    assert "Enable Tailscale HTTPS" in result.stdout
+    assert "Tailscale HTTPS is enabled" in result.stdout
+    assert "Live server terminal" in result.stdout
+    assert "Updates every 3 seconds" in result.stdout
     assert calls.read_text().splitlines() == ["health"]
 
     tailscale = f"csrf={token}&command=configure-tailscale"
@@ -1021,6 +1026,16 @@ def test_qnap_management_console_executes_only_allowlisted_csrf_protected_comman
     assert "service output &lt;private&gt;" in result.stdout
     assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE"]
 
+    terminal = f"csrf={token}&command=logs&format=terminal"
+    environment["CONTENT_LENGTH"] = str(len(terminal))
+    result = subprocess.run(
+        [manager], input=terminal, text=True, capture_output=True, env=environment, check=True
+    )
+    assert "Content-Type: text/plain" in result.stdout
+    assert "service output <private>" in result.stdout
+    assert "<!doctype html>" not in result.stdout
+    assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE", "logs"]
+
     insecure_environment = dict(environment)
     insecure_environment.pop("HTTPS")
     insecure_environment["HTTP_HOST"] = "192.168.4.84:8080"
@@ -1029,7 +1044,7 @@ def test_qnap_management_console_executes_only_allowlisted_csrf_protected_comman
     )
     assert "302 Found" in result.stdout
     assert "Location: https://192.168.4.84/cgi-bin/qpkg/ClearPocketServer/index.cgi" in result.stdout
-    assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE"]
+    assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE", "logs"]
 
     anonymous_environment = dict(environment)
     anonymous_environment.pop("HTTP_COOKIE")
@@ -1038,7 +1053,7 @@ def test_qnap_management_console_executes_only_allowlisted_csrf_protected_comman
     )
     assert "401 Unauthorized" in result.stdout
     assert "valid QTS administrator session" in result.stdout
-    assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE"]
+    assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE", "logs"]
 
     auth.write_text(
         "#!/bin/sh\n"
@@ -1046,7 +1061,7 @@ def test_qnap_management_console_executes_only_allowlisted_csrf_protected_comman
     )
     result = subprocess.run([manager], text=True, capture_output=True, env=environment, check=True)
     assert "401 Unauthorized" in result.stdout
-    assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE"]
+    assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE", "logs"]
 
     auth.write_text(
         "#!/bin/sh\n"
@@ -1057,13 +1072,13 @@ def test_qnap_management_console_executes_only_allowlisted_csrf_protected_comman
     environment["CONTENT_LENGTH"] = str(len(invalid))
     result = subprocess.run([manager], input=invalid, text=True, capture_output=True, env=environment, check=True)
     assert "Allowed commands:" in result.stdout
-    assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE"]
+    assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE", "logs"]
 
     denied = "csrf=wrong&command=restart"
     environment["CONTENT_LENGTH"] = str(len(denied))
     result = subprocess.run([manager], input=denied, text=True, capture_output=True, env=environment, check=True)
     assert "403 Forbidden" in result.stdout
-    assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE"]
+    assert calls.read_text().splitlines() == ["health", "configure-tailscale ENABLE", "logs"]
 
 
 def test_qnap_first_run_generates_private_exact_secrets_and_never_overwrites(tmp_path: Path):

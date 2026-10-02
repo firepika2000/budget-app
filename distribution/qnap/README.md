@@ -140,7 +140,11 @@ the CGI performs an immediate no-cache redirect to the same NAS's HTTPS endpoint
 session or management state. Secure QTS session cookies are therefore never requested over HTTP.
 The manager shows the installed
 server version, NAS host, container status, health output, recent bounded logs, and backup schedule
-state. It can create an encrypted backup or restart the ClearPocket containers. Its terminal-style
+state. Its read-only live terminal refreshes the bounded API/database container log every three
+seconds without reloading the QTS page, pauses while the browser tab is hidden, and can be paused or
+refreshed manually. Every background request revalidates the QTS administrator session and the
+installation-specific CSRF token; it cannot execute arbitrary NAS commands. The manager can create
+an encrypted backup or restart the ClearPocket containers. Its terminal-style
 command field deliberately accepts only these exact commands:
 
 ```text
