@@ -94,7 +94,7 @@ class BudgetDeleteConfirmation(BaseModel):
 
 
 CapabilityName = Literal[
-    "view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports", "view_allocation_history",
+    "view_budget", "view_budget_totals", "view_accounts", "view_account_balances", "view_categories", "view_transactions", "view_reports", "view_allocation_history",
     "create_transaction", "edit_transaction", "delete_transaction", "request_money", "assign_money", "move_money", "manage_own_categories", "reconcile_account",
     "manage_budget_structure", "manage_payees", "manage_planning", "manage_allowances", "approve_request", "export_data",
 ]
@@ -1215,6 +1215,7 @@ class MonthSummaryResponse(BaseModel):
     month: date
     currency_code: str
     ready_to_assign_minor: int
+    budget_totals_visible: bool = True
     all_date_unassigned_minor: Optional[int] = None
     funding_limit_minor: Optional[int] = None
     total_assigned_minor: int

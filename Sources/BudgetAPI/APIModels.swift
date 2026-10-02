@@ -29,7 +29,7 @@ public enum APIBudgetPermission: String, Decodable, Equatable, Sendable {
     public var legacyCapabilities: Set<String> {
         switch self {
         case .view:
-            return ["view_budget", "view_accounts", "view_account_balances", "view_categories",
+            return ["view_budget", "view_budget_totals", "view_accounts", "view_account_balances", "view_categories",
                     "view_transactions", "view_reports", "view_allocation_history"]
         case .contribute:
             return Self.view.legacyCapabilities.union(["create_transaction", "edit_transaction", "delete_transaction", "request_money"])
@@ -1475,6 +1475,7 @@ public struct APIMonthSummary: Decodable, Equatable, Sendable {
     public let month: String
     public let currencyCode: String
     public let readyToAssignMinor: Int64
+    public let budgetTotalsVisible: Bool
     public let allDateUnassignedMinor: Int64?
     public let fundingLimitMinor: Int64?
     public let totalAssignedMinor: Int64
@@ -1486,11 +1487,28 @@ public struct APIMonthSummary: Decodable, Equatable, Sendable {
         case month, categories
         case currencyCode = "currency_code"
         case readyToAssignMinor = "ready_to_assign_minor"
+        case budgetTotalsVisible = "budget_totals_visible"
         case allDateUnassignedMinor = "all_date_unassigned_minor"
         case fundingLimitMinor = "funding_limit_minor"
         case totalAssignedMinor = "total_assigned_minor"
         case totalOverspentMinor = "total_overspent_minor"
         case allocationVersion = "allocation_version"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        month = try values.decode(String.self, forKey: .month)
+        currencyCode = try values.decode(String.self, forKey: .currencyCode)
+        readyToAssignMinor = try values.decode(Int64.self, forKey: .readyToAssignMinor)
+        // Older self-hosted servers predate this explicit privacy signal and always exposed the
+        // field according to their existing access contract.
+        budgetTotalsVisible = try values.decodeIfPresent(Bool.self, forKey: .budgetTotalsVisible) ?? true
+        allDateUnassignedMinor = try values.decodeIfPresent(Int64.self, forKey: .allDateUnassignedMinor)
+        fundingLimitMinor = try values.decodeIfPresent(Int64.self, forKey: .fundingLimitMinor)
+        totalAssignedMinor = try values.decode(Int64.self, forKey: .totalAssignedMinor)
+        totalOverspentMinor = try values.decode(Int64.self, forKey: .totalOverspentMinor)
+        allocationVersion = try values.decode(Int.self, forKey: .allocationVersion)
+        categories = try values.decode([APICategoryMonth].self, forKey: .categories)
     }
 }
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added an owner-controlled Household totals permission. Restricted members now see an explicit privacy state instead of a misleading `$0.00`, while account/category scopes continue to prevent household-wide Ready-to-Assign disclosure.
 - Promoted Household to the production workspace tab shell so members, invitations, delegated
   budgets, allowances, payees, and data-location tools are no longer buried in Profile & Settings.
 - Added a privacy-safe household overview for every active member. Owners can open member access
@@ -11,8 +12,6 @@
   preview of budget, account, balance, category/available, and reporting visibility before saving.
 - Added bounded OFX/QFX and QIF statement parsing alongside CSV as the first reconciliation-import
   foundation. Imported rows remain money-neutral until explicit review and canonical posting.
-
-## Unreleased
 
 ## 0.3.0 - 2026-09-04
 

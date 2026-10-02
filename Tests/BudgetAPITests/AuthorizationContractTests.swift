@@ -10,7 +10,7 @@ final class AuthorizationContractTests: XCTestCase {
     func testEveryLegacyCapabilityMatchesSharedServerContractAndUnknownDenies() throws {
         let rows = try vectors()
         let all = try XCTUnwrap(rows["owner"])
-        XCTAssertEqual(all.count, 21)
+        XCTAssertEqual(all.count, 22)
         for (permission, allowed) in rows {
             let value = APIBudget(id: "b", householdID: "h", name: "Budget", currencyCode: "USD",
                                   effectivePermission: try XCTUnwrap(APIBudgetPermission(rawValue: permission)))

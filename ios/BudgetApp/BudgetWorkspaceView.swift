@@ -502,7 +502,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let creditOverspent = try deficit(Money.sumMinorUnits([creditActivity[item.id] ?? 0, funded]))
             return ["category_id": item.id, "name": item.name, "assigned_minor": item.assigned, "activity_minor": item.activity, "carried_available_minor": plan.categories[item.id]?.carriedAvailableMinor ?? 0, "available_minor": item.available, "is_overspent": item.available < 0, "cash_overspent_minor": max(overspent - creditOverspent, 0), "credit_overspent_minor": creditOverspent, "funded_credit_spending_minor": funded, "target_type": item.target == nil ? NSNull() : item.targetType, "target_amount_minor": item.target.map { $0 as Any } ?? NSNull(), "is_target_snoozed": item.targetSnoozedMonths.contains(month), "target_date": effectiveTargetDate.map { $0 as Any } ?? NSNull(), "recommended_contribution_minor": recommended, "underfunded_minor": max(recommended - max(item.assigned, 0), 0)]
         }
-        let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.isRestricted ? 0 : plan.readyToAssignMinor, "all_date_unassigned_minor": demo.isRestricted ? NSNull() : plan.allDateUnassignedMinor as Any, "funding_limit_minor": demo.isRestricted ? NSNull() : plan.fundingLimitMinor as Any, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": demo.allocationVersion, "categories": summaryRows])
+        let summary: APIMonthSummary = try decode(["month": month, "currency_code": "USD", "ready_to_assign_minor": demo.isRestricted ? 0 : plan.readyToAssignMinor, "budget_totals_visible": !demo.isRestricted, "all_date_unassigned_minor": demo.isRestricted ? NSNull() : plan.allDateUnassignedMinor as Any, "funding_limit_minor": demo.isRestricted ? NSNull() : plan.fundingLimitMinor as Any, "total_assigned_minor": visibleCategories.reduce(0) { $0 + $1.assigned }, "total_overspent_minor": visibleCategories.reduce(0) { $0 + max(-$1.available, 0) }, "allocation_version": demo.allocationVersion, "categories": summaryRows])
         let start = report.start
         let included = demo.visibleTransactions.filter { item in
             item.date >= start && item.date <= report.end
@@ -4568,8 +4568,18 @@ private struct LiveHomeView: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(store.delegatedBudget == nil ? "AVAILABLE TO ASSIGN" : "AVAILABLE IN YOUR BUDGET").font(.caption.bold()).foregroundStyle(.secondary)
-                    Text(store.format(store.delegatedBudget?.availableToAssignMinor ?? store.summary?.readyToAssignMinor ?? 0)).font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
-                    Text(store.delegatedBudget == nil ? "Real money waiting for a purpose" : "Delegated money you control but have not categorized").foregroundStyle(.secondary)
+                    if let delegated = store.delegatedBudget {
+                        Text(store.format(delegated.availableToAssignMinor)).font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
+                        Text("Delegated money you control but have not categorized").foregroundStyle(.secondary)
+                    } else if store.summary?.budgetTotalsVisible == false {
+                        Label("Hidden by household access", systemImage: "eye.slash.fill")
+                            .font(.title3.bold()).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("home-budget-total-hidden")
+                        Text("The household owner has kept the total Ready to Assign private. Your shared categories remain available below.").foregroundStyle(.secondary)
+                    } else {
+                        Text(store.format(store.summary?.readyToAssignMinor ?? 0)).font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
+                        Text("Real money waiting for a purpose").foregroundStyle(.secondary)
+                    }
                 }.padding(.vertical, 10)
             }
             if !store.isLoading && (activeAccounts.isEmpty || needsCategoryStructure) {
@@ -4906,7 +4916,7 @@ private struct LivePlanView: View {
                     LabeledContent("To assign", value: store.format(delegated.availableToAssignMinor))
                     Text("Reallocations conserve your household allocation and follow the limits selected by the owner.").font(.footnote).foregroundStyle(.secondary)
                 }
-            } else if let summary = store.summary {
+            } else if let summary = store.summary, summary.budgetTotalsVisible {
                 Section("Unassigned in selected month") {
                     Text(store.format(summary.readyToAssignMinor)).font(.largeTitle.bold()).monospacedDigit()
                     if let limit = summary.fundingLimitMinor {
@@ -4923,6 +4933,12 @@ private struct LivePlanView: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+            } else if store.summary != nil {
+                Section("Household total") {
+                    Label("Ready to Assign is hidden", systemImage: "eye.slash")
+                    Text("You can still plan with the categories shared with you. Ask the household owner if you need access to the household-wide total.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }.accessibilityIdentifier("plan-budget-total-hidden")
             }
             if let summary = store.summary, activation.showsNormalPlan {
                 Section {
@@ -7185,7 +7201,7 @@ private struct LiveHouseholdOverviewView: View {
             LabeledContent("Visible accounts", value: "\(store.accounts.filter { !$0.isClosed }.count)")
             LabeledContent("Visible categories", value: "\(store.categories.filter { !$0.isArchived }.count)")
             LabeledContent("Account balances", value: store.budget.can("view_account_balances") ? "Visible" : "Hidden")
-            LabeledContent("Total available", value: store.budget.can("view_categories") ? "Visible within your categories" : "Hidden")
+            LabeledContent("Household Ready to Assign", value: store.budget.can("view_budget_totals") ? "Visible when access is unrestricted" : "Hidden")
         }
     }
     private func memberRow(_ member: APIHouseholdMember) -> some View {
@@ -7447,9 +7463,9 @@ private enum MemberAccessPreset: String, CaseIterable, Identifiable {
 
     var capabilities: Set<String> {
         switch self {
-        case .view: return ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"]
-        case .limited: return ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances", "create_transaction", "edit_transaction", "request_money"]
-        case .full: return ["view_budget", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances", "view_allocation_history", "create_transaction", "edit_transaction", "delete_transaction", "assign_money", "move_money", "reconcile_account", "manage_budget_structure", "manage_payees", "manage_planning", "manage_allowances", "approve_request", "request_money", "export_data"]
+        case .view: return ["view_budget", "view_budget_totals", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"]
+        case .limited: return ["view_budget", "view_budget_totals", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances", "create_transaction", "edit_transaction", "request_money"]
+        case .full: return ["view_budget", "view_budget_totals", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances", "view_allocation_history", "create_transaction", "edit_transaction", "delete_transaction", "assign_money", "move_money", "reconcile_account", "manage_budget_structure", "manage_payees", "manage_planning", "manage_allowances", "approve_request", "request_money", "export_data"]
         case .custom: return []
         }
     }
@@ -7478,6 +7494,7 @@ private struct LiveMemberAccessView: View {
 
     private let visibility = [
         MemberCapability(id: "view_budget", title: "Open this budget", explanation: "Access the budget workspace"),
+        MemberCapability(id: "view_budget_totals", title: "Household totals", explanation: "See household-wide Ready to Assign when account and category access is unrestricted"),
         MemberCapability(id: "view_accounts", title: "Account list", explanation: "See permitted account names"),
         MemberCapability(id: "view_account_balances", title: "Account balances", explanation: "See balances for permitted accounts"),
         MemberCapability(id: "view_categories", title: "Plan and categories", explanation: "See permitted categories and their plan"),
@@ -7546,6 +7563,7 @@ private struct LiveMemberAccessView: View {
                 LabeledContent("Accounts", value: capabilities.contains("view_accounts") ? (restrictAccounts ? "\(accountIDs.count) selected" : "All") : "Hidden")
                 LabeledContent("Account balances", value: capabilities.contains("view_account_balances") ? "Visible" : "Hidden")
                 LabeledContent("Categories & available", value: capabilities.contains("view_categories") ? (restrictCategories ? "\(categoryIDs.count) selected" : "All") : "Hidden")
+                LabeledContent("Household Ready to Assign", value: capabilities.contains("view_budget_totals") && !restrictAccounts && !restrictCategories ? "Visible" : "Hidden")
                 LabeledContent("Total budget reporting", value: capabilities.contains("view_reports") ? "Privacy filtered" : "Hidden")
             }
             capabilitySection("Visibility", visibility)
