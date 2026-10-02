@@ -38,6 +38,8 @@ build from a working directory containing a private `.env`.
 App Center installation never waits synchronously for the first container-image download. QTS starts
 a single tracked background worker, completes the QPKG transaction, and records `queued`,
 `downloading`, `starting`, `running`, `stopped`, or `failed` under the private operations directory.
+The worker is detached with POSIX shell signal handling and redirected standard streams rather than
+depending on the optional `nohup` utility, which is absent on current QuTS hero installations.
 The manager's `status` and `logs` commands expose that bounded startup state and log without revealing
 secrets. Stopping the package records cancellation so an in-flight download cannot launch containers
 after the administrator has requested a stop.

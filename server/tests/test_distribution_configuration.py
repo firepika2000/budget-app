@@ -692,7 +692,9 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'compose up -d' in service
     assert 'compose stop' in service
     assert 'compose ps' in service
-    assert 'nohup "$0" startup-worker' in service
+    assert "nohup" not in service
+    assert "trap '' HUP" in service
+    assert 'exec "$0" startup-worker' in service
     assert 'STARTUP_LOG="$OPERATIONS_ROOT/qnap-startup.log"' in service
     assert 'record_startup_status downloading' in service
     assert 'record_startup_status running' in service

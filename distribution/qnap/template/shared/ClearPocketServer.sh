@@ -149,7 +149,10 @@ start_in_background() {
     chmod 700 "$STARTUP_LOCK"
     rm -f "$STARTUP_CANCEL"
     record_startup_status queued
-    nohup "$0" startup-worker >> "$STARTUP_LOG" 2>&1 </dev/null &
+    (
+        trap '' HUP
+        exec "$0" startup-worker
+    ) >> "$STARTUP_LOG" 2>&1 </dev/null &
     WORKER_PID=$!
     printf '%s\n' "$WORKER_PID" > "$STARTUP_PID"
     chmod 600 "$STARTUP_PID"
