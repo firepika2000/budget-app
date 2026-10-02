@@ -40,6 +40,9 @@ a single tracked background worker, completes the QPKG transaction, and records 
 `downloading`, `starting`, `running`, `stopped`, or `failed` under the private operations directory.
 The worker is detached with POSIX shell signal handling and redirected standard streams rather than
 depending on the optional `nohup` utility, which is absent on current QuTS hero installations.
+It changes into the persistent installed server directory before downloading or launching anything,
+and every Compose invocation repeats that anchor. QDK may therefore remove its temporary installer
+working directory without invalidating a long-running first start.
 The manager's `status` and `logs` commands expose that bounded startup state and log without revealing
 secrets. Stopping the package records cancellation so an in-flight download cannot launch containers
 after the administrator has requested a stop.

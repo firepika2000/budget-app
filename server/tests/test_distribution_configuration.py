@@ -698,6 +698,11 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'STARTUP_LOG="$OPERATIONS_ROOT/qnap-startup.log"' in service
     assert 'record_startup_status downloading' in service
     assert 'record_startup_status running' in service
+    startup_worker = service.split("run_startup_worker()", 1)[1].split("show_startup_status()", 1)[0]
+    assert 'cd "$SERVER_ROOT"' in startup_worker
+    assert startup_worker.index('cd "$SERVER_ROOT"') < startup_worker.index("ensure_release_image")
+    compose_function = service.split("compose()", 1)[1].split("wait_healthy()", 1)[0]
+    assert 'cd "$SERVER_ROOT"' in compose_function
     start_case = service.split('case "$1" in', 1)[1].split('startup-worker)', 1)[0]
     assert "ensure_release_image" not in start_case
     assert "compose up" not in start_case

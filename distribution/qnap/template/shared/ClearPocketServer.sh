@@ -60,8 +60,11 @@ DOCKER=$(find_docker) || {
 }
 
 compose() {
-    "$DOCKER" compose --project-directory "$SERVER_ROOT" --env-file "$ENV_FILE" \
-        -f "$SERVER_ROOT/compose.yaml" "$@"
+    (
+        cd "$SERVER_ROOT" || exit 1
+        "$DOCKER" compose --project-directory "$SERVER_ROOT" --env-file "$ENV_FILE" \
+            -f "$SERVER_ROOT/compose.yaml" "$@"
+    )
 }
 
 wait_healthy() {
@@ -161,6 +164,11 @@ start_in_background() {
 
 run_startup_worker() {
     trap 'rm -rf "$STARTUP_LOCK"' EXIT HUP INT TERM
+    cd "$SERVER_ROOT" || {
+        record_startup_status failed
+        echo "ClearPocket startup failed because the installed server directory is unavailable."
+        return 1
+    }
     echo "$(date '+%Y-%m-%d %H:%M:%S') ClearPocket startup began."
     record_startup_status downloading
     START_VERSION=$(tr -d '\r\n' < "$SERVER_ROOT/VERSION")
