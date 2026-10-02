@@ -1,6 +1,18 @@
 # File import implementation
 
-Status: IN PROGRESS. No user-facing import workflow or posting endpoint exists yet.
+Status: IN PROGRESS. The authenticated server API exposes money-neutral statement staging,
+duplicate review, reload, and cancellation for CSV, OFX, QFX, and QIF. Explicit approval and
+the native reconciliation UI remain gated work; no import endpoint posts ledger rows.
+
+Current endpoints:
+
+- `POST /api/v1/budgets/{budget}/accounts/{account}/statement-imports`
+- `GET /api/v1/budgets/{budget}/accounts/{account}/statement-imports/{batch}`
+- `POST /api/v1/budgets/{budget}/accounts/{account}/statement-imports/{batch}/cancel`
+
+Uploads use a bounded raw body and explicit format/currency/mapping headers. CSV column and
+date-order selection is never guessed. Structured formats normalize through the same owned
+staging boundary. Responses contain authorized, bounded duplicate suggestions.
 
 ## Implemented foundation
 
@@ -12,9 +24,8 @@ these choices explicit rather than silently changing financial meaning.
 
 Currency scale is an explicit input; an eventual application service must supply the authoritative
 budget scale, not trust a client-supplied override. Integer arithmetic checks signed Int64 bounds.
-Current server budget schemas store a currency code but no shared scale resolver was found in
-the money/schema audit. Establish and test that contract before exposing import posting; do not
-default every currency to two decimals or derive financial truth from display formatting.
+The authenticated staging route resolves the ISO 4217 minor-unit exponent at the server boundary;
+clients cannot select a decimal scale. This contract must also be reused by eventual approval.
 Candidates retain source record numbers and descriptive text, not database payee identities.
 No payee resolution/creation or transaction posting occurs during parsing.
 

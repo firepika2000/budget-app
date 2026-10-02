@@ -1052,6 +1052,34 @@ class ReconcileResponse(BaseModel):
     adjustment_amount_minor: int = 0
 
 
+class ImportCandidateResponse(BaseModel):
+    source_row: int
+    occurred_on: date
+    amount_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
+    payee: str
+    memo: str
+    exact_transaction_ids: list[str] = Field(default_factory=list)
+    possible_transaction_ids: list[str] = Field(default_factory=list)
+    suggestions_truncated: bool = False
+    duplicate_source_row: Optional[int] = None
+
+
+class StatementImportResponse(BaseModel):
+    id: str
+    budget_id: str
+    account_id: str
+    status: Literal["review", "approved", "cancelled"]
+    version: int
+    source_format: Literal["csv", "ofx", "qfx", "qif"]
+    candidate_count: int
+    candidates: list[ImportCandidateResponse]
+    created_at: datetime
+
+
+class StatementImportCancelRequest(BaseModel):
+    expected_version: int = Field(ge=0)
+
+
 class FinancialRequestCreate(BaseModel):
     request_type: Literal[
         "additional_allocation", "purchase_approval", "savings_withdrawal",
