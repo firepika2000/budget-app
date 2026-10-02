@@ -1385,6 +1385,15 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("net-worth-selected-point"))
     }
 
+    func testProductionReconciliationRetainsStatementImportReviewPath() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appending(path: "BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        XCTAssertTrue(source.contains("import-bank-statement"))
+        XCTAssertTrue(source.contains("StatementImportFlowView"))
+        XCTAssertTrue(source.contains("Possible duplicate — skipped by default"))
+        XCTAssertTrue(source.contains("APIStatementImportApprovalItem"))
+    }
+
     @MainActor
     func testDemoIncomeSpendingPeriodsReconcileToCanonicalReportWithoutTransfers() async throws {
         let store = BudgetWorkspaceStore.demo()

@@ -56,8 +56,12 @@ any later spreadsheet export still requires its own formula-injection defenses.
    `budgeting_routes.create_transaction_in_session` now owns authorization, payee resolution,
    reserve events and audit without committing; the existing HTTP route commits the returned
    transaction. Approval reuses this operation inside one caller-owned transaction.
-6. Native mapping/preview/review/history UX, cancellation, partial-error policy and authorized undo.
-7. Live/Demo/Local Device adapters through the same application-service boundary, full privacy,
+6. Native history UX, cancellation after leaving the active flow, partial-error policy and authorized undo.
+7. The production reconciliation sheet now provides file selection, explicit CSV mapping,
+   duplicate-aware preview, category selection and all-row post/skip approval through the shared
+   workspace command contract. The Budget Server adapter is active. The Local-on-iPhone adapter
+   still fails closed with an explanatory message and remains required before workflow completion.
+   Finish Live/Demo/Local Device parity, full privacy,
    migration/recovery and financial-observation tests before claiming workflow completion.
 
 Verification: 22 focused parser tests cover quoted/BOM inputs, refunds, currency scales, exact

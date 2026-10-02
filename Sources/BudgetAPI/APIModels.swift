@@ -1063,6 +1063,16 @@ public struct APIStatementImportCandidate: Identifiable, Decodable, Equatable, S
     public let duplicateSourceRow: Int?
     public let approvalAction: String?
     public let postedTransactionID: String?
+    public init(sourceRow: Int, occurredOn: String, amountMinor: Int64, payee: String, memo: String,
+                exactTransactionIDs: [String] = [], possibleTransactionIDs: [String] = [],
+                suggestionsTruncated: Bool = false, duplicateSourceRow: Int? = nil,
+                approvalAction: String? = nil, postedTransactionID: String? = nil) {
+        self.sourceRow = sourceRow; self.occurredOn = occurredOn; self.amountMinor = amountMinor
+        self.payee = payee; self.memo = memo; self.exactTransactionIDs = exactTransactionIDs
+        self.possibleTransactionIDs = possibleTransactionIDs; self.suggestionsTruncated = suggestionsTruncated
+        self.duplicateSourceRow = duplicateSourceRow; self.approvalAction = approvalAction
+        self.postedTransactionID = postedTransactionID
+    }
     enum CodingKeys: String, CodingKey {
         case payee, memo
         case sourceRow = "source_row", occurredOn = "occurred_on", amountMinor = "amount_minor"
@@ -1082,6 +1092,13 @@ public struct APIStatementImport: Decodable, Equatable, Sendable {
     public let candidateCount: Int
     public let candidates: [APIStatementImportCandidate]
     public let createdAt: String
+    public init(id: String, budgetID: String, accountID: String, status: String, version: Int,
+                sourceFormat: String, candidateCount: Int, candidates: [APIStatementImportCandidate],
+                createdAt: String) {
+        self.id = id; self.budgetID = budgetID; self.accountID = accountID; self.status = status
+        self.version = version; self.sourceFormat = sourceFormat; self.candidateCount = candidateCount
+        self.candidates = candidates; self.createdAt = createdAt
+    }
     enum CodingKeys: String, CodingKey {
         case id, status, version, candidates
         case budgetID = "budget_id", accountID = "account_id", sourceFormat = "source_format"

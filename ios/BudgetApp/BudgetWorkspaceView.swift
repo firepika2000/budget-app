@@ -340,6 +340,8 @@ extension WorkspaceDataSource {
 
 @MainActor
 protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRepository, TransactionCommandRepository, TransactionBrowserRepository, ScheduleCommandRepository, PayeeCommandRepository {
+    func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport
+    func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport
     func householdInvitations() async throws -> [APIInvitationSummary]
     func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret
     func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret
@@ -972,6 +974,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 }
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
+    func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport {
+        throw workspaceRepositoryError("Statement import for Local on this iPhone is the next provider adapter; connect to Budget Server for this preview build.")
+    }
+    func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport {
+        throw workspaceRepositoryError("This statement review is not available from the local provider.")
+    }
     private func requireHouseholdOwner() throws {
         guard demo.persona == .rey else { throw workspaceRepositoryError("Household not found.") }
     }
@@ -1944,6 +1952,8 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: operation.apiValue, token: token) }
     func deleteTransfer(id: String) async throws { try await credentials.prepare(); try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { try await credentials.prepare(); _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID, request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason, expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor), token: token) }
+    func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.stageStatementImport(budgetID: budget.id, accountID: accountID, data: data, mapping: mapping, token: token) }
+    func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.approveStatementImport(budgetID: budget.id, accountID: accountID, batchID: batchID, approval: approval, token: token) }
     func assignMoney(_ operation: AssignMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.updateAssignment(budgetID: budget.id, categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor, expectedAllocationVersion: operation.expectedVersion, token: token) }
     func cashRolloverPolicy() async throws -> APICashRolloverPolicyObservation { try await credentials.prepare(); return try await client.cashRolloverPolicy(budgetID: budget.id, token: token) }
     func selectCashRolloverPolicy(_ selection: APICashRolloverPolicySelection) async throws -> APICashRolloverPolicyObservation { try await credentials.prepare(); return try await client.selectCashRolloverPolicy(budgetID: budget.id, selection: selection, token: token) }
@@ -2659,6 +2669,24 @@ final class BudgetWorkspaceStore: ObservableObject {
         let cleared = try reconciliationClearedBalance(accountID: accountID, throughDate: throughDate)
         try await services().accounts.reconcile(ReconcileAccountOperation(accountID: accountID, statementBalanceMinor: statementBalance, throughDate: throughDate, createAdjustment: createAdjustment, reason: reason, expectedClearedBalanceMinor: cleared))
         await refresh()
+    }
+
+    func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport {
+        try requireWorkspaceAccess()
+        guard budget.can("reconcile_account"), let commandRepository else {
+            throw workspaceRepositoryError("You do not have permission to import a statement for this account.")
+        }
+        return try await commandRepository.stageStatementImport(accountID: accountID, data: data, mapping: mapping)
+    }
+
+    func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport {
+        try requireWorkspaceAccess()
+        guard budget.can("reconcile_account"), let commandRepository else {
+            throw workspaceRepositoryError("You do not have permission to approve this statement import.")
+        }
+        let result = try await commandRepository.approveStatementImport(accountID: accountID, batchID: batchID, approval: approval)
+        await refresh()
+        return result
     }
 
     func reconciliationClearedBalance(accountID: String, throughDate: String) throws -> Int64 {
@@ -6077,6 +6105,7 @@ private struct LiveReconcileView: View {
     let budget: APIBudget; let account: APIAccount; let currentBalance: Int64; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var statementBalance = ""; @State private var throughDate = Date(); @State private var createAdjustment = false; @State private var reason = ""; @State private var isSaving = false; @State private var errorMessage: String?
+    @State private var choosingStatement = false; @State private var statementFile: StatementImportFile?
     private var parsed: Int64? { CurrencyText.parseMinorUnits(statementBalance, currencyCode: budget.currencyCode) }
     private var cutoffBalance: Int64? { try? workspace.reconciliationClearedBalance(accountID: account.id, throughDate: BudgetWorkspaceStore.dateString(throughDate)) }
     private var difference: Int64? {
@@ -6086,11 +6115,60 @@ private struct LiveReconcileView: View {
     }
     var body: some View {
         NavigationStack { Form {
-            Section("Statement") { LabeledContent("Cleared through selected date", value: cutoffBalance.map { CurrencyText.editable($0, currencyCode: budget.currencyCode) } ?? "Unavailable — refresh account"); CurrencyAmountField("Statement balance", text: $statementBalance, currencyCode: budget.currencyCode, allowsNegative: true, allowsZero: true); DatePicker("Through", selection: $throughDate, displayedComponents: .date) }
+            Section("Statement") { LabeledContent("Cleared through selected date", value: cutoffBalance.map { CurrencyText.editable($0, currencyCode: budget.currencyCode) } ?? "Unavailable — refresh account"); CurrencyAmountField("Statement balance", text: $statementBalance, currencyCode: budget.currencyCode, allowsNegative: true, allowsZero: true); DatePicker("Through", selection: $throughDate, displayedComponents: .date); Button("Import Bank Statement", systemImage: "doc.badge.plus") { choosingStatement = true }.accessibilityIdentifier("import-bank-statement") }
             if let difference, difference != 0 { Section("Difference") { LabeledContent("Adjustment", value: CurrencyText.editable(difference, currencyCode: budget.currencyCode)); Toggle("Create reconciliation adjustment", isOn: $createAdjustment); if createAdjustment { TextField("Adjustment reason", text: $reason) }; Text("The server calculates the authoritative cleared balance and will reject a mismatch unless you approve an adjustment.").font(.footnote).foregroundStyle(.secondary) } }
         }.navigationTitle("Reconcile \(account.name)").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Reconcile") { Task { await save() } }.disabled(parsed == nil || isSaving) } }.onAppear { statementBalance = CurrencyText.editable(currentBalance, currencyCode: budget.currencyCode) }.alert("Unable to reconcile", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
+        .fileImporter(isPresented: $choosingStatement, allowedContentTypes: StatementImportFile.allowedTypes) { result in
+            do { let url = try result.get(); let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }; let data = try Data(contentsOf: url, options: .mappedIfSafe); statementFile = StatementImportFile(name: url.lastPathComponent, data: data) } catch { errorMessage = error.localizedDescription }
+        }
+        .sheet(item: $statementFile) { file in StatementImportFlowView(workspace: workspace, budget: budget, account: account, file: file) }
     }
     private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await workspace.reconcile(accountID: account.id, statementBalance: parsed, throughDate: BudgetWorkspaceStore.dateString(throughDate), createAdjustment: createAdjustment, reason: reason); dismiss() } catch { errorMessage = error.localizedDescription } }
+}
+
+private struct StatementImportFile: Identifiable {
+    let id = UUID(); let name: String; let data: Data
+    static let allowedTypes: [UTType] = [
+        .commaSeparatedText, .pdf,
+        UTType(filenameExtension: "ofx") ?? .data,
+        UTType(filenameExtension: "qfx") ?? .data,
+        UTType(filenameExtension: "qif") ?? .data,
+    ]
+    var format: String { URL(fileURLWithPath: name).pathExtension.lowercased() }
+}
+
+private struct StatementImportFlowView: View {
+    @ObservedObject var workspace: BudgetWorkspaceStore
+    let budget: APIBudget; let account: APIAccount; let file: StatementImportFile
+    @Environment(\.dismiss) private var dismiss
+    @State private var staged: APIStatementImport?
+    @State private var dateColumn = ""; @State private var amountColumn = ""; @State private var payeeColumn = ""; @State private var memoColumn = ""
+    @State private var dateOrder = "mdy"; @State private var postRows: Set<Int> = []; @State private var categoryByRow: [Int: String] = [:]
+    @State private var isWorking = false; @State private var errorMessage: String?
+    private var headers: [String] { file.format == "csv" ? Self.csvHeaders(file.data) : [] }
+    var body: some View { NavigationStack { Form {
+        if let staged { review(staged) } else { setup }
+    }.navigationTitle(staged == nil ? "Import Statement" : "Review Import").navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { if let staged { Button("Post Selected") { Task { await approve(staged) } }.disabled(isWorking) } else { Button("Preview") { Task { await stage() } }.disabled(!mappingReady || isWorking) } } }
+        .alert("Statement import failed", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
+        .onAppear { configureDefaults() }
+    } }
+    @ViewBuilder private var setup: some View {
+        Section("File") { LabeledContent("Statement", value: file.name); LabeledContent("Format", value: file.format.uppercased()); Text("Nothing changes until you review every recognized row and post your selection.").font(.footnote).foregroundStyle(.secondary) }
+        if file.format == "csv" { Section("CSV columns") { Picker("Date", selection: $dateColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }; Picker("Amount", selection: $amountColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }; Picker("Payee", selection: $payeeColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }; Picker("Memo", selection: $memoColumn) { Text("None").tag(""); ForEach(headers, id: \.self) { Text($0).tag($0) } } } }
+        if ["qif", "pdf"].contains(file.format) { Section("Date format") { Picker("Order", selection: $dateOrder) { Text("Month / Day / Year").tag("mdy"); Text("Day / Month / Year").tag("dmy") } } }
+        if file.format == "pdf" { Section { Label("PDF safety", systemImage: "checkmark.shield"); Text("Only text rows with an explicit date and signed or parenthesized amount are recognized. Scanned and ambiguous statements are rejected.").font(.footnote).foregroundStyle(.secondary) } }
+    }
+    @ViewBuilder private func review(_ batch: APIStatementImport) -> some View {
+        Section { LabeledContent("Recognized", value: "\(batch.candidateCount) transactions"); Text("Possible duplicates start skipped. Review the category and choice for every row.").font(.footnote).foregroundStyle(.secondary) }
+        ForEach(batch.candidates) { row in Section { Toggle(isOn: Binding(get: { postRows.contains(row.sourceRow) }, set: { enabled in if enabled { postRows.insert(row.sourceRow) } else { postRows.remove(row.sourceRow) } })) { VStack(alignment: .leading) { Text(row.payee.isEmpty ? "No payee" : row.payee); Text("\(row.occurredOn) · \(CurrencyText.display(row.amountMinor, currencyCode: budget.currencyCode))").font(.caption).foregroundStyle(.secondary) } }; if postRows.contains(row.sourceRow), row.amountMinor < 0 { Picker("Category", selection: Binding(get: { categoryByRow[row.sourceRow] ?? "" }, set: { categoryByRow[row.sourceRow] = $0 })) { Text("Uncategorized").tag(""); ForEach(workspace.categories.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } } }; if !row.exactTransactionIDs.isEmpty || !row.possibleTransactionIDs.isEmpty || row.duplicateSourceRow != nil { Label("Possible duplicate — skipped by default", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange) }; if !row.memo.isEmpty { Text(row.memo).font(.footnote).foregroundStyle(.secondary) } } }
+    }
+    private var mappingReady: Bool { file.format != "csv" || (!dateColumn.isEmpty && !amountColumn.isEmpty && !payeeColumn.isEmpty && Set([dateColumn, amountColumn, payeeColumn]).count == 3) }
+    private func configureDefaults() { guard file.format == "csv", !headers.isEmpty else { return }; dateColumn = Self.preferred(headers, ["date", "posted date", "transaction date"]); amountColumn = Self.preferred(headers, ["amount"]); payeeColumn = Self.preferred(headers, ["payee", "description", "merchant"]); memoColumn = Self.preferred(headers, ["memo", "notes"]) }
+    private func stage() async { isWorking = true; defer { isWorking = false }; do { let mapping = APIStatementImportMapping(sourceFormat: file.format, currencyCode: budget.currencyCode, dateColumn: file.format == "csv" ? dateColumn : nil, amountColumn: file.format == "csv" ? amountColumn : nil, payeeColumn: file.format == "csv" ? payeeColumn : nil, memoColumn: file.format == "csv" && !memoColumn.isEmpty ? memoColumn : nil, dateOrder: file.format == "csv" ? "ymd" : dateOrder); let result = try await workspace.stageStatementImport(accountID: account.id, data: file.data, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)) } catch { errorMessage = error.localizedDescription } }
+    private func approve(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { let items = batch.candidates.map { row in APIStatementImportApprovalItem(sourceRow: row.sourceRow, action: postRows.contains(row.sourceRow) ? "post" : "skip", categoryID: postRows.contains(row.sourceRow) ? categoryByRow[row.sourceRow].flatMap { $0.isEmpty ? nil : $0 } : nil) }; _ = try await workspace.approveStatementImport(accountID: account.id, batchID: batch.id, approval: .init(expectedVersion: batch.version, items: items)); dismiss() } catch { errorMessage = error.localizedDescription } }
+    private static func preferred(_ headers: [String], _ names: [String]) -> String { for name in names { if let match = headers.first(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == name }) { return match } }; return "" }
+    private static func csvHeaders(_ data: Data) -> [String] { guard let text = String(data: data.prefix(64 * 1024), encoding: .utf8), let line = text.split(whereSeparator: \.isNewline).first else { return [] }; var values: [String] = [], value = "", quoted = false; let chars = Array(line); var index = 0; while index < chars.count { let char = chars[index]; if char == "\"" { if quoted && index + 1 < chars.count && chars[index + 1] == "\"" { value.append("\""); index += 1 } else { quoted.toggle() } } else if char == "," && !quoted { values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); value = "" } else { value.append(char) }; index += 1 }; values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); return values.filter { !$0.isEmpty } }
 }
 
 private struct ReportLoadModifier: ViewModifier {
