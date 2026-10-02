@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from io import BytesIO
+
+from pypdf import PdfReader
 
 from .import_candidates import (
     MAX_FIELD_CHARS,
@@ -144,4 +147,69 @@ def parse_qif_candidates(data: bytes, *, scale: int, date_order: str) -> list[Im
         ))
     if not candidates:
         raise ImportValidationError("QIF contains no transactions")
+    return candidates
+
+
+def _extract_pdf_text(data: bytes) -> list[str]:
+    if len(data) > MAX_FILE_BYTES:
+        raise ImportValidationError("File exceeds 10 MB")
+    if not data.startswith(b"%PDF-"):
+        raise ImportValidationError("File is not a valid PDF statement")
+    try:
+        reader = PdfReader(BytesIO(data), strict=True)
+        if reader.is_encrypted or not 1 <= len(reader.pages) <= 200:
+            raise ImportValidationError("PDF must be unencrypted and contain 1 to 200 pages")
+        lines: list[str] = []
+        character_count = 0
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            character_count += len(text)
+            if character_count > MAX_FILE_BYTES:
+                raise ImportValidationError("Extracted PDF text exceeds supported size")
+            lines.extend(text.splitlines())
+        return lines
+    except ImportValidationError:
+        raise
+    except Exception:
+        raise ImportValidationError("PDF text could not be read safely") from None
+
+
+def parse_pdf_candidates(data: bytes, *, scale: int, date_order: str) -> list[ImportCandidate]:
+    """Extract only unambiguous signed rows from a text-based statement PDF.
+
+    PDF layout is not a financial contract. A row must begin with an explicit
+    calendar date and end with a signed amount (`+12.34`, `-12.34`) or a
+    parenthesized outflow (`(12.34)`). Everything between becomes review-only
+    descriptive text. Unsigned values, balances, headers, and totals are ignored.
+    """
+    parse_minor_units("0", scale=scale)
+    if date_order not in {"mdy", "dmy"}:
+        raise ImportValidationError("PDF requires an explicit m/d/y or d/m/y date order")
+    candidates: list[ImportCandidate] = []
+    pattern = re.compile(
+        r"^\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})\s+(.+?)\s+([+-](?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?|\((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?\))\s*$"
+    )
+    for line_number, line in enumerate(_extract_pdf_text(data), start=1):
+        match = pattern.fullmatch(line)
+        if match is None:
+            continue
+        if len(candidates) >= MAX_ROWS:
+            raise ImportValidationError("PDF exceeds 10000 recognized transactions")
+        first, second, raw_year = map(int, match.group(1).split("/"))
+        year = raw_year + (2000 if raw_year < 70 else 1900) if raw_year < 100 else raw_year
+        month, day = (first, second) if date_order == "mdy" else (second, first)
+        try:
+            occurred_on = date(year, month, day)
+            raw_amount = match.group(3).replace(",", "")
+            if raw_amount.startswith("("):
+                raw_amount = "-" + raw_amount[1:-1]
+            amount_minor = parse_minor_units(raw_amount, scale=scale)
+        except (ValueError, ImportValidationError):
+            raise ImportValidationError(f"Invalid date or amount at PDF line {line_number}") from None
+        description = _clean_description(match.group(2), maximum=500, position=line_number)
+        candidates.append(ImportCandidate(line_number, occurred_on, amount_minor, description[:150], description))
+    if not candidates:
+        raise ImportValidationError(
+            "PDF contains no unambiguous signed transaction rows; use CSV, OFX/QFX, QIF, or a text-based statement with signed amounts"
+        )
     return candidates

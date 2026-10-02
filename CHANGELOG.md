@@ -3,7 +3,8 @@
 ## Unreleased
 
 - Added authenticated, money-neutral bank-statement staging and duplicate review APIs for CSV,
-  OFX/QFX, and QIF, plus explicit all-row review and replay-safe canonical posting approval.
+  OFX/QFX, QIF, and conservatively recognized text-based PDFs, plus explicit all-row review and
+  replay-safe canonical posting approval.
 - Added an owner-controlled Household totals permission. Restricted members now see an explicit privacy state instead of a misleading `$0.00`, while account/category scopes continue to prevent household-wide Ready-to-Assign disclosure.
 - Promoted Household to the production workspace tab shell so members, invitations, delegated
   budgets, allowances, payees, and data-location tools are no longer buried in Profile & Settings.

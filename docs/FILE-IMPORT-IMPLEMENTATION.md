@@ -1,7 +1,8 @@
 # File import implementation
 
 Status: IN PROGRESS. The authenticated server API exposes money-neutral statement staging,
-duplicate review, reload, cancellation, and explicit approval for CSV, OFX, QFX, and QIF.
+duplicate review, reload, cancellation, and explicit approval for CSV, OFX, QFX, QIF, and
+conservatively recognized text-based PDF statements.
 The native reconciliation UI remains gated work. Only explicit approval can post ledger rows.
 
 Current endpoints:
@@ -40,10 +41,11 @@ any later spreadsheet export still requires its own formula-injection defenses.
 
 ## Required next dependencies
 
-1. PDF extraction and additional bank-specific mapping profiles. Arbitrary PDF layout is not
-   trusted as structured financial data: extraction must show the exact recognized date, signed
-   amount and description for review, and unsupported/scanned statements must fail clearly rather
-   than silently inventing transactions.
+1. Additional bank-specific PDF mapping profiles and optional local OCR. Arbitrary PDF layout is
+   not trusted as structured financial data. The current extractor accepts only unencrypted,
+   text-based statements whose transaction lines begin with an explicit date and end in a signed
+   or parenthesized amount. Unsigned values, balances, headers and totals are ignored; unsupported
+   or scanned statements fail clearly rather than silently inventing transactions.
 2. Provider-neutral staged batch/candidate contracts; durable staging must remain money-neutral.
 3. Current resource authorization before matching, suggestions, duplicate counts or preview.
 4. Stable external identity/fingerprints and bounded canonical-transaction matching. Ambiguous
@@ -73,8 +75,8 @@ never guesses locale. Common grouped QIF amounts are normalized only after stric
 
 Both adapters enforce the shared 10 MiB / 10,000-row / bounded-description limits, use private-text-
 safe validation errors and perform no matching, payee creation, clearing, reconciliation or posting.
-PDF remains planned for the review UI because reliable extraction requires bank-template selection
-or explicit field mapping; accepting arbitrary PDF text as ledger evidence would be unsafe.
+PDF extraction remains review-only because layout is not a reliable financial contract. Every
+recognized row is returned for explicit post/skip review; nothing is silently approved.
 
 ### Explicit bank CSV mapping
 

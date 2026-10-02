@@ -75,6 +75,19 @@ def test_ofx_qfx_and_qif_use_the_same_owned_staging_boundary(client, owner_token
     assert response.json()["candidates"][0]["amount_minor"] == 250
 
 
+def test_pdf_uses_conservative_review_boundary(client, owner_token, session_factory, monkeypatch):
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    monkeypatch.setattr("app.import_formats._extract_pdf_text", lambda _: [
+        "09/16/2026 Recognized purchase -4.25", "Balance 100.00",
+    ])
+    response = _stage(client, owner_token, budget["id"], account["id"], b"%PDF-test",
+                      **{"X-Statement-Format": "pdf", "X-Statement-Date-Order": "mdy"})
+    assert response.status_code == 201, response.text
+    assert response.json()["source_format"] == "pdf"
+    assert response.json()["candidates"][0]["amount_minor"] == -425
+
+
 def test_import_rejects_wrong_currency_bad_mapping_and_unowned_review(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, _ = create_budget_structure(client, owner_token, budget["id"])

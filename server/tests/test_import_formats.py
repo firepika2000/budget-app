@@ -1,7 +1,7 @@
 import pytest
 
 from app.import_candidates import ImportValidationError
-from app.import_formats import parse_ofx_candidates, parse_qif_candidates
+from app.import_formats import parse_ofx_candidates, parse_pdf_candidates, parse_qif_candidates
 
 
 def test_ofx_xml_and_sgml_transactions_preserve_exact_signed_money():
@@ -79,3 +79,25 @@ def test_ofx_and_qif_enforce_file_and_row_bounds():
     assert len(parse_qif_candidates(qif_record * 10_000, scale=2, date_order="mdy")) == 10_000
     with pytest.raises(ImportValidationError, match="10000"):
         parse_qif_candidates(qif_record * 10_001, scale=2, date_order="mdy")
+
+
+def test_pdf_extracts_only_explicit_signed_rows_for_review(monkeypatch):
+    monkeypatch.setattr("app.import_formats._extract_pdf_text", lambda _: [
+        "Statement for September", "09/14/2026 Corner Market -12.34",
+        "09/15/2026 Payroll +1,234.56", "Ending balance 9,999.99",
+        "09/16/2026 Card purchase (2.00)",
+    ])
+    rows = parse_pdf_candidates(b"%PDF-test", scale=2, date_order="mdy")
+    assert [(row.source_row, row.occurred_on.isoformat(), row.amount_minor, row.payee) for row in rows] == [
+        (2, "2026-09-14", -1234, "Corner Market"),
+        (3, "2026-09-15", 123456, "Payroll"),
+        (5, "2026-09-16", -200, "Card purchase"),
+    ]
+
+
+def test_pdf_refuses_ambiguous_unsigned_or_scanned_statement(monkeypatch):
+    monkeypatch.setattr("app.import_formats._extract_pdf_text", lambda _: [
+        "09/14/2026 Merchant 12.34", "No extractable text",
+    ])
+    with pytest.raises(ImportValidationError, match="no unambiguous signed"):
+        parse_pdf_candidates(b"%PDF-test", scale=2, date_order="mdy")

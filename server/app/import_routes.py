@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from .database import get_db
 from .dependencies import get_current_user
 from .import_candidates import CSVMapping, ImportCandidate, ImportValidationError, parse_csv_candidates
-from .import_formats import parse_ofx_candidates, parse_qif_candidates
+from .import_formats import parse_ofx_candidates, parse_pdf_candidates, parse_qif_candidates
 from .import_matching import review_candidates
 from .import_review import load_match_observations
 from .import_staging import cancel_staged_batch, get_staged_batch, stage_candidates
@@ -82,7 +82,7 @@ def stage_statement_import(
     budget_id: str,
     account_id: str,
     content: bytes = Body(..., media_type="application/octet-stream"),
-    source_format: Literal["csv", "ofx", "qfx", "qif"] = Header(..., alias="X-Statement-Format"),
+    source_format: Literal["csv", "ofx", "qfx", "qif", "pdf"] = Header(..., alias="X-Statement-Format"),
     currency_code: str = Header(..., alias="X-Statement-Currency"),
     date_column: Optional[str] = Header(default=None, alias="X-CSV-Date-Column"),
     amount_column: Optional[str] = Header(default=None, alias="X-CSV-Amount-Column"),
@@ -110,8 +110,10 @@ def stage_statement_import(
             ), scale=scale)
         elif source_format in {"ofx", "qfx"}:
             candidates = parse_ofx_candidates(content, scale=scale)
-        else:
+        elif source_format == "qif":
             candidates = parse_qif_candidates(content, scale=scale, date_order=date_order)
+        else:
+            candidates = parse_pdf_candidates(content, scale=scale, date_order=date_order)
         batch = stage_candidates(
             db, user=user, budget_id=budget_id, account_id=account_id,
             currency_code=normalized_currency, candidates=candidates, source_format=source_format,
