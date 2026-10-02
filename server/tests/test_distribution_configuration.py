@@ -672,6 +672,8 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'QPKG_TIMEOUT="300,120"' in config
     assert 'QPKG_DISTRIBUTION_TYPE="1"' in config
     assert 'QPKG_WEBUI="/cgi-bin/qpkg/ClearPocketServer/index.cgi"' in config
+    assert 'QPKG_WEB_PORT="-2"' in config
+    assert 'QPKG_WEB_SSL_PORT="-1"' in config
     assert 'QPKG_DESKTOP_APP="0"' in config
     assert 'QPKG_VISIBLE="0"' in config
     assert 'QPKG_FORCE_VISIBLE="1"' in config
