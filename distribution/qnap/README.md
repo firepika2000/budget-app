@@ -35,6 +35,13 @@ QDK's `qbuild`. First start and explicit upgrades pull that digest and only then
 used by Compose. An engineering build may omit the digest, but it is not a customer release. Do not
 build from a working directory containing a private `.env`.
 
+App Center installation never waits synchronously for the first container-image download. QTS starts
+a single tracked background worker, completes the QPKG transaction, and records `queued`,
+`downloading`, `starting`, `running`, `stopped`, or `failed` under the private operations directory.
+The manager's `status` and `logs` commands expose that bounded startup state and log without revealing
+secrets. Stopping the package records cancellation so an in-flight download cannot launch containers
+after the administrator has requested a stop.
+
 The server-image workflow pins QDK 2.5.3 by immutable commit and, when that independent toolchain build
 succeeds, uploads an explicitly named unsigned QPKG for hardware acceptance. A QDK outage cannot block
 the Docker/Windows release, and this artifact is never attached to customer GitHub releases. QNAP

@@ -688,6 +688,16 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert 'compose up -d' in service
     assert 'compose stop' in service
     assert 'compose ps' in service
+    assert 'nohup "$0" startup-worker' in service
+    assert 'STARTUP_LOG="$OPERATIONS_ROOT/qnap-startup.log"' in service
+    assert 'record_startup_status downloading' in service
+    assert 'record_startup_status running' in service
+    start_case = service.split('case "$1" in', 1)[1].split('startup-worker)', 1)[0]
+    assert "ensure_release_image" not in start_case
+    assert "compose up" not in start_case
+    assert "start_in_background" in start_case
+    stop_case = service.split('    stop)', 1)[1].split('    restart)', 1)[0]
+    assert 'touch "$STARTUP_CANCEL"' in stop_case
     assert 'ClearPocketBackup.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT"' in service
     assert 'ClearPocketRestore.sh" "$CLEARPOCKET_DATA_ROOT" "$DOCKER" "$SERVER_ROOT"' in service
     assert "explicit final argument RESTORE" in service

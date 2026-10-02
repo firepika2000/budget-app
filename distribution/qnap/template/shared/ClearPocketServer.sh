@@ -32,6 +32,15 @@ if [ ! -r "$ENV_FILE" ]; then
     exit 1
 fi
 
+OPERATIONS_ROOT="$CLEARPOCKET_DATA_ROOT/operations"
+STARTUP_LOCK="$OPERATIONS_ROOT/qnap-startup.lock"
+STARTUP_PID="$STARTUP_LOCK/pid"
+STARTUP_CANCEL="$OPERATIONS_ROOT/qnap-startup.cancel"
+STARTUP_STATUS="$OPERATIONS_ROOT/qnap-startup.status"
+STARTUP_LOG="$OPERATIONS_ROOT/qnap-startup.log"
+mkdir -p "$OPERATIONS_ROOT"
+chmod 700 "$OPERATIONS_ROOT"
+
 find_docker() {
     command -v docker 2>/dev/null && return 0
     CONTAINER_ROOT=$(/sbin/getcfg container-station Install_Path -f /etc/config/qpkg.conf)
@@ -103,6 +112,85 @@ ensure_release_image() {
         log_error "The immutable QNAP server image could not be assigned its local version tag"
         return 1
     }
+}
+
+record_startup_status() {
+    STATUS_TEMP="$STARTUP_STATUS.tmp.$$"
+    printf '%s\n' "$1" > "$STATUS_TEMP"
+    chmod 600 "$STATUS_TEMP"
+    mv "$STATUS_TEMP" "$STARTUP_STATUS"
+}
+
+startup_in_progress() {
+    [ -d "$STARTUP_LOCK" ] || return 1
+    WORKER_PID=$(cat "$STARTUP_PID" 2>/dev/null || true)
+    case "$WORKER_PID" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$WORKER_PID" 2>/dev/null
+}
+
+start_in_background() {
+    if startup_in_progress; then
+        echo "ClearPocket startup is already running in the background."
+        return 0
+    fi
+    if [ -d "$STARTUP_LOCK" ] && [ ! -r "$STARTUP_PID" ]; then
+        # A concurrent caller may observe the lock in the brief interval before its PID is written.
+        sleep 1
+        if startup_in_progress; then
+            echo "ClearPocket startup is already running in the background."
+            return 0
+        fi
+    fi
+    rm -rf "$STARTUP_LOCK"
+    mkdir "$STARTUP_LOCK" || {
+        log_error "Unable to reserve the ClearPocket startup worker"
+        return 1
+    }
+    chmod 700 "$STARTUP_LOCK"
+    rm -f "$STARTUP_CANCEL"
+    record_startup_status queued
+    nohup "$0" startup-worker >> "$STARTUP_LOG" 2>&1 </dev/null &
+    WORKER_PID=$!
+    printf '%s\n' "$WORKER_PID" > "$STARTUP_PID"
+    chmod 600 "$STARTUP_PID"
+    echo "ClearPocket startup queued in the background. Use status or logs to follow progress."
+}
+
+run_startup_worker() {
+    trap 'rm -rf "$STARTUP_LOCK"' EXIT HUP INT TERM
+    echo "$(date '+%Y-%m-%d %H:%M:%S') ClearPocket startup began."
+    record_startup_status downloading
+    START_VERSION=$(tr -d '\r\n' < "$SERVER_ROOT/VERSION")
+    START_IMAGE=$(sed -n 's/^CLEARPOCKET_SERVER_IMAGE=//p' "$ENV_FILE")
+    if ! ensure_release_image "$START_VERSION" "$START_IMAGE"; then
+        record_startup_status failed
+        echo "ClearPocket startup failed while downloading the immutable server image."
+        return 1
+    fi
+    if [ -e "$STARTUP_CANCEL" ]; then
+        record_startup_status stopped
+        echo "ClearPocket startup was stopped before containers were launched."
+        return 0
+    fi
+    record_startup_status starting
+    if ! compose config --quiet || ! compose up -d; then
+        record_startup_status failed
+        echo "ClearPocket startup failed while launching containers."
+        return 1
+    fi
+    record_startup_status running
+    echo "$(date '+%Y-%m-%d %H:%M:%S') ClearPocket containers launched."
+}
+
+show_startup_status() {
+    if startup_in_progress; then
+        printf 'ClearPocket startup: %s (background process %s)\n' \
+            "$(cat "$STARTUP_STATUS" 2>/dev/null || echo working)" "$WORKER_PID"
+    elif [ -r "$STARTUP_STATUS" ]; then
+        printf 'ClearPocket startup: %s\n' "$(cat "$STARTUP_STATUS")"
+    else
+        echo "ClearPocket startup: not requested"
+    fi
 }
 
 local_device_package() {
@@ -389,20 +477,24 @@ configure_qnap_https() {
 
 case "$1" in
     start)
-        START_VERSION=$(tr -d '\r\n' < "$SERVER_ROOT/VERSION")
-        START_IMAGE=$(sed -n 's/^CLEARPOCKET_SERVER_IMAGE=//p' "$ENV_FILE")
-        ensure_release_image "$START_VERSION" "$START_IMAGE" && compose config --quiet && compose up -d
+        # QTS invokes start synchronously during QPKG installation. An initial image pull can take
+        # much longer than App Center's transaction window, so track it as a private background job.
+        start_in_background
+        ;;
+    startup-worker)
+        run_startup_worker
         ;;
     stop)
         # Stop is intentionally non-destructive and never removes persistent volumes.
+        touch "$STARTUP_CANCEL"
+        record_startup_status stopped
         compose stop
         ;;
     restart)
-        START_VERSION=$(tr -d '\r\n' < "$SERVER_ROOT/VERSION")
-        START_IMAGE=$(sed -n 's/^CLEARPOCKET_SERVER_IMAGE=//p' "$ENV_FILE")
-        compose stop && ensure_release_image "$START_VERSION" "$START_IMAGE" && compose config --quiet && compose up -d
+        compose stop && start_in_background
         ;;
     status)
+        show_startup_status
         compose ps
         ;;
     health)
@@ -421,7 +513,12 @@ case "$1" in
         ;;
     logs)
         [ "$#" -eq 1 ] || { echo "Usage: $0 logs" >&2; exit 2; }
-        compose logs --no-color --tail 200 api database
+        if [ -r "$STARTUP_LOG" ]; then
+            echo "--- QNAP startup ---"
+            tail -n 100 "$STARTUP_LOG"
+        fi
+        echo "--- ClearPocket containers ---"
+        compose logs --no-color --tail 200 api database 2>&1 || true
         ;;
     backup)
         [ "$#" -eq 1 ] || { echo "Usage: $0 backup" >&2; exit 2; }
