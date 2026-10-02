@@ -879,7 +879,7 @@ final class DemoStoreTests: XCTestCase {
         )
         XCTAssertFalse(commandWorkspace.contains("dataSource as? DemoWorkspaceDataSource"), "workspace commands must use the common repository contract")
         XCTAssertTrue(workspace.contains("Add your first account"))
-        XCTAssertEqual(workspace.components(separatedBy: ".workspaceProfileToolbar").count - 1, 5, "Profile & Settings must be global workspace chrome on every tab")
+        XCTAssertEqual(workspace.components(separatedBy: ".workspaceProfileToolbar").count - 1, 6, "Profile & Settings must be global workspace chrome on every tab")
         XCTAssertTrue(workspace.contains(".id(activeTab)"), "the iOS 27 production shell must materialize the selected tab instead of rendering a blank lazy stack")
         XCTAssertTrue(workspace.contains("intentional identity replacement at the shell boundary"), "the exceptional shell identity boundary must remain documented")
         XCTAssertFalse(workspace.contains("workspaceDismissToolbar"), "the active budget must not navigate back to a Budgets parent")
@@ -899,6 +899,14 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(workspace.contains("struct PayeeSearchSelectionView"), "all payee-selection workflows must share the bounded searchable selector")
         XCTAssertTrue(workspace.contains("activity-payee-selector"), "Activity filtering must select an existing first-class payee identity")
         XCTAssertTrue(workspace.contains("limit: 20"), "payee selection must request bounded result pages")
+        XCTAssertTrue(workspace.contains("Label(\"Household\", systemImage: \"person.2.fill\")"),
+                      "the production workspace must expose Household as a first-class tab")
+        XCTAssertTrue(workspace.contains("LiveHouseholdOverviewView(session: session, store: store)"),
+                      "the household tab must use the active production session and workspace store")
+        XCTAssertTrue(workspace.contains("accessibilityIdentifier(\"household-overview-screen\")"),
+                      "the real household destination must remain available to production UI coverage")
+        XCTAssertTrue(workspace.contains("Section(\"Visibility preview\")"),
+                      "member access must summarize budget, account, balance, category, and reporting visibility")
         XCTAssertTrue(workspace.contains("payee-search-load-more"), "large payee histories must paginate instead of hydrating every identity")
         XCTAssertFalse(workspace.contains("async let loadedPayees = client.payees"), "workspace hydration must not download the entire household payee history")
         XCTAssertTrue(workspace.contains(".task(id: store.liveCredentialRevision)"), "attachment loading must cancel stale credential work and run once for the current credential generation")

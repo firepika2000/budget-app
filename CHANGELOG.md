@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Promoted Household to the production workspace tab shell so members, invitations, delegated
+  budgets, allowances, payees, and data-location tools are no longer buried in Profile & Settings.
+- Added a privacy-safe household overview for every active member. Owners can open member access
+  directly; restricted members see only counts and visibility derived from their already-authorized
+  workspace snapshot.
+- Reworked member access editing with explicit account/category scope explanations and a concise
+  preview of budget, account, balance, category/available, and reporting visibility before saving.
+- Added bounded OFX/QFX and QIF statement parsing alongside CSV as the first reconciliation-import
+  foundation. Imported rows remain money-neutral until explicit review and canonical posting.
+
+## Unreleased
+
 ## 0.3.0 - 2026-09-04
 
 - Added a five-area native iPhone experience: Home, Plan, Activity, Accounts, and Insights.

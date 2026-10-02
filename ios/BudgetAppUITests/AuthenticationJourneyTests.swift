@@ -2,6 +2,19 @@ import XCTest
 import UIKit
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testProductionHouseholdTabShowsOverviewAndPrivacySummary() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=household", "--skip-guided-onboarding"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.descendants(matching: .any)["household-overview-screen"].exists)
+        XCTAssertTrue(app.staticTexts["Your access"].exists)
+        XCTAssertTrue(app.staticTexts["People"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Household"].exists || app.tabBars.buttons["More"].exists)
+    }
+
     func testLocalDeviceLaunchUsesProductionWorkspaceAndKeepsTrainingOutOfNormalFlow() {
         continueAfterFailure = false
         let app = XCUIApplication()

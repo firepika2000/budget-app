@@ -3015,7 +3015,7 @@ struct BudgetWorkspaceView: View {
     private var activeTab: Int { selectionOverride?.wrappedValue ?? selectedTab }
     private static var launchTab: Int {
         let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--demo-screen=") }?.split(separator: "=").last.map(String.init) ?? "home"
-        return ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4][screen] ?? 0
+        return ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4,"household":5,"members":5][screen] ?? 0
     }
 
     var body: some View {
@@ -3043,6 +3043,7 @@ struct BudgetWorkspaceView: View {
             NavigationStack { LiveActivityView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag(2)
             NavigationStack { LiveAccountsView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Accounts", systemImage: "creditcard.fill") }.tag(3)
             NavigationStack { LiveInsightsView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Insights", systemImage: "chart.xyaxis.line") }.tag(4)
+            NavigationStack { LiveHouseholdOverviewView(session: session, store: store).workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Household", systemImage: "person.2.fill") }.tag(5)
         }
         }
         }
@@ -7100,65 +7101,7 @@ struct LiveHouseholdView: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
-            List {
-                Section("Signed in") {
-                    LabeledContent("Member", value: session.profile?.displayName ?? (session.sourceMode == .localDevice ? "You" : "Demo household"))
-                    LabeledContent("Role", value: store.budget.effectivePermission.rawValue.capitalized)
-                }
-                if session.sourceMode == .liveServer && store.budget.effectivePermission == .owner {
-                    Section("Household access") {
-                        NavigationLink { HouseholdMemberLifecycleView(store: store) } label: {
-                            Label("Members & Invitations", systemImage: "person.2.badge.gearshape")
-                        }
-                        .accessibilityIdentifier("household-members-lifecycle")
-                        ForEach(store.householdMembers.filter { $0.role != "owner" && $0.isActive }) { member in
-                            NavigationLink { LiveMemberAccessView(store: store, member: member) } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(member.displayName)
-                                    Text("Review what this member can see and change")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                            .accessibilityIdentifier("member-access-\(member.userID)")
-                        }
-                        if store.householdMembers.allSatisfy({ $0.role == "owner" || !$0.isActive }) {
-                            Text("No active household members to manage").foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                if session.sourceMode == .liveServer && store.budget.can("manage_allowances") {
-                    Section("Delegated budgets") {
-                        NavigationLink { AllowanceManagementView(store: store) } label: {
-                            Label("Allowances", systemImage: "calendar.badge.clock")
-                        }
-                        .accessibilityIdentifier("allowance-management")
-                        ForEach(store.householdMembers.filter { $0.role != "owner" && $0.isActive }) { member in
-                            NavigationLink { LiveDelegatedPolicyView(session: session, store: store, member: member) } label: {
-                                VStack(alignment: .leading) {
-                                    Text(member.displayName)
-                                    if let policy = delegatedPolicy(for: member.userID) {
-                                        Text("Authority \(store.format(policy.authorityMinor)) · \(policy.allowReallocation ? "can reallocate" : "locked")")
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    } else {
-                                        Text("Not configured").font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Section("Financial organization") {
-                    NavigationLink { PayeeManagementView() } label: { Label("Payees", systemImage: "person.text.rectangle") }
-                }
-                Section("Self-hosting") {
-                    LabeledContent("Data Source", value: session.sourceMode.title)
-                    LabeledContent("Status", value: session.connectionStatus.title)
-                    LabeledContent("Server", value: session.serverURL?.absoluteString ?? "No live server configured")
-                    NavigationLink("Data Location") { ServerConnectionSettingsView() }
-                    Label("Manual entry only — no bank connections", systemImage: "building.columns")
-                }
-            }
-            .navigationTitle("Household")
+            LiveHouseholdOverviewView(session: session, store: store)
             .toolbar { Button("Done") { dismiss() } }
         }
         .environmentObject(session)
@@ -7166,8 +7109,99 @@ struct LiveHouseholdView: View {
         .accessibilityIdentifier("household-profile-screen")
     }
 
-    private func delegatedPolicy(for userID: String) -> APIDelegatedBudget? {
-        store.delegatedBudgets.first { $0.userID == userID }
+}
+
+private struct LiveHouseholdOverviewView: View {
+    @ObservedObject var session: AppSession
+    @ObservedObject var store: BudgetWorkspaceStore
+    private var activeMembers: [APIHouseholdMember] { store.householdMembers.filter(\.isActive) }
+    private var otherMembers: [APIHouseholdMember] { activeMembers.filter { $0.role != "owner" } }
+    private var canManageMembers: Bool { session.sourceMode == .liveServer && store.budget.effectivePermission == .owner }
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(store.budget.name, systemImage: "person.3.fill").font(.title3.weight(.semibold))
+                    Text("A shared view of who belongs to this household and which parts of the budget each person can access.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }.padding(.vertical, 4)
+            }
+            Section("Your access") {
+                LabeledContent("Member", value: session.profile?.displayName ?? (session.sourceMode == .localDevice ? "You" : "Demo household"))
+                LabeledContent("Budget role", value: store.budget.effectivePermission.rawValue.capitalized)
+                visibilitySummary
+            }
+            Section("People") {
+                ForEach(activeMembers) { member in
+                    if canManageMembers && member.role != "owner" {
+                        NavigationLink { LiveMemberAccessView(store: store, member: member) } label: { memberRow(member) }
+                            .accessibilityIdentifier("member-access-\(member.userID)")
+                    } else { memberRow(member) }
+                }
+                if activeMembers.isEmpty {
+                    ContentUnavailableView("Just you for now", systemImage: "person.crop.circle", description: Text("Invite family members when you are ready to share this budget."))
+                }
+                if canManageMembers {
+                    NavigationLink { HouseholdMemberLifecycleView(store: store) } label: {
+                        Label(otherMembers.isEmpty ? "Invite a Household Member" : "Manage Members & Invitations", systemImage: "person.badge.plus")
+                    }.accessibilityIdentifier("household-members-lifecycle")
+                }
+            }
+            if canManageMembers {
+                Section("Privacy at a glance") {
+                    Label("Each member can be limited to selected accounts and categories.", systemImage: "eye.slash")
+                    Label("Account balances and total budget information have separate visibility controls.", systemImage: "lock.shield")
+                    Text("Choose a member above to review exactly what they can see and change.").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            if session.sourceMode == .liveServer && store.budget.can("manage_allowances") {
+                Section("Shared money") {
+                    NavigationLink { AllowanceManagementView(store: store) } label: { Label("Allowances", systemImage: "calendar.badge.clock") }
+                        .accessibilityIdentifier("allowance-management")
+                    ForEach(otherMembers) { member in
+                        NavigationLink { LiveDelegatedPolicyView(session: session, store: store, member: member) } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(member.displayName)
+                                Text(delegatedSummary(member.userID)).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            Section("Household tools") {
+                NavigationLink { PayeeManagementView() } label: { Label("Payees", systemImage: "person.text.rectangle") }
+                NavigationLink { ServerConnectionSettingsView() } label: { Label("Data Location", systemImage: "externaldrive.connected.to.line.below") }
+            }
+        }
+        .navigationTitle("Household")
+        .accessibilityIdentifier("household-overview-screen")
+    }
+
+    @ViewBuilder private var visibilitySummary: some View {
+        if store.budget.effectivePermission == .owner {
+            LabeledContent("Visibility", value: "Entire budget")
+        } else {
+            LabeledContent("Visible accounts", value: "\(store.accounts.filter { !$0.isClosed }.count)")
+            LabeledContent("Visible categories", value: "\(store.categories.filter { !$0.isArchived }.count)")
+            LabeledContent("Account balances", value: store.budget.can("view_account_balances") ? "Visible" : "Hidden")
+            LabeledContent("Total available", value: store.budget.can("view_categories") ? "Visible within your categories" : "Hidden")
+        }
+    }
+    private func memberRow(_ member: APIHouseholdMember) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: member.role == "owner" ? "person.crop.circle.badge.checkmark" : "person.crop.circle")
+                .font(.title2).foregroundStyle(member.role == "owner" ? Theme.accent : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(member.displayName)
+                Text(member.role == "owner" ? "Household owner · full access" : "\(member.role.capitalized) · tap to review visibility")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }.padding(.vertical, 2)
+    }
+    private func delegatedSummary(_ userID: String) -> String {
+        guard let policy = store.delegatedBudgets.first(where: { $0.userID == userID }) else { return "No delegated budget configured" }
+        return "Authority \(store.format(policy.authorityMinor)) · \(policy.allowReallocation ? "can move assigned money" : "fixed access")"
     }
 }
 
@@ -7499,12 +7533,20 @@ private struct LiveMemberAccessView: View {
                 Toggle("Only selected accounts", isOn: $restrictAccounts).accessibilityIdentifier("member-access-restrict-accounts")
                 if restrictAccounts { ForEach(store.accounts.filter { !$0.isClosed }) { account in selectionToggle(account.name, id: account.id, values: $accountIDs) } }
                 if restrictAccounts && accountIDs.isEmpty { Text("Select at least one account.").font(.footnote).foregroundStyle(.red) }
-                Text("Transfers require transaction permission and access to both accounts.").font(.footnote).foregroundStyle(.secondary)
+                Text(restrictAccounts ? "This member will only discover the selected accounts. Transfers require access to both sides." : "This member can discover every account in this budget. Balance amounts are controlled separately below.").font(.footnote).foregroundStyle(.secondary)
             }
             Section("Category visibility") {
                 Toggle("Only selected categories", isOn: $restrictCategories)
                 if restrictCategories { ForEach(store.categories.filter { !$0.isArchived }) { category in selectionToggle(category.name, id: category.id, values: $categoryIDs) } }
                 if restrictCategories && categoryIDs.isEmpty { Text("Select at least one category.").font(.footnote).foregroundStyle(.red) }
+                Text(restrictCategories ? "Plan totals, activity, and reports are filtered to these categories." : "This member can discover every category and its available amount when Plan visibility is enabled.").font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("Visibility preview") {
+                LabeledContent("Budget", value: capabilities.contains("view_budget") ? "Can open" : "Hidden")
+                LabeledContent("Accounts", value: capabilities.contains("view_accounts") ? (restrictAccounts ? "\(accountIDs.count) selected" : "All") : "Hidden")
+                LabeledContent("Account balances", value: capabilities.contains("view_account_balances") ? "Visible" : "Hidden")
+                LabeledContent("Categories & available", value: capabilities.contains("view_categories") ? (restrictCategories ? "\(categoryIDs.count) selected" : "All") : "Hidden")
+                LabeledContent("Total budget reporting", value: capabilities.contains("view_reports") ? "Privacy filtered" : "Hidden")
             }
             capabilitySection("Visibility", visibility)
             capabilitySection("Transactions", transactions)
