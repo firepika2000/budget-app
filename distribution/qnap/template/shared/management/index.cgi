@@ -23,15 +23,14 @@ cookie_value() {
 
 fetch_qts_authentication() {
     SID=$1
-    CLIENT_IP=$2
     if [ -n "$AUTH_FETCH_OVERRIDE" ]; then
         [ -x "$AUTH_FETCH_OVERRIDE" ] || return 1
-        "$AUTH_FETCH_OVERRIDE" "$SID" "$CLIENT_IP"
+        "$AUTH_FETCH_OVERRIDE" "$SID"
         return
     fi
     AUTH_PORT=${SERVER_PORT:-443}
     case "$AUTH_PORT" in ''|*[!0-9]*) AUTH_PORT=443 ;; esac
-    AUTH_URL="https://127.0.0.1:$AUTH_PORT/cgi-bin/authLogin.cgi?sid=$SID&service=101&remote_ip=$CLIENT_IP"
+    AUTH_URL="https://127.0.0.1:$AUTH_PORT/cgi-bin/authLogin.cgi?sid=$SID"
     CURL=$(command -v curl 2>/dev/null || true)
     if [ -n "$CURL" ] && [ -x "$CURL" ]; then
         "$CURL" -k -fsS --max-time 5 "$AUTH_URL"
@@ -50,13 +49,11 @@ fetch_qts_authentication() {
 }
 
 require_qts_administrator() {
-    CLIENT_IP=${REMOTE_ADDR:-127.0.0.1}
-    case "$CLIENT_IP" in *[!0-9A-Fa-f:.]*) fail_page "401 Unauthorized" "A valid QTS administrator session is required." ;; esac
     for COOKIE_NAME in QTS_SSL_SSID QTS_SSID NAS_SID; do
         SID=$(cookie_value "$COOKIE_NAME")
         case "$SID" in ''|*[!A-Za-z0-9]*) continue ;; esac
         [ "${#SID}" -le 128 ] || continue
-        AUTH_RESPONSE=$(fetch_qts_authentication "$SID" "$CLIENT_IP" 2>/dev/null) || continue
+        AUTH_RESPONSE=$(fetch_qts_authentication "$SID" 2>/dev/null) || continue
         printf '%s' "$AUTH_RESPONSE" | grep -Eq '<authPassed>(<!\[CDATA\[)?1(\]\]>)?</authPassed>' || continue
         printf '%s' "$AUTH_RESPONSE" | grep -Eq '<isAdmin>(<!\[CDATA\[)?1(\]\]>)?</isAdmin>' || continue
         return 0

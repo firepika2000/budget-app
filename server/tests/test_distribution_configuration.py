@@ -740,6 +740,8 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "QTS_SSL_SSID QTS_SSID NAS_SID" in manager
     assert "authLogin.cgi" in manager
     assert "<isAdmin>" in manager
+    assert 'authLogin.cgi?sid=$SID"' in manager
+    assert "remote_ip=" not in manager
     assert "command -v curl" in manager
     assert "command -v wget" in manager
     assert "/bin/busybox wget" in manager

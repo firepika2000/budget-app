@@ -85,6 +85,8 @@ Open **ClearPocket Server** from the QTS administrator desktop. Like other serve
 manager opens in a normal browser tab rather than a QTS desktop iframe. Every request validates the
 current QTS session through QNAP's local authentication endpoint and requires `isAdmin=1`; a direct
 anonymous request is rejected before the manager reads its CSRF token or invokes any service command.
+Validation uses QNAP's documented SID-login contract without attempting to bind the check to the
+CGI peer address, which may be a QuTS reverse-proxy address rather than the administrator's client.
 Session validation discovers QNAP's available HTTPS client at runtime and supports native `curl`,
 native `wget`, or the firmware's BusyBox `wget`; it does not weaken authentication when one particular
 binary path is absent.
