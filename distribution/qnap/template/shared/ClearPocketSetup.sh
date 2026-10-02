@@ -54,7 +54,35 @@ if [ -e "$ENV_FILE" ]; then
         echo "Existing ClearPocket configuration is not a regular file" >&2
         exit 1
     }
-    echo "Existing private ClearPocket configuration preserved."
+    [ "$(grep -c '^CLEARPOCKET_SERVER_VERSION=' "$ENV_FILE")" = "1" ] || {
+        echo "Existing ClearPocket server version configuration is invalid" >&2
+        exit 1
+    }
+    [ "$(grep -c '^CLEARPOCKET_PORT=' "$ENV_FILE")" = "1" ] || {
+        echo "Existing ClearPocket port configuration is invalid" >&2
+        exit 1
+    }
+    CURRENT_PORT=$(sed -n 's/^CLEARPOCKET_PORT=//p' "$ENV_FILE")
+    case "$CURRENT_PORT" in
+        8080) TARGET_PORT=18080 ;;
+        *) TARGET_PORT=$CURRENT_PORT ;;
+    esac
+    MIGRATED="$DATA_ROOT/.env.migrate.$$"
+    trap 'rm -f "$MIGRATED"' EXIT HUP INT TERM
+    awk -v version="CLEARPOCKET_SERVER_VERSION=$SERVER_VERSION" \
+        -v port="CLEARPOCKET_PORT=$TARGET_PORT" '
+        /^CLEARPOCKET_SERVER_VERSION=/ { print version; next }
+        /^CLEARPOCKET_PORT=/ { print port; next }
+        { print }
+    ' "$ENV_FILE" > "$MIGRATED"
+    chmod 600 "$MIGRATED"
+    mv "$MIGRATED" "$ENV_FILE"
+    trap - EXIT HUP INT TERM
+    if [ "$CURRENT_PORT" = "8080" ]; then
+        echo "Existing private ClearPocket configuration preserved; QTS-conflicting port 8080 migrated to 18080."
+    else
+        echo "Existing private ClearPocket configuration preserved."
+    fi
     exit 0
 fi
 
@@ -68,7 +96,7 @@ ATTACHMENT_KEY=$(random_secret 32)
     printf 'CLEARPOCKET_SERVER_IMAGE=ghcr.io/firepika2000/budget-server\n'
     printf 'CLEARPOCKET_SERVER_VERSION=%s\n' "$SERVER_VERSION"
     printf 'CLEARPOCKET_BIND_ADDRESS=0.0.0.0\n'
-    printf 'CLEARPOCKET_PORT=8080\n'
+    printf 'CLEARPOCKET_PORT=18080\n'
     printf 'CLEARPOCKET_DATABASE_STORAGE=%s/database\n' "$DATA_ROOT"
     printf 'CLEARPOCKET_ATTACHMENTS_STORAGE=%s/attachments\n' "$DATA_ROOT"
     printf 'CLEARPOCKET_OPERATIONS_STORAGE=%s/operations\n' "$DATA_ROOT"

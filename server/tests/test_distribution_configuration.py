@@ -1042,6 +1042,7 @@ def test_qnap_first_run_generates_private_exact_secrets_and_never_overwrites(tmp
     assert values["CLEARPOCKET_DATABASE_STORAGE"] == f"{data}/database"
     assert values["CLEARPOCKET_ATTACHMENTS_STORAGE"] == f"{data}/attachments"
     assert values["CLEARPOCKET_OPERATIONS_STORAGE"] == f"{data}/operations"
+    assert values["CLEARPOCKET_PORT"] == "18080"
     assert len(values["BUDGET_APP_DB_PASSWORD"]) >= 36
     assert len(values["BUDGET_APP_JWT_SECRET"]) >= 48
     assert len(base64.urlsafe_b64decode(values["BUDGET_APP_ATTACHMENT_ENCRYPTION_KEY"])) == 32
@@ -1055,6 +1056,37 @@ def test_qnap_first_run_generates_private_exact_secrets_and_never_overwrites(tmp
     second = subprocess.run([setup, data], env=environment, check=True, capture_output=True, text=True)
     assert private.read_bytes() == original
     assert "preserved" in second.stdout
+
+
+def test_qnap_upgrade_migrates_qts_port_and_version_without_changing_private_authority(tmp_path: Path):
+    package = tmp_path / "package"
+    server = package / "server"
+    server.mkdir(parents=True)
+    setup = package / "ClearPocketSetup.sh"
+    shutil.copy2(ROOT / "distribution" / "qnap" / "template" / "shared" / "ClearPocketSetup.sh", setup)
+    setup.chmod(0o755)
+    (server / "VERSION").write_text("0.8.0-beta.14\n")
+    share = tmp_path / "share"
+    data = share / "CACHEDEV1_DATA" / "ClearPocketServerData"
+    data.mkdir(parents=True)
+    private = data / ".env"
+    private.write_text(
+        "CLEARPOCKET_SERVER_VERSION=0.8.0-beta.13\n"
+        "CLEARPOCKET_PORT=8080\n"
+        "BUDGET_APP_DB_PASSWORD=unchanged-database-secret\n"
+        "BUDGET_APP_JWT_SECRET=unchanged-jwt-secret\n"
+    )
+    environment = dict(os.environ, CLEARPOCKET_QNAP_SHARE_ROOT=str(share))
+
+    result = subprocess.run([setup, data], env=environment, check=True, capture_output=True, text=True)
+
+    values = parsed(private.read_text())
+    assert values["CLEARPOCKET_SERVER_VERSION"] == "0.8.0-beta.14"
+    assert values["CLEARPOCKET_PORT"] == "18080"
+    assert values["BUDGET_APP_DB_PASSWORD"] == "unchanged-database-secret"
+    assert values["BUDGET_APP_JWT_SECRET"] == "unchanged-jwt-secret"
+    assert private.stat().st_mode & 0o777 == 0o600
+    assert "QTS-conflicting port 8080 migrated to 18080" in result.stdout
 
 
 def manager_deployment(tmp_path: Path):

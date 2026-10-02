@@ -483,7 +483,7 @@ configure_qnap_https() {
     fi
     echo "QNAP HTTPS bridge is ready on NAS loopback port 8443."
     echo "In QTS, proxy https://$PUBLIC_HOST:443 to http://127.0.0.1:8443 and assign its public certificate."
-    echo "Raw API port 8080 is now bound to NAS loopback only."
+    echo "The configured raw API port is now bound to NAS loopback only."
 }
 
 case "$1" in

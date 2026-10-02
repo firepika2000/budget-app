@@ -43,6 +43,9 @@ depending on the optional `nohup` utility, which is absent on current QuTS hero 
 It changes into the persistent installed server directory before downloading or launching anything,
 and every Compose invocation repeats that anchor. QDK may therefore remove its temporary installer
 working directory without invalidating a long-running first start.
+QNAP packages publish the API on port `18080` by default because QTS commonly owns port `8080`.
+Upgrading a beta installation with the package-generated `8080` setting migrates that setting
+atomically to `18080`; custom non-`8080` ports and all private authority data remain unchanged.
 The manager's `status` and `logs` commands expose that bounded startup state and log without revealing
 secrets. Stopping the package records cancellation so an in-flight download cannot launch containers
 after the administrator has requested a stop.
