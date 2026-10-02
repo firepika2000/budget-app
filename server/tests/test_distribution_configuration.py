@@ -678,7 +678,9 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "Container Station must be installed" in routines
     assert "ClearPocketSetup.sh" in routines
     assert "CLEARPOCKET_DATA_ROOT" in routines
-    assert 'DATA_ROOT="${SYS_QPKG_BASE}/ClearPocketServerData"' in routines
+    assert "resolve_clearpocket_data_root" in routines
+    assert '${SYS_QPKG_INSTALL_PATH%/.qpkg}' in routines
+    assert 'DATA_ROOT="$CLEARPOCKET_RESOLVED_DATA_ROOT"' in routines
     assert "SYS_PUBLIC_SHARE" not in routines
     assert "/share/Public" not in routines
     assert "PKG_MAIN_REMOVE" not in routines
@@ -790,6 +792,43 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "CLEARPOCKET_QPKG_VERSION" in builder
     assert "CLEARPOCKET_SERVER_IMAGE_DIGEST" in builder
     assert 'RELEASE-METADATA.txt' in builder
+
+
+def test_qnap_data_root_resolves_from_selected_qdk_volume():
+    routines = ROOT / "distribution" / "qnap" / "template" / "package_routines"
+
+    def resolve(install_path: str, package_path: str) -> str:
+        script = (
+            f'. "{routines}"\n'
+            f'SYS_QPKG_INSTALL_PATH="{install_path}"\n'
+            f'SYS_QPKG_DIR="{package_path}"\n'
+            'resolve_clearpocket_data_root || exit 1\n'
+            'printf "%s" "$CLEARPOCKET_RESOLVED_DATA_ROOT"\n'
+        )
+        result = subprocess.run(
+            ["/bin/sh", "-c", script], capture_output=True, text=True, check=True
+        )
+        return result.stdout
+
+    assert resolve(
+        "/share/CACHEDEV1_DATA/.qpkg",
+        "/share/CACHEDEV1_DATA/.qpkg/ClearPocketServer",
+    ) == "/share/CACHEDEV1_DATA/ClearPocketServerData"
+    assert resolve(
+        "",
+        "/share/ZFS530_DATA/.qpkg/ClearPocketServer",
+    ) == "/share/ZFS530_DATA/ClearPocketServerData"
+
+
+def test_qnap_data_root_rejects_non_qnap_or_ambiguous_paths():
+    routines = ROOT / "distribution" / "qnap" / "template" / "package_routines"
+    script = (
+        f'. "{routines}"\n'
+        'SYS_QPKG_INSTALL_PATH="/tmp/.qpkg"\n'
+        'SYS_QPKG_DIR="/tmp/.qpkg/ClearPocketServer"\n'
+        'if resolve_clearpocket_data_root; then exit 1; fi\n'
+    )
+    subprocess.run(["/bin/sh", "-c", script], check=True)
 
 
 def test_qnap_builder_stages_a_versioned_shared_server_bundle(tmp_path: Path):

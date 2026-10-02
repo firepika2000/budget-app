@@ -1,5 +1,31 @@
 CLEARPOCKET_SYSTEM_CONFIG=/etc/config/clearpocket-server.conf
 
+resolve_clearpocket_data_root() {
+    # QDK 2.5.3 leaves SYS_QPKG_BASE empty. The selected volume is nevertheless
+    # authoritative in SYS_QPKG_INSTALL_PATH (for example
+    # /share/CACHEDEV1_DATA/.qpkg), so derive the durable sibling directory from
+    # that value instead of falling back to a default/public share.
+    case "$SYS_QPKG_INSTALL_PATH" in
+        /share/*/.qpkg)
+            SELECTED_VOLUME_ROOT=${SYS_QPKG_INSTALL_PATH%/.qpkg}
+            ;;
+        *)
+            case "$SYS_QPKG_DIR" in
+                /share/*/.qpkg/*)
+                    SELECTED_VOLUME_ROOT=${SYS_QPKG_DIR%/.qpkg/*}
+                    ;;
+                *)
+                    return 1
+                    ;;
+            esac
+            ;;
+    esac
+    case "$SELECTED_VOLUME_ROOT" in
+        /share/*) CLEARPOCKET_RESOLVED_DATA_ROOT="$SELECTED_VOLUME_ROOT/ClearPocketServerData" ;;
+        *) return 1 ;;
+    esac
+}
+
 pkg_check_requirement() {
     CONTAINER_STATION_PATH=$($CMD_GETCFG container-station Install_Path -f /etc/config/qpkg.conf)
     if [ -z "$CONTAINER_STATION_PATH" ]; then
@@ -14,14 +40,11 @@ pkg_check_requirement() {
 
 pkg_install() {
     if [ ! -f "$CLEARPOCKET_SYSTEM_CONFIG" ]; then
-        DATA_ROOT="${SYS_QPKG_BASE}/ClearPocketServerData"
-        case "$DATA_ROOT" in
-            /share/*/ClearPocketServerData) ;;
-            *)
-                err_log "ClearPocket could not resolve private storage on the selected QNAP volume."
-                return 1
-                ;;
-        esac
+        resolve_clearpocket_data_root || {
+            err_log "ClearPocket could not resolve private storage on the selected QNAP volume."
+            return 1
+        }
+        DATA_ROOT="$CLEARPOCKET_RESOLVED_DATA_ROOT"
         $CMD_ECHO "CLEARPOCKET_DATA_ROOT=$DATA_ROOT" > "$CLEARPOCKET_SYSTEM_CONFIG"
         $CMD_CHMOD 600 "$CLEARPOCKET_SYSTEM_CONFIG"
     fi
