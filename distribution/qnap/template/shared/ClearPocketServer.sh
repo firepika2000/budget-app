@@ -189,8 +189,13 @@ run_startup_worker() {
         echo "ClearPocket startup failed while launching containers."
         return 1
     fi
+    if ! wait_healthy; then
+        record_startup_status failed
+        echo "ClearPocket startup failed because the API did not become healthy. Use logs for details."
+        return 1
+    fi
     record_startup_status running
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ClearPocket containers launched."
+    echo "$(date '+%Y-%m-%d %H:%M:%S') ClearPocket API is healthy."
 }
 
 show_startup_status() {
@@ -510,11 +515,16 @@ case "$1" in
         ;;
     health)
         [ "$#" -eq 1 ] || { echo "Usage: $0 health" >&2; exit 2; }
-        if compose exec -T api python -c \
-            "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/api/v1/health', timeout=3).read().decode())"; then
+        if HEALTH_OUTPUT=$(compose exec -T api python -c \
+            "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/api/v1/health', timeout=3).read().decode())" \
+            2>/dev/null); then
+            printf '%s\n' "$HEALTH_OUTPUT"
             echo "ClearPocket API is healthy."
+        elif startup_in_progress; then
+            echo "ClearPocket API is still starting. Check Status again shortly."
+            exit 1
         else
-            log_error "ClearPocket API health check failed"
+            echo "ClearPocket API is not healthy. Use Recent logs for details."
             exit 1
         fi
         ;;

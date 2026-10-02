@@ -49,6 +49,9 @@ atomically to `18080`; custom non-`8080` ports and all private authority data re
 The manager's `status` and `logs` commands expose that bounded startup state and log without revealing
 secrets. Stopping the package records cancellation so an in-flight download cannot launch containers
 after the administrator has requested a stop.
+Startup remains `starting` while the database initializes, migrations run, and the API health check
+warms up. It becomes `running` only after the API answers successfully; the management health action
+reports a concise starting/unhealthy state instead of exposing an internal Python traceback.
 
 The server-image workflow pins QDK 2.5.3 by immutable commit and, when that independent toolchain build
 succeeds, uploads an explicitly named unsigned QPKG for hardware acceptance. A QDK outage cannot block

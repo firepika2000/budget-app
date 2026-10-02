@@ -701,6 +701,9 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     startup_worker = service.split("run_startup_worker()", 1)[1].split("show_startup_status()", 1)[0]
     assert 'cd "$SERVER_ROOT"' in startup_worker
     assert startup_worker.index('cd "$SERVER_ROOT"') < startup_worker.index("ensure_release_image")
+    assert startup_worker.index("compose up -d") < startup_worker.index("wait_healthy")
+    assert startup_worker.index("wait_healthy") < startup_worker.index("record_startup_status running")
+    assert "ClearPocket API is healthy" in startup_worker
     compose_function = service.split("compose()", 1)[1].split("wait_healthy()", 1)[0]
     assert 'cd "$SERVER_ROOT"' in compose_function
     start_case = service.split('case "$1" in', 1)[1].split('startup-worker)', 1)[0]
@@ -738,6 +741,10 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "import-portable" in service
     assert "configure-qnap-https" in service
     assert "compose logs --no-color --tail 200 api database" in service
+    health_case = service.split('    health)', 1)[1].split('    version)', 1)[0]
+    assert "2>/dev/null" in health_case
+    assert "ClearPocket API is still starting" in health_case
+    assert "Traceback" not in health_case
     assert "status|health|version|logs|backup|restart|backup-schedule-status" in manager
     assert "eval" not in manager
     assert "Content-Security-Policy" in manager
