@@ -19,8 +19,8 @@ fail_page() {
     fail_page "503 Service Unavailable" "ClearPocket Server management is not available."
 
 TOKEN=$(cat "$TOKEN_FILE")
-case "$TOKEN" in ''|*[!0-9a-f]*) fail_page "503 Service Unavailable" "Management protection is invalid." ;; esac
-[ "${#TOKEN}" -eq 64 ] || fail_page "503 Service Unavailable" "Management protection is invalid."
+case "$TOKEN" in ''|*[!A-Za-z0-9_-]*) fail_page "503 Service Unavailable" "Management protection is invalid." ;; esac
+[ "${#TOKEN}" -eq 43 ] || fail_page "503 Service Unavailable" "Management protection is invalid."
 
 COMMAND=status
 OUTPUT=""

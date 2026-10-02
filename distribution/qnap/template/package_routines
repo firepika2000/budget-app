@@ -26,6 +26,29 @@ resolve_clearpocket_data_root() {
     esac
 }
 
+clearpocket_management_token_valid() {
+    TOKEN_PATH=$1
+    [ -f "$TOKEN_PATH" ] && [ ! -L "$TOKEN_PATH" ] || return 1
+    MANAGEMENT_TOKEN=$($CMD_CAT "$TOKEN_PATH" 2>/dev/null) || return 1
+    case "$MANAGEMENT_TOKEN" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
+    [ "${#MANAGEMENT_TOKEN}" -eq 43 ]
+}
+
+create_clearpocket_management_token() {
+    TOKEN_PATH=$1
+    BASE64=$(command -v base64 2>/dev/null || true)
+    [ -n "$BASE64" ] && [ -x "$BASE64" ] && [ -r /dev/urandom ] || return 1
+    MANAGEMENT_TOKEN=$(dd if=/dev/urandom bs=1 count=32 2>/dev/null | \
+        "$BASE64" | tr '+/' '-_' | tr -d '=\r\n')
+    case "$MANAGEMENT_TOKEN" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
+    [ "${#MANAGEMENT_TOKEN}" -eq 43 ] || return 1
+    TOKEN_TEMP="$TOKEN_PATH.tmp.$$"
+    umask 077
+    printf '%s' "$MANAGEMENT_TOKEN" > "$TOKEN_TEMP" || return 1
+    $CMD_CHMOD 600 "$TOKEN_TEMP" || { $CMD_RM -f "$TOKEN_TEMP"; return 1; }
+    $CMD_MV "$TOKEN_TEMP" "$TOKEN_PATH" || { $CMD_RM -f "$TOKEN_TEMP"; return 1; }
+}
+
 pkg_check_requirement() {
     CONTAINER_STATION_PATH=$($CMD_GETCFG container-station Install_Path -f /etc/config/qpkg.conf)
     if [ -z "$CONTAINER_STATION_PATH" ]; then
@@ -66,9 +89,8 @@ pkg_post_install() {
         err_log "ClearPocket management interface is missing."
         return 1
     fi
-    if [ ! -f "$WEB_ROOT/.csrf-token" ]; then
-        umask 077
-        od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$WEB_ROOT/.csrf-token" || {
+    if ! clearpocket_management_token_valid "$WEB_ROOT/.csrf-token"; then
+        create_clearpocket_management_token "$WEB_ROOT/.csrf-token" || {
             err_log "ClearPocket management protection could not be initialized."
             return 1
         }

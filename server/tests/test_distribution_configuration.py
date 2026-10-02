@@ -678,6 +678,8 @@ def test_qnap_qpkg_source_uses_shared_compose_and_preserves_customer_authority()
     assert "Container Station must be installed" in routines
     assert "ClearPocketSetup.sh" in routines
     assert "CLEARPOCKET_DATA_ROOT" in routines
+    assert "create_clearpocket_management_token" in routines
+    assert "od -An" not in routines
     assert "resolve_clearpocket_data_root" in routines
     assert '${SYS_QPKG_INSTALL_PATH%/.qpkg}' in routines
     assert 'DATA_ROOT="$CLEARPOCKET_RESOLVED_DATA_ROOT"' in routines
@@ -841,6 +843,25 @@ def test_qnap_data_root_rejects_non_qnap_or_ambiguous_paths():
     subprocess.run(["/bin/sh", "-c", script], check=True)
 
 
+def test_qnap_management_token_uses_qnap_portable_base64url_and_repairs_invalid_file(tmp_path: Path):
+    routines = ROOT / "distribution" / "qnap" / "template" / "package_routines"
+    token = tmp_path / "csrf-token"
+    token.write_text("")
+    script = (
+        f'. "{routines}"\n'
+        'CMD_CAT=/bin/cat\nCMD_CHMOD=/bin/chmod\nCMD_MV=/bin/mv\nCMD_RM=/bin/rm\n'
+        f'TOKEN_PATH="{token}"\n'
+        'if clearpocket_management_token_valid "$TOKEN_PATH"; then exit 1; fi\n'
+        'create_clearpocket_management_token "$TOKEN_PATH" || exit 2\n'
+        'clearpocket_management_token_valid "$TOKEN_PATH" || exit 3\n'
+    )
+    subprocess.run(["/bin/sh", "-c", script], check=True)
+    value = token.read_text()
+    assert len(value) == 43
+    assert all(character.isalnum() or character in "-_" for character in value)
+    assert token.stat().st_mode & 0o777 == 0o600
+
+
 def test_qnap_builder_stages_a_versioned_shared_server_bundle(tmp_path: Path):
     distribution = tmp_path / "distribution"
     shutil.copytree(ROOT / "distribution" / "qnap", distribution / "qnap")
@@ -902,7 +923,7 @@ def test_qnap_management_console_executes_only_allowlisted_csrf_protected_comman
     server = root / "server"
     management.mkdir(parents=True)
     server.mkdir()
-    token = "a" * 64
+    token = "a" * 43
     (management / ".csrf-token").write_text(token)
     (server / "VERSION").write_text("0.9.0\n")
     calls = tmp_path / "calls"
