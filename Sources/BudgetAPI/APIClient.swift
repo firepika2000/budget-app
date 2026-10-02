@@ -428,6 +428,39 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/reconcile", method: "POST", token: token, body: request)
     }
 
+    public func stageStatementImport(budgetID: String, accountID: String, data: Data,
+                                     mapping: APIStatementImportMapping, token: String) async throws -> APIStatementImport {
+        guard data.count <= 10 * 1024 * 1024 else {
+            throw APIClientError.server(status: 422, message: "Statement files must be 10 MB or smaller.")
+        }
+        var components = URLComponents(url: baseURL.appending(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/statement-imports"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "match_window_days", value: "2")]
+        guard let url = components?.url else { throw APIClientError.invalidServerURL }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"; request.httpBody = data
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let headers: [(String, String?)] = [
+            ("X-Statement-Format", mapping.sourceFormat), ("X-Statement-Currency", mapping.currencyCode),
+            ("X-CSV-Date-Column", mapping.dateColumn), ("X-CSV-Amount-Column", mapping.amountColumn),
+            ("X-CSV-Payee-Column", mapping.payeeColumn), ("X-CSV-Memo-Column", mapping.memoColumn),
+            ("X-CSV-Debit-Column", mapping.debitColumn), ("X-CSV-Credit-Column", mapping.creditColumn),
+            ("X-Statement-Date-Order", mapping.dateOrder), ("X-CSV-Delimiter", mapping.delimiter),
+        ]
+        for (name, value) in headers { if let value { request.setValue(value, forHTTPHeaderField: name) } }
+        let (body, response) = try await session.data(for: request)
+        try validate(response: response, data: body)
+        do { return try JSONDecoder().decode(APIStatementImport.self, from: body) }
+        catch { throw APIClientError.invalidResponse }
+    }
+
+    public func approveStatementImport(budgetID: String, accountID: String, batchID: String,
+                                       approval: APIStatementImportApprove, token: String) async throws -> APIStatementImport {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/statement-imports/\(batchID)/approve",
+                       method: "POST", token: token, body: approval)
+    }
+
     public func updateAssignment(
         budgetID: String,
         categoryID: String,

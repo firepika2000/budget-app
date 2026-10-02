@@ -1050,6 +1050,86 @@ public struct APIReconcileResponse: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIStatementImportCandidate: Identifiable, Decodable, Equatable, Sendable {
+    public var id: Int { sourceRow }
+    public let sourceRow: Int
+    public let occurredOn: String
+    public let amountMinor: Int64
+    public let payee: String
+    public let memo: String
+    public let exactTransactionIDs: [String]
+    public let possibleTransactionIDs: [String]
+    public let suggestionsTruncated: Bool
+    public let duplicateSourceRow: Int?
+    public let approvalAction: String?
+    public let postedTransactionID: String?
+    enum CodingKeys: String, CodingKey {
+        case payee, memo
+        case sourceRow = "source_row", occurredOn = "occurred_on", amountMinor = "amount_minor"
+        case exactTransactionIDs = "exact_transaction_ids", possibleTransactionIDs = "possible_transaction_ids"
+        case suggestionsTruncated = "suggestions_truncated", duplicateSourceRow = "duplicate_source_row"
+        case approvalAction = "approval_action", postedTransactionID = "posted_transaction_id"
+    }
+}
+
+public struct APIStatementImport: Decodable, Equatable, Sendable {
+    public let id: String
+    public let budgetID: String
+    public let accountID: String
+    public let status: String
+    public let version: Int
+    public let sourceFormat: String
+    public let candidateCount: Int
+    public let candidates: [APIStatementImportCandidate]
+    public let createdAt: String
+    enum CodingKeys: String, CodingKey {
+        case id, status, version, candidates
+        case budgetID = "budget_id", accountID = "account_id", sourceFormat = "source_format"
+        case candidateCount = "candidate_count", createdAt = "created_at"
+    }
+}
+
+public struct APIStatementImportMapping: Equatable, Sendable {
+    public let sourceFormat: String
+    public let currencyCode: String
+    public let dateColumn: String?
+    public let amountColumn: String?
+    public let payeeColumn: String?
+    public let memoColumn: String?
+    public let debitColumn: String?
+    public let creditColumn: String?
+    public let dateOrder: String
+    public let delimiter: String
+    public init(sourceFormat: String, currencyCode: String, dateColumn: String? = nil,
+                amountColumn: String? = nil, payeeColumn: String? = nil, memoColumn: String? = nil,
+                debitColumn: String? = nil, creditColumn: String? = nil,
+                dateOrder: String = "mdy", delimiter: String = ",") {
+        self.sourceFormat = sourceFormat; self.currencyCode = currencyCode
+        self.dateColumn = dateColumn; self.amountColumn = amountColumn; self.payeeColumn = payeeColumn
+        self.memoColumn = memoColumn; self.debitColumn = debitColumn; self.creditColumn = creditColumn
+        self.dateOrder = dateOrder; self.delimiter = delimiter
+    }
+}
+
+public struct APIStatementImportApprovalItem: Encodable, Equatable, Sendable {
+    public let sourceRow: Int
+    public let action: String
+    public let categoryID: String?
+    public init(sourceRow: Int, action: String, categoryID: String? = nil) {
+        self.sourceRow = sourceRow; self.action = action; self.categoryID = categoryID
+    }
+    enum CodingKeys: String, CodingKey { case sourceRow = "source_row", action, categoryID = "category_id" }
+}
+
+public struct APIStatementImportApprove: Encodable, Equatable, Sendable {
+    public let expectedVersion: Int
+    public let items: [APIStatementImportApprovalItem]
+    public init(expectedVersion: Int, items: [APIStatementImportApprovalItem]) {
+        self.expectedVersion = expectedVersion; self.items = items
+    }
+    enum CodingKeys: String, CodingKey { case expectedVersion = "expected_version", items }
+}
+
 public struct APISpendingCategoryReport: Identifiable, Decodable, Equatable, Sendable {
     public var id: String { categoryID }
     public let categoryID: String

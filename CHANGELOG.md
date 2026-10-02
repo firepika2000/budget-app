@@ -5,6 +5,8 @@
 - Added authenticated, money-neutral bank-statement staging and duplicate review APIs for CSV,
   OFX/QFX, QIF, and conservatively recognized text-based PDFs, plus explicit all-row review and
   replay-safe canonical posting approval.
+- Added typed Swift API contracts for opaque statement upload, exact candidate review, and explicit
+  post/skip approval without moving parsing or accounting semantics into the HTTP client.
 - Added an owner-controlled Household totals permission. Restricted members now see an explicit privacy state instead of a misleading `$0.00`, while account/category scopes continue to prevent household-wide Ready-to-Assign disclosure.
 - Promoted Household to the production workspace tab shell so members, invitations, delegated
   budgets, allowances, payees, and data-location tools are no longer buried in Profile & Settings.

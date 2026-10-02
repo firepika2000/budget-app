@@ -1265,6 +1265,43 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated-current-token")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/json")
     }
+
+    func testStatementImportUploadsOpaqueFileThenApprovesTypedReview() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        var requests = 0
+        let responseBody = Data(#"{"id":"batch-1","budget_id":"b1","account_id":"a1","status":"review","version":0,"source_format":"csv","candidate_count":1,"candidates":[{"source_row":2,"occurred_on":"2026-09-15","amount_minor":-1234,"payee":"Market","memo":"Food","exact_transaction_ids":[],"possible_transaction_ids":[],"suggestions_truncated":false,"duplicate_source_row":null,"approval_action":null,"posted_transaction_id":null}],"created_at":"2026-10-02T12:00:00Z"}"#.utf8)
+        MockURLProtocol.handler = { request in
+            requests += 1
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            if requests == 1 {
+                XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/statement-imports")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/octet-stream")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "X-Statement-Format"), "csv")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "X-CSV-Date-Column"), "Date")
+                XCTAssertEqual(try requestBody(request), Data("Date,Amount,Payee\n".utf8))
+            } else {
+                XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/statement-imports/batch-1/approve")
+                let body = try JSONSerialization.jsonObject(with: requestBody(request)) as! [String: Any]
+                XCTAssertEqual(body["expected_version"] as? Int, 0)
+                let items = body["items"] as! [[String: Any]]
+                XCTAssertEqual(items.first?["source_row"] as? Int, 2)
+                XCTAssertEqual(items.first?["category_id"] as? String, "c1")
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: requests == 1 ? 201 : 200, httpVersion: nil, headerFields: nil)!, responseBody)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let staged = try await client.stageStatementImport(
+            budgetID: "b1", accountID: "a1", data: Data("Date,Amount,Payee\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd"), token: "current"
+        )
+        XCTAssertEqual(staged.candidates.first?.amountMinor, -1234)
+        _ = try await client.approveStatementImport(
+            budgetID: "b1", accountID: "a1", batchID: staged.id,
+            approval: .init(expectedVersion: 0, items: [.init(sourceRow: 2, action: "post", categoryID: "c1")]), token: "current"
+        )
+        XCTAssertEqual(requests, 2)
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {
