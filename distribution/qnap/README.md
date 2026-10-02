@@ -138,9 +138,17 @@ constructing an unreachable or downgrade-prone plain-HTTP management link on HTT
 Because current QuTS hero may nevertheless construct an external App Center link on its HTTP port,
 the CGI performs an immediate no-cache redirect to the same NAS's HTTPS endpoint before reading any
 session or management state. Secure QTS session cookies are therefore never requested over HTTP.
-The manager shows the installed
-server version, NAS host, container status, health output, recent bounded logs, and backup schedule
-state. Its read-only live terminal refreshes the bounded API/database container log every three
+The manager is organized into focused **Overview**, **Connections**, **Hosted Data**, **Backups**, and
+**Live Logs** pages instead of one long dashboard. Hosted Data treats the deployment accurately as
+one PostgreSQL authority containing multiple household authorities rather than pretending each
+household is a separate database. Its read-only application-owned inventory reports household owner,
+member/budget/transaction counts, last activity, attachment count, and logical/physical storage,
+plus server-wide database and attachment size. It deliberately excludes balances, categories,
+payees, memos, and transaction content. The inventory does not grant cross-household application
+access or create a second financial data path.
+
+The manager also shows the installed server version, NAS host, container status, health output,
+recent bounded logs, and backup schedule state. Its read-only live terminal refreshes the bounded API/database container log every three
 seconds without reloading the QTS page, pauses while the browser tab is hidden, and can be paused or
 refreshed manually. Every background request revalidates the QTS administrator session and the
 installation-specific CSRF token; it cannot execute arbitrary NAS commands. The manager can create

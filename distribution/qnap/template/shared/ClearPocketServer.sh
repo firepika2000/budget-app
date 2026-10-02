@@ -709,6 +709,10 @@ case "$1" in
         [ "$#" -eq 1 ] || { echo "Usage: $0 connection-info" >&2; exit 2; }
         show_connection_info
         ;;
+    authority-inventory)
+        [ "$#" -eq 1 ] || { echo "Usage: $0 authority-inventory" >&2; exit 2; }
+        compose exec -T api python scripts/hosted_authority_inventory.py
+        ;;
     configure-tailscale)
         [ "$#" -eq 2 ] || { echo "Usage: $0 configure-tailscale ENABLE" >&2; exit 2; }
         configure_tailscale_https "$2"
@@ -731,7 +735,7 @@ case "$1" in
         configure_qnap_https "$2" "$3"
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|health|version|logs|backup|restore|upgrade|install-backup-schedule|remove-backup-schedule|backup-schedule-status|connection-info|configure-tailscale|verify-local-device|import-local-device|import-portable|configure-qnap-https}" >&2
+        echo "Usage: $0 {start|stop|restart|status|health|version|logs|backup|restore|upgrade|install-backup-schedule|remove-backup-schedule|backup-schedule-status|connection-info|authority-inventory|configure-tailscale|verify-local-device|import-local-device|import-portable|configure-qnap-https}" >&2
         exit 2
         ;;
 esac
