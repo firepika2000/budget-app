@@ -491,6 +491,143 @@ configure_qnap_https() {
     echo "The configured raw API port is now bound to NAS loopback only."
 }
 
+find_tailscale() {
+    FOUND=$(command -v tailscale 2>/dev/null || true)
+    if [ -n "$FOUND" ] && [ -x "$FOUND" ]; then
+        printf '%s\n' "$FOUND"
+        return 0
+    fi
+    for PACKAGE_NAME in Tailscale tailscale; do
+        PACKAGE_ROOT=$(/sbin/getcfg "$PACKAGE_NAME" Install_Path -f /etc/config/qpkg.conf 2>/dev/null || true)
+        [ -n "$PACKAGE_ROOT" ] || continue
+        for CANDIDATE in "$PACKAGE_ROOT/tailscale" "$PACKAGE_ROOT/bin/tailscale" \
+            "$PACKAGE_ROOT/usr/bin/tailscale"; do
+            if [ -x "$CANDIDATE" ]; then
+                printf '%s\n' "$CANDIDATE"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+tailscale_dns_name() {
+    TAILSCALE=$1
+    "$TAILSCALE" status --json 2>/dev/null | sed -n \
+        's/.*"DNSName"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9.-]*\.ts\.net\.\{0,1\}\)".*/\1/p' | \
+        head -n 1 | sed 's/\.$//'
+}
+
+show_connection_info() {
+    PORT=$(sed -n 's/^CLEARPOCKET_PORT=//p' "$ENV_FILE")
+    PUBLIC_URL=$(sed -n 's/^BUDGET_APP_PAIRING_PUBLIC_URL=//p' "$ENV_FILE")
+    printf 'API port: %s\n' "${PORT:-not configured}"
+    if [ -n "$PUBLIC_URL" ]; then
+        printf 'App server URL: %s\nSecure pairing: ready\n' "$PUBLIC_URL"
+    else
+        echo 'App server URL: not securely configured'
+        echo 'Secure pairing: unavailable until HTTPS is configured'
+    fi
+    if TAILSCALE=$(find_tailscale); then
+        DNS_NAME=$(tailscale_dns_name "$TAILSCALE")
+        if [ -n "$DNS_NAME" ]; then
+            printf 'Tailscale: connected\nTailscale DNS: %s\n' "$DNS_NAME"
+        else
+            echo 'Tailscale: installed, sign-in or MagicDNS/HTTPS setup required'
+        fi
+    else
+        echo 'Tailscale: not detected'
+    fi
+}
+
+configure_tailscale_https() {
+    [ "$1" = "ENABLE" ] || {
+        log_error "Tailscale HTTPS setup requires explicit ENABLE confirmation"
+        return 1
+    }
+    TAILSCALE=$(find_tailscale) || {
+        log_error "Tailscale is not installed. Install and connect the QNAP Tailscale app first."
+        return 1
+    }
+    DNS_NAME=$(tailscale_dns_name "$TAILSCALE")
+    case "$DNS_NAME" in
+        ''|*[!A-Za-z0-9.-]*|.*|*..*|*.|*[!A-Za-z0-9])
+            log_error "Tailscale is not connected with a valid MagicDNS name. Enable MagicDNS and HTTPS in the Tailscale admin console."
+            return 1
+            ;;
+        *.ts.net) ;;
+        *) log_error "Tailscale did not return a private ts.net DNS name"; return 1 ;;
+    esac
+    [ "$(grep -c '^CLEARPOCKET_PORT=' "$ENV_FILE")" = "1" ] || {
+        log_error "Private configuration contains an invalid API port setting"
+        return 1
+    }
+    PORT=$(sed -n 's/^CLEARPOCKET_PORT=//p' "$ENV_FILE")
+    case "$PORT" in ''|*[!0-9]*) log_error "Private configuration contains an invalid API port"; return 1 ;; esac
+
+    for key in CLEARPOCKET_BIND_ADDRESS COMPOSE_PROFILES CLEARPOCKET_PUBLIC_HOST \
+        CLEARPOCKET_QNAP_PROXY_PORT BUDGET_APP_ALLOWED_HOSTS BUDGET_APP_PAIRING_PUBLIC_URL \
+        BUDGET_APP_FORWARDED_ALLOW_IPS; do
+        [ "$(grep -c "^$key=" "$ENV_FILE")" -le 1 ] || {
+            log_error "Private configuration contains duplicate $key settings"
+            return 1
+        }
+    done
+    ORIGINAL_ENV="$ENV_FILE.before-tailscale.$$"
+    TEMP_ENV="$ENV_FILE.tailscale.$$"
+    trap 'rm -f "$ORIGINAL_ENV" "$TEMP_ENV"' EXIT HUP INT TERM
+    cp "$ENV_FILE" "$ORIGINAL_ENV"
+    chmod 600 "$ORIGINAL_ENV"
+    awk '
+        !/^(CLEARPOCKET_BIND_ADDRESS|COMPOSE_PROFILES|CLEARPOCKET_PUBLIC_HOST|CLEARPOCKET_QNAP_PROXY_PORT|BUDGET_APP_ALLOWED_HOSTS|BUDGET_APP_PAIRING_PUBLIC_URL|BUDGET_APP_FORWARDED_ALLOW_IPS)=/ { print }
+    ' "$ENV_FILE" > "$TEMP_ENV"
+    {
+        printf 'CLEARPOCKET_BIND_ADDRESS=127.0.0.1\n'
+        printf 'BUDGET_APP_ALLOWED_HOSTS=%s,localhost,127.0.0.1\n' "$DNS_NAME"
+        printf 'BUDGET_APP_PAIRING_PUBLIC_URL=https://%s\n' "$DNS_NAME"
+        printf 'BUDGET_APP_FORWARDED_ALLOW_IPS=*\n'
+    } >> "$TEMP_ENV"
+    chmod 600 "$TEMP_ENV"
+    if ! "$DOCKER" compose --project-directory "$SERVER_ROOT" --env-file "$TEMP_ENV" \
+        -f "$SERVER_ROOT/compose.yaml" config --quiet; then
+        log_error "Generated Tailscale configuration is invalid; existing configuration was preserved"
+        return 1
+    fi
+
+    SERVE_CREATED=0
+    SERVE_STATUS=$("$TAILSCALE" serve status --json 2>/dev/null || true)
+    COMPACT_SERVE_STATUS=$(printf '%s' "$SERVE_STATUS" | tr -d '[:space:]')
+    case "$COMPACT_SERVE_STATUS" in
+        ''|'{}'|'null') SERVE_CREATED=1 ;;
+        *"127.0.0.1:$PORT"*) ;;
+        *)
+            log_error "Tailscale HTTPS port 443 already serves another application. Existing Tailscale configuration was preserved."
+            return 1
+            ;;
+    esac
+    if ! "$TAILSCALE" serve --bg --yes --https=443 "http://127.0.0.1:$PORT"; then
+        log_error "Tailscale Serve could not enable private HTTPS. Enable MagicDNS and HTTPS in Tailscale, then retry."
+        return 1
+    fi
+
+    mv "$TEMP_ENV" "$ENV_FILE"
+    if ! compose up -d || ! wait_healthy; then
+        mv "$ORIGINAL_ENV" "$ENV_FILE"
+        compose up -d >/dev/null 2>&1 || true
+        if [ "$SERVE_CREATED" = 1 ]; then
+            "$TAILSCALE" serve --https=443 off >/dev/null 2>&1 || true
+        fi
+        log_error "Tailscale setup was rolled back because ClearPocket did not become healthy"
+        return 1
+    fi
+    rm -f "$ORIGINAL_ENV"
+    trap - EXIT HUP INT TERM
+    echo "Private Tailscale HTTPS is ready."
+    echo "App server URL: https://$DNS_NAME"
+    echo "Install Tailscale on each iPhone, join the same tailnet, then enter this URL in ClearPocket."
+    echo "Do not forward port $PORT on your router."
+}
+
 case "$1" in
     start)
         # QTS invokes start synchronously during QPKG installation. An initial image pull can take
@@ -568,6 +705,14 @@ case "$1" in
         [ "$#" -eq 1 ] || { echo "Usage: $0 backup-schedule-status" >&2; exit 2; }
         grep '# ClearPocketServerBackup$' /etc/config/crontab || echo "No ClearPocket backup schedule is installed."
         ;;
+    connection-info)
+        [ "$#" -eq 1 ] || { echo "Usage: $0 connection-info" >&2; exit 2; }
+        show_connection_info
+        ;;
+    configure-tailscale)
+        [ "$#" -eq 2 ] || { echo "Usage: $0 configure-tailscale ENABLE" >&2; exit 2; }
+        configure_tailscale_https "$2"
+        ;;
     verify-local-device)
         [ "$#" -eq 2 ] || { echo "Usage: $0 verify-local-device /share/path/generation.clearpocketbackup" >&2; exit 2; }
         verify_local_device "$2"
@@ -586,7 +731,7 @@ case "$1" in
         configure_qnap_https "$2" "$3"
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|health|version|logs|backup|restore|upgrade|install-backup-schedule|remove-backup-schedule|backup-schedule-status|verify-local-device|import-local-device|import-portable|configure-qnap-https}" >&2
+        echo "Usage: $0 {start|stop|restart|status|health|version|logs|backup|restore|upgrade|install-backup-schedule|remove-backup-schedule|backup-schedule-status|connection-info|configure-tailscale|verify-local-device|import-local-device|import-portable|configure-qnap-https}" >&2
         exit 2
         ;;
 esac

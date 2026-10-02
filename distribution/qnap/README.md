@@ -53,6 +53,38 @@ Startup remains `starting` while the database initializes, migrations run, and t
 warms up. It becomes `running` only after the API answers successfully; the management health action
 reports a concise starting/unhealthy state instead of exposing an internal Python traceback.
 
+## Connecting iPhone with Tailscale
+
+The QTS management page presents the configured app URL, connection diagnostics, guided iPhone
+steps, and two secure-hosting choices. The recommended choice is private Tailscale HTTPS:
+
+1. Install the official Tailscale app on the QNAP and each iPhone and join the same tailnet.
+2. Enable MagicDNS and HTTPS certificates for the tailnet. Choose a non-sensitive QNAP device name:
+   the resulting `device-name.tailnet.ts.net` certificate name is recorded in public certificate
+   transparency logs, although the service remains reachable only inside the tailnet.
+3. Select **Enable Tailscale HTTPS** in ClearPocket's QTS page. The package locates the QNAP
+   Tailscale CLI, reads its assigned MagicDNS name, and configures Tailscale Serve on private HTTPS
+   port 443 to proxy the ClearPocket loopback API.
+4. The package atomically publishes that HTTPS origin for iPhone connection and five-minute device
+   pairing, rebinds the raw API port to NAS loopback, restarts ClearPocket, and verifies health. If
+   ClearPocket does not recover, its environment is rolled back and the failed Serve mapping is
+   removed. Financial data, attachment data, and authority secrets are never rewritten.
+5. Enter the displayed `https://...ts.net` address under **Profile & Settings → Data Source →
+   Connect to Existing Server**. The first device signs in normally. Use **Profile & Settings →
+   Devices** on that authenticated phone to generate one-time QR codes for additional phones.
+
+Tailscale access rules continue to govern which tailnet identities and devices can reach the NAS.
+The package uses Tailscale Serve, not Funnel, and never requests public internet exposure. The raw
+port `18080` must not be forwarded on the router.
+
+Advanced home-only deployments may instead configure private DNS, a publicly trusted certificate,
+and QTS reverse proxy using `configure-qnap-https HOSTNAME CONFIGURE`. Self-signed certificates and
+plain remote HTTP are intentionally not presented as ordinary iPhone connection choices.
+
+Official references: [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve),
+[Serve CLI](https://tailscale.com/docs/reference/tailscale-cli/serve), and
+[HTTPS certificates](https://tailscale.com/docs/how-to/set-up-https-certificates).
+
 The server-image workflow pins QDK 2.5.3 by immutable commit and, when that independent toolchain build
 succeeds, uploads an explicitly named unsigned QPKG for hardware acceptance. A QDK outage cannot block
 the Docker/Windows release, and this artifact is never attached to customer GitHub releases. QNAP
@@ -120,6 +152,8 @@ logs
 backup
 restart
 backup-schedule-status
+connection-info
+configure-tailscale
 ```
 
 It is not a general NAS shell. The CGI never evaluates user input, POST actions require an

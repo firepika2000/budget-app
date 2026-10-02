@@ -96,7 +96,7 @@ if [ "${REQUEST_METHOD:-GET}" = POST ]; then
     SUBMITTED_TOKEN=$(printf '%s' "$BODY" | tr '&' '\n' | sed -n 's/^csrf=//p')
     [ "$SUBMITTED_TOKEN" = "$TOKEN" ] || fail_page "403 Forbidden" "Request protection failed. Reopen the app from QTS."
     case "$COMMAND" in
-        status|health|version|logs|backup|restart|backup-schedule-status) ;;
+        status|health|version|logs|backup|restart|backup-schedule-status|connection-info|configure-tailscale) ;;
         *) COMMAND=help ;;
     esac
 fi
@@ -110,12 +110,19 @@ version
 logs
 backup
 restart
-backup-schedule-status'
+backup-schedule-status
+connection-info
+configure-tailscale'
         ;;
     *)
         OUTPUT_FILE="${TMPDIR:-/tmp}/clearpocket-manager.$$.out"
         trap 'rm -f "$OUTPUT_FILE"' EXIT HUP INT TERM
-        if "$SERVICE" "$COMMAND" > "$OUTPUT_FILE" 2>&1; then
+        if [ "$COMMAND" = configure-tailscale ]; then
+            set -- configure-tailscale ENABLE
+        else
+            set -- "$COMMAND"
+        fi
+        if "$SERVICE" "$@" > "$OUTPUT_FILE" 2>&1; then
             OUTPUT=$(cat "$OUTPUT_FILE")
         else
             RESULT_CLASS=error
@@ -131,6 +138,23 @@ SAFE_OUTPUT=$(printf '%s\n' "$OUTPUT" | escape_html)
 SAFE_COMMAND=$(printf '%s' "$COMMAND" | escape_html)
 VERSION=$(tr -d '\r\n' < "$QPKG_ROOT/server/VERSION" 2>/dev/null | escape_html)
 HOST=$(hostname 2>/dev/null | escape_html)
+SYSTEM_CONFIG=${CLEARPOCKET_SYSTEM_CONFIG:-/etc/config/clearpocket-server.conf}
+DATA_ROOT=$(sed -n 's/^CLEARPOCKET_DATA_ROOT=//p' "$SYSTEM_CONFIG" 2>/dev/null)
+ENV_FILE="$DATA_ROOT/.env"
+PUBLIC_URL=$(sed -n 's/^BUDGET_APP_PAIRING_PUBLIC_URL=//p' "$ENV_FILE" 2>/dev/null)
+PORT=$(sed -n 's/^CLEARPOCKET_PORT=//p' "$ENV_FILE" 2>/dev/null)
+case "$PORT" in ''|*[!0-9]*) PORT=18080 ;; esac
+if [ -n "$PUBLIC_URL" ]; then
+    CONNECTION_STATE="Secure connection ready"
+    DISPLAY_URL=$(printf '%s' "$PUBLIC_URL" | escape_html)
+    CONNECTION_CLASS=ready
+else
+    CONNECTION_STATE="Connection setup needed"
+    DISPLAY_URL="Enable Tailscale HTTPS below"
+    CONNECTION_CLASS=attention
+fi
+CONNECTION_INFO=$("$SERVICE" connection-info 2>&1 || true)
+SAFE_CONNECTION_INFO=$(printf '%s\n' "$CONNECTION_INFO" | escape_html)
 
 printf 'Content-Type: text/html; charset=utf-8\r\n'
 printf 'Cache-Control: no-store\r\n'
@@ -140,17 +164,29 @@ printf 'X-Content-Type-Options: nosniff\r\n\r\n'
 cat <<EOF
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ClearPocket Server</title><style>
-:root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{margin:0;background:#f3f5f8;color:#16202a}main{max-width:1000px;margin:auto;padding:28px}.hero{display:flex;justify-content:space-between;align-items:end;gap:20px}.eyebrow{color:#35705b;font-weight:700}.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:22px 0}.card{background:#fff;border:1px solid #dce2e8;border-radius:14px;padding:16px;box-shadow:0 4px 18px #14202b0d}.label{font-size:.8rem;color:#627080}.value{font-weight:650;margin-top:5px}.console{background:#10151b;color:#d9f5e8;border-radius:14px;padding:18px}.console pre{white-space:pre-wrap;min-height:210px;margin:0 0 18px;max-height:340px;overflow:auto}.console form{display:flex;gap:8px}.console input[type=text]{flex:1;background:#1c242d;color:#fff;border:1px solid #46515d;border-radius:8px;padding:11px;font:inherit}.console button,.quick button{border:0;border-radius:8px;padding:11px 15px;background:#2d7259;color:#fff;font-weight:650}.quick{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.quick form{display:inline}.danger button{background:#9d352f}.error{color:#ff9b91}@media(prefers-color-scheme:dark){body{background:#0c1116;color:#edf3f7}.card{background:#141b22;border-color:#27333e}.label{color:#9eabb6}}
-</style></head><body><main><div class="hero"><div><div class="eyebrow">QNAP management</div><h1>ClearPocket Server</h1></div><div>Private household authority</div></div>
-<section class="meta"><div class="card"><div class="label">Server version</div><div class="value">$VERSION</div></div><div class="card"><div class="label">NAS host</div><div class="value">$HOST</div></div><div class="card"><div class="label">Management access</div><div class="value">QTS administrators</div></div></section>
-<div class="quick">
+:root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--green:#28785d;--green2:#195d49;--ink:#14212b;--muted:#627080;--line:#dae2e7;--panel:#fff;--bg:#f4f7f6;--soft:#edf7f3;--warn:#a45b12}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);line-height:1.45}main{max-width:1120px;margin:auto;padding:34px 26px 64px}.hero{display:flex;justify-content:space-between;align-items:center;gap:22px;margin-bottom:24px}.brand{display:flex;align-items:center;gap:14px}.mark{width:48px;height:48px;border-radius:15px;background:linear-gradient(145deg,var(--green),var(--green2));display:grid;place-items:center;color:white;font-size:25px;font-weight:800;box-shadow:0 8px 24px #195d4930}.eyebrow{color:var(--green);font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em}h1{font-size:2rem;line-height:1.1;margin:4px 0}h2{font-size:1.25rem;margin:0 0 8px}h3{font-size:1rem;margin:0 0 6px}.subtitle,.muted{color:var(--muted)}.badge{border-radius:999px;padding:8px 12px;font-size:.85rem;font-weight:750;background:var(--soft);color:var(--green2)}.badge.attention{background:#fff3df;color:var(--warn)}.meta,.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.meta{margin-bottom:28px}.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:19px;box-shadow:0 8px 28px #14202b0b}.label{font-size:.76rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em}.value{font-size:1.02rem;font-weight:720;margin-top:5px;overflow-wrap:anywhere}.section{margin-top:28px}.section-head{display:flex;justify-content:space-between;align-items:end;gap:12px;margin-bottom:12px}.connection{grid-column:span 2;background:linear-gradient(145deg,var(--soft),var(--panel))}.url{margin:15px 0 7px;padding:12px 14px;background:#10211b;color:#dff9ee;border-radius:10px;font:600 .93rem ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}.steps{margin:14px 0 0;padding-left:22px}.steps li{margin:9px 0}.option{display:flex;flex-direction:column;min-height:230px}.option.recommended{border-color:#84b8a5;box-shadow:0 10px 32px #28785d16}.option .tag{align-self:flex-start;margin-bottom:13px;padding:4px 8px;border-radius:999px;background:var(--soft);color:var(--green2);font-size:.72rem;font-weight:800}.option form{margin-top:auto}.note{font-size:.86rem;color:var(--muted)}button{appearance:none;border:0;border-radius:10px;padding:11px 15px;background:var(--green);color:white;font:700 .9rem inherit;cursor:pointer}button:hover{background:var(--green2)}button.secondary{background:#e8efec;color:var(--green2)}.quick{display:flex;flex-wrap:wrap;gap:9px}.quick form{display:inline}.danger button{background:#a43b35}.console{background:#0d151a;color:#d9f5e8;border-radius:16px;padding:18px}.console pre{white-space:pre-wrap;margin:0;max-height:360px;overflow:auto;font:500 .85rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}.console form{display:flex;gap:8px;margin-top:14px}.console input[type=text]{flex:1;background:#19232a;color:#fff;border:1px solid #40515c;border-radius:9px;padding:11px;font:inherit}.error{color:#ff9b91}details{margin-top:18px}summary{cursor:pointer;font-weight:750;color:var(--muted);padding:6px 0}.connection-data{white-space:pre-wrap;font:500 .82rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);margin:10px 0 0}a{color:var(--green);font-weight:650}@media(max-width:800px){.meta,.grid{grid-template-columns:1fr}.connection{grid-column:auto}.hero{align-items:flex-start;flex-direction:column}.badge{align-self:flex-start}}@media(prefers-color-scheme:dark){:root{--ink:#edf3f7;--muted:#9eabb6;--line:#27343c;--panel:#121b21;--bg:#091015;--soft:#142a23}.badge.attention{background:#332511;color:#ffc477}.url{background:#07110d}.console{background:#060c10}.secondary{color:#d7ebe3!important;background:#243630!important}}
+</style></head><body><main>
+<header class="hero"><div class="brand"><div class="mark">C</div><div><div class="eyebrow">Private household server</div><h1>ClearPocket</h1><div class="subtitle">Connection, protection, and QNAP operations</div></div></div><div class="badge $CONNECTION_CLASS">$CONNECTION_STATE</div></header>
+<section class="meta"><div class="card"><div class="label">Server</div><div class="value">$VERSION</div></div><div class="card"><div class="label">QNAP</div><div class="value">$HOST</div></div><div class="card"><div class="label">Administration</div><div class="value">QTS administrators only</div></div></section>
+
+<section class="section"><div class="section-head"><div><h2>Connect ClearPocket on iPhone</h2><div class="muted">Use one secure address at home and away.</div></div></div><div class="grid">
+<article class="card connection"><div class="label">App server address</div><div class="url">$DISPLAY_URL</div><ol class="steps"><li>Install Tailscale on the QNAP and each iPhone, then sign in to the same tailnet.</li><li>In ClearPocket, open <strong>Profile &amp; Settings → Data Source → Connect to Existing Server</strong>.</li><li>Enter the secure address above. The first device signs in normally; add later devices from <strong>Profile &amp; Settings → Devices</strong> using a five-minute QR code.</li></ol></article>
+<article class="card"><div class="label">Connection details</div><pre class="connection-data">$SAFE_CONNECTION_INFO</pre><form method="post"><input type="hidden" name="csrf" value="$TOKEN"><input type="hidden" name="command" value="connection-info"><button class="secondary">Refresh details</button></form></article>
+</div></section>
+
+<section class="section"><div class="section-head"><div><h2>Secure hosting</h2><div class="muted">Choose how family devices reach this server. Never forward the raw API port.</div></div></div><div class="grid">
+<article class="card option recommended"><div class="tag">Recommended</div><h3>Tailscale private HTTPS</h3><p>Encrypted access at home, on cellular, and while traveling without opening router ports. Tailscale access rules still control which devices can reach the server.</p><p class="note">Before enabling: connect the QNAP Tailscale app, enable MagicDNS and HTTPS certificates in your tailnet, and choose a NAS device name that contains no sensitive information.</p><form method="post"><input type="hidden" name="csrf" value="$TOKEN"><input type="hidden" name="command" value="configure-tailscale"><label class="note"><input type="checkbox" required> I have completed the Tailscale prerequisites.</label><div style="margin-top:10px"><button>Enable Tailscale HTTPS</button></div></form></article>
+<article class="card option"><div class="tag">Home network</div><h3>Private DNS + valid certificate</h3><p>For customers who prefer direct LAN access, use a hostname you control, a publicly trusted certificate, and a QTS reverse proxy to ClearPocket’s loopback bridge.</p><p class="note">This requires router/DNS and certificate administration. Self-signed certificates are not suitable for ordinary iPhone connections.</p><div class="note">Advanced administrators can configure this through the QNAP service CLI with <strong>configure-qnap-https HOSTNAME CONFIGURE</strong>.</div></article>
+<article class="card option"><div class="tag">Safety boundary</div><h3>Raw LAN port</h3><p>Port $PORT exists for local diagnostics and initial setup. It is not a secure remote endpoint and must never be forwarded through the router or exposed to the internet.</p><p class="note">Tailscale setup automatically rebinds it to NAS loopback so only the private HTTPS proxy can reach it.</p></article>
+</div></section>
+
+<section class="section"><div class="section-head"><div><h2>Server operations</h2><div class="muted">Routine checks and recoverable maintenance.</div></div></div><div class="card"><div class="quick">
 <form method="post"><input type="hidden" name="csrf" value="$TOKEN"><input type="hidden" name="command" value="status"><button>Status</button></form>
 <form method="post"><input type="hidden" name="csrf" value="$TOKEN"><input type="hidden" name="command" value="health"><button>Health</button></form>
 <form method="post"><input type="hidden" name="csrf" value="$TOKEN"><input type="hidden" name="command" value="logs"><button>Recent logs</button></form>
 <form method="post"><input type="hidden" name="csrf" value="$TOKEN"><input type="hidden" name="command" value="backup"><button>Encrypted backup</button></form>
 <form method="post" class="danger"><input type="hidden" name="csrf" value="$TOKEN"><input type="hidden" name="command" value="restart"><button>Restart services</button></form>
-</div>
-<section class="console"><pre class="$RESULT_CLASS" aria-live="polite"><strong>\$ $SAFE_COMMAND</strong>
-$SAFE_OUTPUT</pre><form method="post"><input type="hidden" name="csrf" value="$TOKEN"><input type="text" name="command" aria-label="Management command" autocomplete="off" spellcheck="false" placeholder="Type help for allowed commands"><button>Run</button></form></section>
+</div><details open><summary>Latest result</summary><section class="console"><pre class="$RESULT_CLASS" aria-live="polite"><strong>\$ $SAFE_COMMAND</strong>
+$SAFE_OUTPUT</pre></section></details><details><summary>Advanced management console</summary><section class="console"><form method="post"><input type="hidden" name="csrf" value="$TOKEN"><input type="text" name="command" aria-label="Management command" autocomplete="off" spellcheck="false" placeholder="Type help for allowed commands"><button>Run</button></form></section></details></div></section>
 </main></body></html>
 EOF
