@@ -1378,9 +1378,14 @@ final class AuthenticationJourneyTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--demo"]
         app.launch()
-        app.buttons["profile-settings-button"].tap()
-        app.buttons["Household and access"].tap()
-        app.buttons["household-members-lifecycle"].tap()
+        XCTAssertTrue(app.buttons["Household"].waitForExistence(timeout: 5))
+        app.buttons["Household"].tap()
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
+        let lifecycle = app.buttons["household-members-lifecycle"]
+        for _ in 0..<4 where !lifecycle.isHittable { app.swipeUp() }
+        XCTAssertTrue(lifecycle.isHittable)
+        lifecycle.tap()
+        XCTAssertTrue(app.navigationBars["Members"].waitForExistence(timeout: 5))
         let remove = app.buttons["Remove Alex Rivera from household"]
         XCTAssertTrue(remove.waitForExistence(timeout: 5))
         remove.tap()

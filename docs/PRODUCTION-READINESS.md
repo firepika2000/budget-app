@@ -1514,3 +1514,11 @@ behavior and adds the native share sheet with the seven-day expiry warning. Acce
 authorization, and invitation-token semantics are unchanged. The Xcode 27 Beta simulator build,
 Swift package suite, and focused native source regression pass. Native interaction still requires the
 ordinary human acceptance pass; this checkpoint does not claim it.
+
+Follow-up production-composition verification found that the member-lifecycle link could sit at the
+unstable lower edge of the dynamically populated People section and fail to navigate when activated.
+Household management now has a dedicated section ahead of People, keeping member and invitation
+actions visible with a stable native hit target. Re-invitation presentation is item-backed so the
+known email and prior role are the sheet payload rather than state mutated beside a Boolean sheet.
+The focused XCUITest now passes the complete Household-tab flow: open management, cancel removal,
+confirm removal, verify retained history, open a prefilled re-invite, return, and reopen management.

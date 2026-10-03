@@ -7686,6 +7686,16 @@ private struct LiveHouseholdOverviewView: View {
                 LabeledContent("Budget role", value: store.budget.effectivePermission.rawValue.capitalized)
                 visibilitySummary
             }
+            if canManageMembers {
+                Section("Household management") {
+                    NavigationLink { HouseholdMemberLifecycleView(store: store) } label: {
+                        Label("Members & Invitations", systemImage: "person.2.badge.gearshape")
+                    }
+                    .accessibilityIdentifier("household-members-lifecycle")
+                    Button("Invite New Member", systemImage: "person.badge.plus") { showInvite = true }
+                        .accessibilityIdentifier("household-invite-member")
+                }
+            }
             Section("People") {
                 ForEach(activeMembers) { member in
                     if canManageMembers && member.role != "owner" {
@@ -7695,13 +7705,6 @@ private struct LiveHouseholdOverviewView: View {
                 }
                 if otherMembers.isEmpty {
                     ContentUnavailableView("Just you for now", systemImage: "person.crop.circle", description: Text("Invite family members when you are ready to share this budget."))
-                }
-                if canManageMembers {
-                    Button("Invite New Member", systemImage: "person.badge.plus") { showInvite = true }
-                        .accessibilityIdentifier("household-invite-member")
-                    NavigationLink { HouseholdMemberLifecycleView(store: store) } label: {
-                        Label("Members & Invitations", systemImage: "person.2.badge.gearshape")
-                    }.accessibilityIdentifier("household-members-lifecycle")
                 }
             }
             if canManageMembers {
@@ -7919,12 +7922,10 @@ private struct HouseholdMemberLifecycleView: View {
     @ObservedObject var store: BudgetWorkspaceStore
     @State private var invitations: [APIInvitationSummary] = []
     @State private var events: [APIHouseholdAccessEvent] = []
-    @State private var showInvite = false
+    @State private var invitationDraft: HouseholdInvitationDraft?
     @State private var secret: APIInvitationSecret?
     @State private var pendingInvitationSecret: APIInvitationSecret?
     @State private var removing: APIHouseholdMember?
-    @State private var invitationDraftEmail = ""
-    @State private var invitationDraftRole = "adult"
     @State private var isLoading = true
     @State private var errorMessage: String?
 
@@ -7946,9 +7947,7 @@ private struct HouseholdMemberLifecycleView: View {
                         } else {
                             Button("Invite to Rejoin") {
                                 secret = nil
-                                invitationDraftEmail = member.email
-                                invitationDraftRole = member.role
-                                showInvite = true
+                                invitationDraft = .init(email: member.email, role: member.role)
                             }
                                 .accessibilityHint("Creates a new invitation; preserved access is restored only after acceptance")
                                 .accessibilityIdentifier("reinvite-household-member-\(member.userID)")
@@ -7985,14 +7984,16 @@ private struct HouseholdMemberLifecycleView: View {
             }
         }
         .navigationTitle("Members")
-        .toolbar { Button("Invite", systemImage: "person.badge.plus") { invitationDraftEmail = ""; invitationDraftRole = "adult"; showInvite = true }.accessibilityIdentifier("invite-household-member") }
+        .toolbar { Button("Invite", systemImage: "person.badge.plus") { invitationDraft = .init(email: "", role: "adult") }.accessibilityIdentifier("invite-household-member") }
         .task { await load() }
-        .sheet(isPresented: $showInvite, onDismiss: {
+        .sheet(item: $invitationDraft, onDismiss: {
             // Present the one-time code only after the creation sheet has actually dismissed.
             // Completing an async reload is not a presentation-completion signal.
             secret = pendingInvitationSecret
             pendingInvitationSecret = nil
-        }) { HouseholdInvitationCreateView(store: store, recoveredSecret: $pendingInvitationSecret, onCreated: load, initialEmail: invitationDraftEmail, initialRole: invitationDraftRole) }
+        }) { draft in
+            HouseholdInvitationCreateView(store: store, recoveredSecret: $pendingInvitationSecret, onCreated: load, initialEmail: draft.email, initialRole: draft.role)
+        }
         .sheet(item: $secret) { value in HouseholdInvitationSecretView(secret: value) }
         .alert("Remove \(removing?.displayName ?? "member")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             Button("Keep Member", role: .cancel) { removing = nil }
@@ -8019,6 +8020,12 @@ private struct HouseholdMemberLifecycleView: View {
     private func remove(_ member: APIHouseholdMember) async { removing = nil; do { try await store.removeHouseholdMember(userID: member.userID); await load() } catch { errorMessage = error.localizedDescription } }
 }
 
+private struct HouseholdInvitationDraft: Identifiable {
+    let id = UUID()
+    let email: String
+    let role: String
+}
+
 private struct HouseholdInvitationCreateView: View {
     @ObservedObject var store: BudgetWorkspaceStore
     @Binding var recoveredSecret: APIInvitationSecret?
@@ -8028,12 +8035,16 @@ private struct HouseholdInvitationCreateView: View {
     @State private var role = "adult"
     @State private var isSaving = false
     @State private var errorMessage: String?
+    private let initialEmail: String
+    private let initialRole: String
     init(store: BudgetWorkspaceStore, recoveredSecret: Binding<APIInvitationSecret?>, onCreated: @escaping () async -> Void, initialEmail: String = "", initialRole: String = "adult") {
         self.store = store
         _recoveredSecret = recoveredSecret
         self.onCreated = onCreated
+        self.initialEmail = initialEmail
+        self.initialRole = ["adult", "child"].contains(initialRole) ? initialRole : "adult"
         _email = State(initialValue: initialEmail)
-        _role = State(initialValue: ["adult", "child"].contains(initialRole) ? initialRole : "adult")
+        _role = State(initialValue: self.initialRole)
     }
     private var normalizedEmail: String { email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
     private var emailLooksValid: Bool {
@@ -8074,6 +8085,11 @@ private struct HouseholdInvitationCreateView: View {
             } message: { Text(errorMessage ?? "Unknown error") }
         }
         .interactiveDismissDisabled(isSaving)
+        .onAppear {
+            guard !initialEmail.isEmpty else { return }
+            email = initialEmail
+            role = initialRole
+        }
     }
     private func create() async {
         guard !isSaving else { return }

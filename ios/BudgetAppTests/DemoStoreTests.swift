@@ -882,6 +882,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(workspace.components(separatedBy: ".workspaceProfileToolbar").count - 1, 6, "Profile & Settings must be global workspace chrome on every tab")
         XCTAssertTrue(workspace.contains(".id(activeTab)"), "the iOS 27 production shell must materialize the selected tab instead of rendering a blank lazy stack")
         XCTAssertTrue(workspace.contains("intentional identity replacement at the shell boundary"), "the exceptional shell identity boundary must remain documented")
+        XCTAssertTrue(workspace.contains("Section(\"Household management\")"), "member lifecycle actions must remain ahead of the dynamic people list")
+        XCTAssertTrue(workspace.contains(".sheet(item: $invitationDraft"), "re-invites must present the preserved address as the sheet payload")
         XCTAssertFalse(workspace.contains("workspaceDismissToolbar"), "the active budget must not navigate back to a Budgets parent")
         XCTAssertTrue(workspace.contains("Create Category Group"))
         XCTAssertTrue(workspace.contains("Add your first category"))
@@ -907,8 +909,8 @@ final class DemoStoreTests: XCTestCase {
                       "the household tab must use the active production session and workspace store")
         XCTAssertTrue(workspace.contains("accessibilityIdentifier(\"household-overview-screen\")"),
                       "the real household destination must remain available to production UI coverage")
-        XCTAssertTrue(workspace.contains("invitationDraftEmail = member.email"),
-                      "re-inviting a removed member must prefill the known address")
+        XCTAssertTrue(workspace.contains("invitationDraft = .init(email: member.email, role: member.role)"),
+                      "re-inviting a removed member must carry the known address and role in the presentation payload")
         XCTAssertTrue(workspace.contains("ShareLink(item: invitationMessage)"),
                       "one-time household invitations must support the native share sheet")
         XCTAssertTrue(workspace.contains("Section(\"Visibility preview\")"),
