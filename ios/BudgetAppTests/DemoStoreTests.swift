@@ -350,8 +350,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(edit.transactions.map(\.id), ids)
         // Undoing the old amount alone would overflow, but replacing it with two is valid.
         XCTAssertTrue(edit.updateTransfer(id: transferID, amount: 2, from: source, to: destination, memo: "Edited", cleared: true, date: .demo(monthsAgo: 0, day: 15)))
-        XCTAssertEqual(edit.accounts.map(\.balance), [.max - 1, 2])
-        XCTAssertEqual(edit.accounts.map(\.cleared), [.max - 1, 2])
+        XCTAssertEqual(edit.accounts.map(\.balance), [Int64.max - 1, Int64(2)])
+        XCTAssertEqual(edit.accounts.map(\.cleared), [Int64.max - 1, Int64(2)])
         XCTAssertEqual(edit.transactions.map(\.id), ids)
         XCTAssertEqual(edit.transactions.filter { $0.transferID == transferID }.map(\.amount).sorted(), [-2, 2])
         XCTAssertEqual(edit.unassignedMinor, 0)
