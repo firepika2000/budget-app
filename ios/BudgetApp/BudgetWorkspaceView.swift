@@ -7547,9 +7547,13 @@ private struct LiveHouseholdOverviewView: View {
             LabeledContent("Visibility", value: "Entire budget")
         } else {
             LabeledContent("Visible accounts", value: "\(store.accounts.filter { !$0.isClosed }.count)")
+                .accessibilityIdentifier("household-visible-account-count")
             LabeledContent("Visible categories", value: "\(store.categories.filter { !$0.isArchived }.count)")
+                .accessibilityIdentifier("household-visible-category-count")
             LabeledContent("Account balances", value: store.budget.can("view_account_balances") ? "Visible" : "Hidden")
+                .accessibilityIdentifier("household-balance-visibility")
             LabeledContent("Household Ready to Assign", value: store.budget.can("view_budget_totals") ? "Visible when access is unrestricted" : "Hidden")
+                .accessibilityIdentifier("household-total-visibility")
         }
     }
     private func memberRow(_ member: APIHouseholdMember) -> some View {

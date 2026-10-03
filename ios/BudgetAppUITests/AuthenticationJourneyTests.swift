@@ -1482,6 +1482,52 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(identifier: "Cancelled").firstMatch.exists)
     }
 
+    func testRestrictedMemberProductionWorkspaceDoesNotLeakHouseholdAccountsCategoriesOrTotals() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-persona=Alex", "--demo-screen=home"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["AVAILABLE IN YOUR BUDGET"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["AVAILABLE TO ASSIGN"].exists)
+        XCTAssertTrue(app.staticTexts["A household owner needs to share an account with you."].exists)
+        XCTAssertFalse(app.staticTexts["Primary Checking"].exists)
+        XCTAssertFalse(app.staticTexts["High-Yield Savings"].exists)
+
+        app.buttons["Accounts"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["accounts-screen"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Accounts"].exists)
+        XCTAssertTrue(app.staticTexts["A household owner can add accounts. Only accounts shared with you will appear here."].exists)
+        XCTAssertFalse(app.buttons["add-account-cta"].exists)
+        XCTAssertFalse(app.staticTexts["Primary Checking"].exists)
+        XCTAssertFalse(app.staticTexts["High-Yield Savings"].exists)
+        XCTAssertFalse(app.staticTexts["Everyday Visa"].exists)
+
+        app.buttons["Plan"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["plan-screen"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Your delegated budget"].exists)
+        XCTAssertTrue(app.staticTexts["Total authority"].exists)
+        XCTAssertFalse(app.staticTexts["Unassigned in selected month"].exists)
+        XCTAssertTrue(app.staticTexts["Alex Allowance"].exists)
+        for _ in 0..<4 where !app.staticTexts["Giving"].exists { app.swipeUp() }
+        XCTAssertTrue(app.staticTexts["Alex Savings"].exists)
+        XCTAssertTrue(app.staticTexts["Giving"].exists)
+        XCTAssertFalse(app.staticTexts["Groceries"].exists)
+        XCTAssertFalse(app.staticTexts["Dining Out"].exists)
+        XCTAssertFalse(app.staticTexts["Emergency Fund"].exists)
+
+        app.buttons["Household"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["household-overview-screen"].waitForExistence(timeout: 5))
+        let accountCount = app.descendants(matching: .any)["household-visible-account-count"]
+        let categoryCount = app.descendants(matching: .any)["household-visible-category-count"]
+        let totalVisibility = app.descendants(matching: .any)["household-total-visibility"]
+        XCTAssertTrue(accountCount.waitForExistence(timeout: 5))
+        XCTAssertTrue(accountCount.label.contains("0"), "Restricted household summary should report zero visible accounts")
+        XCTAssertTrue(categoryCount.label.contains("3"), "Restricted household summary should report only delegated categories")
+        XCTAssertTrue(totalVisibility.label.contains("Hidden"), "Household Ready to Assign must remain hidden")
+        XCTAssertFalse(app.buttons["household-invite-member"].exists)
+        XCTAssertFalse(app.buttons["member-access-jordan"].exists)
+    }
+
     func testProductionDemoAllowanceIssuePauseAndReopenUsesSharedHouseholdFlow() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=home"]
