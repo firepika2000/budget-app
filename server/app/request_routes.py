@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from .access import can_access_resource, find_visible_budget, has_capability, visible_resource_ids
 from .allocation import PostingInput, append_operation, category_available_balance, lock_budget
+from .clock import today
 from .database import get_db
 from .dependencies import get_current_user
 from .models import Category, FinancialRequest, RequestAction, User
@@ -189,13 +190,13 @@ def decide_request(
         ):
             raise HTTPException(status_code=422, detail="Invalid approval categories")
         locked_budget = lock_budget(db, budget_id)
-        if category_available_balance(db, budget_id, source.id, through=date.today()) < approved:
+        if category_available_balance(db, budget_id, source.id, through=today()) < approved:
             raise HTTPException(status_code=409, detail="Source category has insufficient funds")
         operation = append_operation(
             db,
             budget=locked_budget,
             actor=user,
-            occurred_on=date.today(),
+            occurred_on=today(),
             kind="request_approval",
             note=body.note or item.reason,
             source="approval",

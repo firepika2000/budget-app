@@ -14,6 +14,7 @@ from fastapi.responses import Response, StreamingResponse
 from .schemas import MAX_INT64
 from .calendar_dates import month_end
 from .cash_rollover_repository import cash_rollover_effects
+from .clock import today
 from sqlalchemy import String, and_, cast, delete, false, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.exc import IntegrityError
@@ -415,7 +416,7 @@ def create_account(
             account_id=account.id,
             category_id=None,
             amount_minor=body.starting_balance_minor,
-            occurred_on=date.today(),
+            occurred_on=today(),
             payee_name="Starting Balance",
             memo="Balance when account was added",
             is_cleared=True,
@@ -1133,7 +1134,7 @@ def transfer_allocation(
     db: Session = Depends(get_db),
 ) -> dict:
     access_budget = require_budget_capability(db, user, budget_id, "move_money")
-    if body.occurred_on > date.today():
+    if body.occurred_on > today():
         raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
     budget = lock_budget(db, budget_id)
     require_version(budget, body.expected_allocation_version)
@@ -1504,7 +1505,7 @@ def create_transaction_in_session(
     """
     body = body.model_copy(deep=True)
     budget = require_budget_capability(db, user, budget_id, "create_transaction")
-    if body.occurred_on > date.today():
+    if body.occurred_on > today():
         raise HTTPException(status_code=422, detail="Future transactions belong in the planning layer")
     account = db.scalar(select(Account).where(Account.id == body.account_id).with_for_update())
     if account is None or account.budget_id != budget_id or account.is_closed:
@@ -1676,7 +1677,7 @@ def void_transaction(
     now = datetime.now(timezone.utc)
     reversal = Transaction(
         budget_id=budget_id, account_id=original.account_id, category_id=original.category_id,
-        payee_id=original.payee_id, amount_minor=-original.amount_minor, occurred_on=date.today(),
+        payee_id=original.payee_id, amount_minor=-original.amount_minor, occurred_on=today(),
         payee_name=f"Reversal: {original.payee_name or 'Transaction'}"[:150],
         memo=(f"Void reversal. {body.reason}" if body.reason else "Void reversal.")[:500],
         financial_classification=original.financial_classification,
@@ -1717,9 +1718,9 @@ def create_schedule_from_transaction(
     if original.splits:
         raise HTTPException(status_code=409, detail="Split schedules are not supported yet")
     next_date = body.next_date or next_occurrence(original.occurred_on, body.recurrence_unit, body.interval_count)
-    while next_date is not None and next_date <= date.today():
+    while next_date is not None and next_date <= today():
         next_date = next_occurrence(next_date, body.recurrence_unit, body.interval_count)
-    if next_date is None or next_date <= date.today():
+    if next_date is None or next_date <= today():
         raise HTTPException(status_code=422, detail="Next occurrence must be in the future")
     schedule = ScheduledTransaction(
         budget_id=budget_id, account_id=original.account_id, category_id=original.category_id,
@@ -1894,7 +1895,7 @@ def update_transaction(
     if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
         raise HTTPException(status_code=403, detail="You may only edit your own transactions")
     before_snapshot = transaction_snapshot(transaction)
-    if body.occurred_on > date.today():
+    if body.occurred_on > today():
         raise HTTPException(status_code=422, detail="Future transactions belong in the planning layer")
     account = db.scalar(select(Account).where(Account.id == body.account_id).with_for_update())
     if account is None or account.budget_id != budget_id or account.is_closed or not can_access_resource(db, user, budget, "account", account.id):
@@ -1972,7 +1973,7 @@ def create_transfer(
     db: Session = Depends(get_db),
 ) -> TransferResponse:
     budget = require_budget_capability(db, user, budget_id, "create_transaction")
-    if body.occurred_on > date.today():
+    if body.occurred_on > today():
         raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
     locked_accounts = list(db.scalars(select(Account).where(Account.id.in_([
         body.source_account_id, body.destination_account_id
@@ -2069,7 +2070,7 @@ def update_transfer(
     db: Session = Depends(get_db),
 ) -> TransferResponse:
     budget = require_budget_capability(db, user, budget_id, "edit_transaction")
-    if body.occurred_on > date.today():
+    if body.occurred_on > today():
         raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
     legs = _locked_transfer_legs(db, budget_id, transfer_id)
     _authorize_transfer_legs(db, user, budget, legs, "edit")

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .access import can_access_resource, has_capability
 from .allocation import PostingInput, allocation_balance, append_operation, ready_to_assign_balance
 from .budgeting_routes import lock_budget, require_budget_capability, require_version
+from .clock import today
 from .database import get_db
 from .dependencies import get_current_user
 from .models import Category, DelegatedBudgetPolicy, DelegatedCategoryRule, Membership, User
@@ -136,7 +137,7 @@ def upsert_delegated_budget(
             db,
             budget=locked_budget,
             actor=user,
-            occurred_on=date.today(),
+            occurred_on=today(),
             kind="delegated_authority",
             note=f"Set delegated authority for member {user_id}",
             postings=[

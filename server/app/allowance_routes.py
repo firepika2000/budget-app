@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .access import find_visible_budget, has_capability, visible_resource_ids
 from .allocation import PostingInput, append_operation, category_available_balance, lock_budget, require_version
+from .clock import today
 from .database import get_db
 from .dependencies import get_current_user
 from .models import (
@@ -239,7 +240,7 @@ def issue_allowance(
     require_plan_scope(db, user, budget, plan)
     if body.issue_date != plan.next_issue_date:
         raise HTTPException(status_code=409, detail="Allowance issue date has changed")
-    if body.issue_date > date.today():
+    if body.issue_date > today():
         raise HTTPException(status_code=422, detail="Future allowances remain planned until their issue date")
 
     locked_budget = lock_budget(db, budget_id)

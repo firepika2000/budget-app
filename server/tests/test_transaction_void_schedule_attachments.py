@@ -81,17 +81,12 @@ def test_void_income_and_categorized_refund_net_exactly_across_utc_midnight(
     income = record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=9000, payee_name="Income", occurred_on=local_today.isoformat())
     refund = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=1200, payee_name="Refund", occurred_on=local_today.isoformat())
 
-    class LocalDate(date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 9, 30)
-
     class NextUTCDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
             return cls(2026, 10, 1, 1, 30, tzinfo=timezone.utc)
 
-    monkeypatch.setattr(budgeting_routes, "date", LocalDate)
+    monkeypatch.setattr(budgeting_routes, "today", lambda: local_today)
     monkeypatch.setattr(budgeting_routes, "datetime", NextUTCDateTime)
     for transaction in (income, refund):
         response = client.post(endpoint(budget["id"], transaction["id"], "void"), headers=auth(owner_token), json={})

@@ -15,6 +15,7 @@ from .access import has_capability, is_household_owner, visible_resource_ids
 from .budgeting_routes import account_working_balances, require_budget_capability, transaction_visibility_conditions
 from .calendar_dates import month_periods
 from .cash_rollover_repository import cash_rollover_effects
+from .clock import today as current_date
 from .debt_projection import estimated_monthly_interest
 from .database import get_db
 from .dependencies import get_current_user
@@ -47,7 +48,7 @@ def debt_cost_report(
     if visible is not None:
         selected &= visible
     rows = []
-    as_of = date.today()
+    as_of = current_date()
     balances = account_working_balances(db, list(selected))
     accounts = db.execute(select(Account, AccountDebtTerms).outerjoin(
         AccountDebtTerms, AccountDebtTerms.account_id == Account.id
@@ -719,7 +720,7 @@ def resilience_report(
     """Expose transparent balance/schedule metrics without inventing essential or emergency labels."""
     budget = require_budget_capability(db, user, budget_id, "view_reports")
     require_budget_capability(db, user, budget_id, "view_account_balances")
-    today = date.today()
+    today = current_date()
     projection = forecast(budget_id=budget_id, through=today + timedelta(days=horizon_days), user=user, db=db)
     visible_accounts = visible_resource_ids(db, user, budget, "account")
     account_query = select(Account.id).where(

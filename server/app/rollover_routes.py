@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from .access import find_visible_budget, is_household_owner
 from .allocation import lock_budget, ready_to_assign_balance, require_version
+from .clock import today
 from .database import get_db
 from .dependencies import get_current_user
 from .models import Budget, CashRolloverPolicyChange, User
@@ -73,7 +74,7 @@ def history(db: Session, budget_id: str) -> list[CashRolloverPolicyChange]:
 
 def observation(db: Session, budget: Budget) -> dict:
     rows = history(db, budget.id)
-    month = date.today().replace(day=1)
+    month = today().replace(day=1)
     current = next((row for row in reversed(rows) if row.effective_month <= month), None)
     pending = {row.effective_month: row for row in rows if row.effective_month > month}
     return {
@@ -116,7 +117,7 @@ def select_policy(budget_id: str, body: PolicySelection,
     version = max((row.version for row in rows), default=0)
     if body.expected_policy_version != version:
         raise HTTPException(409, "Cash rollover policy changed. Refresh before trying again.")
-    if body.effective_month.day != 1 or body.effective_month <= date.today().replace(day=1):
+    if body.effective_month.day != 1 or body.effective_month <= today().replace(day=1):
         raise HTTPException(422, "A policy change must begin on the first day of a future month")
     effective = next((row.policy for row in reversed(rows) if row.effective_month <= body.effective_month), "carry_category_deficit")
     if effective == body.policy:

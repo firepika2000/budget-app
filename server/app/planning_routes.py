@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .access import can_access_resource, visible_resource_ids
 from .budgeting_routes import require_budget_capability
+from .clock import today
 from .credit import add_payment_reserve_event, add_purchase_reserve_events
 from .database import get_db
 from .dependencies import get_current_user
@@ -350,7 +351,7 @@ def realize_scheduled_transaction(
     if not schedule.is_active:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Scheduled transaction is inactive")
     realized_on = schedule.next_date
-    if realized_on > date.today():
+    if realized_on > today():
         raise HTTPException(status_code=422, detail="Occurrence is not due yet")
 
     # Re-validate resources against live scope; then reuse the SAME accounting engine as manual
@@ -424,8 +425,8 @@ def forecast(
     db: Session = Depends(get_db),
 ) -> ForecastResponse:
     budget = require_budget_capability(db, user, budget_id, "view_account_balances")
-    today = date.today()
-    if through < today or through > today + timedelta(days=366):
+    current_day = today()
+    if through < current_day or through > current_day + timedelta(days=366):
         raise HTTPException(status_code=422, detail="Forecast horizon must be between today and one year")
     accounts = list(db.scalars(select(Account).where(
         Account.budget_id == budget_id,
@@ -456,7 +457,7 @@ def forecast(
         ):
             continue
         expanded.extend((occurrence, schedule) for occurrence in occurrences_between(
-            schedule, today, through
+            schedule, current_day, through
         ))
     expanded.sort(key=lambda item: (item[0], item[1].id))
     on_budget_ids = {account.id for account in accounts if account.is_on_budget}
@@ -480,7 +481,7 @@ def forecast(
             amount_minor=schedule.amount_minor,
         ))
     return ForecastResponse(
-        as_of=today,
+        as_of=current_day,
         through=through,
         currency_code=budget.currency_code,
         actual_total_on_budget_minor=sum(actual_by_account[item] for item in on_budget_ids),
