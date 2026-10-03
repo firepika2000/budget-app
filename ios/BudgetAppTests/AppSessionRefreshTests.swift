@@ -768,8 +768,29 @@ final class AppSessionRefreshTests: XCTestCase {
         window.rootViewController = controller; window.makeKeyAndVisible()
         controller.loadViewIfNeeded(); controller.view.layoutIfNeeded()
 
-        await session.validateSelectedSource(caller: "test.productionRoot")
-        try? await Task.sleep(for: .milliseconds(50))
+        // RootView.task is the production startup entry point under test. Do not also call
+        // validateSelectedSource directly: on a fast runner the calls happen to overlap and join,
+        // while on a slower runner they can become sequential and make the test itself submit a
+        // second refresh that the application never requests. Wait for the rendered hierarchy's
+        // lifecycle task to reach the authoritative sign-in state instead.
+        // A hosted view receives scene activation automatically in an application test, but a
+        // unit-test UIWindow is not guaranteed to transition its scene to active. Give the actual
+        // modifier an opportunity to start, then invoke the same activation gateway as a fallback.
+        // `activate` is latched, so this cannot start a second validation if SwiftUI already did.
+        let lifecycleDeadline = ContinuousClock.now + .milliseconds(250)
+        while refresh.value == 0,
+              session.connectionStatus != .authenticationRequired,
+              ContinuousClock.now < lifecycleDeadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        if refresh.value == 0 {
+            await session.activate(caller: "test.productionRoot.fallback")
+        }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while session.connectionStatus != .authenticationRequired,
+              ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
 
         XCTAssertEqual(refresh.value, 1)
         XCTAssertNil(session.token)
