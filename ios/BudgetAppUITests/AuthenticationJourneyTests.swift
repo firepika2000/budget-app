@@ -1446,6 +1446,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["Saved"].waitForExistence(timeout: 5))
 
         app.navigationBars.buttons["Household"].tap()
+        XCTAssertTrue(app.staticTexts["Adult · 1 account · 1 category · totals hidden"].waitForExistence(timeout: 5))
         app.buttons["member-access-jordan"].tap()
         XCTAssertTrue(app.navigationBars["Jordan Rivera"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["member-access-preset"].label.contains("Full Access"))

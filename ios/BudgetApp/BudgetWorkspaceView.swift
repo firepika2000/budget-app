@@ -7439,6 +7439,7 @@ private struct LiveHouseholdOverviewView: View {
     @State private var invitationSecret: APIInvitationSecret?
     @State private var pendingInvitationSecret: APIInvitationSecret?
     @State private var invitations: [APIInvitationSummary] = []
+    @State private var memberProfiles: [String: APIAccessProfile] = [:]
     @State private var invitationError: String?
     private var activeMembers: [APIHouseholdMember] { store.householdMembers.filter(\.isActive) }
     private var otherMembers: [APIHouseholdMember] { activeMembers.filter { $0.role != "owner" } }
@@ -7464,7 +7465,7 @@ private struct LiveHouseholdOverviewView: View {
             Section("People") {
                 ForEach(activeMembers) { member in
                     if canManageMembers && member.role != "owner" {
-                        NavigationLink { LiveMemberAccessView(store: store, member: member) } label: { memberRow(member) }
+                        NavigationLink { LiveMemberAccessView(store: store, member: member) { memberProfiles[member.userID] = $0 } } label: { memberRow(member) }
                             .accessibilityIdentifier("member-access-\(member.userID)")
                     } else { memberRow(member) }
                 }
@@ -7526,7 +7527,7 @@ private struct LiveHouseholdOverviewView: View {
             }
         }
         .navigationTitle("Household")
-        .task { if canManageMembers { await loadInvitations() } }
+        .task { if canManageMembers { await loadHouseholdManagement() } }
         .sheet(isPresented: $showInvite, onDismiss: {
             invitationSecret = pendingInvitationSecret
             pendingInvitationSecret = nil
@@ -7556,10 +7557,24 @@ private struct LiveHouseholdOverviewView: View {
                 .font(.title2).foregroundStyle(member.role == "owner" ? Theme.accent : .secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(member.displayName)
-                Text(member.role == "owner" ? "Household owner · full access" : "\(member.role.capitalized) · tap to review visibility")
+                Text(memberAccessSummary(member))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.padding(.vertical, 2)
+    }
+    private func memberAccessSummary(_ member: APIHouseholdMember) -> String {
+        guard member.role != "owner" else { return "Household owner · full access" }
+        guard let profile = memberProfiles[member.userID] else { return "\(member.role.capitalized) · loading visibility…" }
+        guard profile.capabilities.contains("view_budget") else { return "\(member.role.capitalized) · budget hidden" }
+        var scopes: [String] = []
+        if !profile.capabilities.contains("view_accounts") { scopes.append("accounts hidden") }
+        else if profile.restrictAccounts { scopes.append("\(profile.accountIDs.count) account\(profile.accountIDs.count == 1 ? "" : "s")") }
+        else { scopes.append("all accounts") }
+        if !profile.capabilities.contains("view_categories") { scopes.append("plan hidden") }
+        else if profile.restrictCategories { scopes.append("\(profile.categoryIDs.count) categor\(profile.categoryIDs.count == 1 ? "y" : "ies")") }
+        else { scopes.append("all categories") }
+        scopes.append(profile.capabilities.contains("view_budget_totals") && !profile.restrictAccounts && !profile.restrictCategories ? "totals visible" : "totals hidden")
+        return "\(member.role.capitalized) · \(scopes.joined(separator: " · "))"
     }
     private func delegatedSummary(_ userID: String) -> String {
         guard let policy = store.delegatedBudgets.first(where: { $0.userID == userID }) else { return "No delegated budget configured" }
@@ -7568,6 +7583,16 @@ private struct LiveHouseholdOverviewView: View {
     private func loadInvitations() async {
         do { invitations = try await store.householdInvitations(); invitationError = nil }
         catch { invitationError = error.localizedDescription }
+    }
+    private func loadHouseholdManagement() async {
+        async let inviteLoad: Void = loadInvitations()
+        await withTaskGroup(of: (String, APIAccessProfile?).self) { group in
+            for member in otherMembers {
+                group.addTask { (member.userID, try? await store.accessProfile(userID: member.userID)) }
+            }
+            for await (userID, profile) in group { if let profile { memberProfiles[userID] = profile } }
+        }
+        _ = await inviteLoad
     }
 }
 
@@ -7938,6 +7963,7 @@ private struct MemberScopeSelectionView: View {
 private struct LiveMemberAccessView: View {
     @ObservedObject var store: BudgetWorkspaceStore
     let member: APIHouseholdMember
+    var onSaved: (APIAccessProfile) -> Void = { _ in }
     @State private var profile: APIAccessProfile?
     @State private var preset: MemberAccessPreset = .view
     @State private var capabilities: Set<String> = []
@@ -8094,7 +8120,8 @@ private struct LiveMemberAccessView: View {
         guard let profile else { return }; isSaving = true; defer { isSaving = false }
         do {
             let value = APIAccessProfileUpsert(capabilities: capabilities.sorted(), restrictAccounts: restrictAccounts, accountIDs: accountIDs.sorted(), restrictCategories: restrictCategories, categoryIDs: categoryIDs.sorted(), expectedVersion: profile.version)
-            apply(try await store.updateAccessProfile(userID: member.userID, value: value)); errorMessage = nil; didSave = true
+            let updated = try await store.updateAccessProfile(userID: member.userID, value: value)
+            apply(updated); onSaved(updated); errorMessage = nil; didSave = true
         } catch { errorMessage = error.localizedDescription }
     }
 }

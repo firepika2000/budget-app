@@ -5,6 +5,8 @@
 - Enabled CSV, TSV, and delimited-text statement reconciliation for Local on this iPhone. Local
   imports now use the same bounded mapping, duplicate-aware review, explicit post/skip selection,
   and canonical cleared-transaction path as the server-backed workflow.
+- Household owners can now see each member's effective account, category, and household-total
+  visibility directly in the People list, with the summary refreshing immediately after a save.
 
 - Added authenticated, money-neutral bank-statement staging and duplicate review APIs for CSV,
   OFX/QFX, QIF, and conservatively recognized text-based PDFs, plus explicit all-row review and
