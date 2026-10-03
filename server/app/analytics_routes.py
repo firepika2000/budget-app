@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 from starlette.responses import Response
 
 from .access import has_capability, is_household_owner, visible_resource_ids
-from .budgeting_routes import account_working_balances, require_budget_capability
+from .budgeting_routes import account_working_balances, require_budget_capability, transaction_visibility_conditions
 from .calendar_dates import month_periods
 from .cash_rollover_repository import cash_rollover_effects
 from .debt_projection import estimated_monthly_interest
@@ -734,6 +734,60 @@ def resilience_report(
     cash_buffer = sum(actual_by_id.get(account_id, 0) for account_id in cash_ids)
     scheduled_income = sum(item.amount_minor for item in projection.occurrences if item.destination_account_id is None and item.amount_minor > 0)
     scheduled_outflows = sum(-item.amount_minor for item in projection.occurrences if item.destination_account_id is None and item.amount_minor < 0)
+    burn_window_days = 90
+    burn_start = today - timedelta(days=burn_window_days - 1)
+    recent = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.budget_id == budget_id,
+        Transaction.account_id.in_(cash_ids),
+        Transaction.occurred_on >= burn_start,
+        Transaction.occurred_on <= today,
+        *transaction_visibility_conditions(db, user, budget),
+    ))) if cash_ids else []
+    _, recent_spending, _, _ = _income_spending_values([
+        item for item in recent if item.transfer_id is None and item.status != "voided"
+    ])
+    daily_burn = (recent_spending + burn_window_days - 1) // burn_window_days if recent_spending > 0 else None
+    runway_days = max(cash_buffer, 0) // daily_burn if daily_burn else None
+
+    # Current-money age uses a FIFO lot model over authorized cash-account inflows and posted
+    # outflows. Transfers are excluded and categorized refunds become new cash lots on their
+    # posting date. This is an observation only; it never changes ledger or planning state.
+    history = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.budget_id == budget_id,
+        Transaction.account_id.in_(cash_ids),
+        Transaction.occurred_on <= today,
+        *transaction_visibility_conditions(db, user, budget),
+    ).order_by(Transaction.occurred_on, Transaction.created_at, Transaction.id))) if cash_ids else []
+    lots: list[list[object]] = []
+    for item in history:
+        if item.transfer_id is not None or item.status == "voided" or item.amount_minor == 0:
+            continue
+        categorized = item.category_id is not None or bool(item.splits)
+        if item.amount_minor > 0:
+            lots.append([item.occurred_on, item.amount_minor])
+            continue
+        if not categorized:
+            continue
+        remaining = -item.amount_minor
+        while remaining > 0 and lots:
+            used = min(remaining, int(lots[0][1]))
+            lots[0][1] = int(lots[0][1]) - used
+            remaining -= used
+            if lots[0][1] == 0:
+                lots.pop(0)
+    lot_total = sum(int(item[1]) for item in lots)
+    average_age = (
+        sum((today - item[0]).days * int(item[1]) for item in lots) // lot_total
+        if lot_total > 0 else None
+    )
+    unavailable = {
+        "essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.",
+        "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification.",
+    }
+    if average_age is None:
+        unavailable["average_age_of_money_days"] = "No positive authorized cash lots are available to age."
+    if daily_burn is None:
+        unavailable["runway_days"] = "No net spending was recorded in the trailing 90 days."
     return {
         "as_of": today, "through": projection.through, "currency_code": budget.currency_code,
         "cash_buffer_minor": cash_buffer,
@@ -742,12 +796,13 @@ def resilience_report(
         "lowest_projected_on_budget_minor": projection.lowest_projected_total_minor,
         "scheduled_income_minor": scheduled_income, "scheduled_outflows_minor": scheduled_outflows,
         "expected_margin_minor": scheduled_income - scheduled_outflows,
+        "average_age_of_money_days": average_age,
+        "daily_burn_rate_minor": daily_burn,
+        "runway_days": runway_days,
+        "burn_rate_window_days": burn_window_days,
         "essential_expense_coverage_days": None,
         "emergency_fund_coverage_days": None,
-        "unavailable_metrics": {
-            "essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.",
-            "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification.",
-        },
+        "unavailable_metrics": unavailable,
     }
 
 

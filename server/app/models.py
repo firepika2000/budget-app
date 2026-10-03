@@ -534,6 +534,8 @@ class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (
         Index("ix_transaction_budget_date_id", "budget_id", "occurred_on", "id"),
+        UniqueConstraint("budget_id", "created_by_user_id", "client_operation_id",
+                         name="uq_transaction_client_operation"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -562,6 +564,9 @@ class Transaction(Base):
     reversal_of_transaction_id: Mapped[Optional[str]] = mapped_column(ForeignKey("transactions.id", ondelete="RESTRICT"), nullable=True, unique=True)
     reversal_transaction_id: Mapped[Optional[str]] = mapped_column(ForeignKey("transactions.id", ondelete="RESTRICT"), nullable=True, unique=True)
     created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    # Stable client identity for replaying a locally queued create after an uncertain connection.
+    # NULL preserves existing server-created/imported transaction behavior.
+    client_operation_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     splits: Mapped[list["TransactionSplit"]] = relationship(
         back_populates="transaction",

@@ -40,14 +40,14 @@ struct MoveMoneyOperation: Equatable, Sendable {
     let expectedVersion: Int
 }
 
-struct TransactionSplitOperation: Equatable, Sendable {
+struct TransactionSplitOperation: Codable, Equatable, Sendable {
     let categoryID: String
     let amountMinor: Int64
     let memo: String
     var financialClassification: String? = nil
 }
 
-struct RecordTransactionOperation: Equatable, Sendable {
+struct RecordTransactionOperation: Codable, Equatable, Sendable {
     let accountID: String
     let categoryID: String?
     let amountMinor: Int64
@@ -61,6 +61,7 @@ struct RecordTransactionOperation: Equatable, Sendable {
     let flag: String?
     let tags: [String]
     let attachmentMetadata: [[String: String]]
+    var clientOperationID: String? = nil
 }
 
 struct MakeRecurringOperation: Equatable, Sendable {
@@ -177,6 +178,138 @@ enum BudgetApplicationError: LocalizedError, Equatable, Sendable {
         if error is URLError { return .temporarilyUnavailable(message) }
         return .invalidOperation(message)
     }
+}
+
+// MARK: - Durable Live transaction outbox
+
+/// Persists simple transaction creates while a shared Budget Server is unreachable. Entries carry
+/// a server-enforced idempotency identity, so an uncertain response can be replayed without posting
+/// money twice. Allocation, reconciliation, transfer, and authority mutations deliberately do not
+/// use this queue because they require current server state and conflict validation.
+@MainActor
+final class LiveTransactionOutbox {
+    struct Entry: Codable, Equatable, Identifiable {
+        let id: String
+        let queuedAt: Date
+        let operation: RecordTransactionOperation
+    }
+
+    private let fileURL: URL
+    private(set) var entries: [Entry]
+
+    init(budgetID: String, serverURL: URL, token: String, fileManager: FileManager = .default) {
+        let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("BudgetApp/LiveOutbox", isDirectory: true)
+        try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        let scope = "\(serverURL.host ?? "server")-\(serverURL.port ?? 0)-\(liveCredentialSubject(token))-\(budgetID)"
+            .replacingOccurrences(of: "/", with: "-")
+        fileURL = root.appendingPathComponent("\(scope).json", isDirectory: false)
+        entries = (try? Data(contentsOf: fileURL)).flatMap { try? JSONDecoder().decode([Entry].self, from: $0) } ?? []
+    }
+
+    init(fileURL: URL) {
+        self.fileURL = fileURL
+        try? FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        entries = (try? Data(contentsOf: fileURL)).flatMap { try? JSONDecoder().decode([Entry].self, from: $0) } ?? []
+    }
+
+    var count: Int { entries.count }
+
+    func enqueue(_ operation: RecordTransactionOperation) throws {
+        guard let id = operation.clientOperationID, UUID(uuidString: id) != nil else {
+            throw BudgetApplicationError.invalidOperation("Queued transactions require a stable operation identity.")
+        }
+        if entries.contains(where: { $0.id == id }) { return }
+        entries.append(Entry(id: id, queuedAt: Date(), operation: operation))
+        try persist()
+    }
+
+    func remove(id: String) throws {
+        entries.removeAll { $0.id == id }
+        try persist()
+    }
+
+    private func persist() throws {
+        let data = try JSONEncoder().encode(entries)
+        try data.write(to: fileURL, options: [.atomic, .completeFileProtection])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    }
+}
+
+struct LiveWorkspaceCachePayload: Codable {
+    let savedAt: Date
+    let accounts: [APIAccount]
+    let accountBalances: [String: APIAccountBalance]
+    let categories: [APICategory]
+    let groups: [APICategoryGroup]
+    let transactions: [APITransaction]
+    let summary: APIMonthSummary?
+    let targets: [APICategoryTarget]
+    let schedules: [APIScheduledTransaction]
+    let forecast: APIForecast?
+}
+
+/// File-protected last-known authorized observation. It is display-only: permissions and all
+/// financial commands are still revalidated by the server, and a 403/404 never falls back here.
+@MainActor
+final class LiveWorkspaceReadCache {
+    private let fileURL: URL
+
+    init(budgetID: String, serverURL: URL, token: String, fileManager: FileManager = .default) {
+        let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("BudgetApp/LiveCache", isDirectory: true)
+        try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        let scope = "\(serverURL.host ?? "server")-\(serverURL.port ?? 0)-\(liveCredentialSubject(token))-\(budgetID)"
+            .replacingOccurrences(of: "/", with: "-")
+        fileURL = root.appendingPathComponent("\(scope).json", isDirectory: false)
+    }
+
+    init(fileURL: URL) { self.fileURL = fileURL }
+
+    func save(_ snapshot: WorkspaceSnapshot) throws {
+        let value = LiveWorkspaceCachePayload(
+            savedAt: Date(), accounts: snapshot.accounts,
+            accountBalances: snapshot.accountBalances, categories: snapshot.categories,
+            groups: snapshot.groups, transactions: snapshot.transactions, summary: snapshot.summary,
+            targets: snapshot.targets, schedules: snapshot.schedules, forecast: snapshot.forecast
+        )
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try JSONEncoder().encode(value).write(to: fileURL, options: [.atomic, .completeFileProtection])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    }
+
+    func load() throws -> LiveWorkspaceCachePayload {
+        try JSONDecoder().decode(LiveWorkspaceCachePayload.self, from: Data(contentsOf: fileURL))
+    }
+
+    func remove() { try? FileManager.default.removeItem(at: fileURL) }
+}
+
+private func liveCredentialSubject(_ token: String) -> String {
+    let pieces = token.split(separator: ".")
+    guard pieces.count > 1 else { return "unknown-user" }
+    var value = String(pieces[1]).replacingOccurrences(of: "-", with: "+")
+        .replacingOccurrences(of: "_", with: "/")
+    value += String(repeating: "=", count: (4 - value.count % 4) % 4)
+    guard let data = Data(base64Encoded: value),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let subject = object["sub"] as? String else { return "unknown-user" }
+    return subject.replacingOccurrences(of: "/", with: "-")
+}
+
+func isTransientConnectivityFailure(_ error: Error) -> Bool {
+    if error is URLError { return true }
+    let nsError = error as NSError
+    if nsError.domain == NSURLErrorDomain { return true }
+    if case let APIClientError.server(status, _) = error { return status == 408 || status == 429 || status >= 500 }
+    if case .some(.temporarilyUnavailable) = error as? BudgetApplicationError { return true }
+    return false
 }
 
 // MARK: - Capability-oriented repository contracts
@@ -528,7 +661,8 @@ extension RecordTransactionOperation {
             splits: splits.map { APITransactionSplitCreate(categoryID: $0.categoryID, amountMinor: $0.amountMinor, memo: $0.memo, financialClassification: $0.financialClassification) },
             flag: flag,
             tags: tags,
-            attachmentMetadata: attachmentMetadata
+            attachmentMetadata: attachmentMetadata,
+            clientOperationID: clientOperationID
         )
     }
 }

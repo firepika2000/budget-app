@@ -14,14 +14,19 @@ It does not replace the product audit or broader production-readiness history.
   Simulator; the production icon renders and existing provider/authentication state survives install.
 - [x] Focused production UI checks pass for onboarding, fresh account/category setup,
   assignment editing, clearing/reconciliation, scheduling, Home, Insights and Debt failure handling.
+- [x] Previously authorized server workspaces open from a protected snapshot during temporary
+  outages; ordinary transaction entry queues durably and replays exactly once after reconnect.
+- [x] Transient refresh failures use a compact workspace status instead of replacing the current
+  route or presenting a blocking alert.
 - [ ] Human Live retest confirms Debt navigation no longer repeats alerts or terminates.
 - [ ] One disposable Live user completes the concise core journey and relaunch persistence check.
-- [x] Release-candidate Swift and native suites pass for the local-first revision (backend is unchanged).
+- [x] Release-candidate backend, migration, Swift, native XCTest, focused XCUITest, and Simulator
+  build pass for the offline-resilience revision.
 - [ ] Backup and restore are exercised once against disposable Beta data.
 
 ## App Store Connect gate
 
-- [x] Current candidate identity is `0.8.0` build `3`; build `2` was the prior accepted upload.
+- [x] Current candidate identity is `0.8.0` build `4`; build `3` was the prior TestFlight upload.
 - [x] Apple Developer team `6JGQ5388N8` and App ID `com.firepika.BudgetApp` are available locally.
 - [x] Build number was incremented for this upload.
 - [ ] Confirm export-compliance answers for the app's use of Apple-provided HTTPS/Keychain APIs.
@@ -57,7 +62,7 @@ Use disposable Beta data; do not reset the existing human Live database.
 
 **ENGINEERING PACKAGE:** local-first release candidate verified and archiveable.
 
-**TESTFLIGHT READY:** `0.8.0 (3)` is the current engineering candidate. Upload and App Store Connect
+**TESTFLIGHT READY:** `0.8.0 (4)` is the current engineering candidate. Upload and App Store Connect
 processing remain required; no human acceptance is inferred from a successful upload.
 
 ## Signing handoff

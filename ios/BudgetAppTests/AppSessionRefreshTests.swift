@@ -72,6 +72,48 @@ final class AppSessionRefreshTests: XCTestCase {
                        "post-pair identity and budget hydration may complete concurrently")
     }
 
+    @MainActor
+    func testForegroundValidationKeepsAuthenticatedWorkspaceDuringTransientOutage() async throws {
+        let unavailable = Counter()
+        RefreshMockURLProtocol.handler = { request in
+            switch request.url!.path {
+            case "/api/v1/health":
+                return unavailable.value == 0
+                    ? Self.json(200, #"{"status":"ok"}"#)
+                    : Self.json(503, #"{"detail":"Temporarily unavailable"}"#)
+            case "/api/v1/bootstrap/status": return Self.json(200, #"{"initialized":true,"authentication_required":true,"api_version":"v1"}"#)
+            case "/api/v1/auth/pair": return Self.json(200, #"{"access_token":"access","refresh_token":"refresh","token_type":"bearer"}"#)
+            case "/api/v1/me": return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
+            case "/api/v1/budgets": return Self.json(200, #"[{"id":"b1","household_id":"h1","name":"Home","currency_code":"USD","effective_permission":"owner","allocation_version":0}]"#)
+            default: return Self.json(404, #"{"detail":"not found"}"#)
+            }
+        }
+        let suite = "AppSessionForegroundTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let session = AppSession(
+            defaults: defaults,
+            keychain: InMemoryTokenStore([:]),
+            clientFactory: {
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.protocolClasses = [RefreshMockURLProtocol.self]
+                return try APIClient(baseURL: $0, session: URLSession(configuration: configuration))
+            },
+            initialMode: .localDevice
+        )
+        await session.pairDevice(serverAddress: "https://budget.example.com", code: "one-time-code")
+        guard case .workspace = session.route else { return XCTFail("Expected authenticated workspace") }
+
+        _ = unavailable.increment()
+        await session.validateSelectedSource(caller: "foreground-test")
+
+        XCTAssertEqual(session.connectionStatus, .connected)
+        guard case .workspace = session.route else {
+            return XCTFail("A transient foreground validation must not replace the active workspace")
+        }
+        XCTAssertNil(session.errorMessage, "A routine reconnect miss must remain in the compact workspace sync status instead of interrupting the user")
+    }
+
     private static func workspaceResponse(_ path: String) -> (Int, Data) {
         if path.contains("/months/") {
             return json(200, #"{"month":"2026-09-01","currency_code":"USD","ready_to_assign_minor":42,"total_assigned_minor":0,"total_overspent_minor":0,"allocation_version":0,"categories":[]}"#)
@@ -1167,6 +1209,79 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertNil(session.profile)
         XCTAssertTrue(session.budgets.isEmpty)
         XCTAssertEqual(session.connectionStatus, .authenticationRequired)
+        XCTAssertNil(session.errorMessage)
+    }
+    @MainActor
+    func testLiveTransactionOutboxPersistsExactMoneyAndStableReplayIdentity() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("live-outbox-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("queue.json")
+        let id = "5c0da385-5c73-40fc-8c4f-19e9c93ae5b6"
+        let operation = RecordTransactionOperation(
+            accountID: "checking", categoryID: "groceries", amountMinor: -12_345,
+            occurredOn: "2026-10-03", payeeName: "Offline Market", memo: "No signal",
+            isCleared: false,
+            splits: [.init(categoryID: "groceries", amountMinor: -12_345, memo: "")],
+            flag: "orange", tags: ["offline"], attachmentMetadata: [], clientOperationID: id
+        )
+        let first = LiveTransactionOutbox(fileURL: file)
+        try first.enqueue(operation)
+        try first.enqueue(operation)
+        XCTAssertEqual(first.count, 1)
+
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.entries.first?.operation.amountMinor, -12_345)
+        XCTAssertEqual(reopened.entries.first?.operation.clientOperationID, id)
+        try reopened.remove(id: id)
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).count, 0)
+    }
+
+    @MainActor
+    func testLiveWorkspaceReadCacheSurvivesRelaunchWithoutInventingAuthority() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("live-cache-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = LiveWorkspaceReadCache(fileURL: directory.appendingPathComponent("cache.json"))
+        let snapshot = WorkspaceSnapshot(
+            accounts: [], accountBalances: [:], categories: [], groups: [], transactions: [],
+            summary: nil, requests: [], allowances: [], spending: nil, spendingTrends: nil,
+            income: nil, netWorth: nil, debt: nil, planPerformance: nil, resilience: nil,
+            delegated: nil, forecast: nil, members: [], delegatedBudgets: []
+        )
+        try cache.save(snapshot)
+        let reopened = try LiveWorkspaceReadCache(fileURL: directory.appendingPathComponent("cache.json")).load()
+        XCTAssertTrue(reopened.accounts.isEmpty)
+        XCTAssertTrue(reopened.transactions.isEmpty)
+        XCTAssertLessThan(Date().timeIntervalSince(reopened.savedAt), 5)
+    }
+
+    @MainActor
+    func testCachedAuthorizedBudgetKeepsWorkspaceRouteDuringColdOfflineLaunch() async {
+        let suite = "CachedLiveRoute.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("https://budget.example.com", forKey: "budget.serverURL")
+        defaults.set("liveServer", forKey: "budget.dataSourceMode")
+        defaults.set("b1", forKey: "budget.activeBudgetID")
+        defaults.set(Data(#"[{"id":"b1","household_id":"h1","name":"Home","currency_code":"USD","effective_permission":"owner","allocation_version":0}]"#.utf8), forKey: "budget.authorizedBudgetCache")
+        let token = Self.jwt(expiration: Date().timeIntervalSince1970 + 3_600)
+        RefreshMockURLProtocol.handler = { _ in Self.json(503, #"{"detail":"offline"}"#) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let session = AppSession(
+            defaults: defaults,
+            keychain: InMemoryTokenStore(["access-token": token, "refresh-token": "refresh"]),
+            clientFactory: { try APIClient(baseURL: $0, session: URLSession(configuration: configuration)) }
+        )
+
+        guard case .workspace(.live) = session.route else {
+            return XCTFail("The saved authorized workspace must render before reachability completes")
+        }
+        await session.activate(caller: "offline-cold-launch-test")
+        guard case .workspace(.live) = session.route else {
+            return XCTFail("A transient outage must not replace the workspace route")
+        }
         XCTAssertNil(session.errorMessage)
     }
 }

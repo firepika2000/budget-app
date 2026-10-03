@@ -464,6 +464,24 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(estimated.waitForExistence(timeout: 5))
     }
 
+    func testPlanGuidanceAndResilienceMetricsRenderInProductionWorkspace() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=plan", "--skip-guided-onboarding"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Suggested")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Avg spent")).firstMatch.exists)
+
+        app.buttons["Insights"].tap()
+        XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
+        for _ in 0..<6 where !app.staticTexts["Average age of money"].exists { app.swipeUp() }
+        XCTAssertTrue(app.staticTexts["Average age of money"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Current daily burn rate"].exists)
+        XCTAssertTrue(app.staticTexts["Cash runway"].exists)
+    }
+
     func testProductionTimeSeriesMarksExposeCurrencyInsteadOfRawMinorUnits() {
         continueAfterFailure = false
         let app = XCUIApplication()

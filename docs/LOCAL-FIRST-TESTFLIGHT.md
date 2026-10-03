@@ -29,9 +29,17 @@ server-backed budgets; no example fixtures, server, account, or sign-in are requ
 ## Offline boundary
 
 On-device mode is fully offline because the phone database is authoritative; changes do not wait
-for network synchronization. A future server-backed offline outbox will cache authorized reads and
-queue only operations with defined idempotency/conflict rules. This revision does not silently queue
-allocation or reconciliation commands against an unreachable shared authority.
+for network synchronization. A server-backed workspace now keeps its last successfully authorized
+core snapshot in protected device storage and opens that workspace during a temporary outage rather
+than replacing it with setup or sign-in. Ordinary transaction entry is saved to a durable,
+user/server/budget-scoped outbox with an idempotency key; reconnect replay is ordered and cannot post
+the same transaction twice, including after an uncertain response. A compact status pill reports
+background updating, offline use, pending changes, or a rejected item and can be tapped to retry.
+
+Authorization remains the safety boundary. A 403/404 never falls back to cached authority, and
+sign-out removes cached authorization. Operations that require current shared authority or conflict
+resolution—allocations, reconciliation, transfers, household/delegation changes, and destructive
+commands—remain online-only instead of being silently queued.
 
 ## Storage boundary
 
@@ -61,3 +69,7 @@ the workspace fails closed instead of accepting changes into volatile memory.
 11. With disposable data only, open Profile & Settings → **Delete This Budget**, verify the action
     stays disabled until the exact name is entered, delete it, and confirm the replacement budget
     contains the starter Plan but none of the deleted financial records.
+12. For a server budget, load the workspace once, disable connectivity, and confirm the last
+    authorized Home/Plan/Activity/Accounts state remains usable. Add one ordinary transaction and
+    confirm the unobtrusive pending-sync indicator appears. Restore connectivity, tap it if needed,
+    and confirm the transaction posts exactly once and survives relaunch.

@@ -18,7 +18,7 @@ struct APIRefreshRequest: Encodable {
     }
 }
 
-public enum APIBudgetPermission: String, Decodable, Equatable, Sendable {
+public enum APIBudgetPermission: String, Codable, Equatable, Sendable {
     case view, contribute, manage, owner
 
     public var canContribute: Bool { self != .view }
@@ -42,7 +42,7 @@ public enum APIBudgetPermission: String, Decodable, Equatable, Sendable {
     }
 }
 
-public struct APIBudget: Identifiable, Decodable, Equatable, Sendable {
+public struct APIBudget: Identifiable, Codable, Equatable, Sendable {
     public static let supportedCapabilities = APIBudgetPermission.manage.legacyCapabilities.union(["manage_own_categories"])
     public let id: String
     public let householdID: String
@@ -231,7 +231,7 @@ public struct APIHousehold: Identifiable, Decodable, Equatable, Sendable {
     }
 }
 
-public struct APIHouseholdMember: Identifiable, Decodable, Equatable, Sendable {
+public struct APIHouseholdMember: Identifiable, Codable, Equatable, Sendable {
     public var id: String { userID }
     public let userID: String
     public let email: String
@@ -338,7 +338,7 @@ public struct APIBudgetDeleteConfirmation: Encodable, Sendable {
     enum CodingKeys: String, CodingKey { case confirmationName = "confirmation_name" }
 }
 
-public struct APIScheduledTransaction: Identifiable, Decodable, Equatable, Sendable {
+public struct APIScheduledTransaction: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
     public let accountID: String
@@ -496,7 +496,7 @@ struct APIErrorBody: Decodable {
     }
 }
 
-public struct APIAccount: Identifiable, Decodable, Equatable, Sendable {
+public struct APIAccount: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
     public let name: String
@@ -517,7 +517,7 @@ public struct APIAccount: Identifiable, Decodable, Equatable, Sendable {
     }
 }
 
-public struct APIAccountBalance: Decodable, Equatable, Sendable {
+public struct APIAccountBalance: Codable, Equatable, Sendable {
     public let accountID: String; public let currencyCode: String; public let clearedBalanceMinor: Int64; public let unclearedBalanceMinor: Int64; public let workingBalanceMinor: Int64; public let reconciledBalanceMinor: Int64?
     enum CodingKeys: String, CodingKey { case accountID = "account_id", currencyCode = "currency_code", clearedBalanceMinor = "cleared_balance_minor", unclearedBalanceMinor = "uncleared_balance_minor", workingBalanceMinor = "working_balance_minor", reconciledBalanceMinor = "reconciled_balance_minor" }
 }
@@ -724,7 +724,7 @@ public struct APIDebtStrategyProjection: Decodable, Equatable, Sendable {
     }
 }
 
-public struct APICategoryGroup: Identifiable, Decodable, Equatable, Sendable {
+public struct APICategoryGroup: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
     public let name: String
@@ -800,7 +800,7 @@ public struct APICategoryFavoriteUpsert: Encodable, Sendable {
     enum CodingKeys: String, CodingKey { case sortOrder = "sort_order" }
 }
 
-public struct APICategoryTarget: Identifiable, Decodable, Equatable, Sendable {
+public struct APICategoryTarget: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let categoryID: String
     public let targetType: String
@@ -825,7 +825,7 @@ public struct APICategoryTargetUpsert: Encodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case priority; case targetType="target_type", targetAmountMinor="target_amount_minor", targetDate="target_date", recurrenceMonths="recurrence_months", minimumContributionMinor="minimum_contribution_minor", isActive="is_active" }
 }
 
-public struct APITransactionSplit: Identifiable, Decodable, Equatable, Sendable {
+public struct APITransactionSplit: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let categoryID: String
     public let amountMinor: Int64
@@ -840,7 +840,7 @@ public struct APITransactionSplit: Identifiable, Decodable, Equatable, Sendable 
     }
 }
 
-public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
+public struct APITransaction: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let accountID: String
     public let categoryID: String?
@@ -854,6 +854,10 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
     public let isCleared: Bool
     public let isReconciled: Bool
     public let createdByUserID: String?
+    public let createdByDisplayName: String?
+    public let lastModifiedByUserID: String?
+    public let lastModifiedByDisplayName: String?
+    public let lastModifiedAt: String?
     public let transferID: String?
     public let scheduledTransactionID: String?
     public let flag: String?
@@ -880,6 +884,10 @@ public struct APITransaction: Identifiable, Decodable, Equatable, Sendable {
         case isCleared = "is_cleared"
         case isReconciled = "is_reconciled"
         case createdByUserID = "created_by_user_id"
+        case createdByDisplayName = "created_by_display_name"
+        case lastModifiedByUserID = "last_modified_by_user_id"
+        case lastModifiedByDisplayName = "last_modified_by_display_name"
+        case lastModifiedAt = "last_modified_at"
         case transferID = "transfer_id"
         case scheduledTransactionID = "scheduled_transaction_id"
         case attachmentMetadata = "attachment_metadata"
@@ -1422,6 +1430,10 @@ public struct APIResilienceReport: Decodable, Equatable, Sendable {
     public let scheduledIncomeMinor: Int64
     public let scheduledOutflowsMinor: Int64
     public let expectedMarginMinor: Int64
+    public let averageAgeOfMoneyDays: Int?
+    public let dailyBurnRateMinor: Int64?
+    public let runwayDays: Int?
+    public let burnRateWindowDays: Int?
     public let essentialExpenseCoverageDays: Int?
     public let emergencyFundCoverageDays: Int?
     public let unavailableMetrics: [String: String]
@@ -1432,23 +1444,25 @@ public struct APIResilienceReport: Decodable, Equatable, Sendable {
         case lowestProjectedOnBudgetMinor = "lowest_projected_on_budget_minor"
         case scheduledIncomeMinor = "scheduled_income_minor", scheduledOutflowsMinor = "scheduled_outflows_minor"
         case expectedMarginMinor = "expected_margin_minor"
+        case averageAgeOfMoneyDays = "average_age_of_money_days", dailyBurnRateMinor = "daily_burn_rate_minor"
+        case runwayDays = "runway_days", burnRateWindowDays = "burn_rate_window_days"
         case essentialExpenseCoverageDays = "essential_expense_coverage_days"
         case emergencyFundCoverageDays = "emergency_fund_coverage_days", unavailableMetrics = "unavailable_metrics"
     }
 }
 
-public struct APIForecastOccurrence: Identifiable, Decodable, Equatable, Sendable {
+public struct APIForecastOccurrence: Identifiable, Codable, Equatable, Sendable {
     public var id: String { "\(scheduledTransactionID)-\(occurredOn)" }
     public let scheduledTransactionID: String; public let name: String; public let occurredOn: String; public let accountID: String; public let destinationAccountID: String?; public let categoryID: String?; public let amountMinor: Int64
     enum CodingKeys: String, CodingKey { case name; case scheduledTransactionID = "scheduled_transaction_id", occurredOn = "occurred_on", accountID = "account_id", destinationAccountID = "destination_account_id", categoryID = "category_id", amountMinor = "amount_minor" }
 }
 
-public struct APIForecastAccount: Identifiable, Decodable, Equatable, Sendable {
+public struct APIForecastAccount: Identifiable, Codable, Equatable, Sendable {
     public var id: String { accountID }; public let accountID: String; public let name: String; public let actualBalanceMinor: Int64; public let projectedBalanceMinor: Int64
     enum CodingKeys: String, CodingKey { case name; case accountID = "account_id", actualBalanceMinor = "actual_balance_minor", projectedBalanceMinor = "projected_balance_minor" }
 }
 
-public struct APIForecast: Decodable, Equatable, Sendable {
+public struct APIForecast: Codable, Equatable, Sendable {
     public let asOf: String; public let through: String; public let currencyCode: String; public let actualTotalOnBudgetMinor: Int64; public let projectedTotalOnBudgetMinor: Int64; public let lowestProjectedTotalMinor: Int64; public let accounts: [APIForecastAccount]; public let occurrences: [APIForecastOccurrence]
     enum CodingKeys: String, CodingKey { case accounts, occurrences; case asOf = "as_of", through, currencyCode = "currency_code", actualTotalOnBudgetMinor = "actual_total_on_budget_minor", projectedTotalOnBudgetMinor = "projected_total_on_budget_minor", lowestProjectedTotalMinor = "lowest_projected_total_minor" }
 }
@@ -1534,7 +1548,7 @@ struct APISmartFundingCommit: Encodable {
     enum CodingKeys: String, CodingKey { case month; case expectedAllocationVersion = "expected_allocation_version" }
 }
 
-public struct APICategoryMonth: Identifiable, Decodable, Equatable, Sendable {
+public struct APICategoryMonth: Identifiable, Codable, Equatable, Sendable {
     public var id: String { categoryID }
     public let categoryID: String
     public let name: String
@@ -1568,7 +1582,7 @@ public struct APICategoryMonth: Identifiable, Decodable, Equatable, Sendable {
     }
 }
 
-public struct APIMonthSummary: Decodable, Equatable, Sendable {
+public struct APIMonthSummary: Codable, Equatable, Sendable {
     public let month: String
     public let currencyCode: String
     public let readyToAssignMinor: Int64
@@ -1609,7 +1623,7 @@ public struct APIMonthSummary: Decodable, Equatable, Sendable {
     }
 }
 
-public struct APICategory: Identifiable, Decodable, Equatable, Sendable {
+public struct APICategory: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
     public let groupID: String
@@ -1805,6 +1819,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
     public let flag: String?
     public let tags: [String]
     public let attachmentMetadata: [[String: String]]
+    public let clientOperationID: String?
 
     public init(
         accountID: String,
@@ -1819,7 +1834,8 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         splits: [APITransactionSplitCreate] = [],
         flag: String? = nil,
         tags: [String] = [],
-        attachmentMetadata: [[String: String]] = []
+        attachmentMetadata: [[String: String]] = [],
+        clientOperationID: String? = nil
     ) {
         self.accountID = accountID
         self.categoryID = categoryID
@@ -1834,6 +1850,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         self.flag = flag
         self.tags = tags
         self.attachmentMetadata = attachmentMetadata
+        self.clientOperationID = clientOperationID
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1847,6 +1864,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         case payeeName = "payee_name"
         case isCleared = "is_cleared"
         case attachmentMetadata = "attachment_metadata"
+        case clientOperationID = "client_operation_id"
     }
 }
 

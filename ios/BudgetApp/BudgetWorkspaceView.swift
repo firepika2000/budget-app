@@ -163,7 +163,7 @@ private struct PayeeEditorView: View {
                     TextField("Name", text: $name).accessibilityIdentifier("payee-name")
                     Picker("Default category", selection: $categoryID) {
                         Text("No suggestion").tag("")
-                        ForEach(store.categories.filter { !$0.isArchived }) { Text($0.name).tag($0.id) }
+                        ForEach(store.categories.filter { !$0.isArchived }) { Text(store.categoryDisplayName($0)).tag($0.id) }
                     }
                     if payee != nil { Toggle("Archived", isOn: $isArchived) }
                 }
@@ -708,7 +708,39 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let scheduledIncome = try Money.sumMinorUnits(demoForecast.occurrences.filter { $0.destinationAccountID == nil && $0.amountMinor > 0 }.map(\.amountMinor))
         let scheduledOutflows = try difference(0, Money.sumMinorUnits(demoForecast.occurrences.filter { $0.destinationAccountID == nil && $0.amountMinor < 0 }.map(\.amountMinor)))
         let cashIDs = Set(visibleAccounts.filter { $0.isOnBudget && ["checking", "savings", "cash"].contains($0.kind.rawValue) }.map(\.id))
-        let resilience: APIResilienceReport = try decode(["as_of": demoForecast.asOf, "through": demoForecast.through, "currency_code": budget.currencyCode, "cash_buffer_minor": Money.sumMinorUnits(demoForecast.accounts.filter { cashIDs.contains($0.accountID) }.map(\.actualBalanceMinor)), "current_on_budget_minor": demoForecast.actualTotalOnBudgetMinor, "projected_on_budget_minor": demoForecast.projectedTotalOnBudgetMinor, "lowest_projected_on_budget_minor": demoForecast.lowestProjectedTotalMinor, "scheduled_income_minor": scheduledIncome, "scheduled_outflows_minor": scheduledOutflows, "expected_margin_minor": difference(scheduledIncome, scheduledOutflows), "essential_expense_coverage_days": NSNull(), "emergency_fund_coverage_days": NSNull(), "unavailable_metrics": ["essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.", "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification."]])
+        let cashBuffer = try Money.sumMinorUnits(demoForecast.accounts.filter { cashIDs.contains($0.accountID) }.map(\.actualBalanceMinor))
+        let burnStart = Calendar.current.date(byAdding: .day, value: -89, to: forecastStart) ?? forecastStart
+        let recentNet = try Money.sumMinorUnits(transactionRows.filter {
+            cashIDs.contains($0.accountID) && $0.transferID == nil && $0.status != "voided"
+                && ($0.categoryID != nil || !$0.splits.isEmpty)
+                && BudgetWorkspaceStore.parseDate($0.occurredOn) >= burnStart
+                && BudgetWorkspaceStore.parseDate($0.occurredOn) <= forecastStart
+        }.map(\.amountMinor))
+        let recentSpending = max(-recentNet, 0)
+        let dailyBurn: Int64? = recentSpending > 0 ? (recentSpending + 89) / 90 : nil
+        let runway: Int64? = dailyBurn.map { max(cashBuffer, 0) / $0 }
+        var cashLots: [(date: Date, amount: Int64)] = []
+        for item in transactionRows.filter({ cashIDs.contains($0.accountID) && $0.transferID == nil && $0.status != "voided" }).sorted(by: {
+            if $0.occurredOn != $1.occurredOn { return $0.occurredOn < $1.occurredOn }
+            let leftCreated = $0.createdAt ?? ""
+            let rightCreated = $1.createdAt ?? ""
+            if leftCreated != rightCreated { return leftCreated < rightCreated }
+            return $0.id < $1.id
+        }) {
+            if item.amountMinor > 0 { cashLots.append((BudgetWorkspaceStore.parseDate(item.occurredOn), item.amountMinor)); continue }
+            guard item.categoryID != nil || !item.splits.isEmpty else { continue }
+            var remaining = -item.amountMinor
+            while remaining > 0 && !cashLots.isEmpty {
+                let used = min(remaining, cashLots[0].amount)
+                cashLots[0].amount -= used; remaining -= used
+                if cashLots[0].amount == 0 { cashLots.removeFirst() }
+            }
+        }
+        let lotTotal = try Money.sumMinorUnits(cashLots.map(\.amount))
+        let averageAge: Int64? = lotTotal > 0 ? cashLots.reduce(Int64(0)) { partial, lot in
+            partial + Int64(max(Calendar.current.dateComponents([.day], from: lot.date, to: forecastStart).day ?? 0, 0)) * lot.amount
+        } / lotTotal : nil
+        let resilience: APIResilienceReport = try decode(["as_of": demoForecast.asOf, "through": demoForecast.through, "currency_code": budget.currencyCode, "cash_buffer_minor": cashBuffer, "current_on_budget_minor": demoForecast.actualTotalOnBudgetMinor, "projected_on_budget_minor": demoForecast.projectedTotalOnBudgetMinor, "lowest_projected_on_budget_minor": demoForecast.lowestProjectedTotalMinor, "scheduled_income_minor": scheduledIncome, "scheduled_outflows_minor": scheduledOutflows, "expected_margin_minor": difference(scheduledIncome, scheduledOutflows), "average_age_of_money_days": averageAge.map { $0 as Any } ?? NSNull(), "daily_burn_rate_minor": dailyBurn.map { $0 as Any } ?? NSNull(), "runway_days": runway.map { $0 as Any } ?? NSNull(), "burn_rate_window_days": 90, "essential_expense_coverage_days": NSNull(), "emergency_fund_coverage_days": NSNull(), "unavailable_metrics": ["essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.", "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification."]])
         let memberPayload: [[String: Any]]
         if let localIdentity {
             memberPayload = [["user_id": localIdentity.ownerUserID, "email": "", "display_name": localIdentity.ownerDisplayName,
@@ -1960,9 +1992,41 @@ final class LiveWorkspaceCredentials {
 private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     let budget: APIBudget
     private let credentials: LiveWorkspaceCredentials
+    private let transactionOutbox: LiveTransactionOutbox
+    private(set) var outboxFailureMessage: String?
     private var token: String { credentials.token }
     private var client: APIClient { get throws { try credentials.client() } }
-    init(budget: APIBudget, credentials: LiveWorkspaceCredentials) { self.budget = budget; self.credentials = credentials }
+    init(budget: APIBudget, credentials: LiveWorkspaceCredentials) {
+        self.budget = budget
+        self.credentials = credentials
+        transactionOutbox = LiveTransactionOutbox(
+            budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token
+        )
+    }
+
+    var pendingTransactionCount: Int { transactionOutbox.count }
+
+    /// Replays in insertion order and stops at the first failure. A rejected operation remains
+    /// visible as pending for explicit user attention; a connectivity failure quietly retries on
+    /// the next foreground/background refresh.
+    func flushTransactionOutbox() async throws {
+        for entry in transactionOutbox.entries {
+            do {
+                try await sendTransaction(entry.operation)
+                try transactionOutbox.remove(id: entry.id)
+                outboxFailureMessage = nil
+            } catch {
+                if isTransientConnectivityFailure(error) { throw error }
+                outboxFailureMessage = "A saved transaction needs attention: \(error.localizedDescription)"
+                return
+            }
+        }
+    }
+
+    private func sendTransaction(_ operation: RecordTransactionOperation) async throws {
+        try await credentials.prepare()
+        _ = try await client.createTransaction(budgetID: budget.id, transaction: operation.apiValue, token: token)
+    }
 
     func householdInvitations() async throws -> [APIInvitationSummary] { try await credentials.prepare(); return try await client.householdInvitations(householdID: budget.householdID, token: token) }
     func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret { try await credentials.prepare(); return try await client.createHouseholdInvitation(householdID: budget.householdID, value: value, token: token) }
@@ -1989,7 +2053,15 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func createPayeeAlias(payeeID: String, displayName: String) async throws { try await credentials.prepare(); _ = try await client.createPayeeAlias(budgetID: budget.id, payeeID: payeeID, displayName: displayName, token: token) }
     func deletePayeeAlias(payeeID: String, aliasID: String) async throws { try await credentials.prepare(); try await client.deletePayeeAlias(budgetID: budget.id, payeeID: payeeID, aliasID: aliasID, token: token) }
 
-    func recordTransaction(_ operation: RecordTransactionOperation) async throws { try await credentials.prepare(); _ = try await client.createTransaction(budgetID: budget.id, transaction: operation.apiValue, token: token) }
+    func recordTransaction(_ operation: RecordTransactionOperation) async throws {
+        var identified = operation
+        if identified.clientOperationID == nil { identified.clientOperationID = UUID().uuidString.lowercased() }
+        do {
+            try await sendTransaction(identified)
+        } catch where isTransientConnectivityFailure(error) {
+            try transactionOutbox.enqueue(identified)
+        }
+    }
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { try await credentials.prepare(); _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: operation.apiValue, token: token) }
     func deleteTransaction(id: String) async throws { try await credentials.prepare(); try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
     func duplicateTransaction(id: String, occurredOn: String) async throws { try await credentials.prepare(); _ = try await client.duplicateTransaction(budgetID: budget.id, transactionID: id, occurredOn: occurredOn, token: token) }
@@ -2051,15 +2123,19 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
     var serverURL: URL { credentials.serverURL }
     var token: String { credentials.token }
     let commands: LiveWorkspaceCommandRepository
+    private let readCache: LiveWorkspaceReadCache
+    private(set) var lastReadWasCached = false
     init(budget: APIBudget, serverURL: URL, token: String, clientFactory: @escaping (URL) throws -> APIClient = { try APIClient(baseURL: $0) }) {
         self.budget = budget
         let credentials = LiveWorkspaceCredentials(serverURL: serverURL, token: token, clientFactory: clientFactory)
         self.credentials = credentials
         commands = LiveWorkspaceCommandRepository(budget: budget, credentials: credentials)
+        readCache = LiveWorkspaceReadCache(budgetID: budget.id, serverURL: serverURL, token: token)
     }
 
     func updateCredentials(serverURL: URL, token: String) { credentials.update(serverURL: serverURL, token: token) }
     func bindCredentialAuthority(_ resolver: @escaping LiveWorkspaceCredentials.Resolver) { credentials.bind(resolver) }
+    func evictAuthorizedCache() { readCache.remove() }
 
     func reports(planMonth: Date, query report: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
         guard !kinds.isEmpty, budget.can("view_reports") else { return WorkspaceReports() }
@@ -2087,7 +2163,24 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
     }
 
     func coreSnapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
-        try await loadSnapshot(planMonth: planMonth, report: report, kinds: [])
+        do {
+            let snapshot = try await loadSnapshot(planMonth: planMonth, report: report, kinds: [])
+            try? readCache.save(snapshot)
+            lastReadWasCached = false
+            return snapshot
+        } catch where isTransientConnectivityFailure(error) {
+            let cached = try readCache.load()
+            lastReadWasCached = true
+            return WorkspaceSnapshot(
+                accounts: cached.accounts, accountBalances: cached.accountBalances,
+                categories: cached.categories, groups: cached.groups,
+                transactions: cached.transactions, summary: cached.summary,
+                requests: [], allowances: [], spending: nil, spendingTrends: nil, income: nil,
+                netWorth: nil, debt: nil, planPerformance: nil, resilience: nil,
+                delegated: nil, forecast: cached.forecast, members: [], delegatedBudgets: [],
+                targets: cached.targets, schedules: cached.schedules
+            )
+        }
     }
 
     private func loadSnapshot(planMonth: Date, report: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceSnapshot {
@@ -2154,6 +2247,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var debtReport: APIDebtReport?
     @Published var planPerformanceReport: APIPlanPerformanceReport?
     @Published var resilienceReport: APIResilienceReport?
+    @Published var planningSpendingReport: APISpendingReport?
     @Published var insightsSummary: APIInsightsSummary?
     @Published private(set) var reportRevision = 0
     @Published private(set) var loadedReportKinds: Set<WorkspaceReportKind> = []
@@ -2185,6 +2279,10 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date()))!
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published private(set) var pendingSyncCount = 0
+    @Published private(set) var isBackgroundSyncing = false
+    @Published private(set) var isWorkingOffline = false
+    @Published private(set) var syncStatusMessage: String?
     @Published var hideAmounts = false {
         didSet {
             guard hideAmounts != oldValue, let privacyPreferenceKey else { return }
@@ -2450,10 +2548,25 @@ final class BudgetWorkspaceStore: ObservableObject {
     private func loadSnapshot() async {
         let operationID = UUID()
         snapshotOperationID = operationID
-        isLoading = true
-        defer { if snapshotOperationID == operationID { isLoading = false } }
+        let hasVisibleWorkspace = !accounts.isEmpty || !categories.isEmpty || !transactions.isEmpty
+        let isLiveBackgroundRefresh = dataSource is LiveWorkspaceDataSource && hasVisibleWorkspace
+        isLoading = !isLiveBackgroundRefresh
+        if isLiveBackgroundRefresh { isBackgroundSyncing = true }
+        defer {
+            if snapshotOperationID == operationID {
+                isLoading = false
+                isBackgroundSyncing = false
+            }
+        }
         do {
             if let dataSource {
+                if let live = commandRepository as? LiveWorkspaceCommandRepository {
+                    pendingSyncCount = live.pendingTransactionCount
+                    if pendingSyncCount > 0 {
+                        try await live.flushTransactionOutbox()
+                        pendingSyncCount = live.pendingTransactionCount
+                    }
+                }
                 let range = reportRange()
                 let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, flag: reportFlag, tag: reportTag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTrackingAccounts)
                 let value = try await dataSource.coreSnapshot(planMonth: planMonth, report: query)
@@ -2467,15 +2580,36 @@ final class BudgetWorkspaceStore: ObservableObject {
                 householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; allocationOperations = value.allocationOperations; errorMessage = nil
                 targets = Dictionary(uniqueKeysWithValues: value.targets.map { ($0.categoryID, $0) })
                 scheduledTransactions = value.schedules
+                let cachedRead = (dataSource as? LiveWorkspaceDataSource)?.lastReadWasCached == true
+                isWorkingOffline = cachedRead
+                if cachedRead {
+                    syncStatusMessage = pendingSyncCount > 0
+                        ? "Offline · \(pendingSyncCount) change\(pendingSyncCount == 1 ? "" : "s") saved on this iPhone"
+                        : "Offline · showing the latest saved data"
+                } else {
+                    syncStatusMessage = (commandRepository as? LiveWorkspaceCommandRepository)?.outboxFailureMessage
+                        ?? (pendingSyncCount == 0 ? nil : "\(pendingSyncCount) change\(pendingSyncCount == 1 ? "" : "s") waiting to sync")
+                }
                 reportRevision += 1
                 return
             }
         } catch {
             guard snapshotOperationID == operationID else { return }
             if case let APIClientError.server(status, _) = error, status == 403 || status == 404 {
+                (dataSource as? LiveWorkspaceDataSource)?.evictAuthorizedCache()
                 evictUnauthorizedObservations()
             }
-            errorMessage = error.localizedDescription
+            if isTransientConnectivityFailure(error), (!accounts.isEmpty || !categories.isEmpty || !transactions.isEmpty) {
+                isWorkingOffline = true
+                pendingSyncCount = (commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactionCount ?? pendingSyncCount
+                syncStatusMessage = pendingSyncCount > 0
+                    ? "Offline · \(pendingSyncCount) change\(pendingSyncCount == 1 ? "" : "s") saved on this iPhone"
+                    : "Offline · showing the latest available data"
+                // A routine background refresh must not interrupt the current task with an alert.
+                errorMessage = nil
+            } else {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -2502,6 +2636,19 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func refresh() async { await loadSnapshot() }
+
+    func loadPlanningGuidance() async {
+        guard !workspaceAccessDenied, let dataSource, budget.can("view_reports") else { return }
+        let end = Calendar.current.startOfDay(for: Date())
+        let start = Calendar.current.date(byAdding: .day, value: -89, to: end) ?? end
+        let query = WorkspaceReportQuery(
+            start: start, end: end, accountID: "", categoryID: "", categoryGroup: "",
+            payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "",
+            spendingTrendDimension: "group", includeTracking: false
+        )
+        do { planningSpendingReport = try await dataSource.reports(planMonth: planMonth, query: query, kinds: [.spending]).spending }
+        catch { /* Core planning remains usable when optional guidance is unavailable. */ }
+    }
 
     func fetchReports(query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
         try requireWorkspaceAccess()
@@ -2616,6 +2763,11 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func createTransaction(_ operation: RecordTransactionOperation) async throws {
         try await services().transactions.record(operation)
+        pendingSyncCount = (commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactionCount ?? 0
+        if pendingSyncCount > 0 {
+            isWorkingOffline = true
+            syncStatusMessage = "Offline · \(pendingSyncCount) change\(pendingSyncCount == 1 ? "" : "s") saved on this iPhone"
+        }
         await refresh()
     }
 
@@ -3011,6 +3163,11 @@ final class BudgetWorkspaceStore: ObservableObject {
         return ids.compactMap { id in categories.first(where: { $0.id == id })?.name }.joined(separator: ", ")
     }
 
+    func categoryDisplayName(_ category: APICategory) -> String {
+        let groupName = groups.first(where: { $0.id == category.groupID })?.name
+        return groupName.map { "\($0) · \(category.name)" } ?? category.name
+    }
+
     func balance(for account: APIAccount) -> Int64 {
         accountBalances[account.id]?.workingBalanceMinor ?? transactions.filter { $0.accountID == account.id }.reduce(0) { $0 + $1.amountMinor }
     }
@@ -3140,6 +3297,33 @@ struct BudgetWorkspaceView: View {
                     .allowsHitTesting(false)
             }
         }
+        .overlay(alignment: .top) {
+            if store.isBackgroundSyncing || store.syncStatusMessage != nil {
+                Button {
+                    Task { await reload() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if store.isBackgroundSyncing {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: store.isWorkingOffline ? "wifi.slash" : "checkmark.icloud")
+                        }
+                        Text(store.isBackgroundSyncing ? "Updating…" : (store.syncStatusMessage ?? "Up to date"))
+                            .lineLimit(1)
+                    }
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(.regularMaterial, in: Capsule())
+                    .shadow(color: .black.opacity(0.08), radius: 5, y: 2)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 6)
+                .accessibilityIdentifier("workspace-sync-status")
+                .accessibilityHint("Double tap to retry synchronization")
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
         .privacySensitive(store.hideAmounts)
         .task(id: session.token) { [session] in
             store.configurePrivacy(userID: session.profile?.id)
@@ -3169,7 +3353,19 @@ struct BudgetWorkspaceView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            Task { await runAutomaticDropboxBackupIfDue() }
+            Task {
+                await reload()
+                await runAutomaticDropboxBackupIfDue()
+            }
+        }
+        .task(id: session.sourceMode) {
+            guard session.sourceMode == .liveServer else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(12))
+                guard !Task.isCancelled, scenePhase == .active,
+                      !showingSettings, !showingOnboarding else { continue }
+                await reload()
+            }
         }
         .alert("Unable to complete request", isPresented: Binding(get: { store.errorMessage != nil && !store.workspaceAccessDenied }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("Retry") { Task { await reload() } }; Button("Cancel", role: .cancel) {}
@@ -3270,15 +3466,25 @@ private struct WorkspaceBottomBar: View {
                     Button {
                         selection = index
                     } label: {
-                        VStack(spacing: 3) {
-                            Image(systemName: destinations[index].symbol).font(.system(size: 17, weight: selection == index ? .semibold : .regular))
+                        VStack(spacing: 4) {
+                            Image(systemName: destinations[index].symbol)
+                                .font(.system(size: 17, weight: selection == index ? .semibold : .regular))
+                                .frame(width: 24, height: 20)
                             Text(destinations[index].title)
                                 .font(.caption2.weight(selection == index ? .semibold : .regular))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.75)
                         }
                         .foregroundStyle(selection == index ? Theme.accent : Color.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 49)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .background {
+                            if selection == index {
+                                Capsule()
+                                    .fill(Theme.accent.opacity(0.10))
+                                    .frame(maxWidth: 48, maxHeight: 36)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -4829,7 +5035,7 @@ private struct LiveHomeView: View {
         }
         .navigationTitle(store.budget.name)
         .sheet(isPresented: $showTransaction) {
-            TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, onSaved: store.refresh)
+            TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, groups: store.groups, onSaved: store.refresh)
         }
         .sheet(isPresented: $showMoveMoney) {
             if let summary = store.summary {
@@ -5132,15 +5338,15 @@ private struct LivePlanView: View {
                 let groupCategories = store.categories.filter { $0.groupID == group.id && !$0.isArchived }
                 let groupRows = rows.filter { row in store.categories.first(where: { $0.id == row.categoryID })?.groupID == group.id }
                 if groupCategories.isEmpty {
-                    Section(group.name) {
+                    Section {
                         Text("No categories yet").foregroundStyle(.secondary)
                         if store.budget.can("manage_budget_structure") || store.budget.can("manage_own_categories") {
                             Button("Add Category", systemImage: "folder.badge.plus") { categoryCreation = .contextual(groupID: group.id) }
                                 .accessibilityIdentifier("empty-group-add-category-\(group.id)")
                         }
-                    }
+                    } header: { PlanGroupHeader(group: group) }
                 } else if !groupRows.isEmpty {
-                    Section(group.name) {
+                    Section {
                         ForEach(groupRows) { category in
                             NavigationLink {
                                 LivePlanCategoryDetailView(categoryID: category.categoryID, assign: { editing = category }, move: { movePresentation = .init(sourceCategoryID: category.categoryID) }, manage: { managing = store.categories.first(where: { $0.id == category.categoryID }) })
@@ -5152,7 +5358,7 @@ private struct LivePlanView: View {
                             Button("Add Category", systemImage: "folder.badge.plus") { categoryCreation = .contextual(groupID: group.id) }
                                 .accessibilityIdentifier("group-add-category-\(group.id)")
                         }
-                    }
+                    } header: { PlanGroupHeader(group: group) }
                 }
             }
         }.accessibilityIdentifier("plan-screen").navigationTitle("Plan").toolbar {
@@ -5173,6 +5379,7 @@ private struct LivePlanView: View {
         .sheet(item: $managing) { category in LiveCategoryEditView(budget: store.budget, category: category, groups: store.groups, members: store.householdMembers, onSaved: reload) }
         .sheet(isPresented: $showGroups) { LiveGroupManagementView() }
         .sheet(isPresented: $showGroupCreation) { GroupCreationView() }
+        .task { await store.loadPlanningGuidance() }
     }
     private var activationExplanation: String {
         if store.groups.isEmpty { return "Category groups organize the purposes in your plan. Create one first, then add a category for something you spend or save for." }
@@ -5203,6 +5410,43 @@ private struct LivePlanView: View {
     private func reload() async { await store.refresh() }
     private func canManage(_ category: APICategory) -> Bool { store.budget.can("manage_budget_structure") || (store.budget.can("manage_own_categories") && category.delegatedUserID == session.profile?.id) }
     private func changeMonth(_ value: Int) { if let next = Calendar.current.date(byAdding: .month, value: value, to: store.planMonth) { store.planMonth = next; Task { await reload() } } }
+}
+
+private struct PlanGroupHeader: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let group: APICategoryGroup
+    private var rows: [APICategoryMonth] {
+        let categoryIDs = Set(store.categories.filter { $0.groupID == group.id }.map(\.id))
+        return (store.summary?.categories ?? []).filter { categoryIDs.contains($0.categoryID) }
+    }
+    private var targetGuidance: Int64 { rows.reduce(0) { $0 + ($1.recommendedContributionMinor ?? 0) } }
+    private var averageSpent: Int64 {
+        let total = store.planningSpendingReport?.categories
+            .filter { $0.categoryGroup == group.name }
+            .reduce(Int64(0)) { $0 + $1.spendingMinor } ?? 0
+        return total / 3
+    }
+    private var suggested: Int64 { max(targetGuidance, averageSpent) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(group.name).font(.headline)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    Label("Suggested \(store.format(suggested))", systemImage: "sparkles")
+                    Label("Avg spent \(store.format(averageSpent))", systemImage: "chart.line.uptrend.xyaxis")
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Suggested \(store.format(suggested))", systemImage: "sparkles")
+                    Label("Avg spent \(store.format(averageSpent))", systemImage: "chart.line.uptrend.xyaxis")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .textCase(nil)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(group.name), suggested \(store.format(suggested)), average spent \(store.format(averageSpent))")
+    }
 }
 
 private struct CategoryCreationPresentation: Identifiable {
@@ -5440,7 +5684,7 @@ private struct LiveActivityView: View {
         LiveTransferView(presentation: presentation, budget: store.budget, accounts: store.accounts, onSaved: reload)
     }
     @ViewBuilder private var entry: some View {
-        TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, onSaved: reload)
+        TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, groups: store.groups, onSaved: reload)
     }
     private func reload() async { await store.refresh(); await load(reset: true) }
     private func bulkRow(_ transaction: APITransaction) -> some View {
@@ -5709,6 +5953,15 @@ private struct LiveTransactionDetailView: View {
             if let transaction {
                 Section { Text(store.format(transaction.amountMinor)).font(.largeTitle.bold()).frame(maxWidth: .infinity).padding() }
                 Section("Details") { LabeledContent("Payee", value: transaction.payeeName); if let linked = linkedAccountName(for: transaction) { LabeledContent("Linked account", value: linked) } else { LabeledContent("Category", value: store.categoryName(transaction)) }; LabeledContent("Date", value: transaction.occurredOn); LabeledContent("Posting") { Text((transaction.status ?? "posted").uppercased()).accessibilityIdentifier("transaction-posting-status") }; LabeledContent("Clearing") { Text(transaction.isReconciled ? "Reconciled" : transaction.isCleared ? "Cleared" : "Uncleared").accessibilityIdentifier("transaction-status") }; LabeledContent("Classification", value: transaction.financialClassification == "interest_charge" || transaction.splits.contains(where: { $0.financialClassification == "interest_charge" }) ? "Interest charge" : "Ordinary transaction"); LabeledContent("Memo", value: transaction.memo.isEmpty ? "—" : transaction.memo); LabeledContent("Flag", value: transaction.flag?.capitalized ?? "None"); LabeledContent("Tags", value: transaction.tags?.isEmpty == false ? transaction.tags!.map { "#\($0)" }.joined(separator: " ") : "None") }
+                Section("History") {
+                    LabeledContent("Entered by", value: transaction.createdByDisplayName ?? "Household member")
+                    if let editor = transaction.lastModifiedByDisplayName {
+                        LabeledContent("Last edited by", value: editor)
+                    }
+                    if let edited = transaction.lastModifiedAt {
+                        LabeledContent("Last edited", value: edited)
+                    }
+                }
                 if transaction.status == "voided" { Section("Void audit") { LabeledContent("Reason", value: transaction.voidReason ?? "No reason supplied"); if let reversal = transaction.reversalTransactionID { NavigationLink("Open reversal") { LiveTransactionDetailView(transactionID: reversal) } } } }
                 if transaction.status == "reversal", let original = transaction.reversalOfTransactionID { Section("Reversal audit") { NavigationLink("Open voided original") { LiveTransactionDetailView(transactionID: original) } } }
                 TransactionAttachmentsView(transaction: transaction)
@@ -6077,7 +6330,7 @@ struct LiveAccountRegisterView: View {
     }
 
     @ViewBuilder private var entry: some View {
-        TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, initialAccountID: account.id, onSaved: store.refresh)
+        TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, groups: store.groups, initialAccountID: account.id, onSaved: store.refresh)
     }
     @ViewBuilder private func transfer(_ presentation: TransferPresentation) -> some View {
         LiveTransferView(presentation: presentation, budget: store.budget, accounts: store.accounts, onSaved: store.refresh)
@@ -6676,6 +6929,7 @@ private struct LiveInsightsView: View {
                 }
                 if let interest = store.insightsSummary?.recordedInterestMonthMinor { LabeledContent("Recorded interest this month", value: store.format(interest)) }
             }
+            if let resilience = store.resilienceReport { ResilienceInsightsView(report: resilience) }
             Section("Reports") {
                 NavigationLink { SpendingIncomeReportView() } label: { reportLink("Spending & Income", "Where money came from and where it went.", "chart.pie") }.accessibilityIdentifier("insights-spending-income")
                 NavigationLink { PlanPerformanceReportView() } label: { reportLink("Plan Performance", "Assignments, activity, targets, and overspending.", "target") }.accessibilityIdentifier("insights-plan-performance")
@@ -6683,7 +6937,7 @@ private struct LiveInsightsView: View {
                 NavigationLink { DebtInterestDestinationView() } label: { reportLink("Debt & Interest", "Balances, recorded interest, and payoff planning.", "creditcard.trianglebadge.exclamationmark") }.accessibilityIdentifier("insights-debt-interest")
             }
             if let margin = store.insightsSummary?.expectedMarginMinor { Section("Looking Ahead") { LabeledContent("Expected 30-day margin", value: store.format(margin)); Text("Forecast-only scheduled income and outflows. It does not change money available today.").font(.caption).foregroundStyle(.secondary) } }
-        }.modifier(ReportLoadModifier(kinds: [.summary], suspended: showFilters))
+        }.modifier(ReportLoadModifier(kinds: [.summary, .resilience], suspended: showFilters))
         .navigationTitle("Insights").accessibilityIdentifier("insights-hub")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -7167,6 +7421,17 @@ private struct ResilienceInsightsView: View {
         Section("Financial Resilience") {
             LabeledContent("Cash buffer", value: store.format(report.cashBufferMinor))
             Text("Current balances in visible on-budget checking, savings, and cash accounts.").font(.caption).foregroundStyle(.secondary)
+            if let age = report.averageAgeOfMoneyDays {
+                LabeledContent("Average age of money", value: "\(age) day\(age == 1 ? "" : "s")")
+                Text("Weighted age of currently held authorized cash using first-in, first-out posted inflows and spending. Transfers are excluded.").font(.caption).foregroundStyle(.secondary)
+            }
+            if let burn = report.dailyBurnRateMinor {
+                LabeledContent("Current daily burn rate", value: store.format(burn))
+                Text("Net categorized spending averaged across the trailing \(report.burnRateWindowDays ?? 90) days, including refunds.").font(.caption).foregroundStyle(.secondary)
+            }
+            if let runway = report.runwayDays {
+                LabeledContent("Cash runway", value: "\(runway) day\(runway == 1 ? "" : "s")")
+            }
             LabeledContent("Scheduled income", value: store.format(report.scheduledIncomeMinor))
             LabeledContent("Scheduled outflows", value: store.format(report.scheduledOutflowsMinor))
             LabeledContent("Expected 30-day margin", value: store.format(report.expectedMarginMinor))
@@ -7592,8 +7857,53 @@ private struct SpendingBreakdownView: View {
 private struct LiveReportGroupView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let group: String
+    @State private var showAddTransaction = false
     private var categories: [APISpendingCategoryReport] { store.spendingReport?.categories.filter { $0.categoryGroup == group && $0.spendingMinor > 0 }.sorted { $0.spendingMinor > $1.spendingMinor } ?? [] }
-    var body: some View { List { Section { LabeledContent("Total", value: store.format(categories.reduce(Int64(0)) { $0 + $1.spendingMinor })) }; Section("Categories") { ForEach(categories) { category in NavigationLink { LiveReportCategoryView(category: category) } label: { LabeledContent(category.categoryName, value: store.format(category.spendingMinor)) } } } }.navigationTitle(group) }
+    private var groupID: String? { store.groups.first(where: { $0.name == group })?.id }
+    private var entryCategories: [APICategory] { guard let groupID else { return [] }; return store.categories.filter { $0.groupID == groupID && !$0.isArchived } }
+    var body: some View {
+        List {
+            Section { LabeledContent("Total", value: store.format(categories.reduce(Int64(0)) { $0 + $1.spendingMinor })) }
+            if store.budget.can("create_transaction"), !entryCategories.isEmpty {
+                Section {
+                    Button {
+                        showAddTransaction = true
+                    } label: {
+                        Label("Add Transaction to \(group)", systemImage: "plus.circle.fill")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .accessibilityIdentifier("group-add-transaction-primary")
+                }
+            }
+            Section("Categories") {
+                ForEach(categories) { category in
+                    NavigationLink { LiveReportCategoryView(category: category) } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            LabeledContent(category.categoryName, value: store.format(category.spendingMinor))
+                            Text(group).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle(group)
+        .toolbar {
+            if store.budget.can("create_transaction"), !entryCategories.isEmpty {
+                Button("Add Transaction", systemImage: "plus") { showAddTransaction = true }
+                    .accessibilityIdentifier("group-add-transaction")
+            }
+        }
+        .sheet(isPresented: $showAddTransaction) {
+            TransactionEntryView(
+                budget: store.budget,
+                accounts: store.accounts,
+                categories: entryCategories,
+                groups: store.groups,
+                initialCategoryID: entryCategories.count == 1 ? entryCategories[0].id : nil,
+                onSaved: store.refresh
+            )
+        }
+    }
 }
 
 private struct LiveReportTransactionsView: View {
@@ -7625,6 +7935,9 @@ private struct LiveReportCategoryView: View {
     var transactions: [APITransaction] { store.transactions.filter { contributingIDs.contains($0.id) } }
     var body: some View {
         List {
+            Section("Category Group") {
+                Label(category.categoryGroup, systemImage: "folder")
+            }
             Section {
                 LabeledContent("Total", value: store.format(spendingMinor))
                 LabeledContent("Transactions", value: "\(transactions.count)")

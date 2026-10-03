@@ -637,6 +637,7 @@ class TransactionCreate(BaseModel):
     flag: Optional[str] = Field(default=None, max_length=30)
     tags: list[str] = Field(default_factory=list, max_length=20)
     attachment_metadata: list[dict[str, str]] = Field(default_factory=list, max_length=20)
+    client_operation_id: Optional[str] = Field(default=None, min_length=36, max_length=36)
     splits: list[TransactionSplitCreate] = Field(default_factory=list, max_length=100)
 
     @field_validator("flag")
@@ -764,6 +765,10 @@ class TransactionResponse(BaseModel):
     tags: list[str] = Field(default_factory=list)
     attachment_metadata: list[dict[str, str]] = Field(default_factory=list)
     created_by_user_id: str
+    created_by_display_name: Optional[str] = None
+    last_modified_by_user_id: Optional[str] = None
+    last_modified_by_display_name: Optional[str] = None
+    last_modified_at: Optional[datetime] = None
     transfer_id: Optional[str]
     scheduled_transaction_id: Optional[str] = None
     status: str = "posted"
@@ -1010,6 +1015,10 @@ class ResilienceReportResponse(BaseModel):
     scheduled_income_minor: int
     scheduled_outflows_minor: int
     expected_margin_minor: int
+    average_age_of_money_days: Optional[int] = None
+    daily_burn_rate_minor: Optional[int] = None
+    runway_days: Optional[int] = None
+    burn_rate_window_days: int = 90
     essential_expense_coverage_days: Optional[int] = None
     emergency_fund_coverage_days: Optional[int] = None
     unavailable_metrics: dict[str, str]

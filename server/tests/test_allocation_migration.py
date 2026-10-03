@@ -59,7 +59,7 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
         favorite_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('category_favorites')"))}
         debt_term_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('account_debt_terms')"))}
         transaction_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('transactions')"))}
-        assert version == "0031_pairing_devices"
+        assert version == "0032_offline_txn_idempotency"
         assert attachment_count == 0
         assert "ix_transaction_budget_date_id" in report_indexes
         assert {"budget_id", "user_id", "category_id", "sort_order"} <= favorite_columns
@@ -91,7 +91,7 @@ def test_0031_pairing_upgrade_preserves_existing_refresh_sessions(tmp_path, monk
             "SELECT id,user_id,token_hash,device_name FROM refresh_sessions"
         )).one() == ("existing-device", "pair-user", "a" * 64, None)
         assert connection.execute(text("SELECT COUNT(*) FROM pairing_codes")).scalar_one() == 0
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0031_pairing_devices"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0032_offline_txn_idempotency"
 
     command.downgrade(config, "0030_import_staging")
     with engine.connect() as connection:
@@ -150,7 +150,7 @@ def test_0027_interest_classification_preserves_populated_history(tmp_path, monk
     with engine.connect() as connection:
         row = connection.execute(text("SELECT amount_minor, financial_classification FROM transactions WHERE id='t-interest'")).one()
         assert row == (-1234, None)
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0031_pairing_devices"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0032_offline_txn_idempotency"
     command.downgrade(config, "0026_debt_terms")
     with engine.connect() as connection:
         assert connection.execute(text("SELECT amount_minor FROM transactions WHERE id='t-interest'")).scalar_one() == -1234
@@ -170,8 +170,17 @@ def test_0028_snooze_upgrade_downgrade_preserves_populated_financial_rows(tmp_pa
         connection.execute(text("INSERT INTO budgets (id, household_id, name, currency_code, allocation_version, created_at) VALUES ('b-snooze', 'h-snooze', 'Budget', 'USD', 0, :now)"), {"now": now})
         connection.execute(text("INSERT INTO accounts (id, budget_id, name, account_type, is_on_budget, is_closed, created_at) VALUES ('a-snooze', 'b-snooze', 'Checking', 'checking', 1, 0, :now)"), {"now": now})
         connection.execute(text("INSERT INTO transactions (id, budget_id, account_id, amount_minor, occurred_on, payee_name, memo, is_cleared, is_reconciled, tags, attachment_metadata, status, created_by_user_id, created_at) VALUES ('t-snooze', 'b-snooze', 'a-snooze', -2345, '2026-09-01', 'Merchant', 'Keep unchanged', 1, 1, '[]', '[]', 'posted', 'u-snooze', :now)"), {"now": now})
-        before = {table: connection.execute(text(f"SELECT * FROM {table}")).all()
-                  for table in ("accounts", "transactions", "budgets", "allocation_operations", "allocation_postings")}
+        tables = ("accounts", "transactions", "budgets", "allocation_operations", "allocation_postings")
+        before_columns = {
+            table: [row[1] for row in connection.execute(text(f"PRAGMA table_info('{table}')"))]
+            for table in tables
+        }
+        before = {
+            table: connection.execute(text(
+                f"SELECT {', '.join(before_columns[table])} FROM {table}"
+            )).all()
+            for table in tables
+        }
     for revision in ("head", "0027_interest_class", "head"):
         if revision == "head":
             command.upgrade(config, revision)
@@ -179,9 +188,11 @@ def test_0028_snooze_upgrade_downgrade_preserves_populated_financial_rows(tmp_pa
             command.downgrade(config, revision)
         with engine.connect() as connection:
             for table, rows in before.items():
-                assert connection.execute(text(f"SELECT * FROM {table}")).all() == rows
+                assert connection.execute(text(
+                    f"SELECT {', '.join(before_columns[table])} FROM {table}"
+                )).all() == rows
             if revision == "head":
-                assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0031_pairing_devices"
+                assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0032_offline_txn_idempotency"
                 assert connection.execute(text("SELECT COUNT(*) FROM category_target_snoozes")).scalar_one() == 0
 
 

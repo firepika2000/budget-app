@@ -397,6 +397,7 @@ final class APIClientTests: XCTestCase {
             )
             XCTAssertEqual(json["amount_minor"] as? Int, -12345)
             XCTAssertEqual(json["category_id"] as? String, "c1")
+            XCTAssertEqual(json["client_operation_id"] as? String, "b4a31971-273c-4692-a0ce-dcae1889c9a6")
             let response = Data(#"{"id":"t1","budget_id":"b1","account_id":"a1","category_id":"c1","amount_minor":-12345,"occurred_on":"2026-09-04","payee_name":"Market","memo":"","is_cleared":false,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":null,"splits":[]}"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, response)
         }
@@ -409,7 +410,8 @@ final class APIClientTests: XCTestCase {
                 categoryID: "c1",
                 amountMinor: -12345,
                 occurredOn: "2026-09-04",
-                payeeName: "Market"
+                payeeName: "Market",
+                clientOperationID: "b4a31971-273c-4692-a0ce-dcae1889c9a6"
             ),
             token: "secret"
         )
@@ -446,6 +448,24 @@ final class APIClientTests: XCTestCase {
         )
 
         XCTAssertEqual(transaction.payeeID, "p1")
+    }
+
+    func testTransactionListDecodesCreatorAndLatestEditorProvenance() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions")
+            let response = Data(#"[{"id":"t1","budget_id":"b1","account_id":"a1","category_id":"c1","amount_minor":-200,"occurred_on":"2026-09-04","created_at":"2026-09-04T12:00:00Z","payee_name":"Market","memo":"Corrected","is_cleared":false,"is_reconciled":false,"created_by_user_id":"u1","created_by_display_name":"Alex","last_modified_by_user_id":"u2","last_modified_by_display_name":"Sam","last_modified_at":"2026-09-05T13:30:00Z","transfer_id":null,"splits":[]}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let transactions = try await client.transactions(budgetID: "b1", token: "secret")
+        let transaction = try XCTUnwrap(transactions.first)
+        XCTAssertEqual(transaction.createdByDisplayName, "Alex")
+        XCTAssertEqual(transaction.lastModifiedByUserID, "u2")
+        XCTAssertEqual(transaction.lastModifiedByDisplayName, "Sam")
+        XCTAssertEqual(transaction.lastModifiedAt, "2026-09-05T13:30:00Z")
     }
 
     func testTransactionBrowserEncodesTypedFiltersAndDecodesPage() async throws {
@@ -968,13 +988,17 @@ final class APIClientTests: XCTestCase {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/reports/resilience")
             XCTAssertTrue(request.url?.query?.contains("horizon_days=30") == true)
-            let response = Data(#"{"as_of":"2026-09-01","through":"2026-10-01","currency_code":"USD","cash_buffer_minor":100000,"current_on_budget_minor":90000,"projected_on_budget_minor":110000,"lowest_projected_on_budget_minor":85000,"scheduled_income_minor":50000,"scheduled_outflows_minor":30000,"expected_margin_minor":20000,"essential_expense_coverage_days":null,"emergency_fund_coverage_days":null,"unavailable_metrics":{"essential_expense_coverage_days":"Classification unavailable."}}"#.utf8)
+            let response = Data(#"{"as_of":"2026-09-01","through":"2026-10-01","currency_code":"USD","cash_buffer_minor":100000,"current_on_budget_minor":90000,"projected_on_budget_minor":110000,"lowest_projected_on_budget_minor":85000,"scheduled_income_minor":50000,"scheduled_outflows_minor":30000,"expected_margin_minor":20000,"average_age_of_money_days":42,"daily_burn_rate_minor":2500,"runway_days":40,"burn_rate_window_days":90,"essential_expense_coverage_days":null,"emergency_fund_coverage_days":null,"unavailable_metrics":{"essential_expense_coverage_days":"Classification unavailable."}}"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
         let report = try await client.resilienceReport(budgetID: "b1", token: "secret")
         XCTAssertEqual(report.cashBufferMinor, 100_000)
         XCTAssertEqual(report.expectedMarginMinor, 20_000)
+        XCTAssertEqual(report.averageAgeOfMoneyDays, 42)
+        XCTAssertEqual(report.dailyBurnRateMinor, 2_500)
+        XCTAssertEqual(report.runwayDays, 40)
+        XCTAssertEqual(report.burnRateWindowDays, 90)
         XCTAssertNil(report.essentialExpenseCoverageDays)
         XCTAssertEqual(report.unavailableMetrics["essential_expense_coverage_days"], "Classification unavailable.")
     }

@@ -55,14 +55,28 @@ def test_populated_0028_policy_history_upgrade_preserves_rows_and_financial_obse
             "alembic_version", "refresh_sessions", "pairing_codes", "audit_events",
             "cash_rollover_policy_changes", "import_batches",
         )]
+        before_columns = {
+            name: [
+                column["name"] for column in inspect(engine).get_columns(name)
+                if column["name"] != "client_operation_id"
+            ]
+            for name in tables
+        }
         with engine.connect() as connection:
-            before = {name: sorted(connection.execute(text(f'SELECT * FROM "{name}"')).all(), key=repr) for name in tables}
+            before = {
+                name: sorted(connection.execute(text(
+                    f'SELECT {", ".join(before_columns[name])} FROM "{name}"'
+                )).all(), key=repr)
+                for name in tables
+            }
         command.downgrade(config, "0028_target_snoozes")
         for revision in ("head", "0028_target_snoozes", "head"):
             (command.upgrade if revision == "head" else command.downgrade)(config, revision)
             with engine.connect() as connection:
                 for name, rows in before.items():
-                    assert sorted(connection.execute(text(f'SELECT * FROM "{name}"')).all(), key=repr) == rows
+                    assert sorted(connection.execute(text(
+                        f'SELECT {", ".join(before_columns[name])} FROM "{name}"'
+                    )).all(), key=repr) == rows
                 if revision == "head":
                     assert connection.execute(text("SELECT COUNT(*) FROM import_batches")).scalar_one() == 0
                     assert connection.execute(text("SELECT COUNT(*) FROM cash_rollover_policy_changes")).scalar_one() == 502

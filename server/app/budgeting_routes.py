@@ -233,6 +233,37 @@ def record_transaction_change(db: Session, transaction: Transaction, actor: User
     ))
 
 
+def transaction_response_rows(db: Session, transactions: list[Transaction]) -> list[dict]:
+    """Attach bounded, authorized actor provenance without exposing unrelated household activity."""
+    if not transactions:
+        return []
+    ids = [item.id for item in transactions]
+    changes = list(db.scalars(select(TransactionChange).where(
+        TransactionChange.transaction_id.in_(ids),
+        TransactionChange.action.in_((
+            "updated", "bulk_updated", "voided", "attachment_added", "attachment_detached",
+        )),
+    ).order_by(TransactionChange.created_at.desc(), TransactionChange.id.desc())))
+    latest = {}
+    for change in changes:
+        latest.setdefault(change.transaction_id, change)
+    user_ids = {item.created_by_user_id for item in transactions}
+    user_ids.update(change.actor_user_id for change in latest.values())
+    names = {item.id: item.display_name for item in db.scalars(select(User).where(User.id.in_(user_ids)))}
+    rows = []
+    for item in transactions:
+        row = TransactionResponse.model_validate(item).model_dump()
+        row["created_by_display_name"] = names.get(item.created_by_user_id)
+        if change := latest.get(item.id):
+            row.update(
+                last_modified_by_user_id=change.actor_user_id,
+                last_modified_by_display_name=names.get(change.actor_user_id),
+                last_modified_at=change.created_at,
+            )
+        rows.append(row)
+    return rows
+
+
 def require_budget(
     db: Session,
     user: User,
@@ -1421,9 +1452,9 @@ def list_transactions(
     budget_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> list[Transaction]:
+) -> list[dict]:
     budget = require_budget_capability(db, user, budget_id, "view_transactions")
-    return _visible_transactions(db, user, budget)
+    return transaction_response_rows(db, _visible_transactions(db, user, budget))
 
 
 @router.post("/transactions", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
@@ -1433,8 +1464,32 @@ def create_transaction(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Transaction:
+    if body.client_operation_id is not None:
+        existing = db.scalar(select(Transaction).where(
+            Transaction.budget_id == budget_id,
+            Transaction.created_by_user_id == user.id,
+            Transaction.client_operation_id == body.client_operation_id,
+        ))
+        if existing is not None:
+            # Replays are intentionally idempotent. Authorization is checked again so a queued
+            # operation cannot be observed after the member loses access.
+            require_budget_capability(db, user, budget_id, "create_transaction")
+            return existing
     transaction = create_transaction_in_session(budget_id, body, user=user, db=db)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if body.client_operation_id is None:
+            raise
+        existing = db.scalar(select(Transaction).where(
+            Transaction.budget_id == budget_id,
+            Transaction.created_by_user_id == user.id,
+            Transaction.client_operation_id == body.client_operation_id,
+        ))
+        if existing is None:
+            raise
+        return existing
     db.refresh(transaction)
     return transaction
 

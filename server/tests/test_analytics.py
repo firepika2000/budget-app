@@ -1085,7 +1085,7 @@ def test_resilience_report_uses_visible_cash_and_forecast_without_invented_cover
     assert body["essential_expense_coverage_days"] is None
     assert body["emergency_fund_coverage_days"] is None
     assert set(body["unavailable_metrics"]) == {
-        "essential_expense_coverage_days", "emergency_fund_coverage_days",
+        "essential_expense_coverage_days", "emergency_fund_coverage_days", "runway_days",
     }
     assert client.get(
         f"/api/v1/budgets/{budget['id']}/reports/resilience?horizon_days=91",
@@ -1135,6 +1135,44 @@ def test_resilience_report_filters_hidden_accounts_and_schedules_before_aggregat
     assert response.json()["cash_buffer_minor"] == 10000
     assert response.json()["scheduled_income_minor"] == 0
     assert hidden["id"] not in response.text and "Private bonus" not in response.text
+
+
+def test_resilience_reports_exact_fifo_money_age_and_refund_net_burn(
+    client, owner_token, session_factory, monkeypatch
+):
+    today = date(2026, 9, 30)
+    freeze_today(monkeypatch, today, analytics_routes)
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    savings = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Savings", "account_type": "savings"},
+    ).json()
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100_000,
+           occurred_on="2026-07-01")
+    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=category["id"],
+           amount_minor=-9_000, occurred_on="2026-09-01")
+    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=category["id"],
+           amount_minor=1_000, occurred_on="2026-09-20")
+    transfer = client.post(
+        f"/api/v1/budgets/{budget['id']}/transfers", headers=auth(owner_token),
+        json={"source_account_id": checking["id"], "destination_account_id": savings["id"],
+              "amount_minor": 20_000, "occurred_on": "2026-09-25"},
+    )
+    assert transfer.status_code == 201, transfer.text
+
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/resilience", headers=auth(owner_token),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["cash_buffer_minor"] == 92_000
+    assert body["daily_burn_rate_minor"] == 89  # ceil((9,000 - 1,000 refund) / 90)
+    assert body["runway_days"] == 1_033
+    assert body["average_age_of_money_days"] == 90
+    assert body["burn_rate_window_days"] == 90
+    assert "average_age_of_money_days" not in body["unavailable_metrics"]
+    assert "runway_days" not in body["unavailable_metrics"]
 
 
 def test_report_csv_export_is_open_bounded_and_spreadsheet_safe(

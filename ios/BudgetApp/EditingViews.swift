@@ -6,6 +6,7 @@ struct TransactionEntryView: View {
     let budget: APIBudget
     let accounts: [APIAccount]
     let categories: [APICategory]
+    let groups: [APICategoryGroup]
     let onSaved: () async -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -28,12 +29,14 @@ struct TransactionEntryView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], initialAccountID: String? = nil, onSaved: @escaping () async -> Void) {
+    init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], groups: [APICategoryGroup] = [], initialAccountID: String? = nil, initialCategoryID: String? = nil, onSaved: @escaping () async -> Void) {
         self.budget = budget
         self.accounts = accounts
         self.categories = categories
+        self.groups = groups
         self.onSaved = onSaved
         _accountID = State(initialValue: initialAccountID ?? "")
+        _categoryID = State(initialValue: initialCategoryID)
     }
 
     var body: some View {
@@ -66,7 +69,7 @@ struct TransactionEntryView: View {
                             Picker("Category", selection: $row.categoryID) {
                                 Text("Select category").tag("")
                                 ForEach(categories.filter { !$0.isArchived }) { category in
-                                    Text(category.name).tag(category.id)
+                                    Text(categoryLabel(category)).tag(category.id)
                                 }
                             }
                             CurrencyAmountField("Split amount", text: $row.amount, currencyCode: budget.currencyCode, allowsZero: true)
@@ -89,7 +92,7 @@ struct TransactionEntryView: View {
                         Text(isInflow ? "Ready to assign" : "Uncategorized")
                             .tag(nil as String?)
                         ForEach(categories.filter { !$0.isArchived }) { category in
-                            Text(category.name).tag(Optional(category.id))
+                            Text(categoryLabel(category)).tag(Optional(category.id))
                         }
                     }
                 }
@@ -143,6 +146,11 @@ struct TransactionEntryView: View {
                 }
             }
         }
+    }
+
+    private func categoryLabel(_ category: APICategory) -> String {
+        guard let group = groups.first(where: { $0.id == category.groupID }) else { return category.name }
+        return "\(group.name) · \(category.name)"
     }
 
     private var parsedAmount: Int64? {

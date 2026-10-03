@@ -102,6 +102,7 @@ final class AppSession: ObservableObject {
     private let tokenAccount = "access-token"
     private let refreshTokenAccount = "refresh-token"
     private let activeBudgetKey = "budget.activeBudgetID"
+    private let budgetCacheKey = "budget.authorizedBudgetCache"
     // Single-flight refresh: at most one `/auth/refresh` request is in flight per session; concurrent
     // callers await this shared task rather than each submitting the (now-rotated) refresh token.
     private var refreshTask: Task<APIAuthTokens, Error>?
@@ -134,8 +135,19 @@ final class AppSession: ObservableObject {
         suppressLifecycleValidationForUITest = false
         #endif
         serverURL = defaults.string(forKey: serverKey).flatMap(URL.init(string:))
-        token = keychain.read(account: tokenAccount); refreshToken = keychain.read(account: refreshTokenAccount)
-        activeBudgetID = defaults.string(forKey: activeBudgetKey)
+        let restoredToken = keychain.read(account: tokenAccount)
+        let restoredRefreshToken = keychain.read(account: refreshTokenAccount)
+        let restoredActiveBudgetID = defaults.string(forKey: activeBudgetKey)
+        token = restoredToken
+        refreshToken = restoredRefreshToken
+        activeBudgetID = restoredActiveBudgetID
+        let cachedBudgets: [APIBudget]
+        if let cached = defaults.data(forKey: budgetCacheKey),
+           let decoded = try? JSONDecoder().decode([APIBudget].self, from: cached) {
+            cachedBudgets = decoded
+        } else {
+            cachedBudgets = []
+        }
         let stored = defaults.string(forKey: sourceModeKey).flatMap(AppDataSourceMode.init(rawValue:))
         #if DEBUG
         let argumentMode: AppDataSourceMode? = ProcessInfo.processInfo.arguments.contains("--local") ? .localDevice : (ProcessInfo.processInfo.arguments.contains("--live") ? .liveServer : (ProcessInfo.processInfo.arguments.contains("--demo") ? .deterministic : nil))
@@ -146,7 +158,11 @@ final class AppSession: ObservableObject {
         #endif
         let resolvedMode = initialMode ?? argumentMode ?? stored ?? fallback
         sourceMode = resolvedMode
-        connectionStatus = resolvedMode == .localDevice ? .localDevice : (resolvedMode == .deterministic ? .deterministic : .connecting)
+        let hasCachedLiveWorkspace = resolvedMode == .liveServer && restoredToken != nil
+            && cachedBudgets.contains(where: { $0.id == restoredActiveBudgetID })
+        connectionStatus = resolvedMode == .localDevice ? .localDevice
+            : (resolvedMode == .deterministic ? .deterministic : (hasCachedLiveWorkspace ? .connected : .connecting))
+        budgets = cachedBudgets
         #if DEBUG
         if suppressLifecycleValidationForUITest {
             sourceMode = .liveServer
@@ -226,6 +242,7 @@ final class AppSession: ObservableObject {
             }
             profile = loaded.0
             budgets = loaded.1
+            persistBudgetCache()
             selectBudget(expectedBudgetID)
             defaults.set(AppDataSourceMode.liveServer.rawValue, forKey: sourceModeKey)
             sourceMode = .liveServer
@@ -254,9 +271,14 @@ final class AppSession: ObservableObject {
             return
         }
         if serverURL != nil && serverURL != url { clearCredentials(logoutFrom: serverURL) }
+        let preservesAuthenticatedWorkspace = sourceMode == .liveServer
+            && connectionStatus == .connected
+            && token != nil
+            && serverURL == url
         serverURL = url; defaults.set(url.absoluteString, forKey: serverKey)
         defaults.set(AppDataSourceMode.liveServer.rawValue, forKey: sourceModeKey)
-        sourceMode = .liveServer; connectionStatus = .connecting
+        sourceMode = .liveServer
+        if !preservesAuthenticatedWorkspace { connectionStatus = .connecting }
         debugLog("selected data source: liveServer")
         debugLog("initializing live repository for: \(url.absoluteString)")
         do {
@@ -281,7 +303,17 @@ final class AppSession: ObservableObject {
             }
         } catch {
             let message = connectionMessage(error)
-            connectionStatus = isConfigurationError(error) ? .invalidConfiguration(message) : .unreachable(message)
+            if preservesAuthenticatedWorkspace {
+                // A foreground reachability check must not tear down the active workspace and its
+                // navigation/editor state. The workspace remains useful from its last authoritative
+                // snapshot and will refresh when connectivity returns.
+                connectionStatus = .connected
+                // Workspace synchronization owns the unobtrusive offline indicator. A normal
+                // foreground reachability miss must not interrupt the user's current task.
+                errorMessage = nil
+            } else {
+                connectionStatus = isConfigurationError(error) ? .invalidConfiguration(message) : .unreachable(message)
+            }
             debugLog("live connection failed: \(failureCategory(error))")
         }
     }
@@ -359,6 +391,7 @@ final class AppSession: ObservableObject {
                 return
             }
             (profile, budgets) = loaded
+            persistBudgetCache()
             reconcileActiveBudget()
             connectionStatus = .connected
         } catch {
@@ -368,7 +401,12 @@ final class AppSession: ObservableObject {
                 authLog("discarded stale loadBudgets error", caller: caller)
                 return
             }
-            errorMessage = error.localizedDescription
+            // Keep an already-authorized cached workspace usable while the server is temporarily
+            // unreachable. The workspace owns its compact offline/sync presentation; a blocking
+            // session alert here would interrupt the task the user is completing.
+            if !(isTransientConnectivityFailure(error) && activeBudget != nil) {
+                errorMessage = error.localizedDescription
+            }
             debugLog("API request failed: \(failureCategory(error))")
         }
     }
@@ -380,6 +418,7 @@ final class AppSession: ObservableObject {
             let client = try self.clientFactory(serverURL)
             let created = try await client.createBudget(APIBudgetCreate(householdID: householdID, name: name, currencyCode: currencyCode, cashRolloverPolicy: cashRolloverPolicy), token: token)
             self.budgets = try await client.budgets(token: token)
+            self.persistBudgetCache()
             self.selectBudget(created.id)
         }
     }
@@ -392,6 +431,7 @@ final class AppSession: ObservableObject {
         let client = try clientFactory(serverURL)
         try await client.deleteBudget(budgetID: id, confirmationName: confirmationName, token: token)
         budgets = try await client.budgets(token: token)
+        persistBudgetCache()
         if activeBudgetID == id { clearActiveBudget() }
         reconcileActiveBudget()
     }
@@ -442,6 +482,14 @@ final class AppSession: ObservableObject {
         else { activeBudgetID = nil; defaults.removeObject(forKey: activeBudgetKey) }
     }
 
+    private func persistBudgetCache() {
+        if budgets.isEmpty {
+            defaults.removeObject(forKey: budgetCacheKey)
+        } else if let data = try? JSONEncoder().encode(budgets) {
+            defaults.set(data, forKey: budgetCacheKey)
+        }
+    }
+
     func signOut() { clearCredentials(logoutFrom: serverURL) }
     func changeServer() {
         clearCredentials(logoutFrom: serverURL); defaults.removeObject(forKey: serverKey); serverURL = nil
@@ -466,6 +514,7 @@ final class AppSession: ObservableObject {
             let client = try self.clientFactory(serverURL)
             async let profile = client.profile(token: tokens.accessToken); async let budgets = client.budgets(token: tokens.accessToken)
             (self.profile, self.budgets) = try await (profile, budgets)
+            self.persistBudgetCache()
             self.reconcileActiveBudget()
             self.connectionStatus = .connected
         } catch {
@@ -576,6 +625,7 @@ final class AppSession: ObservableObject {
     private func invalidateSessionToSignIn() {
         keychain.delete(account: tokenAccount); keychain.delete(account: refreshTokenAccount)
         token = nil; refreshToken = nil; budgets = []; profile = nil
+        defaults.removeObject(forKey: budgetCacheKey)
         credentialGeneration += 1
         authInvalidated = true
         refreshTask = nil
@@ -589,6 +639,7 @@ final class AppSession: ObservableObject {
         if let url, let refreshToken { Task { try? await clientFactory(url).logout(refreshToken) } }
         keychain.delete(account: tokenAccount); keychain.delete(account: refreshTokenAccount)
         token = nil; refreshToken = nil; budgets = []; profile = nil
+        defaults.removeObject(forKey: budgetCacheKey)
         clearActiveBudget()
         credentialGeneration += 1
         authInvalidated = true
