@@ -2922,6 +2922,40 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(rows.map(\.occurredOn), ["2026-09-15", "2026-09-16"])
     }
 
+    func testLocalQIFParserPreservesExactMoneyAndExplicitDateOrder() throws {
+        let data = Data("!Type:Bank\nD10/02/2026\nT-1,234.56\nPUtility Company\nMSeptember bill\n^\nD03/10/'26\nT25.00\nPRefund\n^\n".utf8)
+        let rows = try LocalQIFStatementParser.parse(data: data, mapping: .init(
+            sourceFormat: "qif", currencyCode: "USD", dateOrder: "mdy"
+        ))
+        XCTAssertEqual(rows.map(\.amountMinor), [-123_456, 2_500])
+        XCTAssertEqual(rows.map(\.occurredOn), ["2026-10-02", "2026-03-10"])
+        XCTAssertEqual(rows.map(\.payee), ["Utility Company", "Refund"])
+        XCTAssertEqual(rows.first?.memo, "September bill")
+
+        let dmy = try LocalQIFStatementParser.parse(
+            data: Data("D31/12/'69\nT1.00\nPInterest\n^\nD01/01/'70\nT1.00\nPInterest\n^".utf8),
+            mapping: .init(sourceFormat: "qif", currencyCode: "USD", dateOrder: "dmy")
+        )
+        XCTAssertEqual(dmy.map(\.occurredOn), ["2069-12-31", "1970-01-01"])
+    }
+
+    func testLocalQIFParserRejectsMalformedPrivateRowsWithoutLeakingContents() throws {
+        let privatePayee = "Private Medical Payee"
+        XCTAssertThrowsError(try LocalQIFStatementParser.parse(
+            data: Data("D02/30/2026\nT1.00\nP\(privatePayee)\n^".utf8),
+            mapping: .init(sourceFormat: "qif", currencyCode: "USD", dateOrder: "mdy")
+        )) { error in
+            XCTAssertFalse(error.localizedDescription.contains(privatePayee))
+            XCTAssertTrue(error.localizedDescription.contains("record 1"))
+        }
+        XCTAssertThrowsError(try LocalQIFStatementParser.parse(
+            data: Data("D10/02/2026\nT1e2\nP\(privatePayee)\n^".utf8),
+            mapping: .init(sourceFormat: "qif", currencyCode: "USD", dateOrder: "mdy")
+        )) { error in
+            XCTAssertFalse(error.localizedDescription.contains(privatePayee))
+        }
+    }
+
     @MainActor
     func testLocalStatementApprovalUsesCanonicalTransactionPath() async throws {
         let source = DemoWorkspaceDataSource()
@@ -2937,6 +2971,35 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(source.demo.transactions.count, initialCount + 1)
         XCTAssertEqual(source.demo.transactions.first(where: { $0.payee == "Local deposit" })?.amount, 1_025)
         XCTAssertEqual(source.demo.transactions.first(where: { $0.payee == "Local deposit" })?.cleared, true)
+    }
+
+    @MainActor
+    func testLocalQIFStagingIsMoneyNeutralUntilCanonicalApproval() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let initialTransactions = source.demo.transactions
+        let initialBalance = source.demo.accounts.first(where: { $0.id == account.id })?.balance
+        let batch = try await source.stageStatementImport(
+            accountID: account.id,
+            data: Data("!Type:Bank\nD09/14/2026\nT-12.34\nPCorner Store\nMImported locally\n^\nD09/15/2026\nT2.34\nPRefund\n^".utf8),
+            mapping: .init(sourceFormat: "qif", currencyCode: "USD", dateOrder: "mdy")
+        )
+        XCTAssertEqual(batch.candidates.map(\.amountMinor), [-1_234, 234])
+        XCTAssertEqual(source.demo.transactions, initialTransactions)
+        XCTAssertEqual(source.demo.accounts.first(where: { $0.id == account.id })?.balance, initialBalance)
+
+        _ = try await source.approveStatementImport(
+            accountID: account.id,
+            batchID: batch.id,
+            approval: .init(expectedVersion: batch.version, items: [
+                .init(sourceRow: 1, action: "skip"),
+                .init(sourceRow: 2, action: "post"),
+            ])
+        )
+        XCTAssertEqual(source.demo.transactions.count, initialTransactions.count + 1)
+        let posted = try XCTUnwrap(source.demo.transactions.first(where: { $0.payee == "Refund" }))
+        XCTAssertEqual(posted.amount, 234)
+        XCTAssertTrue(posted.cleared)
     }
 }
 

@@ -975,12 +975,15 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 }
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
-    func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try requireActiveMembership()
+    func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try requireActiveMembership();
         guard demo.visibleAccounts.contains(where: { $0.id == accountID }) else { throw workspaceRepositoryError("Account not found.") }
-        guard mapping.sourceFormat == "csv" else {
-            throw workspaceRepositoryError("Local statement import currently supports CSV, TSV, and delimited text. OFX, QFX, QIF, and PDF imports are available when connected to Budget Server.")
+        let parsed: [LocalDelimitedStatementParser.Candidate]
+        switch mapping.sourceFormat {
+        case "csv": parsed = try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
+        case "qif": parsed = try LocalQIFStatementParser.parse(data: data, mapping: mapping)
+        default:
+            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, and QIF. OFX, QFX, and PDF imports are available when connected to Budget Server.")
         }
-        let parsed = try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
         let candidates = parsed.map { candidate -> APIStatementImportCandidate in
             let exact = demo.transactions.filter {
                 BudgetWorkspaceStore.dateString($0.date) == candidate.occurredOn && $0.amount == candidate.amountMinor &&
@@ -1004,7 +1007,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         statementImportBatches[batch.id] = batch
         return batch
     }
-    func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try requireActiveMembership()
+    func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try requireActiveMembership();
         guard let batch = statementImportBatches[batchID], batch.accountID == accountID else { throw workspaceRepositoryError("Statement import not found.") }
         guard batch.status == "review", batch.version == approval.expectedVersion else { throw APIClientError.server(status: 409, message: "This statement review changed. Refresh and try again.") }
         let choices = Dictionary(uniqueKeysWithValues: approval.items.map { ($0.sourceRow, $0) })
@@ -6316,7 +6319,7 @@ enum LocalDelimitedStatementParser {
     private static func optionalMinorUnits(_ value: String, currency: String, row: Int) throws -> Int64? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines); return trimmed.isEmpty ? nil : try minorUnits(trimmed, currency: currency, row: row)
     }
-    private static func minorUnits(_ value: String, currency: String, row: Int) throws -> Int64 {
+    static func minorUnits(_ value: String, currency: String, row: Int) throws -> Int64 {
         let scale = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"].contains(currency.uppercased()) ? 3 : (["BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF"].contains(currency.uppercased()) ? 0 : 2)
         var text = value.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "$", with: "").replacingOccurrences(of: ",", with: "")
         let negative = text.hasPrefix("(") && text.hasSuffix(")"); if negative { text = String(text.dropFirst().dropLast()) }
@@ -6325,6 +6328,81 @@ enum LocalDelimitedStatementParser {
         var rounded = Decimal(); NSDecimalRound(&rounded, &input, 0, .plain)
         guard rounded == input, rounded <= Decimal(Int64.max), rounded >= Decimal(Int64.min) else { throw workspaceRepositoryError("Statement row \(row) has unsupported amount precision.") }
         return NSDecimalNumber(decimal: rounded).int64Value
+    }
+}
+
+enum LocalQIFStatementParser {
+    static func parse(data: Data, mapping: APIStatementImportMapping) throws -> [LocalDelimitedStatementParser.Candidate] {
+        guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Statement files must be 10 MB or smaller.") }
+        guard ["mdy", "dmy"].contains(mapping.dateOrder) else { throw workspaceRepositoryError("QIF requires an explicit month/day/year or day/month/year date order.") }
+        guard !data.contains(0) else { throw workspaceRepositoryError("QIF contains an unsupported control character.") }
+        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .windowsCP1252) else {
+            throw workspaceRepositoryError("The QIF statement text could not be decoded.")
+        }
+        guard text.utf8.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Decoded statement exceeds the supported size.") }
+
+        var output: [LocalDelimitedStatementParser.Candidate] = []
+        for rawRecord in text.components(separatedBy: "^") {
+            let lines = rawRecord.components(separatedBy: .newlines).filter { !$0.isEmpty && !$0.hasPrefix("!") }
+            guard !lines.isEmpty else { continue }
+            let record = output.count + 1
+            guard record <= 10_000 else { throw workspaceRepositoryError("QIF may contain at most 10,000 transactions.") }
+            var fields: [Character: String] = [:]
+            for line in lines {
+                guard line.count <= 4_096 else { throw workspaceRepositoryError("QIF field exceeds the supported length at record \(record).") }
+                guard let code = line.first else { continue }
+                if Set<Character>(["D", "T", "P", "M"]).contains(code), fields[code] == nil { fields[code] = String(line.dropFirst()) }
+            }
+            guard let rawDate = fields["D"], let rawAmount = fields["T"] else {
+                throw workspaceRepositoryError("Missing date or amount at QIF record \(record).")
+            }
+            let occurredOn: String
+            let amountMinor: Int64
+            do {
+                occurredOn = try dateString(rawDate, order: mapping.dateOrder, record: record)
+                amountMinor = try amount(rawAmount, currency: mapping.currencyCode, record: record)
+            } catch {
+                throw workspaceRepositoryError("Invalid date or amount at QIF record \(record).")
+            }
+            let payee = clean(fields["P"] ?? "")
+            let memo = clean(fields["M"] ?? "")
+            guard payee.count <= 150, memo.count <= 500 else {
+                throw workspaceRepositoryError("Statement description exceeds the supported length at QIF record \(record).")
+            }
+            output.append(.init(sourceRow: record, occurredOn: occurredOn, amountMinor: amountMinor, payee: payee, memo: memo))
+        }
+        guard !output.isEmpty else { throw workspaceRepositoryError("QIF contains no transactions.") }
+        return output
+    }
+
+    private static func dateString(_ value: String, order: String, record: Int) throws -> String {
+        let pattern = #"^\s*([0-9]{1,2})/([0-9]{1,2})/(?:'([0-9]{2})|([0-9]{4}))\s*$"#
+        let expression = try NSRegularExpression(pattern: pattern)
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        guard let match = expression.firstMatch(in: value, range: range), match.range == range,
+              let firstRange = Range(match.range(at: 1), in: value), let secondRange = Range(match.range(at: 2), in: value) else { throw workspaceRepositoryError("Invalid QIF date at record \(record).") }
+        let first = Int(value[firstRange])!, second = Int(value[secondRange])!
+        let longYearRange = Range(match.range(at: 4), in: value), shortYearRange = Range(match.range(at: 3), in: value)
+        var year = Int(longYearRange.map { String(value[$0]) } ?? shortYearRange.map { String(value[$0]) } ?? "")!
+        if year < 100 { year += year < 70 ? 2_000 : 1_900 }
+        let month = order == "mdy" ? first : second, day = order == "mdy" ? second : first
+        var components = DateComponents(); components.calendar = Calendar(identifier: .gregorian); components.timeZone = TimeZone(secondsFromGMT: 0); components.year = year; components.month = month; components.day = day
+        guard let date = components.date else { throw workspaceRepositoryError("Invalid QIF date at record \(record).") }
+        let verified = Calendar(identifier: .gregorian).dateComponents(in: TimeZone(secondsFromGMT: 0)!, from: date)
+        guard verified.year == year, verified.month == month, verified.day == day else { throw workspaceRepositoryError("Invalid QIF date at record \(record).") }
+        return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+
+    private static func amount(_ value: String, currency: String, record: Int) throws -> Int64 {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pattern = #"^[+-]?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?$"#
+        guard trimmed.range(of: pattern, options: .regularExpression) != nil else { throw workspaceRepositoryError("Invalid QIF amount at record \(record).") }
+        return try LocalDelimitedStatementParser.minorUnits(trimmed.replacingOccurrences(of: ",", with: ""), currency: currency, row: record)
+    }
+
+    private static func clean(_ value: String) -> String {
+        value.replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 }
 
