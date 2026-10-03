@@ -7815,13 +7815,15 @@ private struct LiveHouseholdOverviewView: View {
     }
     private func loadHouseholdManagement() async {
         async let inviteLoad: Void = loadInvitations()
+        var loadedProfiles: [String: APIAccessProfile] = [:]
         await withTaskGroup(of: (String, APIAccessProfile?).self) { group in
             for member in otherMembers {
                 group.addTask { (member.userID, try? await store.accessProfile(userID: member.userID)) }
             }
-            for await (userID, profile) in group { if let profile { memberProfiles[userID] = profile } }
+            for await (userID, profile) in group { if let profile { loadedProfiles[userID] = profile } }
         }
         _ = await inviteLoad
+        memberProfiles = loadedProfiles
     }
 }
 
@@ -7921,6 +7923,8 @@ private struct HouseholdMemberLifecycleView: View {
     @State private var secret: APIInvitationSecret?
     @State private var pendingInvitationSecret: APIInvitationSecret?
     @State private var removing: APIHouseholdMember?
+    @State private var invitationDraftEmail = ""
+    @State private var invitationDraftRole = "adult"
     @State private var isLoading = true
     @State private var errorMessage: String?
 
@@ -7940,8 +7944,14 @@ private struct HouseholdMemberLifecycleView: View {
                                     .accessibilityLabel("Remove \(member.displayName) from household")
                             }
                         } else {
-                            Button("Invite to Rejoin") { secret = nil; showInvite = true }
+                            Button("Invite to Rejoin") {
+                                secret = nil
+                                invitationDraftEmail = member.email
+                                invitationDraftRole = member.role
+                                showInvite = true
+                            }
                                 .accessibilityHint("Creates a new invitation; preserved access is restored only after acceptance")
+                                .accessibilityIdentifier("reinvite-household-member-\(member.userID)")
                         }
                     }
                 }
@@ -7975,14 +7985,14 @@ private struct HouseholdMemberLifecycleView: View {
             }
         }
         .navigationTitle("Members")
-        .toolbar { Button("Invite", systemImage: "person.badge.plus") { showInvite = true }.accessibilityIdentifier("invite-household-member") }
+        .toolbar { Button("Invite", systemImage: "person.badge.plus") { invitationDraftEmail = ""; invitationDraftRole = "adult"; showInvite = true }.accessibilityIdentifier("invite-household-member") }
         .task { await load() }
         .sheet(isPresented: $showInvite, onDismiss: {
             // Present the one-time code only after the creation sheet has actually dismissed.
             // Completing an async reload is not a presentation-completion signal.
             secret = pendingInvitationSecret
             pendingInvitationSecret = nil
-        }) { HouseholdInvitationCreateView(store: store, recoveredSecret: $pendingInvitationSecret, onCreated: load) }
+        }) { HouseholdInvitationCreateView(store: store, recoveredSecret: $pendingInvitationSecret, onCreated: load, initialEmail: invitationDraftEmail, initialRole: invitationDraftRole) }
         .sheet(item: $secret) { value in HouseholdInvitationSecretView(secret: value) }
         .alert("Remove \(removing?.displayName ?? "member")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             Button("Keep Member", role: .cancel) { removing = nil }
@@ -8018,6 +8028,18 @@ private struct HouseholdInvitationCreateView: View {
     @State private var role = "adult"
     @State private var isSaving = false
     @State private var errorMessage: String?
+    init(store: BudgetWorkspaceStore, recoveredSecret: Binding<APIInvitationSecret?>, onCreated: @escaping () async -> Void, initialEmail: String = "", initialRole: String = "adult") {
+        self.store = store
+        _recoveredSecret = recoveredSecret
+        self.onCreated = onCreated
+        _email = State(initialValue: initialEmail)
+        _role = State(initialValue: ["adult", "child"].contains(initialRole) ? initialRole : "adult")
+    }
+    private var normalizedEmail: String { email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+    private var emailLooksValid: Bool {
+        let pieces = normalizedEmail.split(separator: "@", omittingEmptySubsequences: false)
+        return pieces.count == 2 && !pieces[0].isEmpty && pieces[1].contains(".") && !normalizedEmail.contains(" ")
+    }
     var body: some View {
         NavigationStack {
             Form {
@@ -8043,7 +8065,8 @@ private struct HouseholdInvitationCreateView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(isSaving) }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") { Task { await create() } }.disabled(isSaving || !email.contains("@"))
+                    Button("Create") { Task { await create() } }.disabled(isSaving || !emailLooksValid)
+                        .accessibilityIdentifier("create-household-invitation")
                 }
             }
             .alert("Unable to create invitation", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
@@ -8057,7 +8080,7 @@ private struct HouseholdInvitationCreateView: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            let value = try await store.createHouseholdInvitation(.init(email: email, role: role))
+            let value = try await store.createHouseholdInvitation(.init(email: normalizedEmail, role: role))
             recoveredSecret = value
             await onCreated()
             dismiss()
@@ -8076,6 +8099,10 @@ private struct HouseholdInvitationSecretView: View {
                         .textSelection(.enabled)
                         .accessibilityIdentifier("invitation-code")
                     Button("Copy Code", systemImage: "doc.on.doc") { UIPasteboard.general.string = secret.invitationToken }
+                    ShareLink(item: invitationMessage) {
+                        Label("Share Invitation", systemImage: "square.and.arrow.up")
+                    }
+                    .accessibilityIdentifier("share-household-invitation")
                 }
                 Section("Next step") {
                     Text("Send this code privately to \(secret.email). It expires in seven days and can be used once.")
@@ -8086,6 +8113,9 @@ private struct HouseholdInvitationSecretView: View {
             .navigationTitle("Invitation Ready")
             .toolbar { Button("Done") { dismiss() } }
         }
+    }
+    private var invitationMessage: String {
+        "Join my ClearPocket household with this one-time invitation code: \(secret.invitationToken)\n\nThis code expires in seven days."
     }
 }
 

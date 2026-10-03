@@ -1505,3 +1505,12 @@ is unavailable. Member summaries now distinguish “no access” from a misleadi
 Server authorization and persisted permission-profile semantics are unchanged. Focused native source
 coverage and production-composition XCUITests pass; this records engineering verification, not human
 acceptance.
+
+### Household invitation usability — 2026-10-03
+
+Removed-member re-invites now prefill the known normalized email address and prior adult/child role,
+while a new invitation still starts blank. The one-time invitation screen retains explicit copy
+behavior and adds the native share sheet with the seven-day expiry warning. Access profiles, server
+authorization, and invitation-token semantics are unchanged. The Xcode 27 Beta simulator build,
+Swift package suite, and focused native source regression pass. Native interaction still requires the
+ordinary human acceptance pass; this checkpoint does not claim it.

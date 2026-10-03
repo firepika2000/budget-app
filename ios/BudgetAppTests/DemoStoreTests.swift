@@ -907,6 +907,10 @@ final class DemoStoreTests: XCTestCase {
                       "the household tab must use the active production session and workspace store")
         XCTAssertTrue(workspace.contains("accessibilityIdentifier(\"household-overview-screen\")"),
                       "the real household destination must remain available to production UI coverage")
+        XCTAssertTrue(workspace.contains("invitationDraftEmail = member.email"),
+                      "re-inviting a removed member must prefill the known address")
+        XCTAssertTrue(workspace.contains("ShareLink(item: invitationMessage)"),
+                      "one-time household invitations must support the native share sheet")
         XCTAssertTrue(workspace.contains("Section(\"Visibility preview\")"),
                       "member access must summarize budget, account, balance, category, and reporting visibility")
         XCTAssertTrue(workspace.contains("Section(\"What this member can see\")"),
