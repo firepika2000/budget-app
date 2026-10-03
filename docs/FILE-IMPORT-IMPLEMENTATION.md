@@ -1,9 +1,10 @@
 # File import implementation
 
 Status: IN PROGRESS. The authenticated server API exposes money-neutral statement staging,
-duplicate review, reload, cancellation, and explicit approval for CSV, OFX, QFX, QIF, and
-conservatively recognized text-based PDF statements.
-The native reconciliation UI remains gated work. Only explicit approval can post ledger rows.
+duplicate review, reload, cancellation, and explicit approval for CSV/TSV/delimited text,
+OFX/QFX, QIF, and conservatively recognized text-based PDF statements. The native reconciliation
+UI is active for Budget Server workspaces and only explicit approval can post ledger rows. The
+Local-on-iPhone provider adapter remains gated work.
 
 Current endpoints:
 
@@ -92,6 +93,10 @@ credit adds using exact integer arithmetic. Unsupported separators, conflicting 
 negative debit/credit values, invalid leap dates and overprecision fail before returning candidates.
 Thirty-five focused tests cover these contracts. Grouping separators, decimal-comma amounts and
 additional date formats remain explicit mapping work, not silently guessed behavior.
+
+The native picker exposes the same separator contract for `.csv`, `.tsv`, and `.txt` bank exports.
+TSV defaults to a tab separator; CSV and text default to comma. The user can change it explicitly,
+which rebuilds the header mapping rather than sending mismatched column names to the server.
 
 ### Canonical creation transaction boundary
 

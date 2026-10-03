@@ -10,6 +10,8 @@
 - Added a native statement-import flow to account reconciliation with Files selection, explicit CSV
   column mapping, conservative PDF guidance, duplicate-aware defaults, category selection, and
   reviewed post/skip approval for Budget Server workspaces.
+- Expanded native delimited-statement setup to accept CSV, TSV, and plain-text exports with explicit
+  comma, semicolon, or tab selection instead of guessing a bank's file layout.
 - Added an owner-controlled Household totals permission. Restricted members now see an explicit privacy state instead of a misleading `$0.00`, while account/category scopes continue to prevent household-wide Ready-to-Assign disclosure.
 - Promoted Household to the production workspace tab shell so members, invitations, delegated
   budgets, allowances, payees, and data-location tools are no longer buried in Profile & Settings.

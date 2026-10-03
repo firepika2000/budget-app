@@ -6186,12 +6186,14 @@ private struct LiveReconcileView: View {
 private struct StatementImportFile: Identifiable {
     let id = UUID(); let name: String; let data: Data
     static let allowedTypes: [UTType] = [
-        .commaSeparatedText, .pdf,
+        .commaSeparatedText, .tabSeparatedText, .plainText, .pdf,
         UTType(filenameExtension: "ofx") ?? .data,
         UTType(filenameExtension: "qfx") ?? .data,
         UTType(filenameExtension: "qif") ?? .data,
     ]
-    var format: String { URL(fileURLWithPath: name).pathExtension.lowercased() }
+    var fileExtension: String { URL(fileURLWithPath: name).pathExtension.lowercased() }
+    var sourceFormat: String { ["csv", "tsv", "txt"].contains(fileExtension) ? "csv" : fileExtension }
+    var suggestedDelimiter: String { fileExtension == "tsv" ? "\t" : "," }
 }
 
 private struct StatementImportFlowView: View {
@@ -6201,20 +6203,23 @@ private struct StatementImportFlowView: View {
     @State private var staged: APIStatementImport?
     @State private var dateColumn = ""; @State private var amountColumn = ""; @State private var debitColumn = ""; @State private var creditColumn = ""; @State private var payeeColumn = ""; @State private var memoColumn = ""
     @State private var csvAmountLayout = "amount"
+    @State private var delimiter = ","
     @State private var dateOrder = "mdy"; @State private var postRows: Set<Int> = []; @State private var categoryByRow: [Int: String] = [:]
     @State private var isWorking = false; @State private var errorMessage: String?
-    private var headers: [String] { file.format == "csv" ? Self.csvHeaders(file.data) : [] }
+    private var headers: [String] { file.sourceFormat == "csv" ? Self.csvHeaders(file.data, delimiter: delimiter) : [] }
     var body: some View { NavigationStack { Form {
         if let staged { review(staged) } else { setup }
     }.navigationTitle(staged == nil ? "Import Statement" : "Review Import").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { if let staged { Button("Post Selected") { Task { await approve(staged) } }.disabled(isWorking) } else { Button("Preview") { Task { await stage() } }.disabled(!mappingReady || isWorking) } } }
         .alert("Statement import failed", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
-        .onAppear { configureDefaults() }
+        .onAppear { delimiter = file.suggestedDelimiter; configureDefaults() }
+        .onChange(of: delimiter) { _, _ in configureDefaults(reset: true) }
     } }
     @ViewBuilder private var setup: some View {
-        Section("File") { LabeledContent("Statement", value: file.name); LabeledContent("Format", value: file.format.uppercased()); Text("Nothing changes until you review every recognized row and post your selection.").font(.footnote).foregroundStyle(.secondary) }
-        if file.format == "csv" {
+        Section("File") { LabeledContent("Statement", value: file.name); LabeledContent("Format", value: file.fileExtension.uppercased()); Text("Nothing changes until you review every recognized row and post your selection.").font(.footnote).foregroundStyle(.secondary) }
+        if file.sourceFormat == "csv" {
             Section("CSV format") {
+                Picker("Separator", selection: $delimiter) { Text("Comma").tag(","); Text("Semicolon").tag(";"); Text("Tab").tag("\t") }
                 Picker("Date order", selection: $dateOrder) { Text("Year-Month-Day").tag("ymd"); Text("Month / Day / Year").tag("mdy"); Text("Day / Month / Year").tag("dmy") }
                 Picker("Money columns", selection: $csvAmountLayout) { Text("One signed amount").tag("amount"); Text("Separate debit and credit").tag("debit-credit") }
             }
@@ -6231,21 +6236,22 @@ private struct StatementImportFlowView: View {
                 Text(csvAmountLayout == "amount" ? "Expenses must be negative and deposits positive." : "Debit values become outflows; credit values become inflows.").font(.footnote).foregroundStyle(.secondary)
             }
         }
-        if ["qif", "pdf"].contains(file.format) { Section("Date format") { Picker("Order", selection: $dateOrder) { Text("Month / Day / Year").tag("mdy"); Text("Day / Month / Year").tag("dmy") } } }
-        if file.format == "pdf" { Section { Label("PDF safety", systemImage: "checkmark.shield"); Text("Only text rows with an explicit date and signed or parenthesized amount are recognized. Scanned and ambiguous statements are rejected.").font(.footnote).foregroundStyle(.secondary) } }
+        if ["qif", "pdf"].contains(file.sourceFormat) { Section("Date format") { Picker("Order", selection: $dateOrder) { Text("Month / Day / Year").tag("mdy"); Text("Day / Month / Year").tag("dmy") } } }
+        if file.sourceFormat == "pdf" { Section { Label("PDF safety", systemImage: "checkmark.shield"); Text("Only text rows with an explicit date and signed or parenthesized amount are recognized. Scanned and ambiguous statements are rejected.").font(.footnote).foregroundStyle(.secondary) } }
     }
     @ViewBuilder private func review(_ batch: APIStatementImport) -> some View {
         Section { LabeledContent("Recognized", value: "\(batch.candidateCount) transactions"); Text("Possible duplicates start skipped. Review the category and choice for every row.").font(.footnote).foregroundStyle(.secondary) }
         ForEach(batch.candidates) { row in Section { Toggle(isOn: Binding(get: { postRows.contains(row.sourceRow) }, set: { enabled in if enabled { postRows.insert(row.sourceRow) } else { postRows.remove(row.sourceRow) } })) { VStack(alignment: .leading) { Text(row.payee.isEmpty ? "No payee" : row.payee); Text("\(row.occurredOn) · \(CurrencyText.display(row.amountMinor, currencyCode: budget.currencyCode))").font(.caption).foregroundStyle(.secondary) } }; if postRows.contains(row.sourceRow), row.amountMinor < 0 { Picker("Category", selection: Binding(get: { categoryByRow[row.sourceRow] ?? "" }, set: { categoryByRow[row.sourceRow] = $0 })) { Text("Uncategorized").tag(""); ForEach(workspace.categories.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } } }; if !row.exactTransactionIDs.isEmpty || !row.possibleTransactionIDs.isEmpty || row.duplicateSourceRow != nil { Label("Possible duplicate — skipped by default", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange) }; if !row.memo.isEmpty { Text(row.memo).font(.footnote).foregroundStyle(.secondary) } } }
     }
     private var mappingReady: Bool {
-        guard file.format == "csv" else { return true }
+        guard file.sourceFormat == "csv" else { return true }
         let moneyColumns = csvAmountLayout == "amount" ? [amountColumn] : [debitColumn, creditColumn]
         let required = [dateColumn, payeeColumn] + moneyColumns
         return required.allSatisfy { !$0.isEmpty } && Set(required).count == required.count
     }
-    private func configureDefaults() {
-        guard file.format == "csv", !headers.isEmpty else { return }
+    private func configureDefaults(reset: Bool = false) {
+        guard file.sourceFormat == "csv", !headers.isEmpty else { return }
+        if reset { dateColumn = ""; amountColumn = ""; debitColumn = ""; creditColumn = ""; payeeColumn = ""; memoColumn = "" }
         dateColumn = Self.preferred(headers, ["date", "posted date", "transaction date"])
         amountColumn = Self.preferred(headers, ["amount", "transaction amount"])
         debitColumn = Self.preferred(headers, ["debit", "withdrawal", "money out"])
@@ -6254,10 +6260,10 @@ private struct StatementImportFlowView: View {
         memoColumn = Self.preferred(headers, ["memo", "notes", "details"])
         if amountColumn.isEmpty, !debitColumn.isEmpty, !creditColumn.isEmpty { csvAmountLayout = "debit-credit" }
     }
-    private func stage() async { isWorking = true; defer { isWorking = false }; do { let csv = file.format == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; let mapping = APIStatementImportMapping(sourceFormat: file.format, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder); let result = try await workspace.stageStatementImport(accountID: account.id, data: file.data, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)) } catch { errorMessage = error.localizedDescription } }
+    private func stage() async { isWorking = true; defer { isWorking = false }; do { let csv = file.sourceFormat == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; let mapping = APIStatementImportMapping(sourceFormat: file.sourceFormat, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder, delimiter: delimiter); let result = try await workspace.stageStatementImport(accountID: account.id, data: file.data, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)) } catch { errorMessage = error.localizedDescription } }
     private func approve(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { let items = batch.candidates.map { row in APIStatementImportApprovalItem(sourceRow: row.sourceRow, action: postRows.contains(row.sourceRow) ? "post" : "skip", categoryID: postRows.contains(row.sourceRow) ? categoryByRow[row.sourceRow].flatMap { $0.isEmpty ? nil : $0 } : nil) }; _ = try await workspace.approveStatementImport(accountID: account.id, batchID: batch.id, approval: .init(expectedVersion: batch.version, items: items)); dismiss() } catch { errorMessage = error.localizedDescription } }
     private static func preferred(_ headers: [String], _ names: [String]) -> String { for name in names { if let match = headers.first(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == name }) { return match } }; return "" }
-    private static func csvHeaders(_ data: Data) -> [String] { guard let text = String(data: data.prefix(64 * 1024), encoding: .utf8), let line = text.split(whereSeparator: \.isNewline).first else { return [] }; var values: [String] = [], value = "", quoted = false; let chars = Array(line); var index = 0; while index < chars.count { let char = chars[index]; if char == "\"" { if quoted && index + 1 < chars.count && chars[index + 1] == "\"" { value.append("\""); index += 1 } else { quoted.toggle() } } else if char == "," && !quoted { values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); value = "" } else { value.append(char) }; index += 1 }; values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); return values.filter { !$0.isEmpty } }
+    private static func csvHeaders(_ data: Data, delimiter: String) -> [String] { guard let separator = delimiter.first, let text = String(data: data.prefix(64 * 1024), encoding: .utf8), let line = text.split(whereSeparator: \.isNewline).first else { return [] }; var values: [String] = [], value = "", quoted = false; let chars = Array(line); var index = 0; while index < chars.count { let char = chars[index]; if char == "\"" { if quoted && index + 1 < chars.count && chars[index + 1] == "\"" { value.append("\""); index += 1 } else { quoted.toggle() } } else if char == separator && !quoted { values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); value = "" } else { value.append(char) }; index += 1 }; values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); if !values.isEmpty { values[0] = values[0].replacingOccurrences(of: "\u{feff}", with: "") }; return values.filter { !$0.isEmpty } }
 }
 
 private struct ReportLoadModifier: ViewModifier {
