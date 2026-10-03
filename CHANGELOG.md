@@ -22,6 +22,9 @@
   preview of budget, account, balance, category/available, and reporting visibility before saving.
   Human-readable presets now hide low-level capability switches until an owner explicitly chooses
   Custom, and the deterministic training household exercises the same owner-management flow.
+- Replaced unbounded inline household resource toggles with searchable account and category
+  selection screens, including select-all/clear controls, selection counts, and persisted privacy
+  scopes that remain intact while navigating between member-management screens.
 - Added bounded OFX/QFX and QIF statement parsing alongside CSV as the first reconciliation-import
   foundation. Imported rows remain money-neutral until explicit review and canonical posting.
 

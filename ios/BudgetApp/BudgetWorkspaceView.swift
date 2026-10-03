@@ -7655,6 +7655,74 @@ private struct MemberCapability: Identifiable {
     let explanation: String
 }
 
+private struct MemberScopeChoice: Identifiable {
+    let id: String
+    let title: String
+    let detail: String?
+}
+
+private struct MemberScopeSelectionView: View {
+    let title: String
+    let emptyMessage: String
+    let choices: [MemberScopeChoice]
+    @Binding var selectedIDs: Set<String>
+    @State private var query = ""
+
+    private var filteredChoices: [MemberScopeChoice] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return choices }
+        return choices.filter {
+            $0.title.localizedCaseInsensitiveContains(needle)
+                || ($0.detail?.localizedCaseInsensitiveContains(needle) == true)
+        }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                LabeledContent("Visible", value: "\(selectedIDs.count) of \(choices.count)")
+                HStack {
+                    Button("Select All") { selectedIDs.formUnion(choices.map(\.id)) }
+                        .disabled(selectedIDs.count == choices.count)
+                    Spacer()
+                    Button("Clear", role: .destructive) { selectedIDs.removeAll() }
+                        .disabled(selectedIDs.isEmpty)
+                }
+            }
+            Section(title) {
+                ForEach(filteredChoices) { choice in
+                    Button {
+                        if selectedIDs.contains(choice.id) { selectedIDs.remove(choice.id) }
+                        else { selectedIDs.insert(choice.id) }
+                    } label: {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(choice.title).foregroundStyle(.primary)
+                                if let detail = choice.detail {
+                                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Image(systemName: selectedIDs.contains(choice.id) ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selectedIDs.contains(choice.id) ? Theme.accent : Color.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(choice.title)
+                    .accessibilityValue(selectedIDs.contains(choice.id) ? "Visible" : "Hidden")
+                    .accessibilityIdentifier("member-scope-choice-\(choice.id)")
+                }
+                if filteredChoices.isEmpty {
+                    ContentUnavailableView("No matches", systemImage: "magnifyingglass", description: Text(emptyMessage))
+                }
+            }
+        }
+        .navigationTitle(title)
+        .searchable(text: $query, prompt: "Search \(title.lowercased())")
+    }
+}
+
 private struct LiveMemberAccessView: View {
     @ObservedObject var store: BudgetWorkspaceStore
     let member: APIHouseholdMember
@@ -7709,7 +7777,10 @@ private struct LiveMemberAccessView: View {
         }
         .navigationTitle(member.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await load() }
+        .task {
+            guard profile == nil else { return }
+            await load()
+        }
         .toolbar { if profile != nil { Button(didSave ? "Saved" : "Save") { Task { await save() } }.disabled(isSaving || (restrictAccounts && accountIDs.isEmpty) || (restrictCategories && categoryIDs.isEmpty)) } }
         .alert("Unable to update access", isPresented: Binding(get: { errorMessage != nil && profile != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
         .accessibilityIdentifier("member-access-screen")
@@ -7726,13 +7797,41 @@ private struct LiveMemberAccessView: View {
             }
             Section("Account visibility") {
                 Toggle("Only selected accounts", isOn: $restrictAccounts).accessibilityIdentifier("member-access-restrict-accounts")
-                if restrictAccounts { ForEach(store.accounts.filter { !$0.isClosed }) { account in selectionToggle(account.name, id: account.id, values: $accountIDs) } }
+                if restrictAccounts {
+                    NavigationLink {
+                        MemberScopeSelectionView(
+                            title: "Visible Accounts",
+                            emptyMessage: "Try another account name.",
+                            choices: store.accounts.filter { !$0.isClosed }.map {
+                                MemberScopeChoice(id: $0.id, title: $0.name, detail: $0.accountType.replacingOccurrences(of: "_", with: " ").capitalized)
+                            },
+                            selectedIDs: $accountIDs
+                        )
+                    } label: {
+                        LabeledContent("Choose Accounts", value: accountIDs.isEmpty ? "None selected" : "\(accountIDs.count) selected")
+                    }
+                    .accessibilityIdentifier("member-access-choose-accounts")
+                }
                 if restrictAccounts && accountIDs.isEmpty { Text("Select at least one account.").font(.footnote).foregroundStyle(.red) }
                 Text(restrictAccounts ? "This member will only discover the selected accounts. Transfers require access to both sides." : "This member can discover every account in this budget. Balance amounts are controlled separately below.").font(.footnote).foregroundStyle(.secondary)
             }
             Section("Category visibility") {
-                Toggle("Only selected categories", isOn: $restrictCategories)
-                if restrictCategories { ForEach(store.categories.filter { !$0.isArchived }) { category in selectionToggle(category.name, id: category.id, values: $categoryIDs) } }
+                Toggle("Only selected categories", isOn: $restrictCategories).accessibilityIdentifier("member-access-restrict-categories")
+                if restrictCategories {
+                    NavigationLink {
+                        MemberScopeSelectionView(
+                            title: "Visible Categories",
+                            emptyMessage: "Try another category or group name.",
+                            choices: store.categories.filter { !$0.isArchived }.map { category in
+                                MemberScopeChoice(id: category.id, title: category.name, detail: store.groups.first(where: { $0.id == category.groupID })?.name)
+                            },
+                            selectedIDs: $categoryIDs
+                        )
+                    } label: {
+                        LabeledContent("Choose Categories", value: categoryIDs.isEmpty ? "None selected" : "\(categoryIDs.count) selected")
+                    }
+                    .accessibilityIdentifier("member-access-choose-categories")
+                }
                 if restrictCategories && categoryIDs.isEmpty { Text("Select at least one category.").font(.footnote).foregroundStyle(.red) }
                 Text(restrictCategories ? "Plan totals, activity, and reports are filtered to these categories." : "This member can discover every category and its available amount when Plan visibility is enabled.").font(.footnote).foregroundStyle(.secondary)
             }
@@ -7768,7 +7867,6 @@ private struct LiveMemberAccessView: View {
         Section(title) { ForEach(items) { item in Toggle(isOn: capabilityBinding(item.id)) { VStack(alignment: .leading) { Text(item.title); Text(item.explanation).font(.caption).foregroundStyle(.secondary) } } } }
     }
     private func capabilityBinding(_ name: String) -> Binding<Bool> { Binding(get: { capabilities.contains(name) }, set: { enabled in if enabled { capabilities.insert(name) } else { capabilities.remove(name) }; preset = matchingPreset() }) }
-    private func selectionToggle(_ title: String, id: String, values: Binding<Set<String>>) -> some View { Toggle(title, isOn: Binding(get: { values.wrappedValue.contains(id) }, set: { if $0 { values.wrappedValue.insert(id) } else { values.wrappedValue.remove(id) } })) }
     private func matchingPreset() -> MemberAccessPreset { MemberAccessPreset.allCases.first(where: { $0 != .custom && $0.capabilities == capabilities }) ?? .custom }
     private func load() async {
         isLoading = true; defer { isLoading = false }

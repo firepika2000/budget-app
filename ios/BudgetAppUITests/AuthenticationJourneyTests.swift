@@ -1425,10 +1425,25 @@ final class AuthenticationJourneyTests: XCTestCase {
         for _ in 0..<6 where !accountScope.exists { app.swipeUp() }
         XCTAssertTrue(accountScope.waitForExistence(timeout: 5))
         accountScope.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-        XCTAssertTrue(app.switches["Household Checking"].waitForExistence(timeout: 5))
-        let checkingScope = app.switches["Household Checking"]
-        checkingScope.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-        XCTAssertEqual(checkingScope.value as? String, "1")
+        app.buttons["member-access-choose-accounts"].tap()
+        XCTAssertTrue(app.navigationBars["Visible Accounts"].waitForExistence(timeout: 5))
+        let checkingScope = app.buttons["member-scope-choice-checking"]
+        XCTAssertTrue(checkingScope.waitForExistence(timeout: 5))
+        checkingScope.tap()
+        XCTAssertEqual(checkingScope.value as? String, "Visible")
+        app.navigationBars.buttons["Jordan Rivera"].tap()
+
+        let categoryScope = app.switches["member-access-restrict-categories"]
+        for _ in 0..<6 where !categoryScope.exists { app.swipeUp() }
+        XCTAssertTrue(categoryScope.waitForExistence(timeout: 5))
+        categoryScope.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        app.buttons["member-access-choose-categories"].tap()
+        XCTAssertTrue(app.navigationBars["Visible Categories"].waitForExistence(timeout: 5))
+        let groceriesScope = app.buttons["member-scope-choice-groceries"]
+        XCTAssertTrue(groceriesScope.waitForExistence(timeout: 5))
+        groceriesScope.tap()
+        XCTAssertEqual(groceriesScope.value as? String, "Visible")
+        app.navigationBars.buttons["Jordan Rivera"].tap()
         app.buttons["Save"].tap()
         XCTAssertTrue(app.buttons["Saved"].waitForExistence(timeout: 5))
 
@@ -1438,6 +1453,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["member-access-preset"].label.contains("Full Access"))
         for _ in 0..<6 where !app.switches["member-access-restrict-accounts"].exists { app.swipeUp() }
         XCTAssertEqual(app.switches["member-access-restrict-accounts"].value as? String, "1")
+        for _ in 0..<6 where !app.switches["member-access-restrict-categories"].exists { app.swipeUp() }
+        XCTAssertEqual(app.switches["member-access-restrict-categories"].value as? String, "1")
     }
 
     func testDelegatedRequestCancellationIsReachableConfirmedAndRetainedInHistory() {
