@@ -1381,11 +1381,9 @@ final class AuthenticationJourneyTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--demo"]
         app.launch()
-        app.buttons["profile-settings-button"].tap()
-        app.buttons["Household and access"].tap()
-        app.buttons["household-members-lifecycle"].tap()
-        XCTAssertTrue(app.navigationBars["Members"].waitForExistence(timeout: 5))
-        app.buttons["invite-household-member"].tap()
+        app.buttons["Household"].tap()
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
+        app.buttons["household-invite-member"].tap()
         XCTAssertTrue(app.navigationBars["Invite Member"].waitForExistence(timeout: 5))
         app.textFields["Email"].tap()
         app.textFields["Email"].typeText("invitation@example.test")
@@ -1394,16 +1392,16 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertFalse(app.navigationBars["Invite Member"].exists)
         XCTAssertTrue(app.staticTexts["invitation-code"].exists)
         app.navigationBars["Invitation Ready"].buttons["Done"].tap()
-        XCTAssertTrue(app.navigationBars["Members"].waitForExistence(timeout: 5))
-        app.buttons["invite-household-member"].tap()
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
+        app.buttons["household-invite-member"].tap()
         app.navigationBars["Invite Member"].buttons["Cancel"].tap()
         XCTAssertTrue(app.navigationBars["Invite Member"].waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.navigationBars["Invitation Ready"].exists)
-        XCTAssertTrue(app.navigationBars["Members"].exists)
-        let invitation = app.cells.containing(.staticText, identifier: "invitation@example.test").firstMatch
-        XCTAssertTrue(invitation.waitForExistence(timeout: 5))
-        invitation.buttons["Cancel"].tap()
-        XCTAssertTrue(invitation.staticTexts["Canceled"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Household"].exists)
+        for _ in 0..<4 where !app.staticTexts["invitation@example.test"].exists { app.swipeUp() }
+        XCTAssertTrue(app.staticTexts["invitation@example.test"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Pending"].exists)
+        XCTAssertTrue(app.buttons["Manage Invitations"].exists)
     }
 
     func testOwnerCanPersistHumanReadableMemberAccessThroughProductionHouseholdFlow() {

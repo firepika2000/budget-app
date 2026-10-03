@@ -27,6 +27,9 @@
 - Replaced unbounded inline household resource toggles with searchable account and category
   selection screens, including select-all/clear controls, selection counts, and persisted privacy
   scopes that remain intact while navigating between member-management screens.
+- Added a direct Invite New Member action to the Household destination, clearer adult/child role
+  guidance, and reusable invitation handoff instructions that lead owners back to per-member totals,
+  account, category, and action controls after acceptance.
 - Added bounded OFX/QFX and QIF statement parsing alongside CSV as the first reconciliation-import
   foundation. Imported rows remain money-neutral until explicit review and canonical posting.
 

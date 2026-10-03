@@ -7303,8 +7303,14 @@ struct LiveHouseholdView: View {
 private struct LiveHouseholdOverviewView: View {
     @ObservedObject var session: AppSession
     @ObservedObject var store: BudgetWorkspaceStore
+    @State private var showInvite = false
+    @State private var invitationSecret: APIInvitationSecret?
+    @State private var pendingInvitationSecret: APIInvitationSecret?
+    @State private var invitations: [APIInvitationSummary] = []
+    @State private var invitationError: String?
     private var activeMembers: [APIHouseholdMember] { store.householdMembers.filter(\.isActive) }
     private var otherMembers: [APIHouseholdMember] { activeMembers.filter { $0.role != "owner" } }
+    private var openInvitations: [APIInvitationSummary] { invitations.filter { $0.status == "pending" || $0.status == "expired" } }
     private var canManageMembers: Bool {
         store.budget.effectivePermission == .owner && session.sourceMode != .localDevice
     }
@@ -7334,12 +7340,34 @@ private struct LiveHouseholdOverviewView: View {
                     ContentUnavailableView("Just you for now", systemImage: "person.crop.circle", description: Text("Invite family members when you are ready to share this budget."))
                 }
                 if canManageMembers {
+                    Button("Invite New Member", systemImage: "person.badge.plus") { showInvite = true }
+                        .accessibilityIdentifier("household-invite-member")
                     NavigationLink { HouseholdMemberLifecycleView(store: store) } label: {
-                        Label(otherMembers.isEmpty ? "Invite a Household Member" : "Manage Members & Invitations", systemImage: "person.badge.plus")
+                        Label("Members & Invitations", systemImage: "person.2.badge.gearshape")
                     }.accessibilityIdentifier("household-members-lifecycle")
                 }
             }
             if canManageMembers {
+                if !openInvitations.isEmpty {
+                    Section("Pending invitations") {
+                        ForEach(openInvitations) { invitation in
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack {
+                                    Text(invitation.email)
+                                    Spacer()
+                                    Text(invitation.status.capitalized)
+                                        .foregroundStyle(invitation.status == "pending" ? Theme.attention : .secondary)
+                                }
+                                Text("\(invitation.role.capitalized) · expires \(invitation.expiresAt)")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .accessibilityIdentifier("household-invitation-\(invitation.id)")
+                        }
+                        NavigationLink { HouseholdMemberLifecycleView(store: store) } label: {
+                            Label("Manage Invitations", systemImage: "envelope.badge")
+                        }
+                    }
+                }
                 Section("Privacy at a glance") {
                     Label("Each member can be limited to selected accounts and categories.", systemImage: "eye.slash")
                     Label("Account balances and total budget information have separate visibility controls.", systemImage: "lock.shield")
@@ -7366,6 +7394,17 @@ private struct LiveHouseholdOverviewView: View {
             }
         }
         .navigationTitle("Household")
+        .task { if canManageMembers { await loadInvitations() } }
+        .sheet(isPresented: $showInvite, onDismiss: {
+            invitationSecret = pendingInvitationSecret
+            pendingInvitationSecret = nil
+        }) {
+            HouseholdInvitationCreateView(store: store, recoveredSecret: $pendingInvitationSecret, onCreated: loadInvitations)
+        }
+        .sheet(item: $invitationSecret) { value in HouseholdInvitationSecretView(secret: value) }
+        .alert("Unable to load invitations", isPresented: Binding(get: { invitationError != nil }, set: { if !$0 { invitationError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(invitationError ?? "Unknown error") }
         .accessibilityIdentifier("household-overview-screen")
     }
 
@@ -7393,6 +7432,10 @@ private struct LiveHouseholdOverviewView: View {
     private func delegatedSummary(_ userID: String) -> String {
         guard let policy = store.delegatedBudgets.first(where: { $0.userID == userID }) else { return "No delegated budget configured" }
         return "Authority \(store.format(policy.authorityMinor)) · \(policy.allowReallocation ? "can move assigned money" : "fixed access")"
+    }
+    private func loadInvitations() async {
+        do { invitations = try await store.householdInvitations(); invitationError = nil }
+        catch { invitationError = error.localizedDescription }
     }
 }
 
@@ -7554,7 +7597,7 @@ private struct HouseholdMemberLifecycleView: View {
             secret = pendingInvitationSecret
             pendingInvitationSecret = nil
         }) { HouseholdInvitationCreateView(store: store, recoveredSecret: $pendingInvitationSecret, onCreated: load) }
-        .sheet(item: $secret) { value in NavigationStack { Form { Section("Invitation code") { Text(value.invitationToken).textSelection(.enabled).accessibilityIdentifier("invitation-code"); Button("Copy Code") { UIPasteboard.general.string = value.invitationToken } }; Section { Text("Send this code privately to \(value.email). It expires in seven days and can be used once.").font(.footnote).foregroundStyle(.secondary) } }.navigationTitle("Invitation Ready").toolbar { Button("Done") { secret = nil } } } }
+        .sheet(item: $secret) { value in HouseholdInvitationSecretView(secret: value) }
         .alert("Remove \(removing?.displayName ?? "member")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             Button("Keep Member", role: .cancel) { removing = nil }
             Button("Remove Member", role: .destructive) { if let member = removing { Task { await remove(member) } } }
@@ -7597,8 +7640,15 @@ private struct HouseholdInvitationCreateView: View {
                 Picker("Household role", selection: $role) {
                     Text("Adult").tag("adult"); Text("Child").tag("child")
                 }
+                Section("Starting access") {
+                    Label(role == "adult" ? "Adult member" : "Child member", systemImage: role == "adult" ? "person.crop.circle" : "figure.and.child.holdinghands")
+                    Text(role == "adult"
+                         ? "Adults can be given broader access, but ownership and access to other budgets are never transferred."
+                         : "Children start with a more limited household role. You choose their visible accounts, categories, totals, and actions after they join.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section {
-                    Text("An invitation creates membership only after the recipient accepts its private code. Budget access is then configured separately.")
+                    Text("The invitation creates membership only after the recipient accepts its private code. Open their name in Household afterward to review exactly what they can see and change.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -7626,6 +7676,30 @@ private struct HouseholdInvitationCreateView: View {
             await onCreated()
             dismiss()
         } catch { errorMessage = error.localizedDescription }
+    }
+}
+
+private struct HouseholdInvitationSecretView: View {
+    let secret: APIInvitationSecret
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Invitation code") {
+                    Text(secret.invitationToken)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("invitation-code")
+                    Button("Copy Code", systemImage: "doc.on.doc") { UIPasteboard.general.string = secret.invitationToken }
+                }
+                Section("Next step") {
+                    Text("Send this code privately to \(secret.email). It expires in seven days and can be used once.")
+                    Text("After they join, return to Household and tap their name to choose visible totals, accounts, categories, and allowed actions.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Invitation Ready")
+            .toolbar { Button("Done") { dismiss() } }
+        }
     }
 }
 
