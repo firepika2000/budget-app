@@ -7469,7 +7469,7 @@ private struct LiveHouseholdOverviewView: View {
                             .accessibilityIdentifier("member-access-\(member.userID)")
                     } else { memberRow(member) }
                 }
-                if activeMembers.isEmpty {
+                if otherMembers.isEmpty {
                     ContentUnavailableView("Just you for now", systemImage: "person.crop.circle", description: Text("Invite family members when you are ready to share this budget."))
                 }
                 if canManageMembers {
@@ -7528,6 +7528,7 @@ private struct LiveHouseholdOverviewView: View {
         }
         .navigationTitle("Household")
         .task { if canManageMembers { await loadHouseholdManagement() } }
+        .refreshable { if canManageMembers { await loadHouseholdManagement() } }
         .sheet(isPresented: $showInvite, onDismiss: {
             invitationSecret = pendingInvitationSecret
             pendingInvitationSecret = nil
@@ -7558,7 +7559,7 @@ private struct LiveHouseholdOverviewView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(member.displayName)
                 Text(memberAccessSummary(member))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
         }.padding(.vertical, 2)
     }

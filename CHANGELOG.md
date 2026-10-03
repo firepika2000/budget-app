@@ -7,6 +7,8 @@
   and canonical cleared-transaction path as the server-backed workflow.
 - Household owners can now see each member's effective account, category, and household-total
   visibility directly in the People list, with the summary refreshing immediately after a save.
+- Corrected the owner-only Household empty state and added pull-to-refresh for membership,
+  invitation, and access-summary changes made by another administrator or device.
 
 - Added authenticated, money-neutral bank-statement staging and duplicate review APIs for CSV,
   OFX/QFX, QIF, and conservatively recognized text-based PDFs, plus explicit all-row review and
