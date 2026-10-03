@@ -981,8 +981,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         switch mapping.sourceFormat {
         case "csv": parsed = try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
         case "qif": parsed = try LocalQIFStatementParser.parse(data: data, mapping: mapping)
+        case "ofx", "qfx": parsed = try LocalOFXStatementParser.parse(data: data, mapping: mapping)
         default:
-            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, and QIF. OFX, QFX, and PDF imports are available when connected to Budget Server.")
+            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, and QIF. PDF imports are available when connected to Budget Server.")
         }
         let candidates = parsed.map { candidate -> APIStatementImportCandidate in
             let exact = demo.transactions.filter {
@@ -6398,6 +6399,86 @@ enum LocalQIFStatementParser {
         let pattern = #"^[+-]?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?$"#
         guard trimmed.range(of: pattern, options: .regularExpression) != nil else { throw workspaceRepositoryError("Invalid QIF amount at record \(record).") }
         return try LocalDelimitedStatementParser.minorUnits(trimmed.replacingOccurrences(of: ",", with: ""), currency: currency, row: record)
+    }
+
+    private static func clean(_ value: String) -> String {
+        value.replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+}
+
+enum LocalOFXStatementParser {
+    static func parse(data: Data, mapping: APIStatementImportMapping) throws -> [LocalDelimitedStatementParser.Candidate] {
+        guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Statement files must be 10 MB or smaller.") }
+        guard !data.contains(0) else { throw workspaceRepositoryError("OFX/QFX contains an unsupported control character.") }
+        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .windowsCP1252) else {
+            throw workspaceRepositoryError("The OFX/QFX statement text could not be decoded.")
+        }
+        guard text.utf8.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Decoded statement exceeds the supported size.") }
+        guard text.range(of: #"<!\s*(?:DOCTYPE|ENTITY)"#, options: [.regularExpression, .caseInsensitive]) == nil else {
+            throw workspaceRepositoryError("OFX/QFX declarations are not supported.")
+        }
+        let expression = try NSRegularExpression(
+            pattern: #"<STMTTRN\b[^>]*>(.*?)(?:</STMTTRN\s*>|(?=<STMTTRN\b)|(?=</BANKTRANLIST))"#,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        )
+        let matches = expression.matches(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text))
+        guard !matches.isEmpty else { throw workspaceRepositoryError("OFX/QFX contains no bank transactions.") }
+        guard matches.count <= 10_000 else { throw workspaceRepositoryError("OFX/QFX may contain at most 10,000 transactions.") }
+
+        return try matches.enumerated().map { offset, match in
+            let record = offset + 1
+            guard let blockRange = Range(match.range(at: 1), in: text) else { throw workspaceRepositoryError("Invalid OFX/QFX record \(record).") }
+            let block = String(text[blockRange])
+            guard let rawDate = value(block, tag: "DTPOSTED"), let rawAmount = value(block, tag: "TRNAMT") else {
+                throw workspaceRepositoryError("Missing date or amount at OFX/QFX record \(record).")
+            }
+            let occurredOn: String
+            let amountMinor: Int64
+            do {
+                occurredOn = try dateString(rawDate, record: record)
+                amountMinor = try amount(rawAmount, currency: mapping.currencyCode, record: record)
+            } catch {
+                throw workspaceRepositoryError("Invalid date or amount at OFX/QFX record \(record).")
+            }
+            let payee = clean(value(block, tag: "NAME") ?? value(block, tag: "PAYEE") ?? "")
+            let memo = clean(value(block, tag: "MEMO") ?? "")
+            guard payee.count <= 150, memo.count <= 500 else {
+                throw workspaceRepositoryError("Statement description exceeds the supported length at OFX/QFX record \(record).")
+            }
+            return .init(sourceRow: record, occurredOn: occurredOn, amountMinor: amountMinor, payee: payee, memo: memo)
+        }
+    }
+
+    private static func value(_ block: String, tag: String) -> String? {
+        let escaped = NSRegularExpression.escapedPattern(for: tag)
+        guard let expression = try? NSRegularExpression(
+            pattern: "<\(escaped)\\b[^>]*>\\s*([^<\\r\\n]*?)(?:\\s*</\(escaped)\\s*>|\\r?\\n|(?=<)|$)",
+            options: .caseInsensitive
+        ), let match = expression.firstMatch(in: block, range: NSRange(block.startIndex..<block.endIndex, in: block)),
+              let valueRange = Range(match.range(at: 1), in: block) else { return nil }
+        return block[valueRange].trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func dateString(_ value: String, record: Int) throws -> String {
+        let compact = String(value.trimmingCharacters(in: .whitespacesAndNewlines).prefix(8))
+        guard compact.count == 8, compact.allSatisfy(\.isNumber), let year = Int(compact.prefix(4)),
+              let month = Int(compact.dropFirst(4).prefix(2)), let day = Int(compact.suffix(2)) else {
+            throw workspaceRepositoryError("Invalid OFX/QFX date at record \(record).")
+        }
+        var components = DateComponents(); components.calendar = Calendar(identifier: .gregorian); components.timeZone = TimeZone(secondsFromGMT: 0); components.year = year; components.month = month; components.day = day
+        guard let date = components.date else { throw workspaceRepositoryError("Invalid OFX/QFX date at record \(record).") }
+        let verified = Calendar(identifier: .gregorian).dateComponents(in: TimeZone(secondsFromGMT: 0)!, from: date)
+        guard verified.year == year, verified.month == month, verified.day == day else { throw workspaceRepositoryError("Invalid OFX/QFX date at record \(record).") }
+        return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+
+    private static func amount(_ value: String, currency: String, record: Int) throws -> Int64 {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.range(of: #"^[+-]?[0-9]+(?:\.[0-9]+)?$"#, options: .regularExpression) != nil else {
+            throw workspaceRepositoryError("Invalid OFX/QFX amount at record \(record).")
+        }
+        return try LocalDelimitedStatementParser.minorUnits(trimmed, currency: currency, row: record)
     }
 
     private static func clean(_ value: String) -> String {

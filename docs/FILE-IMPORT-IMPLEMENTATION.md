@@ -4,8 +4,8 @@ Status: IN PROGRESS. The authenticated server API exposes money-neutral statemen
 duplicate review, reload, cancellation, and explicit approval for CSV/TSV/delimited text,
 OFX/QFX, QIF, and conservatively recognized text-based PDF statements. The native reconciliation
 UI is active for Budget Server workspaces and only explicit approval can post ledger rows. Local
-on iPhone now supports CSV, TSV, explicitly delimited text, and structured QIF through the same
-review UI; its OFX/QFX and PDF adapters remain gated work.
+on iPhone now supports CSV, TSV, explicitly delimited text, structured OFX/QFX, and QIF through
+the same review UI; its PDF adapter remains gated work.
 
 Current endpoints:
 
@@ -62,11 +62,12 @@ any later spreadsheet export still requires its own formula-injection defenses.
 7. The production reconciliation sheet now provides file selection, explicit CSV mapping,
    duplicate-aware preview, category selection and all-row post/skip approval through the shared
    workspace command contract. The Budget Server adapter is active for every listed format. The
-   Local-on-iPhone adapter now stages and posts CSV/TSV/delimited text and QIF using exact minor
-   units, local duplicate suggestions and canonical transaction creation. QIF uses the same
-   explicit date-order, strict grouped-amount, deterministic two-digit-year, bounded-input and
-   private-safe validation rules as Budget Server. It still fails closed with an explanatory
-   message for OFX/QFX and PDF until those parsers reach local parity.
+   Local-on-iPhone adapter now stages and posts CSV/TSV/delimited text, OFX/QFX, and QIF using
+   exact minor units, local duplicate suggestions and canonical transaction creation. OFX/QFX
+   accepts bounded OFX 1.x SGML and OFX 2.x XML-style transaction records while rejecting entity
+   and document-type declarations. QIF uses the same explicit date-order, strict grouped-amount,
+   deterministic two-digit-year, bounded-input and private-safe validation rules as Budget Server.
+   It still fails closed with an explanatory message for PDF until that parser reaches local parity.
    Finish Live/Demo/Local Device parity, full privacy,
    migration/recovery and financial-observation tests before claiming workflow completion.
 

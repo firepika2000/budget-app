@@ -2956,6 +2956,54 @@ final class DemoStoreTests: XCTestCase {
         }
     }
 
+    func testLocalOFXParserSupportsSGMLAndXMLWithExactSignedMoney() throws {
+        let data = Data("""
+        OFXHEADER:100
+        <OFX><BANKTRANLIST>
+        <STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20260914120000[-4:EDT]<TRNAMT>-12.34<NAME>Corner Store<MEMO>card purchase
+        <STMTTRN><TRNTYPE>CREDIT<DTPOSTED>20260915</DTPOSTED><TRNAMT>2.34</TRNAMT><PAYEE>Corner Store</PAYEE><MEMO>refund</MEMO></STMTTRN>
+        </BANKTRANLIST></OFX>
+        """.utf8)
+        let rows = try LocalOFXStatementParser.parse(
+            data: data,
+            mapping: .init(sourceFormat: "ofx", currencyCode: "USD")
+        )
+        XCTAssertEqual(rows.map(\.occurredOn), ["2026-09-14", "2026-09-15"])
+        XCTAssertEqual(rows.map(\.amountMinor), [-1_234, 234])
+        XCTAssertEqual(rows.map(\.payee), ["Corner Store", "Corner Store"])
+        XCTAssertEqual(rows.map(\.memo), ["card purchase", "refund"])
+    }
+
+    func testLocalOFXParserRejectsDeclarationsAndPrivateMalformedRows() throws {
+        let privatePayee = "Private Medical Payee"
+        let unsafe = Data("<!DOCTYPE OFX [<!ENTITY secret SYSTEM 'file:///etc/passwd'>]><OFX><BANKTRANLIST><STMTTRN><DTPOSTED>20260914<TRNAMT>1</STMTTRN></BANKTRANLIST></OFX>".utf8)
+        XCTAssertThrowsError(try LocalOFXStatementParser.parse(data: unsafe, mapping: .init(sourceFormat: "ofx", currencyCode: "USD"))) { error in
+            XCTAssertFalse(error.localizedDescription.contains("passwd"))
+            XCTAssertTrue(error.localizedDescription.contains("not supported"))
+        }
+        let malformed = Data("<OFX><BANKTRANLIST><STMTTRN><DTPOSTED>20260230<TRNAMT>1<NAME>\(privatePayee)</STMTTRN></BANKTRANLIST></OFX>".utf8)
+        XCTAssertThrowsError(try LocalOFXStatementParser.parse(data: malformed, mapping: .init(sourceFormat: "qfx", currencyCode: "USD"))) { error in
+            XCTAssertFalse(error.localizedDescription.contains(privatePayee))
+            XCTAssertTrue(error.localizedDescription.contains("record 1"))
+        }
+    }
+
+    @MainActor
+    func testLocalOFXUsesOwnedMoneyNeutralStatementStaging() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let initialTransactions = source.demo.transactions
+        let batch = try await source.stageStatementImport(
+            accountID: account.id,
+            data: Data("<OFX><BANKTRANLIST><STMTTRN><DTPOSTED>20260915<TRNAMT>4.50<NAME>Interest</STMTTRN></BANKTRANLIST></OFX>".utf8),
+            mapping: .init(sourceFormat: "ofx", currencyCode: "USD")
+        )
+        XCTAssertEqual(batch.sourceFormat, "ofx")
+        XCTAssertEqual(batch.candidates.first?.amountMinor, 450)
+        XCTAssertEqual(batch.candidates.first?.payee, "Interest")
+        XCTAssertEqual(source.demo.transactions, initialTransactions)
+    }
+
     @MainActor
     func testLocalStatementApprovalUsesCanonicalTransactionPath() async throws {
         let source = DemoWorkspaceDataSource()
