@@ -974,10 +974,10 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 }
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
-    func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport {
+    func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try requireActiveMembership();
         throw workspaceRepositoryError("Statement import for Local on this iPhone is the next provider adapter; connect to Budget Server for this preview build.")
     }
-    func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport {
+    func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try requireActiveMembership();
         throw workspaceRepositoryError("This statement review is not available from the local provider.")
     }
     private func requireHouseholdOwner() throws {
@@ -3059,20 +3059,8 @@ struct BudgetWorkspaceView: View {
             }
             .accessibilityIdentifier("workspace-access-unavailable")
         } else {
-        TabView(selection: tabSelection) {
-            NavigationStack {
-                LiveHomeView(
-                    showPlanTab: { tabSelection.wrappedValue = 1 },
-                    showAccountsTab: { tabSelection.wrappedValue = 3 }
-                )
-                .workspaceProfileToolbar { showingSettings = true }
-            }.tabItem { Label("Home", systemImage: "house.fill") }.tag(0)
-            NavigationStack { LivePlanView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Plan", systemImage: "square.grid.2x2.fill") }.tag(1)
-            NavigationStack { LiveActivityView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag(2)
-            NavigationStack { LiveAccountsView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Accounts", systemImage: "creditcard.fill") }.tag(3)
-            NavigationStack { LiveInsightsView().workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Insights", systemImage: "chart.xyaxis.line") }.tag(4)
-            NavigationStack { LiveHouseholdOverviewView(session: session, store: store).workspaceProfileToolbar { showingSettings = true } }.tabItem { Label("Household", systemImage: "person.2.fill") }.tag(5)
-        }
+        workspaceContent
+        .safeAreaInset(edge: .bottom, spacing: 0) { WorkspaceBottomBar(selection: tabSelection) }
         }
         }
         // iOS 27 can change selection without materializing a previously lazy NavigationStack.
@@ -3155,6 +3143,33 @@ struct BudgetWorkspaceView: View {
         .environmentObject(session)
     }
 
+    @ViewBuilder
+    private var workspaceContent: some View {
+        // UITabBarController reserves its sixth destination for a system “More” screen on iPhone.
+        // The product has six equally important destinations, so the shell owns selection and
+        // presents the matching production NavigationStack directly above its custom bottom bar.
+        switch activeTab {
+        case 1:
+            NavigationStack { LivePlanView().workspaceProfileToolbar { showingSettings = true } }
+        case 2:
+            NavigationStack { LiveActivityView().workspaceProfileToolbar { showingSettings = true } }
+        case 3:
+            NavigationStack { LiveAccountsView().workspaceProfileToolbar { showingSettings = true } }
+        case 4:
+            NavigationStack { LiveInsightsView().workspaceProfileToolbar { showingSettings = true } }
+        case 5:
+            NavigationStack { LiveHouseholdOverviewView(session: session, store: store).workspaceProfileToolbar { showingSettings = true } }
+        default:
+            NavigationStack {
+                LiveHomeView(
+                    showPlanTab: { tabSelection.wrappedValue = 1 },
+                    showAccountsTab: { tabSelection.wrappedValue = 3 }
+                )
+                .workspaceProfileToolbar { showingSettings = true }
+            }
+        }
+    }
+
     private func reload() async {
         // The composition root has already selected a repository. Feature UI never branches on the
         // application source and cannot start authentication or credential refresh work.
@@ -3181,6 +3196,48 @@ struct BudgetWorkspaceView: View {
             return
         }
         if let packageURL { try? FileManager.default.removeItem(at: packageURL) }
+    }
+}
+
+private struct WorkspaceBottomBar: View {
+    @Binding var selection: Int
+    private let destinations: [(title: String, symbol: String)] = [
+        ("Home", "house.fill"),
+        ("Plan", "square.grid.2x2.fill"),
+        ("Activity", "clock.arrow.circlepath"),
+        ("Accounts", "creditcard.fill"),
+        ("Insights", "chart.xyaxis.line"),
+        ("Household", "person.2.fill")
+    ]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 0) {
+                ForEach(destinations.indices, id: \.self) { index in
+                    Button {
+                        selection = index
+                    } label: {
+                        VStack(spacing: 3) {
+                            Image(systemName: destinations[index].symbol).font(.system(size: 17, weight: selection == index ? .semibold : .regular))
+                            Text(destinations[index].title)
+                                .font(.caption2.weight(selection == index ? .semibold : .regular))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                        }
+                        .foregroundStyle(selection == index ? Theme.accent : Color.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 49)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(destinations[index].title)
+                    .accessibilityAddTraits(selection == index ? .isSelected : [])
+                    .accessibilityIdentifier("workspace-tab-\(destinations[index].title.lowercased())")
+                }
+            }
+            .padding(.horizontal, 4)
+            .background(.bar)
+        }
     }
 }
 
@@ -7242,7 +7299,9 @@ private struct LiveHouseholdOverviewView: View {
     @ObservedObject var store: BudgetWorkspaceStore
     private var activeMembers: [APIHouseholdMember] { store.householdMembers.filter(\.isActive) }
     private var otherMembers: [APIHouseholdMember] { activeMembers.filter { $0.role != "owner" } }
-    private var canManageMembers: Bool { session.sourceMode == .liveServer && store.budget.effectivePermission == .owner }
+    private var canManageMembers: Bool {
+        store.budget.effectivePermission == .owner && session.sourceMode != .localDevice
+    }
 
     var body: some View {
         List {
@@ -7571,6 +7630,15 @@ private enum MemberAccessPreset: String, CaseIterable, Identifiable {
     case custom = "Custom"
     var id: String { rawValue }
 
+    var explanation: String {
+        switch self {
+        case .view: return "Can look through authorized budget information but cannot change it."
+        case .limited: return "Can view authorized resources, record activity, and request money without administering the budget."
+        case .full: return "Can manage this budget, but never gains household ownership or access to other budgets."
+        case .custom: return "Choose individual visibility, transaction, planning, and administration permissions."
+        }
+    }
+
     var capabilities: Set<String> {
         switch self {
         case .view: return ["view_budget", "view_budget_totals", "view_accounts", "view_categories", "view_transactions", "view_reports", "view_account_balances"]
@@ -7654,7 +7722,7 @@ private struct LiveMemberAccessView: View {
                 Picker("Preset", selection: $preset) { ForEach(MemberAccessPreset.allCases) { Text($0.rawValue).tag($0) } }
                     .onChange(of: preset) { _, value in if value != .custom { capabilities = value.capabilities } }
                     .accessibilityIdentifier("member-access-preset")
-                if preset == .full { Text("Full budget access does not transfer household ownership.").font(.footnote).foregroundStyle(.secondary) }
+                Text(preset.explanation).font(.footnote).foregroundStyle(.secondary)
             }
             Section("Account visibility") {
                 Toggle("Only selected accounts", isOn: $restrictAccounts).accessibilityIdentifier("member-access-restrict-accounts")
@@ -7676,10 +7744,20 @@ private struct LiveMemberAccessView: View {
                 LabeledContent("Household Ready to Assign", value: capabilities.contains("view_budget_totals") && !restrictAccounts && !restrictCategories ? "Visible" : "Hidden")
                 LabeledContent("Total budget reporting", value: capabilities.contains("view_reports") ? "Privacy filtered" : "Hidden")
             }
-            capabilitySection("Visibility", visibility)
-            capabilitySection("Transactions", transactions)
-            capabilitySection("Planning", planning)
-            capabilitySection("Accounts, requests, and organization", administration)
+            if preset == .custom {
+                capabilitySection("Visibility", visibility)
+                capabilitySection("Transactions", transactions)
+                capabilitySection("Planning", planning)
+                capabilitySection("Accounts, requests, and organization", administration)
+            } else {
+                Section("Permission details") {
+                    LabeledContent("Included permissions", value: "\(capabilities.count)")
+                    Button("Customize Permissions", systemImage: "slider.horizontal.3") { preset = .custom }
+                        .accessibilityIdentifier("customize-member-permissions")
+                    Text("Use Custom only when this household member needs a combination that the presets do not cover.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
             if let profile, let actor = profile.updatedByDisplayName, let date = profile.updatedAt {
                 Section("Last change") { LabeledContent("Changed by", value: actor); LabeledContent("Date", value: date) }
             }

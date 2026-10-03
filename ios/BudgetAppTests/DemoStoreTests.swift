@@ -899,8 +899,10 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(workspace.contains("struct PayeeSearchSelectionView"), "all payee-selection workflows must share the bounded searchable selector")
         XCTAssertTrue(workspace.contains("activity-payee-selector"), "Activity filtering must select an existing first-class payee identity")
         XCTAssertTrue(workspace.contains("limit: 20"), "payee selection must request bounded result pages")
-        XCTAssertTrue(workspace.contains("Label(\"Household\", systemImage: \"person.2.fill\")"),
-                      "the production workspace must expose Household as a first-class tab")
+        XCTAssertTrue(workspace.contains("(\"Household\", \"person.2.fill\")"),
+                      "the production workspace must expose Household as a direct first-class destination")
+        XCTAssertFalse(workspace.contains("TabView(selection: tabSelection)"),
+                       "the six-destination iPhone shell must not regress to UITabBarController's More fallback")
         XCTAssertTrue(workspace.contains("LiveHouseholdOverviewView(session: session, store: store)"),
                       "the household tab must use the active production session and workspace store")
         XCTAssertTrue(workspace.contains("accessibilityIdentifier(\"household-overview-screen\")"),

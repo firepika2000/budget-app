@@ -13,11 +13,15 @@
 - Added an owner-controlled Household totals permission. Restricted members now see an explicit privacy state instead of a misleading `$0.00`, while account/category scopes continue to prevent household-wide Ready-to-Assign disclosure.
 - Promoted Household to the production workspace tab shell so members, invitations, delegated
   budgets, allowances, payees, and data-location tools are no longer buried in Profile & Settings.
+- Replaced the iPhone system tab controller's six-item “More” fallback with a direct, accessible
+  six-destination workspace bar, keeping Household one tap away alongside the five financial areas.
 - Added a privacy-safe household overview for every active member. Owners can open member access
   directly; restricted members see only counts and visibility derived from their already-authorized
   workspace snapshot.
 - Reworked member access editing with explicit account/category scope explanations and a concise
   preview of budget, account, balance, category/available, and reporting visibility before saving.
+  Human-readable presets now hide low-level capability switches until an owner explicitly chooses
+  Custom, and the deterministic training household exercises the same owner-management flow.
 - Added bounded OFX/QFX and QIF statement parsing alongside CSV as the first reconciliation-import
   foundation. Imported rows remain money-neutral until explicit review and canonical posting.
 

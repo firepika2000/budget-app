@@ -12,7 +12,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["household-overview-screen"].exists)
         XCTAssertTrue(app.staticTexts["Your access"].exists)
         XCTAssertTrue(app.staticTexts["People"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Household"].exists || app.tabBars.buttons["More"].exists)
+        XCTAssertTrue(app.buttons["Household"].exists)
+        XCTAssertFalse(app.buttons["More"].exists, "Household must remain a direct bottom destination on iPhone")
     }
 
     func testLocalDeviceLaunchUsesProductionWorkspaceAndKeepsTrainingOutOfNormalFlow() {
@@ -22,11 +23,12 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.launchEnvironment["BUDGETAPP_UI_TEST_LOCAL_ID"] = UUID().uuidString
         app.launch()
 
-        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.tabBars.buttons["Plan"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Activity"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Accounts"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Insights"].exists)
+        XCTAssertTrue(app.buttons["Home"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Plan"].exists)
+        XCTAssertTrue(app.buttons["Activity"].exists)
+        XCTAssertTrue(app.buttons["Accounts"].exists)
+        XCTAssertTrue(app.buttons["Insights"].exists)
+        XCTAssertTrue(app.buttons["Household"].exists)
         XCTAssertFalse(app.navigationBars["Budgets"].exists)
 
         app.buttons["profile-settings-button"].tap()
@@ -60,8 +62,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(confirm.isEnabled)
         confirm.tap()
 
-        XCTAssertTrue(app.tabBars.buttons["Plan"].waitForExistence(timeout: 8))
-        app.tabBars.buttons["Plan"].tap()
+        XCTAssertTrue(app.buttons["Plan"].waitForExistence(timeout: 8))
+        app.buttons["Plan"].tap()
         XCTAssertTrue(app.staticTexts["Monthly Bills"].waitForExistence(timeout: 5))
         let everyday = app.staticTexts["Everyday Spending"]
         for _ in 0..<3 where !everyday.exists { app.swipeUp() }
@@ -786,12 +788,12 @@ final class AuthenticationJourneyTests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["runtime-build-identity"].waitForExistence(timeout: 5))
 
-        app.tabBars.buttons["Accounts"].tap()
+        app.buttons["Accounts"].tap()
         XCTAssertTrue(app.navigationBars["Accounts"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Add Account"].exists)
         XCTAssertTrue(app.buttons["profile-settings-button"].exists)
 
-        let planTab = app.tabBars.buttons["Plan"]
+        let planTab = app.buttons["Plan"]
         XCTAssertTrue(planTab.waitForExistence(timeout: 5))
         for _ in 0..<3 {
             planTab.tap()
@@ -800,7 +802,7 @@ final class AuthenticationJourneyTests: XCTestCase {
             XCTAssertTrue(app.buttons["Create Category Group"].exists)
             XCTAssertTrue(app.buttons["profile-settings-button"].exists)
 
-            app.tabBars.buttons["Accounts"].tap()
+            app.buttons["Accounts"].tap()
             XCTAssertTrue(app.navigationBars["Accounts"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.buttons["Add Account"].exists)
         }
@@ -830,7 +832,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["What money is for"].waitForExistence(timeout: 5))
         app.buttons["Skip"].tap()
         XCTAssertTrue(guide.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.tabBars.buttons["Home"].exists)
+        XCTAssertTrue(app.buttons["Home"].exists)
 
         app.buttons["profile-settings-button"].tap()
         XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
@@ -1140,8 +1142,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.launchArguments = ["--demo"]
         app.launch()
 
-        XCTAssertTrue(app.tabBars.buttons["Accounts"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["Accounts"].tap()
+        XCTAssertTrue(app.buttons["Accounts"].waitForExistence(timeout: 5))
+        app.buttons["Accounts"].tap()
         XCTAssertTrue(app.navigationBars["Accounts"].waitForExistence(timeout: 5))
         app.buttons["account-row-checking"].tap()
         XCTAssertTrue(app.navigationBars["Household Checking"].waitForExistence(timeout: 5))
@@ -1409,8 +1411,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.launchArguments = ["--demo"]
         app.launch()
 
-        app.buttons["profile-settings-button"].tap()
-        app.buttons["Household and access"].tap()
+        XCTAssertTrue(app.buttons["Household"].waitForExistence(timeout: 5))
+        app.buttons["Household"].tap()
         XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
         app.buttons["member-access-jordan"].tap()
         XCTAssertTrue(app.navigationBars["Jordan Rivera"].waitForExistence(timeout: 5))
