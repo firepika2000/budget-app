@@ -29,6 +29,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import Settings
 from app.database import Base
 from app.main import create_app
+from app import planning_routes
 from app.models import (
     AllocationOperation,
     AllocationPosting,
@@ -44,7 +45,7 @@ from app.planning_routes import realize_scheduled_transaction
 from app.request_routes import decide_request
 from app.budgeting_routes import bulk_update_transactions, transfer_allocation, reconcile_account
 
-from .conftest import auth
+from .conftest import auth, freeze_today
 from .test_advanced_ledger import add_category, record
 from .test_allocation_ledger import fund
 from .test_budgeting_api import create_budget, create_budget_structure
@@ -314,7 +315,8 @@ def _schedule(pg, **body):
     return r.json()["id"]
 
 
-def test_concurrent_realize_expense_creates_exactly_one_transaction(pg):
+def test_concurrent_realize_expense_creates_exactly_one_transaction(pg, monkeypatch):
+    freeze_today(monkeypatch, date(2026, 9, 1), planning_routes)
     budget = create_budget(pg.client, pg.token, pg.factory)
     account, category = create_budget_structure(pg.client, pg.token, budget["id"])
     fund(pg.client, pg.token, budget["id"], account["id"], amount=200000)
@@ -340,7 +342,8 @@ def test_concurrent_realize_expense_creates_exactly_one_transaction(pg):
         assert schedule.next_date > date(2026, 9, 1)  # advanced exactly once
 
 
-def test_concurrent_realize_transfer_creates_exactly_one_pair(pg):
+def test_concurrent_realize_transfer_creates_exactly_one_pair(pg, monkeypatch):
+    freeze_today(monkeypatch, date(2026, 9, 1), planning_routes)
     budget = create_budget(pg.client, pg.token, pg.factory)
     checking, _ = create_budget_structure(pg.client, pg.token, budget["id"])
     savings = pg.client.post(f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(pg.token),
@@ -361,7 +364,8 @@ def test_concurrent_realize_transfer_creates_exactly_one_pair(pg):
         assert len({t.transfer_id for t in legs}) == 1
 
 
-def test_concurrent_realize_credit_purchase_moves_reserve_once(pg):
+def test_concurrent_realize_credit_purchase_moves_reserve_once(pg, monkeypatch):
+    freeze_today(monkeypatch, date(2026, 9, 1), planning_routes)
     budget = create_budget(pg.client, pg.token, pg.factory)
     checking, groceries = create_budget_structure(pg.client, pg.token, budget["id"])
     card = create_credit_card(pg.client, pg.token, budget["id"])

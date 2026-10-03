@@ -1,6 +1,17 @@
 import XCTest
 import UIKit
 
+private extension XCUIElement {
+    /// Xcode 15-compatible inverse of `waitForExistence(timeout:)`.
+    func waitUntilGone(timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: self
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+}
+
 final class AuthenticationJourneyTests: XCTestCase {
     func testProductionHouseholdTabShowsOverviewAndPrivacySummary() {
         continueAfterFailure = false
@@ -197,7 +208,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         groceries.tap()
         XCTAssertTrue(state.waitForExistence(timeout: 5))
         action.tap()
-        XCTAssertTrue(state.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(state.waitUntilGone(timeout: 5))
         XCTAssertTrue(action.label.hasPrefix("Snooze for"))
     }
 
@@ -219,11 +230,11 @@ final class AuthenticationJourneyTests: XCTestCase {
         let shortfall = app.staticTexts["smart-funding-shortfall"]
         XCTAssertTrue(shortfall.exists, "The seeded needs exceed available money and must be explained")
         app.buttons["Cancel"].tap()
-        XCTAssertTrue(app.navigationBars["Smart Funding"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Smart Funding"].waitUntilGone(timeout: 5))
         openPreview()
         XCTAssertTrue(confirm.isEnabled, "Cancelling must not consume the available allocation")
         confirm.tap()
-        XCTAssertTrue(app.navigationBars["Smart Funding"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Smart Funding"].waitUntilGone(timeout: 5))
         openPreview()
         XCTAssertFalse(confirm.isEnabled, "The seeded available allocation is exhausted; no repeated commit is offered")
         XCTAssertTrue(shortfall.exists, "No available money does not mean every target is funded")
@@ -571,7 +582,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(alert.waitForExistence(timeout: 8))
         XCTAssertEqual(app.alerts.count, 1)
         alert.buttons["OK"].tap()
-        XCTAssertTrue(alert.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(alert.waitUntilGone(timeout: 5))
         app.segmentedControls.buttons["Overview"].tap()
         XCTAssertFalse(app.alerts.firstMatch.waitForExistence(timeout: 2))
         XCTAssertTrue(app.navigationBars["Debt & Interest"].exists)
@@ -626,7 +637,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["Clear Payment"].tap()
         app.textFields["debt-payment"].typeText("0.01")
         app.buttons["save-debt-terms"].tap()
-        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitUntilGone(timeout: 5))
         let horizon = app.descendants(matching: .any)["debt-payoff-horizon"]
         for _ in 0..<10 where !horizon.exists { app.swipeDown() }
         XCTAssertTrue(horizon.waitForExistence(timeout: 8))
@@ -655,7 +666,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         for _ in 0..<8 where !remove.isHittable { app.swipeUp() }
         XCTAssertTrue(remove.isHittable)
         remove.tap()
-        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitUntilGone(timeout: 5))
         let add = app.buttons["payoff-missing-terms-auto"]
         for _ in 0..<10 where !add.isHittable { app.swipeDown() }
         XCTAssertTrue(add.waitForExistence(timeout: 5))
@@ -669,7 +680,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         let due = app.textFields["debt-due-day"]
         due.tap(); due.typeText("1")
         app.buttons["save-debt-terms"].tap()
-        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitUntilGone(timeout: 5))
         let outcome = app.descendants(matching: .any)["debt-payoff-outcome"]
         XCTAssertTrue(outcome.waitForExistence(timeout: 8))
         XCTAssertFalse(add.exists)
@@ -871,7 +882,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["Next"].tap()
         XCTAssertTrue(app.staticTexts["What money is for"].waitForExistence(timeout: 5))
         app.buttons["Skip"].tap()
-        XCTAssertTrue(guide.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(guide.waitUntilGone(timeout: 5))
         XCTAssertTrue(app.buttons["Home"].exists)
 
         app.buttons["profile-settings-button"].tap()
@@ -915,7 +926,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["Savings"].tap()
         app.buttons["Save"].tap()
 
-        XCTAssertTrue(app.navigationBars["Account Settings"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Account Settings"].waitUntilGone(timeout: 5))
         app.navigationBars.buttons["Accounts"].tap()
         let updatedRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'account-row-' AND label CONTAINS 'Emergency Savings'")).firstMatch
         XCTAssertTrue(updatedRow.waitForExistence(timeout: 5))
@@ -950,7 +961,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(dueDay.value as? String, "1")
         dueDay.tap(); dueDay.typeText(XCUIKeyboardKey.delete.rawValue + "2")
         app.buttons.matching(NSPredicate(format: "identifier == 'save-debt-terms'")).firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["Debt Terms"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Debt Terms"].waitUntilGone(timeout: 5))
 
         app.buttons["account-debt-terms-action"].tap()
         XCTAssertTrue(app.navigationBars["Debt Terms"].waitForExistence(timeout: 5))
@@ -1097,7 +1108,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(field.value as? String, "820.00")
         app.buttons["Save"].tap()
 
-        XCTAssertTrue(app.navigationBars["Edit Assignment"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Edit Assignment"].waitUntilGone(timeout: 5))
         app.buttons["Assign money"].tap()
         let persistedField = app.textFields["Assigned amount"]
         XCTAssertTrue(persistedField.waitForExistence(timeout: 5))
@@ -1122,7 +1133,7 @@ final class AuthenticationJourneyTests: XCTestCase {
                 field.typeText(replacement)
                 app.buttons["Save"].tap()
             } else { app.buttons["Cancel"].tap() }
-            XCTAssertTrue(app.navigationBars["Edit Assignment"].waitForNonExistence(timeout: 5))
+            XCTAssertTrue(app.navigationBars["Edit Assignment"].waitUntilGone(timeout: 5))
             app.navigationBars["Groceries"].buttons.element(boundBy: 0).tap()
             XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
         }
@@ -1160,7 +1171,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["Clear Assigned amount"].tap()
         field.typeText("820.00")
         app.buttons["Save"].tap()
-        XCTAssertTrue(app.navigationBars["Edit Assignment"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Edit Assignment"].waitUntilGone(timeout: 5))
 
         app.terminate()
         app.launch()
@@ -1210,7 +1221,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         }
         app.buttons["Save"].tap()
 
-        XCTAssertTrue(app.navigationBars["Transfer"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Transfer"].waitUntilGone(timeout: 5))
         XCTAssertTrue(app.staticTexts["Transfer"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'To High-Yield Savings'" )).firstMatch.exists)
 
@@ -1221,10 +1232,10 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Edit Transfer"].waitForExistence(timeout: 5))
         app.buttons["Clear Amount"].tap(); app.textFields["Amount"].tap(); app.textFields["Amount"].typeText("20.00")
         app.buttons["Save"].tap()
-        XCTAssertTrue(app.navigationBars["Edit Transfer"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Edit Transfer"].waitUntilGone(timeout: 5))
         XCTAssertTrue(app.staticTexts["-$20.00"].waitForExistence(timeout: 5))
         app.buttons["More"].tap(); app.buttons["delete-transfer-action"].tap(); app.buttons["Delete Transfer"].tap()
-        XCTAssertTrue(app.navigationBars["Transfer Detail"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Transfer Detail"].waitUntilGone(timeout: 5))
         XCTAssertFalse(
             app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'transaction-row-'"))
                 .matching(NSPredicate(format: "label CONTAINS 'To High-Yield Savings'"))
@@ -1254,7 +1265,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["Reconcile"].tap()
         XCTAssertTrue(app.navigationBars.matching(NSPredicate(format: "identifier BEGINSWITH 'Reconcile'")).firstMatch.waitForExistence(timeout: 5))
         app.navigationBars["Reconcile Everyday Visa"].buttons["Reconcile"].tap()
-        XCTAssertTrue(app.navigationBars["Reconcile Everyday Visa"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Reconcile Everyday Visa"].waitUntilGone(timeout: 5))
         XCTAssertEqual(row.value as? String, "R · Details")
         row.swipeLeft()
         XCTAssertFalse(app.buttons["Clear"].exists)
@@ -1379,7 +1390,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.textFields["payee-name"].tap()
         app.textFields["payee-name"].typeText("Neighborhood Market")
         app.buttons["Save"].tap()
-        XCTAssertTrue(app.navigationBars["New Payee"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["New Payee"].waitUntilGone(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["payee-created-confirmation"].waitForExistence(timeout: 5))
         let createdPayee = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'payee-row-' AND label CONTAINS 'Neighborhood Market'")).firstMatch
         XCTAssertTrue(createdPayee.waitForExistence(timeout: 5), "management must search the authoritative identity after creation rather than relying on its first bounded page")
@@ -1411,7 +1422,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(remove.exists)
         remove.tap()
         app.alerts.buttons["Remove Member"].tap()
-        XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(remove.waitUntilGone(timeout: 5))
         let member = app.cells.containing(.staticText, identifier: "alex@example.test").firstMatch
         XCTAssertTrue(member.staticTexts["Removed"].exists)
         XCTAssertTrue(member.buttons["Invite to Rejoin"].exists)
@@ -1446,7 +1457,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
         app.buttons["household-invite-member"].tap()
         app.navigationBars["Invite Member"].buttons["Cancel"].tap()
-        XCTAssertTrue(app.navigationBars["Invite Member"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Invite Member"].waitUntilGone(timeout: 5))
         XCTAssertFalse(app.navigationBars["Invitation Ready"].exists)
         XCTAssertTrue(app.navigationBars["Household"].exists)
         for _ in 0..<4 where !app.staticTexts["invitation@example.test"].exists { app.swipeUp() }
@@ -1521,7 +1532,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["Cancel Request"].exists)
         app.buttons["Cancel Request"].tap()
         app.alerts.buttons["Cancel Request"].tap()
-        XCTAssertTrue(app.buttons["Cancel Request"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Cancel Request"].waitUntilGone(timeout: 5))
         XCTAssertTrue(app.staticTexts.matching(identifier: "Cancelled").firstMatch.waitForExistence(timeout: 5))
         app.navigationBars.buttons.element(boundBy: 0).tap()
         let history = app.buttons["all-funding-requests"]
