@@ -2910,6 +2910,34 @@ final class DemoStoreTests: XCTestCase {
         window.rootViewController = nil
         return signal
     }
+    func testLocalDelimitedStatementParserPreservesExactMoneyAndQuotedFields() throws {
+        let data = Data("Date,Description,Amount,Memo\n09/15/2026,\"Corner, Market\",-12.34,\"weekly, food\"\n09/16/2026,Refund,2.50,\n".utf8)
+        let rows = try LocalDelimitedStatementParser.parse(data: data, mapping: .init(
+            sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount",
+            payeeColumn: "Description", memoColumn: "Memo", dateOrder: "mdy"
+        ))
+        XCTAssertEqual(rows.map(\.amountMinor), [-1_234, 250])
+        XCTAssertEqual(rows.map(\.payee), ["Corner, Market", "Refund"])
+        XCTAssertEqual(rows.first?.memo, "weekly, food")
+        XCTAssertEqual(rows.map(\.occurredOn), ["2026-09-15", "2026-09-16"])
+    }
+
+    @MainActor
+    func testLocalStatementApprovalUsesCanonicalTransactionPath() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let initialCount = source.demo.transactions.count
+        let batch = try await source.stageStatementImport(accountID: account.id,
+            data: Data("Date,Description,Debit,Credit\n09/15/2026,Local deposit,,10.25\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           payeeColumn: "Description", debitColumn: "Debit", creditColumn: "Credit", dateOrder: "mdy"))
+        XCTAssertEqual(batch.candidates.first?.amountMinor, 1_025)
+        _ = try await source.approveStatementImport(accountID: account.id, batchID: batch.id,
+            approval: .init(expectedVersion: batch.version, items: [.init(sourceRow: 2, action: "post")]))
+        XCTAssertEqual(source.demo.transactions.count, initialCount + 1)
+        XCTAssertEqual(source.demo.transactions.first(where: { $0.payee == "Local deposit" })?.amount, 1_025)
+        XCTAssertEqual(source.demo.transactions.first(where: { $0.payee == "Local deposit" })?.cleared, true)
+    }
 }
 
 private final class InMemorySecretDataStore: SecretDataStoring {

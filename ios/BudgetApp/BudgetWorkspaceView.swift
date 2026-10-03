@@ -392,6 +392,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         var subject: DemoPersona? = nil
     }
     private var invitationRecords: [InvitationRecord] = []
+    private var statementImportBatches: [String: APIStatementImport] = [:]
     private var accessEventRecords: [AccessEventRecord] = []
     private var removedMembers: Set<DemoPersona> = []
     private var membershipVersions: [DemoPersona: Int] = [:]
@@ -974,11 +975,56 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 }
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
-    func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try requireActiveMembership();
-        throw workspaceRepositoryError("Statement import for Local on this iPhone is the next provider adapter; connect to Budget Server for this preview build.")
+    func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try requireActiveMembership()
+        guard demo.visibleAccounts.contains(where: { $0.id == accountID }) else { throw workspaceRepositoryError("Account not found.") }
+        guard mapping.sourceFormat == "csv" else {
+            throw workspaceRepositoryError("Local statement import currently supports CSV, TSV, and delimited text. OFX, QFX, QIF, and PDF imports are available when connected to Budget Server.")
+        }
+        let parsed = try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
+        let candidates = parsed.map { candidate -> APIStatementImportCandidate in
+            let exact = demo.transactions.filter {
+                BudgetWorkspaceStore.dateString($0.date) == candidate.occurredOn && $0.amount == candidate.amountMinor &&
+                $0.payee.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(candidate.payee) == .orderedSame
+            }.map(\.id)
+            let possible = demo.transactions.filter {
+                $0.amount == candidate.amountMinor && abs($0.date.timeIntervalSince(BudgetWorkspaceStore.parseDate(candidate.occurredOn))) <= 2 * 86_400 && !exact.contains($0.id)
+            }.map(\.id)
+            return .init(sourceRow: candidate.sourceRow, occurredOn: candidate.occurredOn,
+                         amountMinor: candidate.amountMinor, payee: candidate.payee, memo: candidate.memo,
+                         exactTransactionIDs: exact, possibleTransactionIDs: possible,
+                         duplicateSourceRow: parsed.first(where: {
+                             $0.sourceRow < candidate.sourceRow && $0.occurredOn == candidate.occurredOn &&
+                             $0.amountMinor == candidate.amountMinor && $0.payee.caseInsensitiveCompare(candidate.payee) == .orderedSame
+                         })?.sourceRow)
+        }
+        let batch = APIStatementImport(id: UUID().uuidString, budgetID: budget.id, accountID: accountID,
+                                       status: "review", version: 1, sourceFormat: mapping.sourceFormat,
+                                       candidateCount: candidates.count, candidates: candidates,
+                                       createdAt: ISO8601DateFormatter().string(from: now()))
+        statementImportBatches[batch.id] = batch
+        return batch
     }
-    func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try requireActiveMembership();
-        throw workspaceRepositoryError("This statement review is not available from the local provider.")
+    func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try requireActiveMembership()
+        guard let batch = statementImportBatches[batchID], batch.accountID == accountID else { throw workspaceRepositoryError("Statement import not found.") }
+        guard batch.status == "review", batch.version == approval.expectedVersion else { throw APIClientError.server(status: 409, message: "This statement review changed. Refresh and try again.") }
+        let choices = Dictionary(uniqueKeysWithValues: approval.items.map { ($0.sourceRow, $0) })
+        guard Set(choices.keys) == Set(batch.candidates.map(\.sourceRow)) else { throw workspaceRepositoryError("Review every imported row before posting.") }
+        let operations = try batch.candidates.compactMap { row -> RecordTransactionOperation? in
+            guard let choice = choices[row.sourceRow] else { throw workspaceRepositoryError("Review every imported row before posting.") }
+            guard choice.action == "post" else { return nil }
+            let operation = RecordTransactionOperation(accountID: accountID, categoryID: row.amountMinor < 0 ? choice.categoryID : nil,
+                amountMinor: row.amountMinor, occurredOn: row.occurredOn, payeeName: row.payee, memo: row.memo,
+                isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])
+            try validateTransactionTarget(operation)
+            return operation
+        }
+        for operation in operations { try await recordTransaction(operation) }
+        try await synchronizeLocalAuthorityForBackup()
+        let completed = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
+            status: "approved", version: batch.version + 1, sourceFormat: batch.sourceFormat,
+            candidateCount: batch.candidateCount, candidates: batch.candidates, createdAt: batch.createdAt)
+        statementImportBatches[batch.id] = completed
+        return completed
     }
     private func requireHouseholdOwner() throws {
         guard demo.persona == .rey else { throw workspaceRepositoryError("Household not found.") }
@@ -6194,6 +6240,92 @@ private struct StatementImportFile: Identifiable {
     var fileExtension: String { URL(fileURLWithPath: name).pathExtension.lowercased() }
     var sourceFormat: String { ["csv", "tsv", "txt"].contains(fileExtension) ? "csv" : fileExtension }
     var suggestedDelimiter: String { fileExtension == "tsv" ? "\t" : "," }
+}
+
+enum LocalDelimitedStatementParser {
+    struct Candidate {
+        let sourceRow: Int; let occurredOn: String; let amountMinor: Int64; let payee: String; let memo: String
+    }
+    static func parse(data: Data, mapping: APIStatementImportMapping) throws -> [Candidate] {
+        guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Statement files must be 10 MB or smaller.") }
+        guard mapping.delimiter.count == 1, let delimiter = mapping.delimiter.first,
+              [",", ";", "\t"].contains(mapping.delimiter) else { throw workspaceRepositoryError("Choose comma, semicolon, or tab as the separator.") }
+        guard let text = String(data: data, encoding: .utf8) else { throw workspaceRepositoryError("The statement must be UTF-8 text.") }
+        let rows = try records(text, delimiter: delimiter)
+        guard let header = rows.first, rows.count > 1 else { throw workspaceRepositoryError("The statement does not contain transaction rows.") }
+        let names = header.enumerated().reduce(into: [String: Int]()) { result, item in
+            let key = item.element.replacingOccurrences(of: "\u{feff}", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty { result[key] = item.offset }
+        }
+        guard let dateName = mapping.dateColumn, let dateIndex = names[dateName],
+              let payeeName = mapping.payeeColumn, let payeeIndex = names[payeeName] else { throw workspaceRepositoryError("Map the date and payee columns.") }
+        let amountIndex = mapping.amountColumn.flatMap { names[$0] }
+        let debitIndex = mapping.debitColumn.flatMap { names[$0] }, creditIndex = mapping.creditColumn.flatMap { names[$0] }
+        guard amountIndex != nil || (debitIndex != nil && creditIndex != nil) else { throw workspaceRepositoryError("Map either one amount column or separate debit and credit columns.") }
+        let memoIndex = mapping.memoColumn.flatMap { names[$0] }
+        guard rows.count - 1 <= 10_000 else { throw workspaceRepositoryError("A statement may contain at most 10,000 rows.") }
+        var output: [Candidate] = []
+        for (offset, row) in rows.dropFirst().enumerated() {
+            let sourceRow = offset + 2
+            guard row.count == header.count else { throw workspaceRepositoryError("Statement row \(sourceRow) has a different number of columns.") }
+            let date = try dateString(row[dateIndex], order: mapping.dateOrder, row: sourceRow)
+            let amount: Int64
+            if let amountIndex { amount = try minorUnits(row[amountIndex], currency: mapping.currencyCode, row: sourceRow) }
+            else {
+                let debit = try optionalMinorUnits(row[debitIndex!], currency: mapping.currencyCode, row: sourceRow)
+                let credit = try optionalMinorUnits(row[creditIndex!], currency: mapping.currencyCode, row: sourceRow)
+                guard debit == nil || credit == nil, debit != nil || credit != nil else { throw workspaceRepositoryError("Statement row \(sourceRow) must contain either a debit or a credit.") }
+                amount = credit ?? -(debit ?? 0)
+            }
+            guard amount != 0 else { throw workspaceRepositoryError("Statement row \(sourceRow) has a zero amount.") }
+            let payee = row[payeeIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !payee.isEmpty else { throw workspaceRepositoryError("Statement row \(sourceRow) has no payee or description.") }
+            output.append(.init(sourceRow: sourceRow, occurredOn: date, amountMinor: amount, payee: String(payee.prefix(150)), memo: memoIndex.map { String(row[$0].trimmingCharacters(in: .whitespacesAndNewlines).prefix(500)) } ?? ""))
+        }
+        return output
+    }
+    private static func records(_ text: String, delimiter: Character) throws -> [[String]] {
+        var rows: [[String]] = [], row: [String] = [], field = "", quoted = false, index = text.startIndex
+        while index < text.endIndex {
+            let char = text[index]
+            if char == "\"" {
+                let next = text.index(after: index)
+                if quoted && next < text.endIndex && text[next] == "\"" { field.append("\""); index = next } else { quoted.toggle() }
+            } else if char == delimiter && !quoted { row.append(field); field = "" }
+            else if (char == "\n" || char == "\r") && !quoted {
+                if char == "\r" { let next = text.index(after: index); if next < text.endIndex && text[next] == "\n" { index = next } }
+                row.append(field); field = ""; if row.contains(where: { !$0.isEmpty }) { rows.append(row) }; row = []
+            } else { field.append(char) }
+            index = text.index(after: index)
+        }
+        guard !quoted else { throw workspaceRepositoryError("The statement contains an unfinished quoted field.") }
+        row.append(field); if row.contains(where: { !$0.isEmpty }) { rows.append(row) }
+        return rows
+    }
+    private static func dateString(_ value: String, order: String, row: Int) throws -> String {
+        let pieces = value.trimmingCharacters(in: .whitespacesAndNewlines).split(whereSeparator: { "-/.".contains($0) }).compactMap { Int($0) }
+        guard pieces.count == 3 else { throw workspaceRepositoryError("Statement row \(row) has an invalid date.") }
+        let year: Int, month: Int, day: Int
+        switch order { case "ymd": (year, month, day) = (pieces[0], pieces[1], pieces[2]); case "dmy": (day, month, year) = (pieces[0], pieces[1], pieces[2]); default: (month, day, year) = (pieces[0], pieces[1], pieces[2]) }
+        var components = DateComponents(); components.calendar = Calendar(identifier: .gregorian); components.timeZone = TimeZone(secondsFromGMT: 0); components.year = year; components.month = month; components.day = day
+        guard let date = components.date else { throw workspaceRepositoryError("Statement row \(row) has an invalid date.") }
+        let verified = Calendar(identifier: .gregorian).dateComponents(in: TimeZone(secondsFromGMT: 0)!, from: date)
+        guard verified.year == year, verified.month == month, verified.day == day else { throw workspaceRepositoryError("Statement row \(row) has an invalid date.") }
+        return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+    private static func optionalMinorUnits(_ value: String, currency: String, row: Int) throws -> Int64? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines); return trimmed.isEmpty ? nil : try minorUnits(trimmed, currency: currency, row: row)
+    }
+    private static func minorUnits(_ value: String, currency: String, row: Int) throws -> Int64 {
+        let scale = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"].contains(currency.uppercased()) ? 3 : (["BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF"].contains(currency.uppercased()) ? 0 : 2)
+        var text = value.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "$", with: "").replacingOccurrences(of: ",", with: "")
+        let negative = text.hasPrefix("(") && text.hasSuffix(")"); if negative { text = String(text.dropFirst().dropLast()) }
+        guard let decimal = Decimal(string: text, locale: Locale(identifier: "en_US_POSIX")) else { throw workspaceRepositoryError("Statement row \(row) has an invalid amount.") }
+        var input = negative ? -decimal : decimal, factor = Decimal(1); for _ in 0..<scale { factor *= 10 }; input *= factor
+        var rounded = Decimal(); NSDecimalRound(&rounded, &input, 0, .plain)
+        guard rounded == input, rounded <= Decimal(Int64.max), rounded >= Decimal(Int64.min) else { throw workspaceRepositoryError("Statement row \(row) has unsupported amount precision.") }
+        return NSDecimalNumber(decimal: rounded).int64Value
+    }
 }
 
 private struct StatementImportFlowView: View {

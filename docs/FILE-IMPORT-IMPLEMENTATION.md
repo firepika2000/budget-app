@@ -3,8 +3,9 @@
 Status: IN PROGRESS. The authenticated server API exposes money-neutral statement staging,
 duplicate review, reload, cancellation, and explicit approval for CSV/TSV/delimited text,
 OFX/QFX, QIF, and conservatively recognized text-based PDF statements. The native reconciliation
-UI is active for Budget Server workspaces and only explicit approval can post ledger rows. The
-Local-on-iPhone provider adapter remains gated work.
+UI is active for Budget Server workspaces and only explicit approval can post ledger rows. Local
+on iPhone now supports CSV, TSV, and explicitly delimited text through the same review UI; its
+structured OFX/QFX, QIF, and PDF adapters remain gated work.
 
 Current endpoints:
 
@@ -60,8 +61,10 @@ any later spreadsheet export still requires its own formula-injection defenses.
 6. Native history UX, cancellation after leaving the active flow, partial-error policy and authorized undo.
 7. The production reconciliation sheet now provides file selection, explicit CSV mapping,
    duplicate-aware preview, category selection and all-row post/skip approval through the shared
-   workspace command contract. The Budget Server adapter is active. The Local-on-iPhone adapter
-   still fails closed with an explanatory message and remains required before workflow completion.
+   workspace command contract. The Budget Server adapter is active for every listed format. The
+   Local-on-iPhone adapter now stages and posts CSV/TSV/delimited text using exact minor units,
+   local duplicate suggestions and canonical transaction creation. It still fails closed with an
+   explanatory message for OFX/QFX, QIF, and PDF until those parsers reach local parity.
    Finish Live/Demo/Local Device parity, full privacy,
    migration/recovery and financial-observation tests before claiming workflow completion.
 

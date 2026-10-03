@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Enabled CSV, TSV, and delimited-text statement reconciliation for Local on this iPhone. Local
+  imports now use the same bounded mapping, duplicate-aware review, explicit post/skip selection,
+  and canonical cleared-transaction path as the server-backed workflow.
+
 - Added authenticated, money-neutral bank-statement staging and duplicate review APIs for CSV,
   OFX/QFX, QIF, and conservatively recognized text-based PDFs, plus explicit all-row review and
   replay-safe canonical posting approval.
