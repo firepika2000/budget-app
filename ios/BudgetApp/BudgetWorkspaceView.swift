@@ -7797,10 +7797,10 @@ private struct LiveHouseholdOverviewView: View {
         guard profile.capabilities.contains("view_budget") else { return "\(member.role.capitalized) · budget hidden" }
         var scopes: [String] = []
         if !profile.capabilities.contains("view_accounts") { scopes.append("accounts hidden") }
-        else if profile.restrictAccounts { scopes.append("\(profile.accountIDs.count) account\(profile.accountIDs.count == 1 ? "" : "s")") }
+        else if profile.restrictAccounts { scopes.append(profile.accountIDs.isEmpty ? "no account access" : "\(profile.accountIDs.count) account\(profile.accountIDs.count == 1 ? "" : "s")") }
         else { scopes.append("all accounts") }
         if !profile.capabilities.contains("view_categories") { scopes.append("plan hidden") }
-        else if profile.restrictCategories { scopes.append("\(profile.categoryIDs.count) categor\(profile.categoryIDs.count == 1 ? "y" : "ies")") }
+        else if profile.restrictCategories { scopes.append(profile.categoryIDs.isEmpty ? "no category access" : "\(profile.categoryIDs.count) categor\(profile.categoryIDs.count == 1 ? "y" : "ies")") }
         else { scopes.append("all categories") }
         scopes.append(profile.capabilities.contains("view_budget_totals") && !profile.restrictAccounts && !profile.restrictCategories ? "totals visible" : "totals hidden")
         return "\(member.role.capitalized) · \(scopes.joined(separator: " · "))"
@@ -8235,6 +8235,10 @@ private struct LiveMemberAccessView: View {
         MemberCapability(id: "request_money", title: "Request money", explanation: "Submit funding requests"),
         MemberCapability(id: "export_data", title: "Export reports", explanation: "Export authorized reporting data")
     ]
+    private var advancedVisibility: [MemberCapability] {
+        let promoted = Set(["view_budget", "view_budget_totals", "view_accounts", "view_account_balances", "view_categories"])
+        return visibility.filter { !promoted.contains($0.id) }
+    }
 
     var body: some View {
         Group {
@@ -8262,8 +8266,19 @@ private struct LiveMemberAccessView: View {
                     .accessibilityIdentifier("member-access-preset")
                 Text(preset.explanation).font(.footnote).foregroundStyle(.secondary)
             }
+            Section("What this member can see") {
+                visibilityToggle("Open this budget", capability: "view_budget", symbol: "rectangle.stack")
+                visibilityToggle("Accounts", capability: "view_accounts", symbol: "creditcard")
+                visibilityToggle("Account balances", capability: "view_account_balances", symbol: "dollarsign.circle")
+                    .disabled(!capabilities.contains("view_accounts"))
+                visibilityToggle("Categories & available", capability: "view_categories", symbol: "square.grid.2x2")
+                visibilityToggle("Household Ready to Assign", capability: "view_budget_totals", symbol: "sum")
+                    .disabled(!capabilities.contains("view_budget"))
+                Text("Whole-budget Ready to Assign remains hidden whenever account or category visibility is limited to a selection, even if its permission is enabled.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             Section("Account visibility") {
-                Toggle("Only selected accounts", isOn: $restrictAccounts).accessibilityIdentifier("member-access-restrict-accounts")
+                Toggle("Only selected accounts", isOn: $restrictAccounts).disabled(!capabilities.contains("view_accounts")).accessibilityIdentifier("member-access-restrict-accounts")
                 if restrictAccounts {
                     NavigationLink {
                         MemberScopeSelectionView(
@@ -8280,10 +8295,10 @@ private struct LiveMemberAccessView: View {
                     .accessibilityIdentifier("member-access-choose-accounts")
                 }
                 if restrictAccounts && accountIDs.isEmpty { Text("Select at least one account.").font(.footnote).foregroundStyle(.red) }
-                Text(restrictAccounts ? "This member will only discover the selected accounts. Transfers require access to both sides." : "This member can discover every account in this budget. Balance amounts are controlled separately below.").font(.footnote).foregroundStyle(.secondary)
+                Text(!capabilities.contains("view_accounts") ? "This member cannot discover any account names." : restrictAccounts ? "This member will only discover the selected accounts. Transfers require access to both sides." : "This member can discover every account in this budget. Balance amounts are controlled separately above.").font(.footnote).foregroundStyle(.secondary)
             }
             Section("Category visibility") {
-                Toggle("Only selected categories", isOn: $restrictCategories).accessibilityIdentifier("member-access-restrict-categories")
+                Toggle("Only selected categories", isOn: $restrictCategories).disabled(!capabilities.contains("view_categories")).accessibilityIdentifier("member-access-restrict-categories")
                 if restrictCategories {
                     NavigationLink {
                         MemberScopeSelectionView(
@@ -8300,7 +8315,7 @@ private struct LiveMemberAccessView: View {
                     .accessibilityIdentifier("member-access-choose-categories")
                 }
                 if restrictCategories && categoryIDs.isEmpty { Text("Select at least one category.").font(.footnote).foregroundStyle(.red) }
-                Text(restrictCategories ? "Plan totals, activity, and reports are filtered to these categories." : "This member can discover every category and its available amount when Plan visibility is enabled.").font(.footnote).foregroundStyle(.secondary)
+                Text(!capabilities.contains("view_categories") ? "This member cannot discover category names or available amounts." : restrictCategories ? "Plan totals, activity, and reports are filtered to these categories." : "This member can discover every category and its available amount.").font(.footnote).foregroundStyle(.secondary)
             }
             Section("Visibility preview") {
                 LabeledContent("Budget", value: capabilities.contains("view_budget") ? "Can open" : "Hidden")
@@ -8311,7 +8326,7 @@ private struct LiveMemberAccessView: View {
                 LabeledContent("Total budget reporting", value: capabilities.contains("view_reports") ? "Privacy filtered" : "Hidden")
             }
             if preset == .custom {
-                capabilitySection("Visibility", visibility)
+                capabilitySection("Other visibility", advancedVisibility)
                 capabilitySection("Transactions", transactions)
                 capabilitySection("Planning", planning)
                 capabilitySection("Accounts, requests, and organization", administration)
@@ -8332,6 +8347,18 @@ private struct LiveMemberAccessView: View {
 
     private func capabilitySection(_ title: String, _ items: [MemberCapability]) -> some View {
         Section(title) { ForEach(items) { item in Toggle(isOn: capabilityBinding(item.id)) { VStack(alignment: .leading) { Text(item.title); Text(item.explanation).font(.caption).foregroundStyle(.secondary) } } } }
+    }
+    private func visibilityToggle(_ title: String, capability: String, symbol: String) -> some View {
+        Toggle(isOn: Binding(get: { capabilities.contains(capability) }, set: { enabled in
+            if enabled { capabilities.insert(capability) } else { capabilities.remove(capability) }
+            if capability == "view_accounts", !enabled { capabilities.remove("view_account_balances") }
+            if capability == "view_account_balances", enabled { capabilities.insert("view_accounts") }
+            if capability == "view_budget", !enabled { capabilities.remove("view_budget_totals") }
+            if capability == "view_budget_totals", enabled { capabilities.insert("view_budget") }
+            preset = matchingPreset()
+            didSave = false
+        })) { Label(title, systemImage: symbol) }
+            .accessibilityIdentifier("member-visibility-\(capability)")
     }
     private func capabilityBinding(_ name: String) -> Binding<Bool> { Binding(get: { capabilities.contains(name) }, set: { enabled in if enabled { capabilities.insert(name) } else { capabilities.remove(name) }; preset = matchingPreset() }) }
     private func matchingPreset() -> MemberAccessPreset { MemberAccessPreset.allCases.first(where: { $0 != .custom && $0.capabilities == capabilities }) ?? .custom }

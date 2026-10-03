@@ -909,6 +909,10 @@ final class DemoStoreTests: XCTestCase {
                       "the real household destination must remain available to production UI coverage")
         XCTAssertTrue(workspace.contains("Section(\"Visibility preview\")"),
                       "member access must summarize budget, account, balance, category, and reporting visibility")
+        XCTAssertTrue(workspace.contains("Section(\"What this member can see\")"),
+                      "the most important household visibility controls must not be buried behind advanced customization")
+        XCTAssertTrue(workspace.contains("visibilityToggle(\"Household Ready to Assign\", capability: \"view_budget_totals\""),
+                      "whole-budget Available visibility must remain an explicit owner control")
         XCTAssertTrue(workspace.contains("payee-search-load-more"), "large payee histories must paginate instead of hydrating every identity")
         XCTAssertFalse(workspace.contains("async let loadedPayees = client.payees"), "workspace hydration must not download the entire household payee history")
         XCTAssertTrue(workspace.contains(".task(id: store.liveCredentialRevision)"), "attachment loading must cancel stale credential work and run once for the current credential generation")

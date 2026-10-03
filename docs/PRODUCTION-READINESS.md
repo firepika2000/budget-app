@@ -1491,3 +1491,17 @@ Release retries after image publication are now safe and recoverable: the workfl
 existing AMD64 image configuration and reuses its index digest only when the embedded OCI source
 revision exactly equals the current commit. A different commit can never reuse or overwrite that
 version. This lets a same-commit packaging or upload retry finish without weakening immutable tags.
+
+### Household visibility usability refinement — 2026-10-03
+
+A production-composition visual review on the iPhone 17 Pro Max / iOS 27 simulator confirmed that
+Household is directly reachable from the custom bottom navigation and uses the same live/demo view
+hierarchy. The owner member-access screen now promotes the five decisions families need most—budget
+access, account visibility, account balances, category availability, and whole-household Ready to
+Assign—into a plain-language section instead of hiding them among advanced custom capabilities.
+Account/category scope selectors remain available immediately below those controls, dependent choices
+stay internally consistent, and selected-only scopes explicitly explain why household Ready to Assign
+is unavailable. Member summaries now distinguish “no access” from a misleading zero-resource count.
+Server authorization and persisted permission-profile semantics are unchanged. Focused native source
+coverage and production-composition XCUITests pass; this records engineering verification, not human
+acceptance.

@@ -16,6 +16,28 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertFalse(app.buttons["More"].exists, "Household must remain a direct bottom destination on iPhone")
     }
 
+    func testOwnerCanReachPlainLanguageMemberVisibilityControls() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=household", "--skip-guided-onboarding"]
+        app.launch()
+
+        let member = app.buttons["member-access-jordan"]
+        XCTAssertTrue(member.waitForExistence(timeout: 8))
+        member.tap()
+
+        XCTAssertTrue(app.descendants(matching: .any)["member-access-screen"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["What this member can see"].exists)
+        XCTAssertTrue(app.switches["member-visibility-view_budget"].exists)
+        XCTAssertTrue(app.switches["member-visibility-view_accounts"].exists)
+        XCTAssertTrue(app.switches["member-visibility-view_account_balances"].exists)
+        XCTAssertTrue(app.switches["member-visibility-view_categories"].exists)
+        XCTAssertTrue(app.switches["member-visibility-view_budget_totals"].exists)
+        XCTAssertTrue(app.switches["member-access-restrict-accounts"].exists)
+        app.swipeUp()
+        XCTAssertTrue(app.switches["member-access-restrict-categories"].waitForExistence(timeout: 3))
+    }
+
     func testLocalDeviceLaunchUsesProductionWorkspaceAndKeepsTrainingOutOfNormalFlow() {
         continueAfterFailure = false
         let app = XCUIApplication()
