@@ -11,6 +11,7 @@ import UIKit
 import Accessibility
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import PDFKit
 
 enum Theme {
     static let accent = Color.teal
@@ -982,8 +983,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         case "csv": parsed = try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
         case "qif": parsed = try LocalQIFStatementParser.parse(data: data, mapping: mapping)
         case "ofx", "qfx": parsed = try LocalOFXStatementParser.parse(data: data, mapping: mapping)
+        case "pdf": parsed = try LocalPDFStatementParser.parse(data: data, mapping: mapping)
         default:
-            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, and QIF. PDF imports are available when connected to Budget Server.")
+            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, QIF, and text-based PDF statements.")
         }
         let candidates = parsed.map { candidate -> APIStatementImportCandidate in
             let exact = demo.transactions.filter {
@@ -6485,6 +6487,69 @@ enum LocalOFXStatementParser {
         value.replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
+}
+
+enum LocalPDFStatementParser {
+    static func parse(data: Data, mapping: APIStatementImportMapping) throws -> [LocalDelimitedStatementParser.Candidate] {
+        guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Statement files must be 10 MB or smaller.") }
+        guard data.starts(with: Data("%PDF-".utf8)), let document = PDFDocument(data: data), !document.isEncrypted,
+              (1...200).contains(document.pageCount) else {
+            throw workspaceRepositoryError("The PDF must be an unencrypted statement with 1 to 200 pages.")
+        }
+        var lines: [String] = [], characterCount = 0
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { throw workspaceRepositoryError("The PDF text could not be read safely.") }
+            let text = page.string ?? ""
+            characterCount += text.utf8.count
+            guard characterCount <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Extracted PDF text exceeds the supported size.") }
+            lines.append(contentsOf: text.components(separatedBy: .newlines))
+        }
+        return try parse(lines: lines, mapping: mapping)
+    }
+
+    static func parse(lines: [String], mapping: APIStatementImportMapping) throws -> [LocalDelimitedStatementParser.Candidate] {
+        guard ["mdy", "dmy"].contains(mapping.dateOrder) else { throw workspaceRepositoryError("PDF requires an explicit month/day/year or day/month/year order.") }
+        let pattern = #"^\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})\s+(.+?)\s+([+-](?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?|\((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?\))\s*$"#
+        let expression = try NSRegularExpression(pattern: pattern)
+        var output: [LocalDelimitedStatementParser.Candidate] = []
+        for (offset, line) in lines.enumerated() {
+            let sourceRow = offset + 1, range = NSRange(line.startIndex..<line.endIndex, in: line)
+            guard let match = expression.firstMatch(in: line, range: range), match.range == range,
+                  let dateRange = Range(match.range(at: 1), in: line),
+                  let descriptionRange = Range(match.range(at: 2), in: line),
+                  let amountRange = Range(match.range(at: 3), in: line) else { continue }
+            guard output.count < 10_000 else { throw workspaceRepositoryError("PDF exceeds 10,000 recognized transactions.") }
+            let date = try dateString(String(line[dateRange]), order: mapping.dateOrder, row: sourceRow)
+            var amount = String(line[amountRange]).replacingOccurrences(of: ",", with: "")
+            if amount.hasPrefix("("), amount.hasSuffix(")") { amount = "-" + amount.dropFirst().dropLast() }
+            let amountMinor: Int64
+            do { amountMinor = try LocalDelimitedStatementParser.minorUnits(amount, currency: mapping.currencyCode, row: sourceRow) }
+            catch { throw workspaceRepositoryError("Invalid date or amount at PDF line \(sourceRow).") }
+            let description = clean(String(line[descriptionRange]))
+            guard !description.isEmpty, description.count <= 500 else { throw workspaceRepositoryError("Statement description exceeds the supported length at PDF line \(sourceRow).") }
+            output.append(.init(sourceRow: sourceRow, occurredOn: date, amountMinor: amountMinor,
+                                payee: String(description.prefix(150)), memo: description))
+        }
+        guard !output.isEmpty else {
+            throw workspaceRepositoryError("PDF contains no unambiguous signed transaction rows. Use CSV, OFX/QFX, QIF, or a text-based statement with signed amounts.")
+        }
+        return output
+    }
+
+    private static func dateString(_ value: String, order: String, row: Int) throws -> String {
+        let pieces = value.split(separator: "/").compactMap { Int($0) }
+        guard pieces.count == 3 else { throw workspaceRepositoryError("Invalid date or amount at PDF line \(row).") }
+        var year = pieces[2]
+        if year < 100 { year += year < 70 ? 2_000 : 1_900 }
+        let month = order == "mdy" ? pieces[0] : pieces[1], day = order == "mdy" ? pieces[1] : pieces[0]
+        var components = DateComponents(); components.calendar = Calendar(identifier: .gregorian); components.timeZone = TimeZone(secondsFromGMT: 0); components.year = year; components.month = month; components.day = day
+        guard let date = components.date else { throw workspaceRepositoryError("Invalid date or amount at PDF line \(row).") }
+        let verified = Calendar(identifier: .gregorian).dateComponents(in: TimeZone(secondsFromGMT: 0)!, from: date)
+        guard verified.year == year, verified.month == month, verified.day == day else { throw workspaceRepositoryError("Invalid date or amount at PDF line \(row).") }
+        return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+
+    private static func clean(_ value: String) -> String { value.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
 }
 
 private struct StatementImportFlowView: View {

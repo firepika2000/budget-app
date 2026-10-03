@@ -2988,6 +2988,59 @@ final class DemoStoreTests: XCTestCase {
         }
     }
 
+    func testLocalPDFParserRecognizesOnlyExplicitSignedRows() throws {
+        let rows = try LocalPDFStatementParser.parse(lines: [
+            "Statement for September",
+            "09/14/2026 Corner Market -12.34",
+            "09/15/2026 Payroll +1,234.56",
+            "Ending balance 9,999.99",
+            "09/16/2026 Card purchase (2.00)",
+        ], mapping: .init(sourceFormat: "pdf", currencyCode: "USD", dateOrder: "mdy"))
+        XCTAssertEqual(rows.map(\.sourceRow), [2, 3, 5])
+        XCTAssertEqual(rows.map(\.occurredOn), ["2026-09-14", "2026-09-15", "2026-09-16"])
+        XCTAssertEqual(rows.map(\.amountMinor), [-1_234, 123_456, -200])
+        XCTAssertEqual(rows.map(\.payee), ["Corner Market", "Payroll", "Card purchase"])
+    }
+
+    func testLocalPDFParserRejectsAmbiguousRowsAndPrivateMalformedData() throws {
+        let privateText = "Private Medical Merchant"
+        XCTAssertThrowsError(try LocalPDFStatementParser.parse(
+            lines: ["09/14/2026 \(privateText) 12.34"],
+            mapping: .init(sourceFormat: "pdf", currencyCode: "USD", dateOrder: "mdy")
+        )) { error in
+            XCTAssertFalse(error.localizedDescription.contains(privateText))
+            XCTAssertTrue(error.localizedDescription.contains("no unambiguous signed"))
+        }
+        XCTAssertThrowsError(try LocalPDFStatementParser.parse(
+            lines: ["02/30/2026 \(privateText) -12.34"],
+            mapping: .init(sourceFormat: "pdf", currencyCode: "USD", dateOrder: "mdy")
+        )) { error in
+            XCTAssertFalse(error.localizedDescription.contains(privateText))
+            XCTAssertTrue(error.localizedDescription.contains("line 1"))
+        }
+    }
+
+    @MainActor
+    func testLocalPDFDocumentUsesMoneyNeutralStatementStaging() async throws {
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            "09/15/2026 Interest +4.50".draw(at: CGPoint(x: 40, y: 40), withAttributes: [.font: UIFont.systemFont(ofSize: 14)])
+        }
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let initialTransactions = source.demo.transactions
+        let batch = try await source.stageStatementImport(
+            accountID: account.id,
+            data: data,
+            mapping: .init(sourceFormat: "pdf", currencyCode: "USD", dateOrder: "mdy")
+        )
+        XCTAssertEqual(batch.sourceFormat, "pdf")
+        XCTAssertEqual(batch.candidates.first?.amountMinor, 450)
+        XCTAssertEqual(batch.candidates.first?.payee, "Interest")
+        XCTAssertEqual(source.demo.transactions, initialTransactions)
+    }
+
     @MainActor
     func testLocalOFXUsesOwnedMoneyNeutralStatementStaging() async throws {
         let source = DemoWorkspaceDataSource()
