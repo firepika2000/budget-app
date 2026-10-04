@@ -786,7 +786,11 @@ final class AppSessionRefreshTests: XCTestCase {
         if refresh.value == 0 {
             await session.activate(caller: "test.productionRoot.fallback")
         }
-        let deadline = ContinuousClock.now + .seconds(2)
+        // Hosted Xcode 15.4 runners can take several seconds to deliver a mocked URLProtocol
+        // response after the request has already been observed. Keep the assertion bounded while
+        // waiting for the authoritative transition, rather than treating runner scheduling as an
+        // authentication failure.
+        let deadline = ContinuousClock.now + .seconds(10)
         while session.connectionStatus != .authenticationRequired,
               ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(10))
