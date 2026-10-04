@@ -1161,10 +1161,14 @@ final class AppSessionRefreshTests: XCTestCase {
     @MainActor
     func testProductionPostAuthenticationHydratesOneBudgetBeforeEnteringWorkspace() async throws {
         let budgetsGate = Gate()
+        let workspaceRefresh = Counter()
         let session = makeSession(access: "expired-access", refresh: "R1") { request in
             switch request.url?.path {
             case "/api/v1/auth/login":
                 return Self.json(200, #"{"access_token":"A9","refresh_token":"R9","token_type":"bearer"}"#)
+            case "/api/v1/auth/refresh":
+                _ = workspaceRefresh.increment()
+                return Self.json(200, Self.rotated)
             case "/api/v1/me":
                 return Self.json(200, #"{"id":"u1","email":"owner@example.com","display_name":"Owner","households":[]}"#)
             case "/api/v1/budgets":
@@ -1194,8 +1198,19 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertEqual(session.activeBudget?.id, "b1")
         guard case .workspace = session.route else { return XCTFail("post-authentication hydration must enter the shared workspace route") }
         XCTAssertEqual(session.activeBudgetID, "b1", "the sole authoritative budget must become persisted application context")
+
+        // Entering the real workspace intentionally starts its production reload. Wait for that
+        // authenticated task to consume this test's handler before replacing the process-wide
+        // URLProtocol handler in the next test. Without this drain, a slow hosted simulator can
+        // let the old workspace request receive the next test's synthetic 401.
+        let reloadDeadline = ContinuousClock.now + .seconds(10)
+        while workspaceRefresh.value == 0, ContinuousClock.now < reloadDeadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(workspaceRefresh.value, 1)
         window.isHidden = true
         window.rootViewController = nil
+        await Task.yield()
     }
 
     // A loader can already be suspended in authenticated endpoint calls when another caller learns
