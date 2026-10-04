@@ -22,6 +22,10 @@ It does not replace the product audit or broader production-readiness history.
 - [ ] One disposable Live user completes the concise core journey and relaunch persistence check.
 - [x] Release-candidate backend, migration, Swift, native XCTest, focused XCUITest, and Simulator
   build pass for the offline-resilience revision.
+- [x] GitHub-hosted verification runs native unit tests on its Xcode 15.4 / iOS 18 runner; the
+  production XCUITest matrix remains a pinned release check on Xcode 27 / iOS 27. Attempting the
+  full matrix on the older hosted simulator was proven to lose the app event loop and cascade
+  unrelated `application is not running` failures after otherwise successful launches.
 - [ ] Backup and restore are exercised once against disposable Beta data.
 
 ## App Store Connect gate
