@@ -10,8 +10,31 @@ final class LocalDeviceTransferProjectionTests: XCTestCase {
         XCTAssertEqual(result.snapshot.identity.budgetID, "budget")
         XCTAssertEqual(result.snapshot.transactions.first?.amountMinor, 10_000)
         XCTAssertEqual(result.snapshot.allocations.first?.amountMinor, 4_000)
+        XCTAssertEqual(result.snapshot.categories.first?.iconName, "cart")
+        XCTAssertEqual(result.snapshot.categories.first?.note, "Weekly essentials")
+        XCTAssertEqual(result.snapshot.categories.first?.isEssential, true)
+        XCTAssertEqual(result.snapshot.categories.first?.isEmergencyFund, false)
         XCTAssertEqual(result.observations.transactionCount, 1)
         XCTAssertEqual(result.observations.allocationPostingCount, 2)
+    }
+
+    func testLegacyProjectionDefaultsAbsentCategoryPresentationAndResilienceFields() throws {
+        var value = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture()) as? [String: Any])
+        var categories = try XCTUnwrap(value["categories"] as? [[String: Any]])
+        categories[0].removeValue(forKey: "icon_name")
+        categories[0].removeValue(forKey: "note")
+        categories[0].removeValue(forKey: "is_essential")
+        categories[0].removeValue(forKey: "is_emergency_fund")
+        value["categories"] = categories
+
+        let result = try LocalDeviceTransferProjectionDecoder.decode(
+            JSONSerialization.data(withJSONObject: value)
+        )
+
+        XCTAssertNil(result.snapshot.categories.first?.iconName)
+        XCTAssertEqual(result.snapshot.categories.first?.note, "")
+        XCTAssertEqual(result.snapshot.categories.first?.isEssential, false)
+        XCTAssertEqual(result.snapshot.categories.first?.isEmergencyFund, false)
     }
 
     func testProjectionRejectsTamperedFinancialObservationAndMixedBudgetIdentity() throws {
@@ -67,7 +90,7 @@ final class LocalDeviceTransferProjectionTests: XCTestCase {
           "identity":{"household_id":"household","household_name":"Home","owner_user_id":"owner","owner_display_name":"Owner","budget_id":"budget","budget_name":"Budget","currency_code":"USD"},
           "accounts":[{"id":"checking","budget_id":"budget","name":"Checking","kind":"checking","is_on_budget":true,"is_closed":false,"opening_balance_minor":0,"created_at":"2026-01-01T12:00:00+00:00"}],
           "groups":[{"id":"group","budget_id":"budget","name":"Needs","sort_order":0,"is_archived":false}],
-          "categories":[{"id":"groceries","budget_id":"budget","group_id":"group","name":"Groceries","delegated_user_id":null,"is_archived":false,"sort_order":0,"is_favorite":true,"favorite_sort_order":0}],
+          "categories":[{"id":"groceries","budget_id":"budget","group_id":"group","name":"Groceries","icon_name":"cart","note":"Weekly essentials","delegated_user_id":null,"is_archived":false,"sort_order":0,"is_favorite":true,"favorite_sort_order":0,"is_essential":true,"is_emergency_fund":false}],
           "payees":[],"payee_aliases":[],
           "transactions":[{"id":"income","budget_id":"budget","account_id":"checking","payee_id":null,"payee_name":"Payroll","amount_minor":10000,"occurred_on":"2026-09-01","memo":"","is_cleared":true,"is_reconciled":false,"status":"posted","transfer_id":null,"flag":null,"tags":[],"financial_classification":null,"void_reason":null,"reversal_of_transaction_id":null,"reversal_transaction_id":null,"created_by_user_id":"owner","created_at":"2026-09-01T12:00:00+00:00","splits":[]}],
           "allocations":[{"id":"posting","operation_id":"operation","budget_id":"budget","source_category_id":null,"category_id":"groceries","amount_minor":4000,"occurred_on":"2026-09-01","kind":"assignment","actor_user_id":"owner","note":"","created_at":"2026-09-01T12:00:00+00:00"}],

@@ -53,7 +53,15 @@ public enum LocalDeviceTransferProjectionDecoder {
             identity: identity,
             accounts: value.accounts.map { .init(id: $0.id, budgetID: $0.budgetId, name: $0.name, kind: $0.kind, isOnBudget: $0.isOnBudget, isClosed: $0.isClosed, openingBalanceMinor: $0.openingBalanceMinor, createdAt: $0.createdAt) },
             groups: value.groups.map { .init(id: $0.id, budgetID: $0.budgetId, name: $0.name, sortOrder: $0.sortOrder, isArchived: $0.isArchived) },
-            categories: value.categories.map { .init(id: $0.id, budgetID: $0.budgetId, groupID: $0.groupId, name: $0.name, delegatedUserID: $0.delegatedUserId, isArchived: $0.isArchived, sortOrder: $0.sortOrder, isFavorite: $0.isFavorite, favoriteSortOrder: $0.favoriteSortOrder) },
+            categories: value.categories.map { .init(
+                id: $0.id, budgetID: $0.budgetId, groupID: $0.groupId, name: $0.name,
+                iconName: $0.iconName, note: $0.note ?? "",
+                delegatedUserID: $0.delegatedUserId, isArchived: $0.isArchived,
+                sortOrder: $0.sortOrder, isFavorite: $0.isFavorite,
+                favoriteSortOrder: $0.favoriteSortOrder,
+                isEssential: $0.isEssential ?? false,
+                isEmergencyFund: $0.isEmergencyFund ?? false
+            ) },
             payees: value.payees.map { .init(id: $0.id, budgetID: $0.budgetId, name: $0.name, normalizedName: $0.normalizedName, defaultCategoryID: $0.defaultCategoryId, isArchived: $0.isArchived) },
             payeeAliases: value.payeeAliases.map { .init(id: $0.id, payeeID: $0.payeeId, displayName: $0.displayName, normalizedName: $0.normalizedName) },
             transactions: value.transactions.map { item in .init(
@@ -187,7 +195,13 @@ private struct Envelope: Decodable {
 private struct IdentityDTO: Decodable { let householdId: String; let householdName: String; let ownerUserId: String; let ownerDisplayName: String; let budgetId: String; let budgetName: String; let currencyCode: String }
 private struct AccountDTO: Decodable { let id: String; let budgetId: String; let name: String; let kind: String; let isOnBudget: Bool; let isClosed: Bool; let openingBalanceMinor: Int64; let createdAt: String }
 private struct GroupDTO: Decodable { let id: String; let budgetId: String; let name: String; let sortOrder: Int64; let isArchived: Bool }
-private struct CategoryDTO: Decodable { let id: String; let budgetId: String; let groupId: String; let name: String; let delegatedUserId: String?; let isArchived: Bool; let sortOrder: Int64; let isFavorite: Bool; let favoriteSortOrder: Int64 }
+private struct CategoryDTO: Decodable {
+    let id: String; let budgetId: String; let groupId: String; let name: String
+    let iconName: String?; let note: String?
+    let delegatedUserId: String?; let isArchived: Bool; let sortOrder: Int64
+    let isFavorite: Bool; let favoriteSortOrder: Int64
+    let isEssential: Bool?; let isEmergencyFund: Bool?
+}
 private struct PayeeDTO: Decodable { let id: String; let budgetId: String; let name: String; let normalizedName: String; let defaultCategoryId: String?; let isArchived: Bool }
 private struct AliasDTO: Decodable { let id: String; let payeeId: String; let displayName: String; let normalizedName: String }
 private struct SplitDTO: Decodable { let id: String; let categoryId: String; let amountMinor: Int64; let memo: String }
