@@ -1719,4 +1719,16 @@ Changing the horizon is read-only: it neither posts scheduled activity nor chang
 transactions, allocations, or available money. Offline Live workspaces retain the latest visible
 forecast and show the existing unobtrusive sync status instead of clearing the screen. The Xcode 27
 Beta build and a focused native regression covering short/annual expansion and unchanged actual
-state pass. Explicit what-if scenarios remain open v0.15 scope.
+state pass. The subsequent scenario checkpoint completes the remaining v0.15 engineering scope.
+
+### Ephemeral what-if scenarios — 2026-10-07
+
+Forecast now links to an explicit scenario comparison for temporary monthly income reduction,
+monthly recurring-cost increases, and a one-time major purchase. The calculator consumes the
+current permission-filtered authoritative forecast and uses `BudgetCore.Money` exact minor-unit
+arithmetic; it never derives or rewrites actual balances. Assumptions are deliberately ephemeral,
+remain on the scenario screen, and cannot post transactions, alter schedules, change allocations,
+or make anticipated income spendable. The selected forecast horizon bounds the number of monthly
+assumptions. Focused BudgetCore tests cover combined assumptions, validation, and overflow; the
+production Xcode 27 Beta build passes. This closes v0.15 engineering scope without claiming human
+acceptance.

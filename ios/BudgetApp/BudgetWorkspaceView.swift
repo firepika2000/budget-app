@@ -5602,6 +5602,16 @@ private struct LiveForecastView: View {
                     LabeledContent("At \(forecast.through)", value: store.format(forecast.projectedTotalOnBudgetMinor))
                     LabeledContent("Lowest", value: store.format(forecast.lowestProjectedTotalMinor))
                 }
+                Section("What if?") {
+                    NavigationLink {
+                        ForecastScenarioView(forecast: forecast, horizonDays: horizonDays)
+                    } label: {
+                        Label("Explore a scenario", systemImage: "slider.horizontal.3")
+                    }
+                    .accessibilityIdentifier("forecast-scenario-link")
+                    Text("Try temporary changes without editing schedules or real financial data.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Accounts") {
                     ForEach(forecast.accounts) { account in
                         VStack(alignment: .leading) {
@@ -5628,6 +5638,67 @@ private struct LiveForecastView: View {
         .navigationTitle("Forecast")
         .overlay { if store.isForecastLoading { ProgressView("Updating forecast…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
         .onChange(of: horizonDays) { _, value in Task { await store.loadForecast(days: value) } }
+    }
+}
+
+private struct ForecastScenarioView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let forecast: APIForecast
+    let horizonDays: Int
+    @State private var incomeReduction = ""
+    @State private var recurringCostIncrease = ""
+    @State private var majorPurchase = ""
+    @State private var activeMonths = 1
+
+    private var maximumMonths: Int {
+        switch horizonDays { case ...30: 1; case ...60: 2; case ...90: 3; case ...180: 6; default: 12 }
+    }
+    private func amount(_ text: String) -> Int64? {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0 : CurrencyText.parseMinorUnits(text, currencyCode: store.budget.currencyCode)
+    }
+    private var projection: Result<ForecastScenarioProjection, Error> {
+        Result {
+            guard let income = amount(incomeReduction), income >= 0,
+                  let costs = amount(recurringCostIncrease), costs >= 0,
+                  let purchase = amount(majorPurchase), purchase >= 0 else {
+                throw ForecastScenarioError.invalidAssumption
+            }
+            let incomeChange = try Money(minorUnits: income, currencyCode: store.budget.currencyCode).negated().minorUnits
+            return try ForecastScenarioCalculator.project(
+                baselineProjectedMinor: forecast.projectedTotalOnBudgetMinor,
+                currencyCode: store.budget.currencyCode,
+                assumptions: .init(monthlyIncomeChangeMinor: incomeChange, monthlyCostChangeMinor: costs, activeMonths: activeMonths, majorPurchaseMinor: purchase)
+            )
+        }
+    }
+
+    var body: some View {
+        Form {
+            Section("Temporary assumptions") {
+                CurrencyAmountField("Monthly income reduction", text: $incomeReduction, currencyCode: store.budget.currencyCode, allowsZero: true)
+                CurrencyAmountField("Monthly cost increase", text: $recurringCostIncrease, currencyCode: store.budget.currencyCode, allowsZero: true)
+                Stepper("Apply monthly changes for \(activeMonths) month\(activeMonths == 1 ? "" : "s")", value: $activeMonths, in: 1...maximumMonths)
+                CurrencyAmountField("One-time major purchase", text: $majorPurchase, currencyCode: store.budget.currencyCode, allowsZero: true)
+            }
+            Section("Comparison") {
+                LabeledContent("Known schedule forecast", value: store.format(forecast.projectedTotalOnBudgetMinor))
+                switch projection {
+                case .success(let value):
+                    LabeledContent("With this scenario", value: store.format(value.scenarioProjectedMinor))
+                    LabeledContent("Scenario difference", value: store.format(value.differenceMinor))
+                        .foregroundStyle(value.differenceMinor < 0 ? Theme.danger : Theme.healthy)
+                case .failure:
+                    Text("Enter valid amounts that fit the budget currency.").foregroundStyle(Theme.danger)
+                }
+            }
+            Section {
+                Text("This scenario exists only on this screen. It does not save, post transactions, change schedules, or make future income available to spend.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("What-if Scenario")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { activeMonths = maximumMonths }
     }
 }
 
