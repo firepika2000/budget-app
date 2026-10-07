@@ -1867,3 +1867,12 @@ produce no history noise, and imported server history is retained. Amount change
 corresponding split projection, matching the exact accounting mutation. Focused delta tests cover
 create, update, delete, unchanged records, and field-name projection; the production app build
 passes without invoking the known-broken remote/native test runner.
+
+### Many-to-many allocation transfer fidelity — 2026-10-07
+
+Balanced allocation operations with multiple source and destination categories no longer block a
+personal Budget Server authority from moving to Local Device. The transfer projection now performs
+a stable posting-id-ordered flow decomposition into directed local rows, retains the original
+operation identifier and audit metadata, and preserves every category's exact integer-minor-unit
+net posting. Unbalanced or directionless records still fail closed. Focused backend projection and
+authenticated transfer tests pass, as do all five native transfer-envelope/observation tests.

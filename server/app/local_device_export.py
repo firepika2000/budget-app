@@ -71,19 +71,42 @@ def _allocation_rows(
         if ready:
             if len(ready) != 1:
                 raise ValueError("Allocation operation has multiple Ready to Assign postings")
-            mapped = [(item, None, item.category_id, item.amount_minor) for item in categories]
+            mapped = [(item.id, None, item.category_id, item.amount_minor) for item in categories]
         else:
             negative = [item for item in categories if item.amount_minor < 0]
             positive = [item for item in categories if item.amount_minor > 0]
             if len(negative) == 1:
-                mapped = [(item, negative[0].category_id, item.category_id, item.amount_minor) for item in positive]
+                mapped = [(item.id, negative[0].category_id, item.category_id, item.amount_minor) for item in positive]
             elif len(positive) == 1:
-                mapped = [(item, item.category_id, positive[0].category_id, -item.amount_minor) for item in negative]
+                mapped = [(item.id, item.category_id, positive[0].category_id, -item.amount_minor) for item in negative]
             else:
-                raise ValueError("Allocation operation has an unsupported many-to-many shape")
-        for posting, source_category_id, category_id, amount_minor in mapped:
+                if not negative or not positive:
+                    raise ValueError("Allocation operation has no portable category movement")
+                # Local Device stores directed source/destination rows. A balanced many-to-many
+                # operation can be represented losslessly by deterministically matching its
+                # negative and positive postings; the shared operation id retains its atomic audit
+                # identity while every category's exact net posting remains unchanged.
+                sources = [[item, -item.amount_minor] for item in sorted(negative, key=lambda row: row.id)]
+                destinations = [[item, item.amount_minor] for item in sorted(positive, key=lambda row: row.id)]
+                mapped = []
+                source_index = destination_index = 0
+                while source_index < len(sources) and destination_index < len(destinations):
+                    source, source_remaining = sources[source_index]
+                    destination, destination_remaining = destinations[destination_index]
+                    amount = min(source_remaining, destination_remaining)
+                    mapped.append((f"{operation.id}:{source.id}:{destination.id}",
+                                   source.category_id, destination.category_id, amount))
+                    sources[source_index][1] -= amount
+                    destinations[destination_index][1] -= amount
+                    if sources[source_index][1] == 0:
+                        source_index += 1
+                    if destinations[destination_index][1] == 0:
+                        destination_index += 1
+                if source_index != len(sources) or destination_index != len(destinations):
+                    raise ValueError("Allocation operation could not be balanced for Local Device")
+        for posting_id, source_category_id, category_id, amount_minor in mapped:
             rows.append({
-                "id": posting.id,
+                "id": posting_id,
                 "operation_id": operation.id,
                 "budget_id": operation.budget_id,
                 "source_category_id": source_category_id,
@@ -114,12 +137,10 @@ def unsupported_allocation_operation_count(db: Session, budget_id: str) -> int:
         ready = [item for item in values if item.bucket == "ready_to_assign"]
         categories = [item for item in values if item.bucket == "category"]
         balanced = bool(values) and sum(item.amount_minor for item in values) == 0
-        representable = (
-            balanced and ((len(ready) == 1 and bool(categories)) or (
-                not ready and bool(categories)
-                and (sum(item.amount_minor < 0 for item in categories) == 1
-                     or sum(item.amount_minor > 0 for item in categories) == 1)
-            ))
+        representable = balanced and (
+            (len(ready) == 1 and bool(categories))
+            or (not ready and any(item.amount_minor < 0 for item in categories)
+                and any(item.amount_minor > 0 for item in categories))
         )
         if not representable:
             unsupported += 1
