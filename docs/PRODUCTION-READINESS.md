@@ -1732,3 +1732,16 @@ or make anticipated income spendable. The selected forecast horizon bounds the n
 assumptions. Focused BudgetCore tests cover combined assumptions, validation, and overflow; the
 production Xcode 27 Beta build passes. This closes v0.15 engineering scope without claiming human
 acceptance.
+
+### Explainable Smart Funding — 2026-10-07
+
+Smart Funding now preserves the structured evidence behind every proposed category amount: target
+type, priority, full monthly recommendation, amount fundable from current real Unassigned money, and
+the category's remaining shortfall. The shared production sheet renders those reasons and clearly
+identifies partial funding instead of showing an unexplained amount. Live, Demo, and Local Device
+use the same response contract and presentation; older server responses remain decodable. The
+existing priority order, exact integer-minor-unit calculations, delegated authorization, optimistic
+version check, and atomic canonical commit are unchanged. Preview and cancellation remain strictly
+non-mutating. Focused backend Smart Funding tests, Swift compatibility/contract tests, and an Xcode
+27 Beta production build pass. This closes v0.16 engineering scope without claiming human
+acceptance.

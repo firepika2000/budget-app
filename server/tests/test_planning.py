@@ -191,7 +191,7 @@ def test_smart_funding_partial_guidance_and_negative_rta_are_exact():
 
 def test_smart_funding_honors_priority_and_explains_unfunded_need():
     categories = [
-        SimpleNamespace(category_id="large", name="Large", available_minor=0,
+        SimpleNamespace(category_id="large", name="Large", available_minor=0, target_type="savings_balance",
                         recommended_contribution_minor=90000, underfunded_minor=90000, target_priority=10),
         SimpleNamespace(category_id="urgent", name="Urgent", available_minor=0,
                         recommended_contribution_minor=20000, underfunded_minor=20000, target_priority=90),
@@ -201,6 +201,10 @@ def test_smart_funding_honors_priority_and_explains_unfunded_need():
     preview = build_smart_funding_preview(summary)
     assert [p["category_id"] for p in preview["proposals"]] == ["urgent", "large"]
     assert [p["amount_minor"] for p in preview["proposals"]] == [20000, 10000]
+    assert preview["proposals"][0]["target_priority"] == 90
+    assert preview["proposals"][1]["target_type"] == "savings_balance"
+    assert preview["proposals"][1]["recommended_contribution_minor"] == 90000
+    assert preview["proposals"][1]["remaining_need_minor"] == 80000
     assert preview["remaining_need_minor"] == 80000
     assert preview["unfunded_category_count"] == 1
     categories[0].underfunded_minor = 2**63 - 1

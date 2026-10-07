@@ -2514,6 +2514,10 @@ def build_smart_funding_preview(summary: MonthSummaryResponse, *, available_mino
             "amount_minor": requested,
             "before_available_minor": category.available_minor,
             "after_available_minor": category.available_minor + requested,
+            "target_type": getattr(category, "target_type", None),
+            "target_priority": getattr(category, "target_priority", 50),
+            "recommended_contribution_minor": category.recommended_contribution_minor,
+            "remaining_need_minor": max(category.underfunded_minor - requested, 0),
         })
         remaining -= requested
         if remaining == 0:

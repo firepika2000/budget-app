@@ -1619,9 +1619,15 @@ public struct APISmartFundingProposal: Identifiable, Decodable, Equatable, Senda
     public let amountMinor: Int64
     public let beforeAvailableMinor: Int64
     public let afterAvailableMinor: Int64
+    public let targetType: String?
+    public let targetPriority: Int?
+    public let recommendedContributionMinor: Int64?
+    public let remainingNeedMinor: Int64?
     enum CodingKeys: String, CodingKey {
         case categoryID = "category_id", categoryName = "category_name", amountMinor = "amount_minor"
         case beforeAvailableMinor = "before_available_minor", afterAvailableMinor = "after_available_minor"
+        case targetType = "target_type", targetPriority = "target_priority"
+        case recommendedContributionMinor = "recommended_contribution_minor", remainingNeedMinor = "remaining_need_minor"
     }
 }
 

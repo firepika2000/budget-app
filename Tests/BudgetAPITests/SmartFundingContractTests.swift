@@ -32,4 +32,19 @@ final class SmartFundingContractTests: XCTestCase {
         XCTAssertEqual(decoded.fundingLimitMinor, 10000)
         XCTAssertEqual(decoded.proposedMinor, legacy.proposedMinor)
     }
+    func testProposalExplanationFieldsDecodeWithoutBreakingOlderServers() throws {
+        let legacyJSON = #"{"category_id":"food","category_name":"Food","amount_minor":1000,"before_available_minor":0,"after_available_minor":1000}"#
+        let legacy = try JSONDecoder().decode(APISmartFundingProposal.self, from: Data(legacyJSON.utf8))
+        XCTAssertNil(legacy.targetType)
+        XCTAssertNil(legacy.targetPriority)
+        XCTAssertNil(legacy.recommendedContributionMinor)
+        XCTAssertNil(legacy.remainingNeedMinor)
+
+        let currentJSON = #"{"category_id":"food","category_name":"Food","amount_minor":1000,"before_available_minor":0,"after_available_minor":1000,"target_type":"monthly_funding","target_priority":80,"recommended_contribution_minor":2500,"remaining_need_minor":1500}"#
+        let current = try JSONDecoder().decode(APISmartFundingProposal.self, from: Data(currentJSON.utf8))
+        XCTAssertEqual(current.targetType, "monthly_funding")
+        XCTAssertEqual(current.targetPriority, 80)
+        XCTAssertEqual(current.recommendedContributionMinor, 2500)
+        XCTAssertEqual(current.remainingNeedMinor, 1500)
+    }
 }

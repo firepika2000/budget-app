@@ -1352,6 +1352,10 @@ class SmartFundingProposal(BaseModel):
     amount_minor: int
     before_available_minor: int
     after_available_minor: int
+    target_type: Optional[str] = None
+    target_priority: int = 50
+    recommended_contribution_minor: int = 0
+    remaining_need_minor: int = 0
 
 
 class SmartFundingPreviewResponse(BaseModel):

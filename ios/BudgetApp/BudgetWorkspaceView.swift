@@ -2176,7 +2176,10 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             let after = category.available.addingReportingOverflow(amount)
             guard !after.overflow else { throw workspaceRepositoryError("Target funding exceeds the supported amount range.") }
             rows.append(["category_id": category.id, "category_name": category.name, "amount_minor": amount,
-                         "before_available_minor": category.available, "after_available_minor": after.partialValue])
+                         "before_available_minor": category.available, "after_available_minor": after.partialValue,
+                         "target_type": category.targetType, "target_priority": category.targetPriority,
+                         "recommended_contribution_minor": funding.recommendedContributionMinor,
+                         "remaining_need_minor": funding.underfundedMinor - amount])
             remaining -= amount
             fundedAmounts[category.id] = amount
         }
@@ -6503,7 +6506,24 @@ private struct LiveSmartFundingView: View {
                         LabeledContent("Proposed", value: workspace.format(-preview.proposedMinor))
                         LabeledContent("Selected month after", value: workspace.format(preview.afterReadyToAssignMinor))
                     }
-                    Section("Target recommendations") { ForEach(preview.proposals) { proposal in LabeledContent(proposal.categoryName, value: workspace.format(proposal.amountMinor)) } }
+                    Section("Target recommendations") {
+                        ForEach(preview.proposals) { proposal in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text(proposal.categoryName).fontWeight(.semibold)
+                                    Spacer()
+                                    Text(workspace.format(proposal.amountMinor)).monospacedDigit()
+                                }
+                                Text(proposalExplanation(proposal))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                if let remaining = proposal.remainingNeedMinor, remaining > 0 {
+                                    Label("\(workspace.format(remaining)) still needed", systemImage: "exclamationmark.circle")
+                                        .font(.caption).foregroundStyle(Theme.attention)
+                                }
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
                     if let remaining = preview.remainingNeedMinor {
                         Section {
                             if remaining > 0 {
@@ -6526,6 +6546,21 @@ private struct LiveSmartFundingView: View {
     }
     private func load() async { isLoading=true;defer{isLoading=false};do{preview=try await workspace.smartFundingPreview(month:month)}catch{errorMessage=error.localizedDescription} }
     private func commit() async { guard let preview else{return};isLoading=true;defer{isLoading=false};do{try await workspace.commitSmartFunding(preview);dismiss()}catch{errorMessage=error.localizedDescription} }
+    private func proposalExplanation(_ proposal: APISmartFundingProposal) -> String {
+        let target = switch proposal.targetType {
+        case "monthly_funding": "monthly funding target"
+        case "weekly_spending": "weekly spending target"
+        case "savings_balance": "balance target"
+        case "target_by_date": "target by date"
+        case "recurring_expense": "recurring expense target"
+        default: "target"
+        }
+        let priority = proposal.targetPriority.map { "priority \($0)" } ?? "standard priority"
+        if let recommended = proposal.recommendedContributionMinor, recommended > 0 {
+            return "\(target.capitalized), \(priority). This month recommends \(workspace.format(recommended)); available money funds \(workspace.format(proposal.amountMinor))."
+        }
+        return "\(target.capitalized), \(priority). Available money funds \(workspace.format(proposal.amountMinor))."
+    }
 }
 
 private struct LiveActivityView: View {
