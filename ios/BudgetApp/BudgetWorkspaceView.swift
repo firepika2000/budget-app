@@ -3620,9 +3620,12 @@ struct BudgetWorkspaceView: View {
     private func consumeWorkspaceShortcutRequest() {
         guard let destination = WorkspaceShortcutRequest.consume() else { return }
         switch destination {
+        case .home: tabSelection.wrappedValue = 0
         case .plan: tabSelection.wrappedValue = 1
+        case .activity: tabSelection.wrappedValue = 2
         case .accounts: tabSelection.wrappedValue = 3
         case .insights: tabSelection.wrappedValue = 4
+        case .household: tabSelection.wrappedValue = 5
         }
     }
 

@@ -41,6 +41,12 @@ or foreground activation, so a handled shortcut cannot reroute a later session. 
 Beta intent-compilation, one-shot routing, and production-composition tests pass. A WidgetKit target
 and parameterized financial entry remain separate roadmap work.
 
+Apple integration closure checkpoint: Activity and Household now have the same privacy-safe Siri/
+Shortcuts navigation as the other primary workspace surfaces, and a parameterized Open ClearPocket
+Screen action lets a personal shortcut choose Home, Plan, Activity, Accounts, Insights or Household.
+The intent only records a one-shot route into the existing production shell. It does not read private
+budget values, create transactions or bypass authentication and budget authorization.
+
 ## STOP FEATURE EXPANSION — human Live Debt P0
 
 Human reports repeated PlatformAlertController presentation conflicts followed by code-9 debugger

@@ -11,8 +11,18 @@ enum QuickEntryRequest {
     }
 }
 
-enum WorkspaceShortcutDestination: String {
-    case plan, accounts, insights
+enum WorkspaceShortcutDestination: String, AppEnum, CaseIterable {
+    case home, plan, activity, accounts, insights, household
+
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "ClearPocket Screen")
+    static let caseDisplayRepresentations: [WorkspaceShortcutDestination: DisplayRepresentation] = [
+        .home: "Home",
+        .plan: "Plan",
+        .activity: "Activity",
+        .accounts: "Accounts",
+        .insights: "Insights",
+        .household: "Household"
+    ]
 }
 
 enum WorkspaceShortcutRequest {
@@ -72,6 +82,44 @@ struct OpenClearPocketInsightsIntent: AppIntent {
     }
 }
 
+struct OpenClearPocketActivityIntent: AppIntent {
+    static let title: LocalizedStringResource = "Open ClearPocket Activity"
+    static let description = IntentDescription("Open the active ClearPocket budget directly to Activity.")
+    static let openAppWhenRun = true
+
+    @MainActor func perform() async throws -> some IntentResult {
+        WorkspaceShortcutRequest.request(.activity)
+        return .result()
+    }
+}
+
+struct OpenClearPocketHouseholdIntent: AppIntent {
+    static let title: LocalizedStringResource = "Open ClearPocket Household"
+    static let description = IntentDescription("Open the active ClearPocket budget directly to Household.")
+    static let openAppWhenRun = true
+
+    @MainActor func perform() async throws -> some IntentResult {
+        WorkspaceShortcutRequest.request(.household)
+        return .result()
+    }
+}
+
+struct OpenClearPocketScreenIntent: AppIntent {
+    static let title: LocalizedStringResource = "Open ClearPocket Screen"
+    static let description = IntentDescription("Choose a screen to open in the active ClearPocket budget.")
+    static let openAppWhenRun = true
+
+    @Parameter(title: "Screen") var destination: WorkspaceShortcutDestination
+
+    init() {}
+    init(destination: WorkspaceShortcutDestination) { self.destination = destination }
+
+    @MainActor func perform() async throws -> some IntentResult {
+        WorkspaceShortcutRequest.request(destination)
+        return .result()
+    }
+}
+
 struct ClearPocketShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: OpenClearPocketTransactionIntent(),
@@ -86,6 +134,12 @@ struct ClearPocketShortcuts: AppShortcutsProvider {
         AppShortcut(intent: OpenClearPocketInsightsIntent(),
                     phrases: ["Open insights in \(.applicationName)", "Show my spending insights in \(.applicationName)"],
                     shortTitle: "Open Insights", systemImageName: "chart.pie.fill")
+        AppShortcut(intent: OpenClearPocketActivityIntent(),
+                    phrases: ["Open my activity in \(.applicationName)", "Show my transactions in \(.applicationName)"],
+                    shortTitle: "Open Activity", systemImageName: "clock.arrow.circlepath")
+        AppShortcut(intent: OpenClearPocketHouseholdIntent(),
+                    phrases: ["Open my household in \(.applicationName)", "Show my household in \(.applicationName)"],
+                    shortTitle: "Open Household", systemImageName: "person.2.fill")
     }
 }
 
