@@ -8,6 +8,14 @@ import CryptoKit
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testQuickEntryIntentRequestIsConsumedExactlyOnce() {
+        UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey) }
+        XCTAssertFalse(QuickEntryRequest.consume())
+        QuickEntryRequest.request()
+        XCTAssertTrue(QuickEntryRequest.consume())
+        XCTAssertFalse(QuickEntryRequest.consume())
+    }
     @MainActor
     func testFundedCardPurchaseDoesNotRelabelLaterCashDeficitAsCreditDebt() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)

@@ -1,4 +1,35 @@
 import SwiftUI
+import AppIntents
+
+enum QuickEntryRequest {
+    static let defaultsKey = "clearpocket.pendingQuickEntry"
+    static func request() { UserDefaults.standard.set(true, forKey: defaultsKey) }
+    static func consume() -> Bool {
+        guard UserDefaults.standard.bool(forKey: defaultsKey) else { return false }
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
+        return true
+    }
+}
+
+struct OpenClearPocketTransactionIntent: AppIntent {
+    static let title: LocalizedStringResource = "Add ClearPocket Transaction"
+    static let description = IntentDescription("Open the active ClearPocket budget directly to a new transaction.")
+    static let openAppWhenRun = true
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        QuickEntryRequest.request()
+        return .result()
+    }
+}
+
+struct ClearPocketShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
+        AppShortcut(intent: OpenClearPocketTransactionIntent(),
+                    phrases: ["Add a transaction in \(.applicationName)", "Record spending in \(.applicationName)"],
+                    shortTitle: "Add Transaction", systemImageName: "plus.circle.fill")
+    }
+}
 
 #if DEBUG
 enum RuntimeBuildIdentity {

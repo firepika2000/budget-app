@@ -71,7 +71,9 @@ any later spreadsheet export still requires its own formula-injection defenses.
    reserve events and audit without committing; the existing HTTP route commits the returned
    transaction. Approval reuses this operation inside one caller-owned transaction.
 6. Partial-error policy and authorized undo. Native bounded history/reopen and cancellation are now
-   production-wired across Live, Demo, and Local Device providers.
+   production-wired across Live, Demo, and Local Device providers. Undo must be atomic across every
+   posted row and reuse the canonical void/reversal service; the current route commits one void at a
+   time, so a client-side loop is deliberately not exposed as an unsafe partial-undo substitute.
 7. The production reconciliation sheet now provides file selection, explicit CSV mapping,
    duplicate-aware preview, category selection and all-row post/skip approval through the shared
    workspace command contract. The Budget Server adapter is active for every listed format. The

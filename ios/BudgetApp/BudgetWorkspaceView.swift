@@ -3296,6 +3296,7 @@ struct BudgetWorkspaceView: View {
     @State private var showingOnboarding = false
     @State private var didEvaluateOnboarding = false
     @State private var selectedTab: Int
+    @State private var quickEntryRequest = 0
     private let selectionOverride: Binding<Int>?
 
     init(budget: APIBudget) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _selectedTab = State(initialValue: 0); selectionOverride = nil }
@@ -3412,7 +3413,9 @@ struct BudgetWorkspaceView: View {
                 await reload()
                 await runAutomaticDropboxBackupIfDue()
             }
+            consumeQuickEntryRequest()
         }
+        .onAppear { consumeQuickEntryRequest() }
         .task(id: session.sourceMode) {
             guard session.sourceMode == .liveServer else { return }
             while !Task.isCancelled {
@@ -3455,7 +3458,7 @@ struct BudgetWorkspaceView: View {
         case 1:
             NavigationStack { LivePlanView().workspaceProfileToolbar { showingSettings = true } }
         case 2:
-            NavigationStack { LiveActivityView().workspaceProfileToolbar { showingSettings = true } }
+            NavigationStack { LiveActivityView(quickEntryRequest: quickEntryRequest).workspaceProfileToolbar { showingSettings = true } }
         case 3:
             NavigationStack { LiveAccountsView().workspaceProfileToolbar { showingSettings = true } }
         case 4:
@@ -3477,6 +3480,12 @@ struct BudgetWorkspaceView: View {
         // The composition root has already selected a repository. Feature UI never branches on the
         // application source and cannot start authentication or credential refresh work.
         await store.refresh()
+    }
+
+    private func consumeQuickEntryRequest() {
+        guard QuickEntryRequest.consume() else { return }
+        tabSelection.wrappedValue = 2
+        quickEntryRequest += 1
     }
 
     private func runAutomaticDropboxBackupIfDue() async {
@@ -5692,6 +5701,7 @@ private struct LiveSmartFundingView: View {
 
 private struct LiveActivityView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
+    var quickEntryRequest = 0
     @State private var search = ""
     @State private var filter = TransactionBrowserFilter()
     @State private var rows: [APITransaction] = []
@@ -5732,8 +5742,14 @@ private struct LiveActivityView: View {
             .sheet(isPresented: $showSchedule) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode) }
             .sheet(item: $transferPresentation) { presentation in transfer(presentation) }
             .sheet(isPresented: $showFilters) { TransactionFilterView(current: filter) { filter = $0 } }
+            .onAppear { openQuickEntryIfRequested() }
+            .onChange(of: quickEntryRequest) { _, _ in openQuickEntryIfRequested() }
             .task(id: queryKey) { if !search.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }; guard !Task.isCancelled else { return }; await load(reset: true) }
             .refreshable { await store.refresh(); await load(reset: true) }
+    }
+    private func openQuickEntryIfRequested() {
+        guard quickEntryRequest > 0, store.budget.can("create_transaction") else { return }
+        showAdd = true
     }
     @ViewBuilder private func transfer(_ presentation: TransferPresentation) -> some View {
         LiveTransferView(presentation: presentation, budget: store.budget, accounts: store.accounts, onSaved: reload)
