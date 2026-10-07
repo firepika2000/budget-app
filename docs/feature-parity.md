@@ -118,8 +118,9 @@ Status meanings:
 
 Server-backed offline conflict resolution, encrypted future bank-provider token storage, webhook isolation,
 provider retention policy, and formal security review remain prerequisites. No parity claim is made for
-direct bank connectivity, Apple Card automation, or widgets. Manual statement import and encrypted
-production attachment storage are already implemented and must not be treated as missing foundations.
+direct bank connectivity, Apple Card automation, or financial-data widgets. Privacy-safe launcher widgets,
+manual statement import, and encrypted production attachment storage are already implemented and must not
+be treated as missing foundations.
 
 ## Public benchmark sources
 
