@@ -455,6 +455,19 @@ public struct APIClient {
         catch { throw APIClientError.invalidResponse }
     }
 
+    public func statementImports(budgetID: String, accountID: String, limit: Int = 25,
+                                 offset: Int = 0, token: String) async throws -> APIStatementImportList {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/statement-imports",
+                       queryItems: [URLQueryItem(name: "limit", value: String(limit)),
+                                    URLQueryItem(name: "offset", value: String(offset))], token: token)
+    }
+
+    public func statementImport(budgetID: String, accountID: String, batchID: String,
+                                token: String) async throws -> APIStatementImport {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/statement-imports/\(batchID)",
+                       token: token)
+    }
+
     public func approveStatementImport(budgetID: String, accountID: String, batchID: String,
                                        approval: APIStatementImportApprove, token: String) async throws -> APIStatementImport {
         try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/statement-imports/\(batchID)/approve",

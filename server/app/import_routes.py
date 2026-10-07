@@ -13,11 +13,12 @@ from .import_candidates import CSVMapping, ImportCandidate, ImportValidationErro
 from .import_formats import parse_ofx_candidates, parse_pdf_candidates, parse_qif_candidates
 from .import_matching import review_candidates
 from .import_review import load_match_observations
-from .import_staging import cancel_staged_batch, get_staged_batch, stage_candidates
+from .import_staging import cancel_staged_batch, get_staged_batch, list_staged_batches, stage_candidates
 from .models import ImportBatch, User
 from .schemas import (
     StatementImportApproveRequest,
     StatementImportCancelRequest,
+    StatementImportListResponse,
     StatementImportResponse,
     TransactionCreate,
 )
@@ -74,6 +75,29 @@ def _response(db: Session, user: User, budget_id: str, batch: ImportBatch,
             "approval_action": batch.candidates[index].get("approval_action"),
             "posted_transaction_id": batch.candidates[index].get("posted_transaction_id"),
         } for index, row in enumerate(candidates)],
+    }
+
+
+@router.get("", response_model=StatementImportListResponse)
+def list_statement_imports(
+    budget_id: str, account_id: str,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=100_000),
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> dict:
+    batches, has_more = list_staged_batches(
+        db, user=user, budget_id=budget_id, account_id=account_id,
+        limit=limit, offset=offset,
+    )
+    return {
+        "items": [{
+            "id": batch.id, "budget_id": batch.budget_id, "account_id": batch.account_id,
+            "status": batch.status, "version": batch.version,
+            "source_format": batch.source_format, "candidate_count": batch.candidate_count,
+            "created_at": batch.created_at,
+        } for batch in batches],
+        "has_more": has_more,
+        "next_offset": offset + len(batches) if has_more else None,
     }
 
 

@@ -1347,6 +1347,33 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(result.status, "cancelled")
         XCTAssertEqual(result.version, 4)
     }
+
+    func testStatementImportHistoryIsBoundedAndDetailLoadsSeparately() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        var requests = 0
+        MockURLProtocol.handler = { request in
+            requests += 1
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            if requests == 1 {
+                XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/statement-imports")
+                let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+                XCTAssertEqual(components?.queryItems?.first(where: { $0.name == "limit" })?.value, "25")
+                XCTAssertEqual(components?.queryItems?.first(where: { $0.name == "offset" })?.value, "0")
+                let body = Data(#"{"items":[{"id":"batch-1","budget_id":"b1","account_id":"a1","status":"review","version":0,"source_format":"csv","candidate_count":1,"created_at":"2026-10-02T12:00:00Z"}],"has_more":false,"next_offset":null}"#.utf8)
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+            }
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/statement-imports/batch-1")
+            let body = Data(#"{"id":"batch-1","budget_id":"b1","account_id":"a1","status":"review","version":0,"source_format":"csv","candidate_count":1,"candidates":[{"source_row":2,"occurred_on":"2026-09-15","amount_minor":-1234,"payee":"Private","memo":"Private memo","exact_transaction_ids":[],"possible_transaction_ids":[],"suggestions_truncated":false,"duplicate_source_row":null,"approval_action":null,"posted_transaction_id":null}],"created_at":"2026-10-02T12:00:00Z"}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let page = try await client.statementImports(budgetID: "b1", accountID: "a1", token: "current")
+        XCTAssertEqual(page.items.map(\.id), ["batch-1"])
+        let detail = try await client.statementImport(budgetID: "b1", accountID: "a1", batchID: "batch-1", token: "current")
+        XCTAssertEqual(detail.candidates.first?.payee, "Private")
+        XCTAssertEqual(requests, 2)
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

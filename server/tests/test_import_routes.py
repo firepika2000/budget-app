@@ -59,6 +59,49 @@ def test_csv_import_is_money_neutral_and_returns_duplicate_review(client, owner_
     assert (cancelled.status_code, cancelled.json()["status"], cancelled.json()["version"]) == (200, "cancelled", 1)
 
 
+def test_import_history_is_bounded_actor_private_and_reopenable(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    first = _stage(client, owner_token, budget["id"], account["id"],
+                   b"Date,Amount,Payee,Memo\n2026-09-15,-1.00,Private one,Secret one\n")
+    second = _stage(client, owner_token, budget["id"], account["id"],
+                    b"Date,Amount,Payee,Memo\n2026-09-16,-2.00,Private two,Secret two\n")
+    assert first.status_code == second.status_code == 201
+
+    page = client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/statement-imports?limit=1",
+        headers=auth(owner_token),
+    )
+    assert page.status_code == 200, page.text
+    body = page.json()
+    assert len(body["items"]) == 1
+    assert body["has_more"] is True and body["next_offset"] == 1
+    # History intentionally exposes metadata, not imported private text.
+    assert "candidates" not in body["items"][0]
+
+    next_page = client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/statement-imports?limit=1&offset=1",
+        headers=auth(owner_token),
+    )
+    assert next_page.status_code == 200
+    assert len(next_page.json()["items"]) == 1
+
+    member_token = add_member(session_factory, client, "manage", budget["id"])
+    hidden = client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/statement-imports",
+        headers=auth(member_token),
+    )
+    assert hidden.status_code == 200
+    assert hidden.json()["items"] == []
+
+    reopened = client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/statement-imports/{first.json()['id']}",
+        headers=auth(owner_token),
+    )
+    assert reopened.status_code == 200
+    assert reopened.json()["candidates"][0]["payee"] == "Private one"
+
+
 def test_ofx_qfx_and_qif_use_the_same_owned_staging_boundary(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, _ = create_budget_structure(client, owner_token, budget["id"])

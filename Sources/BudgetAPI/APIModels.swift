@@ -1090,7 +1090,7 @@ public struct APIStatementImportCandidate: Identifiable, Decodable, Equatable, S
     }
 }
 
-public struct APIStatementImport: Decodable, Equatable, Sendable {
+public struct APIStatementImport: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
     public let accountID: String
@@ -1111,6 +1111,41 @@ public struct APIStatementImport: Decodable, Equatable, Sendable {
         case id, status, version, candidates
         case budgetID = "budget_id", accountID = "account_id", sourceFormat = "source_format"
         case candidateCount = "candidate_count", createdAt = "created_at"
+    }
+}
+
+public struct APIStatementImportSummary: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let budgetID: String
+    public let accountID: String
+    public let status: String
+    public let version: Int
+    public let sourceFormat: String
+    public let candidateCount: Int
+    public let createdAt: String
+    public init(id: String, budgetID: String, accountID: String, status: String, version: Int,
+                sourceFormat: String, candidateCount: Int, createdAt: String) {
+        self.id = id; self.budgetID = budgetID; self.accountID = accountID; self.status = status
+        self.version = version; self.sourceFormat = sourceFormat
+        self.candidateCount = candidateCount; self.createdAt = createdAt
+    }
+    enum CodingKeys: String, CodingKey {
+        case id, status, version
+        case budgetID = "budget_id", accountID = "account_id", sourceFormat = "source_format"
+        case candidateCount = "candidate_count", createdAt = "created_at"
+    }
+}
+
+public struct APIStatementImportList: Decodable, Equatable, Sendable {
+    public let items: [APIStatementImportSummary]
+    public let hasMore: Bool
+    public let nextOffset: Int?
+    public init(items: [APIStatementImportSummary], hasMore: Bool, nextOffset: Int?) {
+        self.items = items; self.hasMore = hasMore; self.nextOffset = nextOffset
+    }
+    enum CodingKeys: String, CodingKey {
+        case items
+        case hasMore = "has_more", nextOffset = "next_offset"
     }
 }
 

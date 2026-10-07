@@ -3120,6 +3120,31 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalStatementHistoryReopensPrivateDetailAndPaginates() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let first = try await source.stageStatementImport(
+            accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,-1.00,First private payee\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd")
+        )
+        _ = try await source.stageStatementImport(
+            accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-16,-2.00,Second private payee\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd")
+        )
+        let page = try await source.statementImports(accountID: account.id, limit: 1, offset: 0)
+        XCTAssertEqual(page.items.count, 1)
+        XCTAssertTrue(page.hasMore)
+        XCTAssertEqual(page.nextOffset, 1)
+        let reopened = try await source.statementImport(accountID: account.id, batchID: first.id)
+        XCTAssertEqual(reopened.candidates.first?.payee, "First private payee")
+        XCTAssertEqual(source.demo.transactions.filter { $0.payee.contains("private payee") }.count, 0)
+    }
+
+    @MainActor
     func testLocalQIFStagingIsMoneyNeutralUntilCanonicalApproval() async throws {
         let source = DemoWorkspaceDataSource()
         let account = try XCTUnwrap(source.demo.accounts.first)

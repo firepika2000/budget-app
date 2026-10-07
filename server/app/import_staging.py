@@ -62,6 +62,22 @@ def get_staged_batch(db: Session, *, user: User, budget_id: str, batch_id: str) 
     return db.get(ImportBatch, batch_id)
 
 
+def list_staged_batches(db: Session, *, user: User, budget_id: str, account_id: str,
+                        limit: int, offset: int) -> tuple[list[ImportBatch], bool]:
+    """List only the current actor's import metadata after current account authorization.
+
+    Candidate/payee text is intentionally not loaded for the history screen. The detail endpoint
+    performs a fresh authority check before hydrating private statement content.
+    """
+    _require_account(db, user, budget_id, account_id)
+    rows = list(db.scalars(select(ImportBatch).where(
+        ImportBatch.budget_id == budget_id,
+        ImportBatch.account_id == account_id,
+        ImportBatch.created_by_user_id == user.id,
+    ).order_by(ImportBatch.created_at.desc(), ImportBatch.id.desc()).offset(offset).limit(limit + 1)))
+    return rows[:limit], len(rows) > limit
+
+
 def cancel_staged_batch(db: Session, *, user: User, budget_id: str, batch_id: str,
                         expected_version: int) -> ImportBatch:
     batch = get_staged_batch(db, user=user, budget_id=budget_id, batch_id=batch_id)

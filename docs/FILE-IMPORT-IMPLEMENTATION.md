@@ -13,6 +13,12 @@ Import requires confirmation and calls the provider's optimistic-version cancell
 it does not post or delete transactions. Live, Demo, and Local Device providers share this command
 surface, and stale/replayed cancellation is rejected.
 
+Statement Import History is available from reconciliation. It uses a bounded, paginated metadata
+endpoint scoped to the current actor and account; imported payee/memo text is not included in list
+responses. Opening one item performs a fresh authorization check before loading private candidate
+details. Review batches resume with the same duplicate-safe defaults, while approved and cancelled
+batches remain inspectable and read-only.
+
 Current endpoints:
 
 - `POST /api/v1/budgets/{budget}/accounts/{account}/statement-imports`
@@ -64,8 +70,8 @@ any later spreadsheet export still requires its own formula-injection defenses.
    `budgeting_routes.create_transaction_in_session` now owns authorization, payee resolution,
    reserve events and audit without committing; the existing HTTP route commits the returned
    transaction. Approval reuses this operation inside one caller-owned transaction.
-6. Native history/reopen UX, partial-error policy and authorized undo. In-flow cancellation is now
-   production-wired; cancelling an older abandoned review still requires the planned history surface.
+6. Partial-error policy and authorized undo. Native bounded history/reopen and cancellation are now
+   production-wired across Live, Demo, and Local Device providers.
 7. The production reconciliation sheet now provides file selection, explicit CSV mapping,
    duplicate-aware preview, category selection and all-row post/skip approval through the shared
    workspace command contract. The Budget Server adapter is active for every listed format. The

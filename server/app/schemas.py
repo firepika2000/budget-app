@@ -1087,6 +1087,23 @@ class StatementImportResponse(BaseModel):
     created_at: datetime
 
 
+class StatementImportSummary(BaseModel):
+    id: str
+    budget_id: str
+    account_id: str
+    status: Literal["review", "approved", "cancelled"]
+    version: int
+    source_format: Literal["csv", "ofx", "qfx", "qif", "pdf"]
+    candidate_count: int
+    created_at: datetime
+
+
+class StatementImportListResponse(BaseModel):
+    items: list[StatementImportSummary]
+    has_more: bool
+    next_offset: Optional[int] = None
+
+
 class StatementImportCancelRequest(BaseModel):
     expected_version: int = Field(ge=0)
 
