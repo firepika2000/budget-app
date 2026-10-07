@@ -3029,6 +3029,70 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDemoOwnerCanConfigureDelegatedPolicyWithServerEquivalentFunding() async throws {
+        let source = DemoWorkspaceDataSource()
+        let query = WorkspaceReportQuery(
+            start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-09-30"),
+            accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "",
+            transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category",
+            includeTracking: true
+        )
+        let before = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+        let beforeSummary = try XCTUnwrap(before.summary)
+        let rta = beforeSummary.readyToAssignMinor
+        let poolAssigned = try XCTUnwrap(beforeSummary.categories.first { $0.categoryID == "alexallow" }).assignedMinor
+
+        try await source.updateDelegatedPolicy(userID: "alex", value: .init(
+            userID: "alex", poolCategoryID: "alexallow", authorityMinor: 10_000,
+            allowCategoryCreation: false, allowReallocation: true,
+            expectedAllocationVersion: beforeSummary.allocationVersion,
+            rules: [.init(categoryID: "alexsave", ruleKind: "soft_target", minimumMinor: 1_000, maximumMinor: 5_000)]
+        ))
+
+        let after = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+        let afterSummary = try XCTUnwrap(after.summary)
+        let policy = try XCTUnwrap(after.delegatedBudgets.first { $0.userID == "alex" })
+        XCTAssertEqual(policy.authorityMinor, 10_000)
+        XCTAssertFalse(policy.allowCategoryCreation)
+        XCTAssertTrue(policy.allowReallocation)
+        XCTAssertEqual(policy.rules.first?.categoryID, "alexsave")
+        XCTAssertEqual(afterSummary.readyToAssignMinor, rta - 3_200)
+        XCTAssertEqual(afterSummary.categories.first { $0.categoryID == "alexallow" }?.assignedMinor, poolAssigned + 3_200)
+        XCTAssertEqual(source.demo.allocationEvents.last?.kind, "delegated_authority")
+        XCTAssertEqual(source.demo.allocationEvents.last?.amountMinor, 3_200)
+    }
+
+    @MainActor
+    func testDemoDelegatedPolicyRejectsStaleOrUnauthorizedMutationAtomically() async throws {
+        let source = DemoWorkspaceDataSource()
+        let categories = source.demo.categories
+        let rta = source.demo.unassignedMinor
+        let eventIDs = source.demo.allocationEvents.map(\.id)
+        do {
+            try await source.updateDelegatedPolicy(userID: "alex", value: .init(
+                userID: "alex", poolCategoryID: "alexallow", authorityMinor: 10_000,
+                allowCategoryCreation: true, allowReallocation: true, expectedAllocationVersion: 99
+            ))
+            XCTFail("A stale policy must be rejected")
+        } catch {}
+        XCTAssertEqual(source.demo.categories, categories)
+        XCTAssertEqual(source.demo.unassignedMinor, rta)
+        XCTAssertEqual(source.demo.allocationEvents.map(\.id), eventIDs)
+
+        source.demo.persona = .alex
+        do {
+            try await source.updateDelegatedPolicy(userID: "alex", value: .init(
+                userID: "alex", poolCategoryID: "alexallow", authorityMinor: 10_000,
+                allowCategoryCreation: true, allowReallocation: true, expectedAllocationVersion: 0
+            ))
+            XCTFail("A delegated member must not edit authority")
+        } catch {}
+        XCTAssertEqual(source.demo.categories, categories)
+        XCTAssertEqual(source.demo.unassignedMinor, rta)
+        XCTAssertEqual(source.demo.allocationEvents.map(\.id), eventIDs)
+    }
+
+    @MainActor
     func testDemoRequestApprovalRefusesInvalidOrUnauthorizedIntentWithoutMutation() async throws {
         for scenario in ["restricted", "stale", "missing-source", "missing-destination", "same-category", "archived-source", "archived-group", "zero", "negative", "excess", "insufficient", "overflow"] {
             let source = DemoWorkspaceDataSource()

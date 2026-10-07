@@ -97,6 +97,48 @@ final class DemoStore: ObservableObject {
         allocationVersion += 1
     }
 
+    func setDelegatedAuthority(
+        user: DemoPersona,
+        poolCategoryID: String,
+        authorityMinor: Int64,
+        expectedVersion: Int?
+    ) throws {
+        guard persona == .rey else { throw DemoMutationError.restrictedCategory }
+        guard user.isChild, authorityMinor >= 0 else { throw DemoMutationError.invalidAmount }
+        if let expectedVersion { try requireAllocationVersion(expectedVersion) }
+        guard let pool = categories.first(where: {
+            $0.id == poolCategoryID && $0.delegatedTo == user && !$0.isHidden && !archivedGroups.contains($0.group)
+        }) else { throw DemoMutationError.categoryNotFound }
+
+        let selected = try planningSnapshot(month: currentPlanningMonth)
+        let controlled = try Money.sumMinorUnits(categories.filter { $0.delegatedTo == user }.compactMap {
+            selected.categories[$0.id]?.assignedMinor
+        })
+        let delta = try Money(minorUnits: authorityMinor, currencyCode: "USD")
+            .subtracting(Money(minorUnits: controlled, currencyCode: "USD")).minorUnits
+        guard delta != 0 else { return }
+        guard delta <= selected.fundingLimitMinor else {
+            throw DemoMutationError.insufficientFunds(available: selected.fundingLimitMinor)
+        }
+        let poolAllocation = selected.categories[pool.id]?.assignedMinor ?? 0
+        guard delta >= 0 || poolAllocation >= -delta else {
+            throw NSError(domain: "BudgetWorkspace", code: 409, userInfo: [NSLocalizedDescriptionKey: "Move money back to the delegated pool before reducing authority."])
+        }
+        let allocation = try PlanningPeriodProjection.Allocation(
+            occurredOn: currentPlanningMonth,
+            postings: [.init(categoryID: nil, amountMinor: -delta), .init(categoryID: pool.id, amountMinor: delta)]
+        )
+        let current = try planningSnapshot(month: currentPlanningMonth, additionalAllocations: [allocation])
+        recordAllocation(
+            amount: delta,
+            to: pool.id,
+            occurredOn: currentPlanningMonth,
+            kind: "delegated_authority",
+            note: "Set delegated authority for member \(user.rawValue.lowercased())"
+        )
+        publishPlanning(current)
+    }
+
     // Validate the whole operation before publishing any state. All legs share one identity
     // and consume one optimistic concurrency token, like Live append_operation.
     func fundTargets(_ amounts: [(categoryID: String, amount: Int64)], month: String, expectedVersion: Int) throws {

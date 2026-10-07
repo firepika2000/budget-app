@@ -408,6 +408,11 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var accessEventRecords: [AccessEventRecord] = []
     private var removedMembers: Set<DemoPersona> = []
     private var membershipVersions: [DemoPersona: Int] = [:]
+    private struct DelegatedPolicyRecord {
+        let id: String
+        var value: APIDelegatedBudgetUpsert
+    }
+    private var delegatedPolicyRecords: [String: DelegatedPolicyRecord] = [:]
     private let localAuthority: LocalAuthorityStore?
     private let localAttachmentVault: LocalAttachmentVault?
     private let localOperationGate: LocalDeviceOperationGate?
@@ -807,7 +812,24 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
              "interval_count": plan.intervalCount, "rollover_policy": plan.rollover ? "rollover" : "use_it_or_lose_it", "is_active": !plan.isPaused,
              "splits": plan.splits.map { ["destination_category_id": $0.0, "amount_minor": $0.1] as [String: Any] }] as [String: Any]
         })
-        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: allowanceRows, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: demoForecast, members: members, delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
+        let delegatedBudgetRows: [APIDelegatedBudget] = try delegatedPolicyRecords.values.sorted { $0.value.userID < $1.value.userID }.map { record in
+            let value = record.value
+            let poolAvailable = max(plan.categories[value.poolCategoryID]?.assignedMinor ?? 0, 0)
+            return try decode([
+                "id": record.id, "budget_id": budget.id, "user_id": value.userID,
+                "pool_category_id": value.poolCategoryID, "authority_minor": value.authorityMinor,
+                "assigned_minor": max(value.authorityMinor - poolAvailable, 0),
+                "available_to_assign_minor": poolAvailable,
+                "allow_category_creation": value.allowCategoryCreation,
+                "allow_reallocation": value.allowReallocation,
+                "rules": value.rules.enumerated().map { index, rule in
+                    ["id": "\(record.id)-rule-\(index)", "category_id": rule.categoryID,
+                     "rule_kind": rule.ruleKind, "minimum_minor": rule.minimumMinor as Any? ?? NSNull(),
+                     "maximum_minor": rule.maximumMinor as Any? ?? NSNull()] as [String: Any]
+                }
+            ])
+        }
+        return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: allowanceRows, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: demoForecast, members: members, delegatedBudgets: delegatedBudgetRows, allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
     }
 
     func forecast(days: Int) async throws -> APIForecast {
@@ -2219,7 +2241,29 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         }
         try demo.fundTargets(current.proposals.map { ($0.categoryID, $0.amountMinor) }, month: current.month, expectedVersion: preview.allocationVersion)
     }
-    func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { try requireActiveMembership(); throw workspaceRepositoryError("Owner policy editing is demonstrated in live mode; use a delegated demo persona to verify the member experience.") }
+    func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws {
+        try requireActiveMembership()
+        guard budget.can("manage_allowances") else { throw workspaceRepositoryError("You do not have permission to manage delegated budgets.") }
+        guard userID == value.userID,
+              let member = DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == userID }),
+              member != .rey, !removedMembers.contains(member) else {
+            throw workspaceRepositoryError("Delegated user must be an active non-owner member.")
+        }
+        let controlledIDs = Set(demo.categories.filter { $0.delegatedTo == member }.map(\.id))
+        guard controlledIDs.contains(value.poolCategoryID),
+              value.rules.allSatisfy({ controlledIDs.contains($0.categoryID) }),
+              Set(value.rules.map(\.categoryID)).count == value.rules.count,
+              value.rules.allSatisfy({ rule in
+                  ["hard_limit", "soft_target", "approval_gated"].contains(rule.ruleKind)
+                      && (rule.minimumMinor ?? 0) >= 0 && (rule.maximumMinor ?? 0) >= 0
+                      && (rule.minimumMinor == nil || rule.maximumMinor == nil || rule.minimumMinor! <= rule.maximumMinor!)
+              }) else { throw workspaceRepositoryError("Delegated policy categories or limits are invalid.") }
+        try demo.setDelegatedAuthority(user: member, poolCategoryID: value.poolCategoryID,
+                                       authorityMinor: value.authorityMinor,
+                                       expectedVersion: value.expectedAllocationVersion)
+        let id = delegatedPolicyRecords[userID]?.id ?? "demo-delegated-\(userID)"
+        delegatedPolicyRecords[userID] = .init(id: id, value: value)
+    }
 }
 
 private func workspaceRepositoryError(_ message: String?) -> NSError { NSError(domain: "BudgetWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: message ?? "Unable to complete the change."]) }
