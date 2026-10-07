@@ -813,10 +813,10 @@ struct AccountCreationView: View {
             : CurrencyText.parseMinorUnits(startingBalance, currencyCode: budget.currencyCode)
     }
 
-    private var availableTypes: [String] { isOnBudget ? ["checking", "savings", "cash", "credit"] : ["tracking", "loan", "mortgage"] }
+    private var availableTypes: [String] { isOnBudget ? ["checking", "savings", "cash", "credit"] : ["asset", "tracking", "loan", "mortgage"] }
 
     private func accountTypeTitle(_ type: String) -> String {
-        switch type { case "credit": "Credit Card"; case "loan": "Loan / Liability"; case "mortgage": "Mortgage"; case "tracking": "Asset / Tracking"; default: type.capitalized }
+        switch type { case "credit": "Credit Card"; case "loan": "Loan / Liability"; case "mortgage": "Mortgage"; case "asset": "Asset"; case "tracking": "Other Tracking"; default: type.capitalized }
     }
 
     private func save() async {
@@ -897,11 +897,11 @@ struct AccountSettingsView: View {
 
     private var safeTypes: [String] {
         if account.isOnBudget { return ["checking", "savings", "cash"].contains(account.accountType) ? ["checking", "savings", "cash"] : [account.accountType] }
-        return ["loan", "mortgage", "tracking"].contains(account.accountType) ? ["tracking", "loan", "mortgage"] : [account.accountType]
+        return ["loan", "mortgage", "asset", "tracking"].contains(account.accountType) ? ["asset", "tracking", "loan", "mortgage"] : [account.accountType]
     }
 
     private func typeTitle(_ type: String) -> String {
-        switch type { case "credit": "Credit Card"; case "loan": "Loan / Liability"; case "mortgage": "Mortgage"; case "tracking": "Asset / Tracking"; default: type.capitalized }
+        switch type { case "credit": "Credit Card"; case "loan": "Loan / Liability"; case "mortgage": "Mortgage"; case "asset": "Asset"; case "tracking": "Other Tracking"; default: type.capitalized }
     }
 
     private func save() async {

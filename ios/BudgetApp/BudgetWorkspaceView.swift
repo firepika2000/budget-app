@@ -6843,7 +6843,7 @@ private struct LiveAccountsView: View {
         List {
             ForEach(store.accounts) { account in
                 NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: {
-                    HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: account.accountType == "credit" ? "creditcard.fill" : "building.columns.fill") }; Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } }
+                    HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: accountIcon(account.accountType)) }; Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } }
                 }
                 .accessibilityIdentifier("account-row-\(account.id)")
             }
@@ -6866,6 +6866,17 @@ private struct LiveAccountsView: View {
         .navigationTitle("Accounts")
         .toolbar { if store.budget.can("manage_budget_structure") { Button { showAdd = true } label: { Image(systemName:"plus") } } }
         .sheet(isPresented:$showAdd){AccountCreationView(budget:store.budget,onSaved:reload)}
+    }
+    private func accountIcon(_ type: String) -> String {
+        switch type {
+        case "credit": "creditcard.fill"
+        case "loan": "car.fill"
+        case "mortgage": "house.fill"
+        case "asset": "chart.line.uptrend.xyaxis"
+        case "cash": "banknote.fill"
+        case "savings": "leaf.fill"
+        default: "building.columns.fill"
+        }
     }
     private func reload() async { await store.refresh() }
 }

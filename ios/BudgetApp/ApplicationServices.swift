@@ -390,9 +390,9 @@ struct AccountService {
         }
         let validKind = operation.isOnBudget
             ? ["checking", "savings", "cash", "credit"].contains(operation.kind)
-            : ["loan", "mortgage", "tracking"].contains(operation.kind)
+            : ["loan", "mortgage", "asset", "tracking"].contains(operation.kind)
         guard validKind else {
-            throw BudgetApplicationError.invalidOperation("Choose a budget account type for On budget, or Loan/Mortgage/Tracking for Tracking.")
+            throw BudgetApplicationError.invalidOperation("Choose a budget account type for On budget, or Loan/Mortgage/Asset/Tracking for Tracking.")
         }
         do { try await repository.createAccount(operation) }
         catch { throw BudgetApplicationError.map(error) }
@@ -403,7 +403,7 @@ struct AccountService {
             throw BudgetApplicationError.invalidOperation("Enter an account name.")
         }
         let cashTypes = Set(["checking", "savings", "cash"])
-        let trackingTypes = Set(["loan", "mortgage", "tracking"])
+        let trackingTypes = Set(["loan", "mortgage", "asset", "tracking"])
         let safe = operation.kind == operation.currentKind
             || (operation.isOnBudget && cashTypes.contains(operation.currentKind) && cashTypes.contains(operation.kind))
             || (!operation.isOnBudget && trackingTypes.contains(operation.currentKind) && trackingTypes.contains(operation.kind))

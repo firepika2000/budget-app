@@ -342,12 +342,20 @@ def test_account_creation_enforces_budget_treatment_type_families(
     ):
         response = client.post(f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token), json=payload)
         assert response.status_code == 422
-    tracking = client.post(
+    mortgage = client.post(
         f"/api/v1/budgets/{budget['id']}/accounts",
         headers=auth(owner_token),
-        json={"name": "Mortgage", "account_type": "loan", "is_on_budget": False, "starting_balance_minor": -25000000},
+        json={"name": "Mortgage", "account_type": "mortgage", "is_on_budget": False, "starting_balance_minor": -25000000},
     )
-    assert tracking.status_code == 201
+    assert mortgage.status_code == 201
+    assert mortgage.json()["account_type"] == "mortgage"
+    asset = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts",
+        headers=auth(owner_token),
+        json={"name": "Home value", "account_type": "asset", "is_on_budget": False, "starting_balance_minor": 40000000},
+    )
+    assert asset.status_code == 201
+    assert asset.json()["account_type"] == "asset"
 
 
 def test_viewer_cannot_add_transaction(client, owner_token, session_factory):

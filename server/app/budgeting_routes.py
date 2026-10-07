@@ -121,7 +121,7 @@ from .planning import next_occurrence
 from .attachment_storage import AttachmentStorage, safe_filename, validate_content
 
 ON_BUDGET_CASH_TYPES = {"checking", "savings", "cash"}
-TRACKING_TYPES = {"loan", "mortgage", "tracking"}
+TRACKING_TYPES = {"loan", "mortgage", "asset", "tracking"}
 
 
 def debt_terms_readiness(terms: AccountDebtTerms) -> tuple[bool, list[str]]:
@@ -179,7 +179,7 @@ def validate_account_treatment(account_type: str, is_on_budget: bool) -> None:
     if not valid:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Choose a budget account type for On budget, or Loan/Mortgage/Tracking for Tracking.",
+            detail="Choose a budget account type for On budget, or Loan/Mortgage/Asset/Tracking for Tracking.",
         )
 
 

@@ -66,7 +66,7 @@ Status meanings:
 | Credit card | IMPLEMENTED | Card balance, payment reserve, funded and unfunded spending exposed. |
 | Loan/mortgage/tracking asset/liability | IMPLEMENTED | Live and local creation support first-class loan, mortgage, and tracking types; mortgage/loan debt terms, cost, and payoff projections share exact production semantics. |
 | Closed accounts | IMPLEMENTED | Backend and live client state. |
-| Net-worth-only tracking distinction | PARTIALLY IMPLEMENTED | `is_on_budget` foundation exists; richer live account classification remains. |
+| Net-worth-only tracking distinction | IMPLEMENTED | First-class Asset and Other Tracking types remain outside the Plan while contributing to permission-filtered net worth. |
 | Payoff simulator | IMPLEMENTED | Production avalanche, snowball, rollover, and custom-extra scenarios use exact shared projections and authoritative debt terms without mutating the budget. |
 | Card reserve animation | FUTURE | State explanation is present; Reduce Motion-aware animation remains polish work. |
 
