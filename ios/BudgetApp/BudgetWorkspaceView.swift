@@ -8914,6 +8914,11 @@ private struct ResilienceInsightsView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let report: APIResilienceReport
 
+    private var upcomingObligationCoverage: Double? {
+        guard report.scheduledOutflowsMinor > 0 else { return nil }
+        return Double(max(report.cashBufferMinor, 0)) / Double(report.scheduledOutflowsMinor)
+    }
+
     var body: some View {
         Section("Financial Resilience") {
             LabeledContent("Cash buffer", value: store.format(report.cashBufferMinor))
@@ -8949,6 +8954,15 @@ private struct ResilienceInsightsView: View {
             }
             LabeledContent("Scheduled income", value: store.format(report.scheduledIncomeMinor))
             LabeledContent("Scheduled outflows", value: store.format(report.scheduledOutflowsMinor))
+            if let upcomingObligationCoverage {
+                LabeledContent(
+                    "Upcoming obligations covered",
+                    value: upcomingObligationCoverage.formatted(.percent.precision(.fractionLength(0)))
+                )
+                Text("Visible cash divided by active scheduled outflows through \(report.through). Scheduled income is deliberately excluded because it is not spendable yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             LabeledContent("Expected 30-day margin", value: store.format(report.expectedMarginMinor))
             LabeledContent("Lowest projected balance", value: store.format(report.lowestProjectedOnBudgetMinor))
             Text("Expected margin uses active scheduled income and outflows through \(report.through). It is forecast-only and does not change spendable money.").font(.caption).foregroundStyle(.secondary)

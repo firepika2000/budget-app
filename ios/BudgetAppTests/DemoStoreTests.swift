@@ -1586,6 +1586,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("Cash runway"))
         XCTAssertTrue(contents.contains("Essential expense coverage"))
         XCTAssertTrue(contents.contains("Emergency fund coverage"))
+        XCTAssertTrue(contents.contains("Upcoming obligations covered"))
+        XCTAssertTrue(contents.contains("Scheduled income is deliberately excluded"))
         XCTAssertTrue(contents.contains("PlanGroupHeader"))
         XCTAssertTrue(contents.contains("group-add-transaction"))
         XCTAssertTrue(contents.contains("Task.sleep(for: .seconds(12))"))

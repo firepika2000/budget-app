@@ -437,3 +437,7 @@ The roadmap is a living document, but changing it is a deliberate product decisi
 - Activity now includes the five most recent authorized Plan changes with actor attribution and a
   route to the complete immutable allocation history. Posted transactions remain separately searchable
   and filterable, so Plan changes do not masquerade as ledger activity.
+- Financial Resilience now exposes average money age, net-spending burn/runway, category-classified
+  essential and emergency-fund coverage, and upcoming-obligation coverage. The latter divides the
+  exact visible cash buffer by authorized active scheduled outflows and deliberately excludes future
+  income so a forecast cannot inflate current spendable reality.
