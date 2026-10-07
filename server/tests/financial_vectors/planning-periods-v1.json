@@ -1,7 +1,7 @@
 {
   "format_version": 1,
   "currency": "USD",
-  "scope": "Persistent dated observations and legacy carry characterization; prospective rollover policy is not implemented by these vectors.",
+  "scope": "Persistent dated observations and legacy carry characterization. Prospective rollover policy is covered separately by cash-rollover-v1.json and service/API tests.",
   "cases": [
     {
       "id": "future_assignment_cannot_fund_earlier_card_purchase",
