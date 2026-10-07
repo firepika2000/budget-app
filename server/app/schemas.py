@@ -161,14 +161,14 @@ class AccessProfileResponse(AccessProfileUpsert):
 
 class AccountCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    account_type: Literal["checking", "savings", "cash", "credit", "loan", "tracking"]
+    account_type: Literal["checking", "savings", "cash", "credit", "loan", "mortgage", "tracking"]
     is_on_budget: bool = True
     starting_balance_minor: int = Field(default=0, ge=MIN_INT64, le=MAX_INT64)
 
 
 class AccountUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    account_type: Literal["checking", "savings", "cash", "credit", "loan", "tracking"]
+    account_type: Literal["checking", "savings", "cash", "credit", "loan", "mortgage", "tracking"]
 
 
 class AccountResponse(BaseModel):

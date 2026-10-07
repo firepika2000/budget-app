@@ -615,7 +615,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         // Debt reporting includes visible loans regardless of the Net Worth
         // tracking toggle, matching the production server debt-report contract.
         let debtAccounts = visibleAccounts.filter {
-            ["credit", "loan"].contains($0.kind.rawValue)
+            ["credit", "loan", "mortgage"].contains($0.kind.rawValue)
                 && (report.accountID.isEmpty || $0.id == report.accountID)
         }
         let openingDate = Calendar.current.date(byAdding: .day, value: -1, to: start)!
@@ -951,7 +951,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection { try requireActiveMembership();
         let selected = demo.visibleAccounts.filter {
-            ["credit", "loan"].contains($0.kind.rawValue)
+            ["credit", "loan", "mortgage"].contains($0.kind.rawValue)
                 && (request.accountIDs.isEmpty || request.accountIDs.contains($0.id))
         }
         let missing = selected.compactMap { account -> [String: Any]? in
@@ -986,7 +986,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 
     func debtCost(accountIDs: [String]) async throws -> APIDebtCost { try requireActiveMembership();
         guard budget.can("view_reports"), budget.can("view_account_balances") else { throw workspaceRepositoryError("You do not have permission to view debt cost.") }
-        let visible = demo.visibleAccounts.filter { ["credit", "loan"].contains($0.kind.rawValue) }
+        let visible = demo.visibleAccounts.filter { ["credit", "loan", "mortgage"].contains($0.kind.rawValue) }
         guard Set(accountIDs).isSubset(of: Set(demo.visibleAccounts.map(\.id))) else { throw workspaceRepositoryError("Report resource not found.") }
         let asOf = Date.demo(monthsAgo: 0, day: 30)
         let rows = try visible.filter { accountIDs.isEmpty || accountIDs.contains($0.id) }.map { account -> [String: Any] in
@@ -1942,7 +1942,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         }
         if let classification = operation.financialClassification {
             guard classification == "interest_charge", operation.amountMinor < 0,
-                  demo.accounts.contains(where: { $0.id == operation.accountID && [.credit, .loan].contains($0.kind) }) else {
+                  demo.accounts.contains(where: { $0.id == operation.accountID && [.credit, .loan, .mortgage].contains($0.kind) }) else {
                 throw APIClientError.server(status: 422, message: "Interest charges require a debt-account outflow")
             }
         }
@@ -9490,7 +9490,7 @@ private struct LiveTransactionEditView: View {
     private var remaining:Int64?{guard let parsed,let parsedSplits else{return nil};return parsed - parsedSplits.reduce(0){$0+$1.amountMinor}}
     private var splitsValid:Bool{!isSplit || (parsedSplits?.count ?? 0)>=2 && remaining==0}
     private func save() async { guard let parsed,let parsedSplits else{return};isSaving=true;defer{isSaving=false};do{try await workspace.updateTransaction(id:transaction.id,operation:RecordTransactionOperation(accountID:accountID,categoryID:isSplit || isInflow || categoryID.isEmpty ? nil:categoryID,amountMinor:parsed,occurredOn:BudgetWorkspaceStore.dateString(date),payeeName:payee,payeeID:payeeID,memo:memo,financialClassification:financialClassification.isEmpty || isSplit ? nil:financialClassification,isCleared:cleared,splits:parsedSplits,flag:flag.isEmpty ? nil:flag,tags:commaValues(tags),attachmentMetadata:transaction.attachmentMetadata ?? []));dismiss()}catch{errorMessage=error.localizedDescription} }
-    private var selectedAccountIsDebt:Bool{guard let type=accounts.first(where:{$0.id==accountID})?.accountType else{return false};return type=="credit" || type=="loan"}
+    private var selectedAccountIsDebt:Bool{guard let type=accounts.first(where:{$0.id==accountID})?.accountType else{return false};return ["credit","loan","mortgage"].contains(type)}
     private func clearInvalidClassification(){if !selectedAccountIsDebt || isInflow {financialClassification="";for index in splitRows.indices{splitRows[index].financialClassification=""}}}
     private func commaValues(_ value:String)->[String]{value.split(separator:",").map{$0.trimmingCharacters(in:.whitespacesAndNewlines)}.filter{!$0.isEmpty}}
     private static func parseDate(_ value:String)->Date{let formatter=DateFormatter();formatter.locale=Locale(identifier:"en_US_POSIX");formatter.dateFormat="yyyy-MM-dd";return formatter.date(from:value) ?? Date()}

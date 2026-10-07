@@ -235,7 +235,7 @@ struct TransactionEntryView: View {
 
     private var selectedAccountIsDebt: Bool {
         guard let type = accounts.first(where: { $0.id == accountID })?.accountType else { return false }
-        return type == "credit" || type == "loan"
+        return ["credit", "loan", "mortgage"].contains(type)
     }
 
     private func commaValues(_ value: String) -> [String] {
@@ -813,10 +813,10 @@ struct AccountCreationView: View {
             : CurrencyText.parseMinorUnits(startingBalance, currencyCode: budget.currencyCode)
     }
 
-    private var availableTypes: [String] { isOnBudget ? ["checking", "savings", "cash", "credit"] : ["tracking", "loan"] }
+    private var availableTypes: [String] { isOnBudget ? ["checking", "savings", "cash", "credit"] : ["tracking", "loan", "mortgage"] }
 
     private func accountTypeTitle(_ type: String) -> String {
-        switch type { case "credit": "Credit Card"; case "loan": "Loan / Liability"; case "tracking": "Asset / Tracking"; default: type.capitalized }
+        switch type { case "credit": "Credit Card"; case "loan": "Loan / Liability"; case "mortgage": "Mortgage"; case "tracking": "Asset / Tracking"; default: type.capitalized }
     }
 
     private func save() async {
@@ -864,7 +864,7 @@ struct AccountSettingsView: View {
                     Text("Balances are not account metadata. Correct them with transactions or Reconcile from the account register.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                if ["credit", "loan"].contains(account.accountType) {
+                if ["credit", "loan", "mortgage"].contains(account.accountType) {
                     Section("Debt planning") {
                         Button {
                             showDebtTerms = true
@@ -897,11 +897,11 @@ struct AccountSettingsView: View {
 
     private var safeTypes: [String] {
         if account.isOnBudget { return ["checking", "savings", "cash"].contains(account.accountType) ? ["checking", "savings", "cash"] : [account.accountType] }
-        return ["loan", "tracking"].contains(account.accountType) ? ["tracking", "loan"] : [account.accountType]
+        return ["loan", "mortgage", "tracking"].contains(account.accountType) ? ["tracking", "loan", "mortgage"] : [account.accountType]
     }
 
     private func typeTitle(_ type: String) -> String {
-        switch type { case "credit": "Credit Card"; case "loan": "Loan / Liability"; case "tracking": "Asset / Tracking"; default: type.capitalized }
+        switch type { case "credit": "Credit Card"; case "loan": "Loan / Liability"; case "mortgage": "Mortgage"; case "tracking": "Asset / Tracking"; default: type.capitalized }
     }
 
     private func save() async {

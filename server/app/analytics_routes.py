@@ -41,7 +41,7 @@ def debt_cost_report(
     require_budget_capability(db, user, budget_id, "view_account_balances")
     visible = visible_resource_ids(db, user, budget, "account")
     budget_accounts = dict(db.execute(select(Account.id, Account.account_type).where(Account.budget_id == budget_id)).all())
-    eligible_ids = {key for key, kind in budget_accounts.items() if kind in {"credit", "loan"}}
+    eligible_ids = {key for key, kind in budget_accounts.items() if kind in {"credit", "loan", "mortgage"}}
     if any(value not in budget_accounts or (visible is not None and value not in visible) for value in account_id):
         raise HTTPException(status_code=404, detail="Report resource not found")
     selected = set(account_id) & eligible_ids if account_id else eligible_ids
@@ -511,7 +511,7 @@ def debt_report(
 
     query = select(Account).where(
         Account.budget_id == budget_id,
-        Account.account_type.in_(("credit", "loan")),
+        Account.account_type.in_(("credit", "loan", "mortgage")),
     )
     if account_id:
         query = query.where(Account.id.in_(account_id))

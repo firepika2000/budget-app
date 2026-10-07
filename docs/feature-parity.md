@@ -64,7 +64,7 @@ Status meanings:
 |---|---|---|
 | Checking, savings, cash | IMPLEMENTED | Clearly grouped on-budget cash. |
 | Credit card | IMPLEMENTED | Card balance, payment reserve, funded and unfunded spending exposed. |
-| Loan/mortgage/tracking asset/liability | PARTIALLY IMPLEMENTED | Native demo and local calculations; production metadata needs dedicated schema. |
+| Loan/mortgage/tracking asset/liability | IMPLEMENTED | Live and local creation support first-class loan, mortgage, and tracking types; mortgage/loan debt terms, cost, and payoff projections share exact production semantics. |
 | Closed accounts | IMPLEMENTED | Backend and live client state. |
 | Net-worth-only tracking distinction | PARTIALLY IMPLEMENTED | `is_on_budget` foundation exists; richer live account classification remains. |
 | Payoff simulator | IMPLEMENTED | Production avalanche, snowball, rollover, and custom-extra scenarios use exact shared projections and authoritative debt terms without mutating the budget. |

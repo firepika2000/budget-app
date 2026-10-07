@@ -121,7 +121,7 @@ from .planning import next_occurrence
 from .attachment_storage import AttachmentStorage, safe_filename, validate_content
 
 ON_BUDGET_CASH_TYPES = {"checking", "savings", "cash"}
-TRACKING_TYPES = {"loan", "tracking"}
+TRACKING_TYPES = {"loan", "mortgage", "tracking"}
 
 
 def debt_terms_readiness(terms: AccountDebtTerms) -> tuple[bool, list[str]]:
@@ -179,7 +179,7 @@ def validate_account_treatment(account_type: str, is_on_budget: bool) -> None:
     if not valid:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Choose a budget account type for On budget, or Loan/Tracking for Tracking.",
+            detail="Choose a budget account type for On budget, or Loan/Mortgage/Tracking for Tracking.",
         )
 
 
@@ -468,7 +468,7 @@ def get_account_debt_terms(
 ) -> dict:
     budget = require_budget_capability(db, user, budget_id, "view_account_balances")
     account = db.get(Account, account_id)
-    if account is None or account.budget_id != budget_id or account.account_type not in {"credit", "loan"} or not can_access_resource(
+    if account is None or account.budget_id != budget_id or account.account_type not in {"credit", "loan", "mortgage"} or not can_access_resource(
         db, user, budget, "account", account_id
     ):
         raise HTTPException(status_code=404, detail="Account not found")
@@ -492,11 +492,11 @@ def upsert_account_debt_terms(
         raise HTTPException(status_code=404, detail="Account not found")
     expected_type = (
         "credit_card" if account.account_type == "credit"
-        else "installment_loan" if account.account_type == "loan"
+        else "installment_loan" if account.account_type in {"loan", "mortgage"}
         else None
     )
     if expected_type is None:
-        raise HTTPException(status_code=422, detail="Debt terms are available only for credit cards and loans")
+        raise HTTPException(status_code=422, detail="Debt terms are available only for credit cards, loans, and mortgages")
     if body.terms_type != expected_type:
         raise HTTPException(status_code=422, detail=f"Use {expected_type} terms for this account")
     values = body.model_dump()
@@ -522,7 +522,7 @@ def delete_account_debt_terms(
 ) -> Response:
     budget = require_budget_capability(db, user, budget_id, "manage_budget_structure")
     account = db.get(Account, account_id)
-    if account is None or account.budget_id != budget_id or account.account_type not in {"credit", "loan"} or not can_access_resource(
+    if account is None or account.budget_id != budget_id or account.account_type not in {"credit", "loan", "mortgage"} or not can_access_resource(
         db, user, budget, "account", account_id
     ):
         raise HTTPException(status_code=404, detail="Account not found")
@@ -543,7 +543,7 @@ def debt_projection(
 ):
     budget = require_budget_capability(db, user, budget_id, "view_account_balances")
     account = db.get(Account, account_id)
-    if account is None or account.budget_id != budget_id or account.account_type not in {"credit", "loan"} or not can_access_resource(
+    if account is None or account.budget_id != budget_id or account.account_type not in {"credit", "loan", "mortgage"} or not can_access_resource(
         db, user, budget, "account", account_id
     ):
         raise HTTPException(status_code=404, detail="Account not found")
@@ -588,7 +588,7 @@ def debt_strategy_projection(
     visible = visible_resource_ids(db, user, budget, "account")
     budget_debt_ids = set(db.scalars(select(Account.id).where(
         Account.budget_id == budget_id,
-        Account.account_type.in_(("credit", "loan")),
+        Account.account_type.in_(("credit", "loan", "mortgage")),
     )))
     requested_ids = set(body.account_ids) | set(body.custom_order)
     if any(value not in budget_debt_ids for value in requested_ids):
@@ -1556,7 +1556,7 @@ def create_transaction_in_session(
     account = db.scalar(select(Account).where(Account.id == body.account_id).with_for_update())
     if account is None or account.budget_id != budget_id or account.is_closed:
         raise HTTPException(status_code=422, detail="Invalid account")
-    if (body.financial_classification is not None or any(split.financial_classification is not None for split in body.splits)) and account.account_type not in {"credit", "loan"}:
+    if (body.financial_classification is not None or any(split.financial_classification is not None for split in body.splits)) and account.account_type not in {"credit", "loan", "mortgage"}:
         raise HTTPException(status_code=422, detail="Interest charges require a debt account")
     if not can_access_resource(db, user, budget, "account", account.id):
         raise HTTPException(status_code=422, detail="Invalid account")
@@ -1957,7 +1957,7 @@ def update_transaction(
     account = db.scalar(select(Account).where(Account.id == body.account_id).with_for_update())
     if account is None or account.budget_id != budget_id or account.is_closed or not can_access_resource(db, user, budget, "account", account.id):
         raise HTTPException(status_code=422, detail="Invalid account")
-    if (body.financial_classification is not None or any(split.financial_classification is not None for split in body.splits)) and account.account_type not in {"credit", "loan"}:
+    if (body.financial_classification is not None or any(split.financial_classification is not None for split in body.splits)) and account.account_type not in {"credit", "loan", "mortgage"}:
         raise HTTPException(status_code=422, detail="Interest charges require a debt account")
     category_ids = ([body.category_id] if body.category_id is not None else []) + [split.category_id for split in body.splits]
     if category_ids and not account.is_on_budget:

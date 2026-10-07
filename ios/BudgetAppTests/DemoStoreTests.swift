@@ -1473,7 +1473,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(debt.accounts.reduce(Int64(0)) { $0 + $1.debtMinor }, debt.debtMinor)
         XCTAssertEqual(debt.openingDebtMinor - debt.debtMinor, debt.principalReductionMinor)
         XCTAssertTrue(debt.accounts.allSatisfy { account in
-            store.accounts.contains { $0.id == account.accountID && ["credit", "loan"].contains($0.accountType) }
+            store.accounts.contains { $0.id == account.accountID && ["credit", "loan", "mortgage"].contains($0.accountType) }
         })
         let plan = try XCTUnwrap(store.planPerformanceReport)
         for point in plan.points {

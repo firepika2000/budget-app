@@ -108,7 +108,7 @@ YNAB behavior summaries are grounded in current first-party documentation (see r
 | CC payment (transfer) not a 2nd expense | Paying card moves cash, not expense | method | transfer + reserve event | Activity → Transfer to card | Both | `test_credit_cards` | IMPLEMENTED | — | — | Payment: checking ↓, card ↓, no new expense |
 | CC overspending / carried debt | Unfunded spend increases debt | method | reserve math; funded vs unfunded | shown as negative | Both | `test_credit_cards` partial-fund | IMPLEMENTED | — | — | Unfunded purchase raises debt without inventing reserve |
 | CC refund releases reserve | Refund releases only that reserve | method | attributed refund release | reflected | Both | `test_credit_cards` refund | IMPLEMENTED · **BETTER** | — | — | Refund can't release unrelated/manual reserve |
-| Loan / mortgage / tracking | Loan accounts, payoff tools | features (Loan planner) | account types exist; no persisted loan metadata/amortization | demo payoff calc only (removed in unified) | demo-only historically | — | PARTIAL/MISSING | P2 | Loan metadata (APR, term) + payoff view | Track a loan; see payoff estimate live |
+| Loan / mortgage / tracking | Loan accounts, payoff tools | features (Loan planner) | first-class production types with persisted debt terms and exact payoff projections | unified Live/Demo debt planning | server-authoritative | focused debt-term and mortgage projection coverage | IMPLEMENTED | — | — | Track a loan or mortgage; edit terms; compare payoff estimates |
 
 ## 9. Reports (Reflect)
 

@@ -107,6 +107,48 @@ def test_installment_terms_reject_credit_fields_and_non_debt_accounts(client, ow
     ).status_code == 422
 
 
+def test_mortgage_is_first_class_tracking_debt_with_installment_projection(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    path = f"/api/v1/budgets/{budget['id']}"
+    mortgage = create_account(
+        client, owner_token, budget["id"], "Home Mortgage", "mortgage", False, -28_500_000
+    )
+    assert mortgage["account_type"] == "mortgage"
+    assert mortgage["is_on_budget"] is False
+
+    terms = client.put(
+        f"{path}/accounts/{mortgage['id']}/debt-terms",
+        headers=auth(owner_token),
+        json={
+            "terms_type": "installment_loan",
+            "annual_rate_basis_points": 625,
+            "rate_type": "fixed",
+            "payment_frequency": "monthly",
+            "scheduled_payment_minor": 185_000,
+            "due_day": 1,
+            "original_principal_minor": 30_000_000,
+            "original_term_months": 360,
+            "remaining_term_months": 324,
+        },
+    )
+    assert terms.status_code == 200, terms.text
+    assert terms.json()["terms_type"] == "installment_loan"
+    assert terms.json()["projection_ready"] is True
+
+    projection = client.post(
+        f"{path}/accounts/{mortgage['id']}/debt-projection",
+        headers=auth(owner_token),
+        json={"first_payment_on": "2026-11-01", "extra_payment_minor": 0},
+    )
+    assert projection.status_code == 200, projection.text
+    assert projection.json()["account_id"] == mortgage["id"]
+    assert projection.json()["starting_principal_minor"] == 28_500_000
+
+    debt_cost = client.get(f"{path}/reports/debt-cost", headers=auth(owner_token))
+    assert debt_cost.status_code == 200, debt_cost.text
+    assert {row["account_id"] for row in debt_cost.json()["accounts"]} == {mortgage["id"]}
+
+
 def test_debt_terms_follow_account_scope_and_export(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     path = f"/api/v1/budgets/{budget['id']}"
