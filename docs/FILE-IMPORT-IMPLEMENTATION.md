@@ -2,9 +2,9 @@
 
 Status: IN PROGRESS. The authenticated server API exposes money-neutral statement staging,
 duplicate review, reload, cancellation, explicit approval, and atomic approved-import undo for CSV/TSV/delimited text,
-OFX/QFX, QIF, SWIFT MT940, and conservatively recognized text-based PDF statements. The native reconciliation
+OFX/QFX, QIF, SWIFT MT940, ISO 20022 CAMT XML, and conservatively recognized text-based PDF statements. The native reconciliation
 UI is active for Budget Server workspaces and only explicit approval can post ledger rows. Local
-on iPhone now supports CSV, TSV, explicitly delimited text, structured OFX/QFX, QIF, MT940, and
+on iPhone now supports CSV, TSV, explicitly delimited text, structured OFX/QFX, QIF, MT940, CAMT, and
 conservatively recognized text-based PDFs through the same review UI.
 
 Local Device import review/history is durable in the Local Device SQLite authority rather than being
@@ -85,7 +85,7 @@ any later spreadsheet export still requires its own formula-injection defenses.
 7. The production reconciliation sheet now provides file selection, explicit CSV mapping,
    duplicate-aware preview, category selection and all-row post/skip approval through the shared
    workspace command contract. The Budget Server adapter is active for every listed format. The
-   Local-on-iPhone adapter now stages and posts CSV/TSV/delimited text, OFX/QFX, QIF, and MT940 using
+   Local-on-iPhone adapter now stages and posts CSV/TSV/delimited text, OFX/QFX, QIF, MT940, and CAMT using
    exact minor units, local duplicate suggestions and canonical transaction creation. OFX/QFX
    accepts bounded OFX 1.x SGML and OFX 2.x XML-style transaction records while rejecting entity
    and document-type declarations. QIF uses the same explicit date-order, strict grouped-amount,
@@ -123,6 +123,16 @@ as descriptive text. Opening/closing balances and other statement metadata are i
 misclassified as transactions. Malformed transaction-looking records, zero amounts, excessive
 precision, invalid dates, oversized files, excessive rows, and overlong descriptions fail closed
 with private-text-safe errors. No row posts until the existing duplicate-aware review is approved.
+
+### ISO 20022 CAMT adapter
+
+CAMT.052, CAMT.053 and CAMT.054 XML exports are accepted as `.camt` or `.xml` files in Budget
+Server and Local Device modes. Only `Ntry` statement entries become candidates. Debit/credit
+direction, booking date (or value-date fallback), exact decimal amount, counterparty name and
+remittance information flow into the existing money-neutral review. The parser rejects document
+type and entity declarations, malformed dates/directions/amounts, zero values, oversized input,
+more than 10,000 entries and overlong descriptions without echoing private source data. Balance
+and statement metadata are not posted, and every candidate still requires explicit approval.
 
 ### Explicit bank CSV mapping
 

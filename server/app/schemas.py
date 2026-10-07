@@ -1125,7 +1125,7 @@ class StatementImportResponse(BaseModel):
     account_id: str
     status: Literal["review", "approved", "cancelled"]
     version: int
-    source_format: Literal["csv", "ofx", "qfx", "qif", "mt940", "pdf"]
+    source_format: Literal["csv", "ofx", "qfx", "qif", "mt940", "camt", "pdf"]
     candidate_count: int
     candidates: list[ImportCandidateResponse]
     created_at: datetime
@@ -1137,7 +1137,7 @@ class StatementImportSummary(BaseModel):
     account_id: str
     status: Literal["review", "approved", "cancelled"]
     version: int
-    source_format: Literal["csv", "ofx", "qfx", "qif", "mt940", "pdf"]
+    source_format: Literal["csv", "ofx", "qfx", "qif", "mt940", "camt", "pdf"]
     candidate_count: int
     created_at: datetime
 

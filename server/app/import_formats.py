@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from datetime import date
 from io import BytesIO
+from xml.etree import ElementTree
 
 from pypdf import PdfReader
 
@@ -215,6 +216,86 @@ def parse_mt940_candidates(data: bytes, *, scale: int) -> list[ImportCandidate]:
         index = next_index
     if not candidates:
         raise ImportValidationError("MT940 contains no transactions")
+    return candidates
+
+
+def parse_camt_candidates(data: bytes, *, scale: int) -> list[ImportCandidate]:
+    """Parse ISO 20022 CAMT.052/.053/.054 entries into review-only candidates."""
+    parse_minor_units("0", scale=scale)
+    text = _bounded_text(data, "CAMT")
+    if re.search(r"<!\s*(?:DOCTYPE|ENTITY)", text, re.I):
+        raise ImportValidationError("CAMT declarations are not supported")
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError:
+        raise ImportValidationError("CAMT XML could not be read safely") from None
+
+    def local_name(element: ElementTree.Element) -> str:
+        return element.tag.rsplit("}", 1)[-1]
+
+    def child(element: ElementTree.Element, name: str) -> ElementTree.Element | None:
+        return next((item for item in element if local_name(item) == name), None)
+
+    def descendant(element: ElementTree.Element, path: tuple[str, ...]) -> ElementTree.Element | None:
+        current: ElementTree.Element | None = element
+        for name in path:
+            if current is None:
+                return None
+            current = child(current, name)
+        return current
+
+    entries = [element for element in root.iter() if local_name(element) == "Ntry"]
+    if not entries:
+        raise ImportValidationError("CAMT contains no statement entries")
+    if len(entries) > MAX_ROWS:
+        raise ImportValidationError("CAMT exceeds 10000 transactions")
+
+    candidates: list[ImportCandidate] = []
+    for position, entry in enumerate(entries, start=1):
+        amount_element = child(entry, "Amt")
+        direction_element = child(entry, "CdtDbtInd")
+        date_element = descendant(entry, ("BookgDt", "Dt"))
+        if date_element is None:
+            date_element = descendant(entry, ("ValDt", "Dt"))
+        raw_amount = (amount_element.text or "").strip() if amount_element is not None else ""
+        direction = (direction_element.text or "").strip() if direction_element is not None else ""
+        raw_date = (date_element.text or "").strip() if date_element is not None else ""
+        try:
+            if direction not in {"CRDT", "DBIT"}:
+                raise ValueError()
+            occurred_on = date.fromisoformat(raw_date)
+            amount_minor = parse_minor_units(raw_amount, scale=scale)
+            if direction == "DBIT":
+                amount_minor = -amount_minor
+            if amount_minor == 0:
+                raise ValueError()
+        except (ValueError, ImportValidationError):
+            raise ImportValidationError(f"Invalid date or amount at CAMT record {position}") from None
+
+        transaction_details = next((item for item in entry.iter() if local_name(item) == "TxDtls"), entry)
+        def party_names(party_tag: str) -> list[str]:
+            party = next((item for item in transaction_details.iter() if local_name(item) == party_tag), None)
+            if party is None:
+                return []
+            return [(item.text or "").strip() for item in party.iter()
+                    if local_name(item) == "Nm" and (item.text or "").strip()]
+
+        names = party_names("Cdtr" if direction == "DBIT" else "Dbtr")
+        if not names:
+            names = [(item.text or "").strip() for item in transaction_details.iter()
+                     if local_name(item) == "Nm" and (item.text or "").strip()]
+        descriptions = [
+            (item.text or "").strip()
+            for item in transaction_details.iter()
+            if local_name(item) in {"Ustrd", "AddtlTxInf"} and (item.text or "").strip()
+        ]
+        if not descriptions:
+            additional = child(entry, "AddtlNtryInf")
+            if additional is not None and (additional.text or "").strip():
+                descriptions.append((additional.text or "").strip())
+        payee = _clean_description(names[0] if names else "", maximum=150, position=position)
+        memo = _clean_description(" ".join(descriptions), maximum=500, position=position)
+        candidates.append(ImportCandidate(position, occurred_on, amount_minor, payee, memo))
     return candidates
 
 

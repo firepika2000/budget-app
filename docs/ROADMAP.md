@@ -166,6 +166,10 @@ Local Device statement-import review/history is now durable across relaunch and 
 backup/restore. This closes the prior session-only lifecycle gap while preserving money-neutral staging,
 explicit approval and account-scoped detail access.
 
+Bank statement import now also accepts ISO 20022 CAMT.052/.053/.054 XML in Budget Server and Local
+Device modes. Entries retain exact minor-unit debit/credit values and use the same bounded,
+duplicate-aware review and canonical approval path; unsafe XML declarations fail closed.
+
 Category selection now uses qualified `Group · Category` labels throughout production transaction
 entry/editing, split entry, scheduled expenses, Activity/report filters, statement-import review and
 allowance setup; posted transaction detail uses the same label. Duplicate names in different groups remain distinguishable at the

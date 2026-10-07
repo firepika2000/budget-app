@@ -3293,6 +3293,31 @@ final class DemoStoreTests: XCTestCase {
         }
     }
 
+    func testLocalCAMTParserPreservesExactMoneyAndDescriptions() throws {
+        let data = Data("""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"><BkToCstmrStmt><Stmt>
+          <Ntry><Amt Ccy="USD">12.34</Amt><CdtDbtInd>DBIT</CdtDbtInd><BookgDt><Dt>2026-10-01</Dt></BookgDt>
+            <NtryDtls><TxDtls><RltdPties><Dbtr><Pty><Nm>Account Owner</Nm></Pty></Dbtr><Cdtr><Pty><Nm>Corner Market</Nm></Pty></Cdtr></RltdPties><RmtInf><Ustrd>Weekly groceries</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry>
+          <Ntry><Amt Ccy="USD">1000.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><ValDt><Dt>2026-10-02</Dt></ValDt><NtryDtls><TxDtls><RltdPties><Dbtr><Pty><Nm>Employer</Nm></Pty></Dbtr><Cdtr><Pty><Nm>Account Owner</Nm></Pty></Cdtr></RltdPties></TxDtls></NtryDtls><AddtlNtryInf>Payroll deposit</AddtlNtryInf></Ntry>
+        </Stmt></BkToCstmrStmt></Document>
+        """.utf8)
+        let rows = try LocalCAMTStatementParser.parse(data: data, mapping: .init(sourceFormat: "camt", currencyCode: "USD"))
+        XCTAssertEqual(rows.map(\.occurredOn), ["2026-10-01", "2026-10-02"])
+        XCTAssertEqual(rows.map(\.amountMinor), [-1_234, 100_000])
+        XCTAssertEqual(rows.map(\.payee), ["Corner Market", "Employer"])
+        XCTAssertEqual(rows.map(\.memo), ["Weekly groceries", "Payroll deposit"])
+    }
+
+    func testLocalCAMTParserRejectsDeclarationsWithoutLeakingPrivateContent() throws {
+        let privateValue = "Private Medical Payee"
+        let data = Data("<!DOCTYPE x [<!ENTITY secret '\(privateValue)'>]><Document><Ntry>&secret;</Ntry></Document>".utf8)
+        XCTAssertThrowsError(try LocalCAMTStatementParser.parse(data: data, mapping: .init(sourceFormat: "camt", currencyCode: "USD"))) { error in
+            XCTAssertFalse(error.localizedDescription.contains(privateValue))
+            XCTAssertTrue(error.localizedDescription.contains("not supported"))
+        }
+    }
+
     func testLocalPDFParserRecognizesOnlyExplicitSignedRows() throws {
         let rows = try LocalPDFStatementParser.parse(lines: [
             "Statement for September",

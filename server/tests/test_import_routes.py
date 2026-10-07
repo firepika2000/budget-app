@@ -102,7 +102,7 @@ def test_import_history_is_bounded_actor_private_and_reopenable(client, owner_to
     assert reopened.json()["candidates"][0]["payee"] == "Private one"
 
 
-def test_ofx_qfx_and_qif_use_the_same_owned_staging_boundary(client, owner_token, session_factory):
+def test_structured_formats_use_the_same_owned_staging_boundary(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, _ = create_budget_structure(client, owner_token, budget["id"])
     ofx = b"<OFX><BANKTRANLIST><STMTTRN><DTPOSTED>20260915<TRNAMT>-1.25<NAME>Cafe</STMTTRN></BANKTRANLIST></OFX>"
@@ -123,6 +123,16 @@ def test_ofx_qfx_and_qif_use_the_same_owned_staging_boundary(client, owner_token
     assert response.status_code == 201, response.text
     assert response.json()["source_format"] == "mt940"
     assert response.json()["candidates"][0]["amount_minor"] == -321
+
+    camt = b'''<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"><BkToCstmrStmt><Stmt>
+      <Ntry><Amt Ccy="USD">4.56</Amt><CdtDbtInd>CRDT</CdtDbtInd><BookgDt><Dt>2026-09-18</Dt></BookgDt>
+      <NtryDtls><TxDtls><RltdPties><Dbtr><Pty><Nm>Refund Company</Nm></Pty></Dbtr></RltdPties></TxDtls></NtryDtls></Ntry>
+    </Stmt></BkToCstmrStmt></Document>'''
+    response = _stage(client, owner_token, budget["id"], account["id"], camt,
+                      **{"X-Statement-Format": "camt"})
+    assert response.status_code == 201, response.text
+    assert response.json()["source_format"] == "camt"
+    assert response.json()["candidates"][0]["amount_minor"] == 456
 
 
 def test_pdf_uses_conservative_review_boundary(client, owner_token, session_factory, monkeypatch):

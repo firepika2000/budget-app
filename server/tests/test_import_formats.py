@@ -1,7 +1,7 @@
 import pytest
 
 from app.import_candidates import ImportValidationError
-from app.import_formats import parse_mt940_candidates, parse_ofx_candidates, parse_pdf_candidates, parse_qif_candidates
+from app.import_formats import parse_camt_candidates, parse_mt940_candidates, parse_ofx_candidates, parse_pdf_candidates, parse_qif_candidates
 
 
 def test_ofx_xml_and_sgml_transactions_preserve_exact_signed_money():
@@ -69,6 +69,35 @@ def test_mt940_refuses_malformed_input_without_private_content(data):
     with pytest.raises(ImportValidationError) as error:
         parse_mt940_candidates(data, scale=2)
     assert "Private Medical Payee" not in str(error.value)
+
+
+def test_camt_statements_preserve_exact_money_dates_and_descriptions():
+    data = b'''<?xml version="1.0" encoding="UTF-8"?>
+    <Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"><BkToCstmrStmt><Stmt>
+      <Ntry><Amt Ccy="USD">12.34</Amt><CdtDbtInd>DBIT</CdtDbtInd><BookgDt><Dt>2026-10-01</Dt></BookgDt>
+        <NtryDtls><TxDtls><RltdPties><Dbtr><Pty><Nm>Account Owner</Nm></Pty></Dbtr><Cdtr><Pty><Nm>Corner Market</Nm></Pty></Cdtr></RltdPties><RmtInf><Ustrd>Weekly groceries</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry>
+      <Ntry><Amt Ccy="USD">1000.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><ValDt><Dt>2026-10-02</Dt></ValDt>
+        <NtryDtls><TxDtls><RltdPties><Dbtr><Pty><Nm>Employer</Nm></Pty></Dbtr><Cdtr><Pty><Nm>Account Owner</Nm></Pty></Cdtr></RltdPties></TxDtls></NtryDtls><AddtlNtryInf>Payroll deposit</AddtlNtryInf></Ntry>
+    </Stmt></BkToCstmrStmt></Document>'''
+    rows = parse_camt_candidates(data, scale=2)
+    assert [(row.occurred_on.isoformat(), row.amount_minor) for row in rows] == [
+        ("2026-10-01", -1234), ("2026-10-02", 100000)
+    ]
+    assert rows[0].payee == "Corner Market"
+    assert rows[1].payee == "Employer"
+    assert rows[0].memo == "Weekly groceries"
+    assert rows[1].memo == "Payroll deposit"
+
+
+@pytest.mark.parametrize("data", [
+    b'<!DOCTYPE x [<!ENTITY secret "private">]><Document><Ntry>&secret;</Ntry></Document>',
+    b'<Document><Ntry><Amt>private-value</Amt><CdtDbtInd>DBIT</CdtDbtInd><BookgDt><Dt>2026-10-01</Dt></BookgDt></Ntry></Document>',
+    b'<Document><Ntry><Amt>1.00</Amt><CdtDbtInd>UNKNOWN</CdtDbtInd><BookgDt><Dt>2026-10-01</Dt></BookgDt></Ntry></Document>',
+])
+def test_camt_refuses_unsafe_or_malformed_private_rows(data):
+    with pytest.raises(ImportValidationError) as exc:
+        parse_camt_candidates(data, scale=2)
+    assert "private" not in str(exc.value)
 
 
 @pytest.mark.parametrize("data", [

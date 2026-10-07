@@ -1072,9 +1072,10 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         case "qif": parsed = try LocalQIFStatementParser.parse(data: data, mapping: mapping)
         case "ofx", "qfx": parsed = try LocalOFXStatementParser.parse(data: data, mapping: mapping)
         case "mt940": parsed = try LocalMT940StatementParser.parse(data: data, mapping: mapping)
+        case "camt": parsed = try LocalCAMTStatementParser.parse(data: data, mapping: mapping)
         case "pdf": parsed = try LocalPDFStatementParser.parse(data: data, mapping: mapping)
         default:
-            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, QIF, MT940, and text-based PDF statements.")
+            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, QIF, MT940, CAMT, and text-based PDF statements.")
         }
         let candidates = parsed.map { candidate -> APIStatementImportCandidate in
             let exact = demo.transactions.filter {
@@ -7405,11 +7406,14 @@ private struct StatementImportFile: Identifiable {
         UTType(filenameExtension: "sta") ?? .data,
         UTType(filenameExtension: "mt940") ?? .data,
         UTType(filenameExtension: "940") ?? .data,
+        UTType(filenameExtension: "camt") ?? .xml,
+        UTType(filenameExtension: "xml") ?? .xml,
     ]
     var fileExtension: String { URL(fileURLWithPath: name).pathExtension.lowercased() }
     var sourceFormat: String {
         if ["csv", "tsv", "txt"].contains(fileExtension) { return "csv" }
         if ["sta", "mt940", "940"].contains(fileExtension) { return "mt940" }
+        if ["camt", "xml"].contains(fileExtension) { return "camt" }
         return fileExtension
     }
     var suggestedDelimiter: String { fileExtension == "tsv" ? "\t" : "," }
@@ -7729,6 +7733,83 @@ enum LocalMT940StatementParser {
     }
 }
 
+enum LocalCAMTStatementParser {
+    private final class Delegate: NSObject, XMLParserDelegate {
+        struct Entry { var amount = ""; var direction = ""; var date = ""; var debtorNames: [String] = []; var creditorNames: [String] = []; var fallbackNames: [String] = []; var descriptions: [String] = [] }
+        var entries: [Entry] = []; var failure: String?
+        private var current: Entry?; private var stack: [String] = []; private var text = ""
+
+        func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String : String] = [:]) {
+            let name = elementName.components(separatedBy: ":").last ?? elementName
+            stack.append(name); text = ""
+            if name == "Ntry" { current = Entry() }
+        }
+        func parser(_ parser: XMLParser, foundCharacters string: String) { text += string }
+        func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+            let name = elementName.components(separatedBy: ":").last ?? elementName
+            let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if var entry = current {
+                if name == "Amt", stack.dropLast().last == "Ntry" { entry.amount = value }
+                else if name == "CdtDbtInd", stack.dropLast().last == "Ntry" { entry.direction = value }
+                else if name == "Dt", entry.date.isEmpty, stack.contains("BookgDt") || stack.contains("ValDt") { entry.date = value }
+                else if name == "Nm", !value.isEmpty {
+                    entry.fallbackNames.append(value)
+                    if stack.contains("Dbtr") { entry.debtorNames.append(value) }
+                    if stack.contains("Cdtr") { entry.creditorNames.append(value) }
+                }
+                else if ["Ustrd", "AddtlTxInf", "AddtlNtryInf"].contains(name), !value.isEmpty { entry.descriptions.append(value) }
+                current = entry
+                if name == "Ntry" {
+                    if entries.count >= 10_000 { failure = "CAMT may contain at most 10,000 transactions."; parser.abortParsing() }
+                    else { entries.append(entry); current = nil }
+                }
+            }
+            _ = stack.popLast(); text = ""
+        }
+        func parser(_ parser: XMLParser, parseErrorOccurred parseError: Error) {
+            if failure == nil { failure = "CAMT XML could not be read safely." }
+        }
+    }
+
+    static func parse(data: Data, mapping: APIStatementImportMapping) throws -> [LocalDelimitedStatementParser.Candidate] {
+        guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Statement files must be 10 MB or smaller.") }
+        guard !data.contains(0), let source = String(data: data, encoding: .utf8) else { throw workspaceRepositoryError("The CAMT statement must be UTF-8 XML.") }
+        guard source.range(of: #"<!\s*(DOCTYPE|ENTITY)"#, options: [.regularExpression, .caseInsensitive]) == nil else {
+            throw workspaceRepositoryError("CAMT declarations are not supported.")
+        }
+        let delegate = Delegate(), parser = XMLParser(data: data)
+        parser.shouldResolveExternalEntities = false; parser.delegate = delegate
+        guard parser.parse(), delegate.failure == nil else { throw workspaceRepositoryError(delegate.failure ?? "CAMT XML could not be read safely.") }
+        guard !delegate.entries.isEmpty else { throw workspaceRepositoryError("CAMT contains no statement entries.") }
+        return try delegate.entries.enumerated().map { offset, entry in
+            let record = offset + 1
+            guard ["CRDT", "DBIT"].contains(entry.direction) else {
+                throw workspaceRepositoryError("Invalid date or amount at CAMT record \(record).")
+            }
+            let occurredOn = try dateString(entry.date, record: record)
+            var amount: Int64
+            do { amount = try LocalDelimitedStatementParser.minorUnits(entry.amount, currency: mapping.currencyCode, row: record) }
+            catch { throw workspaceRepositoryError("Invalid date or amount at CAMT record \(record).") }
+            if entry.direction == "DBIT" { amount = -amount }
+            guard amount != 0 else { throw workspaceRepositoryError("Invalid date or amount at CAMT record \(record).") }
+            let preferredNames = entry.direction == "DBIT" ? entry.creditorNames : entry.debtorNames
+            let payee = clean(preferredNames.first ?? entry.fallbackNames.first ?? ""), memo = clean(entry.descriptions.joined(separator: " "))
+            guard payee.count <= 150, memo.count <= 500 else { throw workspaceRepositoryError("Statement description exceeds the supported length at CAMT record \(record).") }
+            return .init(sourceRow: record, occurredOn: occurredOn, amountMinor: amount, payee: payee, memo: memo)
+        }
+    }
+    private static func dateString(_ value: String, record: Int) throws -> String {
+        let pieces = value.split(separator: "-").compactMap { Int($0) }
+        guard pieces.count == 3 else { throw workspaceRepositoryError("Invalid date or amount at CAMT record \(record).") }
+        var components = DateComponents(); components.calendar = Calendar(identifier: .gregorian); components.timeZone = TimeZone(secondsFromGMT: 0); components.year = pieces[0]; components.month = pieces[1]; components.day = pieces[2]
+        guard let date = components.date else { throw workspaceRepositoryError("Invalid date or amount at CAMT record \(record).") }
+        let verified = Calendar(identifier: .gregorian).dateComponents(in: TimeZone(secondsFromGMT: 0)!, from: date)
+        guard verified.year == pieces[0], verified.month == pieces[1], verified.day == pieces[2] else { throw workspaceRepositoryError("Invalid date or amount at CAMT record \(record).") }
+        return String(format: "%04d-%02d-%02d", pieces[0], pieces[1], pieces[2])
+    }
+    private static func clean(_ value: String) -> String { value.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+}
+
 enum LocalPDFStatementParser {
     static func parse(data: Data, mapping: APIStatementImportMapping) throws -> [LocalDelimitedStatementParser.Candidate] {
         guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Statement files must be 10 MB or smaller.") }
@@ -7858,6 +7939,7 @@ private struct StatementImportFlowView: View {
         }
         if ["qif", "pdf"].contains(file.sourceFormat) { Section("Date format") { Picker("Order", selection: $dateOrder) { Text("Month / Day / Year").tag("mdy"); Text("Day / Month / Year").tag("dmy") } } }
         if file.sourceFormat == "mt940" { Section { Label("MT940 safety", systemImage: "checkmark.shield"); Text("Only SWIFT :61: transaction records are imported. Balance records are ignored, and every recognized transaction must be reviewed before posting.").font(.footnote).foregroundStyle(.secondary) } }
+        if file.sourceFormat == "camt" { Section { Label("CAMT safety", systemImage: "checkmark.shield"); Text("ISO 20022 statement entries are imported for review. XML declarations are refused, and no entry posts until you approve it.").font(.footnote).foregroundStyle(.secondary) } }
         if file.sourceFormat == "pdf" { Section { Label("PDF safety", systemImage: "checkmark.shield"); Text("Only text rows with an explicit date and signed or parenthesized amount are recognized. Scanned and ambiguous statements are rejected.").font(.footnote).foregroundStyle(.secondary) } }
         }
     }

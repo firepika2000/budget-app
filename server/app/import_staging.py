@@ -30,7 +30,7 @@ def stage_candidates(db: Session, *, user: User, budget_id: str, account_id: str
     This internal service is not an HTTP endpoint accepting unchecked JSON.
     """
     budget = _require_account(db, user, budget_id, account_id)
-    if currency_code != budget.currency_code or source_format not in {"csv", "ofx", "qfx", "qif", "mt940", "pdf"}:
+    if currency_code != budget.currency_code or source_format not in {"csv", "ofx", "qfx", "qif", "mt940", "camt", "pdf"}:
         raise HTTPException(status_code=422, detail="Invalid import currency or format")
     if not 1 <= len(candidates) <= MAX_ROWS:
         raise HTTPException(status_code=422, detail="Import must contain 1 to 10000 candidates")
