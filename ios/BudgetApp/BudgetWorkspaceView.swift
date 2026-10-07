@@ -5467,6 +5467,7 @@ private struct LivePlanView: View {
     @State private var showGroups = false
     @State private var showCategories = false
     @State private var showGroupCreation = false
+    @State private var selectedGroup: APICategoryGroup?
     @State private var focus = PlanFocus.all
     private var rows: [APICategoryMonth] {
         let filtered = (store.summary?.categories ?? []).filter { row in
@@ -5591,7 +5592,7 @@ private struct LivePlanView: View {
                             Button("Add Category", systemImage: "folder.badge.plus") { categoryCreation = .contextual(groupID: group.id) }
                                 .accessibilityIdentifier("empty-group-add-category-\(group.id)")
                         }
-                    } header: { PlanGroupHeader(group: group) }
+                    } header: { PlanGroupHeader(group: group) { selectedGroup = group } }
                 } else if !groupRows.isEmpty {
                     Section {
                         ForEach(groupRows) { category in
@@ -5605,7 +5606,7 @@ private struct LivePlanView: View {
                             Button("Add Category", systemImage: "folder.badge.plus") { categoryCreation = .contextual(groupID: group.id) }
                                 .accessibilityIdentifier("group-add-category-\(group.id)")
                         }
-                    } header: { PlanGroupHeader(group: group) }
+                    } header: { PlanGroupHeader(group: group) { selectedGroup = group } }
                 }
             }
         }.accessibilityIdentifier("plan-screen").navigationTitle("Plan").toolbar {
@@ -5639,6 +5640,7 @@ private struct LivePlanView: View {
         .sheet(isPresented: $showGroups) { LiveGroupManagementView() }
         .sheet(isPresented: $showCategories) { LiveCategoryManagementView() }
         .sheet(isPresented: $showGroupCreation) { GroupCreationView() }
+        .sheet(item: $selectedGroup) { LivePlanGroupDetailView(group: $0) }
         .task { await store.loadPlanningGuidance() }
         .onAppear { restoreFocusPreference() }
         .onChange(of: focus) { _, value in
@@ -5780,6 +5782,7 @@ private struct AllocationHistoryView: View {
 private struct PlanGroupHeader: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let group: APICategoryGroup
+    let open: () -> Void
     private var rows: [APICategoryMonth] {
         let categoryIDs = Set(store.categories.filter { $0.groupID == group.id }.map(\.id))
         return (store.summary?.categories ?? []).filter { categoryIDs.contains($0.categoryID) }
@@ -5793,24 +5796,99 @@ private struct PlanGroupHeader: View {
     }
     private var suggested: Int64 { max(targetGuidance, averageSpent) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(group.name).font(.headline)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) {
-                    Label("Suggested \(store.format(suggested))", systemImage: "sparkles")
-                    Label("Avg spent \(store.format(averageSpent))", systemImage: "chart.line.uptrend.xyaxis")
+        Button(action: open) {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(group.name).font(.headline)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            Label("Suggested \(store.format(suggested))", systemImage: "sparkles")
+                            Label("Avg spent \(store.format(averageSpent))", systemImage: "chart.line.uptrend.xyaxis")
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Suggested \(store.format(suggested))", systemImage: "sparkles")
+                            Label("Avg spent \(store.format(averageSpent))", systemImage: "chart.line.uptrend.xyaxis")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Label("Suggested \(store.format(suggested))", systemImage: "sparkles")
-                    Label("Avg spent \(store.format(averageSpent))", systemImage: "chart.line.uptrend.xyaxis")
-                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
+        .buttonStyle(.plain)
         .textCase(nil)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(group.name), suggested \(store.format(suggested)), average spent \(store.format(averageSpent))")
+        .accessibilityHint("Opens this category group")
+    }
+}
+
+private struct LivePlanGroupDetailView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let group: APICategoryGroup
+    @State private var showTransaction = false
+
+    private var categories: [APICategory] {
+        store.categories.filter { $0.groupID == group.id && !$0.isArchived }
+            .sorted { $0.sortOrder == $1.sortOrder ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : $0.sortOrder < $1.sortOrder }
+    }
+    private var rows: [APICategoryMonth] {
+        let ids = Set(categories.map(\.id))
+        return (store.summary?.categories ?? []).filter { ids.contains($0.categoryID) }
+    }
+    private var canAddTransaction: Bool {
+        store.budget.can("create_transaction") && !store.accounts.filter { !$0.isClosed }.isEmpty && !categories.isEmpty
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Group summary") {
+                    LabeledContent("Categories", value: "\(categories.count)")
+                    LabeledContent("Available", value: store.format((try? Money.sumMinorUnits(rows.map(\.availableMinor))) ?? 0))
+                    LabeledContent("Assigned this month", value: store.format((try? Money.sumMinorUnits(rows.map(\.assignedMinor))) ?? 0))
+                    LabeledContent("Activity this month", value: store.format((try? Money.sumMinorUnits(rows.map(\.activityMinor))) ?? 0))
+                }
+                Section("Categories in \(group.name)") {
+                    ForEach(rows) { row in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(row.name)
+                            HStack {
+                                Text("Available \(store.format(row.availableMinor))")
+                                Spacer()
+                                Text("Activity \(store.format(row.activityMinor))")
+                            }
+                            .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if canAddTransaction {
+                    Section {
+                        Button("Add Transaction", systemImage: "plus.circle.fill") { showTransaction = true }
+                            .accessibilityIdentifier("group-detail-add-transaction")
+                    } footer: {
+                        Text("The transaction editor shows categories from this group and uses the same production save path as Activity.")
+                    }
+                }
+            }
+            .navigationTitle(group.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        .sheet(isPresented: $showTransaction) {
+            TransactionEntryView(
+                budget: store.budget,
+                accounts: store.accounts,
+                categories: categories,
+                groups: [group],
+                initialCategoryID: categories.count == 1 ? categories[0].id : nil,
+                onSaved: store.refresh
+            )
+        }
+        .accessibilityIdentifier("plan-group-detail")
     }
 }
 

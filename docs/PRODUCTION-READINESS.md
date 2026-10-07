@@ -53,6 +53,11 @@ Removed or newly visible debt accounts are reconciled into the saved order safel
 reset returns to the read-only default scenario. Persistence changes only projection preferences;
 it does not mutate transactions, balances, Plan assignments, schedules or canonical Debt Terms.
 
+Plan group navigation checkpoint: category-group headers are now discoverable destinations rather
+than static labels. Group detail keeps the group name visible, summarizes exact current-month Plan
+values, lists its categories, and opens the shared production transaction editor scoped to that
+group. The editor still uses canonical transaction authorization and mutation behavior.
+
 ## STOP FEATURE EXPANSION — human Live Debt P0
 
 Human reports repeated PlatformAlertController presentation conflicts followed by code-9 debugger
