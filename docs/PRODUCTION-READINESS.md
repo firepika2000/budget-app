@@ -1586,3 +1586,15 @@ the user's working context without changing shared financial data. The preferenc
 device-local and contains only the focus name; category visibility and amounts continue to come
 from the authoritative scoped workspace. The existing production favorite/filter journey now also
 covers shell reconstruction and resets its deterministic preference after verification.
+
+### Exact arithmetic money entry — 2026-10-07
+
+All shared monetary entry surfaces now expose Add, Subtract, Multiply, and Divide controls above the
+native keyboard and accept parenthesized expressions. Evaluation uses Foundation `Decimal`; it never
+converts source-of-truth money through `Double`. A result is accepted only when it converts exactly
+to the currency's integer minor-unit scale and fits `Int64`. Incomplete expressions, division by
+zero, non-terminating precision, unsupported characters, and overflow remain validation failures and
+cannot mutate the budget. This reusable path covers transaction and split amounts, assignments,
+moves, requests, reconciliation, targets, allowances, delegated authority, and debt scenarios.
+Focused native tests cover operator precedence, parentheses, Unicode operator labels, exact division,
+invalid syntax, division by zero, fractional minor-unit results, and overflow.

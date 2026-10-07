@@ -1980,6 +1980,14 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertNil(CurrencyText.parseMinorUnits(".", currencyCode: "USD"))
         XCTAssertNil(CurrencyText.parseMinorUnits("-", currencyCode: "USD"))
         XCTAssertEqual(CurrencyText.parseMinorUnits("820.00", currencyCode: "USD"), 82_000)
+        XCTAssertEqual(CurrencyText.parseMinorUnits("12.50 + 7.25", currencyCode: "USD"), 1_975)
+        XCTAssertEqual(CurrencyText.parseMinorUnits("(10 + 5) * 2", currencyCode: "USD"), 3_000)
+        XCTAssertEqual(CurrencyText.parseMinorUnits("10 ÷ 4", currencyCode: "USD"), 250)
+        XCTAssertEqual(CurrencyText.parseMinorUnits("20 − 3 * 2", currencyCode: "USD"), 1_400)
+        XCTAssertNil(CurrencyText.parseMinorUnits("10 / 0", currencyCode: "USD"))
+        XCTAssertNil(CurrencyText.parseMinorUnits("10 +", currencyCode: "USD"))
+        XCTAssertNil(CurrencyText.parseMinorUnits("1 / 3", currencyCode: "USD"))
+        XCTAssertNil(CurrencyText.parseMinorUnits("92233720368547758.07 + 0.01", currencyCode: "USD"))
     }
 
     @MainActor

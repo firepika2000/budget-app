@@ -524,18 +524,13 @@ enum CurrencyText {
     }
 
     static func parseMinorUnits(_ text: String, currencyCode: String) -> Int64? {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.locale = .current
-        formatter.generatesDecimalNumbers = true
-        guard let number = formatter.number(from: text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            return nil
-        }
+        var expression = CurrencyExpression(text: text, locale: .current)
+        guard let amount = expression.value else { return nil }
         let currencyFormatter = NumberFormatter()
         currencyFormatter.numberStyle = .currency
         currencyFormatter.currencyCode = currencyCode
         let multiplier = NSDecimalNumber(mantissa: 1, exponent: Int16(currencyFormatter.maximumFractionDigits), isNegative: false)
-        let scaled = NSDecimalNumber(decimal: number.decimalValue).multiplying(by: multiplier)
+        let scaled = NSDecimalNumber(decimal: amount).multiplying(by: multiplier)
         let rounded = scaled.rounding(accordingToBehavior: NSDecimalNumberHandler(
             roundingMode: .plain,
             scale: 0,
@@ -545,11 +540,97 @@ enum CurrencyText {
             raiseOnDivideByZero: false
         ))
         guard scaled == rounded,
-              rounded.compare(NSDecimalNumber(value: Int64.max)) != .orderedDescending,
-              rounded.compare(NSDecimalNumber(value: Int64.min)) != .orderedAscending else {
+              rounded.compare(NSDecimalNumber(value: Int64.max)) != ComparisonResult.orderedDescending,
+              rounded.compare(NSDecimalNumber(value: Int64.min)) != ComparisonResult.orderedAscending else {
             return nil
         }
         return rounded.int64Value
+    }
+
+    private struct CurrencyExpression {
+        private var characters: [Character]
+        private var index = 0
+
+        init(text: String, locale: Locale) {
+            let formatter = NumberFormatter(); formatter.locale = locale
+            let decimal = formatter.decimalSeparator ?? "."
+            let grouping = formatter.groupingSeparator ?? ","
+            let normalized = text
+                .replacingOccurrences(of: grouping, with: "")
+                .replacingOccurrences(of: decimal, with: ".")
+                .replacingOccurrences(of: "−", with: "-")
+                .replacingOccurrences(of: "×", with: "*")
+                .replacingOccurrences(of: "÷", with: "/")
+                .filter { !$0.isWhitespace }
+            characters = Array(normalized)
+        }
+
+        var value: Decimal? {
+            mutating get {
+                guard !characters.isEmpty, let result = expression(), index == characters.count else { return nil }
+                return result.isFinite ? result : nil
+            }
+        }
+
+        private mutating func expression() -> Decimal? {
+            guard var value = term() else { return nil }
+            while let symbol = peek(), symbol == "+" || symbol == "-" {
+                index += 1
+                guard let right = term(), let result = calculate(value, right, symbol) else { return nil }
+                value = result
+            }
+            return value
+        }
+
+        private mutating func term() -> Decimal? {
+            guard var value = factor() else { return nil }
+            while let symbol = peek(), symbol == "*" || symbol == "/" {
+                index += 1
+                guard let right = factor(), symbol != "/" || right != 0,
+                      let result = calculate(value, right, symbol) else { return nil }
+                value = result
+            }
+            return value
+        }
+
+        private mutating func factor() -> Decimal? {
+            if peek() == "+" { index += 1; return factor() }
+            if peek() == "-" { index += 1; return factor().flatMap { calculate(0, $0, "-") } }
+            if peek() == "(" {
+                index += 1
+                guard let value = expression(), peek() == ")" else { return nil }
+                index += 1
+                return value
+            }
+            return number()
+        }
+
+        private mutating func number() -> Decimal? {
+            let start = index
+            var sawDigit = false, sawDecimal = false
+            while let value = peek() {
+                if value.isNumber { sawDigit = true; index += 1 }
+                else if value == "." && !sawDecimal { sawDecimal = true; index += 1 }
+                else { break }
+            }
+            guard sawDigit else { return nil }
+            return Decimal(string: String(characters[start..<index]), locale: Locale(identifier: "en_US_POSIX"))
+        }
+
+        private func peek() -> Character? { index < characters.count ? characters[index] : nil }
+
+        private func calculate(_ left: Decimal, _ right: Decimal, _ symbol: Character) -> Decimal? {
+            var left = left, right = right, result = Decimal()
+            let error: Decimal.CalculationError
+            switch symbol {
+            case "+": error = NSDecimalAdd(&result, &left, &right, .plain)
+            case "-": error = NSDecimalSubtract(&result, &left, &right, .plain)
+            case "*": error = NSDecimalMultiply(&result, &left, &right, .plain)
+            case "/": error = NSDecimalDivide(&result, &left, &right, .plain)
+            default: return nil
+            }
+            return error == .noError ? result : nil
+        }
     }
 
     static func editable(_ minorUnits: Int64, currencyCode: String) -> String {
@@ -591,7 +672,7 @@ struct CurrencyAmountField: View {
                 Spacer(minLength: 12)
                 TextField("0.00", text: $text)
                     .focused($isFocused)
-                    .keyboardType(allowsNegative ? .numbersAndPunctuation : .decimalPad)
+                    .keyboardType(.numbersAndPunctuation)
                     .multilineTextAlignment(.trailing)
                     .frame(minWidth: 120)
                     .accessibilityLabel(title)
@@ -618,6 +699,10 @@ struct CurrencyAmountField: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
+                Button("+") { text += "+" }.accessibilityLabel("Add")
+                Button("−") { text += "-" }.accessibilityLabel("Subtract")
+                Button("×") { text += "*" }.accessibilityLabel("Multiply")
+                Button("÷") { text += "/" }.accessibilityLabel("Divide")
                 Spacer()
                 Button("Done") { isFocused = false }
             }

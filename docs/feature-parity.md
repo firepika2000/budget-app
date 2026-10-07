@@ -57,7 +57,7 @@ Status meanings:
 | Recurring transactions | IMPLEMENTED | Scheduled transaction planning/forecast API. Materialization UI remains limited. |
 | Remembered payees, rename, merge | FUTURE | No first-class payee table yet. |
 | Local category suggestion | FUTURE | Planned deterministic “2 of last 3” suggestion; never silent mutation. |
-| Calculator keypad | FUTURE | Decimal keyboard works; arithmetic expression keypad is not implemented. |
+| Calculator keypad | IMPLEMENTED | Shared exact-money fields accept parentheses and +, −, ×, ÷ expressions from a native keyboard toolbar; malformed, fractional-minor-unit, divide-by-zero, and overflow results are rejected. |
 
 ## Accounts, cards, and debt
 
