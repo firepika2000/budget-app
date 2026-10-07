@@ -295,6 +295,13 @@ struct WorkspaceReportContext: Equatable {
     let credentialRevision: Int
 }
 
+private struct LocalCompleteBudgetExport: Encodable {
+    let format = "com.clearpocket.complete-budget-export"
+    let version = 1
+    let exportedAt: String
+    let authority: LocalAuthoritySnapshot
+}
+
 @MainActor
 protocol WorkspaceDataSource: AnyObject {
     var budget: APIBudget { get }
@@ -1091,6 +1098,19 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             rows.append("plan,\(point.periodStart),\(point.periodEnd),metric,unassigned,\(point.readyToAssignMinor),\(budget.currencyCode)")
         }
         return Data((rows.joined(separator: "\n") + "\n").utf8)
+    }
+
+    func exportCompleteBudget() async throws -> Data {
+        try requireActiveMembership()
+        guard let localAuthority, let localIdentity else {
+            throw workspaceRepositoryError("Complete data export is available for Local Device budgets.")
+        }
+        let snapshot = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(LocalCompleteBudgetExport(
+            exportedAt: ISO8601DateFormatter().string(from: now()), authority: snapshot
+        ))
     }
 
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection { try requireActiveMembership();
@@ -4297,7 +4317,26 @@ private struct WorkspaceProfileView: View {
                             }
                             .accessibilityIdentifier("local-backup-recovery-settings")
                             Button("Server & Transfer Options", systemImage: "arrow.left.arrow.right") { showConnection = true }
+                            if let completeExportURL {
+                                ShareLink(item: completeExportURL) {
+                                    Label("Share Complete Data Export", systemImage: "square.and.arrow.up")
+                                }
+                                .accessibilityIdentifier("share-complete-budget-export")
+                            }
+                            Button(completeExportURL == nil ? "Prepare Complete Data Export" : "Refresh Complete Data Export",
+                                   systemImage: "doc.badge.gearshape") {
+                                Task { await prepareCompleteExport() }
+                            }
+                            .disabled(preparingCompleteExport || !store.budget.can("export_data"))
+                            .accessibilityIdentifier("prepare-complete-budget-export")
+                            if preparingCompleteExport { ProgressView("Preparing private data…") }
+                            if let completeExportError {
+                                Label(completeExportError, systemImage: "exclamationmark.triangle")
+                                    .foregroundStyle(.red)
+                            }
                             Text("Your complete budget works offline on this iPhone. Create an encrypted backup before moving or restoring data; connecting to a server never deletes the local copy.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                            Text("The JSON export contains private financial data and attachment metadata, but not attachment files. Encrypted Backup & Recovery remains the complete recovery path.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                     }

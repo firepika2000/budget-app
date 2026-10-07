@@ -1886,3 +1886,13 @@ a provider move. Encrypted Local Device SQLite migrates in place from schema 13 
 transfer envelopes decode with a nil classification, and canonical audit snapshots include the
 field. The focused authenticated export regression, 13 storage/migration tests, six transfer decoder
 tests, and the Xcode 27 Beta production build pass.
+
+### Local Device complete data export — 2026-10-07
+
+Owner Profile & Settings now offers the same discoverable Prepare/Share Complete Data Export flow
+for Local Device budgets that was previously limited to Budget Server. The versioned, sorted JSON
+artifact contains the full typed Local Device authority—including exact ledger records, planning,
+schedules, import review, audit and attachment metadata—while attachment bytes remain in the
+encrypted backup/recovery package. All authority records now support a verified Codable round trip;
+13 focused storage/export tests and the Xcode 27 Beta production build pass. The UI explicitly warns
+that the JSON is private financial data and is not a replacement for encrypted recovery backups.

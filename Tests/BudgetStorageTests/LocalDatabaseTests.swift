@@ -208,6 +208,8 @@ final class LocalDatabaseTests: XCTestCase {
         )
         XCTAssertEqual(transactionHistory.map(\.id), ["change"])
         XCTAssertEqual(snapshot.creditReserveEvents.first?.amountMinor, 12_345)
+        let portableJSON = try JSONEncoder().encode(snapshot)
+        XCTAssertEqual(try JSONDecoder().decode(LocalAuthoritySnapshot.self, from: portableJSON), snapshot)
         try await reopened.integrityCheck()
     }
 

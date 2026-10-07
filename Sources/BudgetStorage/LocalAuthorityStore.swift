@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LocalAuthorityIdentity: Equatable, Sendable {
+public struct LocalAuthorityIdentity: Codable, Equatable, Sendable {
     public let householdID: String
     public let householdName: String
     public let ownerUserID: String
@@ -18,7 +18,7 @@ public struct LocalAuthorityIdentity: Equatable, Sendable {
     }
 }
 
-public struct LocalStatementImportRecord: Equatable, Sendable {
+public struct LocalStatementImportRecord: Codable, Equatable, Sendable {
     public let id: String; public let budgetID: String; public let accountID: String
     public let status: String; public let version: Int64; public let sourceFormat: String
     public let candidateCount: Int64; public let payloadJSON: String; public let createdAt: String
@@ -30,7 +30,7 @@ public struct LocalStatementImportRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalAccountRecord: Equatable, Sendable {
+public struct LocalAccountRecord: Codable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
     public let name: String
@@ -48,7 +48,7 @@ public struct LocalAccountRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalCategoryGroupRecord: Equatable, Sendable {
+public struct LocalCategoryGroupRecord: Codable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
     public let name: String
@@ -61,7 +61,7 @@ public struct LocalCategoryGroupRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalCategoryRecord: Equatable, Sendable {
+public struct LocalCategoryRecord: Codable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
     public let groupID: String
@@ -88,7 +88,7 @@ public struct LocalCategoryRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalPayeeRecord: Equatable, Sendable {
+public struct LocalPayeeRecord: Codable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
     public let name: String
@@ -107,7 +107,7 @@ public struct LocalPayeeRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalPayeeAliasRecord: Equatable, Sendable {
+public struct LocalPayeeAliasRecord: Codable, Equatable, Sendable {
     public let id: String; public let payeeID: String; public let displayName: String
     public let normalizedName: String
     public init(id: String, payeeID: String, displayName: String, normalizedName: String) {
@@ -116,7 +116,7 @@ public struct LocalPayeeAliasRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalTransactionSplitRecord: Equatable, Sendable {
+public struct LocalTransactionSplitRecord: Codable, Equatable, Sendable {
     public let id: String
     public let categoryID: String
     public let amountMinor: Int64
@@ -130,7 +130,7 @@ public struct LocalTransactionSplitRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalTransactionRecord: Equatable, Sendable {
+public struct LocalTransactionRecord: Codable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
     public let accountID: String
@@ -176,7 +176,7 @@ public struct LocalTransactionRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalAllocationRecord: Equatable, Sendable {
+public struct LocalAllocationRecord: Codable, Equatable, Sendable {
     public let id: String; public let operationID: String; public let budgetID: String
     public let sourceCategoryID: String?; public let categoryID: String?
     public let amountMinor: Int64; public let occurredOn: String; public let kind: String
@@ -191,7 +191,7 @@ public struct LocalAllocationRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalReconciliationRecord: Equatable, Sendable {
+public struct LocalReconciliationRecord: Codable, Equatable, Sendable {
     public let id: String; public let accountID: String; public let statementDate: String
     public let statementBalanceMinor: Int64; public let adjustmentTransactionID: String?
     public let createdAt: String
@@ -203,7 +203,7 @@ public struct LocalReconciliationRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalCategoryTargetRecord: Equatable, Sendable {
+public struct LocalCategoryTargetRecord: Codable, Equatable, Sendable {
     public let categoryID: String; public let targetType: String; public let amountMinor: Int64
     public let cadence: String; public let effectiveMonth: String; public let snoozedMonth: String?
     public let targetDate: String?; public let recurrenceMonths: Int64?
@@ -221,7 +221,7 @@ public struct LocalCategoryTargetRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalScheduleRecord: Equatable, Sendable {
+public struct LocalScheduleRecord: Codable, Equatable, Sendable {
     public let id: String; public let budgetID: String; public let accountID: String
     public let destinationAccountID: String?; public let categoryID: String?; public let payeeID: String?
     public let name: String; public let amountMinor: Int64; public let nextDate: String
@@ -245,7 +245,7 @@ public struct LocalScheduleRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalAccountDebtTermsRecord: Equatable, Sendable {
+public struct LocalAccountDebtTermsRecord: Codable, Equatable, Sendable {
     public let accountID: String; public let termsType: String; public let annualRateBasisPoints: Int64?
     public let rateType: String?; public let paymentFrequency: String?; public let scheduledPaymentMinor: Int64?
     public let minimumPaymentRule: String?; public let minimumPaymentMinor: Int64?
@@ -269,7 +269,7 @@ public struct LocalAccountDebtTermsRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalCashRolloverPolicyRecord: Equatable, Sendable {
+public struct LocalCashRolloverPolicyRecord: Codable, Equatable, Sendable {
     public let id: String; public let budgetID: String; public let effectiveMonth: String
     public let policy: String; public let version: Int64; public let source: String
     public let actorUserID: String?; public let createdAt: String
@@ -280,7 +280,7 @@ public struct LocalCashRolloverPolicyRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalAttachmentRecord: Equatable, Sendable {
+public struct LocalAttachmentRecord: Codable, Equatable, Sendable {
     public let id: String; public let transactionID: String; public let filename: String
     public let contentType: String; public let sizeBytes: Int64; public let sha256: String
     public let objectName: String; public let createdAt: String
@@ -292,7 +292,7 @@ public struct LocalAttachmentRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalAttachmentTombstoneRecord: Equatable, Sendable {
+public struct LocalAttachmentTombstoneRecord: Codable, Equatable, Sendable {
     public let id: String; public let budgetID: String; public let transactionID: String
     public let filename: String; public let contentType: String; public let sizeBytes: Int64
     public let sha256: String; public let createdAt: String; public let detachedAt: String
@@ -310,7 +310,7 @@ public struct LocalAttachmentTombstoneRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalCreditReserveAttributionRecord: Equatable, Sendable {
+public struct LocalCreditReserveAttributionRecord: Codable, Equatable, Sendable {
     public let transactionID: String
     public let categoryID: String
     public let amountMinor: Int64
@@ -322,7 +322,7 @@ public struct LocalCreditReserveAttributionRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalTransactionChangeRecord: Equatable, Sendable {
+public struct LocalTransactionChangeRecord: Codable, Equatable, Sendable {
     public let id: String; public let budgetID: String; public let transactionID: String
     public let actorUserID: String; public let action: String; public let beforeJSON: String?
     public let afterJSON: String?; public let createdAt: String
@@ -415,7 +415,7 @@ public enum LocalTransactionAudit {
     }
 }
 
-public struct LocalCreditReserveEventRecord: Equatable, Sendable {
+public struct LocalCreditReserveEventRecord: Codable, Equatable, Sendable {
     public let id: String; public let budgetID: String; public let creditAccountID: String
     public let paymentCategoryID: String; public let spendingCategoryID: String?
     public let sourceTransactionID: String?; public let transferID: String?
@@ -433,7 +433,7 @@ public struct LocalCreditReserveEventRecord: Equatable, Sendable {
     }
 }
 
-public struct LocalAuthoritySnapshot: Equatable, Sendable {
+public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
     public let identity: LocalAuthorityIdentity
     public let accounts: [LocalAccountRecord]
     public let groups: [LocalCategoryGroupRecord]
