@@ -121,9 +121,12 @@ public struct LocalTransactionSplitRecord: Equatable, Sendable {
     public let categoryID: String
     public let amountMinor: Int64
     public let memo: String
+    public let financialClassification: String?
 
-    public init(id: String, categoryID: String, amountMinor: Int64, memo: String = "") {
+    public init(id: String, categoryID: String, amountMinor: Int64, memo: String = "",
+                financialClassification: String? = nil) {
         self.id = id; self.categoryID = categoryID; self.amountMinor = amountMinor; self.memo = memo
+        self.financialClassification = financialClassification
     }
 }
 
@@ -400,7 +403,8 @@ public enum LocalTransactionAudit {
             "transfer_id": value.transferID ?? NSNull(),
             "scheduled_transaction_id": value.scheduledTransactionID ?? NSNull(),
             "splits": sortedSplits.map { [
-                "category_id": $0.categoryID, "amount_minor": $0.amountMinor, "memo": $0.memo
+                "category_id": $0.categoryID, "amount_minor": $0.amountMinor, "memo": $0.memo,
+                "financial_classification": $0.financialClassification ?? NSNull()
             ] as [String: Any] },
         ]
         let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
@@ -954,7 +958,7 @@ public actor LocalAuthorityStore {
         for row in rows {
             let transactionID = try text(row, "id")
             let splits = try await database.rows(.init("SELECT * FROM transaction_splits WHERE transaction_id=? ORDER BY id", values: [.text(transactionID)])).map {
-                try LocalTransactionSplitRecord(id: text($0, "id"), categoryID: text($0, "category_id"), amountMinor: integer($0, "amount_minor"), memo: text($0, "memo"))
+                try LocalTransactionSplitRecord(id: text($0, "id"), categoryID: text($0, "category_id"), amountMinor: integer($0, "amount_minor"), memo: text($0, "memo"), financialClassification: optionalText($0, "financial_classification"))
             }
             result.append(try .init(id: transactionID, budgetID: text(row, "budget_id"), accountID: text(row, "account_id"), payeeID: optionalText(row, "payee_id"), payeeName: text(row, "payee_name"), amountMinor: integer(row, "amount_minor"), occurredOn: text(row, "occurred_on"), memo: text(row, "memo"), isCleared: bool(row, "is_cleared"), isReconciled: bool(row, "is_reconciled"), status: text(row, "status"), transferID: optionalText(row, "transfer_id"), scheduledTransactionID: optionalText(row, "scheduled_transaction_id"), flag: optionalText(row, "flag"), tags: stringArray(row, "tags_json"), financialClassification: optionalText(row, "financial_classification"), voidReason: optionalText(row, "void_reason"), reversalOfTransactionID: optionalText(row, "reversal_of_transaction_id"), reversalTransactionID: optionalText(row, "reversal_transaction_id"), createdByUserID: text(row, "created_by_user_id"), createdAt: text(row, "created_at"), splits: splits))
         }
@@ -1081,8 +1085,8 @@ public actor LocalAuthorityStore {
 
     private func splitInserts(_ value: LocalTransactionRecord) -> [LocalSQLStatement] {
         value.splits.map { split in
-            .init("INSERT INTO transaction_splits(id,transaction_id,category_id,amount_minor,memo) VALUES (?,?,?,?,?)",
-                  values: [.text(split.id), .text(value.id), .text(split.categoryID), .integer(split.amountMinor), .text(split.memo)])
+            .init("INSERT INTO transaction_splits(id,transaction_id,category_id,amount_minor,memo,financial_classification) VALUES (?,?,?,?,?,?)",
+                  values: [.text(split.id), .text(value.id), .text(split.categoryID), .integer(split.amountMinor), .text(split.memo), optionalText(split.financialClassification)])
         }
     }
 

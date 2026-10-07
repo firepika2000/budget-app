@@ -1876,3 +1876,13 @@ a stable posting-id-ordered flow decomposition into directed local rows, retains
 operation identifier and audit metadata, and preserves every category's exact integer-minor-unit
 net posting. Unbalanced or directionless records still fail closed. Focused backend projection and
 authenticated transfer tests pass, as do all five native transfer-envelope/observation tests.
+
+### Split classification transfer fidelity — 2026-10-07
+
+Server-to-Local Device transfer and later on-device publications now preserve each split's optional
+financial classification instead of retaining only its category, amount, and memo. This closes a
+semantic loss for classified finance-charge splits that could otherwise change debt reporting after
+a provider move. Encrypted Local Device SQLite migrates in place from schema 13 to 14, legacy
+transfer envelopes decode with a nil classification, and canonical audit snapshots include the
+field. The focused authenticated export regression, 13 storage/migration tests, six transfer decoder
+tests, and the Xcode 27 Beta production build pass.

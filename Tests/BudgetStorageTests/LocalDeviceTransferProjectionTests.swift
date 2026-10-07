@@ -71,6 +71,29 @@ final class LocalDeviceTransferProjectionTests: XCTestCase {
         XCTAssertEqual(imported.amountFromFirstCandidate, -250)
     }
 
+    func testProjectionPreservesSplitFinancialClassification() throws {
+        var value = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture()) as? [String: Any])
+        var transactions = try XCTUnwrap(value["transactions"] as? [[String: Any]])
+        transactions[0]["amount_minor"] = -10_000
+        transactions[0]["splits"] = [[
+            "id": "interest", "category_id": "groceries", "amount_minor": -10_000,
+            "memo": "Finance charge", "financial_classification": "interest_charge",
+        ]]
+        value["transactions"] = transactions
+        var observations = try XCTUnwrap(value["observations"] as? [String: Any])
+        observations["transactions"] = [[
+            "account_id": "checking", "status": "posted", "amount_minor": -10_000,
+        ]]
+        value["observations"] = observations
+
+        let result = try LocalDeviceTransferProjectionDecoder.decode(
+            JSONSerialization.data(withJSONObject: value)
+        )
+
+        XCTAssertEqual(result.snapshot.transactions.first?.splits.first?.financialClassification,
+                       "interest_charge")
+    }
+
     func testProjectionRejectsTamperedFinancialObservationAndMixedBudgetIdentity() throws {
         var value = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture()) as? [String: Any])
         var observations = try XCTUnwrap(value["observations"] as? [String: Any])

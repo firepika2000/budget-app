@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 13
+    public static let schemaVersion = 14
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -367,6 +367,18 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 14 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV14 { try execute(sql, on: database) }
+                try execute("INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)", values: [.integer(14), .text(Self.timestamp())], on: database)
+                try execute("PRAGMA user_version = 14", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -402,6 +414,10 @@ public actor LocalDatabase {
     private static let schemaV13 = [
         "CREATE TABLE attachment_tombstones (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, transaction_id TEXT NOT NULL, filename TEXT NOT NULL, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0), sha256 TEXT NOT NULL, created_at TEXT NOT NULL, detached_at TEXT NOT NULL, detached_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT, purge_after TEXT NOT NULL, tombstone_object_name TEXT) STRICT",
         "CREATE INDEX idx_attachment_tombstones_budget_detached ON attachment_tombstones(budget_id,detached_at,id)"
+    ]
+
+    private static let schemaV14 = [
+        "ALTER TABLE transaction_splits ADD COLUMN financial_classification TEXT"
     ]
 
     private static let schemaV2 = [

@@ -5,7 +5,7 @@ from io import StringIO
 import json
 import pytest
 
-from app.models import Household, MonthlyAssignment, Payee
+from app.models import Household, MonthlyAssignment, Payee, TransactionSplit
 from app.local_device_export import source_revision
 from .test_delegated_access import add_child
 
@@ -184,9 +184,17 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
         db.commit()
     purchase = record(
         client, owner_token, budget["id"], account_id=account["id"],
-        category_id=category["id"], amount_minor=-1_250,
+        amount_minor=-1_250, splits=[{
+            "category_id": category["id"], "amount_minor": -1_250,
+        }],
         occurred_on="2026-09-02", payee_name="Market", memo="groceries",
     )
+    # Classification was validly recorded by an older server/account configuration. Transfer must
+    # preserve stored semantics rather than reinterpret them through today's command validation.
+    with session_factory() as db:
+        split = db.query(TransactionSplit).filter_by(transaction_id=purchase["id"]).one()
+        split.financial_classification = "interest_charge"
+        db.commit()
     receipt = b"%PDF-1.4\nlocal-device-transfer-receipt\n%%EOF"
     uploaded = client.post(
         f"{path}/transactions/{purchase['id']}/attachments",
@@ -242,6 +250,7 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
     assert transactions[income["id"]]["splits"] == []
     assert transactions[purchase["id"]]["splits"][0]["category_id"] == category["id"]
     assert transactions[purchase["id"]]["splits"][0]["amount_minor"] == -1_250
+    assert transactions[purchase["id"]]["splits"][0]["financial_classification"] == "interest_charge"
     realized_transaction_id = realized.json()["transaction_ids"][0]
     assert transactions[realized_transaction_id]["scheduled_transaction_id"] == schedule.json()["id"]
     exported_schedule = next(item for item in value["schedules"] if item["id"] == schedule.json()["id"])

@@ -263,9 +263,11 @@ def build_local_device_projection(
             "splits": ([{
                 "id": split.id, "category_id": split.category_id,
                 "amount_minor": split.amount_minor, "memo": split.memo,
+                "financial_classification": split.financial_classification,
             } for split in sorted(splits_by_transaction[item.id], key=lambda value: value.id)] or ([{
                 "id": f"{item.id}-category", "category_id": item.category_id,
                 "amount_minor": item.amount_minor, "memo": "",
+                "financial_classification": item.financial_classification,
             }] if item.category_id is not None else [])),
         } for item in transactions],
         "allocations": allocation_rows,
