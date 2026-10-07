@@ -43,6 +43,35 @@ def test_refill_balance_recommends_replacing_current_month_spending():
     assert after_spending.underfunded_minor == 6_000
 
 
+def test_weekly_spending_counts_real_weekdays_in_each_month():
+    target = CategoryTarget(target_type="weekly_spending", target_amount_minor=2_500,
+                            target_date=date(2026, 10, 2), minimum_contribution_minor=0, is_active=True)
+    october = target_funding(target, month=date(2026, 10, 1), assigned_minor=2_500, available_minor=2_500)
+    november = target_funding(target, month=date(2026, 11, 1), assigned_minor=0, available_minor=0)
+    assert october.recommended_contribution_minor == 12_500  # five Fridays
+    assert october.underfunded_minor == 10_000
+    assert october.effective_target_date == date(2026, 10, 30)
+    assert november.recommended_contribution_minor == 10_000  # four Fridays
+    assert november.effective_target_date == date(2026, 11, 27)
+
+
+def test_live_weekly_target_contract_drives_month_summary(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    _, category = create_budget_structure(client, owner_token, budget["id"])
+    base = f"/api/v1/budgets/{budget['id']}"
+    saved = client.put(f"{base}/categories/{category['id']}/target", headers=auth(owner_token), json={
+        "target_type": "weekly_spending", "target_amount_minor": 2_500,
+        "target_date": "2026-10-02",
+    })
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["target_type"] == "weekly_spending"
+    october = client.get(f"{base}/months/2026-10-01", headers=auth(owner_token))
+    assert october.status_code == 200, october.text
+    row = next(item for item in october.json()["categories"] if item["category_id"] == category["id"])
+    assert row["recommended_contribution_minor"] == 12_500
+    assert row["target_date"] == "2026-10-30"
+
+
 @pytest.mark.parametrize("vector", json.loads(Path(__file__).with_name("target_cadence_vectors.json").read_text()), ids=lambda v: v["name"])
 def test_shared_target_vectors(vector):
     anchor = date.fromisoformat(vector["anchor"])

@@ -421,7 +421,7 @@ class DelegatedBudgetPolicyResponse(BaseModel):
 
 
 class CategoryTargetUpsert(BaseModel):
-    target_type: Literal["monthly_funding", "savings_balance", "target_by_date", "recurring_expense"]
+    target_type: Literal["monthly_funding", "savings_balance", "target_by_date", "recurring_expense", "weekly_spending"]
     target_amount_minor: int = Field(gt=0, le=MAX_INT64)
     target_date: Optional[date] = None
     recurrence_months: Optional[int] = Field(default=None, gt=0, le=1200)
@@ -431,10 +431,12 @@ class CategoryTargetUpsert(BaseModel):
 
     @model_validator(mode="after")
     def validate_target_shape(self) -> "CategoryTargetUpsert":
-        if self.target_type in {"target_by_date", "recurring_expense"} and self.target_date is None:
+        if self.target_type in {"target_by_date", "recurring_expense", "weekly_spending"} and self.target_date is None:
             raise ValueError("target_date is required for dated targets")
         if self.target_type == "recurring_expense" and self.recurrence_months is None:
             raise ValueError("recurrence_months is required for recurring expense targets")
+        if self.target_type == "weekly_spending" and self.target_amount_minor > MAX_INT64 // 5:
+            raise ValueError("weekly target amount is too large")
         return self
 
 

@@ -29,4 +29,18 @@ final class TargetPlanningTests: XCTestCase {
             XCTAssertEqual(result.effectiveTargetDate, v.due, v.name)
         }
     }
+
+    func testWeeklySpendingCountsCalendarOccurrencesExactly() throws {
+        let october = try TargetPlanning.funding(type: "weekly_spending", amountMinor: 2_500,
+            targetDate: "2026-10-02", recurrenceMonths: nil, minimumMinor: 0, isActive: true,
+            month: "2026-10-01", assignedMinor: 2_500, availableMinor: 2_500)
+        let november = try TargetPlanning.funding(type: "weekly_spending", amountMinor: 2_500,
+            targetDate: "2026-10-02", recurrenceMonths: nil, minimumMinor: 0, isActive: true,
+            month: "2026-11-01", assignedMinor: 0, availableMinor: 0)
+        XCTAssertEqual(october.recommendedContributionMinor, 12_500)
+        XCTAssertEqual(october.underfundedMinor, 10_000)
+        XCTAssertEqual(october.effectiveTargetDate, "2026-10-30")
+        XCTAssertEqual(november.recommendedContributionMinor, 10_000)
+        XCTAssertEqual(november.effectiveTargetDate, "2026-11-27")
+    }
 }

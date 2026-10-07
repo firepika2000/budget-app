@@ -22,6 +22,13 @@ public enum TargetPlanning {
         return (y, m, d)
     }
 
+    private static func weekday(year: Int, month: Int, day: Int) throws -> Int {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        guard let date = calendar.date(from: DateComponents(year: year, month: month, day: day)) else { throw InvalidInput.date }
+        return calendar.component(.weekday, from: date)
+    }
+
     public static func funding(type: String, amountMinor: Int64, targetDate: String?,
                                recurrenceMonths: Int?, minimumMinor: Int64, isActive: Bool,
                                month: String, assignedMinor: Int64, availableMinor: Int64) throws -> Funding {
@@ -52,7 +59,19 @@ public enum TargetPlanning {
         let carry = subtraction.overflow ? (availableMinor >= 0 ? Int64.max : 0) : max(subtraction.partialValue, 0)
         let gap = max(amountMinor - carry, 0)
         let recommended: Int64
-        if type == "monthly_funding" { recommended = max(amountMinor, minimumMinor) }
+        if type == "weekly_spending" {
+            guard let targetDate else { throw InvalidInput.date }
+            let anchor = try parse(targetDate)
+            let anchorWeekday = try weekday(year: anchor.year, month: anchor.month, day: anchor.day)
+            let occurrences = try (1...days(current.year, current.month)).reduce(0) { count, day in
+                count + (try weekday(year: current.year, month: current.month, day: day) == anchorWeekday ? 1 : 0)
+            }
+            let total = amountMinor.multipliedReportingOverflow(by: Int64(occurrences))
+            guard !total.overflow else { throw InvalidInput.amount }
+            recommended = max(total.partialValue, minimumMinor)
+            let lastDay = try (1...days(current.year, current.month)).last { try weekday(year: current.year, month: current.month, day: $0) == anchorWeekday }
+            effective = lastDay.map { String(format: "%04d-%02d-%02d", current.year, current.month, $0) }
+        } else if type == "monthly_funding" { recommended = max(amountMinor, minimumMinor) }
         else if type == "savings_balance" { recommended = max(gap, minimumMinor) }
         else {
             let divisor = Int64(periods)

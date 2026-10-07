@@ -87,7 +87,21 @@ def target_funding(
     periods, due = target_occurrence(target, month)
     if not target.is_active:
         return TargetFunding(0, 0, due)
-    if target.target_type == "monthly_funding":
+    if target.target_type == "weekly_spending":
+        if target.target_date is None:
+            raise ValueError("Weekly target requires an anchor date")
+        month_days = monthrange(month.year, month.month)[1]
+        occurrences = sum(
+            date(month.year, month.month, day).weekday() == target.target_date.weekday()
+            for day in range(1, month_days + 1)
+        )
+        recommendation = max(target.target_amount_minor * occurrences, target.minimum_contribution_minor)
+        due = max(
+            date(month.year, month.month, day)
+            for day in range(1, month_days + 1)
+            if date(month.year, month.month, day).weekday() == target.target_date.weekday()
+        )
+    elif target.target_type == "monthly_funding":
         recommendation = max(target.target_amount_minor, target.minimum_contribution_minor)
     elif target.target_type == "savings_balance":
         recommendation = max(
