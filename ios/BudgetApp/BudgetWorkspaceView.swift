@@ -7124,6 +7124,7 @@ private struct LiveTransactionDetailView: View {
                         if store.budget.can("edit_transaction") { Button("Edit Transfer", systemImage: "pencil") { editTransfer = transfer }.accessibilityIdentifier("edit-transfer-action") }
                         if store.budget.can("delete_transaction") { Button("Delete Transfer", systemImage: "trash", role: .destructive) { confirmDelete = true }.accessibilityIdentifier("delete-transfer-action") }
                     } label: { Image(systemName: "ellipsis.circle") }
+                        .accessibilityLabel("Transfer actions")
                 } else if transaction.transferID == nil {
                     Menu {
                         if store.budget.can("edit_transaction") { Button("Edit", systemImage: "pencil") { showEdit = true } }
@@ -7132,6 +7133,7 @@ private struct LiveTransactionDetailView: View {
                         if store.budget.can("delete_transaction"), !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Void with Reversal", systemImage: "arrow.uturn.backward.circle") { showVoid = true }.accessibilityIdentifier("void-transaction-action") }
                         if store.budget.can("delete_transaction") { Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true } }
                     } label: { Image(systemName: "ellipsis.circle") }
+                        .accessibilityLabel("Transaction actions")
                 }
             }
         }
@@ -7492,7 +7494,13 @@ private struct LiveAccountsView: View {
         }
         .accessibilityIdentifier("accounts-screen")
         .navigationTitle("Accounts")
-        .toolbar { if store.budget.can("manage_budget_structure") { Button { showAdd = true } label: { Image(systemName:"plus") } } }
+        .toolbar {
+            if store.budget.can("manage_budget_structure") {
+                Button { showAdd = true } label: { Image(systemName: "plus") }
+                    .accessibilityLabel("Add Account")
+                    .accessibilityIdentifier("accounts-add-account")
+            }
+        }
         .sheet(isPresented:$showAdd){AccountCreationView(budget:store.budget,onSaved:reload)}
     }
     private func accountIcon(_ type: String) -> String {
@@ -8753,11 +8761,16 @@ private struct DebtPayoffContent: View {
                 HStack {
                     Text("\(index + 1). \(accountName(id))")
                     Spacer()
-                    Button("Move up", systemImage: "chevron.up") { move(id, by: -1) }.labelStyle(.iconOnly).disabled(index == 0)
-                    Button("Move down", systemImage: "chevron.down") { move(id, by: 1) }.labelStyle(.iconOnly).disabled(index == customOrder.count - 1)
+                    Button("Move up", systemImage: "chevron.up") { move(id, by: -1) }
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("Move \(accountName(id)) up")
+                        .disabled(index == 0)
+                    Button("Move down", systemImage: "chevron.down") { move(id, by: 1) }
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("Move \(accountName(id)) down")
+                        .disabled(index == customOrder.count - 1)
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Priority \(index + 1), \(accountName(id))")
+                .accessibilityElement(children: .contain)
             }
         }
     }
