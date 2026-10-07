@@ -1273,8 +1273,19 @@ final class AppSessionRefreshTests: XCTestCase {
         let reopened = LiveTransactionOutbox(fileURL: file)
         XCTAssertEqual(reopened.entries.first?.operation.amountMinor, -12_345)
         XCTAssertEqual(reopened.entries.first?.operation.clientOperationID, id)
+        let secondID = "9ad90c5c-ae8f-4dbc-9a87-10323c0b9376"
+        let second = RecordTransactionOperation(
+            accountID: "savings", categoryID: "goals", amountMinor: -500,
+            occurredOn: "2026-10-04", payeeName: "Second queued item", memo: "Keep me",
+            isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: [],
+            clientOperationID: secondID
+        )
+        try reopened.enqueue(second)
         try reopened.remove(id: id)
-        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).count, 0)
+        let afterDiscard = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(afterDiscard.count, 1)
+        XCTAssertEqual(afterDiscard.entries.first?.id, secondID)
+        XCTAssertEqual(afterDiscard.entries.first?.operation.amountMinor, -500)
     }
 
     @MainActor

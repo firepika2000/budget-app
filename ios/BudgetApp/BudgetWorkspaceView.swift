@@ -2315,6 +2315,12 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     var pendingTransactionCount: Int { transactionOutbox.count }
+    var pendingTransactions: [LiveTransactionOutbox.Entry] { transactionOutbox.entries }
+
+    func discardPendingTransaction(id: String) throws {
+        try transactionOutbox.remove(id: id)
+        if transactionOutbox.count == 0 { outboxFailureMessage = nil }
+    }
 
     /// Replays in insertion order and stops at the first failure. A rejected operation remains
     /// visible as pending for explicit user attention; a connectivity failure quietly retries on
@@ -3136,6 +3142,19 @@ final class BudgetWorkspaceStore: ObservableObject {
             syncStatusMessage = "Offline · \(pendingSyncCount) change\(pendingSyncCount == 1 ? "" : "s") saved on this iPhone"
         }
         await refresh()
+    }
+
+    var pendingLiveTransactions: [LiveTransactionOutbox.Entry] {
+        (commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []
+    }
+
+    func discardPendingLiveTransaction(id: String) throws {
+        guard let live = commandRepository as? LiveWorkspaceCommandRepository else { return }
+        try live.discardPendingTransaction(id: id)
+        pendingSyncCount = live.pendingTransactionCount
+        syncStatusMessage = live.outboxFailureMessage
+            ?? (pendingSyncCount == 0 ? nil : "\(pendingSyncCount) change\(pendingSyncCount == 1 ? "" : "s") waiting to sync")
+        if pendingSyncCount == 0 { isWorkingOffline = false }
     }
 
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws {
@@ -4082,6 +4101,7 @@ private struct WorkspaceProfileView: View {
     @State private var showBackupHealth = false
     @State private var showLocalBackup = false
     @State private var showDevices = false
+    @State private var showPendingSync = false
     @State private var showDeleteBudget = false
     @State private var completeExportURL: URL?
     @State private var preparingCompleteExport = false
@@ -4192,6 +4212,16 @@ private struct WorkspaceProfileView: View {
                     }
                 }
                 if session.sourceMode == .liveServer {
+                    if store.pendingSyncCount > 0 {
+                        Section("Synchronization") {
+                            Button("Review Pending Changes", systemImage: "arrow.triangle.2.circlepath") {
+                                showPendingSync = true
+                            }
+                            .accessibilityIdentifier("review-pending-sync")
+                            Text("\(store.pendingSyncCount) transaction\(store.pendingSyncCount == 1 ? "" : "s") saved on this iPhone will retry automatically. Review a rejected item here without exposing other financial data.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
                     Section("Devices") {
                         Button("Pair & Manage Devices", systemImage: "iphone.gen3.radiowaves.left.and.right") {
                             showDevices = true
@@ -4245,6 +4275,7 @@ private struct WorkspaceProfileView: View {
                 LocalDeviceBackupRecoveryView(store: store, dropbox: dropboxBackup)
             }
             .navigationDestination(isPresented: $showDevices) { DeviceAccessSettingsView() }
+            .navigationDestination(isPresented: $showPendingSync) { PendingLiveTransactionsView(store: store) }
             .sheet(isPresented: $showCreate) {
                 BudgetCreationView(households: session.profile?.households.filter { $0.role == "owner" && $0.isActive } ?? [])
             }
@@ -4292,6 +4323,75 @@ private struct WorkspaceProfileView: View {
 
         What I expected:
         """
+    }
+}
+
+private struct PendingLiveTransactionsView: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    @State private var pendingDiscard: LiveTransactionOutbox.Entry?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            Section {
+                if store.pendingLiveTransactions.isEmpty {
+                    ContentUnavailableView("No Pending Changes", systemImage: "checkmark.icloud", description: Text("Everything saved on this iPhone has synchronized."))
+                } else {
+                    ForEach(store.pendingLiveTransactions) { entry in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(entry.operation.payeeName.isEmpty ? "Transaction" : entry.operation.payeeName)
+                                    .font(.headline)
+                                Spacer()
+                                Text(store.format(entry.operation.amountMinor)).monospacedDigit()
+                            }
+                            Text("\(entry.operation.occurredOn) · \(accountName(entry.operation.accountID))")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text("Saved \(entry.queuedAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2).foregroundStyle(.secondary)
+                            Button("Discard Pending Transaction", role: .destructive) { pendingDiscard = entry }
+                                .accessibilityIdentifier("discard-pending-transaction-\(entry.id)")
+                        }
+                        .accessibilityElement(children: .contain)
+                    }
+                }
+            } header: {
+                Text("Pending transactions")
+            } footer: {
+                Text("Retry first. Discard only if the server rejected an item you no longer want to post. Discarding removes only the local queued copy; it never deletes a server transaction.")
+            }
+            if !store.pendingLiveTransactions.isEmpty {
+                Section {
+                    Button("Retry Synchronization", systemImage: "arrow.clockwise") { Task { await store.refresh() } }
+                        .accessibilityIdentifier("retry-pending-sync")
+                }
+            }
+        }
+        .navigationTitle("Pending Sync")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("Discard Pending Transaction?", isPresented: Binding(
+            get: { pendingDiscard != nil },
+            set: { if !$0 { pendingDiscard = nil } }
+        )) {
+            Button("Discard", role: .destructive) {
+                if let pendingDiscard { discard(pendingDiscard) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the transaction waiting on this iPhone. It does not change any transaction already accepted by the server.")
+        }
+        .alert("Unable to discard", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(errorMessage ?? "Unknown error") }
+    }
+
+    private func accountName(_ id: String) -> String {
+        store.accounts.first(where: { $0.id == id })?.name ?? "Account"
+    }
+
+    private func discard(_ entry: LiveTransactionOutbox.Entry) {
+        do { try store.discardPendingLiveTransaction(id: entry.id) }
+        catch { errorMessage = error.localizedDescription }
     }
 }
 
