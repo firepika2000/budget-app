@@ -3249,6 +3249,33 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
 
+    func skipNextScheduleOccurrence(id: String) async throws {
+        guard let schedule = scheduledTransactions.first(where: { $0.id == id }), schedule.isActive else {
+            throw workspaceRepositoryError("Scheduled transaction is unavailable.")
+        }
+        let currentDate = Self.parseDate(schedule.nextDate)
+        let followingDate = Self.nextScheduledDate(
+            from: currentDate,
+            unit: schedule.recurrenceUnit,
+            interval: schedule.intervalCount
+        )
+        let operation = ScheduleOperation(
+            accountID: schedule.accountID,
+            destinationAccountID: schedule.destinationAccountID,
+            categoryID: schedule.categoryID,
+            payeeID: schedule.payeeID,
+            name: schedule.name,
+            amountMinor: schedule.amountMinor,
+            nextDate: followingDate.map(Self.dateString) ?? schedule.nextDate,
+            recurrenceUnit: schedule.recurrenceUnit,
+            intervalCount: schedule.intervalCount,
+            memo: schedule.memo,
+            financialClassification: schedule.financialClassification,
+            isActive: followingDate != nil
+        )
+        try await updateSchedule(id: id, operation: operation)
+    }
+
     func deleteSchedule(id: String) async throws {
         try await services().schedules.delete(id: id)
         await refresh()
@@ -6431,6 +6458,7 @@ private struct LiveScheduledTransactionEditor: View {
     @State private var error: String?
     @State private var confirmDelete = false
     @State private var confirmRealize = false
+    @State private var confirmSkip = false
 
     init(schedule: APIScheduledTransaction?, currencyCode: String) {
         self.schedule = schedule; self.currencyCode = currencyCode
@@ -6462,7 +6490,7 @@ private struct LiveScheduledTransactionEditor: View {
                 }
                 if let schedule {
                     if due && store.budget.can("create_transaction") { Section { Button("Enter Now", systemImage: "checkmark.circle") { confirmRealize = true }.disabled(saving); Text("This posts the due occurrence through the normal transaction engine and then advances the schedule.").font(.footnote).foregroundStyle(.secondary) } }
-                    if store.budget.can("manage_planning") { Section { Button("Delete Schedule", role: .destructive) { confirmDelete = true }; Text("Deleting the schedule keeps any transactions already entered from it.").font(.footnote).foregroundStyle(.secondary) } }
+                    if store.budget.can("manage_planning") { Section { if schedule.isActive { Button(schedule.recurrenceUnit == "once" ? "Skip and Pause" : "Skip Next Occurrence", systemImage: "forward.end") { confirmSkip = true }.disabled(saving).accessibilityIdentifier("schedule-skip-next") }; Button("Delete Schedule", role: .destructive) { confirmDelete = true }; Text("Skipping advances only this schedule and posts no transaction. Deleting keeps any transactions already entered from it.").font(.footnote).foregroundStyle(.secondary) } }
                     if schedule.lastRealizedOn != nil { Section("History") { LabeledContent("Last entered", value: schedule.lastRealizedOn ?? "") } }
                 }
             }
@@ -6470,6 +6498,7 @@ private struct LiveScheduledTransactionEditor: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; if store.budget.can("manage_planning") { ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(!valid || saving) } } }
             .confirmationDialog("Enter this occurrence now?", isPresented: $confirmRealize) { Button("Enter Now") { Task { await realize() } } } message: { Text("This creates an actual transaction. It is no longer forecast-only.") }
+            .confirmationDialog(schedule?.recurrenceUnit == "once" ? "Skip and pause this item?" : "Skip the next occurrence?", isPresented: $confirmSkip) { Button("Skip Occurrence") { Task { await skip() } } } message: { Text("No transaction will be created and no balance or category amount will change.") }
             .confirmationDialog("Delete this schedule?", isPresented: $confirmDelete) { Button("Delete Schedule", role: .destructive) { Task { await remove() } } }
             .alert(schedule == nil ? "Unable to create schedule" : "Unable to update schedule", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
         }
@@ -6478,6 +6507,7 @@ private struct LiveScheduledTransactionEditor: View {
     private func save() async { saving = true; defer { saving = false }; do { if let schedule { try await store.updateSchedule(id: schedule.id, operation: payload()) } else { try await store.createSchedule(payload()) }; dismiss() } catch { self.error = error.localizedDescription } }
     private func remove() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { try await store.deleteSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
     private func realize() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { _ = try await store.realizeSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
+    private func skip() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { try await store.skipNextScheduleOccurrence(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
 }
 
 private struct LiveTransactionLink: View {

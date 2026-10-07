@@ -63,6 +63,12 @@ Every lock-screen notification is deliberately generic—no amount, payee, accou
 member or household detail is persisted in notification content. Denied permission leaves the toggle
 off and provides a direct explanation; disabling removes the app's pending requests for that budget.
 
+Scheduled skip checkpoint (2026-10-07): an authorized planner can now skip the next occurrence from
+the production schedule editor after explicit confirmation. Recurring items advance one exact cadence;
+one-time items become paused. The action reuses the canonical schedule update service and preserves
+the schedule's account, destination, category, payee, amount, memo and classification. A focused
+production-store test proves that no transaction, account balance or Available-to-Assign value changes.
+
 Transaction audit checkpoint after `e96701f`: transaction detail now exposes bounded,
 actor-attributed change history from the immutable server audit ledger. The route rechecks current
 account/category visibility before loading events and returns action, actor, timestamp and changed

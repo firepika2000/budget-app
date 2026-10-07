@@ -1213,6 +1213,41 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSkippingScheduledOccurrenceAdvancesWithoutPostingOrMovingMoney() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let account = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
+        let before = (store.summary?.readyToAssignMinor, store.balance(for: account), store.transactions.count)
+
+        try await store.createSchedule(.init(
+            accountID: account.id,
+            name: "Skip monthly",
+            amountMinor: -1_234,
+            nextDate: "2026-10-31",
+            recurrenceUnit: "months"
+        ))
+        let recurring = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Skip monthly" })
+        try await store.skipNextScheduleOccurrence(id: recurring.id)
+        let advanced = try XCTUnwrap(store.scheduledTransactions.first { $0.id == recurring.id })
+        XCTAssertEqual(advanced.nextDate, "2026-11-30")
+        XCTAssertTrue(advanced.isActive)
+
+        try await store.createSchedule(.init(
+            accountID: account.id,
+            name: "Skip once",
+            amountMinor: -500,
+            nextDate: "2026-11-01",
+            recurrenceUnit: "once"
+        ))
+        let once = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Skip once" })
+        try await store.skipNextScheduleOccurrence(id: once.id)
+        XCTAssertFalse(try XCTUnwrap(store.scheduledTransactions.first { $0.id == once.id }).isActive)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, before.0)
+        XCTAssertEqual(store.balance(for: account), before.1)
+        XCTAssertEqual(store.transactions.count, before.2)
+    }
+
+    @MainActor
     func testScheduledProductionSurfacesShareWorkspaceStateAndForecastContract() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
