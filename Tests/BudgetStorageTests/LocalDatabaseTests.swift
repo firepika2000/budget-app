@@ -222,6 +222,28 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertFalse(value.changedFields.contains("private after"))
     }
 
+    func testLocalTransactionAuditAppendsOnlyRealTransactionDeltas() throws {
+        let first = transaction(id: "first", amountMinor: -100, memo: "before")
+        let unchanged = transaction(id: "same", amountMinor: -200, memo: "same")
+        let updated = transaction(id: "first", amountMinor: -125, memo: "after")
+        let created = transaction(id: "new", amountMinor: -300, memo: "new")
+        var ids = ["update", "create", "delete"].makeIterator()
+
+        let result = try LocalTransactionAudit.appendingChanges(
+            previous: [first, unchanged, transaction(id: "gone", amountMinor: -50, memo: "gone")],
+            current: [updated, unchanged, created], to: [], budgetID: "budget",
+            actorUserID: "owner", createdAt: "2026-10-07T12:00:00Z",
+            makeID: { ids.next()! }
+        )
+
+        XCTAssertEqual(result.map(\.action).sorted(), ["created", "deleted", "updated"])
+        XCTAssertEqual(result.first(where: { $0.transactionID == "first" })?.changedFields,
+                       ["amount_minor", "memo", "splits"])
+        XCTAssertEqual(result.first(where: { $0.transactionID == "same" }), nil)
+        XCTAssertEqual(result.first(where: { $0.transactionID == "new" })?.afterJSON?.contains("new"), true)
+        XCTAssertEqual(result.first(where: { $0.transactionID == "gone" })?.beforeJSON?.contains("gone"), true)
+    }
+
     func testTypedAuthorityStoreRefusesInvalidSplitAggregateWithoutPartialWrite() async throws {
         let databaseURL = try temporaryDirectory().appendingPathComponent("atomic.sqlite")
         let store = try LocalAuthorityStore(fileURL: databaseURL)
@@ -384,6 +406,15 @@ final class LocalDatabaseTests: XCTestCase {
         let snapshotAfterTombstonePurge = try await store.snapshot(budgetID: "b")
         XCTAssertTrue(snapshotAfterTombstonePurge.attachmentTombstones.isEmpty)
         XCTAssertEqual(snapshot.payees.map(\.id), ["p"])
+    }
+
+    private func transaction(id: String, amountMinor: Int64, memo: String) -> LocalTransactionRecord {
+        .init(
+            id: id, budgetID: "budget", accountID: "checking", payeeName: "Market",
+            amountMinor: amountMinor, occurredOn: "2026-10-07", memo: memo,
+            createdByUserID: "owner", createdAt: "2026-10-07T12:00:00Z",
+            splits: [.init(id: "\(id)-split", categoryID: "food", amountMinor: amountMinor)]
+        )
     }
 
     private var fixtureStatements: [LocalSQLStatement] {

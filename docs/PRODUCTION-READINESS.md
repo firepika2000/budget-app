@@ -1858,5 +1858,12 @@ the active budget and transaction, newest-first, and bounded to 50 entries. The 
 the action, actor identity, timestamp, and changed field names; raw before/after values and internal
 attachment, digest, and schedule-lineage identifiers remain confined to storage. Focused storage
 tests cover persistence, query scoping, and value redaction, and the Xcode 27 Beta production build
-passes. Creating new audit rows for mutations performed after moving to Local Device remains a
-separate provider-parity gap.
+passes.
+
+Local Device command publication now also appends privacy-preserving `created`, `updated`, and
+`deleted` audit rows by comparing canonical transaction snapshots before the command with the
+validated projection afterward. Generated storage timestamps are excluded, unchanged transactions
+produce no history noise, and imported server history is retained. Amount changes include the
+corresponding split projection, matching the exact accounting mutation. Focused delta tests cover
+create, update, delete, unchanged records, and field-name projection; the production app build
+passes without invoking the known-broken remote/native test runner.

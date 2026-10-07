@@ -961,12 +961,32 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                 promotionalRateBasisPoints: item.promotionalRateBasisPoints.map(Int64.init),
                 promotionalEndsOn: item.promotionalEndsOn, updatedAt: ISO8601DateFormatter().string(from: now()))
         }
-        let value = try demo.localAuthoritySnapshot(
+        let projected = try demo.localAuthoritySnapshot(
             identity: localIdentity, preservingAttachments: previous.attachments,
             preservingAttachmentTombstones: previous.attachmentTombstones,
-            debtTerms: debtTerms, transactionChanges: previous.transactionChanges,
+            debtTerms: debtTerms, transactionChanges: [],
             creditReserveEvents: previous.creditReserveEvents,
             statementImports: previous.statementImports
+        )
+        let stamp = ISO8601DateFormatter().string(from: now())
+        let transactionChanges = try LocalTransactionAudit.appendingChanges(
+            previous: previous.transactions, current: projected.transactions,
+            to: previous.transactionChanges, budgetID: localIdentity.budgetID,
+            actorUserID: localIdentity.ownerUserID, createdAt: stamp
+        )
+        let value = LocalAuthoritySnapshot(
+            identity: projected.identity, accounts: projected.accounts, groups: projected.groups,
+            categories: projected.categories, payees: projected.payees,
+            payeeAliases: projected.payeeAliases, transactions: projected.transactions,
+            allocations: projected.allocations, reconciliations: projected.reconciliations,
+            targets: projected.targets, schedules: projected.schedules,
+            attachments: projected.attachments,
+            attachmentTombstones: projected.attachmentTombstones, debtTerms: projected.debtTerms,
+            cashRolloverPolicies: projected.cashRolloverPolicies,
+            creditReserveAttributions: projected.creditReserveAttributions,
+            transactionChanges: transactionChanges,
+            creditReserveEvents: projected.creditReserveEvents,
+            statementImports: projected.statementImports
         )
         try await localAuthority.replaceWorkspaceState(value)
         try await localAuthority.integrityCheck()

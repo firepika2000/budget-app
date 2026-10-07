@@ -351,6 +351,66 @@ public struct LocalTransactionChangeRecord: Equatable, Sendable {
     }
 }
 
+public enum LocalTransactionAudit {
+    /// Appends audit events for the transaction delta produced by one local command publication.
+    /// Imported history is retained verbatim; generated snapshots intentionally omit storage-only
+    /// timestamps so routine workspace persistence cannot manufacture false updates.
+    public static func appendingChanges(
+        previous: [LocalTransactionRecord], current: [LocalTransactionRecord],
+        to history: [LocalTransactionChangeRecord], budgetID: String,
+        actorUserID: String, createdAt: String,
+        makeID: () -> String = { UUID().uuidString.lowercased() }
+    ) throws -> [LocalTransactionChangeRecord] {
+        let old = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+        let new = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        var result = history
+        for id in Set(old.keys).union(new.keys).sorted() {
+            let before = try old[id].map(snapshotJSON)
+            let after = try new[id].map(snapshotJSON)
+            guard before != after else { continue }
+            let action = before == nil ? "created" : (after == nil ? "deleted" : "updated")
+            result.append(.init(
+                id: makeID(), budgetID: budgetID, transactionID: id,
+                actorUserID: actorUserID, action: action,
+                beforeJSON: before, afterJSON: after, createdAt: createdAt
+            ))
+        }
+        return result
+    }
+
+    private static func snapshotJSON(_ value: LocalTransactionRecord) throws -> String {
+        let sortedSplits = value.splits.sorted { ($0.categoryID, $0.id) < ($1.categoryID, $1.id) }
+        let object: [String: Any] = [
+            "account_id": value.accountID,
+            "category_id": sortedSplits.count == 1 ? sortedSplits[0].categoryID : NSNull(),
+            "amount_minor": value.amountMinor,
+            "occurred_on": value.occurredOn,
+            "payee_name": value.payeeName,
+            "payee_id": value.payeeID ?? NSNull(),
+            "memo": value.memo,
+            "financial_classification": value.financialClassification ?? NSNull(),
+            "is_cleared": value.isCleared,
+            "is_reconciled": value.isReconciled,
+            "flag": value.flag ?? NSNull(),
+            "tags": value.tags,
+            "status": value.status,
+            "void_reason": value.voidReason ?? NSNull(),
+            "reversal_of_transaction_id": value.reversalOfTransactionID ?? NSNull(),
+            "reversal_transaction_id": value.reversalTransactionID ?? NSNull(),
+            "transfer_id": value.transferID ?? NSNull(),
+            "scheduled_transaction_id": value.scheduledTransactionID ?? NSNull(),
+            "splits": sortedSplits.map { [
+                "category_id": $0.categoryID, "amount_minor": $0.amountMinor, "memo": $0.memo
+            ] as [String: Any] },
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        guard let result = String(data: data, encoding: .utf8) else {
+            throw LocalStorageError.invalidSnapshot("Transaction audit snapshot is invalid")
+        }
+        return result
+    }
+}
+
 public struct LocalCreditReserveEventRecord: Equatable, Sendable {
     public let id: String; public let budgetID: String; public let creditAccountID: String
     public let paymentCategoryID: String; public let spendingCategoryID: String?
