@@ -55,7 +55,7 @@ Status meanings:
 | Duplicate detection | IMPLEMENTED | Statement staging identifies duplicate candidates before explicit approval; imports remain non-mutating until reviewed. |
 | Recurring transactions | IMPLEMENTED | Active/paused schedule management, forecast-only occurrences, and canonical Enter Now realization share the production editor. |
 | Remembered payees, rename, merge | IMPLEMENTED | First-class searchable payees support aliases, defaults, archive, rename, and merge with bounded server-authoritative results. |
-| Local category suggestion | FUTURE | Planned deterministic “2 of last 3” suggestion; never silent mutation. |
+| Local category suggestion | IMPLEMENTED | When no explicit payee default exists, transaction entry offers an opt-in category suggestion only after the same visible category appears in at least two of the payee's last three eligible posted purchases. |
 | Calculator keypad | IMPLEMENTED | Shared exact-money fields accept parentheses and +, −, ×, ÷ expressions from a native keyboard toolbar; malformed, fractional-minor-unit, divide-by-zero, and overflow results are rejected. |
 
 ## Accounts, cards, and debt

@@ -15,6 +15,7 @@ struct TransactionEntryView: View {
     @State private var payee = ""
     @State private var payeeID: String?
     @State private var selectedPayeeName = ""
+    @State private var suggestedCategoryID: String?
     @State private var showPayeeSelector = false
     @State private var amount = ""
     @State private var memo = ""
@@ -49,7 +50,7 @@ struct TransactionEntryView: View {
                 }
                 TextField("Payee", text: $payee)
                     .onChange(of: payee) { _, value in
-                        if payeeID != nil && selectedPayeeName != value { payeeID = nil; selectedPayeeName = "" }
+                        if payeeID != nil && selectedPayeeName != value { payeeID = nil; selectedPayeeName = ""; suggestedCategoryID = nil }
                     }
                 Button("Choose saved payee", systemImage: "person.text.rectangle") { showPayeeSelector = true }.accessibilityIdentifier("saved-payee-menu")
                 CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode)
@@ -94,6 +95,18 @@ struct TransactionEntryView: View {
                         ForEach(categories.filter { !$0.isArchived }) { category in
                             Text(categoryLabel(category)).tag(Optional(category.id))
                         }
+                    }
+                    if categoryID == nil, let suggestion = suggestedCategoryID,
+                       let category = categories.first(where: { $0.id == suggestion && !$0.isArchived }) {
+                        HStack {
+                            Label("Suggested: \(categoryLabel(category))", systemImage: "sparkles")
+                                .font(.subheadline)
+                            Spacer()
+                            Button("Use") { categoryID = suggestion; suggestedCategoryID = nil }
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier("use-category-suggestion")
+                        }
+                        .accessibilityIdentifier("category-suggestion")
                     }
                 }
                 Section {
@@ -142,7 +155,12 @@ struct TransactionEntryView: View {
             .sheet(isPresented: $showPayeeSelector) {
                 PayeeSearchSelectionView { item in
                     payeeID = item.id; payee = item.displayName; selectedPayeeName = item.displayName
-                    if categoryID == nil, let suggested = item.defaultCategoryID { categoryID = suggested }
+                    if categoryID == nil, let preferred = item.defaultCategoryID,
+                       categories.contains(where: { $0.id == preferred && !$0.isArchived }) {
+                        categoryID = preferred; suggestedCategoryID = nil
+                    } else if categoryID == nil {
+                        suggestedCategoryID = workspace.suggestedCategoryID(forPayeeID: item.id)
+                    }
                 }
             }
         }

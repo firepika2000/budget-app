@@ -1991,6 +1991,16 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testCategorySuggestionUsesTwoOfLastThreeEligibleVisiblePurchases() async {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+
+        XCTAssertEqual(store.suggestedCategoryID(forPayeeID: DemoStore.payeeID("Fresh Market")), "groceries")
+        XCTAssertNil(store.suggestedCategoryID(forPayeeID: DemoStore.payeeID("Payroll")))
+        XCTAssertNil(store.suggestedCategoryID(forPayeeID: "missing-payee"))
+    }
+
+    @MainActor
     func testLocalDeviceAttachmentKeyIsGeneratedOnceAndReloadedExactly() throws {
         let secrets = InMemorySecretDataStore()
         let first = try LocalDeviceKeyManager(store: secrets).loadOrCreateAttachmentKey()

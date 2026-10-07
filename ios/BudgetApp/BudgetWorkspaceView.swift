@@ -2919,6 +2919,25 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func createPayee(_ operation: CreatePayeeOperation) async throws { try await services().payees.create(operation); await refresh() }
     func searchPayees(query: String = "", includeArchived: Bool = false, limit: Int = 20, cursor: String? = nil) async throws -> APIPayeePage { try await services().payees.search(query: query, includeArchived: includeArchived, limit: limit, cursor: cursor) }
+    func suggestedCategoryID(forPayeeID payeeID: String) -> String? {
+        let eligibleCategories = Set(categories.filter { !$0.isArchived }.map(\.id))
+        let recent = transactions.filter { transaction in
+            transaction.payeeID == payeeID
+                && transaction.amountMinor < 0
+                && transaction.transferID == nil
+                && transaction.reversalOfTransactionID == nil
+                && (transaction.status == nil || transaction.status == "posted")
+                && transaction.splits.isEmpty
+                && transaction.categoryID.map(eligibleCategories.contains) == true
+        }.sorted {
+            ($0.occurredOn, $0.createdAt ?? "", $0.id) > ($1.occurredOn, $1.createdAt ?? "", $1.id)
+        }.prefix(3)
+        let counts = Dictionary(grouping: recent.compactMap(\.categoryID), by: { $0 }).mapValues(\.count)
+        return counts.filter { $0.value >= 2 }.sorted { left, right in
+            if left.value != right.value { return left.value > right.value }
+            return left.key < right.key
+        }.first?.key
+    }
     func updatePayee(_ operation: UpdatePayeeOperation) async throws { try await services().payees.update(operation); await refresh() }
     func mergePayee(sourceID: String, destinationID: String) async throws { try await services().payees.merge(sourceID: sourceID, destinationID: destinationID); await refresh() }
     func createPayeeAlias(payeeID: String, displayName: String) async throws { try await services().payees.createAlias(payeeID: payeeID, displayName: displayName); await refresh() }

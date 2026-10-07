@@ -1598,3 +1598,13 @@ cannot mutate the budget. This reusable path covers transaction and split amount
 moves, requests, reconciliation, targets, allowances, delegated authority, and debt scenarios.
 Focused native tests cover operator precedence, parentheses, Unicode operator labels, exact division,
 invalid syntax, division by zero, fractional minor-unit results, and overflow.
+
+### Conservative category suggestions — 2026-10-07
+
+Selecting a saved payee with no explicit default category now offers a category only when the same
+active category occurs in at least two of that payee's last three eligible posted purchases. The
+history excludes transfers, reversals, voided entries, inflows, splits, archived categories, and
+anything outside the already permission-filtered workspace. Explicit payee defaults still take
+precedence. The suggestion is visibly labelled and requires the user to tap Use; it never silently
+changes or saves a transaction. A focused provider-shaped test covers a qualifying merchant plus
+income and unknown-payee refusals.
