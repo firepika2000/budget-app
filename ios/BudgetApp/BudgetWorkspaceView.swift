@@ -3514,8 +3514,12 @@ struct BudgetWorkspaceView: View {
                 await runAutomaticDropboxBackupIfDue()
             }
             consumeQuickEntryRequest()
+            consumeWorkspaceShortcutRequest()
         }
-        .onAppear { consumeQuickEntryRequest() }
+        .onAppear {
+            consumeQuickEntryRequest()
+            consumeWorkspaceShortcutRequest()
+        }
         .task(id: session.sourceMode) {
             guard session.sourceMode == .liveServer else { return }
             while !Task.isCancelled {
@@ -3586,6 +3590,15 @@ struct BudgetWorkspaceView: View {
         guard QuickEntryRequest.consume() else { return }
         tabSelection.wrappedValue = 2
         quickEntryRequest += 1
+    }
+
+    private func consumeWorkspaceShortcutRequest() {
+        guard let destination = WorkspaceShortcutRequest.consume() else { return }
+        switch destination {
+        case .plan: tabSelection.wrappedValue = 1
+        case .accounts: tabSelection.wrappedValue = 3
+        case .insights: tabSelection.wrappedValue = 4
+        }
     }
 
     private func runAutomaticDropboxBackupIfDue() async {

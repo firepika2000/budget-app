@@ -11,6 +11,22 @@ enum QuickEntryRequest {
     }
 }
 
+enum WorkspaceShortcutDestination: String {
+    case plan, accounts, insights
+}
+
+enum WorkspaceShortcutRequest {
+    static let defaultsKey = "clearpocket.pendingWorkspaceDestination"
+    static func request(_ destination: WorkspaceShortcutDestination) {
+        UserDefaults.standard.set(destination.rawValue, forKey: defaultsKey)
+    }
+    static func consume() -> WorkspaceShortcutDestination? {
+        guard let rawValue = UserDefaults.standard.string(forKey: defaultsKey) else { return nil }
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
+        return WorkspaceShortcutDestination(rawValue: rawValue)
+    }
+}
+
 struct OpenClearPocketTransactionIntent: AppIntent {
     static let title: LocalizedStringResource = "Add ClearPocket Transaction"
     static let description = IntentDescription("Open the active ClearPocket budget directly to a new transaction.")
@@ -23,11 +39,53 @@ struct OpenClearPocketTransactionIntent: AppIntent {
     }
 }
 
+struct OpenClearPocketPlanIntent: AppIntent {
+    static let title: LocalizedStringResource = "Open ClearPocket Plan"
+    static let description = IntentDescription("Open the active ClearPocket budget directly to Plan.")
+    static let openAppWhenRun = true
+
+    @MainActor func perform() async throws -> some IntentResult {
+        WorkspaceShortcutRequest.request(.plan)
+        return .result()
+    }
+}
+
+struct OpenClearPocketAccountsIntent: AppIntent {
+    static let title: LocalizedStringResource = "Open ClearPocket Accounts"
+    static let description = IntentDescription("Open the active ClearPocket budget directly to Accounts.")
+    static let openAppWhenRun = true
+
+    @MainActor func perform() async throws -> some IntentResult {
+        WorkspaceShortcutRequest.request(.accounts)
+        return .result()
+    }
+}
+
+struct OpenClearPocketInsightsIntent: AppIntent {
+    static let title: LocalizedStringResource = "Open ClearPocket Insights"
+    static let description = IntentDescription("Open the active ClearPocket budget directly to Insights.")
+    static let openAppWhenRun = true
+
+    @MainActor func perform() async throws -> some IntentResult {
+        WorkspaceShortcutRequest.request(.insights)
+        return .result()
+    }
+}
+
 struct ClearPocketShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: OpenClearPocketTransactionIntent(),
                     phrases: ["Add a transaction in \(.applicationName)", "Record spending in \(.applicationName)"],
                     shortTitle: "Add Transaction", systemImageName: "plus.circle.fill")
+        AppShortcut(intent: OpenClearPocketPlanIntent(),
+                    phrases: ["Open my plan in \(.applicationName)", "Plan my money in \(.applicationName)"],
+                    shortTitle: "Open Plan", systemImageName: "list.bullet.rectangle")
+        AppShortcut(intent: OpenClearPocketAccountsIntent(),
+                    phrases: ["Open my accounts in \(.applicationName)", "Show my accounts in \(.applicationName)"],
+                    shortTitle: "Open Accounts", systemImageName: "building.columns")
+        AppShortcut(intent: OpenClearPocketInsightsIntent(),
+                    phrases: ["Open insights in \(.applicationName)", "Show my spending insights in \(.applicationName)"],
+                    shortTitle: "Open Insights", systemImageName: "chart.pie.fill")
     }
 }
 

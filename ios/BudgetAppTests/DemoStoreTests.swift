@@ -871,6 +871,7 @@ final class DemoStoreTests: XCTestCase {
         let appDirectory = testFile.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp")
         let workspace = try String(contentsOf: appDirectory.appendingPathComponent("BudgetWorkspaceView.swift"))
         let root = try String(contentsOf: appDirectory.appendingPathComponent("RootView.swift"))
+        let app = try String(contentsOf: appDirectory.appendingPathComponent("BudgetApp.swift"))
         let editor = try String(contentsOf: appDirectory.appendingPathComponent("EditingViews.swift"))
         XCTAssertTrue(root.contains("ActiveBudgetShell(context: context)"), "resolved routing must enter the persistent active-budget shell")
         XCTAssertTrue(root.contains("private struct AuthenticationFlowView"), "authentication drafts must be owned below the application route boundary")
@@ -907,6 +908,10 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(workspace.contains("prepare-complete-budget-export"), "server owners must be able to prepare the existing privacy-gated structured export")
         XCTAssertTrue(workspace.contains("share-complete-budget-export"), "the structured export must be shareable without developer tooling")
         XCTAssertTrue(workspace.contains("budgetExportJSON"), "the export UI must use the canonical server export instead of reconstructing history on-device")
+        XCTAssertTrue(app.contains("OpenClearPocketPlanIntent"))
+        XCTAssertTrue(app.contains("OpenClearPocketAccountsIntent"))
+        XCTAssertTrue(app.contains("OpenClearPocketInsightsIntent"))
+        XCTAssertTrue(workspace.contains("consumeWorkspaceShortcutRequest()"), "workspace shortcuts must route through the shared production shell")
         XCTAssertTrue(root.contains("PairingCodeScanner"), "the real source-selection flow must support native QR pairing")
         XCTAssertTrue(root.contains("PairingJoinView"), "pairing must enter through the canonical application route")
         XCTAssertTrue(workspace.contains("struct PayeeSearchSelectionView"), "all payee-selection workflows must share the bounded searchable selector")
@@ -974,6 +979,19 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertFalse(restricted.showsAddAccount)
         XCTAssertFalse(restricted.showsCreateGroup)
         XCTAssertFalse(restricted.showsAddCategory)
+    }
+
+    @MainActor
+    func testWorkspaceShortcutDestinationIsOneShotAndExact() {
+        UserDefaults.standard.removeObject(forKey: WorkspaceShortcutRequest.defaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: WorkspaceShortcutRequest.defaultsKey) }
+
+        WorkspaceShortcutRequest.request(.accounts)
+        XCTAssertEqual(WorkspaceShortcutRequest.consume(), .accounts)
+        XCTAssertNil(WorkspaceShortcutRequest.consume(), "a handled shortcut must not reroute later app activations")
+
+        WorkspaceShortcutRequest.request(.insights)
+        XCTAssertEqual(WorkspaceShortcutRequest.consume(), .insights)
     }
 
     @MainActor

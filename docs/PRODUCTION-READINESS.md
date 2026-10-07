@@ -33,6 +33,14 @@ as private, explains that attachment metadata but not attachment payloads is inc
 operational encrypted backup/restore as a separate workflow. Scoped or unauthorized exports remain
 server-denied. Focused Swift transport and native production-composition tests pass.
 
+Shortcuts navigation checkpoint: the existing Add Transaction shortcut is joined by privacy-safe
+Open Plan, Open Accounts, and Open Insights actions. Each intent only records a one-shot destination
+and opens the existing active-budget production shell; it neither reads private financial values
+into Shortcuts nor performs a money mutation. The shell consumes and clears each request on launch
+or foreground activation, so a handled shortcut cannot reroute a later session. Focused Xcode 27
+Beta intent-compilation, one-shot routing, and production-composition tests pass. A WidgetKit target
+and parameterized financial entry remain separate roadmap work.
+
 ## STOP FEATURE EXPANSION — human Live Debt P0
 
 Human reports repeated PlatformAlertController presentation conflicts followed by code-9 debugger
