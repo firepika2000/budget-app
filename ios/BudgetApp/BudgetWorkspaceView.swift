@@ -6034,8 +6034,9 @@ private enum PlanFocus: String, CaseIterable, Identifiable { case all = "All", f
 
 private struct PlanCategoryRow: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let category: APICategoryMonth
-    var body: some View { VStack(alignment: .leading, spacing: 5) { HStack { Text(category.name); Spacer(); Text(store.format(category.availableMinor)).fontWeight(.semibold).foregroundStyle(category.isOverspent ? Theme.danger : .primary) }; HStack { Text("Assigned \(store.format(category.assignedMinor))"); Spacer(); Text("Activity \(store.format(category.activityMinor))") }.font(.caption).foregroundStyle(.secondary); if let overspend = store.overspendSummary(category) { Label(overspend, systemImage: (category.creditOverspentMinor ?? 0) > 0 ? "creditcard.trianglebadge.exclamationmark" : "banknote").font(.caption).foregroundStyle(Theme.danger).accessibilityLabel(overspend) } else if let funded = category.fundedCreditSpendingMinor, funded > 0 { Label("\(store.format(funded)) reserved for card payment", systemImage: "creditcard.and.123").font(.caption).foregroundStyle(Theme.healthy) }; if category.isTargetSnoozed == true { Label("Target snoozed this month", systemImage: "pause.circle").font(.caption).foregroundStyle(.secondary) } else if category.targetType != nil { ProgressView(value: targetProgress).accessibilityLabel("Target progress").accessibilityValue(targetProgress.formatted(.percent)); HStack { Label(status, systemImage: (category.underfundedMinor ?? 0) > 0 ? "target" : "checkmark.circle.fill"); Spacer(); if let needed = category.underfundedMinor, needed > 0 { Text("\(store.format(needed)) needed") } }.font(.caption).foregroundStyle((category.underfundedMinor ?? 0) > 0 ? Theme.attention : Theme.healthy) } } }
+    var body: some View { VStack(alignment: .leading, spacing: 5) { HStack { Text(category.name); Spacer(); Text(store.format(category.availableMinor)).fontWeight(.semibold).foregroundStyle(category.isOverspent ? Theme.danger : .primary) }; HStack { Text("Assigned \(store.format(category.assignedMinor))"); Spacer(); Text("Activity \(store.format(category.activityMinor))") }.font(.caption).foregroundStyle(.secondary); if let overspend = store.overspendSummary(category) { Label(overspend, systemImage: (category.creditOverspentMinor ?? 0) > 0 ? "creditcard.trianglebadge.exclamationmark" : "banknote").font(.caption).foregroundStyle(Theme.danger).accessibilityLabel(overspend) } else if let funded = category.fundedCreditSpendingMinor, funded > 0 { Label("\(store.format(funded)) reserved for card payment", systemImage: "creditcard.and.123").font(.caption).foregroundStyle(Theme.healthy).contentTransition(.numericText()).animation(reduceMotion ? nil : .snappy(duration: 0.25), value: funded) }; if category.isTargetSnoozed == true { Label("Target snoozed this month", systemImage: "pause.circle").font(.caption).foregroundStyle(.secondary) } else if category.targetType != nil { ProgressView(value: targetProgress).accessibilityLabel("Target progress").accessibilityValue(targetProgress.formatted(.percent)); HStack { Label(status, systemImage: (category.underfundedMinor ?? 0) > 0 ? "target" : "checkmark.circle.fill"); Spacer(); if let needed = category.underfundedMinor, needed > 0 { Text("\(store.format(needed)) needed") } }.font(.caption).foregroundStyle((category.underfundedMinor ?? 0) > 0 ? Theme.attention : Theme.healthy) } } }
     private var targetProgress: Double { let recommendation = category.recommendedContributionMinor ?? 0; guard recommendation > 0 else { return 1 }; return min(Double(max(recommendation - (category.underfundedMinor ?? 0), 0)) / Double(recommendation), 1) }
     private var status: String { category.isOverspent ? "Overspent" : (category.underfundedMinor ?? 0) > 0 ? "Underfunded" : category.targetType == nil ? "Available" : "Funded" }
 }
@@ -6883,6 +6884,7 @@ private struct LiveAccountsView: View {
 
 struct LiveAccountRegisterView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let initialAccount: APIAccount
     @State private var showAdd = false
     @State private var transferPresentation: TransferPresentation?
@@ -6908,7 +6910,11 @@ struct LiveAccountRegisterView: View {
                 } else {
                     LabeledContent("Reconciliation", value: "Not reconciled")
                 }
-                if let paymentReserve { LabeledContent("Reserved for payment", value: store.format(paymentReserve)) }
+                if let paymentReserve {
+                    LabeledContent("Reserved for payment", value: store.format(paymentReserve))
+                        .contentTransition(.numericText())
+                        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: paymentReserve)
+                }
             } header: {
                 Text(account.name)
             }

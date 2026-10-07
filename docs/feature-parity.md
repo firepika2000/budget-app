@@ -68,7 +68,7 @@ Status meanings:
 | Closed accounts | IMPLEMENTED | Backend and live client state. |
 | Net-worth-only tracking distinction | IMPLEMENTED | First-class Asset and Other Tracking types remain outside the Plan while contributing to permission-filtered net worth. |
 | Payoff simulator | IMPLEMENTED | Production avalanche, snowball, rollover, and custom-extra scenarios use exact shared projections and authoritative debt terms without mutating the budget. |
-| Card reserve animation | FUTURE | State explanation is present; Reduce Motion-aware animation remains polish work. |
+| Card reserve animation | IMPLEMENTED | Exact reserve values use a subtle native numeric transition in Plan and card registers, disabled automatically when Reduce Motion is enabled. |
 
 ## Insights and forecast
 
