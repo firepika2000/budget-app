@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 5
+    public static let schemaVersion = 6
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -262,6 +262,21 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 6 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV6 { try execute(sql, on: database) }
+                try execute(
+                    "INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)",
+                    values: [.integer(6), .text(Self.timestamp())], on: database
+                )
+                try execute("PRAGMA user_version = 6", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -331,6 +346,11 @@ public actor LocalDatabase {
         "CREATE INDEX idx_local_transaction_changes_budget_created ON transaction_changes(budget_id,created_at,id)",
         "CREATE TABLE credit_reserve_events (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, credit_account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT, payment_category_id TEXT NOT NULL, spending_category_id TEXT REFERENCES categories(id) ON DELETE RESTRICT, source_transaction_id TEXT REFERENCES transactions(id) ON DELETE RESTRICT, transfer_id TEXT, occurred_on TEXT NOT NULL, amount_minor INTEGER NOT NULL CHECK(amount_minor != 0), kind TEXT NOT NULL, actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT, created_at TEXT NOT NULL, CHECK((source_transaction_id IS NOT NULL AND transfer_id IS NULL) OR (source_transaction_id IS NULL AND transfer_id IS NOT NULL))) STRICT",
         "CREATE INDEX idx_local_reserve_events_budget_date ON credit_reserve_events(budget_id,occurred_on,id)"
+    ]
+
+    private static let schemaV6 = [
+        "ALTER TABLE categories ADD COLUMN icon_name TEXT",
+        "ALTER TABLE categories ADD COLUMN note TEXT NOT NULL DEFAULT ''"
     ]
 
     private static func execute(

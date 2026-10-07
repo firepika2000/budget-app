@@ -335,6 +335,8 @@ class Category(Base):
     group_id: Mapped[str] = mapped_column(ForeignKey("category_groups.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(100))
     name_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    icon_name: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    note: Mapped[str] = mapped_column(String(500), default="")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     system_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)

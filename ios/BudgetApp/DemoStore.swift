@@ -1123,7 +1123,7 @@ extension DemoStore {
         archivedGroups = Set(value.groups.filter(\.isArchived).map(\.name))
         categories = value.categories.map { item in
             let target = value.targets.first { $0.categoryID == item.id }
-            return DemoCategory(id: item.id, group: groupNames[item.groupID] ?? "Categories", name: item.name, icon: "folder.fill", assigned: 0, activity: 0, available: 0, target: target?.amountMinor, targetDate: target?.targetDate, targetType: target?.targetType ?? "savings_balance", targetRecurrenceMonths: target?.recurrenceMonths.map(Int.init), targetMinimumContribution: target?.minimumContributionMinor ?? 0, targetPriority: target.map { Int($0.priority) } ?? 50, targetIsActive: target?.isActive ?? true, targetSnoozedMonths: Set(target?.snoozedMonths ?? [target?.snoozedMonth].compactMap { $0 }), pinned: item.isFavorite, isHidden: item.isArchived)
+            return DemoCategory(id: item.id, group: groupNames[item.groupID] ?? "Categories", name: item.name, icon: item.iconName ?? "folder.fill", assigned: 0, activity: 0, available: 0, target: target?.amountMinor, targetDate: target?.targetDate, targetType: target?.targetType ?? "savings_balance", targetRecurrenceMonths: target?.recurrenceMonths.map(Int.init), targetMinimumContribution: target?.minimumContributionMinor ?? 0, targetPriority: target.map { Int($0.priority) } ?? 50, targetIsActive: target?.isActive ?? true, targetSnoozedMonths: Set(target?.snoozedMonths ?? [target?.snoozedMonth].compactMap { $0 }), note: item.note, pinned: item.isFavorite, isHidden: item.isArchived)
         }
         payees = value.payees.map { item in
             DemoPayee(id: item.id, name: item.name, isArchived: item.isArchived, defaultCategoryID: item.defaultCategoryID, aliases: value.payeeAliases.filter { $0.payeeID == item.id }.map(\.displayName))
@@ -1195,7 +1195,7 @@ extension DemoStore {
             LocalCategoryGroupRecord(id: groupIDs[name]!, budgetID: identity.budgetID, name: name, sortOrder: Int64(index), isArchived: archivedGroups.contains(name))
         }
         let categoryRows = categories.enumerated().map { index, item in
-            LocalCategoryRecord(id: item.id, budgetID: identity.budgetID, groupID: groupIDs[item.group]!, name: item.name, delegatedUserID: nil, isArchived: item.isHidden, sortOrder: Int64(index), isFavorite: item.pinned, favoriteSortOrder: Int64(index))
+            LocalCategoryRecord(id: item.id, budgetID: identity.budgetID, groupID: groupIDs[item.group]!, name: item.name, iconName: item.icon, note: item.note, delegatedUserID: nil, isArchived: item.isHidden, sortOrder: Int64(index), isFavorite: item.pinned, favoriteSortOrder: Int64(index))
         }
         let payeeRows = payees.map { item in
             LocalPayeeRecord(id: item.id, budgetID: identity.budgetID, name: item.name, normalizedName: item.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased(), defaultCategoryID: item.defaultCategoryID, isArchived: item.isArchived)

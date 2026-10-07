@@ -115,6 +115,57 @@ def create_budget_structure(client, owner_token, budget_id):
     return account.json(), category.json()
 
 
+def test_category_customization_round_trips_through_list_update_and_favorite(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory, name="Custom Plan")
+    group = client.post(
+        f"/api/v1/budgets/{budget['id']}/category-groups",
+        headers=auth(owner_token), json={"name": "Needs", "sort_order": 10},
+    ).json()
+    created = client.post(
+        f"/api/v1/budgets/{budget['id']}/categories",
+        headers=auth(owner_token),
+        json={"group_id": group["id"], "name": "Groceries", "icon_name": "cart.fill",
+              "note": "Weekly staples", "sort_order": 10},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["icon_name"] == "cart.fill"
+    assert created.json()["note"] == "Weekly staples"
+
+    listed = client.get(f"/api/v1/budgets/{budget['id']}/categories", headers=auth(owner_token))
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["icon_name"] == "cart.fill"
+    assert listed.json()[0]["note"] == "Weekly staples"
+
+    category_id = created.json()["id"]
+    updated = client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{category_id}",
+        headers=auth(owner_token),
+        json={"group_id": group["id"], "name": "Food", "icon_name": "fork.knife",
+              "note": "Meals at home", "sort_order": 20, "is_archived": False},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["icon_name"] == "fork.knife"
+    assert updated.json()["note"] == "Meals at home"
+
+    favorite = client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{category_id}/favorite",
+        headers=auth(owner_token), json={"sort_order": 2},
+    )
+    assert favorite.status_code == 200, favorite.text
+    assert favorite.json()["icon_name"] == "fork.knife"
+    assert favorite.json()["note"] == "Meals at home"
+
+    invalid = client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{category_id}",
+        headers=auth(owner_token),
+        json={"group_id": group["id"], "name": "Food", "note": "x" * 501,
+              "sort_order": 20, "is_archived": False},
+    )
+    assert invalid.status_code == 422
+
+
 def add_member(session_factory, client, permission, budget_id):
     with session_factory() as db:
         household = db.query(Household).one()

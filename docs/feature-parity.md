@@ -20,7 +20,7 @@ Status meanings:
 | Move money and recent moves | IMPLEMENTED | Auditable native/API moves are implemented with a dedicated, permission-filtered Plan history browser covering assignments, moves, Smart Funding, requests, and allowances. |
 | Future-month assignments | IMPLEMENTED | Month-addressed ledger and summaries. |
 | Underfunded/overspent state | IMPLEMENTED | Native filtered views and attention surfaces. |
-| Category notes, icons, customization | PARTIALLY IMPLEMENTED | Icons and note presentation exist; full live editing/reordering is future work. |
+| Category notes, icons, customization | PARTIALLY IMPLEMENTED | Live and Local Device categories persist editable SF Symbol icons and notes; explicit ordering exists, while direct drag-to-reorder remains future work. |
 | Hidden/inactive categories | IMPLEMENTED | The production category manager lists active and hidden categories, supports search, preserves history, and lets authorized users hide or restore categories. |
 | Focused/custom views | IMPLEMENTED | All, Favorites, Underfunded, Overspent, Funded, and Available views run in the shared production Plan and remember the selected view per user and budget. |
 | Category templates/presets | IMPLEMENTED | New budgets default to an editable zero-money starter Plan across server and on-device authorities; creation can explicitly opt out. |

@@ -225,7 +225,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.tags, ["income", "monthly"])
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 5)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 6)
     }
 
     func testTypedAuthorityStoreUpdateAndDeleteLifecyclePersistsAcrossReopen() async throws {
@@ -248,7 +248,10 @@ final class LocalDatabaseTests: XCTestCase {
 
         try await store?.updateAccount(.init(id: "checking", budgetID: "budget", name: "Daily Checking", kind: "checking", isOnBudget: true, isClosed: false, openingBalanceMinor: 100_00, createdAt: timestamp))
         try await store?.updateCategoryGroup(.init(id: "needs", budgetID: "budget", name: "Essentials", sortOrder: 4))
-        try await store?.updateCategory(.init(id: "food", budgetID: "budget", groupID: "needs", name: "Groceries", isArchived: false, sortOrder: 2))
+        try await store?.updateCategory(.init(
+            id: "food", budgetID: "budget", groupID: "needs", name: "Groceries",
+            iconName: "cart.fill", note: "Weekly staples", isArchived: false, sortOrder: 2
+        ))
         try await store?.updatePayee(.init(id: "market", budgetID: "budget", name: "Local Market", normalizedName: "local market", defaultCategoryID: "food"))
         try await store?.replaceTransaction(.init(
             id: "purchase", budgetID: "budget", accountID: "checking", payeeID: "market",
@@ -264,6 +267,8 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(snapshot.accounts.first?.openingBalanceMinor, 100_00, "Metadata edits cannot rewrite opening money")
         XCTAssertEqual(snapshot.groups.first?.name, "Essentials")
         XCTAssertEqual(snapshot.categories.first?.name, "Groceries")
+        XCTAssertEqual(snapshot.categories.first?.iconName, "cart.fill")
+        XCTAssertEqual(snapshot.categories.first?.note, "Weekly staples")
         XCTAssertEqual(snapshot.payees.first?.defaultCategoryID, "food")
         XCTAssertEqual(snapshot.transactions.first?.amountMinor, -2_00)
         XCTAssertEqual(snapshot.transactions.first?.splits.map(\.id), ["replacement"])

@@ -770,6 +770,8 @@ def list_categories(
         "budget_id": category.budget_id,
         "group_id": category.group_id,
         "name": category.name,
+        "icon_name": category.icon_name,
+        "note": category.note,
         "sort_order": category.sort_order,
         "is_archived": category.is_archived,
         "system_type": category.system_type,
@@ -812,7 +814,8 @@ def favorite_category(
     db.commit()
     return {
         "id": category.id, "budget_id": category.budget_id, "group_id": category.group_id,
-        "name": category.name, "sort_order": category.sort_order, "is_archived": category.is_archived,
+        "name": category.name, "icon_name": category.icon_name, "note": category.note,
+        "sort_order": category.sort_order, "is_archived": category.is_archived,
         "system_type": category.system_type, "linked_account_id": (
             category.linked_account_id
             if category.linked_account_id is None or can_access_resource(
@@ -981,6 +984,8 @@ def update_category(
     category.group_id = body.group_id
     category.name = category_name
     category.name_key = None if conflicting_siblings else name_key
+    category.icon_name = body.icon_name or None
+    category.note = body.note
     category.sort_order = body.sort_order
     category.is_archived = body.is_archived
     try:

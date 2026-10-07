@@ -763,18 +763,23 @@ public struct APICategoryGroupCreate: Encodable, Sendable {
 public struct APICategoryCreate: Encodable, Sendable {
     public let groupID: String
     public let name: String
+    public let iconName: String?
+    public let note: String
     public let sortOrder: Int
     public let delegatedUserID: String?
 
-    public init(groupID: String, name: String, sortOrder: Int = 0, delegatedUserID: String? = nil) {
+    public init(groupID: String, name: String, iconName: String? = nil, note: String = "", sortOrder: Int = 0, delegatedUserID: String? = nil) {
         self.groupID = groupID
         self.name = name
+        self.iconName = iconName
+        self.note = note
         self.sortOrder = sortOrder
         self.delegatedUserID = delegatedUserID
     }
 
     enum CodingKeys: String, CodingKey {
-        case name
+        case name, note
+        case iconName = "icon_name"
         case groupID = "group_id"
         case sortOrder = "sort_order"
         case delegatedUserID = "delegated_user_id"
@@ -784,13 +789,15 @@ public struct APICategoryCreate: Encodable, Sendable {
 public struct APICategoryUpdate: Encodable, Sendable {
     public let groupID: String
     public let name: String
+    public let iconName: String?
+    public let note: String
     public let sortOrder: Int
     public let isArchived: Bool
-    public init(groupID: String, name: String, sortOrder: Int = 0, isArchived: Bool = false) {
-        self.groupID = groupID; self.name = name; self.sortOrder = sortOrder; self.isArchived = isArchived
+    public init(groupID: String, name: String, iconName: String? = nil, note: String = "", sortOrder: Int = 0, isArchived: Bool = false) {
+        self.groupID = groupID; self.name = name; self.iconName = iconName; self.note = note; self.sortOrder = sortOrder; self.isArchived = isArchived
     }
     enum CodingKeys: String, CodingKey {
-        case groupID = "group_id", name, sortOrder = "sort_order", isArchived = "is_archived"
+        case groupID = "group_id", name, note, iconName = "icon_name", sortOrder = "sort_order", isArchived = "is_archived"
     }
 }
 
@@ -1696,6 +1703,8 @@ public struct APICategory: Identifiable, Codable, Equatable, Sendable {
     public let budgetID: String
     public let groupID: String
     public let name: String
+    public let iconName: String?
+    public let note: String
     public let sortOrder: Int
     public let isArchived: Bool
     public let systemType: String?
@@ -1705,7 +1714,8 @@ public struct APICategory: Identifiable, Codable, Equatable, Sendable {
     public let favoriteSortOrder: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, name
+        case id, name, note
+        case iconName = "icon_name"
         case budgetID = "budget_id"
         case groupID = "group_id"
         case sortOrder = "sort_order"
@@ -1723,6 +1733,8 @@ public struct APICategory: Identifiable, Codable, Equatable, Sendable {
         budgetID = try values.decode(String.self, forKey: .budgetID)
         groupID = try values.decode(String.self, forKey: .groupID)
         name = try values.decode(String.self, forKey: .name)
+        iconName = try values.decodeIfPresent(String.self, forKey: .iconName)
+        note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
         sortOrder = try values.decode(Int.self, forKey: .sortOrder)
         isArchived = try values.decode(Bool.self, forKey: .isArchived)
         systemType = try values.decodeIfPresent(String.self, forKey: .systemType)

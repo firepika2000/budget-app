@@ -335,6 +335,8 @@ class CategoryGroupResponse(BaseModel):
 class CategoryCreate(BaseModel):
     group_id: str
     name: str = Field(min_length=1, max_length=100)
+    icon_name: Optional[str] = Field(default=None, max_length=50)
+    note: str = Field(default="", max_length=500)
     sort_order: int = 0
     delegated_user_id: Optional[str] = None
 
@@ -346,6 +348,8 @@ class CategoryResponse(BaseModel):
     budget_id: str
     group_id: str
     name: str
+    icon_name: Optional[str]
+    note: str
     sort_order: int
     is_archived: bool
     system_type: Optional[str]
@@ -366,6 +370,8 @@ class CategoryDelegationUpdate(BaseModel):
 class CategoryUpdate(BaseModel):
     group_id: str
     name: str = Field(min_length=1, max_length=100)
+    icon_name: Optional[str] = Field(default=None, max_length=50)
+    note: str = Field(default="", max_length=500)
     sort_order: int = 0
     is_archived: bool = False
 

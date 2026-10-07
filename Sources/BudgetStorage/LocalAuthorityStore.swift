@@ -54,16 +54,19 @@ public struct LocalCategoryRecord: Equatable, Sendable {
     public let budgetID: String
     public let groupID: String
     public let name: String
+    public let iconName: String?
+    public let note: String
     public let delegatedUserID: String?
     public let isArchived: Bool
     public let sortOrder: Int64
     public let isFavorite: Bool
     public let favoriteSortOrder: Int64
 
-    public init(id: String, budgetID: String, groupID: String, name: String,
+    public init(id: String, budgetID: String, groupID: String, name: String, iconName: String? = nil, note: String = "",
                 delegatedUserID: String? = nil, isArchived: Bool = false, sortOrder: Int64,
                 isFavorite: Bool = false, favoriteSortOrder: Int64 = 0) {
         self.id = id; self.budgetID = budgetID; self.groupID = groupID; self.name = name
+        self.iconName = iconName; self.note = note
         self.delegatedUserID = delegatedUserID; self.isArchived = isArchived; self.sortOrder = sortOrder
         self.isFavorite = isFavorite; self.favoriteSortOrder = favoriteSortOrder
     }
@@ -437,15 +440,15 @@ public actor LocalAuthorityStore {
 
     public func insertCategory(_ value: LocalCategoryRecord) async throws {
         try await database.execute(.init(
-            "INSERT INTO categories(id,budget_id,group_id,name,delegated_user_id,is_archived,sort_order,is_favorite,favorite_sort_order) VALUES (?,?,?,?,?,?,?,?,?)",
-            values: [.text(value.id), .text(value.budgetID), .text(value.groupID), .text(value.name), optionalText(value.delegatedUserID), .integer(value.isArchived ? 1 : 0), .integer(value.sortOrder), .integer(value.isFavorite ? 1 : 0), .integer(value.favoriteSortOrder)]
+            "INSERT INTO categories(id,budget_id,group_id,name,icon_name,note,delegated_user_id,is_archived,sort_order,is_favorite,favorite_sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            values: [.text(value.id), .text(value.budgetID), .text(value.groupID), .text(value.name), optionalText(value.iconName), .text(value.note), optionalText(value.delegatedUserID), .integer(value.isArchived ? 1 : 0), .integer(value.sortOrder), .integer(value.isFavorite ? 1 : 0), .integer(value.favoriteSortOrder)]
         ))
     }
 
     public func updateCategory(_ value: LocalCategoryRecord) async throws {
         let changes = try await database.executeReturningChanges(.init(
-            "UPDATE categories SET group_id=?,name=?,delegated_user_id=?,is_archived=?,sort_order=?,is_favorite=?,favorite_sort_order=? WHERE id=? AND budget_id=?",
-            values: [.text(value.groupID), .text(value.name), optionalText(value.delegatedUserID),
+            "UPDATE categories SET group_id=?,name=?,icon_name=?,note=?,delegated_user_id=?,is_archived=?,sort_order=?,is_favorite=?,favorite_sort_order=? WHERE id=? AND budget_id=?",
+            values: [.text(value.groupID), .text(value.name), optionalText(value.iconName), .text(value.note), optionalText(value.delegatedUserID),
                      .integer(value.isArchived ? 1 : 0), .integer(value.sortOrder), .integer(value.isFavorite ? 1 : 0), .integer(value.favoriteSortOrder), .text(value.id), .text(value.budgetID)]
         ))
         try requireOneChange(changes, record: "category")
@@ -653,7 +656,7 @@ public actor LocalAuthorityStore {
             .init("INSERT INTO category_groups(id,budget_id,name,sort_order,is_archived) VALUES (?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.name), .integer(item.sortOrder), .integer(item.isArchived ? 1 : 0)])
         }
         statements += value.categories.map { item in
-            .init("INSERT INTO categories(id,budget_id,group_id,name,delegated_user_id,is_archived,sort_order,is_favorite,favorite_sort_order) VALUES (?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.groupID), .text(item.name), optionalText(item.delegatedUserID), .integer(item.isArchived ? 1 : 0), .integer(item.sortOrder), .integer(item.isFavorite ? 1 : 0), .integer(item.favoriteSortOrder)])
+            .init("INSERT INTO categories(id,budget_id,group_id,name,icon_name,note,delegated_user_id,is_archived,sort_order,is_favorite,favorite_sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.groupID), .text(item.name), optionalText(item.iconName), .text(item.note), optionalText(item.delegatedUserID), .integer(item.isArchived ? 1 : 0), .integer(item.sortOrder), .integer(item.isFavorite ? 1 : 0), .integer(item.favoriteSortOrder)])
         }
         statements += value.payees.map { item in
             .init("INSERT INTO payees(id,budget_id,name,normalized_name,default_category_id,is_archived) VALUES (?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.name), .text(item.normalizedName), optionalText(item.defaultCategoryID), .integer(item.isArchived ? 1 : 0)])
@@ -709,7 +712,7 @@ public actor LocalAuthorityStore {
 
     private func loadCategories(budgetID: String) async throws -> [LocalCategoryRecord] {
         try await database.rows(.init("SELECT * FROM categories WHERE budget_id=? ORDER BY sort_order,id", values: [.text(budgetID)])).map {
-            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), groupID: text($0, "group_id"), name: text($0, "name"), delegatedUserID: optionalText($0, "delegated_user_id"), isArchived: bool($0, "is_archived"), sortOrder: integer($0, "sort_order"), isFavorite: bool($0, "is_favorite"), favoriteSortOrder: integer($0, "favorite_sort_order"))
+            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), groupID: text($0, "group_id"), name: text($0, "name"), iconName: optionalText($0, "icon_name"), note: text($0, "note"), delegatedUserID: optionalText($0, "delegated_user_id"), isArchived: bool($0, "is_archived"), sortOrder: integer($0, "sort_order"), isFavorite: bool($0, "is_favorite"), favoriteSortOrder: integer($0, "favorite_sort_order"))
         }
     }
 
