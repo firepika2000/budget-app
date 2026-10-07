@@ -117,6 +117,13 @@ def test_ofx_qfx_and_qif_use_the_same_owned_staging_boundary(client, owner_token
     assert response.status_code == 201, response.text
     assert response.json()["candidates"][0]["amount_minor"] == 250
 
+    mt940 = b":20:START\n:61:260917D3,21NTRFNONREF\n:86:Utility Company\n:62F:C260917USD0,00\n"
+    response = _stage(client, owner_token, budget["id"], account["id"], mt940,
+                      **{"X-Statement-Format": "mt940"})
+    assert response.status_code == 201, response.text
+    assert response.json()["source_format"] == "mt940"
+    assert response.json()["candidates"][0]["amount_minor"] == -321
+
 
 def test_pdf_uses_conservative_review_boundary(client, owner_token, session_factory, monkeypatch):
     budget = create_budget(client, owner_token, session_factory)

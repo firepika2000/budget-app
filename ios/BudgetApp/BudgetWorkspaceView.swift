@@ -1071,9 +1071,10 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         case "csv": parsed = try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
         case "qif": parsed = try LocalQIFStatementParser.parse(data: data, mapping: mapping)
         case "ofx", "qfx": parsed = try LocalOFXStatementParser.parse(data: data, mapping: mapping)
+        case "mt940": parsed = try LocalMT940StatementParser.parse(data: data, mapping: mapping)
         case "pdf": parsed = try LocalPDFStatementParser.parse(data: data, mapping: mapping)
         default:
-            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, QIF, and text-based PDF statements.")
+            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, QIF, MT940, and text-based PDF statements.")
         }
         let candidates = parsed.map { candidate -> APIStatementImportCandidate in
             let exact = demo.transactions.filter {
@@ -7346,9 +7347,16 @@ private struct StatementImportFile: Identifiable {
         UTType(filenameExtension: "ofx") ?? .data,
         UTType(filenameExtension: "qfx") ?? .data,
         UTType(filenameExtension: "qif") ?? .data,
+        UTType(filenameExtension: "sta") ?? .data,
+        UTType(filenameExtension: "mt940") ?? .data,
+        UTType(filenameExtension: "940") ?? .data,
     ]
     var fileExtension: String { URL(fileURLWithPath: name).pathExtension.lowercased() }
-    var sourceFormat: String { ["csv", "tsv", "txt"].contains(fileExtension) ? "csv" : fileExtension }
+    var sourceFormat: String {
+        if ["csv", "tsv", "txt"].contains(fileExtension) { return "csv" }
+        if ["sta", "mt940", "940"].contains(fileExtension) { return "mt940" }
+        return fileExtension
+    }
     var suggestedDelimiter: String { fileExtension == "tsv" ? "\t" : "," }
 }
 
@@ -7593,6 +7601,79 @@ enum LocalOFXStatementParser {
     }
 }
 
+enum LocalMT940StatementParser {
+    static func parse(data: Data, mapping: APIStatementImportMapping) throws -> [LocalDelimitedStatementParser.Candidate] {
+        guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Statement files must be 10 MB or smaller.") }
+        guard !data.contains(0) else { throw workspaceRepositoryError("MT940 contains an unsupported control character.") }
+        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .windowsCP1252) else {
+            throw workspaceRepositoryError("The MT940 statement text could not be decoded.")
+        }
+        guard text.utf8.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Decoded statement exceeds the supported size.") }
+        let lines = text.components(separatedBy: .newlines).map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+        let expression = try NSRegularExpression(pattern: #"^:61:([0-9]{6})(?:[0-9]{4})?R?([DC])(?:[A-Z])?([0-9]+,[0-9]{1,3})(.*)$"#)
+        var output: [LocalDelimitedStatementParser.Candidate] = []
+        var index = 0
+        while index < lines.count {
+            let line = lines[index]
+            guard line.hasPrefix(":61:") else { index += 1; continue }
+            let record = output.count + 1
+            guard record <= 10_000 else { throw workspaceRepositoryError("MT940 may contain at most 10,000 transactions.") }
+            guard line.count <= 4_096 else { throw workspaceRepositoryError("MT940 field exceeds the supported length at record \(record).") }
+            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            guard let match = expression.firstMatch(in: line, range: range), match.range == range,
+                  let dateRange = Range(match.range(at: 1), in: line),
+                  let directionRange = Range(match.range(at: 2), in: line),
+                  let amountRange = Range(match.range(at: 3), in: line),
+                  let remainderRange = Range(match.range(at: 4), in: line) else {
+                throw workspaceRepositoryError("Invalid date or amount at MT940 record \(record).")
+            }
+            let occurredOn: String
+            let amountMinor: Int64
+            do {
+                occurredOn = try dateString(String(line[dateRange]), record: record)
+                var amount = try LocalDelimitedStatementParser.minorUnits(
+                    String(line[amountRange]).replacingOccurrences(of: ",", with: "."),
+                    currency: mapping.currencyCode, row: record
+                )
+                if line[directionRange] == "D" { amount = -amount }
+                guard amount != 0 else { throw workspaceRepositoryError("Zero amount") }
+                amountMinor = amount
+            } catch {
+                throw workspaceRepositoryError("Invalid date or amount at MT940 record \(record).")
+            }
+            var parts = [String(line[remainderRange]).trimmingCharacters(in: .whitespacesAndNewlines)].filter { !$0.isEmpty }
+            var nextIndex = index + 1
+            if nextIndex < lines.count, lines[nextIndex].hasPrefix(":86:") {
+                parts = [String(lines[nextIndex].dropFirst(4))]
+                nextIndex += 1
+                while nextIndex < lines.count, !lines[nextIndex].hasPrefix(":") {
+                    parts.append(lines[nextIndex]); nextIndex += 1
+                }
+            }
+            let description = parts.joined(separator: " ").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard description.count <= 500 else { throw workspaceRepositoryError("Statement description exceeds the supported length at MT940 record \(record).") }
+            output.append(.init(sourceRow: record, occurredOn: occurredOn, amountMinor: amountMinor,
+                                payee: String(description.prefix(150)), memo: description))
+            index = nextIndex
+        }
+        guard !output.isEmpty else { throw workspaceRepositoryError("MT940 contains no transactions.") }
+        return output
+    }
+
+    private static func dateString(_ value: String, record: Int) throws -> String {
+        guard value.count == 6, value.allSatisfy(\.isNumber), var year = Int(value.prefix(2)),
+              let month = Int(value.dropFirst(2).prefix(2)), let day = Int(value.suffix(2)) else {
+            throw workspaceRepositoryError("Invalid MT940 date at record \(record).")
+        }
+        year += year < 70 ? 2_000 : 1_900
+        var components = DateComponents(); components.calendar = Calendar(identifier: .gregorian); components.timeZone = TimeZone(secondsFromGMT: 0); components.year = year; components.month = month; components.day = day
+        guard let date = components.date else { throw workspaceRepositoryError("Invalid MT940 date at record \(record).") }
+        let verified = Calendar(identifier: .gregorian).dateComponents(in: TimeZone(secondsFromGMT: 0)!, from: date)
+        guard verified.year == year, verified.month == month, verified.day == day else { throw workspaceRepositoryError("Invalid MT940 date at record \(record).") }
+        return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+}
+
 enum LocalPDFStatementParser {
     static func parse(data: Data, mapping: APIStatementImportMapping) throws -> [LocalDelimitedStatementParser.Candidate] {
         guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Statement files must be 10 MB or smaller.") }
@@ -7721,6 +7802,7 @@ private struct StatementImportFlowView: View {
             }
         }
         if ["qif", "pdf"].contains(file.sourceFormat) { Section("Date format") { Picker("Order", selection: $dateOrder) { Text("Month / Day / Year").tag("mdy"); Text("Day / Month / Year").tag("dmy") } } }
+        if file.sourceFormat == "mt940" { Section { Label("MT940 safety", systemImage: "checkmark.shield"); Text("Only SWIFT :61: transaction records are imported. Balance records are ignored, and every recognized transaction must be reviewed before posting.").font(.footnote).foregroundStyle(.secondary) } }
         if file.sourceFormat == "pdf" { Section { Label("PDF safety", systemImage: "checkmark.shield"); Text("Only text rows with an explicit date and signed or parenthesized amount are recognized. Scanned and ambiguous statements are rejected.").font(.footnote).foregroundStyle(.secondary) } }
         }
     }

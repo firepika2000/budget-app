@@ -3263,6 +3263,36 @@ final class DemoStoreTests: XCTestCase {
         }
     }
 
+    func testLocalMT940ParserPreservesExactMoneyAndDescriptions() throws {
+        let data = Data("""
+        :20:START
+        :60F:C261001EUR1000,00
+        :61:2610021002D12,34NTRFNONREF
+        :86:Corner Market
+        weekly groceries
+        :61:261003C2,34NTRFREFUND
+        :86:Corner Market refund
+        :62F:C261003EUR990,00
+        """.utf8)
+        let rows = try LocalMT940StatementParser.parse(
+            data: data, mapping: .init(sourceFormat: "mt940", currencyCode: "USD")
+        )
+        XCTAssertEqual(rows.map(\.occurredOn), ["2026-10-02", "2026-10-03"])
+        XCTAssertEqual(rows.map(\.amountMinor), [-1_234, 234])
+        XCTAssertEqual(rows.map(\.payee), ["Corner Market weekly groceries", "Corner Market refund"])
+    }
+
+    func testLocalMT940ParserRejectsMalformedPrivateRowsWithoutLeakingContents() throws {
+        let privatePayee = "Private Medical Payee"
+        XCTAssertThrowsError(try LocalMT940StatementParser.parse(
+            data: Data(":61:260230D1,00NTRF\n:86:\(privatePayee)\n".utf8),
+            mapping: .init(sourceFormat: "mt940", currencyCode: "USD")
+        )) { error in
+            XCTAssertFalse(error.localizedDescription.contains(privatePayee))
+            XCTAssertTrue(error.localizedDescription.contains("record 1"))
+        }
+    }
+
     func testLocalPDFParserRecognizesOnlyExplicitSignedRows() throws {
         let rows = try LocalPDFStatementParser.parse(lines: [
             "Statement for September",

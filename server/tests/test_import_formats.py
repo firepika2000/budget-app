@@ -1,7 +1,7 @@
 import pytest
 
 from app.import_candidates import ImportValidationError
-from app.import_formats import parse_ofx_candidates, parse_pdf_candidates, parse_qif_candidates
+from app.import_formats import parse_mt940_candidates, parse_ofx_candidates, parse_pdf_candidates, parse_qif_candidates
 
 
 def test_ofx_xml_and_sgml_transactions_preserve_exact_signed_money():
@@ -40,6 +40,35 @@ def test_qif_two_digit_year_is_deterministic():
     data = b"D31/12/'69\nT1.00\nPInterest\n^\nD01/01/'70\nT1.00\nPInterest\n^"
     rows = parse_qif_candidates(data, scale=2, date_order="dmy")
     assert [row.occurred_on.isoformat() for row in rows] == ["2069-12-31", "1970-01-01"]
+
+
+def test_mt940_preserves_exact_debits_credits_and_multiline_descriptions():
+    data = b""":20:START
+:60F:C261001EUR1000,00
+:61:2610021002D12,34NTRFNONREF
+:86:Corner Market
+weekly groceries
+:61:261003C2,34NTRFREFUND
+:86:Corner Market refund
+:62F:C261003EUR990,00
+"""
+    rows = parse_mt940_candidates(data, scale=2)
+    assert [(row.occurred_on.isoformat(), row.amount_minor, row.payee, row.memo) for row in rows] == [
+        ("2026-10-02", -1234, "Corner Market weekly groceries", "Corner Market weekly groceries"),
+        ("2026-10-03", 234, "Corner Market refund", "Corner Market refund"),
+    ]
+
+
+@pytest.mark.parametrize("data", [
+    b":20:NO TRANSACTIONS\n:60F:C261001EUR1000,00\n",
+    b":61:260230D1,00NTRF\n:86:Private Medical Payee\n",
+    b":61:261002D1.00NTRF\n:86:Private Medical Payee\n",
+    b":61:261002D0,00NTRF\n:86:Private Medical Payee\n",
+])
+def test_mt940_refuses_malformed_input_without_private_content(data):
+    with pytest.raises(ImportValidationError) as error:
+        parse_mt940_candidates(data, scale=2)
+    assert "Private Medical Payee" not in str(error.value)
 
 
 @pytest.mark.parametrize("data", [

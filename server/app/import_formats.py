@@ -150,6 +150,74 @@ def parse_qif_candidates(data: bytes, *, scale: int, date_order: str) -> list[Im
     return candidates
 
 
+_MT940_TRANSACTION = re.compile(
+    r"^:61:([0-9]{6})(?:[0-9]{4})?R?([DC])(?:[A-Z])?([0-9]+,[0-9]{1,3})(.*)$"
+)
+
+
+def parse_mt940_candidates(data: bytes, *, scale: int) -> list[ImportCandidate]:
+    """Parse bounded SWIFT MT940 statement entries into review-only candidates.
+
+    Only ``:61:`` transaction records are financial inputs. Optional ``:86:``
+    information and its continuation lines are descriptive text. Opening and
+    closing balance records are deliberately ignored.
+    """
+    parse_minor_units("0", scale=scale)
+    text = _bounded_text(data, "MT940")
+    lines = text.splitlines()
+    candidates: list[ImportCandidate] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index].rstrip("\r")
+        if not line.startswith(":61:"):
+            index += 1
+            continue
+        position = len(candidates) + 1
+        if position > MAX_ROWS:
+            raise ImportValidationError("MT940 exceeds 10000 transactions")
+        if len(line) > MAX_FIELD_CHARS:
+            raise ImportValidationError(f"MT940 field exceeds supported length at record {position}")
+        match = _MT940_TRANSACTION.fullmatch(line)
+        if match is None:
+            raise ImportValidationError(f"Invalid date or amount at MT940 record {position}")
+        try:
+            compact_date = match.group(1)
+            year = int(compact_date[:2])
+            year += 2000 if year < 70 else 1900
+            occurred_on = date(year, int(compact_date[2:4]), int(compact_date[4:6]))
+            amount_minor = parse_minor_units(match.group(3).replace(",", "."), scale=scale)
+            if match.group(2) == "D":
+                amount_minor = -amount_minor
+            if amount_minor == 0:
+                raise ValueError()
+        except (ValueError, ImportValidationError):
+            raise ImportValidationError(f"Invalid date or amount at MT940 record {position}") from None
+
+        description_parts: list[str] = []
+        remainder = match.group(4).strip()
+        if remainder:
+            description_parts.append(remainder)
+        next_index = index + 1
+        if next_index < len(lines) and lines[next_index].startswith(":86:"):
+            description_parts = [lines[next_index][4:]]
+            next_index += 1
+            while next_index < len(lines) and not lines[next_index].startswith(":"):
+                description_parts.append(lines[next_index])
+                next_index += 1
+        description = _clean_description(" ".join(description_parts), maximum=500, position=position)
+        candidates.append(ImportCandidate(
+            source_row=position,
+            occurred_on=occurred_on,
+            amount_minor=amount_minor,
+            payee=description[:150],
+            memo=description,
+        ))
+        index = next_index
+    if not candidates:
+        raise ImportValidationError("MT940 contains no transactions")
+    return candidates
+
+
 def _extract_pdf_text(data: bytes) -> list[str]:
     if len(data) > MAX_FILE_BYTES:
         raise ImportValidationError("File exceeds 10 MB")
