@@ -8890,6 +8890,45 @@ private struct DebtPayoffContent: View {
     }
 }
 
+struct SpendingTrendChange: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let latestPeriodStart: String
+    let latestMinor: Int64
+    let priorAverageMinor: Int64
+    let increaseMinor: Int64
+    let transactionIDs: [String]
+    let transactionIDsTruncated: Bool
+
+    static func increases(in report: APISpendingTrendsReport, limit: Int = 3) -> [Self] {
+        guard limit > 0 else { return [] }
+        return report.series.compactMap { series in
+            let points = series.points.sorted { $0.periodStart < $1.periodStart }
+            guard let latest = points.last, points.count > 1 else { return nil }
+            var priorTotal: Int64 = 0
+            for point in points.dropLast() {
+                let result = priorTotal.addingReportingOverflow(point.spendingMinor)
+                guard !result.overflow else { return nil }
+                priorTotal = result.partialValue
+            }
+            let average = priorTotal / Int64(points.count - 1)
+            let difference = latest.spendingMinor.subtractingReportingOverflow(average)
+            guard !difference.overflow, difference.partialValue > 0 else { return nil }
+            return Self(
+                id: series.dimensionID, name: series.dimensionName,
+                latestPeriodStart: latest.periodStart, latestMinor: latest.spendingMinor,
+                priorAverageMinor: average, increaseMinor: difference.partialValue,
+                transactionIDs: latest.transactionIDs,
+                transactionIDsTruncated: latest.transactionIDsTruncated == true
+            )
+        }
+        .sorted { lhs, rhs in
+            lhs.increaseMinor == rhs.increaseMinor ? lhs.name < rhs.name : lhs.increaseMinor > rhs.increaseMinor
+        }
+        .prefix(limit).map { $0 }
+    }
+}
+
 private struct SpendingTrendsView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let report: APISpendingTrendsReport
@@ -8905,6 +8944,32 @@ private struct SpendingTrendsView: View {
             if report.series.isEmpty {
                 ContentUnavailableView("No spending trend", systemImage: "chart.xyaxis.line", description: Text("Try a wider date range or different filters."))
             } else {
+                let changes = SpendingTrendChange.increases(in: report)
+                if !changes.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Recent increases", systemImage: "arrow.up.right")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Latest report period compared with the monthly average of earlier periods in this range. Refunds and current filters are already included.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(changes) { change in
+                            NavigationLink {
+                                LiveReportTransactionsView(
+                                    title: "\(change.name) · \(change.latestPeriodStart)",
+                                    transactionIDs: change.transactionIDs,
+                                    isTruncated: change.transactionIDsTruncated
+                                )
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    LabeledContent(change.name, value: "+\(store.format(change.increaseMinor))")
+                                    Text("\(store.format(change.latestMinor)) latest · \(store.format(change.priorAverageMinor)) earlier average")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .accessibilityIdentifier("spending-change-\(change.id)")
+                        }
+                    }
+                    .accessibilityIdentifier("spending-recent-changes")
+                }
                 Chart {
                     ForEach(report.series) { series in
                         ForEach(series.points) { point in

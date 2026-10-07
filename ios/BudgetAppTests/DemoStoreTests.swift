@@ -8,6 +8,33 @@ import CryptoKit
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testSpendingTrendChangesRankExactServerDerivedIncreases() throws {
+        let report = try JSONDecoder().decode(APISpendingTrendsReport.self, from: Data(#"""
+        {
+          "start_date":"2026-07-01","end_date":"2026-09-30","currency_code":"USD","dimension":"category","total_spending_minor":42000,
+          "series":[
+            {"dimension_id":"groceries","dimension_name":"Groceries","category_group":"Food","spending_minor":24000,"transaction_ids":["g1","g2","g3"],"transaction_ids_truncated":false,"points":[
+              {"period_start":"2026-07-01","period_end":"2026-07-31","spending_minor":5000,"transaction_ids":["g1"],"transaction_ids_truncated":false},
+              {"period_start":"2026-08-01","period_end":"2026-08-31","spending_minor":7000,"transaction_ids":["g2"],"transaction_ids_truncated":false},
+              {"period_start":"2026-09-01","period_end":"2026-09-30","spending_minor":12000,"transaction_ids":["g3"],"transaction_ids_truncated":true}]},
+            {"dimension_id":"fuel","dimension_name":"Fuel","category_group":"Transport","spending_minor":18000,"transaction_ids":["f1","f2","f3"],"transaction_ids_truncated":false,"points":[
+              {"period_start":"2026-07-01","period_end":"2026-07-31","spending_minor":7000,"transaction_ids":["f1"],"transaction_ids_truncated":false},
+              {"period_start":"2026-08-01","period_end":"2026-08-31","spending_minor":6000,"transaction_ids":["f2"],"transaction_ids_truncated":false},
+              {"period_start":"2026-09-01","period_end":"2026-09-30","spending_minor":5000,"transaction_ids":["f3"],"transaction_ids_truncated":false}]}
+          ]
+        }
+        """#.utf8))
+
+        let changes = SpendingTrendChange.increases(in: report)
+
+        XCTAssertEqual(changes.map(\.id), ["groceries"])
+        XCTAssertEqual(changes.first?.priorAverageMinor, 6_000)
+        XCTAssertEqual(changes.first?.latestMinor, 12_000)
+        XCTAssertEqual(changes.first?.increaseMinor, 6_000)
+        XCTAssertEqual(changes.first?.transactionIDs, ["g3"])
+        XCTAssertTrue(changes.first?.transactionIDsTruncated == true)
+    }
+
     @MainActor
     func testCategoryDisplayNamesAlwaysIncludeTheirGroup() async throws {
         let store = BudgetWorkspaceStore.demo()
