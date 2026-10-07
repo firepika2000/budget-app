@@ -19,6 +19,12 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Transaction audit checkpoint after `e96701f`: transaction detail now exposes bounded,
+actor-attributed change history from the immutable server audit ledger. The route rechecks current
+account/category visibility before loading events and returns action, actor, timestamp and changed
+field names only; private before/after snapshots remain on the server. Focused backend privacy,
+Swift API-contract and native production-composition checks pass.
+
 ## STOP FEATURE EXPANSION — human Live Debt P0
 
 Human reports repeated PlatformAlertController presentation conflicts followed by code-9 debugger

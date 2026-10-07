@@ -105,6 +105,7 @@ from .schemas import (
     ScheduledTransactionResponse,
     TransactionBulkUpdateRequest,
     TransactionCreate,
+    TransactionChangeResponse,
     TransactionDuplicateRequest,
     TransactionVoidRequest,
     TransactionScheduleRequest,
@@ -1456,6 +1457,51 @@ def list_transactions(
 ) -> list[dict]:
     budget = require_budget_capability(db, user, budget_id, "view_transactions")
     return transaction_response_rows(db, _visible_transactions(db, user, budget))
+
+
+def _changed_transaction_fields(change: TransactionChange) -> list[str]:
+    """Return field names only; snapshots remain private server audit material."""
+    try:
+        before = json.loads(change.before_json) if change.before_json else {}
+        after = json.loads(change.after_json) if change.after_json else {}
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return []
+    ignored = {"attachment_id", "sha256", "scheduled_transaction_id"}
+    return sorted(key for key in (set(before) | set(after)) if key not in ignored and before.get(key) != after.get(key))
+
+
+@router.get("/transactions/{transaction_id}/history", response_model=list[TransactionChangeResponse])
+def transaction_history(
+    budget_id: str,
+    transaction_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    transaction = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.id == transaction_id,
+        Transaction.budget_id == budget.id,
+    ))
+    if transaction is None or not _can_access_transaction_resources(db, user, budget, transaction):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    changes = list(db.scalars(select(TransactionChange).where(
+        TransactionChange.budget_id == budget.id,
+        TransactionChange.transaction_id == transaction.id,
+    ).order_by(TransactionChange.created_at.desc(), TransactionChange.id.desc()).offset(offset).limit(limit)))
+    actor_ids = {item.actor_user_id for item in changes}
+    names = {item.id: item.display_name for item in db.scalars(select(User).where(User.id.in_(actor_ids)))} if actor_ids else {}
+    return [{
+        "id": item.id,
+        "action": item.action,
+        "actor_user_id": item.actor_user_id,
+        "actor_display_name": names.get(item.actor_user_id),
+        "changed_fields": _changed_transaction_fields(item),
+        "created_at": item.created_at,
+    } for item in changes]
 
 
 @router.post("/transactions", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)

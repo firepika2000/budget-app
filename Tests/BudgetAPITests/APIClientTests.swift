@@ -468,6 +468,25 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(transaction.lastModifiedAt, "2026-09-05T13:30:00Z")
     }
 
+    func testTransactionHistoryUsesBoundedAuthorizedContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/t1/history")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertTrue(items.contains(.init(name: "limit", value: "25")))
+            XCTAssertTrue(items.contains(.init(name: "offset", value: "50")))
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
+            let response = Data(#"[{"id":"h1","action":"updated","actor_user_id":"u2","actor_display_name":"Sam","changed_fields":["amount_minor","memo"],"created_at":"2026-09-05T13:30:00Z"}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let history = try await client.transactionHistory(budgetID: "b1", transactionID: "t1", limit: 25, offset: 50, token: "secret")
+        XCTAssertEqual(history.first?.actorDisplayName, "Sam")
+        XCTAssertEqual(history.first?.changedFields, ["amount_minor", "memo"])
+    }
+
     func testTransactionBrowserEncodesTypedFiltersAndDecodesPage() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

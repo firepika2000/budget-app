@@ -1552,6 +1552,14 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let contentType = name.lowercased().hasSuffix(".png") ? "image/png" : "application/pdf"
         return [try JSONDecoder().decode(APITransactionAttachment.self, from: JSONSerialization.data(withJSONObject: ["id": "demo-attachment-\(id)", "transaction_id": id, "filename": name, "content_type": contentType, "byte_count": data.count, "sha256": "demo", "created_at": "2026-09-14T00:00:00Z", "detached_at": NSNull()]))]
     }
+    func transactionHistory(id: String) async throws -> [APITransactionChange] { try requireActiveMembership();
+        let transaction = try attachmentTransaction(id: id)
+        return [try decode([
+            "id": "demo-history-\(id)", "action": "created", "actor_user_id": transaction.member,
+            "actor_display_name": transaction.member, "changed_fields": [],
+            "created_at": ISO8601DateFormatter().string(from: transaction.date),
+        ] as [String: Any])]
+    }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try requireActiveMembership();
         let transaction = try attachmentTransaction(id: id, editing: true)
         guard transaction.status != "reversal" else { throw APIClientError.server(status: 409, message: "Attach supporting documents to the original transaction") }
@@ -2096,6 +2104,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func voidTransaction(id: String, reason: String) async throws { try await credentials.prepare(); _ = try await client.voidTransaction(budgetID: budget.id, transactionID: id, reason: reason, token: token) }
     func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws { try await credentials.prepare(); _ = try await client.createScheduleFromTransaction(budgetID: budget.id, transactionID: id, request: .init(recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, nextDate: operation.nextDate), token: token) }
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await credentials.prepare(); return try await client.transactionAttachments(budgetID: budget.id, transactionID: id, token: token) }
+    func transactionHistory(id: String) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.transactionHistory(budgetID: budget.id, transactionID: id, token: token) }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await credentials.prepare(); _ = try await client.uploadTransactionAttachment(budgetID: budget.id, transactionID: id, filename: filename, contentType: contentType, data: data, token: token) }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await credentials.prepare(); return try await client.downloadTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await credentials.prepare(); try await client.detachTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
@@ -2850,6 +2859,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await services().transactions.attachments(id: id) }
+    func transactionHistory(id: String) async throws -> [APITransactionChange] { try await services().transactions.history(id: id) }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await services().transactions.uploadAttachment(id: id, filename: filename, contentType: contentType, data: data); await refresh() }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await services().transactions.downloadAttachment(transactionID: transactionID, attachmentID: attachmentID) }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await services().transactions.detachAttachment(transactionID: transactionID, attachmentID: attachmentID); await refresh() }
@@ -6032,6 +6042,8 @@ private struct LiveTransactionDetailView: View {
                     if let edited = transaction.lastModifiedAt {
                         LabeledContent("Last edited", value: edited)
                     }
+                    NavigationLink("View Change History") { TransactionChangeHistoryView(transactionID: transaction.id) }
+                        .accessibilityIdentifier("transaction-change-history")
                 }
                 if transaction.status == "voided" { Section("Void audit") { LabeledContent("Reason", value: transaction.voidReason ?? "No reason supplied"); if let reversal = transaction.reversalTransactionID { NavigationLink("Open reversal") { LiveTransactionDetailView(transactionID: reversal) } } } }
                 if transaction.status == "reversal", let original = transaction.reversalOfTransactionID { Section("Reversal audit") { NavigationLink("Open voided original") { LiveTransactionDetailView(transactionID: original) } } }
@@ -6088,6 +6100,87 @@ private struct LiveTransactionDetailView: View {
         isDeleting = true; defer { isDeleting = false }
         do { try await store.duplicateTransaction(id: transaction.id, occurredOn: BudgetWorkspaceStore.dateString(Date())) }
         catch { store.errorMessage = error.localizedDescription }
+    }
+}
+
+private struct TransactionChangeHistoryView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let transactionID: String
+    @State private var changes: [APITransactionChange] = []
+    @State private var loading = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            if loading {
+                HStack { Spacer(); ProgressView(); Spacer() }
+            } else if let errorMessage {
+                ContentUnavailableView("History Unavailable", systemImage: "exclamationmark.triangle", description: Text(errorMessage))
+                Button("Try Again") { Task { await load() } }
+            } else if changes.isEmpty {
+                ContentUnavailableView("No Recorded Changes", systemImage: "clock.arrow.circlepath", description: Text("Future edits to this transaction will appear here."))
+            } else {
+                ForEach(changes) { change in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Label(actionTitle(change.action), systemImage: actionSymbol(change.action)).font(.headline)
+                            Spacer()
+                            Text(change.createdAt).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text(change.actorDisplayName ?? "Household member").font(.subheadline)
+                        if !change.changedFields.isEmpty {
+                            Text("Changed: \(change.changedFields.map(fieldTitle).joined(separator: ", "))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("transaction-change-\(change.id)")
+                }
+            }
+        }
+        .navigationTitle("Change History")
+        .task { await load() }
+    }
+
+    private func load() async {
+        loading = true
+        defer { loading = false }
+        do { changes = try await store.transactionHistory(id: transactionID); errorMessage = nil }
+        catch { errorMessage = error.localizedDescription }
+    }
+    private func actionTitle(_ action: String) -> String {
+        switch action {
+        case "created": "Created"
+        case "updated", "bulk_updated": "Updated"
+        case "duplicated": "Duplicated"
+        case "voided": "Voided"
+        case "reversal_created": "Reversal created"
+        case "schedule_created": "Made recurring"
+        case "attachment_added": "Attachment added"
+        case "attachment_detached": "Attachment removed"
+        case "payee_renamed": "Payee renamed"
+        case "payee_merged": "Payee merged"
+        case "deleted": "Deleted"
+        default: action.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+    private func actionSymbol(_ action: String) -> String {
+        switch action {
+        case "created", "duplicated": "plus.circle"
+        case "voided", "deleted": "minus.circle"
+        case "attachment_added", "attachment_detached": "paperclip"
+        case "schedule_created": "repeat"
+        default: "pencil.circle"
+        }
+    }
+    private func fieldTitle(_ field: String) -> String {
+        let names = [
+            "account_id": "account", "category_id": "category", "amount_minor": "amount",
+            "occurred_on": "date", "payee_name": "payee", "payee_id": "payee",
+            "is_cleared": "clearing", "is_reconciled": "reconciliation",
+            "financial_classification": "classification", "attachment_metadata": "attachments",
+            "reversal_of_transaction_id": "reversal", "reversal_transaction_id": "reversal",
+        ]
+        return names[field] ?? field.replacingOccurrences(of: "_", with: " ")
     }
 }
 

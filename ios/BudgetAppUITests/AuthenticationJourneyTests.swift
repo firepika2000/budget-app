@@ -1769,6 +1769,16 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'transaction-posting-reversal-'")).firstMatch.waitForExistence(timeout: 5))
     }
 
+    func testProductionTransactionDetailExposesAttributedChangeHistory() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+        XCTAssertTrue(app.buttons["transaction-row-t1"].waitForExistence(timeout: 5))
+        app.buttons["transaction-row-t1"].tap()
+        let history = app.buttons["transaction-change-history"]
+        XCTAssertTrue(history.waitForExistence(timeout: 5))
+    }
+
     func testProductionActivityBulkSelectionUpdatesThroughCanonicalWorkspace() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=activity"]

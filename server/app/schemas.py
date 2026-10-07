@@ -786,6 +786,15 @@ class TransactionPageResponse(BaseModel):
     total_count: int
 
 
+class TransactionChangeResponse(BaseModel):
+    id: str
+    action: str
+    actor_user_id: str
+    actor_display_name: Optional[str] = None
+    changed_fields: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
 class PayeeCreate(BaseModel):
     display_name: str = Field(min_length=1, max_length=150)
     default_category_id: Optional[str] = None

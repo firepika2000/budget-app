@@ -342,6 +342,7 @@ protocol TransactionCommandRepository: AnyObject {
     func voidTransaction(id: String, reason: String) async throws
     func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment]
+    func transactionHistory(id: String) async throws -> [APITransactionChange]
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws
@@ -498,6 +499,11 @@ struct TransactionService {
 
     func attachments(id: String) async throws -> [APITransactionAttachment] {
         do { return try await repository.transactionAttachments(id: id) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func history(id: String) async throws -> [APITransactionChange] {
+        do { return try await repository.transactionHistory(id: id) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

@@ -914,6 +914,23 @@ public struct APITransactionPage: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APITransactionChange: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let action: String
+    public let actorUserID: String
+    public let actorDisplayName: String?
+    public let changedFields: [String]
+    public let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, action
+        case actorUserID = "actor_user_id"
+        case actorDisplayName = "actor_display_name"
+        case changedFields = "changed_fields"
+        case createdAt = "created_at"
+    }
+}
+
 public struct APITransactionQuery: Equatable, Sendable {
     public var search: String
     public var accountIDs: [String]
