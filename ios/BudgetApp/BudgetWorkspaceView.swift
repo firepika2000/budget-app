@@ -7751,6 +7751,7 @@ private struct DebtInterestContent: View {
 
 private struct DebtPayoffContent: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
+    @EnvironmentObject private var session: AppSession
     let report: APIDebtReport
     @Binding var editingTermsAccount: APIAccount?
     let termsRevision: Int
@@ -7764,6 +7765,14 @@ private struct DebtPayoffContent: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var calculationID = UUID()
+
+    private struct SavedScenario: Codable {
+        let strategy: String
+        let rollover: Bool
+        let extraPreset: Int64
+        let customExtra: String
+        let customOrder: [String]
+    }
 
     private var extraPayment: Int64? {
         if extraPreset >= 0 { return extraPreset }
@@ -7794,6 +7803,9 @@ private struct DebtPayoffContent: View {
                 CurrencyAmountField("Extra each month", text: $customExtra, currencyCode: store.budget.currencyCode, allowsZero: true)
                     .accessibilityIdentifier("debt-payoff-custom-extra")
             }
+            Button("Reset saved scenario", systemImage: "arrow.counterclockwise") { resetScenario() }
+                .disabled(isDefaultScenario)
+                .accessibilityIdentifier("debt-payoff-reset-scenario")
         }
         if strategy == "custom" { customOrderSection }
         if isLoading { Section { HStack { Spacer(); ProgressView("Calculating projected payoff…"); Spacer() } } }
@@ -7824,7 +7836,12 @@ private struct DebtPayoffContent: View {
             guard !Task.isCancelled else { return }
             await calculate()
         }
-        .onAppear { if customOrder.isEmpty { customOrder = report.accounts.map(\.accountID) } }
+        .onAppear { restoreScenario() }
+        .onChange(of: strategy) { _, _ in saveScenario() }
+        .onChange(of: rollover) { _, _ in saveScenario() }
+        .onChange(of: extraPreset) { _, _ in saveScenario() }
+        .onChange(of: customExtra) { _, _ in saveScenario() }
+        .onChange(of: customOrder) { _, _ in saveScenario() }
         .alert("Unable to calculate payoff", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
     }
 
@@ -7912,6 +7929,42 @@ private struct DebtPayoffContent: View {
     private func accountName(_ id: String) -> String { report.accounts.first(where: { $0.accountID == id })?.accountName ?? "Debt account" }
     private func friendlyMissingField(_ field: String) -> String { field == "debt_terms" ? "Debt Terms" : field.replacingOccurrences(of: "_", with: " ") }
     private func move(_ id: String, by offset: Int) { guard let index = customOrder.firstIndex(of: id) else { return }; let destination = index + offset; guard customOrder.indices.contains(destination) else { return }; customOrder.swapAt(index, destination) }
+    private var scenarioPreferenceKey: String {
+        let identity = session.profile?.id ?? (session.sourceMode == .deterministic ? "deterministic-demo-user" : "local-device-owner")
+        return "budget.debt.payoff.scenario.\(identity).\(store.budget.id)"
+    }
+    private var visibleAccountIDs: [String] { report.accounts.map(\.accountID) }
+    private var isDefaultScenario: Bool {
+        strategy == "avalanche" && rollover && extraPreset == 0 && customExtra.isEmpty && customOrder == visibleAccountIDs
+    }
+    private func restoreScenario() {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: scenarioPreferenceKey),
+           let saved = try? JSONDecoder().decode(SavedScenario.self, from: data) {
+            strategy = ["avalanche", "snowball", "custom"].contains(saved.strategy) ? saved.strategy : "avalanche"
+            rollover = saved.rollover
+            extraPreset = [Int64(0), 5_000, 10_000, 25_000, -1].contains(saved.extraPreset) ? saved.extraPreset : 0
+            customExtra = saved.customExtra
+            let retained = saved.customOrder.filter(visibleAccountIDs.contains)
+            customOrder = retained + visibleAccountIDs.filter { !retained.contains($0) }
+        } else {
+            customOrder = visibleAccountIDs
+        }
+    }
+    private func saveScenario() {
+        guard !customOrder.isEmpty else { return }
+        let saved = SavedScenario(strategy: strategy, rollover: rollover, extraPreset: extraPreset, customExtra: customExtra, customOrder: customOrder)
+        guard let data = try? JSONEncoder().encode(saved) else { return }
+        UserDefaults.standard.set(data, forKey: scenarioPreferenceKey)
+    }
+    private func resetScenario() {
+        strategy = "avalanche"
+        rollover = true
+        extraPreset = 0
+        customExtra = ""
+        customOrder = visibleAccountIDs
+        UserDefaults.standard.removeObject(forKey: scenarioPreferenceKey)
+    }
     private func calculate() async {
         guard let extraPayment else { return }
         let operation = UUID()

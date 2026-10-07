@@ -47,6 +47,12 @@ Screen action lets a personal shortcut choose Home, Plan, Activity, Accounts, In
 The intent only records a one-shot route into the existing production shell. It does not read private
 budget values, create transactions or bypass authentication and budget authorization.
 
+Debt scenario continuity checkpoint: the payoff planner now restores strategy, rollover behavior,
+extra-payment choice and custom account order per signed-in user and budget on the current device.
+Removed or newly visible debt accounts are reconciled into the saved order safely, and an explicit
+reset returns to the read-only default scenario. Persistence changes only projection preferences;
+it does not mutate transactions, balances, Plan assignments, schedules or canonical Debt Terms.
+
 ## STOP FEATURE EXPANSION — human Live Debt P0
 
 Human reports repeated PlatformAlertController presentation conflicts followed by code-9 debugger
