@@ -5556,6 +5556,7 @@ private struct LivePlanView: View {
                 // must activate only its own intent (especially Previous versus Today/Next).
                 .buttonStyle(.borderless)
                 Picker("Focus", selection: $focus) { ForEach(PlanFocus.allCases) { Text($0.rawValue).tag($0) } }
+                    .accessibilityIdentifier("plan-focus-picker")
                 }
             }
             ForEach(store.groups.sorted { $0.sortOrder < $1.sortOrder }) { group in
@@ -5617,6 +5618,10 @@ private struct LivePlanView: View {
         .sheet(isPresented: $showCategories) { LiveCategoryManagementView() }
         .sheet(isPresented: $showGroupCreation) { GroupCreationView() }
         .task { await store.loadPlanningGuidance() }
+        .onAppear { restoreFocusPreference() }
+        .onChange(of: focus) { _, value in
+            UserDefaults.standard.set(value.rawValue, forKey: focusPreferenceKey)
+        }
     }
     private var activationExplanation: String {
         if store.groups.isEmpty { return "Category groups organize the purposes in your plan. Create one first, then add a category for something you spend or save for." }
@@ -5647,6 +5652,15 @@ private struct LivePlanView: View {
     private func reload() async { await store.refresh() }
     private func canManage(_ category: APICategory) -> Bool { store.budget.can("manage_budget_structure") || (store.budget.can("manage_own_categories") && category.delegatedUserID == session.profile?.id) }
     private func changeMonth(_ value: Int) { if let next = Calendar.current.date(byAdding: .month, value: value, to: store.planMonth) { store.planMonth = next; Task { await reload() } } }
+    private var focusPreferenceKey: String {
+        let identity = session.profile?.id ?? (session.sourceMode == .deterministic ? "deterministic-demo-user" : "local-device-owner")
+        return "budget.plan.focus.\(identity).\(store.budget.id)"
+    }
+    private func restoreFocusPreference() {
+        guard let saved = UserDefaults.standard.string(forKey: focusPreferenceKey),
+              let value = PlanFocus(rawValue: saved) else { return }
+        focus = value
+    }
 }
 
 private struct AllocationHistoryView: View {

@@ -443,6 +443,15 @@ final class AuthenticationJourneyTests: XCTestCase {
         focus.tap()
         app.buttons["Favorites"].tap()
         XCTAssertTrue(app.buttons["plan-category-dining"].waitForExistence(timeout: 5))
+
+        app.buttons["workspace-tab-home"].tap()
+        XCTAssertTrue(app.navigationBars["Home"].waitForExistence(timeout: 5))
+        app.buttons["workspace-tab-plan"].tap()
+        XCTAssertTrue(app.buttons["Focus, Favorites"].waitForExistence(timeout: 5))
+
+        // Leave the shared deterministic preference clean for unrelated journeys.
+        app.buttons["Focus, Favorites"].tap()
+        app.buttons["All"].tap()
     }
 
     func testProductionInsightsRemainReachableInDarkModeAtAccessibilityTextSize() {

@@ -1577,3 +1577,12 @@ leaving a discoverable way to restore it. Authorized owners can open the canonic
 from the manager, hide or reactivate a category, and retain its complete financial history; delegated
 category managers see only categories assigned to them. The existing server mutation and capability
 checks remain authoritative. No allocation or transaction values change when visibility changes.
+
+### Persistent Plan focus — 2026-10-07
+
+The shared production Plan now remembers the selected All, Favorites, Underfunded, Overspent,
+Funded, or Available view per user and budget. Switching tabs or returning to the budget restores
+the user's working context without changing shared financial data. The preference remains
+device-local and contains only the focus name; category visibility and amounts continue to come
+from the authoritative scoped workspace. The existing production favorite/filter journey now also
+covers shell reconstruction and resets its deterministic preference after verification.
