@@ -230,6 +230,8 @@ public struct APIClient {
     }
     public func updateCategoryGroup(budgetID: String, groupID: String, group: APICategoryGroupUpdate, token: String) async throws -> APICategoryGroup { try await send(path: "api/v1/budgets/\(budgetID)/category-groups/\(groupID)", method: "PUT", token: token, body: group) }
     public func deleteCategoryGroup(budgetID: String, groupID: String, token: String) async throws { let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/category-groups/\(groupID)", method: "DELETE", token: token) }
+    public func reorderCategoryGroups(budgetID: String, orderedIDs: [String], token: String) async throws -> [APICategoryGroup] { try await send(path: "api/v1/budgets/\(budgetID)/category-group-order", method: "PUT", token: token, body: APIOrderedIDsUpdate(orderedIDs: orderedIDs)) }
+    public func reorderCategories(budgetID: String, groupID: String, orderedIDs: [String], token: String) async throws -> [APICategory] { try await send(path: "api/v1/budgets/\(budgetID)/category-order/\(groupID)", method: "PUT", token: token, body: APIOrderedIDsUpdate(orderedIDs: orderedIDs)) }
 
     public func transactions(budgetID: String, token: String) async throws -> [APITransaction] {
         try await send(path: "api/v1/budgets/\(budgetID)/transactions", token: token)

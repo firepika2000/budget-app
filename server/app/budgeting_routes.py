@@ -95,6 +95,7 @@ from .schemas import (
     CategoryGroupCreate,
     CategoryGroupUpdate,
     CategoryGroupResponse,
+    OrderedIDsUpdate,
     CategoryMonthSummary,
     CategoryResponse,
     MonthSummaryResponse,
@@ -725,6 +726,24 @@ def create_category_group(
     return group
 
 
+@router.put("/category-group-order", response_model=list[CategoryGroupResponse])
+def reorder_category_groups(
+    budget_id: str, body: OrderedIDsUpdate, user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[CategoryGroup]:
+    require_budget_capability(db, user, budget_id, "manage_budget_structure")
+    groups = list(db.scalars(select(CategoryGroup).where(
+        CategoryGroup.budget_id == budget_id, CategoryGroup.is_archived.is_(False)
+    )))
+    by_id = {item.id: item for item in groups}
+    if len(body.ordered_ids) != len(set(body.ordered_ids)) or set(body.ordered_ids) != set(by_id):
+        raise HTTPException(status_code=422, detail="Order must contain every active category group exactly once")
+    for index, item_id in enumerate(body.ordered_ids):
+        by_id[item_id].sort_order = index * 10
+    db.commit()
+    return [by_id[item_id] for item_id in body.ordered_ids]
+
+
 @router.put("/category-groups/{group_id}", response_model=CategoryGroupResponse)
 def update_category_group(budget_id: str, group_id: str, body: CategoryGroupUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> CategoryGroup:
     require_budget_capability(db, user, budget_id, "manage_budget_structure")
@@ -786,6 +805,27 @@ def list_categories(
         "is_favorite": category.id in favorite_orders,
         "favorite_sort_order": favorite_orders.get(category.id),
     } for category in categories]
+
+
+@router.put("/category-order/{group_id}", response_model=list[CategoryResponse])
+def reorder_categories(
+    budget_id: str, group_id: str, body: OrderedIDsUpdate,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> list[Category]:
+    require_budget_capability(db, user, budget_id, "manage_budget_structure")
+    group = db.get(CategoryGroup, group_id)
+    if group is None or group.budget_id != budget_id:
+        raise HTTPException(status_code=404, detail="Category group not found")
+    categories = list(db.scalars(select(Category).where(
+        Category.budget_id == budget_id, Category.group_id == group_id,
+    )))
+    by_id = {item.id: item for item in categories}
+    if len(body.ordered_ids) != len(set(body.ordered_ids)) or set(body.ordered_ids) != set(by_id):
+        raise HTTPException(status_code=422, detail="Order must contain every category in the group exactly once")
+    for index, item_id in enumerate(body.ordered_ids):
+        by_id[item_id].sort_order = index * 10
+    db.commit()
+    return [by_id[item_id] for item_id in body.ordered_ids]
 
 
 @router.put("/categories/{category_id}/favorite", response_model=CategoryResponse)

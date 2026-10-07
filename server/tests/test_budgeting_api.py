@@ -166,6 +166,28 @@ def test_category_customization_round_trips_through_list_update_and_favorite(
     assert invalid.status_code == 422
 
 
+def test_category_and_group_reordering_is_atomic_and_authorized(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory, name="Ordered Plan")
+    groups = [client.post(f"/api/v1/budgets/{budget['id']}/category-groups", headers=auth(owner_token), json={"name": name}).json() for name in ("First", "Second")]
+    categories = [client.post(f"/api/v1/budgets/{budget['id']}/categories", headers=auth(owner_token), json={"group_id": groups[0]["id"], "name": name}).json() for name in ("One", "Two", "Three")]
+
+    reordered_groups = client.put(f"/api/v1/budgets/{budget['id']}/category-group-order", headers=auth(owner_token), json={"ordered_ids": [groups[1]["id"], groups[0]["id"]]})
+    assert reordered_groups.status_code == 200, reordered_groups.text
+    assert [row["id"] for row in reordered_groups.json()] == [groups[1]["id"], groups[0]["id"]]
+    reordered_categories = client.put(f"/api/v1/budgets/{budget['id']}/category-order/{groups[0]['id']}", headers=auth(owner_token), json={"ordered_ids": [categories[2]["id"], categories[0]["id"], categories[1]["id"]]})
+    assert reordered_categories.status_code == 200, reordered_categories.text
+    assert [row["id"] for row in reordered_categories.json()] == [categories[2]["id"], categories[0]["id"], categories[1]["id"]]
+
+    invalid = client.put(f"/api/v1/budgets/{budget['id']}/category-order/{groups[0]['id']}", headers=auth(owner_token), json={"ordered_ids": [categories[0]["id"]]})
+    assert invalid.status_code == 422
+    listed = client.get(f"/api/v1/budgets/{budget['id']}/categories", headers=auth(owner_token)).json()
+    assert [row["id"] for row in listed if row["group_id"] == groups[0]["id"]] == [categories[2]["id"], categories[0]["id"], categories[1]["id"]]
+
+    viewer = add_member(session_factory, client, "view", budget["id"])
+    denied = client.put(f"/api/v1/budgets/{budget['id']}/category-group-order", headers=auth(viewer), json={"ordered_ids": [groups[1]["id"], groups[0]["id"]]})
+    assert denied.status_code == 403
+
+
 def add_member(session_factory, client, permission, budget_id):
     with session_factory() as db:
         household = db.query(Household).one()

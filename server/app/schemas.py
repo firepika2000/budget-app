@@ -316,6 +316,10 @@ class CategoryGroupCreate(BaseModel):
     sort_order: int = 0
 
 
+class OrderedIDsUpdate(BaseModel):
+    ordered_ids: list[str] = Field(min_length=1, max_length=500)
+
+
 class CategoryGroupUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     sort_order: int = 0

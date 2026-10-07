@@ -364,6 +364,8 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
     func createRequest(_ value: APIFinancialRequestCreate) async throws
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws
     func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws
+    func reorderCategoryGroups(_ orderedIDs: [String]) async throws
+    func reorderCategories(groupID: String, orderedIDs: [String]) async throws
     func deleteGroup(id: String, currentName: String?) async throws
     func deleteCategory(id: String) async throws
     func setCategoryFavorite(id: String, isFavorite: Bool, sortOrder: Int) async throws
@@ -1869,6 +1871,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         demo.renameCategoryGroup(from: currentName, to: value.name, sortOrder: value.sortOrder)
         demo.archivedGroups.remove(currentName); if value.isArchived { demo.archivedGroups.insert(value.name) }
     }
+    func reorderCategoryGroups(_ orderedIDs: [String]) async throws { try requireActiveMembership(); demo.groupOrder = orderedIDs.compactMap { id in demo.groupOrder.first { "demo-group-\($0.lowercased().replacingOccurrences(of: " ", with: "-"))" == id } } }
+    func reorderCategories(groupID: String, orderedIDs: [String]) async throws { try requireActiveMembership(); let ranks = Dictionary(uniqueKeysWithValues: orderedIDs.enumerated().map { ($0.element, $0.offset) }); demo.categories.sort { (ranks[$0.id] ?? Int.max) < (ranks[$1.id] ?? Int.max) } }
     func deleteGroup(id: String, currentName: String?) async throws { try requireActiveMembership();
         guard let currentName else { throw workspaceRepositoryError("Category group not found.") }
         guard !demo.categories.contains(where: { $0.group == currentName }) else { throw workspaceRepositoryError("Move or archive every category before deleting this group") }
@@ -2199,6 +2203,8 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func createRequest(_ value: APIFinancialRequestCreate) async throws { try await credentials.prepare(); _ = try await client.createFinancialRequest(budgetID: budget.id, request: value, token: token) }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws { try await credentials.prepare(); _ = try await client.updateCategory(budgetID: budget.id, categoryID: id, category: value, token: token); if existingDelegatedUserID != delegatedUserID { _ = try await client.updateCategoryDelegation(budgetID: budget.id, categoryID: id, delegatedUserID: delegatedUserID, token: token) } }
     func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { try await credentials.prepare(); _ = try await client.updateCategoryGroup(budgetID: budget.id, groupID: id, group: value, token: token) }
+    func reorderCategoryGroups(_ orderedIDs: [String]) async throws { try await credentials.prepare(); _ = try await client.reorderCategoryGroups(budgetID: budget.id, orderedIDs: orderedIDs, token: token) }
+    func reorderCategories(groupID: String, orderedIDs: [String]) async throws { try await credentials.prepare(); _ = try await client.reorderCategories(budgetID: budget.id, groupID: groupID, orderedIDs: orderedIDs, token: token) }
     func deleteGroup(id: String, currentName: String?) async throws { try await credentials.prepare(); try await client.deleteCategoryGroup(budgetID: budget.id, groupID: id, token: token) }
     func deleteCategory(id: String) async throws { try await credentials.prepare(); try await client.deleteCategory(budgetID: budget.id, categoryID: id, token: token) }
     func setCategoryFavorite(id: String, isFavorite: Bool, sortOrder: Int) async throws { try await credentials.prepare(); if isFavorite { _ = try await client.favoriteCategory(budgetID: budget.id, categoryID: id, sortOrder: sortOrder, token: token) } else { try await client.unfavoriteCategory(budgetID: budget.id, categoryID: id, token: token) } }
@@ -3156,6 +3162,12 @@ final class BudgetWorkspaceStore: ObservableObject {
     func updateGroup(id: String, value: APICategoryGroupUpdate) async throws {
         try await commands().updateGroup(id: id, currentName: groups.first(where: { $0.id == id })?.name, value: value)
         await refresh()
+    }
+    func reorderCategoryGroups(_ orderedIDs: [String]) async throws {
+        try await commands().reorderCategoryGroups(orderedIDs); await refresh()
+    }
+    func reorderCategories(groupID: String, orderedIDs: [String]) async throws {
+        try await commands().reorderCategories(groupID: groupID, orderedIDs: orderedIDs); await refresh()
     }
     func deleteGroup(id: String) async throws {
         try await commands().deleteGroup(id: id, currentName: groups.first(where: { $0.id == id })?.name)
@@ -5946,7 +5958,10 @@ private struct LiveGroupManagementView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var editing: APICategoryGroup?
     @State private var showGroupCreation = false
-    var body: some View { NavigationStack { List { ForEach(store.groups.sorted { $0.sortOrder < $1.sortOrder }) { group in Button { editing=group } label: { HStack { VStack(alignment:.leading){Text(group.name);Text(group.isArchived ? "Hidden" : "Visible").font(.caption).foregroundStyle(.secondary)};Spacer();Image(systemName:"chevron.right").font(.caption).foregroundStyle(.tertiary) } } } }.navigationTitle("Category Groups").toolbar { ToolbarItem(placement:.cancellationAction){Button("Add Group",systemImage:"plus"){showGroupCreation=true}.accessibilityIdentifier("manage-groups-add-action")};ToolbarItem(placement:.confirmationAction){Button("Done"){dismiss()}} }.sheet(item:$editing){LiveGroupEditor(group:$0)}.sheet(isPresented:$showGroupCreation){GroupCreationView()} } }
+    private var activeGroups: [APICategoryGroup] { store.groups.filter { !$0.isArchived }.sorted { $0.sortOrder < $1.sortOrder } }
+    private var archivedGroups: [APICategoryGroup] { store.groups.filter(\.isArchived).sorted { $0.sortOrder < $1.sortOrder } }
+    var body: some View { NavigationStack { List { Section("Active") { ForEach(activeGroups) { group in Button { editing=group } label: { HStack { VStack(alignment:.leading){Text(group.name);Text("Visible").font(.caption).foregroundStyle(.secondary)};Spacer();Image(systemName:"chevron.right").font(.caption).foregroundStyle(.tertiary) } } }.onMove(perform: moveGroups) }; if !archivedGroups.isEmpty { Section("Hidden") { ForEach(archivedGroups) { group in Button { editing=group } label: { HStack { Text(group.name); Spacer(); Image(systemName:"archivebox.fill").foregroundStyle(.secondary) } } } } } }.navigationTitle("Category Groups").toolbar { ToolbarItem(placement:.cancellationAction){Button("Add Group",systemImage:"plus"){showGroupCreation=true}.accessibilityIdentifier("manage-groups-add-action")};ToolbarItem{EditButton()};ToolbarItem(placement:.confirmationAction){Button("Done"){dismiss()}} }.sheet(item:$editing){LiveGroupEditor(group:$0)}.sheet(isPresented:$showGroupCreation){GroupCreationView()} } }
+    private func moveGroups(from source: IndexSet, to destination: Int) { var reordered=activeGroups; reordered.move(fromOffsets:source,toOffset:destination); Task { try? await store.reorderCategoryGroups(reordered.map(\.id)) } }
 }
 
 private struct LiveCategoryManagementView: View {
@@ -5990,6 +6005,12 @@ private struct LiveCategoryManagementView: View {
                                 }
                                 .accessibilityIdentifier("manage-category-\(category.id)")
                             }
+                            .onMove { source, destination in
+                                guard search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                                var reordered = categories
+                                reordered.move(fromOffsets: source, toOffset: destination)
+                                Task { try? await store.reorderCategories(groupID: group.id, orderedIDs: reordered.map(\.id)) }
+                            }
                         }
                     }
                 }
@@ -6000,7 +6021,7 @@ private struct LiveCategoryManagementView: View {
             .searchable(text: $search, prompt: "Search categories")
             .navigationTitle("Categories")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem { EditButton().disabled(!search.isEmpty) }; ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
         .accessibilityIdentifier("category-management-screen")
     }

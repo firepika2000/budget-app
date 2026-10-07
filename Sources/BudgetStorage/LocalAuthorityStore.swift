@@ -454,6 +454,18 @@ public actor LocalAuthorityStore {
         try requireOneChange(changes, record: "category")
     }
 
+    public func reorderCategoryGroups(budgetID: String, orderedIDs: [String]) async throws {
+        try await database.transaction(orderedIDs.enumerated().map { index, id in
+            .init("UPDATE category_groups SET sort_order=? WHERE id=? AND budget_id=?", values: [.integer(Int64(index * 10)), .text(id), .text(budgetID)])
+        })
+    }
+
+    public func reorderCategories(budgetID: String, groupID: String, orderedIDs: [String]) async throws {
+        try await database.transaction(orderedIDs.enumerated().map { index, id in
+            .init("UPDATE categories SET sort_order=? WHERE id=? AND budget_id=? AND group_id=?", values: [.integer(Int64(index * 10)), .text(id), .text(budgetID), .text(groupID)])
+        })
+    }
+
     public func insertPayee(_ value: LocalPayeeRecord) async throws {
         try await database.execute(.init(
             "INSERT INTO payees(id,budget_id,name,normalized_name,default_category_id,is_archived) VALUES (?,?,?,?,?,?)",

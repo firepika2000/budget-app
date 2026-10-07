@@ -745,6 +745,12 @@ public struct APICategoryGroupUpdate: Encodable, Sendable {
     enum CodingKeys: String, CodingKey { case name; case sortOrder="sort_order", isArchived="is_archived" }
 }
 
+public struct APIOrderedIDsUpdate: Encodable, Sendable {
+    public let orderedIDs: [String]
+    public init(orderedIDs: [String]) { self.orderedIDs = orderedIDs }
+    enum CodingKeys: String, CodingKey { case orderedIDs = "ordered_ids" }
+}
+
 public struct APICategoryGroupCreate: Encodable, Sendable {
     public let name: String
     public let sortOrder: Int

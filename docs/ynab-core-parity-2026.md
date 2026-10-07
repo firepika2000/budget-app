@@ -37,7 +37,7 @@ YNAB behavior summaries are grounded in current first-party documentation (see r
 | Category groups | Group categories | features | `category-groups` CRUD (create) | create-on-new-category | Both | yes | PARTIAL | P2 | No rename/reorder/delete group in UI | Owner can create/rename/reorder/delete groups |
 | Create category | Add category to a group | features | `POST /categories` | Plan → Add category | Both | yes | IMPLEMENTED | — | — | New category appears, persists |
 | Rename category | Edit name | features | `PUT /categories/{id}` | Manage Category sheet | Both | yes | IMPLEMENTED | — | — | Rename persists+reloads |
-| Reorder categories/groups | Drag to reorder | features | `sort_order` field | **no UI** | — | — | MISSING | P2 | Add drag-reorder writing `sort_order` | Reorder persists and reflects in Plan order |
+| Reorder categories/groups | Drag to reorder | features | Atomic order endpoints | Native Edit/drag management | Both | yes | IMPLEMENTED | — | — | Reorder persists and reflects in Plan order |
 | Hide/archive/unhide | Hide inactive categories, historical reports retain them | features | `is_archived` | Manage Category → Archived toggle | Both | yes | IMPLEMENTED | — | — | Archive hides from new spend/assign; unarchive restores |
 
 ## 3. Month navigation, rollover, overspending, money moves
