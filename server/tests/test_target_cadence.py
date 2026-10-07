@@ -26,6 +26,23 @@ def test_annual_target_after_due_month_uses_next_occurrence():
     assert target.target_date == date(2027, 1, 31)
 
 
+def test_refill_balance_recommends_replacing_current_month_spending():
+    target = CategoryTarget(
+        target_type="savings_balance", target_amount_minor=10_000,
+        minimum_contribution_minor=0, is_active=True,
+    )
+    before_spending = target_funding(
+        target, month=date(2026, 10, 1), assigned_minor=2_000, available_minor=7_000,
+    )
+    after_spending = target_funding(
+        target, month=date(2026, 10, 1), assigned_minor=2_000, available_minor=4_000,
+    )
+    assert before_spending.recommended_contribution_minor == 5_000
+    assert before_spending.underfunded_minor == 3_000
+    assert after_spending.recommended_contribution_minor == 8_000
+    assert after_spending.underfunded_minor == 6_000
+
+
 @pytest.mark.parametrize("vector", json.loads(Path(__file__).with_name("target_cadence_vectors.json").read_text()), ids=lambda v: v["name"])
 def test_shared_target_vectors(vector):
     anchor = date.fromisoformat(vector["anchor"])

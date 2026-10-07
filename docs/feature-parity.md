@@ -30,7 +30,7 @@ Status meanings:
 | Capability | Status | Budget App position |
 |---|---|---|
 | Monthly contribution/spending target | IMPLEMENTED | Generalized target model with amount, minimum, priority, date, and recurrence. |
-| Refill/up-to behavior | PARTIALLY IMPLEMENTED | Can be represented in planning UI; explicit persisted behavior needs extension. |
+| Refill/up-to behavior | IMPLEMENTED | Persisted Refill Balance targets recommend the exact gap after rollover and current-month spending without moving money automatically. |
 | Weekly/yearly/custom recurrence | PARTIALLY IMPLEMENTED | Recurrence months exists for targets; weekly/custom cadence is not complete. |
 | Target by date and savings balance | IMPLEMENTED | Forecast calculations and progress UI. |
 | Debt payoff target | PARTIALLY IMPLEMENTED | Native local payoff simulator; dedicated persisted payoff target is future. |
