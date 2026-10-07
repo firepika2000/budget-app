@@ -75,6 +75,12 @@ forecast expansion honors it, and realization/skip pause the item instead of adv
 field is metadata-only until an occurrence is explicitly realized, so account balances, category
 activity and Available-to-Assign remain unchanged by creation or editing.
 
+Scheduled occurrence-count checkpoint (2026-10-07): recurring items can alternatively specify an
+exact remaining count (1–10,000) across Server, Local Device, Demo, portable transfer and the shared
+editor. Forecasting caps projected rows without mutating the schedule. Enter Now and Skip Next each
+consume one occurrence; an exhausted schedule remains manageable but inactive. Create rejects zero,
+one-time items and combined date/count limits; update permits zero only for an inactive item.
+
 Local statement-import durability checkpoint (2026-10-07): on-device statement review/history is
 now stored in the Local Device SQLite authority instead of an in-memory dictionary. Unfinished,
 approved, cancelled and undone batch metadata survives repository reconstruction and app relaunch,

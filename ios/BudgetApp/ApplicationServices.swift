@@ -103,16 +103,17 @@ struct ScheduleOperation: Equatable, Sendable {
     let recurrenceUnit: String
     let intervalCount: Int
     let endDate: String?
+    let remainingOccurrences: Int?
     let memo: String
     let financialClassification: String?
     let isActive: Bool
 
     init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, payeeID: String? = nil, name: String,
          amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1,
-         endDate: String? = nil, memo: String = "", financialClassification: String? = nil, isActive: Bool = true) {
+         endDate: String? = nil, remainingOccurrences: Int? = nil, memo: String = "", financialClassification: String? = nil, isActive: Bool = true) {
         self.accountID = accountID; self.destinationAccountID = destinationAccountID; self.categoryID = categoryID; self.payeeID = payeeID
         self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate; self.recurrenceUnit = recurrenceUnit
-        self.intervalCount = intervalCount; self.endDate = endDate; self.memo = memo; self.financialClassification = financialClassification; self.isActive = isActive
+        self.intervalCount = intervalCount; self.endDate = endDate; self.remainingOccurrences = remainingOccurrences; self.memo = memo; self.financialClassification = financialClassification; self.isActive = isActive
     }
 }
 
@@ -683,6 +684,6 @@ extension TransferMoneyOperation {
 
 extension ScheduleOperation {
     var apiValue: APIScheduledTransactionCreate {
-        APIScheduledTransactionCreate(accountID: accountID, destinationAccountID: destinationAccountID, categoryID: categoryID, payeeID: payeeID, name: name, amountMinor: amountMinor, nextDate: nextDate, recurrenceUnit: recurrenceUnit, intervalCount: intervalCount, endDate: endDate, memo: memo, financialClassification: financialClassification, isActive: isActive)
+        APIScheduledTransactionCreate(accountID: accountID, destinationAccountID: destinationAccountID, categoryID: categoryID, payeeID: payeeID, name: name, amountMinor: amountMinor, nextDate: nextDate, recurrenceUnit: recurrenceUnit, intervalCount: intervalCount, endDate: endDate, remainingOccurrences: remainingOccurrences, memo: memo, financialClassification: financialClassification, isActive: isActive)
     }
 }

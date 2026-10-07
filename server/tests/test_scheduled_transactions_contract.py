@@ -225,6 +225,48 @@ def test_schedule_end_date_bounds_forecast_and_deactivates_after_final_realizati
     assert realized.json()["next_date"] is None
 
 
+def test_schedule_occurrence_limit_bounds_forecast_and_deactivates_after_final_realization(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    bounded = create_schedule(
+        client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"],
+        name="Three payments", amount_minor=-700, next_date=future(10), recurrence_unit="weeks",
+        remaining_occurrences=3,
+    )
+    assert bounded.status_code == 201, bounded.text
+    assert bounded.json()["remaining_occurrences"] == 3
+    forecast = client.get(f"/api/v1/budgets/{budget['id']}/forecast?through={horizon()}", headers=auth(owner_token)).json()
+    occurrences = [item for item in forecast["occurrences"] if item["scheduled_transaction_id"] == bounded.json()["id"]]
+    assert len(occurrences) == 3
+
+    mutually_bounded = create_schedule(
+        client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"],
+        name="Ambiguous limit", amount_minor=-100, next_date=future(10), recurrence_unit="weeks",
+        end_date=future(20), remaining_occurrences=2,
+    )
+    assert mutually_bounded.status_code == 422
+
+    final = create_schedule(
+        client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"],
+        name="Last payment", amount_minor=-500, next_date=PAST, recurrence_unit="weeks",
+        remaining_occurrences=1,
+    ).json()
+    realized = client.post(realize_url(budget["id"], final["id"]), headers=auth(owner_token))
+    assert realized.status_code == 200, realized.text
+    assert realized.json()["is_active"] is False
+    assert realized.json()["next_date"] is None
+    saved = client.get(f"{sched_url(budget['id'])}?include_inactive=true", headers=auth(owner_token)).json()
+    assert next(item for item in saved if item["id"] == final["id"])["remaining_occurrences"] == 0
+    exhausted_update = {
+        "account_id": account["id"], "category_id": category["id"], "name": "Last payment",
+        "amount_minor": -500, "next_date": PAST, "recurrence_unit": "weeks",
+        "remaining_occurrences": 0, "is_active": False,
+    }
+    assert client.put(item_url(budget["id"], final["id"]), headers=auth(owner_token), json=exhausted_update).status_code == 200
+    exhausted_update["is_active"] = True
+    assert client.put(item_url(budget["id"], final["id"]), headers=auth(owner_token), json=exhausted_update).status_code == 422
+
+
 # ---------------------------------------------------------------------------
 # Realization + idempotency
 # ---------------------------------------------------------------------------

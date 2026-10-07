@@ -256,6 +256,8 @@ def build_local_device_projection(
             "name": item.name, "amount_minor": item.amount_minor,
             "next_date": _iso(item.next_date), "recurrence_unit": item.recurrence_unit,
             "interval_count": item.interval_count, "memo": item.memo,
+            "end_date": _iso(item.end_date),
+            "remaining_occurrences": item.remaining_occurrences,
             "is_active": item.is_active,
             "financial_classification": item.financial_classification,
             "last_realized_on": _iso(item.last_realized_on),

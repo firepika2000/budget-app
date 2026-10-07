@@ -158,6 +158,10 @@ Recurring schedules can now carry an optional final occurrence date across Live 
 Demo, export/import projection, editor and forecast paths. Forecast expansion stops at that boundary;
 realizing or skipping the final occurrence pauses the schedule without creating extra financial state.
 
+They can alternatively carry an exact remaining-occurrence count. Forecast expansion consumes only a
+temporary copy of the count; Enter Now and Skip Next decrement canonical state and pause at zero.
+Date and count limits are mutually exclusive, and neither changes actual money before realization.
+
 Local Device statement-import review/history is now durable across relaunch and encrypted SQLite
 backup/restore. This closes the prior session-only lifecycle gap while preserving money-neutral staging,
 explicit approval and account-scoped detail access.

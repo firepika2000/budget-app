@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 8
+    public static let schemaVersion = 9
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -307,6 +307,18 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 9 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV9 { try execute(sql, on: database) }
+                try execute("INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)", values: [.integer(9), .text(Self.timestamp())], on: database)
+                try execute("PRAGMA user_version = 9", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -390,6 +402,10 @@ public actor LocalDatabase {
     private static let schemaV8 = [
         "CREATE TABLE statement_imports (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, status TEXT NOT NULL, version INTEGER NOT NULL CHECK(version > 0), source_format TEXT NOT NULL, candidate_count INTEGER NOT NULL CHECK(candidate_count >= 0), payload_json TEXT NOT NULL, created_at TEXT NOT NULL) STRICT",
         "CREATE INDEX idx_statement_imports_account_created ON statement_imports(account_id,created_at DESC,id DESC)"
+    ]
+
+    private static let schemaV9 = [
+        "ALTER TABLE scheduled_transactions ADD COLUMN remaining_occurrences INTEGER CHECK(remaining_occurrences IS NULL OR remaining_occurrences >= 0)"
     ]
 
     private static func execute(

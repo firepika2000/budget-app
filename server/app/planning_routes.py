@@ -401,6 +401,10 @@ def realize_scheduled_transaction(
 
     # Advance the schedule atomically under the row lock so the same occurrence cannot post twice.
     following = next_occurrence(realized_on, schedule.recurrence_unit, schedule.interval_count)
+    if schedule.remaining_occurrences is not None:
+        schedule.remaining_occurrences -= 1
+        if schedule.remaining_occurrences == 0:
+            following = None
     if following is not None and schedule.end_date is not None and following > schedule.end_date:
         following = None
     schedule.last_realized_on = realized_on

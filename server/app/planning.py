@@ -35,11 +35,16 @@ def occurrences_between(
 ) -> list[date]:
     result: list[date] = []
     occurrence = schedule.next_date
+    remaining = schedule.remaining_occurrences
     for _ in range(1000):
         if occurrence > through or (schedule.end_date is not None and occurrence > schedule.end_date):
             break
+        if remaining is not None and remaining <= 0:
+            break
         if occurrence >= start:
             result.append(occurrence)
+        if remaining is not None:
+            remaining -= 1
         following = next_occurrence(occurrence, schedule.recurrence_unit, schedule.interval_count)
         if following is None:
             break

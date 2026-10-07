@@ -683,7 +683,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             scheduleVisible(item) && visibleAccounts.contains { $0.id == item.accountID }
                 && (item.destinationAccountID == nil || visibleAccounts.contains { $0.id == item.destinationAccountID })
                 && (item.categoryID.map(categoryIDs.contains) ?? !demo.isRestricted)
-        }.map { item in ["id": item.id, "budget_id": budget.id, "account_id": item.accountID, "destination_account_id": item.destinationAccountID.map { $0 as Any } ?? NSNull(), "category_id": item.categoryID.map { $0 as Any } ?? NSNull(), "name": item.name, "amount_minor": item.amount, "next_date": item.nextDate, "recurrence_unit": item.recurrenceUnit, "interval_count": item.intervalCount, "end_date": item.endDate.map { $0 as Any } ?? NSNull(), "memo": item.memo, "financial_classification": item.financialClassification ?? NSNull(), "is_active": item.isActive, "last_realized_on": item.lastRealizedOn.map { $0 as Any } ?? NSNull()] })
+        }.map { item in ["id": item.id, "budget_id": budget.id, "account_id": item.accountID, "destination_account_id": item.destinationAccountID.map { $0 as Any } ?? NSNull(), "category_id": item.categoryID.map { $0 as Any } ?? NSNull(), "name": item.name, "amount_minor": item.amount, "next_date": item.nextDate, "recurrence_unit": item.recurrenceUnit, "interval_count": item.intervalCount, "end_date": item.endDate.map { $0 as Any } ?? NSNull(), "remaining_occurrences": item.remainingOccurrences.map { $0 as Any } ?? NSNull(), "memo": item.memo, "financial_classification": item.financialClassification ?? NSNull(), "is_active": item.isActive, "last_realized_on": item.lastRealizedOn.map { $0 as Any } ?? NSNull()] })
         let forecastStart = Date.demo(monthsAgo: 0, day: 5), forecastThrough = Calendar.current.date(byAdding: .day, value: 90, to: forecastStart)!
         var projected = Dictionary(uniqueKeysWithValues: visibleAccounts.map { ($0.id, $0.balance) })
         let onBudgetAccounts = visibleAccounts.filter(\.isOnBudget)
@@ -692,13 +692,16 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         var expanded: [(date: Date, schedule: APIScheduledTransaction)] = []
         var occurrenceRows: [[String: Any]] = []
         for item in scheduleRows where item.isActive {
-            var occurrence = try validateScheduleShape(.init(accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amountMinor: item.amountMinor, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: item.intervalCount, endDate: item.endDate, memo: item.memo, financialClassification: item.financialClassification, isActive: item.isActive))
+            var occurrence = try validateScheduleShape(.init(accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amountMinor: item.amountMinor, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: item.intervalCount, endDate: item.endDate, remainingOccurrences: item.remainingOccurrences, memo: item.memo, financialClassification: item.financialClassification, isActive: item.isActive))
             var expandedCount = 0
+            var remaining = item.remainingOccurrences
             while occurrence <= forecastThrough {
                 if let endDate = item.endDate, occurrence > BudgetWorkspaceStore.parseDate(endDate) { break }
+                if let remaining, remaining <= 0 { break }
                 guard expandedCount < 1_000 else { throw workspaceRepositoryError("Schedule produces too many forecast occurrences.") }
                 expandedCount += 1
                 if occurrence >= forecastStart { expanded.append((occurrence, item)) }
+                if let count = remaining { remaining = count - 1 }
                 guard let next = BudgetWorkspaceStore.nextScheduledDate(from: occurrence, unit: item.recurrenceUnit, interval: item.intervalCount) else { break }
                 guard next > occurrence else { throw workspaceRepositoryError("Schedule recurrence must advance its date.") }
                 occurrence = next
@@ -2023,19 +2026,27 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                 throw APIClientError.server(status: 422, message: "Schedule end date must be on or after the next occurrence")
             }
         }
+        guard operation.remainingOccurrences == nil ||
+                (operation.recurrenceUnit != "once" && ((1...10_000).contains(operation.remainingOccurrences!) || (operation.remainingOccurrences == 0 && !operation.isActive))),
+              operation.endDate == nil || operation.remainingOccurrences == nil else {
+            throw APIClientError.server(status: 422, message: "Choose either an end date or an occurrence limit")
+        }
         return date
     }
     func createSchedule(_ operation: ScheduleOperation) async throws { try requireActiveMembership();
         try requireTransactionCapability("manage_planning")
         try validateScheduleShape(operation)
+        guard operation.remainingOccurrences != 0 else {
+            throw APIClientError.server(status: 422, message: "A new occurrence limit must be at least one")
+        }
         try validateScheduleResources(accountID: operation.accountID, destinationID: operation.destinationAccountID, categoryID: operation.categoryID)
-        demo.schedules.append(.init(id: UUID().uuidString, accountID: operation.accountID, destinationAccountID: operation.destinationAccountID, categoryID: operation.categoryID, name: operation.name, amount: operation.amountMinor, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, endDate: operation.endDate, memo: operation.memo, financialClassification: operation.financialClassification, isActive: operation.isActive))
+        demo.schedules.append(.init(id: UUID().uuidString, accountID: operation.accountID, destinationAccountID: operation.destinationAccountID, categoryID: operation.categoryID, name: operation.name, amount: operation.amountMinor, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, endDate: operation.endDate, remainingOccurrences: operation.remainingOccurrences, memo: operation.memo, financialClassification: operation.financialClassification, isActive: operation.isActive))
     }
     func updateSchedule(id: String, operation: ScheduleOperation) async throws { try requireActiveMembership();
         let index = try scheduleCommandSource(id: id, capability: "manage_planning")
         try validateScheduleShape(operation)
         try validateScheduleResources(accountID: operation.accountID, destinationID: operation.destinationAccountID, categoryID: operation.categoryID)
-        demo.schedules[index].accountID = operation.accountID; demo.schedules[index].destinationAccountID = operation.destinationAccountID; demo.schedules[index].categoryID = operation.categoryID; demo.schedules[index].name = operation.name; demo.schedules[index].amount = operation.amountMinor; demo.schedules[index].nextDate = operation.nextDate; demo.schedules[index].recurrenceUnit = operation.recurrenceUnit; demo.schedules[index].intervalCount = operation.intervalCount; demo.schedules[index].endDate = operation.endDate; demo.schedules[index].memo = operation.memo; demo.schedules[index].financialClassification = operation.financialClassification; demo.schedules[index].isActive = operation.isActive
+        demo.schedules[index].accountID = operation.accountID; demo.schedules[index].destinationAccountID = operation.destinationAccountID; demo.schedules[index].categoryID = operation.categoryID; demo.schedules[index].name = operation.name; demo.schedules[index].amount = operation.amountMinor; demo.schedules[index].nextDate = operation.nextDate; demo.schedules[index].recurrenceUnit = operation.recurrenceUnit; demo.schedules[index].intervalCount = operation.intervalCount; demo.schedules[index].endDate = operation.endDate; demo.schedules[index].remainingOccurrences = operation.remainingOccurrences; demo.schedules[index].memo = operation.memo; demo.schedules[index].financialClassification = operation.financialClassification; demo.schedules[index].isActive = operation.isActive
     }
     func deleteSchedule(id: String) async throws { try requireActiveMembership();
         let index = try scheduleCommandSource(id: id, capability: "manage_planning")
@@ -2044,7 +2055,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation { try requireActiveMembership();
         let index = try scheduleCommandSource(id: id, capability: "create_transaction")
         let item = demo.schedules[index]; guard item.isActive else { throw workspaceRepositoryError("Scheduled transaction is inactive") }
-        let due = try validateScheduleShape(.init(accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amountMinor: item.amount, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: item.intervalCount, endDate: item.endDate, memo: item.memo, financialClassification: item.financialClassification, isActive: item.isActive))
+        let due = try validateScheduleShape(.init(accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amountMinor: item.amount, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: item.intervalCount, endDate: item.endDate, remainingOccurrences: item.remainingOccurrences, memo: item.memo, financialClassification: item.financialClassification, isActive: item.isActive))
         try validateScheduleResources(accountID: item.accountID, destinationID: item.destinationAccountID, categoryID: item.categoryID)
         guard Calendar.current.startOfDay(for: due) <= Calendar.current.startOfDay(for: now()) else { throw workspaceRepositoryError("This scheduled transaction is not due yet") }
         let before = Set(demo.transactions.map(\.id))
@@ -2055,8 +2066,12 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         }
         let transactionIDs = demo.transactions.map(\.id).filter { !before.contains($0) }
         let candidate = BudgetWorkspaceStore.nextScheduledDate(from: due, unit: item.recurrenceUnit, interval: item.intervalCount)
-        let next = candidate.flatMap { value in item.endDate.map { value <= BudgetWorkspaceStore.parseDate($0) } ?? true ? value : nil }
-        demo.schedules[index].lastRealizedOn = item.nextDate; demo.schedules[index].isActive = next != nil; if let next { demo.schedules[index].nextDate = BudgetWorkspaceStore.dateString(next) }
+        let remaining = item.remainingOccurrences.map { max(0, $0 - 1) }
+        let next: Date? = candidate.flatMap { value -> Date? in
+            guard remaining != 0 else { return nil }
+            return item.endDate.map { value <= BudgetWorkspaceStore.parseDate($0) } ?? true ? value : nil
+        }
+        demo.schedules[index].remainingOccurrences = remaining; demo.schedules[index].lastRealizedOn = item.nextDate; demo.schedules[index].isActive = next != nil; if let next { demo.schedules[index].nextDate = BudgetWorkspaceStore.dateString(next) }
         return ScheduledRealizationObservation(scheduleID: id, transactionIDs: transactionIDs, realizedOn: item.nextDate, nextDate: next.map(BudgetWorkspaceStore.dateString), isActive: next != nil, lastRealizedOn: item.nextDate)
     }
     func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws { try requireActiveMembership();
@@ -3324,8 +3339,9 @@ final class BudgetWorkspaceStore: ObservableObject {
             unit: schedule.recurrenceUnit,
             interval: schedule.intervalCount
         )
-        let followingDate = candidateDate.flatMap { candidate in
-            schedule.endDate.map { candidate <= Self.parseDate($0) } ?? true ? candidate : nil
+        let followingDate: Date? = candidateDate.flatMap { candidate -> Date? in
+            guard schedule.remainingOccurrences != 1 else { return nil }
+            return schedule.endDate.map { candidate <= Self.parseDate($0) } ?? true ? candidate : nil
         }
         let operation = ScheduleOperation(
             accountID: schedule.accountID,
@@ -3338,6 +3354,7 @@ final class BudgetWorkspaceStore: ObservableObject {
             recurrenceUnit: schedule.recurrenceUnit,
             intervalCount: schedule.intervalCount,
             endDate: schedule.endDate,
+            remainingOccurrences: schedule.remainingOccurrences.map { max(0, $0 - 1) },
             memo: schedule.memo,
             financialClassification: schedule.financialClassification,
             isActive: followingDate != nil
@@ -6478,6 +6495,7 @@ private struct ScheduledTransactionRow: View {
     private var kind: ScheduledKind { item.destinationAccountID != nil ? .transfer : item.amountMinor > 0 ? .income : .expense }
     private var recurrence: String {
         let cadence = item.recurrenceUnit == "once" ? "Once" : "Every \(item.intervalCount == 1 ? "" : "\(item.intervalCount) ")\(item.recurrenceUnit.dropLast(item.intervalCount == 1 ? 1 : 0))"
+        if let remaining = item.remainingOccurrences { return remaining == 0 ? "\(cadence) · Completed" : "\(cadence) · \(remaining) remaining" }
         return item.endDate.map { "\(cadence) through \(BudgetWorkspaceStore.compactDate($0))" } ?? cadence
     }
     var body: some View {
@@ -6527,6 +6545,8 @@ private struct LiveScheduledTransactionEditor: View {
     @State private var intervalCount: Int
     @State private var usesEndDate: Bool
     @State private var endDate: Date
+    @State private var usesOccurrenceLimit: Bool
+    @State private var occurrenceLimit: Int
     @State private var memo: String
     @State private var active: Bool
     @State private var saving = false
@@ -6539,11 +6559,11 @@ private struct LiveScheduledTransactionEditor: View {
         self.schedule = schedule; self.currencyCode = currencyCode
         let inferred: ScheduledKind = schedule?.destinationAccountID != nil ? .transfer : (schedule?.amountMinor ?? -1) > 0 ? .income : .expense
         let initialNext = schedule.map { BudgetWorkspaceStore.parseDate($0.nextDate) } ?? Calendar.current.date(byAdding: .day, value: 1, to: Date())!
-        _kind = State(initialValue: inferred); _accountID = State(initialValue: schedule?.accountID ?? ""); _destinationAccountID = State(initialValue: schedule?.destinationAccountID ?? ""); _categoryID = State(initialValue: schedule?.categoryID ?? ""); _payeeID = State(initialValue: schedule?.payeeID); _name = State(initialValue: schedule?.name ?? ""); _amount = State(initialValue: CurrencyText.editable(abs(schedule?.amountMinor ?? 0), currencyCode: currencyCode)); _nextDate = State(initialValue: initialNext); _recurrenceUnit = State(initialValue: schedule?.recurrenceUnit ?? "months"); _intervalCount = State(initialValue: schedule?.intervalCount ?? 1); _usesEndDate = State(initialValue: schedule?.endDate != nil); _endDate = State(initialValue: schedule?.endDate.map(BudgetWorkspaceStore.parseDate) ?? Calendar.current.date(byAdding: .year, value: 1, to: initialNext)!); _memo = State(initialValue: schedule?.memo ?? ""); _active = State(initialValue: schedule?.isActive ?? true)
+        _kind = State(initialValue: inferred); _accountID = State(initialValue: schedule?.accountID ?? ""); _destinationAccountID = State(initialValue: schedule?.destinationAccountID ?? ""); _categoryID = State(initialValue: schedule?.categoryID ?? ""); _payeeID = State(initialValue: schedule?.payeeID); _name = State(initialValue: schedule?.name ?? ""); _amount = State(initialValue: CurrencyText.editable(abs(schedule?.amountMinor ?? 0), currencyCode: currencyCode)); _nextDate = State(initialValue: initialNext); _recurrenceUnit = State(initialValue: schedule?.recurrenceUnit ?? "months"); _intervalCount = State(initialValue: schedule?.intervalCount ?? 1); _usesEndDate = State(initialValue: schedule?.endDate != nil); _endDate = State(initialValue: schedule?.endDate.map(BudgetWorkspaceStore.parseDate) ?? Calendar.current.date(byAdding: .year, value: 1, to: initialNext)!); _usesOccurrenceLimit = State(initialValue: schedule?.remainingOccurrences != nil); _occurrenceLimit = State(initialValue: max(1, schedule?.remainingOccurrences ?? 12)); _memo = State(initialValue: schedule?.memo ?? ""); _active = State(initialValue: schedule?.isActive ?? true)
     }
     private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: store.budget.currencyCode), value > 0 else { return nil }; return value }
     private var due: Bool { schedule?.isActive == true && Calendar.current.startOfDay(for: nextDate) <= Calendar.current.startOfDay(for: Date()) }
-    private var valid: Bool { parsed != nil && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !accountID.isEmpty && (kind != .expense || !categoryID.isEmpty) && (kind != .transfer || !destinationAccountID.isEmpty && destinationAccountID != accountID) && (!usesEndDate || recurrenceUnit != "once" && endDate >= nextDate) }
+    private var valid: Bool { parsed != nil && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !accountID.isEmpty && (kind != .expense || !categoryID.isEmpty) && (kind != .transfer || !destinationAccountID.isEmpty && destinationAccountID != accountID) && (!usesEndDate || recurrenceUnit != "once" && endDate >= nextDate) && (!usesOccurrenceLimit || recurrenceUnit != "once") }
     var body: some View {
         NavigationStack {
             Form {
@@ -6560,11 +6580,13 @@ private struct LiveScheduledTransactionEditor: View {
                     DatePicker("Next occurrence", selection: $nextDate, in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
                         .accessibilityIdentifier("schedule-next-date")
                         .onChange(of: nextDate) { _, value in if endDate < value { endDate = value } }
-                    Picker("Repeats", selection: $recurrenceUnit) { Text("Once").tag("once"); Text("Days").tag("days"); Text("Weeks").tag("weeks"); Text("Months").tag("months"); Text("Years").tag("years") }.onChange(of: recurrenceUnit) { _, value in if value == "once" { usesEndDate = false } }
+                    Picker("Repeats", selection: $recurrenceUnit) { Text("Once").tag("once"); Text("Days").tag("days"); Text("Weeks").tag("weeks"); Text("Months").tag("months"); Text("Years").tag("years") }.onChange(of: recurrenceUnit) { _, value in if value == "once" { usesEndDate = false; usesOccurrenceLimit = false } }
                     if recurrenceUnit != "once" { Stepper("Every \(intervalCount) \(recurrenceUnit)", value: $intervalCount, in: 1...365) }
                     if recurrenceUnit != "once" {
-                        Toggle("End on a date", isOn: $usesEndDate)
+                        Toggle("End on a date", isOn: $usesEndDate).onChange(of: usesEndDate) { _, enabled in if enabled { usesOccurrenceLimit = false } }
                         if usesEndDate { DatePicker("Final occurrence", selection: $endDate, in: nextDate..., displayedComponents: .date).accessibilityIdentifier("schedule-end-date") }
+                        Toggle("End after a number of occurrences", isOn: $usesOccurrenceLimit).onChange(of: usesOccurrenceLimit) { _, enabled in if enabled { usesEndDate = false } }
+                        if usesOccurrenceLimit { Stepper("\(occurrenceLimit) occurrences remaining", value: $occurrenceLimit, in: 1...10_000).accessibilityIdentifier("schedule-occurrence-limit") }
                     }
                     Toggle("Active", isOn: $active)
                     if kind == .income { Label("Future income remains forecast-only and is not available to spend until entered.", systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary) }
@@ -6584,7 +6606,7 @@ private struct LiveScheduledTransactionEditor: View {
             .alert(schedule == nil ? "Unable to create schedule" : "Unable to update schedule", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
         }
     }
-    private func payload(isActive: Bool? = nil) -> ScheduleOperation { .init(accountID: accountID, destinationAccountID: kind == .transfer ? destinationAccountID : nil, categoryID: kind == .expense ? categoryID : nil, payeeID: kind == .transfer ? nil : payeeID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: kind == .expense ? -(parsed ?? 0) : parsed ?? 0, nextDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrenceUnit, intervalCount: recurrenceUnit == "once" ? 1 : intervalCount, endDate: usesEndDate && recurrenceUnit != "once" ? BudgetWorkspaceStore.dateString(endDate) : nil, memo: memo, isActive: isActive ?? active) }
+    private func payload(isActive: Bool? = nil) -> ScheduleOperation { .init(accountID: accountID, destinationAccountID: kind == .transfer ? destinationAccountID : nil, categoryID: kind == .expense ? categoryID : nil, payeeID: kind == .transfer ? nil : payeeID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: kind == .expense ? -(parsed ?? 0) : parsed ?? 0, nextDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrenceUnit, intervalCount: recurrenceUnit == "once" ? 1 : intervalCount, endDate: usesEndDate && recurrenceUnit != "once" ? BudgetWorkspaceStore.dateString(endDate) : nil, remainingOccurrences: usesOccurrenceLimit && recurrenceUnit != "once" ? occurrenceLimit : nil, memo: memo, isActive: isActive ?? active) }
     private func save() async { saving = true; defer { saving = false }; do { if let schedule { try await store.updateSchedule(id: schedule.id, operation: payload()) } else { try await store.createSchedule(payload()) }; dismiss() } catch { self.error = error.localizedDescription } }
     private func remove() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { try await store.deleteSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
     private func realize() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { _ = try await store.realizeSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }

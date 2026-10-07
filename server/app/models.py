@@ -464,6 +464,7 @@ class ScheduledTransaction(Base):
     recurrence_unit: Mapped[str] = mapped_column(String(20))
     interval_count: Mapped[int] = mapped_column(Integer, default=1)
     end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    remaining_occurrences: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     memo: Mapped[str] = mapped_column(String(500), default="")
     financial_classification: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

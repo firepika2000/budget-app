@@ -477,6 +477,7 @@ class ScheduledTransactionCreate(BaseModel):
     recurrence_unit: Literal["once", "days", "weeks", "months", "years"]
     interval_count: int = Field(default=1, gt=0, le=365)
     end_date: Optional[date] = None
+    remaining_occurrences: Optional[int] = Field(default=None, ge=1, le=10_000)
     memo: str = Field(default="", max_length=500)
     financial_classification: Optional[Literal["interest_charge"]] = None
 
@@ -495,11 +496,22 @@ class ScheduledTransactionCreate(BaseModel):
             raise ValueError("schedule end date cannot precede the next occurrence")
         if self.recurrence_unit == "once" and self.end_date is not None:
             raise ValueError("one-time schedules do not use an end date")
+        if self.recurrence_unit == "once" and self.remaining_occurrences is not None:
+            raise ValueError("one-time schedules do not use an occurrence limit")
+        if self.end_date is not None and self.remaining_occurrences is not None:
+            raise ValueError("choose either an end date or an occurrence limit")
         return self
 
 
 class ScheduledTransactionUpdate(ScheduledTransactionCreate):
+    remaining_occurrences: Optional[int] = Field(default=None, ge=0, le=10_000)
     is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_completed_occurrence_limit(self) -> "ScheduledTransactionUpdate":
+        if self.remaining_occurrences == 0 and self.is_active:
+            raise ValueError("an exhausted occurrence limit must be inactive")
+        return self
 
 
 class ScheduledTransactionResponse(BaseModel):
@@ -517,6 +529,7 @@ class ScheduledTransactionResponse(BaseModel):
     recurrence_unit: str
     interval_count: int
     end_date: Optional[date] = None
+    remaining_occurrences: Optional[int] = None
     memo: str
     financial_classification: Optional[str] = None
     is_active: bool
