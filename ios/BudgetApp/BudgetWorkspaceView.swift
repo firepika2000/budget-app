@@ -3435,6 +3435,7 @@ struct BudgetWorkspaceView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store: BudgetWorkspaceStore
     @StateObject private var dropboxBackup = DropboxBackupCoordinator()
+    @StateObject private var scheduledReminders: ScheduledReminderSettings
     @State private var showingSettings = false
     @State private var showingOnboarding = false
     @State private var didEvaluateOnboarding = false
@@ -3442,10 +3443,10 @@ struct BudgetWorkspaceView: View {
     @State private var quickEntryRequest = 0
     private let selectionOverride: Binding<Int>?
 
-    init(budget: APIBudget) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _selectedTab = State(initialValue: 0); selectionOverride = nil }
-    init(store: BudgetWorkspaceStore) { _store = StateObject(wrappedValue: store); _selectedTab = State(initialValue: Self.launchTab); selectionOverride = nil }
-    private init(demo: Bool) { _store = StateObject(wrappedValue: .demo()); _selectedTab = State(initialValue: Self.launchTab); selectionOverride = nil }
-    init(testStore: BudgetWorkspaceStore, selection: Binding<Int>) { _store = StateObject(wrappedValue: testStore); _selectedTab = State(initialValue: 0); selectionOverride = selection }
+    init(budget: APIBudget) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: budget.id)); _selectedTab = State(initialValue: 0); selectionOverride = nil }
+    init(store: BudgetWorkspaceStore) { _store = StateObject(wrappedValue: store); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: store.budget.id)); _selectedTab = State(initialValue: Self.launchTab); selectionOverride = nil }
+    private init(demo: Bool) { let store = BudgetWorkspaceStore.demo(); _store = StateObject(wrappedValue: store); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: store.budget.id)); _selectedTab = State(initialValue: Self.launchTab); selectionOverride = nil }
+    init(testStore: BudgetWorkspaceStore, selection: Binding<Int>) { _store = StateObject(wrappedValue: testStore); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: testStore.budget.id)); _selectedTab = State(initialValue: 0); selectionOverride = selection }
     static func demo() -> BudgetWorkspaceView { BudgetWorkspaceView(demo: true) }
     private var tabSelection: Binding<Int> { selectionOverride ?? $selectedTab }
     private var activeTab: Int { selectionOverride?.wrappedValue ?? selectedTab }
@@ -3537,6 +3538,7 @@ struct BudgetWorkspaceView: View {
                 store.updateLiveCredentials(serverURL: serverURL, token: token)
             }
             await reload()
+            await scheduledReminders.synchronize(store.scheduledTransactions)
             await runAutomaticDropboxBackupIfDue()
             if !didEvaluateOnboarding {
                 didEvaluateOnboarding = true
@@ -3566,6 +3568,9 @@ struct BudgetWorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: WorkspaceShortcutRequest.notification)) { _ in
             consumeWorkspaceShortcutRequest()
         }
+        .onChange(of: store.scheduledTransactions) { _, schedules in
+            Task { await scheduledReminders.synchronize(schedules) }
+        }
         .task(id: session.sourceMode) {
             guard session.sourceMode == .liveServer else { return }
             while !Task.isCancelled {
@@ -3579,7 +3584,7 @@ struct BudgetWorkspaceView: View {
             Button("Retry") { Task { await reload() } }; Button("Cancel", role: .cancel) {}
         } message: { Text(store.errorMessage ?? "Unknown error") }
         .sheet(isPresented: $showingSettings) {
-            WorkspaceProfileView(store: store, dropboxBackup: dropboxBackup) {
+            WorkspaceProfileView(store: store, dropboxBackup: dropboxBackup, scheduledReminders: scheduledReminders) {
                 if store.onboardingCompleted { store.restartOnboarding() } else { store.resumeOnboarding() }
                 showingOnboarding = true
             }
@@ -3731,6 +3736,7 @@ private struct WorkspaceProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var store: BudgetWorkspaceStore
     @ObservedObject var dropboxBackup: DropboxBackupCoordinator
+    @ObservedObject var scheduledReminders: ScheduledReminderSettings
     let startOnboarding: () -> Void
     @State private var showHousehold = false
     @State private var showConnection = false
@@ -3776,6 +3782,18 @@ private struct WorkspaceProfileView: View {
                     .accessibilityIdentifier("appearance-settings-action")
                     Text("System follows your iPhone appearance automatically. Light and Dark stay fixed on this device.")
                         .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Reminders") {
+                    Toggle("Scheduled item reminders", isOn: Binding(
+                        get: { scheduledReminders.isEnabled },
+                        set: { enabled in Task { await scheduledReminders.setEnabled(enabled, schedules: store.scheduledTransactions) } }
+                    ))
+                    .accessibilityIdentifier("scheduled-reminders-toggle")
+                    Text("ClearPocket can show a generic reminder at 9:00 AM on upcoming due dates. Lock-screen alerts never include amounts, payees, accounts, categories, or household names.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    if let message = scheduledReminders.errorMessage {
+                        Text(message).font(.footnote).foregroundStyle(.red)
+                    }
                 }
                 if session.sourceMode == .liveServer {
                     Section("Budgets") {

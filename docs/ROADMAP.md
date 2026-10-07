@@ -146,6 +146,10 @@ Private receipt assistance now satisfies the product-specification proposal boun
 locally, suggests payee, exact amount, date and a visible category, and requires both explicit Apply
 and the normal transaction Save. It neither uploads the receipt nor creates financial state on its own.
 
+Privacy-safe local reminders now cover active scheduled-item due dates without turning notifications
+into another financial-data surface. They are explicitly enabled per device and budget, bounded to
+the next 60 days, refreshed from authoritative schedule state, and contain only generic alert text.
+
 The sections that follow retain the original milestone scope and historical context. References
 to v0.9 distribution or v1.x import in those sections use the old numbering; the table above is the
 current authorized execution sequence. Human acceptance is pending and no retest is requested now.

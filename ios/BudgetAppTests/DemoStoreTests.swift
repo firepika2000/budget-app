@@ -33,6 +33,18 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(suggestion.amountMinor, 200)
     }
 
+    func testScheduledReminderDateIsBoundedAndFutureOnly() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 7, hour: 8)))
+        let fire = ScheduledReminderSettings.fireDate(nextDate: "2026-10-08", now: now, calendar: calendar)
+        XCTAssertEqual(calendar.dateComponents([.year, .month, .day, .hour], from: try XCTUnwrap(fire)), DateComponents(year: 2026, month: 10, day: 8, hour: 9))
+        let afterMorningReminder = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 7, hour: 10)))
+        XCTAssertNil(ScheduledReminderSettings.fireDate(nextDate: "2026-10-07", now: afterMorningReminder, calendar: calendar))
+        XCTAssertNil(ScheduledReminderSettings.fireDate(nextDate: "2027-01-01", now: now, calendar: calendar))
+        XCTAssertNil(ScheduledReminderSettings.fireDate(nextDate: "not-a-date", now: now, calendar: calendar))
+    }
+
     func testQuickEntryIntentRequestIsConsumedExactlyOnce() {
         UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey)
         defer { UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey) }

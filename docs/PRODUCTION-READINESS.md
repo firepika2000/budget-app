@@ -55,6 +55,14 @@ on the existing iPhone 17 Pro Max / iOS 27 Simulator. Camera capture and automat
 remain intentionally outside this checkpoint; the established post-save attachment workflow handles
 retention, encryption and authorization.
 
+Scheduled-reminder checkpoint (2026-10-07): Profile & Settings now offers opt-in, device-local
+reminders for active scheduled items. ClearPocket asks for system notification permission only when
+the user enables the feature, replaces its own budget-scoped pending requests whenever authoritative
+schedules change, excludes paused/past/distant items, and bounds the next 60 days to 50 requests.
+Every lock-screen notification is deliberately generic—no amount, payee, account, category, budget,
+member or household detail is persisted in notification content. Denied permission leaves the toggle
+off and provides a direct explanation; disabling removes the app's pending requests for that budget.
+
 Transaction audit checkpoint after `e96701f`: transaction detail now exposes bounded,
 actor-attributed change history from the immutable server audit ledger. The route rechecks current
 account/category visibility before loading events and returns action, actor, timestamp and changed
