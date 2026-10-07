@@ -22,7 +22,7 @@ Status meanings:
 | Future-month assignments | IMPLEMENTED | Month-addressed ledger and summaries. |
 | Underfunded/overspent state | IMPLEMENTED | Native filtered views and attention surfaces. |
 | Category notes, icons, customization | PARTIALLY IMPLEMENTED | Icons and note presentation exist; full live editing/reordering is future work. |
-| Hidden/inactive categories | PARTIALLY IMPLEMENTED | Archived backend state exists; richer native management remains. |
+| Hidden/inactive categories | IMPLEMENTED | The production category manager lists active and hidden categories, supports search, preserves history, and lets authorized users hide or restore categories. |
 | Focused/custom views | PARTIALLY IMPLEMENTED | All, Underfunded, Overspent, and Pinned demo views; persistence remains future. |
 | Category templates/presets | FUTURE | No template engine yet. |
 

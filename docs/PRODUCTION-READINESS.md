@@ -1568,3 +1568,12 @@ loaded by the production workspace, so restricted members cannot infer hidden co
 notes, or actors. Pull-to-refresh reloads authoritative state. This adds no mutation path and changes
 no account, allocation, target, forecast, or transaction semantics. Focused production-composition
 verification covers discovery through the real Plan menu and rendered ledger content.
+
+### Hidden-category lifecycle closure — 2026-10-07
+
+Plan now includes a searchable category manager that lists both active and archived categories by
+group. This closes the prior one-way lifecycle where archiving removed a category from Plan without
+leaving a discoverable way to restore it. Authorized owners can open the canonical category editor
+from the manager, hide or reactivate a category, and retain its complete financial history; delegated
+category managers see only categories assigned to them. The existing server mutation and capability
+checks remain authoritative. No allocation or transaction values change when visibility changes.

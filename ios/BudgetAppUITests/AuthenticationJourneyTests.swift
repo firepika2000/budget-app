@@ -1133,6 +1133,41 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Available to Assign'")).firstMatch.exists)
     }
 
+    func testProductionCategoryManagerCanRestoreArchivedCategory() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=plan", "--skip-guided-onboarding"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 8))
+        app.buttons["plan-add-menu"].tap()
+        let manage = app.buttons["manage-categories-action"]
+        XCTAssertTrue(manage.waitForExistence(timeout: 5))
+        manage.tap()
+
+        XCTAssertTrue(app.navigationBars["Categories"].waitForExistence(timeout: 5))
+        let groceries = app.buttons["manage-category-groceries"]
+        XCTAssertTrue(groceries.waitForExistence(timeout: 5))
+        groceries.tap()
+        XCTAssertTrue(app.navigationBars["Manage Category"].waitForExistence(timeout: 5))
+        let archived = app.switches["Archived"]
+        XCTAssertTrue(archived.exists)
+        archived.tap()
+        app.buttons["Save"].tap()
+
+        XCTAssertTrue(app.navigationBars["Categories"].waitForExistence(timeout: 5))
+        let archivedRow = app.buttons["manage-category-groceries"]
+        XCTAssertTrue(archivedRow.waitForExistence(timeout: 5))
+        archivedRow.tap()
+        XCTAssertEqual(app.switches["Archived"].value as? String, "1")
+        app.switches["Archived"].tap()
+        app.buttons["Save"].tap()
+        let restoredRow = app.buttons["manage-category-groceries"]
+        XCTAssertTrue(restoredRow.waitForExistence(timeout: 5))
+        restoredRow.tap()
+        XCTAssertEqual(app.switches["Archived"].value as? String, "0")
+    }
+
     func testProductionPlanKeepsCurrentAndFutureAssignmentsIndependent() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=plan"]
