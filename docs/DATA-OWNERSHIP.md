@@ -453,7 +453,7 @@ The reverse direction now begins with an owner-only, server-authoritative compat
 `GET /api/v1/budgets/{budget_id}/local-device-transfer-eligibility`. The Live Backup & Recovery
 screen evaluates that gate with the current rotated credential. A personal budget with no
 server-only records is identified as eligible for a future verified cutover; shared identities,
-invitations/access history, delegated requests or allowances, grants, unsupported audit/import
+invitations/access history, delegated requests or allowances, grants, unsupported legacy assignment
 history and non-owner financial attribution produce bounded,
 human-readable blockers. Non-owners receive the same not-found response as an invisible budget.
 
@@ -507,6 +507,14 @@ includes them automatically with SQLite, and the cross-language phone-to-server 
 v5 rows while remaining able to reconstruct reserve events from supported v4 authorities. Transfer
 eligibility therefore no longer rejects an otherwise personal budget merely because it contains an
 ordinary transaction edit or funded card purchase; non-owner actor attribution remains a blocker.
+
+Local schema statement-import history is now part of the same typed Server-to-Local projection.
+Review candidates retain their exact dates, minor-unit amounts, source text, decisions, posted or
+reversal identities, ordering, and batch state. Server-derived match suggestions are deliberately
+discarded because they are a refreshable cache rather than financial authority. A normal personal
+budget is therefore no longer trapped on Server merely because its owner imported a bank statement;
+legacy monthly-assignment history remains an explicit compatibility blocker until it has an exact
+Local Device representation.
 
 ## Remaining implementation sequence
 

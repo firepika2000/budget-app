@@ -177,6 +177,20 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
         content=receipt,
     )
     assert uploaded.status_code == 201, uploaded.text
+    staged = client.post(
+        f"{path}/accounts/{account['id']}/statement-imports",
+        headers={
+            **auth(owner_token), "Content-Type": "application/octet-stream",
+            "X-Statement-Format": "csv", "X-Statement-Currency": "USD",
+            "X-CSV-Date-Column": "Date", "X-CSV-Amount-Column": "Amount",
+            "X-CSV-Payee-Column": "Payee", "X-CSV-Memo-Column": "Memo",
+            "X-Statement-Date-Order": "ymd",
+        },
+        content=b"Date,Amount,Payee,Memo\n2026-09-03,-2.50,Portable import,Retain review\n",
+    )
+    assert staged.status_code == 201, staged.text
+    eligibility = client.get(f"{path}/local-device-transfer-eligibility", headers=auth(owner_token))
+    assert eligibility.status_code == 200 and eligibility.json()["eligible"] is True
 
     response = client.get(f"{path}/local-device-transfer", headers=auth(owner_token))
 
@@ -200,6 +214,32 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
         "size_bytes": len(receipt), "sha256": uploaded.json()["sha256"],
         "object_name": uploaded.json()["id"], "created_at": uploaded.json()["created_at"],
     }]
+    staged_created_at = staged.json()["created_at"].removesuffix("Z")
+    assert len(value["statement_imports"]) == 1
+    imported = value["statement_imports"][0]
+    assert imported == {
+        **{key: imported[key] for key in ("payload",)},
+        "id": staged.json()["id"], "budget_id": budget["id"], "account_id": account["id"],
+        "status": "review", "version": 1, "source_format": "csv", "candidate_count": 1,
+        "created_at": staged_created_at,
+    }
+    assert imported["payload"] == {
+        **{key: imported["payload"][key] for key in ("candidates",)},
+        **{key: staged.json()[key] for key in (
+            "id", "budget_id", "account_id", "status", "source_format", "candidate_count",
+        )},
+        "version": 1, "created_at": staged_created_at,
+    }
+    candidate = imported["payload"]["candidates"][0]
+    assert candidate["source_row"] == 2
+    assert candidate["occurred_on"] == "2026-09-03"
+    assert candidate["amount_minor"] == -250
+    assert candidate["payee"] == "Portable import"
+    assert candidate["memo"] == "Retain review"
+    assert candidate["exact_transaction_ids"] == []
+    assert candidate["possible_transaction_ids"] == []
+    assert candidate["suggestions_truncated"] is False
+    assert candidate["duplicate_source_row"] is False
     observations = value["observations"]
     assert observations["transaction_count"] == 2
     assert observations["transactions"] == [{

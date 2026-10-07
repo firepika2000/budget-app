@@ -1227,7 +1227,8 @@ extension DemoStore {
     func localAuthoritySnapshot(identity: LocalAuthorityIdentity, preservingAttachments: [LocalAttachmentRecord] = [],
                                 debtTerms: [LocalAccountDebtTermsRecord] = [],
                                 transactionChanges: [LocalTransactionChangeRecord] = [],
-                                creditReserveEvents: [LocalCreditReserveEventRecord] = []) throws -> LocalAuthoritySnapshot {
+                                creditReserveEvents: [LocalCreditReserveEventRecord] = [],
+                                statementImports: [LocalStatementImportRecord] = []) throws -> LocalAuthoritySnapshot {
         let stamp = ISO8601DateFormatter().string(from: planningNow())
         for name in groupOrder { ensureGroupIdentity(name) }
         let groupIDs = groupIdentityByName
@@ -1272,6 +1273,6 @@ extension DemoStore {
                 return LocalCreditReserveAttributionRecord(transactionID: transactionID, categoryID: categoryID, amountMinor: amount)
             }
         }
-        return LocalAuthoritySnapshot(identity: identity, accounts: accountRows, groups: groupRows, categories: categoryRows, payees: payeeRows, payeeAliases: aliases, transactions: transactionRows, allocations: allocationRows, reconciliations: reconciliations, targets: targets, schedules: scheduleRows, attachments: preservingAttachments, debtTerms: debtTerms, cashRolloverPolicies: rollover, creditReserveAttributions: reserveRows, transactionChanges: transactionChanges, creditReserveEvents: creditReserveEvents)
+        return LocalAuthoritySnapshot(identity: identity, accounts: accountRows, groups: groupRows, categories: categoryRows, payees: payeeRows, payeeAliases: aliases, transactions: transactionRows, allocations: allocationRows, reconciliations: reconciliations, targets: targets, schedules: scheduleRows, attachments: preservingAttachments, debtTerms: debtTerms, cashRolloverPolicies: rollover, creditReserveAttributions: reserveRows, transactionChanges: transactionChanges, creditReserveEvents: creditReserveEvents, statementImports: statementImports)
     }
 }

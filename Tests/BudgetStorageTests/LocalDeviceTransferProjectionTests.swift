@@ -37,6 +37,34 @@ final class LocalDeviceTransferProjectionTests: XCTestCase {
         XCTAssertEqual(result.snapshot.categories.first?.isEmergencyFund, false)
     }
 
+    func testProjectionPreservesStatementImportReviewHistory() throws {
+        var value = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture()) as? [String: Any])
+        let payload: [String: Any] = [
+            "id": "import-1", "budget_id": "budget", "account_id": "checking",
+            "status": "review", "version": 1, "source_format": "csv",
+            "candidate_count": 1, "created_at": "2026-09-03T12:00:00+00:00",
+            "candidates": [[
+                "source_row": 2, "occurred_on": "2026-09-03", "amount_minor": -250,
+                "payee": "Portable import", "memo": "Retain review",
+                "exact_transaction_ids": [], "possible_transaction_ids": [],
+                "suggestions_truncated": false, "duplicate_source_row": false,
+            ]],
+        ]
+        value["statement_imports"] = [[
+            "id": "import-1", "budget_id": "budget", "account_id": "checking",
+            "status": "review", "version": 1, "source_format": "csv",
+            "candidate_count": 1, "created_at": "2026-09-03T12:00:00+00:00",
+            "payload": payload,
+        ]]
+
+        let result = try LocalDeviceTransferProjectionDecoder.decode(
+            JSONSerialization.data(withJSONObject: value)
+        )
+        let imported = try XCTUnwrap(result.snapshot.statementImports.first)
+        XCTAssertEqual(imported.id, "import-1")
+        XCTAssertEqual(imported.amountFromFirstCandidate, -250)
+    }
+
     func testProjectionRejectsTamperedFinancialObservationAndMixedBudgetIdentity() throws {
         var value = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture()) as? [String: Any])
         var observations = try XCTUnwrap(value["observations"] as? [String: Any])
@@ -98,5 +126,15 @@ final class LocalDeviceTransferProjectionTests: XCTestCase {
           "observations":{"transaction_count":1,"transactions":[{"account_id":"checking","status":"posted","amount_minor":10000}],"allocation_count":2,"allocations":[{"bucket":"category","category_id":"groceries","amount_minor":4000},{"bucket":"ready_to_assign","category_id":null,"amount_minor":-4000}],"reserve_count":0,"reserves":[]}
         }
         """#.utf8)
+    }
+}
+
+private extension LocalStatementImportRecord {
+    var amountFromFirstCandidate: Int64? {
+        guard let data = payloadJSON.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let candidates = value["candidates"] as? [[String: Any]],
+              let amount = candidates.first?["amount_minor"] as? NSNumber else { return nil }
+        return amount.int64Value
     }
 }

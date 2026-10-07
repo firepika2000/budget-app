@@ -946,7 +946,8 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let value = try demo.localAuthoritySnapshot(
             identity: localIdentity, preservingAttachments: previous.attachments,
             debtTerms: debtTerms, transactionChanges: previous.transactionChanges,
-            creditReserveEvents: previous.creditReserveEvents
+            creditReserveEvents: previous.creditReserveEvents,
+            statementImports: previous.statementImports
         )
         try await localAuthority.replaceWorkspaceState(value)
         try await localAuthority.integrityCheck()

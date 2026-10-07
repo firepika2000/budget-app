@@ -343,6 +343,7 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
     public let creditReserveAttributions: [LocalCreditReserveAttributionRecord]
     public let transactionChanges: [LocalTransactionChangeRecord]
     public let creditReserveEvents: [LocalCreditReserveEventRecord]
+    public let statementImports: [LocalStatementImportRecord]
 
     public init(identity: LocalAuthorityIdentity, accounts: [LocalAccountRecord],
                 groups: [LocalCategoryGroupRecord], categories: [LocalCategoryRecord],
@@ -354,7 +355,8 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
                 cashRolloverPolicies: [LocalCashRolloverPolicyRecord] = [],
                 creditReserveAttributions: [LocalCreditReserveAttributionRecord] = [],
                 transactionChanges: [LocalTransactionChangeRecord] = [],
-                creditReserveEvents: [LocalCreditReserveEventRecord] = []) {
+                creditReserveEvents: [LocalCreditReserveEventRecord] = [],
+                statementImports: [LocalStatementImportRecord] = []) {
         self.identity = identity; self.accounts = accounts; self.groups = groups
         self.categories = categories; self.payees = payees; self.payeeAliases = payeeAliases
         self.transactions = transactions; self.allocations = allocations
@@ -363,6 +365,7 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
         self.debtTerms = debtTerms; self.cashRolloverPolicies = cashRolloverPolicies
         self.creditReserveAttributions = creditReserveAttributions
         self.transactionChanges = transactionChanges; self.creditReserveEvents = creditReserveEvents
+        self.statementImports = statementImports
     }
 }
 
@@ -678,12 +681,13 @@ public actor LocalAuthorityStore {
         let reserve = try await loadCreditReserveAttributions(transactionIDs: Set(transactions.map(\.id)))
         let changes = try await loadTransactionChanges(budgetID: budgetID)
         let reserveEvents = try await loadCreditReserveEvents(budgetID: budgetID)
+        let statementImports = try await loadStatementImports(budgetID: budgetID)
         return .init(identity: identity, accounts: accounts, groups: groups, categories: categories,
                      payees: payees, payeeAliases: payeeAliases, transactions: transactions, allocations: allocations,
                      reconciliations: reconciliations, targets: targets, schedules: schedules,
                      attachments: attachments, debtTerms: debtTerms, cashRolloverPolicies: rollover,
                      creditReserveAttributions: reserve, transactionChanges: changes,
-                     creditReserveEvents: reserveEvents)
+                     creditReserveEvents: reserveEvents, statementImports: statementImports)
     }
 
     public func integrityCheck() async throws { try await database.integrityCheck() }
@@ -696,6 +700,7 @@ public actor LocalAuthorityStore {
         let budgetID = value.identity.budgetID
         var statements: [LocalSQLStatement] = [
             .init("DELETE FROM account_debt_terms WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
+            .init("DELETE FROM statement_imports WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM cash_rollover_policies WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM credit_reserve_attributions WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM credit_reserve_events WHERE budget_id=?", values: [.text(budgetID)]),
@@ -753,6 +758,9 @@ public actor LocalAuthorityStore {
         statements += value.attachments.map { item in
             .init("INSERT INTO attachments(id,transaction_id,filename,content_type,size_bytes,sha256,object_name,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.transactionID), .text(item.filename), .text(item.contentType), .integer(item.sizeBytes), .text(item.sha256), .text(item.objectName), .text(item.createdAt)])
         }
+        statements += value.statementImports.map { item in
+            .init("INSERT INTO statement_imports(id,budget_id,account_id,status,version,source_format,candidate_count,payload_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), .text(item.status), .integer(item.version), .text(item.sourceFormat), .integer(item.candidateCount), .text(item.payloadJSON), .text(item.createdAt)])
+        }
         statements += value.debtTerms.map { item in
             .init("INSERT INTO account_debt_terms(account_id,terms_type,annual_rate_basis_points,rate_type,payment_frequency,scheduled_payment_minor,minimum_payment_rule,minimum_payment_minor,minimum_payment_rate_basis_points,due_day,statement_day,original_principal_minor,original_term_months,remaining_term_months,promotional_rate_basis_points,promotional_ends_on,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.accountID), .text(item.termsType), optionalInteger(item.annualRateBasisPoints), optionalText(item.rateType), optionalText(item.paymentFrequency), optionalInteger(item.scheduledPaymentMinor), optionalText(item.minimumPaymentRule), optionalInteger(item.minimumPaymentMinor), optionalInteger(item.minimumPaymentRateBasisPoints), optionalInteger(item.dueDay), optionalInteger(item.statementDay), optionalInteger(item.originalPrincipalMinor), optionalInteger(item.originalTermMonths), optionalInteger(item.remainingTermMonths), optionalInteger(item.promotionalRateBasisPoints), optionalText(item.promotionalEndsOn), .text(item.updatedAt)])
         }
@@ -766,6 +774,13 @@ public actor LocalAuthorityStore {
         try await database.rows(.init("SELECT * FROM accounts WHERE budget_id=? ORDER BY created_at,id", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), name: text($0, "name"), kind: text($0, "kind"), isOnBudget: bool($0, "is_on_budget"), isClosed: bool($0, "is_closed"), openingBalanceMinor: integer($0, "opening_balance_minor"), createdAt: text($0, "created_at"))
         }
+    }
+
+    private func loadStatementImports(budgetID: String) async throws -> [LocalStatementImportRecord] {
+        try await database.rows(.init(
+            "SELECT * FROM statement_imports WHERE budget_id=? ORDER BY created_at,id",
+            values: [.text(budgetID)]
+        )).map(statementImportRecord)
     }
 
     private func loadGroups(budgetID: String) async throws -> [LocalCategoryGroupRecord] {

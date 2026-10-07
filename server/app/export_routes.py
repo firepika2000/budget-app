@@ -231,9 +231,8 @@ def local_device_transfer_eligibility(
     )
     add(
         "unsupported_audit_history",
-        "This budget has server audit or import history not yet represented on Local Device.",
-        count(ImportBatch, ImportBatch.budget_id == budget.id)
-        + count(MonthlyAssignment, MonthlyAssignment.budget_id == budget.id),
+        "This budget has legacy assignment history not yet represented on Local Device.",
+        count(MonthlyAssignment, MonthlyAssignment.budget_id == budget.id),
     )
     add(
         "unsupported_allocation_shape",

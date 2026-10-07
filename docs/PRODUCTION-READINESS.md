@@ -1787,3 +1787,15 @@ integer minor units and the same definitions. Existing Local Device databases mi
 schema 10 with false defaults, and older API/local snapshots remain compatible. Focused backend
 analytics and migration tests, Swift API/storage tests, and the Xcode 27 Beta production build pass;
 human acceptance remains separate.
+
+### Statement-import transfer portability — 2026-10-07
+
+Owner-authorized Server-to-Local Device transfer now preserves durable statement-import review and
+undo history instead of treating ordinary bank-import use as a permanent portability blocker. The
+typed projection carries exact candidate dates, integer-minor-unit amounts, source text, decisions,
+posted/reversal identities, version ordering, and batch state into the encrypted Local Device SQLite
+authority. Server-derived transaction-match suggestions are cleared because they are recomputable
+cache data, not financial authority. Existing transfer envelopes without import history remain
+decodable, and later Local Device workspace publications retain imported history. Focused backend
+transfer tests, Swift projection tests, and the Xcode 27 Beta production build pass. Legacy monthly
+assignment history and household/server-only attribution remain fail-closed blockers.

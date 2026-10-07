@@ -22,7 +22,7 @@ from .models import (
     Account, AccountDebtTerms, AllocationOperation, AllocationPosting, Budget,
     CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget,
     CategoryTargetSnooze, CreditCardReserveEvent, Household, Payee, PayeeAlias,
-    PayeeBudgetPreference, ScheduledTransaction, Transaction, TransactionAttachment,
+    ImportBatch, PayeeBudgetPreference, ScheduledTransaction, Transaction, TransactionAttachment,
     TransactionChange, TransactionSplit, User,
 )
 
@@ -174,6 +174,9 @@ def build_local_device_projection(
         TransactionAttachment.budget_id == budget.id,
         TransactionAttachment.detached_at.is_(None),
     ).order_by(TransactionAttachment.created_at, TransactionAttachment.id)))
+    import_batches = list(db.scalars(select(ImportBatch).where(
+        ImportBatch.budget_id == budget.id
+    ).order_by(ImportBatch.created_at, ImportBatch.id)))
 
     projection: dict[str, Any] = {
         "format": FORMAT,
@@ -270,6 +273,23 @@ def build_local_device_projection(
             "size_bytes": item.byte_count, "sha256": item.sha256,
             "object_name": item.id, "created_at": _iso(item.created_at),
         } for item in attachment_rows],
+        "statement_imports": [{
+            "id": item.id, "budget_id": item.budget_id, "account_id": item.account_id,
+            "status": item.status, "version": item.version + 1,
+            "source_format": item.source_format, "candidate_count": item.candidate_count,
+            "created_at": _iso(item.created_at),
+            "payload": {
+                "id": item.id, "budget_id": item.budget_id, "account_id": item.account_id,
+                "status": item.status, "version": item.version + 1,
+                "source_format": item.source_format, "candidate_count": item.candidate_count,
+                "created_at": _iso(item.created_at),
+                "candidates": [{
+                    **candidate,
+                    "exact_transaction_ids": [], "possible_transaction_ids": [],
+                    "suggestions_truncated": False, "duplicate_source_row": False,
+                } for candidate in item.candidates],
+            },
+        } for item in import_batches],
         "debt_terms": [{
             key: _iso(value) if key in {"promotional_ends_on", "updated_at"} else value
             for key, value in vars(item).items() if not key.startswith("_") and key != "budget_id"

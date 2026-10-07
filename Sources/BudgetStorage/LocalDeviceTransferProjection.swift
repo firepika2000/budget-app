@@ -49,6 +49,17 @@ public enum LocalDeviceTransferProjectionDecoder {
             budgetID: value.identity.budgetId, budgetName: value.identity.budgetName,
             currencyCode: value.identity.currencyCode
         )
+        let statementImports = try (value.statementImports ?? []).map { item -> LocalStatementImportRecord in
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            let payload = try encoder.encode(item.payload)
+            return .init(
+                id: item.id, budgetID: item.budgetId, accountID: item.accountId,
+                status: item.status, version: item.version, sourceFormat: item.sourceFormat,
+                candidateCount: item.candidateCount,
+                payloadJSON: String(decoding: payload, as: UTF8.self), createdAt: item.createdAt
+            )
+        }
         let snapshot = LocalAuthoritySnapshot(
             identity: identity,
             accounts: value.accounts.map { .init(id: $0.id, budgetID: $0.budgetId, name: $0.name, kind: $0.kind, isOnBudget: $0.isOnBudget, isClosed: $0.isClosed, openingBalanceMinor: $0.openingBalanceMinor, createdAt: $0.createdAt) },
@@ -84,7 +95,8 @@ public enum LocalDeviceTransferProjectionDecoder {
             cashRolloverPolicies: value.cashRolloverPolicies.map { .init(id: $0.id, budgetID: $0.budgetId, effectiveMonth: $0.effectiveMonth, policy: $0.policy, version: $0.version, source: $0.source, actorUserID: $0.actorUserId, createdAt: $0.createdAt) },
             creditReserveAttributions: value.creditReserveAttributions.map { .init(transactionID: $0.transactionId, categoryID: $0.categoryId, amountMinor: $0.amountMinor) },
             transactionChanges: value.transactionChanges.map { .init(id: $0.id, budgetID: $0.budgetId, transactionID: $0.transactionId, actorUserID: $0.actorUserId, action: $0.action, beforeJSON: $0.beforeJson, afterJSON: $0.afterJson, createdAt: $0.createdAt) },
-            creditReserveEvents: value.creditReserveEvents.map { .init(id: $0.id, budgetID: $0.budgetId, creditAccountID: $0.creditAccountId, paymentCategoryID: $0.paymentCategoryId, spendingCategoryID: $0.spendingCategoryId, sourceTransactionID: $0.sourceTransactionId, transferID: $0.transferId, occurredOn: $0.occurredOn, amountMinor: $0.amountMinor, kind: $0.kind, actorUserID: $0.actorUserId, createdAt: $0.createdAt) }
+            creditReserveEvents: value.creditReserveEvents.map { .init(id: $0.id, budgetID: $0.budgetId, creditAccountID: $0.creditAccountId, paymentCategoryID: $0.paymentCategoryId, spendingCategoryID: $0.spendingCategoryId, sourceTransactionID: $0.sourceTransactionId, transferID: $0.transferId, occurredOn: $0.occurredOn, amountMinor: $0.amountMinor, kind: $0.kind, actorUserID: $0.actorUserId, createdAt: $0.createdAt) },
+            statementImports: statementImports
         )
         let observations = LocalDeviceTransferObservation(
             transactionCount: value.observations.transactionCount,
@@ -106,6 +118,7 @@ public enum LocalDeviceTransferProjectionDecoder {
             + snapshot.categories.map(\.budgetID) + snapshot.payees.map(\.budgetID)
             + snapshot.transactions.map(\.budgetID) + snapshot.allocations.map(\.budgetID)
             + snapshot.schedules.map(\.budgetID) + snapshot.cashRolloverPolicies.map(\.budgetID)
+            + snapshot.statementImports.map(\.budgetID)
             + snapshot.transactionChanges.map(\.budgetID) + snapshot.creditReserveEvents.map(\.budgetID)
         guard budgetRows.allSatisfy({ $0 == budgetID }) else {
             throw LocalStorageError.invalidSnapshot("Server transfer projection mixes budget identities")
@@ -188,6 +201,7 @@ private struct Envelope: Decodable {
     let allocations: [AllocationDTO]; let reconciliations: [ReconciliationDTO]
     let targets: [TargetDTO]; let schedules: [ScheduleDTO]; let attachments: [AttachmentDTO]
     let debtTerms: [DebtTermsDTO]; let cashRolloverPolicies: [RolloverDTO]
+    let statementImports: [StatementImportDTO]?
     let creditReserveAttributions: [AttributionDTO]; let transactionChanges: [ChangeDTO]
     let creditReserveEvents: [ReserveEventDTO]; let observations: ObservationsDTO
 }
@@ -216,6 +230,22 @@ private struct RolloverDTO: Decodable { let id: String; let budgetId: String; le
 private struct AttributionDTO: Decodable { let transactionId: String; let categoryId: String; let amountMinor: Int64 }
 private struct ChangeDTO: Decodable { let id: String; let budgetId: String; let transactionId: String; let actorUserId: String; let action: String; let beforeJson: String?; let afterJson: String?; let createdAt: String }
 private struct ReserveEventDTO: Decodable { let id: String; let budgetId: String; let creditAccountId: String; let paymentCategoryId: String; let spendingCategoryId: String?; let sourceTransactionId: String?; let transferId: String?; let occurredOn: String; let amountMinor: Int64; let kind: String; let actorUserId: String; let createdAt: String }
+private struct StatementImportDTO: Decodable {
+    let id: String; let budgetId: String; let accountId: String; let status: String
+    let version: Int64; let sourceFormat: String; let candidateCount: Int64
+    let createdAt: String; let payload: StatementImportPayloadDTO
+}
+private struct StatementImportPayloadDTO: Codable {
+    let id: String; let budgetId: String; let accountId: String; let status: String
+    let version: Int64; let sourceFormat: String; let candidateCount: Int64
+    let createdAt: String; let candidates: [StatementImportCandidateDTO]
+}
+private struct StatementImportCandidateDTO: Codable {
+    let sourceRow: Int; let occurredOn: String; let amountMinor: Int64; let payee: String; let memo: String
+    let exactTransactionIds: [String]; let possibleTransactionIds: [String]
+    let suggestionsTruncated: Bool; let duplicateSourceRow: Bool
+    let approvalAction: String?; let postedTransactionId: String?; let reversalTransactionId: String?
+}
 private struct ObservationsDTO: Decodable { let transactionCount: Int; let transactions: [TransactionTotalDTO]; let allocationCount: Int; let allocations: [AllocationTotalDTO]; let reserveCount: Int; let reserves: [ReserveTotalDTO] }
 private struct TransactionTotalDTO: Decodable { let accountId: String; let status: String; let amountMinor: Int64 }
 private struct AllocationTotalDTO: Decodable { let bucket: String; let categoryId: String?; let amountMinor: Int64 }
