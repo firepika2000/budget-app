@@ -154,6 +154,15 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])
     path = f"/api/v1/budgets/{budget['id']}"
+    category_update = client.put(
+        f"{path}/categories/{category['id']}", headers=auth(owner_token), json={
+            "group_id": category["group_id"], "name": category["name"],
+            "icon_name": "cart.fill", "note": "Keep a weekly grocery buffer",
+            "sort_order": category["sort_order"], "is_archived": False,
+            "is_essential": True, "is_emergency_fund": False,
+        },
+    )
+    assert category_update.status_code == 200, category_update.text
     income = record(
         client, owner_token, budget["id"], account_id=account["id"],
         amount_minor=10_000, occurred_on="2026-09-01", payee_name="Payroll",
@@ -224,6 +233,11 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
     assert len(value["source_revision"]) == 64
     assert value["identity"]["budget_id"] == budget["id"]
     assert value["accounts"][0]["opening_balance_minor"] == 0
+    exported_category = next(item for item in value["categories"] if item["id"] == category["id"])
+    assert exported_category["icon_name"] == "cart.fill"
+    assert exported_category["note"] == "Keep a weekly grocery buffer"
+    assert exported_category["is_essential"] is True
+    assert exported_category["is_emergency_fund"] is False
     transactions = {item["id"]: item for item in value["transactions"]}
     assert transactions[income["id"]]["splits"] == []
     assert transactions[purchase["id"]]["splits"][0]["category_id"] == category["id"]

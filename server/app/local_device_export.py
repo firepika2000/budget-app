@@ -205,9 +205,12 @@ def build_local_device_projection(
         } for item in portable_groups],
         "categories": [{
             "id": item.id, "budget_id": budget.id, "group_id": item.group_id,
-            "name": item.name, "delegated_user_id": None, "is_archived": item.is_archived,
+            "name": item.name, "icon_name": item.icon_name, "note": item.note,
+            "delegated_user_id": None, "is_archived": item.is_archived,
             "sort_order": item.sort_order, "is_favorite": item.id in favorites,
             "favorite_sort_order": favorites[item.id].sort_order if item.id in favorites else 0,
+            "is_essential": item.is_essential,
+            "is_emergency_fund": item.is_emergency_fund,
         } for item in portable_categories],
         "payees": [{
             "id": item.id, "budget_id": budget.id, "name": item.display_name,

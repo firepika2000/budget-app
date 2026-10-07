@@ -1838,3 +1838,14 @@ based only on active files. Focused server export, Swift projection, schema migr
 candidate-import, and Xcode 27 Beta production-build verification pass. Shared household identity,
 authorization/delegation records, non-owner attribution, and unsupported many-to-many allocation
 history remain deliberately fail-closed rather than being flattened.
+
+### Category guidance transfer fidelity — 2026-10-07
+
+Server-to-Local Device transfer now emits the category icon, explanatory note, essential-expense
+classification, and emergency-fund classification that the native projection already understood.
+Previously the decoder and its synthetic fixture supported these fields while the real server
+projection silently omitted them, so a successful provider move could lose user-authored planning
+guidance and resilience classifications. The focused authenticated export regression now creates
+real metadata through the production category command and asserts it in the returned transfer
+contract; the Swift projection compatibility suite confirms both complete and legacy envelopes.
+No financial observations or authorization rules change.
