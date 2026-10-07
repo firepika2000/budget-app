@@ -282,6 +282,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         for _ in 0..<6 where !debt.exists { app.swipeUp() }
         debt.tap()
         app.segmentedControls.buttons["Cost"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["debt-value-kind-estimated"].waitForExistence(timeout: 5))
         let estimate = app.descendants(matching: .any)["estimated-debt-cost-visa"]
         for _ in 0..<8 where !estimate.exists { app.swipeUp() }
         XCTAssertTrue(estimate.waitForExistence(timeout: 5))
@@ -296,6 +297,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         for _ in 0..<8 where !app.segmentedControls.buttons["Interest"].isHittable { app.swipeDown() }
         app.segmentedControls.buttons["Interest"].tap()
         XCTAssertTrue(app.staticTexts["Recorded Interest"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["interest-value-kind-actual"].exists)
     }
     func testAppearancePreferenceUsesProductionSettingsAndPersistsAcrossRelaunch() {
         let suite = "BudgetAppUITests.Appearance.\(UUID().uuidString)"
@@ -608,6 +610,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         debt.tap()
         XCTAssertTrue(app.navigationBars["Debt & Interest"].waitForExistence(timeout: 5))
         app.segmentedControls.buttons["Payoff"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["debt-value-kind-projected"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.segmentedControls["debt-payoff-strategy"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.switches["debt-payoff-rollover"].exists)
         let outcome = app.descendants(matching: .any)["debt-payoff-outcome"]

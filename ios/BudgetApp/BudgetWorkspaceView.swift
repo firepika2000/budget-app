@@ -8028,6 +8028,10 @@ private struct DebtCurrentCostContent: View {
     var body: some View {
         Group {
         Section("Estimated current interest") {
+            Label("Estimated model", systemImage: "function")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.attention)
+                .accessibilityLabel("Estimated current interest model. Not an actual posted charge.")
+                .accessibilityIdentifier("debt-value-kind-estimated")
             Text("An unchanged-balance estimate for one month at the saved APR—not a posted charge or an issuer statement. Payments, daily balance changes, grace periods, fees and future rate changes can change actual interest.")
                 .font(.footnote).foregroundStyle(.secondary)
             if let report { Text("Current balances and effective APR as of \(report.asOf). Historical report dates do not apply.").font(.caption).foregroundStyle(.secondary) }
@@ -8090,6 +8094,10 @@ private struct DebtOverviewContent: View {
     let report: APIDebtReport
     var body: some View {
         Section("Recorded debt") {
+            Label("Actual recorded data", systemImage: "checkmark.seal")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.healthy)
+                .accessibilityLabel("Actual recorded debt from posted financial activity.")
+                .accessibilityIdentifier("debt-value-kind-actual")
             LabeledContent("Before \(report.startDate)", value: store.format(report.openingDebtMinor))
             LabeledContent("Debt as of \(report.endDate)", value: store.format(report.debtMinor))
                 .accessibilityIdentifier("recorded-debt-as-of")
@@ -8116,6 +8124,10 @@ private struct DebtInterestContent: View {
     let report: APIDebtReport
     var body: some View {
         Section("Recorded Interest") {
+            Label("Actual recorded data", systemImage: "checkmark.seal")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.healthy)
+                .accessibilityLabel("Actual recorded interest from posted financial activity.")
+                .accessibilityIdentifier("interest-value-kind-actual")
             LabeledContent("Selected range", value: store.format(report.recordedInterestRangeMinor)).accessibilityIdentifier("recorded-interest-range")
             LabeledContent("This month", value: store.format(report.recordedInterestMonthMinor))
             LabeledContent("Year to date", value: store.format(report.recordedInterestYTDMinor))
@@ -8165,6 +8177,10 @@ private struct DebtPayoffContent: View {
 
     var body: some View {
         Section("Scenario") {
+            Label("Projected scenario", systemImage: "chart.line.uptrend.xyaxis")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.accent)
+                .accessibilityLabel("Projected payoff scenario. Values are forecasts and are not posted financial activity.")
+                .accessibilityIdentifier("debt-value-kind-projected")
             Picker("Payoff strategy", selection: $strategy) {
                 Text("Avalanche").tag("avalanche")
                 Text("Snowball").tag("snowball")
