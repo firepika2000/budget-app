@@ -1,10 +1,11 @@
 import csv
 from dataclasses import replace
+from datetime import date
 from io import StringIO
 import json
 import pytest
 
-from app.models import Household, Payee
+from app.models import Household, MonthlyAssignment, Payee
 from app.local_device_export import source_revision
 from .test_delegated_access import add_child
 
@@ -163,6 +164,15 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
         json={"month": "2026-09-01", "assigned_minor": 4_000},
     )
     assert assignment.status_code == 200, assignment.text
+    # Migration 0006 retains this pre-ledger row for historical compatibility after
+    # converting it to the canonical balanced allocation operation above. It must not
+    # strand an otherwise personal budget or be projected a second time.
+    with session_factory() as db:
+        db.add(MonthlyAssignment(
+            budget_id=budget["id"], category_id=category["id"],
+            month=date(2026, 9, 1), assigned_minor=4_000,
+        ))
+        db.commit()
     purchase = record(
         client, owner_token, budget["id"], account_id=account["id"],
         category_id=category["id"], amount_minor=-1_250,

@@ -453,8 +453,8 @@ The reverse direction now begins with an owner-only, server-authoritative compat
 `GET /api/v1/budgets/{budget_id}/local-device-transfer-eligibility`. The Live Backup & Recovery
 screen evaluates that gate with the current rotated credential. A personal budget with no
 server-only records is identified as eligible for a future verified cutover; shared identities,
-invitations/access history, delegated requests or allowances, grants, unsupported legacy assignment
-history and non-owner financial attribution produce bounded,
+invitations/access history, delegated requests or allowances, grants, and non-owner financial
+attribution produce bounded,
 human-readable blockers. Non-owners receive the same not-found response as an invisible budget.
 
 This is deliberately not a lossy exporter: it does not flatten a household into one person or discard
@@ -512,9 +512,11 @@ Local schema statement-import history is now part of the same typed Server-to-Lo
 Review candidates retain their exact dates, minor-unit amounts, source text, decisions, posted or
 reversal identities, ordering, and batch state. Server-derived match suggestions are deliberately
 discarded because they are a refreshable cache rather than financial authority. A normal personal
-budget is therefore no longer trapped on Server merely because its owner imported a bank statement;
-legacy monthly-assignment history remains an explicit compatibility blocker until it has an exact
-Local Device representation.
+budget is therefore no longer trapped on Server merely because its owner imported a bank statement.
+Legacy monthly-assignment rows retained by migration `0006` are not projected independently: their
+money was already converted into the canonical balanced allocation ledger, so transferring both
+would duplicate assignments. Their presence therefore no longer blocks an otherwise eligible
+personal budget.
 
 ## Remaining implementation sequence
 

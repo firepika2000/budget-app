@@ -1798,4 +1798,6 @@ authority. Server-derived transaction-match suggestions are cleared because they
 cache data, not financial authority. Existing transfer envelopes without import history remain
 decodable, and later Local Device workspace publications retain imported history. Focused backend
 transfer tests, Swift projection tests, and the Xcode 27 Beta production build pass. Legacy monthly
-assignment history and household/server-only attribution remain fail-closed blockers.
+assignment rows retained after migration `0006` no longer block transfer because their financial
+effect already exists in the canonical allocation ledger; they are never projected twice.
+Household/server-only attribution remains fail-closed.

@@ -230,11 +230,6 @@ def local_device_transfer_eligibility(
         + count(ResourceGrant, ResourceGrant.budget_id == budget.id),
     )
     add(
-        "unsupported_audit_history",
-        "This budget has legacy assignment history not yet represented on Local Device.",
-        count(MonthlyAssignment, MonthlyAssignment.budget_id == budget.id),
-    )
-    add(
         "unsupported_allocation_shape",
         "This budget contains allocation history that Local Device cannot represent losslessly yet.",
         unsupported_allocation_operation_count(db, budget.id),
