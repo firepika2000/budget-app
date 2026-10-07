@@ -360,6 +360,10 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertTrue(snapshot.targets.isEmpty)
         XCTAssertTrue(snapshot.schedules.isEmpty)
         XCTAssertEqual(snapshot.transactions.map(\.id), ["t"])
+
+        try await store.deleteAttachmentTombstone(id: "attachment", budgetID: "b")
+        let snapshotAfterTombstonePurge = try await store.snapshot(budgetID: "b")
+        XCTAssertTrue(snapshotAfterTombstonePurge.attachmentTombstones.isEmpty)
         XCTAssertEqual(snapshot.payees.map(\.id), ["p"])
     }
 

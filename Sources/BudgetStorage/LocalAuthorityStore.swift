@@ -685,6 +685,14 @@ public actor LocalAuthorityStore {
         ])
     }
 
+    public func deleteAttachmentTombstone(id: String, budgetID: String) async throws {
+        let changes = try await database.executeReturningChanges(.init(
+            "DELETE FROM attachment_tombstones WHERE id=? AND budget_id=?",
+            values: [.text(id), .text(budgetID)]
+        ))
+        try requireOneChange(changes, record: "attachment tombstone")
+    }
+
     public func snapshot(budgetID: String) async throws -> LocalAuthoritySnapshot {
         let identityRows = try await database.rows(.init(
             "SELECT h.id AS household_id,h.name AS household_name,u.id AS owner_user_id,u.display_name AS owner_display_name,b.id AS budget_id,b.name AS budget_name,b.currency_code FROM budgets b JOIN households h ON h.id=b.household_id JOIN memberships m ON m.household_id=h.id AND m.role='owner' AND m.is_active=1 JOIN users u ON u.id=m.user_id WHERE b.id=? ORDER BY u.id LIMIT 1",

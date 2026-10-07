@@ -83,6 +83,18 @@ final class LocalAttachmentVaultTests: XCTestCase {
         } catch {}
     }
 
+    func testNamedTombstonePurgeIsIdempotent() async throws {
+        let directory = try temporaryDirectory()
+        let vault = try LocalAttachmentVault(directoryURL: directory, keyData: Data(repeating: 9, count: 32))
+        let stored = try await vault.store(Data("receipt".utf8), objectName: "receipt.enc")
+        let tombstone = try await vault.tombstone(objectName: stored.objectName)
+
+        let first = try await vault.purgeTombstone(named: tombstone)
+        let second = try await vault.purgeTombstone(named: tombstone)
+        XCTAssertTrue(first)
+        XCTAssertFalse(second)
+    }
+
     func testTraversalAndInvalidKeyAreRejected() async throws {
         let directory = try temporaryDirectory()
         XCTAssertThrowsError(try LocalAttachmentVault(directoryURL: directory, keyData: Data(repeating: 0, count: 31)))

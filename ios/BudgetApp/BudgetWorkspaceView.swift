@@ -903,7 +903,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private func synchronizeLocalAuthorityWhileExclusive() async throws {
         guard let localAuthority, let localIdentity else { return }
         if !localAuthorityLoaded {
-            let value: LocalAuthoritySnapshot
+            var value: LocalAuthoritySnapshot
             do {
                 value = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
             } catch LocalStorageError.recordNotFound("budget") {
@@ -912,6 +912,24 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                     createdAt: ISO8601DateFormatter().string(from: now()),
                     installStarterPlan: true
                 )
+                value = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
+            }
+            if let localAttachmentVault {
+                let current = now()
+                let formatter = ISO8601DateFormatter()
+                for tombstone in value.attachmentTombstones {
+                    guard let purgeDate = formatter.date(from: tombstone.purgeAfter), purgeDate <= current else { continue }
+                    do {
+                        if let name = tombstone.tombstoneObjectName {
+                            _ = try await localAttachmentVault.purgeTombstone(named: name)
+                        }
+                        try await localAuthority.deleteAttachmentTombstone(
+                            id: tombstone.id, budgetID: localIdentity.budgetID
+                        )
+                    } catch {
+                        print("[BudgetApp] attachment tombstone cleanup will retry: \(error)")
+                    }
+                }
                 value = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
             }
             try demo.loadLocalAuthority(value)

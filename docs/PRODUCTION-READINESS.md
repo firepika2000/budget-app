@@ -1830,8 +1830,11 @@ is not downloaded or resurrected. This matches the established portable-archive 
 Device schema v13 persists that lifecycle metadata through candidate publication, relaunch, encrypted
 backup, and complete workspace replacement. A Local Device detach now atomically moves active
 metadata into the same retention ledger after the encrypted object enters the vault tombstone
-directory, restoring the object if the metadata commit fails. Active attachment limits and UI lists
-remain based only on active files. Focused server export, Swift projection, schema migration,
+directory, restoring the object if the metadata commit fails. On-device authority startup now
+removes expired encrypted tombstones and their metadata idempotently, while imported server
+tombstones without local payloads expire from metadata without inventing file content. Cleanup
+failures remain retryable on the next authority load. Active attachment limits and UI lists remain
+based only on active files. Focused server export, Swift projection, schema migration,
 candidate-import, and Xcode 27 Beta production-build verification pass. Shared household identity,
 authorization/delegation records, non-owner attribution, and unsupported many-to-many allocation
 history remain deliberately fail-closed rather than being flattened.

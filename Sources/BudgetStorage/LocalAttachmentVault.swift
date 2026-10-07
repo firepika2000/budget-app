@@ -124,6 +124,17 @@ public actor LocalAttachmentVault {
         return removed
     }
 
+    /// Removes one metadata-authorized tombstone. A missing file is already in the desired purged
+    /// state, which lets lifecycle cleanup resume safely after interruption.
+    @discardableResult
+    public func purgeTombstone(named tombstoneName: String) throws -> Bool {
+        let name = try validatedObjectName(tombstoneName)
+        let target = tombstonesURL.appendingPathComponent(name)
+        guard FileManager.default.fileExists(atPath: target.path) else { return false }
+        try FileManager.default.removeItem(at: target)
+        return true
+    }
+
     private func validatedObjectName(_ value: String) throws -> String {
         guard !value.isEmpty, value != ".", value != "..",
               value.unicodeScalars.allSatisfy({ scalar in
