@@ -22,6 +22,7 @@ struct UpdateAccountMetadataOperation: Equatable, Sendable {
     let currentKind: String
     let kind: String
     let isOnBudget: Bool
+    let isClosed: Bool
 }
 
 struct AssignMoneyOperation: Equatable, Sendable {

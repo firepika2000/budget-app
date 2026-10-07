@@ -51,6 +51,7 @@ struct DemoAccount: Identifiable, Hashable {
     var balance: Int64
     var cleared: Int64
     var isOnBudget: Bool = true
+    var isClosed: Bool = false
     var paymentReserved: Int64 = 0
     var fundedSpending: Int64 = 0
     var unfundedSpending: Int64 = 0

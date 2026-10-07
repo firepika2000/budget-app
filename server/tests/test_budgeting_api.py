@@ -383,6 +383,52 @@ def test_account_metadata_edit_preserves_balance_and_ready_to_assign(
     assert client.get(f"/api/v1/budgets/{budget['id']}/months/{month}", headers=auth(owner_token)).json()["ready_to_assign_minor"] == before_rta == 200000
 
 
+def test_close_and_reopen_account_preserves_financial_state_and_blocks_new_posting(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    posted = client.post(
+        f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token),
+        json={"account_id": account["id"], "category_id": category["id"],
+              "amount_minor": -1234, "occurred_on": date.today().isoformat()},
+    )
+    assert posted.status_code == 201, posted.text
+    transaction = posted.json()
+    before = client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/balance",
+        headers=auth(owner_token),
+    ).json()
+
+    closed = client.patch(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}",
+        headers=auth(owner_token),
+        json={"name": account["name"], "account_type": account["account_type"], "is_closed": True},
+    )
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["is_closed"] is True
+    rejected = client.post(
+        f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token),
+        json={"account_id": account["id"], "category_id": category["id"],
+              "amount_minor": -100, "occurred_on": date.today().isoformat()},
+    )
+    assert rejected.status_code == 422
+    assert client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/balance",
+        headers=auth(owner_token),
+    ).json() == before
+
+    reopened = client.patch(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}",
+        headers=auth(owner_token),
+        json={"name": account["name"], "account_type": account["account_type"], "is_closed": False},
+    )
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["is_closed"] is False
+    history = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()
+    assert transaction["id"] in {item["id"] for item in history}
+
+
 def test_account_metadata_rejects_financial_reclassification_and_unauthorized_edit(
     client, owner_token, session_factory
 ):

@@ -546,15 +546,18 @@ public struct APIAccountCreate: Encodable, Sendable {
 public struct APIAccountUpdate: Encodable, Equatable, Sendable {
     public let name: String
     public let accountType: String
+    public let isClosed: Bool?
 
-    public init(name: String, accountType: String) {
+    public init(name: String, accountType: String, isClosed: Bool? = nil) {
         self.name = name
         self.accountType = accountType
+        self.isClosed = isClosed
     }
 
     enum CodingKeys: String, CodingKey {
         case name
         case accountType = "account_type"
+        case isClosed = "is_closed"
     }
 }
 

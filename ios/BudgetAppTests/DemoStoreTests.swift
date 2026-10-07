@@ -1031,7 +1031,7 @@ final class DemoStoreTests: XCTestCase {
         let summaryBefore = store.summary
         let transactionCountBefore = store.transactions.count
 
-        try await store.updateAccount(.init(accountID: account.id, name: "Emergency Savings", currentKind: "checking", kind: "savings", isOnBudget: true))
+        try await store.updateAccount(.init(accountID: account.id, name: "Emergency Savings", currentKind: "checking", kind: "savings", isOnBudget: true, isClosed: false))
         let updated = try XCTUnwrap(store.accounts.first(where: { $0.id == account.id }))
         XCTAssertEqual(updated.name, "Emergency Savings")
         XCTAssertEqual(updated.accountType, "savings")
@@ -1041,7 +1041,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(store.transactions.count, transactionCountBefore)
 
         do {
-            try await store.updateAccount(.init(accountID: account.id, name: "Card", currentKind: "savings", kind: "credit", isOnBudget: true))
+            try await store.updateAccount(.init(accountID: account.id, name: "Card", currentKind: "savings", kind: "credit", isOnBudget: true, isClosed: false))
             XCTFail("Expected an unsafe type transition to be rejected")
         } catch let error as BudgetApplicationError {
             guard case .invalidOperation = error else { return XCTFail("Unexpected error: \(error)") }

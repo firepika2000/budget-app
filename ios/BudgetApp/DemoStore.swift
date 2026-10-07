@@ -434,12 +434,13 @@ final class DemoStore: ObservableObject {
     }
 
     @discardableResult
-    func updateAccount(id: String, name: String, type: String) -> Bool {
+    func updateAccount(id: String, name: String, type: String, isClosed: Bool) -> Bool {
         guard let index = accounts.firstIndex(where: { $0.id == id }), let kind = DemoAccountKind(rawValue: type) else {
             return false
         }
         accounts[index].name = name
         accounts[index].kind = kind
+        accounts[index].isClosed = isClosed
         return true
     }
 
@@ -1111,7 +1112,7 @@ extension DemoStore {
     func loadLocalAuthority(_ value: LocalAuthoritySnapshot) throws {
         persona = .rey
         accounts = value.accounts.map { item in
-            DemoAccount(id: item.id, name: item.name, kind: DemoAccountKind(rawValue: item.kind) ?? (item.isOnBudget ? .checking : .asset), balance: item.openingBalanceMinor, cleared: item.openingBalanceMinor, isOnBudget: item.isOnBudget)
+            DemoAccount(id: item.id, name: item.name, kind: DemoAccountKind(rawValue: item.kind) ?? (item.isOnBudget ? .checking : .asset), balance: item.openingBalanceMinor, cleared: item.openingBalanceMinor, isOnBudget: item.isOnBudget, isClosed: item.isClosed)
         }
         guard Set(value.groups.map(\.id)).count == value.groups.count,
               Set(value.groups.map(\.name)).count == value.groups.count else {
@@ -1189,7 +1190,7 @@ extension DemoStore {
         for name in groupOrder { ensureGroupIdentity(name) }
         let groupIDs = groupIdentityByName
         let accountRows = accounts.map { item in
-            LocalAccountRecord(id: item.id, budgetID: identity.budgetID, name: item.name, kind: item.kind.rawValue, isOnBudget: item.isOnBudget, openingBalanceMinor: 0, createdAt: stamp)
+            LocalAccountRecord(id: item.id, budgetID: identity.budgetID, name: item.name, kind: item.kind.rawValue, isOnBudget: item.isOnBudget, isClosed: item.isClosed, openingBalanceMinor: 0, createdAt: stamp)
         }
         let groupRows = groupOrder.enumerated().map { index, name in
             LocalCategoryGroupRecord(id: groupIDs[name]!, budgetID: identity.budgetID, name: name, sortOrder: Int64(index), isArchived: archivedGroups.contains(name))

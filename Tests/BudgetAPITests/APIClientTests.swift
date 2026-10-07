@@ -247,6 +247,22 @@ final class APIClientTests: XCTestCase {
         XCTAssertTrue(account.isOnBudget)
     }
 
+    func testAccountStatusUpdateUsesMetadataPathWithoutFinancialFields() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            let body = try requestBody(request)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json as NSDictionary, ["name": "Checking", "account_type": "checking", "is_closed": true] as NSDictionary)
+            let response = Data(#"{"id":"a1","budget_id":"b1","name":"Checking","account_type":"checking","is_on_budget":true,"is_closed":true,"reconciled_balance_minor":null,"payment_category_id":null}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let account = try await client.updateAccount(budgetID: "b1", accountID: "a1", account: .init(name: "Checking", accountType: "checking", isClosed: true), token: "secret")
+        XCTAssertTrue(account.isClosed)
+    }
+
     func testDebtTermsUseExactTypedAccountScopedContract() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

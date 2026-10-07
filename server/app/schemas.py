@@ -169,6 +169,7 @@ class AccountCreate(BaseModel):
 class AccountUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     account_type: Literal["checking", "savings", "cash", "credit", "loan", "mortgage", "asset", "tracking"]
+    is_closed: Optional[bool] = None
 
 
 class AccountResponse(BaseModel):

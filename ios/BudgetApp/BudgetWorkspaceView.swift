@@ -483,7 +483,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         }
         let visibleCategories = demo.projectedCategories(in: plan)
         let categoryIDs = Set(visibleCategories.map(\.id))
-        let accountRows: [APIAccount] = try decode(visibleAccounts.map { ["id": $0.id, "budget_id": budget.id, "name": $0.name, "account_type": $0.kind.rawValue, "is_on_budget": $0.isOnBudget, "is_closed": false, "reconciled_balance_minor": $0.reconciledBalance as Any? ?? NSNull(), "payment_category_id": NSNull()] })
+        let accountRows: [APIAccount] = try decode(visibleAccounts.map { ["id": $0.id, "budget_id": budget.id, "name": $0.name, "account_type": $0.kind.rawValue, "is_on_budget": $0.isOnBudget, "is_closed": $0.isClosed, "reconciled_balance_minor": $0.reconciledBalance as Any? ?? NSNull(), "payment_category_id": NSNull()] })
         let accountBalanceRows: [APIAccountBalance] = try decode(visibleAccounts.map { ["account_id": $0.id, "currency_code": "USD", "cleared_balance_minor": $0.cleared, "uncleared_balance_minor": $0.balance - $0.cleared, "working_balance_minor": $0.balance, "reconciled_balance_minor": $0.reconciledBalance as Any? ?? NSNull()] })
         let groupNames = demo.isRestricted ? demo.groupOrder.filter { name in categoryInventory.contains { $0.group == name } } : demo.groupOrder
         let groupIDs = Dictionary(uniqueKeysWithValues: groupNames.map { ($0, "demo-group-\($0.lowercased().replacingOccurrences(of: " ", with: "-"))") })
@@ -1834,7 +1834,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard demo.createAccount(name: operation.name, type: operation.kind, isOnBudget: operation.isOnBudget, startingBalance: operation.openingBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
     func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws { try requireActiveMembership();
-        guard demo.updateAccount(id: operation.accountID, name: operation.name, type: operation.kind) else { throw workspaceRepositoryError("Account not found.") }
+        guard demo.updateAccount(id: operation.accountID, name: operation.name, type: operation.kind, isClosed: operation.isClosed) else { throw workspaceRepositoryError("Account not found.") }
     }
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? { try requireActiveMembership();
         guard let value = debtTermsValues[accountID] else { return nil }
@@ -2202,7 +2202,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { try await credentials.prepare(); var targetGroupID = groupID; if !newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { targetGroupID = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: newGroupName), token: token).id }; _ = try await client.createCategory(budgetID: budget.id, category: APICategoryCreate(groupID: targetGroupID, name: name, delegatedUserID: delegatedUserID), token: token) }
     func createGroup(name: String) async throws { try await credentials.prepare(); _ = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: name), token: token) }
     func createAccount(_ operation: CreateAccountOperation) async throws { try await credentials.prepare(); _ = try await client.createAccount(budgetID: budget.id, account: APIAccountCreate(name: operation.name, accountType: operation.kind, isOnBudget: operation.isOnBudget, startingBalanceMinor: operation.openingBalanceMinor), token: token) }
-    func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws { try await credentials.prepare(); _ = try await client.updateAccount(budgetID: budget.id, accountID: operation.accountID, account: APIAccountUpdate(name: operation.name, accountType: operation.kind), token: token) }
+    func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws { try await credentials.prepare(); _ = try await client.updateAccount(budgetID: budget.id, accountID: operation.accountID, account: APIAccountUpdate(name: operation.name, accountType: operation.kind, isClosed: operation.isClosed), token: token) }
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? { try await credentials.prepare(); return try await client.accountDebtTerms(budgetID: budget.id, accountID: accountID, token: token) }
     func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms { try await credentials.prepare(); return try await client.updateAccountDebtTerms(budgetID: budget.id, accountID: accountID, terms: value, token: token) }
     func deleteAccountDebtTerms(accountID: String) async throws { try await credentials.prepare(); try await client.deleteAccountDebtTerms(budgetID: budget.id, accountID: accountID, token: token) }
@@ -6877,11 +6877,18 @@ private struct LiveAccountsView: View {
     }
     var body: some View {
         List {
-            ForEach(store.accounts) { account in
+            Section("Open") { ForEach(store.accounts.filter { !$0.isClosed }) { account in
                 NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: {
                     HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: accountIcon(account.accountType)) }; Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } }
                 }
                 .accessibilityIdentifier("account-row-\(account.id)")
+            } }
+            if store.accounts.contains(where: \.isClosed) {
+                Section("Closed") { ForEach(store.accounts.filter { $0.isClosed }) { account in
+                    NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: {
+                        Label { VStack(alignment: .leading) { Text(account.name); Text("Closed · \(account.accountType.capitalized)").font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: "archivebox.fill") }
+                    }.accessibilityIdentifier("closed-account-row-\(account.id)")
+                } }
             }
             if activation.needsAccount && !store.isLoading {
                 Section {
@@ -6969,9 +6976,9 @@ struct LiveAccountRegisterView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if store.budget.can("create_transaction") { Button("Add Transaction", systemImage: "plus") { showAdd = true } }
-                if store.budget.can("create_transaction") { Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation(sourceID: account.id) } }
-                if store.budget.can("reconcile_account") { Button("Reconcile", systemImage: "checkmark.seal") { showReconcile = true } }
+                if store.budget.can("create_transaction") && !account.isClosed { Button("Add Transaction", systemImage: "plus") { showAdd = true } }
+                if store.budget.can("create_transaction") && !account.isClosed { Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation(sourceID: account.id) } }
+                if store.budget.can("reconcile_account") && !account.isClosed { Button("Reconcile", systemImage: "checkmark.seal") { showReconcile = true } }
                 if store.budget.can("manage_budget_structure") { Button("Account Settings", systemImage: "gearshape") { showSettings = true }.accessibilityIdentifier("account-settings-action") }
             }
         }

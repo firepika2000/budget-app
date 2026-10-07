@@ -65,7 +65,7 @@ Status meanings:
 | Checking, savings, cash | IMPLEMENTED | Clearly grouped on-budget cash. |
 | Credit card | IMPLEMENTED | Card balance, payment reserve, funded and unfunded spending exposed. |
 | Loan/mortgage/tracking asset/liability | IMPLEMENTED | Live and local creation support first-class loan, mortgage, and tracking types; mortgage/loan debt terms, cost, and payoff projections share exact production semantics. |
-| Closed accounts | IMPLEMENTED | Backend and live client state. |
+| Closed accounts | IMPLEMENTED | Owner-managed close/reopen lifecycle, preserved history and balances, separate open/closed presentation, and transaction-entry protections across Live, local, and demo authorities. |
 | Net-worth-only tracking distinction | IMPLEMENTED | First-class Asset and Other Tracking types remain outside the Plan while contributing to permission-filtered net worth. |
 | Payoff simulator | IMPLEMENTED | Production avalanche, snowball, rollover, and custom-extra scenarios use exact shared projections and authoritative debt terms without mutating the budget. |
 | Card reserve animation | IMPLEMENTED | Exact reserve values use a subtle native numeric transition in Plan and card registers, disabled automatically when Reduce Motion is enabled. |

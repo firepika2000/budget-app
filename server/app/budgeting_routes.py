@@ -446,6 +446,8 @@ def update_account(
     if not account.name:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Enter an account name.")
     account.account_type = body.account_type
+    if body.is_closed is not None:
+        account.is_closed = body.is_closed
     if account.account_type == "credit" and account.payment_category_id:
         payment_category = db.get(Category, account.payment_category_id)
         if payment_category is not None and payment_category.system_type == "credit_payment":

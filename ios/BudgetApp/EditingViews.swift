@@ -840,11 +840,14 @@ struct AccountSettingsView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showDebtTerms = false
+    @State private var isClosed: Bool
+    @State private var confirmStatusChange = false
 
     init(account: APIAccount) {
         self.account = account
         _name = State(initialValue: account.name)
         _accountType = State(initialValue: account.accountType)
+        _isClosed = State(initialValue: account.isClosed)
     }
 
     var body: some View {
@@ -877,6 +880,13 @@ struct AccountSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                Section("Status") {
+                    LabeledContent("Account", value: isClosed ? "Closed" : "Open")
+                    Button(isClosed ? "Reopen Account" : "Close Account", systemImage: isClosed ? "arrow.uturn.backward.circle" : "archivebox", role: isClosed ? nil : .destructive) { confirmStatusChange = true }
+                        .accessibilityIdentifier(isClosed ? "reopen-account-action" : "close-account-action")
+                    Text(isClosed ? "Reopening allows new transactions, transfers, and reconciliation again." : "Closing keeps all history and balances but removes the account from new transaction and transfer choices.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("Account Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -891,6 +901,14 @@ struct AccountSettingsView: View {
             .sheet(isPresented: $showDebtTerms) {
                 DebtTermsEditorView(account: account)
                     .environmentObject(workspace)
+            }
+            .confirmationDialog(isClosed ? "Reopen this account?" : "Close this account?", isPresented: $confirmStatusChange) {
+                Button(isClosed ? "Reopen Account" : "Close Account", role: isClosed ? nil : .destructive) {
+                    isClosed.toggle()
+                    Task { await save() }
+                }
+            } message: {
+                Text("The account's transactions, balance, reconciliation history, and reports are preserved.")
             }
         }
     }
@@ -908,7 +926,7 @@ struct AccountSettingsView: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            try await workspace.updateAccount(.init(accountID: account.id, name: name, currentKind: account.accountType, kind: accountType, isOnBudget: account.isOnBudget))
+            try await workspace.updateAccount(.init(accountID: account.id, name: name, currentKind: account.accountType, kind: accountType, isOnBudget: account.isOnBudget, isClosed: isClosed))
             dismiss()
         } catch { errorMessage = error.localizedDescription }
     }
