@@ -3099,6 +3099,26 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalStatementUndoUsesCanonicalVoidAndReversalPath() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let initialTotal = source.demo.transactions.reduce(Int64(0)) { $0 + $1.amount }
+        let batch = try await source.stageStatementImport(accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,10.25,Local deposit\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd"))
+        let approved = try await source.approveStatementImport(accountID: account.id, batchID: batch.id,
+            approval: .init(expectedVersion: batch.version, items: [.init(sourceRow: 2, action: "post")]))
+        let postedID = try XCTUnwrap(approved.candidates.first?.postedTransactionID)
+        let undone = try await source.undoStatementImport(
+            accountID: account.id, batchID: batch.id, expectedVersion: approved.version
+        )
+        XCTAssertNotNil(undone.candidates.first?.reversalTransactionID)
+        XCTAssertEqual(source.demo.transactions.first(where: { $0.id == postedID })?.status, "voided")
+        XCTAssertEqual(source.demo.transactions.reduce(Int64(0)) { $0 + $1.amount }, initialTotal)
+    }
+
+    @MainActor
     func testLocalStatementCancellationIsMoneyNeutralAndRejectsReplay() async throws {
         let source = DemoWorkspaceDataSource()
         let account = try XCTUnwrap(source.demo.accounts.first)

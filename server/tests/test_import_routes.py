@@ -203,6 +203,44 @@ def test_explicit_approval_posts_selected_rows_once_through_canonical_ledger(cli
         assert db.query(Transaction).count() == 1
 
 
+def test_approved_import_undo_is_atomic_auditable_and_versioned(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    batch = _stage(
+        client, owner_token, budget["id"], account["id"],
+        b"Date,Amount,Payee,Memo\n2026-09-14,-12.34,Market,Food\n2026-09-15,-2.00,Cafe,Coffee\n",
+    ).json()
+    approved = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/statement-imports/{batch['id']}/approve",
+        headers=auth(owner_token), json={"expected_version": batch["version"], "items": [
+            {"source_row": 2, "action": "post", "category_id": category["id"]},
+            {"source_row": 3, "action": "post", "category_id": category["id"]},
+        ]},
+    ).json()
+    posted_ids = [row["posted_transaction_id"] for row in approved["candidates"]]
+    with session_factory() as db:
+        db.get(Transaction, posted_ids[1]).is_reconciled = True
+        db.commit()
+    path = f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/statement-imports/{batch['id']}/undo"
+    rejected = client.post(path, headers=auth(owner_token), json={"expected_version": approved["version"]})
+    assert rejected.status_code == 409
+    with session_factory() as db:
+        assert all(db.get(Transaction, transaction_id).status == "posted" for transaction_id in posted_ids)
+        db.get(Transaction, posted_ids[1]).is_reconciled = False
+        db.commit()
+
+    undone = client.post(path, headers=auth(owner_token), json={"expected_version": approved["version"]})
+    assert undone.status_code == 200, undone.text
+    assert undone.json()["version"] == approved["version"] + 1
+    assert all(row["reversal_transaction_id"] for row in undone.json()["candidates"])
+    with session_factory() as db:
+        originals = [db.get(Transaction, transaction_id) for transaction_id in posted_ids]
+        assert all(item.status == "voided" for item in originals)
+        assert db.query(Transaction).filter_by(status="reversal").count() == 2
+        assert sum(item.amount_minor for item in db.query(Transaction).all()) == 0
+    assert client.post(path, headers=auth(owner_token), json={"expected_version": approved["version"]}).status_code == 409
+
+
 def test_approval_requires_complete_review_and_rolls_back_failed_canonical_post(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, _ = create_budget_structure(client, owner_token, budget["id"])

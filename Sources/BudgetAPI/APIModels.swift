@@ -1088,15 +1088,18 @@ public struct APIStatementImportCandidate: Identifiable, Decodable, Equatable, S
     public let duplicateSourceRow: Int?
     public let approvalAction: String?
     public let postedTransactionID: String?
+    public let reversalTransactionID: String?
     public init(sourceRow: Int, occurredOn: String, amountMinor: Int64, payee: String, memo: String,
                 exactTransactionIDs: [String] = [], possibleTransactionIDs: [String] = [],
                 suggestionsTruncated: Bool = false, duplicateSourceRow: Int? = nil,
-                approvalAction: String? = nil, postedTransactionID: String? = nil) {
+                approvalAction: String? = nil, postedTransactionID: String? = nil,
+                reversalTransactionID: String? = nil) {
         self.sourceRow = sourceRow; self.occurredOn = occurredOn; self.amountMinor = amountMinor
         self.payee = payee; self.memo = memo; self.exactTransactionIDs = exactTransactionIDs
         self.possibleTransactionIDs = possibleTransactionIDs; self.suggestionsTruncated = suggestionsTruncated
         self.duplicateSourceRow = duplicateSourceRow; self.approvalAction = approvalAction
         self.postedTransactionID = postedTransactionID
+        self.reversalTransactionID = reversalTransactionID
     }
     enum CodingKeys: String, CodingKey {
         case payee, memo
@@ -1104,6 +1107,7 @@ public struct APIStatementImportCandidate: Identifiable, Decodable, Equatable, S
         case exactTransactionIDs = "exact_transaction_ids", possibleTransactionIDs = "possible_transaction_ids"
         case suggestionsTruncated = "suggestions_truncated", duplicateSourceRow = "duplicate_source_row"
         case approvalAction = "approval_action", postedTransactionID = "posted_transaction_id"
+        case reversalTransactionID = "reversal_transaction_id"
     }
 }
 
@@ -1208,6 +1212,12 @@ public struct APIStatementImportApprove: Encodable, Equatable, Sendable {
 }
 
 public struct APIStatementImportCancel: Encodable, Equatable, Sendable {
+    public let expectedVersion: Int
+    public init(expectedVersion: Int) { self.expectedVersion = expectedVersion }
+    enum CodingKeys: String, CodingKey { case expectedVersion = "expected_version" }
+}
+
+public struct APIStatementImportUndo: Encodable, Equatable, Sendable {
     public let expectedVersion: Int
     public init(expectedVersion: Int) { self.expectedVersion = expectedVersion }
     enum CodingKeys: String, CodingKey { case expectedVersion = "expected_version" }

@@ -489,6 +489,13 @@ public struct APIClient {
                        body: APIStatementImportCancel(expectedVersion: expectedVersion))
     }
 
+    public func undoStatementImport(budgetID: String, accountID: String, batchID: String,
+                                    expectedVersion: Int, token: String) async throws -> APIStatementImport {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/statement-imports/\(batchID)/undo",
+                       method: "POST", token: token,
+                       body: APIStatementImportUndo(expectedVersion: expectedVersion))
+    }
+
     public func updateAssignment(
         budgetID: String,
         categoryID: String,

@@ -1706,6 +1706,19 @@ def void_transaction(
     original = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.id == transaction_id, Transaction.budget_id == budget_id,
     ).with_for_update())
+    reversal = void_transaction_in_session(
+        budget=budget, original=original, reason=body.reason, user=user, db=db,
+    )
+    db.commit()
+    db.refresh(reversal)
+    return reversal
+
+
+def void_transaction_in_session(
+    *, budget: Budget, original: Transaction | None, reason: str,
+    user: User, db: Session,
+) -> Transaction:
+    """Apply one canonical void without committing, so callers can compose atomic workflows."""
     if original is None or not _can_access_transaction_resources(db, user, budget, original):
         raise HTTPException(status_code=404, detail="Transaction not found")
     if original.status != "posted":
@@ -1722,10 +1735,10 @@ def void_transaction(
     before_snapshot = transaction_snapshot(original)
     now = datetime.now(timezone.utc)
     reversal = Transaction(
-        budget_id=budget_id, account_id=original.account_id, category_id=original.category_id,
+        budget_id=budget.id, account_id=original.account_id, category_id=original.category_id,
         payee_id=original.payee_id, amount_minor=-original.amount_minor, occurred_on=today(),
         payee_name=f"Reversal: {original.payee_name or 'Transaction'}"[:150],
-        memo=(f"Void reversal. {body.reason}" if body.reason else "Void reversal.")[:500],
+        memo=(f"Void reversal. {reason}" if reason else "Void reversal.")[:500],
         financial_classification=original.financial_classification,
         is_cleared=False, flag=original.flag, tags=list(original.tags), attachment_metadata=[],
         created_by_user_id=user.id, status="reversal", reversal_of_transaction_id=original.id,
@@ -1738,12 +1751,10 @@ def void_transaction(
     original.status = "voided"
     original.voided_at = now
     original.voided_by_user_id = user.id
-    original.void_reason = body.reason or None
+    original.void_reason = reason or None
     original.reversal_transaction_id = reversal.id
     record_transaction_change(db, original, user, "voided", before=before_snapshot, after=transaction_snapshot(original))
     record_transaction_change(db, reversal, user, "reversal_created", after=transaction_snapshot(reversal))
-    db.commit()
-    db.refresh(reversal)
     return reversal
 
 

@@ -1,7 +1,7 @@
 # File import implementation
 
 Status: IN PROGRESS. The authenticated server API exposes money-neutral statement staging,
-duplicate review, reload, cancellation, and explicit approval for CSV/TSV/delimited text,
+duplicate review, reload, cancellation, explicit approval, and atomic approved-import undo for CSV/TSV/delimited text,
 OFX/QFX, QIF, and conservatively recognized text-based PDF statements. The native reconciliation
 UI is active for Budget Server workspaces and only explicit approval can post ledger rows. Local
 on iPhone now supports CSV, TSV, explicitly delimited text, structured OFX/QFX, QIF, and
@@ -25,6 +25,7 @@ Current endpoints:
 - `GET /api/v1/budgets/{budget}/accounts/{account}/statement-imports/{batch}`
 - `POST /api/v1/budgets/{budget}/accounts/{account}/statement-imports/{batch}/cancel`
 - `POST /api/v1/budgets/{budget}/accounts/{account}/statement-imports/{batch}/approve`
+- `POST /api/v1/budgets/{budget}/accounts/{account}/statement-imports/{batch}/undo`
 
 Uploads use a bounded raw body and explicit format/currency/mapping headers. CSV column and
 date-order selection is never guessed. Structured formats normalize through the same owned
@@ -64,16 +65,19 @@ any later spreadsheet export still requires its own formula-injection defenses.
 3. Current resource authorization before matching, suggestions, duplicate counts or preview.
 4. Stable external identity/fingerprints and bounded canonical-transaction matching. Ambiguous
    candidates remain explicitly reviewable; no silent merge or payee creation.
-5. Continue hardening explicit approval with PostgreSQL concurrency coverage and authorized undo.
+5. Continue hardening explicit approval with PostgreSQL concurrency coverage.
    Canonical transaction commands, optimistic replay protection, audit attribution and unchanged
    reconciliation/credit-reserve protections are active.
    `budgeting_routes.create_transaction_in_session` now owns authorization, payee resolution,
    reserve events and audit without committing; the existing HTTP route commits the returned
    transaction. Approval reuses this operation inside one caller-owned transaction.
-6. Partial-error policy and authorized undo. Native bounded history/reopen and cancellation are now
-   production-wired across Live, Demo, and Local Device providers. Undo must be atomic across every
-   posted row and reuse the canonical void/reversal service; the current route commits one void at a
-   time, so a client-side loop is deliberately not exposed as an unsafe partial-undo substitute.
+6. Partial-error policy. Native bounded history/reopen, cancellation, and authorized undo are now
+   production-wired across Live, Demo, and Local Device providers. Undo row-locks the approved batch,
+   rechecks optimistic version and current account scope, prevalidates every posted transaction, and
+   applies the canonical void/reversal operation to all rows in one database transaction. A
+   reconciled, stale, missing, or otherwise ineligible row rejects the entire request without a
+   partial undo. Reversal identities are retained in the staged candidate metadata, so the operation
+   remains inspectable and replay-safe without adding another financial source of truth.
 7. The production reconciliation sheet now provides file selection, explicit CSV mapping,
    duplicate-aware preview, category selection and all-row post/skip approval through the shared
    workspace command contract. The Budget Server adapter is active for every listed format. The

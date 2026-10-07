@@ -5,7 +5,8 @@ from datetime import date, timedelta
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
 
 from .database import get_db
 from .dependencies import get_current_user
@@ -14,15 +15,16 @@ from .import_formats import parse_ofx_candidates, parse_pdf_candidates, parse_qi
 from .import_matching import review_candidates
 from .import_review import load_match_observations
 from .import_staging import cancel_staged_batch, get_staged_batch, list_staged_batches, stage_candidates
-from .models import ImportBatch, User
+from .models import ImportBatch, Transaction, User
 from .schemas import (
     StatementImportApproveRequest,
     StatementImportCancelRequest,
     StatementImportListResponse,
     StatementImportResponse,
+    StatementImportUndoRequest,
     TransactionCreate,
 )
-from .budgeting_routes import create_transaction_in_session
+from .budgeting_routes import create_transaction_in_session, require_budget_capability, void_transaction_in_session
 from .import_staging import claim_staged_batch_for_approval
 
 
@@ -74,6 +76,7 @@ def _response(db: Session, user: User, budget_id: str, batch: ImportBatch,
             "duplicate_source_row": reviews[row.source_row].duplicate_source_row,
             "approval_action": batch.candidates[index].get("approval_action"),
             "posted_transaction_id": batch.candidates[index].get("posted_transaction_id"),
+            "reversal_transaction_id": batch.candidates[index].get("reversal_transaction_id"),
         } for index, row in enumerate(candidates)],
     }
 
@@ -215,6 +218,50 @@ def approve_statement_import(
             approved["posted_transaction_id"] = transaction.id
         stored_rows.append(approved)
     batch.candidates = stored_rows
+    db.flush()
+    response = _response(db, user, budget_id, batch, 2)
+    db.commit()
+    return response
+
+
+@router.post("/{batch_id}/undo", response_model=StatementImportResponse)
+def undo_statement_import(
+    budget_id: str, account_id: str, batch_id: str, body: StatementImportUndoRequest,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> dict:
+    budget = require_budget_capability(db, user, budget_id, "delete_transaction")
+    visible = get_staged_batch(db, user=user, budget_id=budget_id, batch_id=batch_id)
+    if visible.account_id != account_id:
+        raise HTTPException(status_code=404, detail="Import batch not found")
+    batch = db.scalar(select(ImportBatch).where(
+        ImportBatch.id == batch_id, ImportBatch.budget_id == budget_id,
+    ).with_for_update())
+    if batch is None or batch.version != body.expected_version:
+        raise HTTPException(status_code=409, detail="Statement import changed; reload before undoing")
+    if batch.status != "approved":
+        raise HTTPException(status_code=409, detail="Only an approved statement import can be undone")
+    posted_ids = [row.get("posted_transaction_id") for row in batch.candidates if row.get("approval_action") == "post"]
+    if not posted_ids:
+        raise HTTPException(status_code=409, detail="This import did not post any transactions")
+    if any(row.get("reversal_transaction_id") for row in batch.candidates):
+        raise HTTPException(status_code=409, detail="This statement import has already been undone")
+    transactions = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.budget_id == budget_id, Transaction.id.in_(posted_ids),
+    ).with_for_update()))
+    by_id = {item.id: item for item in transactions}
+    if len(by_id) != len(posted_ids):
+        raise HTTPException(status_code=409, detail="One or more imported transactions no longer exists")
+    reversals = {}
+    for transaction_id in posted_ids:
+        reversal = void_transaction_in_session(
+            budget=budget, original=by_id[transaction_id],
+            reason=f"Undo statement import {batch.id}", user=user, db=db,
+        )
+        reversals[transaction_id] = reversal.id
+    batch.candidates = [dict(row, reversal_transaction_id=reversals.get(row.get("posted_transaction_id")))
+                        if row.get("posted_transaction_id") in reversals else dict(row)
+                        for row in batch.candidates]
+    batch.version += 1
     db.flush()
     response = _response(db, user, budget_id, batch, 2)
     db.commit()

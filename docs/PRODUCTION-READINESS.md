@@ -1528,3 +1528,16 @@ actions visible with a stable native hit target. Re-invitation presentation is i
 known email and prior role are the sheet payload rather than state mutated beside a Boolean sheet.
 The focused XCUITest now passes the complete Household-tab flow: open management, cancel removal,
 confirm removal, verify retained history, open a prefilled re-invite, return, and reopen management.
+
+### Atomic statement-import undo — 2026-10-07
+
+Approved statement imports can now be undone from their existing review screen without deleting
+ledger history. The authorized command row-locks the actor-owned batch, checks its optimistic
+version and current account scope, validates every posted row, then uses the canonical transaction
+void/reversal service for the complete batch in one database transaction. If any source transaction
+is reconciled or otherwise ineligible, no row is changed. Successful reversal identities are stored
+with the import candidates, the batch version advances, and replay is rejected. Live requests use
+the current rotating credential; Demo and Local Device use the same production UI and canonical
+void/reversal semantics. Focused backend atomicity/accounting tests, Swift request-shape tests, and
+the Xcode 27 Beta native accounting test pass. This is engineering verification, not a claim of
+human acceptance.

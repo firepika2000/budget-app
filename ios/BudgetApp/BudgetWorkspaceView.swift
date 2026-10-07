@@ -346,6 +346,7 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
     func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport
     func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport
     func cancelStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport
+    func undoStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport
     func householdInvitations() async throws -> [APIInvitationSummary]
     func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret
     func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret
@@ -1075,13 +1076,67 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             try validateTransactionTarget(operation)
             return operation
         }
-        for operation in operations { try await recordTransaction(operation) }
+        var postedIDs: [Int: String] = [:]
+        for (index, operation) in operations.enumerated() {
+            let existing = Set(demo.transactions.map(\.id))
+            try await recordTransaction(operation)
+            guard let created = demo.transactions.first(where: { !existing.contains($0.id) }) else {
+                throw workspaceRepositoryError("The imported transaction could not be identified.")
+            }
+            postedIDs[index] = created.id
+        }
         try await synchronizeLocalAuthorityForBackup()
+        var postedIndex = 0
+        let completedCandidates = batch.candidates.map { row -> APIStatementImportCandidate in
+            guard choices[row.sourceRow]?.action == "post" else { return APIStatementImportCandidate(
+                sourceRow: row.sourceRow, occurredOn: row.occurredOn, amountMinor: row.amountMinor,
+                payee: row.payee, memo: row.memo, exactTransactionIDs: row.exactTransactionIDs,
+                possibleTransactionIDs: row.possibleTransactionIDs, suggestionsTruncated: row.suggestionsTruncated,
+                duplicateSourceRow: row.duplicateSourceRow, approvalAction: "skip") }
+            defer { postedIndex += 1 }
+            return APIStatementImportCandidate(
+                sourceRow: row.sourceRow, occurredOn: row.occurredOn, amountMinor: row.amountMinor,
+                payee: row.payee, memo: row.memo, exactTransactionIDs: row.exactTransactionIDs,
+                possibleTransactionIDs: row.possibleTransactionIDs, suggestionsTruncated: row.suggestionsTruncated,
+                duplicateSourceRow: row.duplicateSourceRow, approvalAction: "post",
+                postedTransactionID: postedIDs[postedIndex])
+        }
         let completed = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
             status: "approved", version: batch.version + 1, sourceFormat: batch.sourceFormat,
-            candidateCount: batch.candidateCount, candidates: batch.candidates, createdAt: batch.createdAt)
+            candidateCount: batch.candidateCount, candidates: completedCandidates, createdAt: batch.createdAt)
         statementImportBatches[batch.id] = completed
         return completed
+    }
+    func undoStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try requireActiveMembership();
+        guard let batch = statementImportBatches[batchID], batch.accountID == accountID else { throw workspaceRepositoryError("Statement import not found.") }
+        guard batch.status == "approved", batch.version == expectedVersion,
+              batch.candidates.contains(where: { $0.postedTransactionID != nil }),
+              batch.candidates.allSatisfy({ $0.reversalTransactionID == nil }) else {
+            throw APIClientError.server(status: 409, message: "This statement import cannot be undone.")
+        }
+        let ids = batch.candidates.compactMap(\.postedTransactionID)
+        let sources = try ids.map { try transactionCommandSource(id: $0, capability: "delete_transaction", requiresCreator: true) }
+        guard sources.allSatisfy({ $0.status == "posted" && $0.transferID == nil && !$0.reconciled }) else {
+            throw APIClientError.server(status: 409, message: "Every imported transaction must remain posted and unreconciled before the import can be undone.")
+        }
+        var reversals: [String: String] = [:]
+        for id in ids {
+            let before = Set(demo.transactions.map(\.id))
+            try await voidTransaction(id: id, reason: "Undo statement import \(batch.id)")
+            reversals[id] = demo.transactions.first(where: { !before.contains($0.id) })?.id
+        }
+        let rows = batch.candidates.map { row in APIStatementImportCandidate(
+            sourceRow: row.sourceRow, occurredOn: row.occurredOn, amountMinor: row.amountMinor,
+            payee: row.payee, memo: row.memo, exactTransactionIDs: row.exactTransactionIDs,
+            possibleTransactionIDs: row.possibleTransactionIDs, suggestionsTruncated: row.suggestionsTruncated,
+            duplicateSourceRow: row.duplicateSourceRow, approvalAction: row.approvalAction,
+            postedTransactionID: row.postedTransactionID,
+            reversalTransactionID: row.postedTransactionID.flatMap { reversals[$0] }) }
+        let result = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
+            status: batch.status, version: batch.version + 1, sourceFormat: batch.sourceFormat,
+            candidateCount: batch.candidateCount, candidates: rows, createdAt: batch.createdAt)
+        statementImportBatches[batch.id] = result
+        return result
     }
     func cancelStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try requireActiveMembership()
         guard let batch = statementImportBatches[batchID], batch.accountID == accountID else { throw workspaceRepositoryError("Statement import not found.") }
@@ -2118,6 +2173,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.stageStatementImport(budgetID: budget.id, accountID: accountID, data: data, mapping: mapping, token: token) }
     func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.approveStatementImport(budgetID: budget.id, accountID: accountID, batchID: batchID, approval: approval, token: token) }
     func cancelStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.cancelStatementImport(budgetID: budget.id, accountID: accountID, batchID: batchID, expectedVersion: expectedVersion, token: token) }
+    func undoStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.undoStatementImport(budgetID: budget.id, accountID: accountID, batchID: batchID, expectedVersion: expectedVersion, token: token) }
     func assignMoney(_ operation: AssignMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.updateAssignment(budgetID: budget.id, categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor, expectedAllocationVersion: operation.expectedVersion, token: token) }
     func cashRolloverPolicy() async throws -> APICashRolloverPolicyObservation { try await credentials.prepare(); return try await client.cashRolloverPolicy(budgetID: budget.id, token: token) }
     func selectCashRolloverPolicy(_ selection: APICashRolloverPolicySelection) async throws -> APICashRolloverPolicyObservation { try await credentials.prepare(); return try await client.selectCashRolloverPolicy(budgetID: budget.id, selection: selection, token: token) }
@@ -2956,6 +3012,16 @@ final class BudgetWorkspaceStore: ObservableObject {
             throw workspaceRepositoryError("You do not have permission to cancel this statement import.")
         }
         return try await commandRepository.cancelStatementImport(accountID: accountID, batchID: batchID, expectedVersion: expectedVersion)
+    }
+
+    func undoStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport {
+        try requireWorkspaceAccess()
+        guard budget.can("reconcile_account"), budget.can("delete_transaction"), let commandRepository else {
+            throw workspaceRepositoryError("You do not have permission to undo this statement import.")
+        }
+        let result = try await commandRepository.undoStatementImport(accountID: accountID, batchID: batchID, expectedVersion: expectedVersion)
+        await refresh()
+        return result
     }
 
     func reconciliationClearedBalance(accountID: String, throughDate: String) throws -> Int64 {
@@ -7000,6 +7066,7 @@ private struct StatementImportFlowView: View {
     @State private var dateOrder = "mdy"; @State private var postRows: Set<Int> = []; @State private var categoryByRow: [Int: String] = [:]
     @State private var isWorking = false; @State private var errorMessage: String?
     @State private var confirmingCancel = false
+    @State private var confirmingUndo = false
     init(workspace: BudgetWorkspaceStore, budget: APIBudget, account: APIAccount, file: StatementImportFile) {
         self.workspace = workspace; self.budget = budget; self.account = account; self.file = file
         _staged = State(initialValue: nil)
@@ -7023,6 +7090,10 @@ private struct StatementImportFlowView: View {
             Button("Cancel Import", role: .destructive) { if let staged { Task { await cancel(staged) } } }
             Button("Keep Reviewing", role: .cancel) {}
         } message: { Text("No transactions have been posted. This review will be marked cancelled.") }
+        .confirmationDialog("Undo Posted Import?", isPresented: $confirmingUndo, titleVisibility: .visible) {
+            Button("Undo Import", role: .destructive) { if let staged { Task { await undo(staged) } } }
+            Button("Keep Transactions", role: .cancel) {}
+        } message: { Text("Every unreconciled transaction posted by this import will be voided with an auditable reversal. If any row cannot be reversed, nothing changes.") }
         .onAppear { if let file { delimiter = file.suggestedDelimiter; configureDefaults() } }
         .onChange(of: delimiter) { _, _ in configureDefaults(reset: true) }
     } }
@@ -7054,7 +7125,14 @@ private struct StatementImportFlowView: View {
     }
     @ViewBuilder private func review(_ batch: APIStatementImport) -> some View {
         Section { LabeledContent("Recognized", value: "\(batch.candidateCount) transactions"); Text("Possible duplicates start skipped. Review the category and choice for every row.").font(.footnote).foregroundStyle(.secondary) }
-        ForEach(batch.candidates) { row in Section { Toggle(isOn: Binding(get: { postRows.contains(row.sourceRow) || row.approvalAction == "post" }, set: { enabled in if enabled { postRows.insert(row.sourceRow) } else { postRows.remove(row.sourceRow) } })) { VStack(alignment: .leading) { Text(row.payee.isEmpty ? "No payee" : row.payee); Text("\(row.occurredOn) · \(CurrencyText.display(row.amountMinor, currencyCode: budget.currencyCode))").font(.caption).foregroundStyle(.secondary) } }.disabled(!reviewable); if reviewable && postRows.contains(row.sourceRow) && row.amountMinor < 0 { Picker("Category", selection: Binding(get: { categoryByRow[row.sourceRow] ?? "" }, set: { categoryByRow[row.sourceRow] = $0 })) { Text("Uncategorized").tag(""); ForEach(workspace.categories.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } } }; if !row.exactTransactionIDs.isEmpty || !row.possibleTransactionIDs.isEmpty || row.duplicateSourceRow != nil { Label("Possible duplicate — skipped by default", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange) }; if !row.memo.isEmpty { Text(row.memo).font(.footnote).foregroundStyle(.secondary) }; if let action = row.approvalAction { Label(action == "post" ? "Posted" : "Skipped", systemImage: action == "post" ? "checkmark.circle" : "forward.end.circle").font(.footnote).foregroundStyle(.secondary) } } }
+        if budget.can("delete_transaction"), batch.status == "approved", batch.candidates.contains(where: { $0.postedTransactionID != nil }), batch.candidates.allSatisfy({ $0.reversalTransactionID == nil }) {
+            Section("Corrections") {
+                Button("Undo Posted Import", systemImage: "arrow.uturn.backward.circle", role: .destructive) { confirmingUndo = true }
+                    .disabled(isWorking).accessibilityIdentifier("undo-statement-import")
+                Text("Undo uses normal void-and-reversal accounting. It is all-or-nothing and cannot alter reconciled history.").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        ForEach(batch.candidates) { row in Section { Toggle(isOn: Binding(get: { postRows.contains(row.sourceRow) || row.approvalAction == "post" }, set: { enabled in if enabled { postRows.insert(row.sourceRow) } else { postRows.remove(row.sourceRow) } })) { VStack(alignment: .leading) { Text(row.payee.isEmpty ? "No payee" : row.payee); Text("\(row.occurredOn) · \(CurrencyText.display(row.amountMinor, currencyCode: budget.currencyCode))").font(.caption).foregroundStyle(.secondary) } }.disabled(!reviewable); if reviewable && postRows.contains(row.sourceRow) && row.amountMinor < 0 { Picker("Category", selection: Binding(get: { categoryByRow[row.sourceRow] ?? "" }, set: { categoryByRow[row.sourceRow] = $0 })) { Text("Uncategorized").tag(""); ForEach(workspace.categories.filter { !$0.isArchived }) { Text($0.name).tag($0.id) } } }; if !row.exactTransactionIDs.isEmpty || !row.possibleTransactionIDs.isEmpty || row.duplicateSourceRow != nil { Label("Possible duplicate — skipped by default", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange) }; if !row.memo.isEmpty { Text(row.memo).font(.footnote).foregroundStyle(.secondary) }; if row.reversalTransactionID != nil { Label("Reversed", systemImage: "arrow.uturn.backward.circle").font(.footnote).foregroundStyle(.orange) } else if let action = row.approvalAction { Label(action == "post" ? "Posted" : "Skipped", systemImage: action == "post" ? "checkmark.circle" : "forward.end.circle").font(.footnote).foregroundStyle(.secondary) } } }
     }
     private var mappingReady: Bool {
         guard let file, file.sourceFormat == "csv" else { return file != nil }
@@ -7076,6 +7154,7 @@ private struct StatementImportFlowView: View {
     private func stage() async { guard let file else { return }; isWorking = true; defer { isWorking = false }; do { let csv = file.sourceFormat == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; let mapping = APIStatementImportMapping(sourceFormat: file.sourceFormat, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder, delimiter: delimiter); let result = try await workspace.stageStatementImport(accountID: account.id, data: file.data, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)) } catch { errorMessage = error.localizedDescription } }
     private func approve(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { let items = batch.candidates.map { row in APIStatementImportApprovalItem(sourceRow: row.sourceRow, action: postRows.contains(row.sourceRow) ? "post" : "skip", categoryID: postRows.contains(row.sourceRow) ? categoryByRow[row.sourceRow].flatMap { $0.isEmpty ? nil : $0 } : nil) }; _ = try await workspace.approveStatementImport(accountID: account.id, batchID: batch.id, approval: .init(expectedVersion: batch.version, items: items)); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func cancel(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { _ = try await workspace.cancelStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version); dismiss() } catch { errorMessage = error.localizedDescription } }
+    private func undo(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { staged = try await workspace.undoStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version) } catch { errorMessage = error.localizedDescription } }
     private static func preferred(_ headers: [String], _ names: [String]) -> String { for name in names { if let match = headers.first(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == name }) { return match } }; return "" }
     private static func csvHeaders(_ data: Data, delimiter: String) -> [String] { guard let separator = delimiter.first, let text = String(data: data.prefix(64 * 1024), encoding: .utf8), let line = text.split(whereSeparator: \.isNewline).first else { return [] }; var values: [String] = [], value = "", quoted = false; let chars = Array(line); var index = 0; while index < chars.count { let char = chars[index]; if char == "\"" { if quoted && index + 1 < chars.count && chars[index + 1] == "\"" { value.append("\""); index += 1 } else { quoted.toggle() } } else if char == separator && !quoted { values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); value = "" } else { value.append(char) }; index += 1 }; values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); if !values.isEmpty { values[0] = values[0].replacingOccurrences(of: "\u{feff}", with: "") }; return values.filter { !$0.isEmpty } }
 }

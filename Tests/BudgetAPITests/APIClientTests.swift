@@ -1367,6 +1367,26 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(result.version, 4)
     }
 
+    func testStatementImportUndoSendsOnlyOptimisticVersion() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let responseBody = Data(#"{"id":"batch-1","budget_id":"b1","account_id":"a1","status":"approved","version":2,"source_format":"csv","candidate_count":1,"candidates":[{"source_row":2,"occurred_on":"2026-10-02","amount_minor":-100,"payee":"Cafe","memo":"","exact_transaction_ids":[],"possible_transaction_ids":[],"suggestions_truncated":false,"duplicate_source_row":null,"approval_action":"post","posted_transaction_id":"t1","reversal_transaction_id":"r1"}],"created_at":"2026-10-02T12:00:00Z"}"#.utf8)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/statement-imports/batch-1/undo")
+            let body = try JSONSerialization.jsonObject(with: requestBody(request)) as! [String: Any]
+            XCTAssertEqual(body.count, 1)
+            XCTAssertEqual(body["expected_version"] as? Int, 1)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, responseBody)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let result = try await client.undoStatementImport(
+            budgetID: "b1", accountID: "a1", batchID: "batch-1", expectedVersion: 1, token: "current"
+        )
+        XCTAssertEqual(result.candidates.first?.reversalTransactionID, "r1")
+        XCTAssertEqual(result.version, 2)
+    }
+
     func testStatementImportHistoryIsBoundedAndDetailLoadsSeparately() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

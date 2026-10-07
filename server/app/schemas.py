@@ -1082,6 +1082,7 @@ class ImportCandidateResponse(BaseModel):
     duplicate_source_row: Optional[int] = None
     approval_action: Optional[Literal["post", "skip"]] = None
     posted_transaction_id: Optional[str] = None
+    reversal_transaction_id: Optional[str] = None
 
 
 class StatementImportResponse(BaseModel):
@@ -1114,6 +1115,10 @@ class StatementImportListResponse(BaseModel):
 
 
 class StatementImportCancelRequest(BaseModel):
+    expected_version: int = Field(ge=0)
+
+
+class StatementImportUndoRequest(BaseModel):
     expected_version: int = Field(ge=0)
 
 
