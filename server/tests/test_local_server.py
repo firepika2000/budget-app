@@ -59,7 +59,7 @@ def test_non_loopback_binding_requires_explicit_allowed_hosts(tmp_path):
 def test_local_mode_runs_full_migration_graph_and_preserves_populated_database(tmp_path):
     configuration = LocalServerConfiguration.load_or_create(tmp_path / "local")
     migrate(configuration, SERVER_ROOT)
-    assert "0032_offline_txn_idempotency (head)" in migration_state(configuration, SERVER_ROOT)
+    assert "0034_schedule_end_date (head)" in migration_state(configuration, SERVER_ROOT)
     with sqlite3.connect(configuration.database_path) as database:
         database.execute("INSERT INTO users(id,email,password_hash,display_name,created_at) VALUES (?,?,?,?,?)",
                          ("owner", "owner@example.test", "hash", "Owner", "2026-09-27 00:00:00"))

@@ -201,17 +201,19 @@ public struct LocalScheduleRecord: Equatable, Sendable {
     public let destinationAccountID: String?; public let categoryID: String?; public let payeeID: String?
     public let name: String; public let amountMinor: Int64; public let nextDate: String
     public let recurrenceUnit: String; public let intervalCount: Int64; public let memo: String
+    public let endDate: String?
     public let isActive: Bool
     public let financialClassification: String?; public let lastRealizedOn: String?
     public init(id: String, budgetID: String, accountID: String, destinationAccountID: String? = nil,
                 categoryID: String? = nil, payeeID: String? = nil, name: String, amountMinor: Int64,
                 nextDate: String, recurrenceUnit: String, intervalCount: Int64, memo: String = "",
+                endDate: String? = nil,
                 isActive: Bool = true, financialClassification: String? = nil,
                 lastRealizedOn: String? = nil) {
         self.id = id; self.budgetID = budgetID; self.accountID = accountID
         self.destinationAccountID = destinationAccountID; self.categoryID = categoryID; self.payeeID = payeeID
         self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate
-        self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.memo = memo
+        self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.memo = memo; self.endDate = endDate
         self.isActive = isActive
         self.financialClassification = financialClassification; self.lastRealizedOn = lastRealizedOn
     }
@@ -565,12 +567,12 @@ public actor LocalAuthorityStore {
     public func upsertSchedule(_ value: LocalScheduleRecord) async throws {
         guard value.intervalCount > 0 else { throw LocalStorageError.operationFailed("Schedule interval must be positive") }
         try await database.execute(.init(
-            "INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active,financial_classification,last_realized_on) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id,destination_account_id=excluded.destination_account_id,category_id=excluded.category_id,payee_id=excluded.payee_id,name=excluded.name,amount_minor=excluded.amount_minor,next_date=excluded.next_date,recurrence_unit=excluded.recurrence_unit,interval_count=excluded.interval_count,memo=excluded.memo,is_active=excluded.is_active,financial_classification=excluded.financial_classification,last_realized_on=excluded.last_realized_on",
+            "INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active,financial_classification,last_realized_on,end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id,destination_account_id=excluded.destination_account_id,category_id=excluded.category_id,payee_id=excluded.payee_id,name=excluded.name,amount_minor=excluded.amount_minor,next_date=excluded.next_date,recurrence_unit=excluded.recurrence_unit,interval_count=excluded.interval_count,memo=excluded.memo,is_active=excluded.is_active,financial_classification=excluded.financial_classification,last_realized_on=excluded.last_realized_on,end_date=excluded.end_date",
             values: [.text(value.id), .text(value.budgetID), .text(value.accountID), optionalText(value.destinationAccountID),
                      optionalText(value.categoryID), optionalText(value.payeeID), .text(value.name), .integer(value.amountMinor),
                      .text(value.nextDate), .text(value.recurrenceUnit), .integer(value.intervalCount), .text(value.memo),
                      .integer(value.isActive ? 1 : 0), optionalText(value.financialClassification),
-                     optionalText(value.lastRealizedOn)]
+                     optionalText(value.lastRealizedOn), optionalText(value.endDate)]
         ))
     }
 
@@ -696,7 +698,7 @@ public actor LocalAuthorityStore {
             .init("INSERT INTO category_targets(category_id,target_type,amount_minor,cadence,effective_month,snoozed_month,target_date,recurrence_months,minimum_contribution_minor,priority,is_active,snoozed_months_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.categoryID), .text(item.targetType), .integer(item.amountMinor), .text(item.cadence), .text(item.effectiveMonth), optionalText(item.snoozedMonth), optionalText(item.targetDate), optionalInteger(item.recurrenceMonths), .integer(item.minimumContributionMinor), .integer(item.priority), .integer(item.isActive ? 1 : 0), .text(json(item.snoozedMonths))])
         }
         statements += value.schedules.map { item in
-            .init("INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active,financial_classification,last_realized_on) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), optionalText(item.destinationAccountID), optionalText(item.categoryID), optionalText(item.payeeID), .text(item.name), .integer(item.amountMinor), .text(item.nextDate), .text(item.recurrenceUnit), .integer(item.intervalCount), .text(item.memo), .integer(item.isActive ? 1 : 0), optionalText(item.financialClassification), optionalText(item.lastRealizedOn)])
+            .init("INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active,financial_classification,last_realized_on,end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), optionalText(item.destinationAccountID), optionalText(item.categoryID), optionalText(item.payeeID), .text(item.name), .integer(item.amountMinor), .text(item.nextDate), .text(item.recurrenceUnit), .integer(item.intervalCount), .text(item.memo), .integer(item.isActive ? 1 : 0), optionalText(item.financialClassification), optionalText(item.lastRealizedOn), optionalText(item.endDate)])
         }
         statements += value.attachments.map { item in
             .init("INSERT INTO attachments(id,transaction_id,filename,content_type,size_bytes,sha256,object_name,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.transactionID), .text(item.filename), .text(item.contentType), .integer(item.sizeBytes), .text(item.sha256), .text(item.objectName), .text(item.createdAt)])
@@ -785,7 +787,7 @@ public actor LocalAuthorityStore {
 
     private func loadSchedules(budgetID: String) async throws -> [LocalScheduleRecord] {
         try await database.rows(.init("SELECT * FROM scheduled_transactions WHERE budget_id=? ORDER BY next_date,id", values: [.text(budgetID)])).map {
-            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), accountID: text($0, "account_id"), destinationAccountID: optionalText($0, "destination_account_id"), categoryID: optionalText($0, "category_id"), payeeID: optionalText($0, "payee_id"), name: text($0, "name"), amountMinor: integer($0, "amount_minor"), nextDate: text($0, "next_date"), recurrenceUnit: text($0, "recurrence_unit"), intervalCount: integer($0, "interval_count"), memo: text($0, "memo"), isActive: bool($0, "is_active"), financialClassification: optionalText($0, "financial_classification"), lastRealizedOn: optionalText($0, "last_realized_on"))
+            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), accountID: text($0, "account_id"), destinationAccountID: optionalText($0, "destination_account_id"), categoryID: optionalText($0, "category_id"), payeeID: optionalText($0, "payee_id"), name: text($0, "name"), amountMinor: integer($0, "amount_minor"), nextDate: text($0, "next_date"), recurrenceUnit: text($0, "recurrence_unit"), intervalCount: integer($0, "interval_count"), memo: text($0, "memo"), endDate: optionalText($0, "end_date"), isActive: bool($0, "is_active"), financialClassification: optionalText($0, "financial_classification"), lastRealizedOn: optionalText($0, "last_realized_on"))
         }
     }
 

@@ -1130,7 +1130,7 @@ extension DemoStore {
             DemoPayee(id: item.id, name: item.name, isArchived: item.isArchived, defaultCategoryID: item.defaultCategoryID, aliases: value.payeeAliases.filter { $0.payeeID == item.id }.map(\.displayName))
         }
         schedules = value.schedules.map { item in
-            DemoSchedule(id: item.id, accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amount: item.amountMinor, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: Int(item.intervalCount), memo: item.memo, financialClassification: item.financialClassification, isActive: item.isActive, lastRealizedOn: item.lastRealizedOn)
+            DemoSchedule(id: item.id, accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amount: item.amountMinor, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: Int(item.intervalCount), endDate: item.endDate, memo: item.memo, financialClassification: item.financialClassification, isActive: item.isActive, lastRealizedOn: item.lastRealizedOn)
         }
         requests = []; allowances = []; allowanceHistory = []; reserveAttribution = [:]
         allocationEvents = value.allocations.map { item in
@@ -1218,7 +1218,7 @@ extension DemoStore {
             item.target.map { LocalCategoryTargetRecord(categoryID: item.id, targetType: item.targetType, amountMinor: $0, cadence: "monthly", effectiveMonth: currentPlanningMonth, snoozedMonth: item.targetSnoozedMonths.sorted().last, targetDate: item.targetDate, recurrenceMonths: item.targetRecurrenceMonths.map(Int64.init), minimumContributionMinor: item.targetMinimumContribution, priority: Int64(item.targetPriority), isActive: item.targetIsActive, snoozedMonths: item.targetSnoozedMonths.sorted()) }
         }
         let scheduleRows = schedules.map { item in
-            LocalScheduleRecord(id: item.id, budgetID: identity.budgetID, accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, payeeID: payees.first(where: { $0.name == item.name })?.id, name: item.name, amountMinor: item.amount, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: Int64(item.intervalCount), memo: item.memo, isActive: item.isActive, financialClassification: item.financialClassification, lastRealizedOn: item.lastRealizedOn)
+            LocalScheduleRecord(id: item.id, budgetID: identity.budgetID, accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, payeeID: payees.first(where: { $0.name == item.name })?.id, name: item.name, amountMinor: item.amount, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: Int64(item.intervalCount), memo: item.memo, endDate: item.endDate, isActive: item.isActive, financialClassification: item.financialClassification, lastRealizedOn: item.lastRealizedOn)
         }
         let rollover = cashRolloverPolicies.map { item in
             let audit = cashRolloverAudit[item.version]

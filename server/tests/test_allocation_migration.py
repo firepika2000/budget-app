@@ -60,13 +60,15 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
         debt_term_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('account_debt_terms')"))}
         transaction_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('transactions')"))}
         category_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('categories')"))}
-        assert version == "0033_category_customization"
+        assert version == "0034_schedule_end_date"
         assert attachment_count == 0
         assert "ix_transaction_budget_date_id" in report_indexes
         assert {"budget_id", "user_id", "category_id", "sort_order"} <= favorite_columns
         assert {"account_id", "budget_id", "terms_type", "annual_rate_basis_points"} <= debt_term_columns
         assert "financial_classification" in transaction_columns
         assert {"icon_name", "note"} <= category_columns
+        schedule_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('scheduled_transactions')"))}
+        assert "end_date" in schedule_columns
 
 
 def test_0031_pairing_upgrade_preserves_existing_refresh_sessions(tmp_path, monkeypatch):

@@ -194,6 +194,37 @@ def test_disabling_and_deleting_schedule_updates_forecast(client, owner_token, s
     assert fc["projected_total_on_budget_minor"] == fc["actual_total_on_budget_minor"]
 
 
+def test_schedule_end_date_bounds_forecast_and_deactivates_after_final_realization(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    bounded = create_schedule(
+        client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"],
+        name="Bounded bill", amount_minor=-1200, next_date=future(10), recurrence_unit="weeks",
+        interval_count=1, end_date=future(17),
+    )
+    assert bounded.status_code == 201, bounded.text
+    assert bounded.json()["end_date"] == future(17)
+    forecast = client.get(f"/api/v1/budgets/{budget['id']}/forecast?through={horizon()}", headers=auth(owner_token)).json()
+    occurrences = [item for item in forecast["occurrences"] if item["scheduled_transaction_id"] == bounded.json()["id"]]
+    assert [item["occurred_on"] for item in occurrences] == [future(10), future(17)]
+
+    invalid = create_schedule(
+        client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"],
+        name="Invalid end", amount_minor=-100, next_date=future(10), recurrence_unit="weeks",
+        end_date=future(9),
+    )
+    assert invalid.status_code == 422
+
+    final = create_schedule(
+        client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"],
+        name="Final due bill", amount_minor=-500, next_date=PAST, recurrence_unit="weeks", end_date=PAST,
+    ).json()
+    realized = client.post(realize_url(budget["id"], final["id"]), headers=auth(owner_token))
+    assert realized.status_code == 200, realized.text
+    assert realized.json()["is_active"] is False
+    assert realized.json()["next_date"] is None
+
+
 # ---------------------------------------------------------------------------
 # Realization + idempotency
 # ---------------------------------------------------------------------------

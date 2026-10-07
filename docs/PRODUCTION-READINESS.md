@@ -69,6 +69,12 @@ one-time items become paused. The action reuses the canonical schedule update se
 the schedule's account, destination, category, payee, amount, memo and classification. A focused
 production-store test proves that no transaction, account balance or Available-to-Assign value changes.
 
+Scheduled end-date checkpoint (2026-10-07): recurring items can now specify an optional inclusive
+final occurrence date in the shared production editor. Server and Local Device storage persist it,
+forecast expansion honors it, and realization/skip pause the item instead of advancing past it. The
+field is metadata-only until an occurrence is explicitly realized, so account balances, category
+activity and Available-to-Assign remain unchanged by creation or editing.
+
 Transaction audit checkpoint after `e96701f`: transaction detail now exposes bounded,
 actor-attributed change history from the immutable server audit ledger. The route rechecks current
 account/category visibility before loading events and returns action, actor, timestamp and changed

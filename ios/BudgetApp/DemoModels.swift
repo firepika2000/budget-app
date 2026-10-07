@@ -137,6 +137,7 @@ struct DemoSchedule: Identifiable, Hashable {
     var nextDate: String
     var recurrenceUnit: String
     var intervalCount: Int = 1
+    var endDate: String? = nil
     var memo: String = ""
     var financialClassification: String? = nil
     var isActive = true

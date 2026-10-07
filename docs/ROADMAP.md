@@ -154,6 +154,10 @@ Scheduled-item management now includes an explicitly confirmed Skip Next Occurre
 the existing scoped schedule-update service, advances recurring dates with the canonical calendar
 rules, pauses a skipped one-time item, and never creates a transaction or changes financial state.
 
+Recurring schedules can now carry an optional final occurrence date across Live Server, Local Device,
+Demo, export/import projection, editor and forecast paths. Forecast expansion stops at that boundary;
+realizing or skipping the final occurrence pauses the schedule without creating extra financial state.
+
 The sections that follow retain the original milestone scope and historical context. References
 to v0.9 distribution or v1.x import in those sections use the old numbering; the table above is the
 current authorized execution sequence. Human acceptance is pending and no retest is requested now.

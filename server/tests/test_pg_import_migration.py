@@ -35,5 +35,5 @@ def test_populated_import_staging_upgrade_and_downgrade_safety(pg, monkeypatch):
     with pytest.raises(RuntimeError, match="Cannot remove populated import staging"):
         command.downgrade(config, "0029_cash_rollover_history")
     with pg.engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0032_offline_txn_idempotency"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0034_schedule_end_date"
         assert connection.execute(text("SELECT COUNT(*) FROM import_batches")).scalar_one() == 1

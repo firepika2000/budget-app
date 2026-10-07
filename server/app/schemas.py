@@ -476,6 +476,7 @@ class ScheduledTransactionCreate(BaseModel):
     next_date: date
     recurrence_unit: Literal["once", "days", "weeks", "months", "years"]
     interval_count: int = Field(default=1, gt=0, le=365)
+    end_date: Optional[date] = None
     memo: str = Field(default="", max_length=500)
     financial_classification: Optional[Literal["interest_charge"]] = None
 
@@ -490,6 +491,10 @@ class ScheduledTransactionCreate(BaseModel):
                 raise ValueError("scheduled transfers use a positive amount and no category or payee")
         if self.financial_classification == "interest_charge" and self.amount_minor >= 0:
             raise ValueError("interest charges must be outflows")
+        if self.end_date is not None and self.end_date < self.next_date:
+            raise ValueError("schedule end date cannot precede the next occurrence")
+        if self.recurrence_unit == "once" and self.end_date is not None:
+            raise ValueError("one-time schedules do not use an end date")
         return self
 
 
@@ -511,6 +516,7 @@ class ScheduledTransactionResponse(BaseModel):
     next_date: date
     recurrence_unit: str
     interval_count: int
+    end_date: Optional[date] = None
     memo: str
     financial_classification: Optional[str] = None
     is_active: bool

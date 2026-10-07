@@ -350,6 +350,7 @@ public struct APIScheduledTransaction: Identifiable, Codable, Equatable, Sendabl
     public let nextDate: String
     public let recurrenceUnit: String
     public let intervalCount: Int
+    public let endDate: String?
     public let memo: String
     public let financialClassification: String?
     public let isActive: Bool
@@ -367,6 +368,7 @@ public struct APIScheduledTransaction: Identifiable, Codable, Equatable, Sendabl
         case nextDate = "next_date"
         case recurrenceUnit = "recurrence_unit"
         case intervalCount = "interval_count"
+        case endDate = "end_date"
         case isActive = "is_active"
         case lastRealizedOn = "last_realized_on"
     }
@@ -382,15 +384,16 @@ public struct APIScheduledTransactionCreate: Encodable, Sendable {
     public let nextDate: String
     public let recurrenceUnit: String
     public let intervalCount: Int
+    public let endDate: String?
     public let memo: String
     public let financialClassification: String?
     public let isActive: Bool
 
-    public init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, payeeID: String? = nil, name: String, amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1, memo: String = "", financialClassification: String? = nil, isActive: Bool = true) {
+    public init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, payeeID: String? = nil, name: String, amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1, endDate: String? = nil, memo: String = "", financialClassification: String? = nil, isActive: Bool = true) {
         self.accountID = accountID; self.destinationAccountID = destinationAccountID; self.categoryID = categoryID
         self.payeeID = payeeID
         self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate
-        self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.memo = memo; self.financialClassification = financialClassification; self.isActive = isActive
+        self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.endDate = endDate; self.memo = memo; self.financialClassification = financialClassification; self.isActive = isActive
     }
 
     enum CodingKeys: String, CodingKey {
@@ -404,6 +407,7 @@ public struct APIScheduledTransactionCreate: Encodable, Sendable {
         case nextDate = "next_date"
         case recurrenceUnit = "recurrence_unit"
         case intervalCount = "interval_count"
+        case endDate = "end_date"
         case isActive = "is_active"
     }
 }

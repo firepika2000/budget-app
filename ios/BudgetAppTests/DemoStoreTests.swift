@@ -1194,6 +1194,9 @@ final class DemoStoreTests: XCTestCase {
             try await store.createSchedule(.init(accountID: account.id, name: "Future \(unit)", amountMinor: 50_000, nextDate: "2026-12-01", recurrenceUnit: unit, intervalCount: unit == "weeks" ? 2 : 1))
             XCTAssertTrue(store.scheduledTransactions.contains { $0.name == "Future \(unit)" && $0.recurrenceUnit == unit })
         }
+        try await store.createSchedule(.init(accountID: account.id, name: "Bounded daily", amountMinor: -100, nextDate: "2026-12-01", recurrenceUnit: "days", endDate: "2026-12-02"))
+        XCTAssertEqual(store.scheduledTransactions.first { $0.name == "Bounded daily" }?.endDate, "2026-12-02")
+        XCTAssertEqual(store.forecast?.occurrences.filter { $0.name == "Bounded daily" }.count, 2)
         XCTAssertEqual(store.summary?.readyToAssignMinor, before.0)
         XCTAssertEqual(store.balance(for: account), before.1)
         XCTAssertEqual(store.transactions.count, before.2)
@@ -1231,6 +1234,18 @@ final class DemoStoreTests: XCTestCase {
         let advanced = try XCTUnwrap(store.scheduledTransactions.first { $0.id == recurring.id })
         XCTAssertEqual(advanced.nextDate, "2026-11-30")
         XCTAssertTrue(advanced.isActive)
+
+        try await store.createSchedule(.init(
+            accountID: account.id,
+            name: "Skip final",
+            amountMinor: -750,
+            nextDate: "2026-11-30",
+            recurrenceUnit: "months",
+            endDate: "2026-11-30"
+        ))
+        let final = try XCTUnwrap(store.scheduledTransactions.first { $0.name == "Skip final" })
+        try await store.skipNextScheduleOccurrence(id: final.id)
+        XCTAssertFalse(try XCTUnwrap(store.scheduledTransactions.first { $0.id == final.id }).isActive)
 
         try await store.createSchedule(.init(
             accountID: account.id,
