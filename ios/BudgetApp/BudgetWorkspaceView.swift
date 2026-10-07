@@ -1818,6 +1818,23 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     func transactionHistory(id: String) async throws -> [APITransactionChange] { try requireActiveMembership();
         let transaction = try attachmentTransaction(id: id)
+        if let localAuthority, let localIdentity {
+            let rows = try await localAuthority.transactionChanges(
+                transactionID: id, budgetID: localIdentity.budgetID
+            )
+            if !rows.isEmpty {
+                return try rows.map { item in
+                    try decode([
+                        "id": item.id, "action": item.action,
+                        "actor_user_id": item.actorUserID,
+                        "actor_display_name": item.actorUserID == localIdentity.ownerUserID
+                            ? localIdentity.ownerDisplayName : NSNull(),
+                        "changed_fields": item.changedFields,
+                        "created_at": item.createdAt,
+                    ] as [String: Any])
+                }
+            }
+        }
         return [try decode([
             "id": "demo-history-\(id)", "action": "created", "actor_user_id": transaction.member,
             "actor_display_name": transaction.member, "changed_fields": [],

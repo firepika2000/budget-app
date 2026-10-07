@@ -329,6 +329,26 @@ public struct LocalTransactionChangeRecord: Equatable, Sendable {
         self.actorUserID = actorUserID; self.action = action; self.beforeJSON = beforeJSON
         self.afterJSON = afterJSON; self.createdAt = createdAt
     }
+
+    /// Matches the server's privacy-safe history projection: callers receive field names, while
+    /// the raw before/after values stay inside the local authority database.
+    public var changedFields: [String] {
+        func object(_ value: String?) -> [String: Any] {
+            guard let value, let data = value.data(using: .utf8),
+                  let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return [:]
+            }
+            return result
+        }
+        let before = object(beforeJSON)
+        let after = object(afterJSON)
+        let ignored: Set<String> = ["attachment_id", "sha256", "scheduled_transaction_id"]
+        return Set(before.keys).union(after.keys).subtracting(ignored).filter { key in
+            !NSDictionary(dictionary: ["value": before[key] ?? NSNull()]).isEqual(
+                to: ["value": after[key] ?? NSNull()]
+            )
+        }.sorted()
+    }
 }
 
 public struct LocalCreditReserveEventRecord: Equatable, Sendable {
@@ -693,6 +713,18 @@ public actor LocalAuthorityStore {
         try requireOneChange(changes, record: "attachment tombstone")
     }
 
+    public func transactionChanges(
+        transactionID: String, budgetID: String, limit: Int = 50
+    ) async throws -> [LocalTransactionChangeRecord] {
+        guard (1...100).contains(limit) else {
+            throw LocalStorageError.invalidSnapshot("Transaction history limit is invalid")
+        }
+        return try await database.rows(.init(
+            "SELECT * FROM transaction_changes WHERE budget_id=? AND transaction_id=? ORDER BY created_at DESC,id DESC LIMIT ?",
+            values: [.text(budgetID), .text(transactionID), .integer(Int64(limit))]
+        )).map(transactionChangeRecord)
+    }
+
     public func snapshot(budgetID: String) async throws -> LocalAuthoritySnapshot {
         let identityRows = try await database.rows(.init(
             "SELECT h.id AS household_id,h.name AS household_name,u.id AS owner_user_id,u.display_name AS owner_display_name,b.id AS budget_id,b.name AS budget_name,b.currency_code FROM budgets b JOIN households h ON h.id=b.household_id JOIN memberships m ON m.household_id=h.id AND m.role='owner' AND m.is_active=1 JOIN users u ON u.id=m.user_id WHERE b.id=? ORDER BY u.id LIMIT 1",
@@ -928,9 +960,11 @@ public actor LocalAuthorityStore {
     }
 
     private func loadTransactionChanges(budgetID: String) async throws -> [LocalTransactionChangeRecord] {
-        try await database.rows(.init("SELECT * FROM transaction_changes WHERE budget_id=? ORDER BY created_at,id", values: [.text(budgetID)])).map { row in
-            try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), transactionID: text(row, "transaction_id"), actorUserID: text(row, "actor_user_id"), action: text(row, "action"), beforeJSON: optionalText(row, "before_json"), afterJSON: optionalText(row, "after_json"), createdAt: text(row, "created_at"))
-        }
+        try await database.rows(.init("SELECT * FROM transaction_changes WHERE budget_id=? ORDER BY created_at,id", values: [.text(budgetID)])).map(transactionChangeRecord)
+    }
+
+    private func transactionChangeRecord(_ row: LocalSQLiteRow) throws -> LocalTransactionChangeRecord {
+        try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), transactionID: text(row, "transaction_id"), actorUserID: text(row, "actor_user_id"), action: text(row, "action"), beforeJSON: optionalText(row, "before_json"), afterJSON: optionalText(row, "after_json"), createdAt: text(row, "created_at"))
     }
 
     private func loadCreditReserveEvents(budgetID: String) async throws -> [LocalCreditReserveEventRecord] {

@@ -199,8 +199,27 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(snapshot.cashRolloverPolicies.first?.policy, "absorb_next_month")
         XCTAssertEqual(snapshot.creditReserveAttributions, [.init(transactionID: "purchase", categoryID: "groceries", amountMinor: 12_345)])
         XCTAssertEqual(snapshot.transactionChanges.first?.afterJSON, "{\"amount_minor\":-12345}")
+        XCTAssertEqual(snapshot.transactionChanges.first?.changedFields, ["amount_minor"])
+        let transactionHistory = try await reopened.transactionChanges(
+            transactionID: "purchase", budgetID: "budget"
+        )
+        XCTAssertEqual(transactionHistory.map(\.id), ["change"])
         XCTAssertEqual(snapshot.creditReserveEvents.first?.amountMinor, 12_345)
         try await reopened.integrityCheck()
+    }
+
+    func testTransactionChangeFieldProjectionRedactsValuesAndInternalMetadata() {
+        let value = LocalTransactionChangeRecord(
+            id: "change", budgetID: "budget", transactionID: "transaction",
+            actorUserID: "owner", action: "updated",
+            beforeJSON: #"{"amount_minor":-100,"memo":"private before","attachment_id":"old","sha256":"old","scheduled_transaction_id":"schedule"}"#,
+            afterJSON: #"{"amount_minor":-125,"memo":"private after","attachment_id":"new","sha256":"new","scheduled_transaction_id":"other"}"#,
+            createdAt: "2026-10-07T12:00:00Z"
+        )
+
+        XCTAssertEqual(value.changedFields, ["amount_minor", "memo"])
+        XCTAssertFalse(value.changedFields.contains("private before"))
+        XCTAssertFalse(value.changedFields.contains("private after"))
     }
 
     func testTypedAuthorityStoreRefusesInvalidSplitAggregateWithoutPartialWrite() async throws {

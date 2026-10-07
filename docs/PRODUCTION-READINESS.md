@@ -1849,3 +1849,14 @@ guidance and resilience classifications. The focused authenticated export regres
 real metadata through the production category command and asserts it in the returned transfer
 contract; the Swift projection compatibility suite confirms both complete and legacy envelopes.
 No financial observations or authorization rules change.
+
+### Local Device transaction-history visibility — 2026-10-07
+
+Transaction detail now reads the preserved Server-to-Local audit rows from the encrypted Local
+Device authority instead of replacing them with a synthetic creation entry. The query is scoped to
+the active budget and transaction, newest-first, and bounded to 50 entries. The UI receives only
+the action, actor identity, timestamp, and changed field names; raw before/after values and internal
+attachment, digest, and schedule-lineage identifiers remain confined to storage. Focused storage
+tests cover persistence, query scoping, and value redaction, and the Xcode 27 Beta production build
+passes. Creating new audit rows for mutations performed after moving to Local Device remains a
+separate provider-parity gap.
