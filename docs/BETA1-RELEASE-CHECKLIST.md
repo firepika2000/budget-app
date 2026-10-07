@@ -72,9 +72,8 @@ processing remain required; no human acceptance is inferred from a successful up
 ## Signing handoff
 
 Apple approved the developer enrollment on 2026-09-30. The Apple Development and Apple Distribution
-identities for team `6JGQ5388N8` are installed.
-No `DEVELOPMENT_TEAM` is committed to the project: the release helper applies the owner's team only
-to the archive invocation, keeping personal team configuration out of Git. In Xcode Beta:
+identities for team `6JGQ5388N8` are installed, and the application target now records that intended
+organization team. Provisioning profiles and private signing material remain uncommitted. In Xcode:
 
 1. Open **Xcode > Settings > Accounts** and sign in to the enrolled Apple Developer account.
 2. Open `ios/BudgetApp.xcodeproj`, select **BudgetApp > Signing & Capabilities**, and choose the
@@ -88,6 +87,7 @@ membership details and run:
 
 ```sh
 export BUDGET_APP_DEVELOPMENT_TEAM='ABCDEFGHIJ'
+export BUDGET_APP_DROPBOX_APP_KEY='registered-public-app-key'
 scripts/ios-release.sh preflight
 scripts/ios-release.sh archive
 ```
@@ -99,3 +99,10 @@ settings before creating a timestamped archive. It refuses to overwrite an archi
 under the ignored `artifacts/archives/` directory. It does not upload, change App Store Connect, or
 commit provisioning material. Validate and upload the resulting archive deliberately through Xcode
 Organizer after the remaining release gates pass.
+
+`BUDGET_APP_DROPBOX_APP_KEY` is the public OAuth app key, not a client secret. The helper refuses to
+archive without it and confirms that the exact key reached the archived Info.plist, so TestFlight can
+no longer silently ship the completed Dropbox UI in an unavailable state. In the Dropbox App Console,
+configure a scoped **App folder** application, enable `files.content.read`, `files.content.write`,
+`files.metadata.read`, and `files.metadata.write`, and register the exact redirect URI
+`clearpocket://dropbox-oauth`. ClearPocket uses PKCE and never embeds a Dropbox app secret.

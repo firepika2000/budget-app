@@ -69,6 +69,12 @@ the workspace fails closed instead of accepting changes into volatile memory.
 11. With disposable data only, open Profile & Settings → **Delete This Budget**, verify the action
     stays disabled until the exact name is entered, delete it, and confirm the replacement budget
     contains the starter Plan but none of the deleted financial records.
+
+Release archives are now fail-closed for Dropbox configuration. `scripts/ios-release.sh` requires
+`BUDGET_APP_DROPBOX_APP_KEY`, injects it into the generated application Info.plist, and verifies the
+archived value before reporting success. The registered Dropbox application must use scoped App-folder
+access, the four file content/metadata read/write scopes, and redirect URI
+`clearpocket://dropbox-oauth`; no Dropbox client secret belongs in the app or repository.
 12. For a server budget, load the workspace once, disable connectivity, and confirm the last
     authorized Home/Plan/Activity/Accounts state remains usable. Add one ordinary transaction and
     confirm the unobtrusive pending-sync indicator appears. Restore connectivity, tap it if needed,
