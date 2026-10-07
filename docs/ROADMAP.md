@@ -162,6 +162,11 @@ Local Device statement-import review/history is now durable across relaunch and 
 backup/restore. This closes the prior session-only lifecycle gap while preserving money-neutral staging,
 explicit approval and account-scoped detail access.
 
+Category selection now uses qualified `Group · Category` labels throughout production transaction
+entry/editing, split entry, scheduled expenses, Activity/report filters, statement-import review and
+allowance setup; posted transaction detail uses the same label. Duplicate names in different groups remain distinguishable at the
+point of selection without changing category identity or accounting semantics.
+
 The sections that follow retain the original milestone scope and historical context. References
 to v0.9 distribution or v1.x import in those sections use the old numbering; the table above is the
 current authorized execution sequence. Human acceptance is pending and no retest is requested now.

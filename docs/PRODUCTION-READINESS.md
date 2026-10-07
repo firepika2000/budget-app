@@ -81,6 +81,11 @@ approved, cancelled and undone batch metadata survives repository reconstruction
 remains budget/account scoped, and is automatically covered by existing encrypted SQLite backups.
 Focused schema-upgrade, private-payload paging and production-provider relaunch tests pass.
 
+Qualified category-selection checkpoint (2026-10-07): production pickers now identify categories as
+`Group · Category` across transaction create/edit/splits, schedules, Activity and report filters,
+statement-import review, allowance funding/delivery and transaction detail. This closes the ambiguous duplicate-name
+beta finding while preserving stable category IDs and all existing authorization boundaries.
+
 Transaction audit checkpoint after `e96701f`: transaction detail now exposes bounded,
 actor-attributed change history from the immutable server audit ledger. The route rechecks current
 account/category visibility before loading events and returns action, actor, timestamp and changed

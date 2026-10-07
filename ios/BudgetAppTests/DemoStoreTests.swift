@@ -8,6 +8,16 @@ import CryptoKit
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testCategoryDisplayNamesAlwaysIncludeTheirGroup() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let category = try XCTUnwrap(store.categories.first)
+        let group = try XCTUnwrap(store.groups.first(where: { $0.id == category.groupID }))
+
+        XCTAssertEqual(store.categoryDisplayName(category), "\(group.name) · \(category.name)")
+    }
+
     func testReceiptOCRPrefersTotalAndProducesReviewableExactSuggestions() throws {
         let category = try JSONDecoder().decode(APICategory.self, from: Data(#"{"id":"groceries","budget_id":"budget","group_id":"needs","name":"Groceries","icon_name":null,"note":"","sort_order":0,"is_archived":false,"system_type":null,"linked_account_id":null,"delegated_user_id":null,"is_favorite":false,"favorite_sort_order":null}"#.utf8))
         let now = try XCTUnwrap(Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 10, day: 7)))
