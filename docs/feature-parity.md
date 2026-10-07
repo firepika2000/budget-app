@@ -31,7 +31,7 @@ Status meanings:
 |---|---|---|
 | Monthly contribution/spending target | IMPLEMENTED | Generalized target model with amount, minimum, priority, date, and recurrence. |
 | Refill/up-to behavior | IMPLEMENTED | Persisted Refill Balance targets recommend the exact gap after rollover and current-month spending without moving money automatically. |
-| Weekly/yearly/custom recurrence | PARTIALLY IMPLEMENTED | Recurrence months exists for targets; weekly/custom cadence is not complete. |
+| Weekly/yearly/custom recurrence | PARTIALLY IMPLEMENTED | Recurring expenses provide monthly, quarterly, six-month, yearly, and custom month cadences with due-date contribution guidance. Weekly cadence remains future work. |
 | Target by date and savings balance | IMPLEMENTED | Forecast calculations and progress UI. |
 | Debt payoff target | PARTIALLY IMPLEMENTED | Native local payoff simulator; dedicated persisted payoff target is future. |
 | Snooze/skip target | IMPLEMENTED | Month-scoped, money-neutral target snooze/resume persists across Live and on-device providers without changing the global target rule. |
