@@ -1311,6 +1311,29 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testForecastHorizonReloadsWithoutPostingMoney() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let original = try XCTUnwrap(store.forecast)
+        let transactionIDs = store.transactions.map(\.id)
+        let balances = store.accountBalances.mapValues(\.workingBalanceMinor)
+
+        await store.loadForecast(days: 30)
+        let short = try XCTUnwrap(store.forecast)
+        XCTAssertEqual(short.through, "2026-10-05")
+        XCTAssertLessThanOrEqual(short.occurrences.count, original.occurrences.count)
+
+        await store.loadForecast(days: 365)
+        let annual = try XCTUnwrap(store.forecast)
+        XCTAssertEqual(annual.through, "2027-09-05")
+        XCTAssertGreaterThan(annual.occurrences.count, short.occurrences.count)
+        XCTAssertEqual(annual.actualTotalOnBudgetMinor, original.actualTotalOnBudgetMinor)
+        XCTAssertEqual(store.transactions.map(\.id), transactionIDs)
+        XCTAssertEqual(store.accountBalances.mapValues(\.workingBalanceMinor), balances)
+        XCTAssertFalse(store.isForecastLoading)
+    }
+
+    @MainActor
     func testReportRangeUsesFixtureClockOnlyForDeterministicProvider() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

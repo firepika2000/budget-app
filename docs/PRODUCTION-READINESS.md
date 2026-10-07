@@ -1709,3 +1709,14 @@ anything outside the already permission-filtered workspace. Explicit payee defau
 precedence. The suggestion is visibly labelled and requires the user to tap Use; it never silently
 changes or saves a transaction. A focused provider-shaped test covers a qualifying merchant plus
 income and unknown-payee refusals.
+
+### Selectable forecast horizons — 2026-10-07
+
+The shared production Forecast screen now supports 30, 60, and 90 days, six months, and one year.
+Live workspaces request each range from the existing authorization-scoped server forecast endpoint;
+Demo and Local Device expand the same visible active schedules with exact integer-minor-unit money.
+Changing the horizon is read-only: it neither posts scheduled activity nor changes balances,
+transactions, allocations, or available money. Offline Live workspaces retain the latest visible
+forecast and show the existing unobtrusive sync status instead of clearing the screen. The Xcode 27
+Beta build and a focused native regression covering short/annual expansion and unchanged actual
+state pass. Explicit what-if scenarios remain open v0.15 scope.

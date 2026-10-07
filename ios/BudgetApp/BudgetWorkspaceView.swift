@@ -306,6 +306,7 @@ protocol WorkspaceDataSource: AnyObject {
     func exportCompleteBudget() async throws -> Data
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection
     func debtCost(accountIDs: [String]) async throws -> APIDebtCost
+    func forecast(days: Int) async throws -> APIForecast
 }
 
 extension WorkspaceDataSource {
@@ -785,6 +786,53 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
              "splits": plan.splits.map { ["destination_category_id": $0.0, "amount_minor": $0.1] as [String: Any] }] as [String: Any]
         })
         return WorkspaceSnapshot(accounts: accountRows, accountBalances: Dictionary(uniqueKeysWithValues: accountBalanceRows.map { ($0.accountID, $0) }), categories: categoryRows, groups: groupRows, transactions: transactionRows, summary: summary, payees: payeeRows, requests: requestRows, allowances: allowanceRows, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: demoForecast, members: members, delegatedBudgets: [], allocationOperations: allocationOperations, targets: targetRows, schedules: scheduleRows)
+    }
+
+    func forecast(days: Int) async throws -> APIForecast {
+        guard (1...366).contains(days) else { throw workspaceRepositoryError("Forecast horizon must be between 1 and 366 days.") }
+        let start = Date.demo(monthsAgo: 0, day: 5)
+        let query = WorkspaceReportQuery(start: start, end: start, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: false)
+        let value = try await snapshot(planMonth: start, report: query)
+        guard days != 90 else { return value.forecast! }
+        let through = Calendar.current.date(byAdding: .day, value: days, to: start)!
+        let openAccounts = value.accounts.filter { !$0.isClosed }
+        var projected = Dictionary(uniqueKeysWithValues: openAccounts.map { account in
+            (account.id, value.accountBalances[account.id]?.workingBalanceMinor ?? 0)
+        })
+        let onBudgetIDs = Set(openAccounts.filter(\.isOnBudget).map(\.id))
+        let actualTotal = try Money.sumMinorUnits(onBudgetIDs.map { projected[$0] ?? 0 })
+        var lowestTotal = actualTotal
+        var expanded: [(Date, APIScheduledTransaction)] = []
+        for item in value.schedules where item.isActive {
+            var occurrence = try validateScheduleShape(.init(accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amountMinor: item.amountMinor, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: item.intervalCount, endDate: item.endDate, remainingOccurrences: item.remainingOccurrences, memo: item.memo, financialClassification: item.financialClassification, isActive: item.isActive))
+            var remaining = item.remainingOccurrences
+            var count = 0
+            while occurrence <= through {
+                if let endDate = item.endDate, occurrence > BudgetWorkspaceStore.parseDate(endDate) { break }
+                if let remaining, remaining <= 0 { break }
+                guard count < 1_000 else { throw workspaceRepositoryError("Schedule produces too many forecast occurrences.") }
+                count += 1
+                if occurrence >= start { expanded.append((occurrence, item)) }
+                if let value = remaining { remaining = value - 1 }
+                guard let next = BudgetWorkspaceStore.nextScheduledDate(from: occurrence, unit: item.recurrenceUnit, interval: item.intervalCount), next > occurrence else { break }
+                occurrence = next
+            }
+        }
+        expanded.sort { $0.0 == $1.0 ? $0.1.id < $1.1.id : $0.0 < $1.0 }
+        var occurrenceRows: [[String: Any]] = []
+        for (date, item) in expanded {
+            guard let source = projected[item.accountID] else { continue }
+            projected[item.accountID] = try Money(minorUnits: source, currencyCode: budget.currencyCode).adding(Money(minorUnits: item.destinationAccountID == nil ? item.amountMinor : -item.amountMinor, currencyCode: budget.currencyCode)).minorUnits
+            if let destination = item.destinationAccountID, let balance = projected[destination] {
+                projected[destination] = try Money.sumMinorUnits([balance, item.amountMinor])
+            }
+            lowestTotal = min(lowestTotal, try Money.sumMinorUnits(onBudgetIDs.map { projected[$0] ?? 0 }))
+            occurrenceRows.append(["scheduled_transaction_id": item.id, "name": item.name, "occurred_on": BudgetWorkspaceStore.dateString(date), "account_id": item.accountID, "destination_account_id": item.destinationAccountID as Any? ?? NSNull(), "category_id": item.categoryID as Any? ?? NSNull(), "amount_minor": item.amountMinor])
+        }
+        let accountRows = openAccounts.map { account in
+            ["account_id": account.id, "name": account.name, "actual_balance_minor": value.accountBalances[account.id]?.workingBalanceMinor ?? 0, "projected_balance_minor": projected[account.id] ?? 0] as [String: Any]
+        }
+        return try decode(["as_of": BudgetWorkspaceStore.dateString(start), "through": BudgetWorkspaceStore.dateString(through), "currency_code": budget.currencyCode, "actual_total_on_budget_minor": actualTotal, "projected_total_on_budget_minor": try Money.sumMinorUnits(onBudgetIDs.map { projected[$0] ?? 0 }), "lowest_projected_total_minor": lowestTotal, "accounts": accountRows, "occurrences": occurrenceRows])
     }
 
     private func synchronizeLocalAuthority() async throws {
@@ -2431,6 +2479,13 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         try await credentials.prepare()
         return try await credentials.client().debtCost(budgetID: budget.id, accountIDs: accountIDs, token: token)
     }
+    func forecast(days: Int) async throws -> APIForecast {
+        guard budget.can("view_account_balances") else { throw APIClientError.server(status: 403, message: "Account balances are unavailable.") }
+        guard (1...366).contains(days) else { throw workspaceRepositoryError("Forecast horizon must be between 1 and 366 days.") }
+        try await credentials.prepare()
+        let through = Calendar.current.date(byAdding: .day, value: days, to: Date())!
+        return try await credentials.client().forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(through), token: credentials.token)
+    }
 }
 
 @MainActor
@@ -2466,6 +2521,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var targets: [String: APICategoryTarget] = [:]
     @Published var scheduledTransactions: [APIScheduledTransaction] = []
     @Published var forecast: APIForecast?
+    @Published private(set) var isForecastLoading = false
     @Published private(set) var liveCredentialRevision = 0
     @Published var reportPeriod = "30d"
     @Published var customReportStart = Calendar.current.date(byAdding: .day, value: -29, to: Date())!
@@ -2507,6 +2563,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     private var transactionBrowseQuery: APITransactionQuery?
     private var transactionBrowseOperationID: UUID?
     private var snapshotOperationID: UUID?
+    private var forecastOperationID: UUID?
     private var authorityRevision = 0
     @Published private(set) var workspaceAccessDenied = false
     private var privacyPreferenceKey: String?
@@ -2826,6 +2883,7 @@ final class BudgetWorkspaceStore: ObservableObject {
         pendingReports = [:]; loadedReportKinds = []; loadedReportContext = nil; reportErrors = [:]
         transactionBrowseTask?.cancel()
         transactionBrowseTask = nil; transactionBrowseQuery = nil; transactionBrowseOperationID = nil
+        forecastOperationID = nil; isForecastLoading = false
         summary = nil; accounts = []; accountBalances = [:]; payees = []; categories = []; groups = []
         transactions = []; requests = []; allowances = []; householdMembers = []; delegatedBudgets = []
         allocationOperations = []; targets = [:]; scheduledTransactions = []; delegatedBudget = nil; forecast = nil
@@ -2841,6 +2899,26 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func refresh() async { await loadSnapshot() }
+
+    func loadForecast(days: Int) async {
+        guard !workspaceAccessDenied, let dataSource else { return }
+        let operationID = UUID()
+        forecastOperationID = operationID
+        isForecastLoading = true
+        defer { if forecastOperationID == operationID { isForecastLoading = false } }
+        do {
+            let value = try await dataSource.forecast(days: days)
+            guard forecastOperationID == operationID else { return }
+            forecast = value
+        } catch {
+            guard forecastOperationID == operationID else { return }
+            if isTransientConnectivityFailure(error), forecast != nil {
+                syncStatusMessage = "Offline · showing the latest available forecast"
+            } else {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
 
     func loadPlanningGuidance() async {
         guard !workspaceAccessDenied, let dataSource, budget.can("view_reports") else { return }
@@ -5505,7 +5583,52 @@ private struct HomeQuickAction: View {
 
 private struct LiveForecastView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    var body: some View { List { if let forecast = store.forecast { Section { Text("Projected values include schedules but are not spendable until entered.").font(.footnote).foregroundStyle(.secondary) }; Section("Household cash") { LabeledContent("Today", value: store.format(forecast.actualTotalOnBudgetMinor)); LabeledContent("At \(forecast.through)", value: store.format(forecast.projectedTotalOnBudgetMinor)); LabeledContent("Lowest", value: store.format(forecast.lowestProjectedTotalMinor)) }; Section("Accounts") { ForEach(forecast.accounts) { account in VStack(alignment: .leading) { Text(account.name); HStack { Text("Now \(store.format(account.actualBalanceMinor))"); Spacer(); Text("Projected \(store.format(account.projectedBalanceMinor))") }.font(.caption).foregroundStyle(.secondary) } } }; Section("Scheduled activity") { if forecast.occurrences.isEmpty { Text("No scheduled transactions in this period").foregroundStyle(.secondary) }; ForEach(forecast.occurrences) { item in if let schedule = store.scheduledTransactions.first(where: { $0.id == item.scheduledTransactionID }) { NavigationLink { LiveScheduledTransactionEditor(schedule: schedule, currencyCode: store.budget.currencyCode) } label: { ScheduledActivityPresentation(name: item.name, amountMinor: item.amountMinor, occurrenceDate: item.occurredOn, context: item.categoryID.flatMap { id in store.categories.first(where: { $0.id == id })?.name }) } } else { ScheduledActivityPresentation(name: item.name, amountMinor: item.amountMinor, occurrenceDate: item.occurredOn, context: nil) } } } } }.navigationTitle("Forecast") }
+    @State private var horizonDays = 90
+    private let horizons = [(30, "30 days"), (60, "60 days"), (90, "90 days"), (180, "6 months"), (365, "1 year")]
+
+    var body: some View {
+        List {
+            Section("Forecast period") {
+                Picker("Look ahead", selection: $horizonDays) {
+                    ForEach(horizons, id: \.0) { Text($0.1).tag($0.0) }
+                }
+                .accessibilityIdentifier("forecast-horizon-picker")
+                Text("Forecasts are read-only and use scheduled transactions. They do not change balances or make future money spendable.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let forecast = store.forecast {
+                Section("Household cash") {
+                    LabeledContent("Today", value: store.format(forecast.actualTotalOnBudgetMinor))
+                    LabeledContent("At \(forecast.through)", value: store.format(forecast.projectedTotalOnBudgetMinor))
+                    LabeledContent("Lowest", value: store.format(forecast.lowestProjectedTotalMinor))
+                }
+                Section("Accounts") {
+                    ForEach(forecast.accounts) { account in
+                        VStack(alignment: .leading) {
+                            Text(account.name)
+                            HStack { Text("Now \(store.format(account.actualBalanceMinor))"); Spacer(); Text("Projected \(store.format(account.projectedBalanceMinor))") }
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Section("Scheduled activity") {
+                    if forecast.occurrences.isEmpty { Text("No scheduled transactions in this period").foregroundStyle(.secondary) }
+                    ForEach(forecast.occurrences) { item in
+                        if let schedule = store.scheduledTransactions.first(where: { $0.id == item.scheduledTransactionID }) {
+                            NavigationLink { LiveScheduledTransactionEditor(schedule: schedule, currencyCode: store.budget.currencyCode) } label: {
+                                ScheduledActivityPresentation(name: item.name, amountMinor: item.amountMinor, occurrenceDate: item.occurredOn, context: item.categoryID.flatMap { id in store.categories.first(where: { $0.id == id })?.name })
+                            }
+                        } else {
+                            ScheduledActivityPresentation(name: item.name, amountMinor: item.amountMinor, occurrenceDate: item.occurredOn, context: nil)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Forecast")
+        .overlay { if store.isForecastLoading { ProgressView("Updating forecast…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
+        .onChange(of: horizonDays) { _, value in Task { await store.loadForecast(days: value) } }
+    }
 }
 
 private struct LiveRequestsView: View {

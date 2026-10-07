@@ -113,7 +113,7 @@ as acceptance for later work. No further merge or release tag is authorized by t
 | v0.12 | Financial History / Audit: preserve immutable attribution, explain observations and close history/export gaps. |
 | v0.13 | Bank connectivity architecture and feasible integration after the import engine. Credentials, provider contracts and security review remain real gates; no screen scraping or speculative live-account access. |
 | v0.14 | Data Ownership: production transactional/migratable Local Device storage, encrypted/versioned backup and new-destination restore. Dropbox is a backup destination, not live SQLite sync. |
-| v0.15 | Extended Forecasting: longer horizons and explicit what-if scenarios without making future income spendable. This carries the older v0.8 advanced-forecast expansion rather than silently dropping it. |
+| v0.15 | Extended Forecasting: selectable 30/60/90-day, six-month, and one-year production horizons are implemented; explicit what-if scenarios remain. Future income and schedules remain forecast-only and never become spendable. |
 | v0.16 | Explainable Smart Planning; recommendations cannot mutate money without explicit canonical commands. |
 | v0.17 | Household Power: readable scopes, requests/allowances, attribution and adversarial privacy closure. |
 | v0.18 | Platform Expansion in dependency order after the iPhone/provider foundation. |
