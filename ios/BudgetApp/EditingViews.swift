@@ -1,4 +1,5 @@
 import BudgetAPI
+import PhotosUI
 import SwiftUI
 
 struct TransactionEntryView: View {
@@ -29,6 +30,9 @@ struct TransactionEntryView: View {
     @State private var splitRows = [SplitDraft(), SplitDraft()]
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @State private var receiptPhoto: PhotosPickerItem?
+    @State private var receiptSuggestion: ReceiptSuggestion?
+    @State private var isScanningReceipt = false
 
     init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], groups: [APICategoryGroup] = [], initialAccountID: String? = nil, initialCategoryID: String? = nil, initialIsInflow: Bool = false, onSaved: @escaping () async -> Void) {
         self.budget = budget
@@ -125,6 +129,16 @@ struct TransactionEntryView: View {
                 TextField("Memo", text: $memo)
                 Picker("Flag", selection: $flag) { Text("None").tag(""); Text("Red").tag("red"); Text("Orange").tag("orange"); Text("Yellow").tag("yellow"); Text("Green").tag("green"); Text("Blue").tag("blue"); Text("Purple").tag("purple") }
                 TextField("Tags (comma separated)", text: $tags)
+                Section("Receipt assistance") {
+                    PhotosPicker(selection: $receiptPhoto, matching: .images) {
+                        Label("Scan Receipt Photo", systemImage: "doc.text.viewfinder")
+                    }
+                    .disabled(isScanningReceipt)
+                    .accessibilityIdentifier("scan-receipt-photo")
+                    if isScanningReceipt { ProgressView("Reading on this iPhone…") }
+                    Text("ClearPocket reads the selected image on this device and proposes fields for your review. Nothing is saved automatically, and the image remains in Photos until you attach it after saving.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Text("Save the transaction, then add PDF or image attachments from its detail screen.").font(.footnote).foregroundStyle(.secondary)
                 Toggle("Cleared", isOn: $isCleared)
             }
@@ -158,6 +172,12 @@ struct TransactionEntryView: View {
                 }
             }
             .onChange(of: accountID) { _, _ in if !selectedAccountIsDebt { financialClassification = "" } }
+            .onChange(of: receiptPhoto) { _, item in if let item { Task { await scanReceipt(item) } } }
+            .sheet(item: $receiptSuggestion) { suggestion in
+                ReceiptSuggestionReview(suggestion: suggestion, currencyCode: budget.currencyCode, categoryName: categories.first(where: { $0.id == suggestion.categoryID })?.name) {
+                    Task { await apply(suggestion) }
+                }
+            }
             .sheet(isPresented: $showPayeeSelector) {
                 PayeeSearchSelectionView { item in
                     payeeID = item.id; payee = item.displayName; selectedPayeeName = item.displayName
@@ -246,6 +266,56 @@ struct TransactionEntryView: View {
 
     private func commaValues(_ value: String) -> [String] {
         value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
+
+    private func scanReceipt(_ item: PhotosPickerItem) async {
+        isScanningReceipt = true; defer { isScanningReceipt = false; receiptPhoto = nil }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else { throw ReceiptOCRError.invalidImage }
+            receiptSuggestion = try await ReceiptOCR.recognize(data, currencyCode: budget.currencyCode, categories: categories.filter { !$0.isArchived })
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func apply(_ suggestion: ReceiptSuggestion) async {
+        if let value = suggestion.amountMinor { amount = CurrencyText.editable(value, currencyCode: budget.currencyCode) }
+        if let value = suggestion.occurredOn { date = value }
+        if let value = suggestion.categoryID { categoryID = value }
+        if let candidate = suggestion.payee, !candidate.isEmpty {
+            payee = candidate; payeeID = nil; selectedPayeeName = ""
+            if let page = try? await workspace.searchPayees(query: candidate, includeArchived: false, limit: 10),
+               let existing = page.items.first(where: { $0.displayName.compare(candidate, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }) {
+                payee = existing.displayName; payeeID = existing.id; selectedPayeeName = existing.displayName
+                if categoryID == nil, let preferred = existing.defaultCategoryID { categoryID = preferred }
+            }
+        }
+        receiptSuggestion = nil
+    }
+}
+
+private struct ReceiptSuggestionReview: View {
+    @Environment(\.dismiss) private var dismiss
+    let suggestion: ReceiptSuggestion
+    let currencyCode: String
+    let categoryName: String?
+    let onApply: () -> Void
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Proposed fields") {
+                    LabeledContent("Payee", value: suggestion.payee ?? "Not found")
+                    LabeledContent("Amount", value: suggestion.amountMinor.map { CurrencyText.editable($0, currencyCode: currencyCode) } ?? "Not found")
+                    LabeledContent("Date", value: suggestion.occurredOn?.formatted(date: .abbreviated, time: .omitted) ?? "Not found")
+                    LabeledContent("Category", value: categoryName ?? "No suggestion")
+                }
+                Section("Recognized text") { Text(suggestion.recognizedText).textSelection(.enabled).font(.caption.monospaced()) }
+                Section { Text("Review the proposed fields before applying them. Applying fills the draft only; Save remains required to create the transaction.").font(.footnote).foregroundStyle(.secondary) }
+            }
+            .navigationTitle("Review Receipt")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Apply Suggestions") { onApply(); dismiss() }.accessibilityIdentifier("apply-receipt-suggestions") }
+            }
+        }
     }
 }
 

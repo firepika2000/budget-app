@@ -51,7 +51,7 @@ Status meanings:
 | Reconciliation | IMPLEMENTED | Explicit adjustment only; native comparison preview. |
 | Search and filters | IMPLEMENTED | Native transaction search/filter/sort uses bounded cursor-paginated server queries plus server-derived Insights dimensions. |
 | Flags/tags | IMPLEMENTED | Persisted production metadata and shared editor. |
-| Receipt/photo/file attachment | IMPLEMENTED | Camera, Photos, and Files share one validated application-service path; local content is encrypted at rest with a Keychain-protected key. |
+| Receipt/photo/file attachment | IMPLEMENTED | Camera, Photos, and Files share one validated application-service path; local content is encrypted at rest with a Keychain-protected key. New transaction entry can also read a receipt photo locally and propose payee, exact amount, date, and a visible category for explicit review; it never posts or attaches automatically. |
 | Edit and delete/void | IMPLEMENTED | Production edit, guarded attachment detach, void/reversal, and immutable before/after/delete audit history. |
 | Duplicate detection | IMPLEMENTED | Statement staging identifies duplicate candidates before explicit approval; imports remain non-mutating until reviewed. |
 | Recurring transactions | IMPLEMENTED | Active/paused schedule management, forecast-only occurrences, and canonical Enter Now realization share the production editor. |

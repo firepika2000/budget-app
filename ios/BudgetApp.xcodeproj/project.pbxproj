@@ -31,6 +31,7 @@
 		AA0000180000000000000018 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = BB0000180000000000000018 /* PrivacyInfo.xcprivacy */; };
 		EE0000010000000000000001 /* ClearPocketWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE0000020000000000000002 /* ClearPocketWidget.swift */; };
 		EE0000030000000000000003 /* ClearPocketWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = EE0000040000000000000004 /* ClearPocketWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		FF0000010000000000000001 /* ReceiptOCR.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0000020000000000000002 /* ReceiptOCR.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -82,6 +83,7 @@
 		EE0000020000000000000002 /* ClearPocketWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClearPocketWidget.swift; sourceTree = "<group>"; };
 		EE0000070000000000000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		EE0000040000000000000004 /* ClearPocketWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClearPocketWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		FF0000020000000000000002 /* ReceiptOCR.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptOCR.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -165,6 +167,7 @@
 				345B8B1D2F7640B5BD488CC5 /* BudgetApp.swift */,
 				BB0000130000000000000013 /* AppearancePreference.swift */,
 				B0E14E75380CB2C219F61828 /* EditingViews.swift */,
+				FF0000020000000000000002 /* ReceiptOCR.swift */,
 				DEFFDD801DC18A01D2C2C6FF /* KeychainStore.swift */,
 				BB0000200000000000000020 /* LocalDeviceStorage.swift */,
 				BB0000210000000000000021 /* DropboxBackupCoordinator.swift */,
@@ -341,6 +344,7 @@
 				F7F6130787A7D2A0DAF13030 /* AppSession.swift in Sources */,
 				1C7D1E60B9E1C0ED2B68695C /* BudgetApp.swift in Sources */,
 				983A5654DFC35D2D8A62DEF3 /* EditingViews.swift in Sources */,
+				FF0000010000000000000001 /* ReceiptOCR.swift in Sources */,
 				75327D5040AB839F991E0054 /* KeychainStore.swift in Sources */,
 				AA0000200000000000000020 /* LocalDeviceStorage.swift in Sources */,
 				AA0000210000000000000021 /* DropboxBackupCoordinator.swift in Sources */,

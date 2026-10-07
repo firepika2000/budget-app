@@ -8,6 +8,31 @@ import CryptoKit
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testReceiptOCRPrefersTotalAndProducesReviewableExactSuggestions() throws {
+        let category = try JSONDecoder().decode(APICategory.self, from: Data(#"{"id":"groceries","budget_id":"budget","group_id":"needs","name":"Groceries","icon_name":null,"note":"","sort_order":0,"is_archived":false,"system_type":null,"linked_account_id":null,"delegated_user_id":null,"is_favorite":false,"favorite_sort_order":null}"#.utf8))
+        let now = try XCTUnwrap(Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 10, day: 7)))
+
+        let suggestion = ReceiptOCR.parse(
+            lines: ["FRESH MARKET", "09/15/2026", "Subtotal $18.00", "Tax $1.50", "TOTAL $19.50", "Groceries"],
+            currencyCode: "USD",
+            categories: [category],
+            now: now
+        )
+
+        XCTAssertEqual(suggestion.payee, "FRESH MARKET")
+        XCTAssertEqual(suggestion.amountMinor, 1_950)
+        XCTAssertEqual(suggestion.categoryID, "groceries")
+        XCTAssertEqual(Calendar(identifier: .gregorian).dateComponents([.year, .month, .day], from: try XCTUnwrap(suggestion.occurredOn)), DateComponents(year: 2026, month: 9, day: 15))
+        XCTAssertTrue(suggestion.recognizedText.contains("Subtotal $18.00"))
+    }
+
+    func testReceiptOCRRejectsFutureDates() throws {
+        let now = try XCTUnwrap(Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 10, day: 7)))
+        let suggestion = ReceiptOCR.parse(lines: ["LOCAL SHOP", "10/08/2026", "TOTAL 2.00"], currencyCode: "USD", categories: [], now: now)
+        XCTAssertNil(suggestion.occurredOn)
+        XCTAssertEqual(suggestion.amountMinor, 200)
+    }
+
     func testQuickEntryIntentRequestIsConsumedExactlyOnce() {
         UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey)
         defer { UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey) }

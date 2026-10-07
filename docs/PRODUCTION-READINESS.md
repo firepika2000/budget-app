@@ -44,6 +44,17 @@ app-plus-extension build, embedded extension/plist validation, and focused one-s
 on the existing iPhone 17 Pro Max / iOS 27 Simulator. Financial widgets remain intentionally absent
 until a separate privacy/authorization contract justifies exposing data outside the app.
 
+Receipt-assistance checkpoint (2026-10-07): New Transaction can select a receipt image through the
+system photo picker and run Vision text recognition entirely on the device. ClearPocket derives an
+exact integer-minor-unit amount, plausible payee, non-future date and currently visible category,
+then presents every proposal for review. Applying suggestions only fills the unsaved editor draft;
+the user must still press Save, and the image is not uploaded or attached implicitly. Exact existing
+payees are resolved through the bounded first-class-payee search so this does not create a parallel
+payee identity path. Xcode 27 Beta production build and focused total/date/category parser tests pass
+on the existing iPhone 17 Pro Max / iOS 27 Simulator. Camera capture and automatic receipt attachment
+remain intentionally outside this checkpoint; the established post-save attachment workflow handles
+retention, encryption and authorization.
+
 Transaction audit checkpoint after `e96701f`: transaction detail now exposes bounded,
 actor-attributed change history from the immutable server audit ledger. The route rechecks current
 account/category visibility before loading events and returns action, actor, timestamp and changed

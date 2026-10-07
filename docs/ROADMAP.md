@@ -142,6 +142,10 @@ uses the authenticated production shell for navigation. It deliberately shares n
 credentials with the extension. Rich financial widgets require a future explicit disclosure,
 authorization, shared-container and redaction contract; they are not implied by this launcher.
 
+Private receipt assistance now satisfies the product-specification proposal boundary: Vision OCR runs
+locally, suggests payee, exact amount, date and a visible category, and requires both explicit Apply
+and the normal transaction Save. It neither uploads the receipt nor creates financial state on its own.
+
 The sections that follow retain the original milestone scope and historical context. References
 to v0.9 distribution or v1.x import in those sections use the old numbering; the table above is the
 current authorized execution sequence. Human acceptance is pending and no retest is requested now.
