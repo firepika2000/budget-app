@@ -1030,6 +1030,10 @@ def update_category(
     category.note = body.note
     category.sort_order = body.sort_order
     category.is_archived = body.is_archived
+    if body.is_essential is not None:
+        category.is_essential = body.is_essential
+    if body.is_emergency_fund is not None:
+        category.is_emergency_fund = body.is_emergency_fund
     try:
         db.commit()
     except IntegrityError:

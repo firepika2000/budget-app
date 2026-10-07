@@ -82,6 +82,8 @@ struct DemoCategory: Identifiable, Hashable {
     var pinned = false
     var delegatedTo: DemoPersona? = nil
     var isHidden = false
+    var isEssential = false
+    var isEmergencyFund = false
 
     var progress: Double {
         guard let target, target > 0 else { return available >= 0 ? 1 : 0 }

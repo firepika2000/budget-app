@@ -1041,6 +1041,22 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(report.unavailableMetrics["essential_expense_coverage_days"], "Classification unavailable.")
     }
 
+    func testCategoryResilienceClassificationIsBackwardCompatibleAndEncodesExplicitly() throws {
+        let legacy = Data(#"{"id":"c1","budget_id":"b1","group_id":"g1","name":"Rent","icon_name":null,"note":"","sort_order":0,"is_archived":false,"system_type":null,"linked_account_id":null,"delegated_user_id":null,"is_favorite":false,"favorite_sort_order":null}"#.utf8)
+        let decoded = try JSONDecoder().decode(APICategory.self, from: legacy)
+        XCTAssertFalse(decoded.isEssential)
+        XCTAssertFalse(decoded.isEmergencyFund)
+
+        let update = APICategoryUpdate(
+            groupID: "g1", name: "Rent", isEssential: true, isEmergencyFund: true
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(update)) as? [String: Any]
+        )
+        XCTAssertEqual(object["is_essential"] as? Bool, true)
+        XCTAssertEqual(object["is_emergency_fund"] as? Bool, true)
+    }
+
     func testReportExportDownloadsOpenCSVWithBearerCredential() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

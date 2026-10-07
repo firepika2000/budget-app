@@ -60,13 +60,13 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
         debt_term_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('account_debt_terms')"))}
         transaction_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('transactions')"))}
         category_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('categories')"))}
-        assert version == "0035_schedule_occurrence_limit"
+        assert version == "0036_category_resilience"
         assert attachment_count == 0
         assert "ix_transaction_budget_date_id" in report_indexes
         assert {"budget_id", "user_id", "category_id", "sort_order"} <= favorite_columns
         assert {"account_id", "budget_id", "terms_type", "annual_rate_basis_points"} <= debt_term_columns
         assert "financial_classification" in transaction_columns
-        assert {"icon_name", "note"} <= category_columns
+        assert {"icon_name", "note", "is_essential", "is_emergency_fund"} <= category_columns
         schedule_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('scheduled_transactions')"))}
         assert "end_date" in schedule_columns
         assert "remaining_occurrences" in schedule_columns

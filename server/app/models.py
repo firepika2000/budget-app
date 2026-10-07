@@ -339,6 +339,8 @@ class Category(Base):
     note: Mapped[str] = mapped_column(String(500), default="")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_essential: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_emergency_fund: Mapped[bool] = mapped_column(Boolean, default=False)
     system_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     linked_account_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, unique=True)
     delegated_user_id: Mapped[Optional[str]] = mapped_column(

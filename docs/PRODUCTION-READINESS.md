@@ -1773,3 +1773,17 @@ runtime showed the sidebar and real Home content together. A focused XCUITest wa
 destination and settings reachability, but the local UI-test runner stalled after launch and was
 stopped at the bounded cutoff rather than repeatedly retried. Human iPad acceptance, macOS, web,
 and Android remain open and must not be inferred from this engineering slice.
+
+### Classified resilience coverage — 2026-10-07
+
+The two remaining unavailable resilience observations now have an explicit source of truth instead
+of inferred labels. Category editing can mark an item as an essential expense or an emergency fund;
+fresh starter plans classify the obvious baseline categories without adding money. The authorized
+report nets direct and split essential activity, including refunds, over the existing trailing
+90-day window, then derives essential coverage from visible cash and emergency-fund coverage from
+the canonical current Plan Available amount. Transfers, voids, hidden accounts, and hidden
+categories remain excluded by the existing report scope. Live, Demo, and Local Device use exact
+integer minor units and the same definitions. Existing Local Device databases migrate in place to
+schema 10 with false defaults, and older API/local snapshots remain compatible. Focused backend
+analytics and migration tests, Swift API/storage tests, and the Xcode 27 Beta production build pass;
+human acceptance remains separate.

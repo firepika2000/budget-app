@@ -344,6 +344,8 @@ class CategoryCreate(BaseModel):
     note: str = Field(default="", max_length=500)
     sort_order: int = 0
     delegated_user_id: Optional[str] = None
+    is_essential: bool = False
+    is_emergency_fund: bool = False
 
 
 class CategoryResponse(BaseModel):
@@ -357,6 +359,8 @@ class CategoryResponse(BaseModel):
     note: str
     sort_order: int
     is_archived: bool
+    is_essential: bool
+    is_emergency_fund: bool
     system_type: Optional[str]
     linked_account_id: Optional[str]
     delegated_user_id: Optional[str]
@@ -379,6 +383,8 @@ class CategoryUpdate(BaseModel):
     note: str = Field(default="", max_length=500)
     sort_order: int = 0
     is_archived: bool = False
+    is_essential: Optional[bool] = None
+    is_emergency_fund: Optional[bool] = None
 
 
 class DelegatedCategoryRuleUpsert(BaseModel):

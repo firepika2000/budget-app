@@ -784,14 +784,18 @@ public struct APICategoryCreate: Encodable, Sendable {
     public let note: String
     public let sortOrder: Int
     public let delegatedUserID: String?
+    public let isEssential: Bool
+    public let isEmergencyFund: Bool
 
-    public init(groupID: String, name: String, iconName: String? = nil, note: String = "", sortOrder: Int = 0, delegatedUserID: String? = nil) {
+    public init(groupID: String, name: String, iconName: String? = nil, note: String = "", sortOrder: Int = 0, delegatedUserID: String? = nil, isEssential: Bool = false, isEmergencyFund: Bool = false) {
         self.groupID = groupID
         self.name = name
         self.iconName = iconName
         self.note = note
         self.sortOrder = sortOrder
         self.delegatedUserID = delegatedUserID
+        self.isEssential = isEssential
+        self.isEmergencyFund = isEmergencyFund
     }
 
     enum CodingKeys: String, CodingKey {
@@ -800,6 +804,8 @@ public struct APICategoryCreate: Encodable, Sendable {
         case groupID = "group_id"
         case sortOrder = "sort_order"
         case delegatedUserID = "delegated_user_id"
+        case isEssential = "is_essential"
+        case isEmergencyFund = "is_emergency_fund"
     }
 }
 
@@ -810,11 +816,13 @@ public struct APICategoryUpdate: Encodable, Sendable {
     public let note: String
     public let sortOrder: Int
     public let isArchived: Bool
-    public init(groupID: String, name: String, iconName: String? = nil, note: String = "", sortOrder: Int = 0, isArchived: Bool = false) {
-        self.groupID = groupID; self.name = name; self.iconName = iconName; self.note = note; self.sortOrder = sortOrder; self.isArchived = isArchived
+    public let isEssential: Bool
+    public let isEmergencyFund: Bool
+    public init(groupID: String, name: String, iconName: String? = nil, note: String = "", sortOrder: Int = 0, isArchived: Bool = false, isEssential: Bool = false, isEmergencyFund: Bool = false) {
+        self.groupID = groupID; self.name = name; self.iconName = iconName; self.note = note; self.sortOrder = sortOrder; self.isArchived = isArchived; self.isEssential = isEssential; self.isEmergencyFund = isEmergencyFund
     }
     enum CodingKeys: String, CodingKey {
-        case groupID = "group_id", name, note, iconName = "icon_name", sortOrder = "sort_order", isArchived = "is_archived"
+        case groupID = "group_id", name, note, iconName = "icon_name", sortOrder = "sort_order", isArchived = "is_archived", isEssential = "is_essential", isEmergencyFund = "is_emergency_fund"
     }
 }
 
@@ -1736,6 +1744,8 @@ public struct APICategory: Identifiable, Codable, Equatable, Sendable {
     public let note: String
     public let sortOrder: Int
     public let isArchived: Bool
+    public let isEssential: Bool
+    public let isEmergencyFund: Bool
     public let systemType: String?
     public let linkedAccountID: String?
     public let delegatedUserID: String?
@@ -1749,6 +1759,8 @@ public struct APICategory: Identifiable, Codable, Equatable, Sendable {
         case groupID = "group_id"
         case sortOrder = "sort_order"
         case isArchived = "is_archived"
+        case isEssential = "is_essential"
+        case isEmergencyFund = "is_emergency_fund"
         case systemType = "system_type"
         case linkedAccountID = "linked_account_id"
         case delegatedUserID = "delegated_user_id"
@@ -1766,6 +1778,8 @@ public struct APICategory: Identifiable, Codable, Equatable, Sendable {
         note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
         sortOrder = try values.decode(Int.self, forKey: .sortOrder)
         isArchived = try values.decode(Bool.self, forKey: .isArchived)
+        isEssential = try values.decodeIfPresent(Bool.self, forKey: .isEssential) ?? false
+        isEmergencyFund = try values.decodeIfPresent(Bool.self, forKey: .isEmergencyFund) ?? false
         systemType = try values.decodeIfPresent(String.self, forKey: .systemType)
         linkedAccountID = try values.decodeIfPresent(String.self, forKey: .linkedAccountID)
         delegatedUserID = try values.decodeIfPresent(String.self, forKey: .delegatedUserID)

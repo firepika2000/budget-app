@@ -1037,20 +1037,20 @@ final class DemoStore: ObservableObject {
 
     // Metadata and September assignment intent only. Activity/Available are projected from facts.
     static let seedCategories: [DemoCategory] = [
-        .init(id:"mortgage",group:"Housing",name:"Mortgage",icon:"house.fill",assigned:184500,activity:0,available:0,target:184500,pinned:true),
-        .init(id:"electric",group:"Housing",name:"Electric",icon:"bolt.fill",assigned:16500,activity:0,available:0,target:16500),
-        .init(id:"water",group:"Housing",name:"Water",icon:"drop.fill",assigned:8500,activity:0,available:0,target:8500),
-        .init(id:"internet",group:"Housing",name:"Internet",icon:"wifi",assigned:7900,activity:0,available:0,target:7900),
-        .init(id:"groceries",group:"Food",name:"Groceries",icon:"cart.fill",assigned:72000,activity:0,available:0,target:72000,pinned:true),
+        .init(id:"mortgage",group:"Housing",name:"Mortgage",icon:"house.fill",assigned:184500,activity:0,available:0,target:184500,pinned:true,isEssential:true),
+        .init(id:"electric",group:"Housing",name:"Electric",icon:"bolt.fill",assigned:16500,activity:0,available:0,target:16500,isEssential:true),
+        .init(id:"water",group:"Housing",name:"Water",icon:"drop.fill",assigned:8500,activity:0,available:0,target:8500,isEssential:true),
+        .init(id:"internet",group:"Housing",name:"Internet",icon:"wifi",assigned:7900,activity:0,available:0,target:7900,isEssential:true),
+        .init(id:"groceries",group:"Food",name:"Groceries",icon:"cart.fill",assigned:72000,activity:0,available:0,target:72000,pinned:true,isEssential:true),
         .init(id:"dining",group:"Food",name:"Dining Out",icon:"fork.knife",assigned:22000,activity:0,available:0,target:22000),
-        .init(id:"fuel",group:"Transportation",name:"Fuel",icon:"fuelpump.fill",assigned:28000,activity:0,available:0,target:30000),
+        .init(id:"fuel",group:"Transportation",name:"Fuel",icon:"fuelpump.fill",assigned:28000,activity:0,available:0,target:30000,isEssential:true),
         .init(id:"maintenance",group:"Transportation",name:"Car Maintenance",icon:"wrench.and.screwdriver.fill",assigned:15000,activity:0,available:0,target:120000,targetDate:"2026-12-01"),
-        .init(id:"medical",group:"True Expenses",name:"Medical",icon:"cross.case.fill",assigned:10000,activity:0,available:0,target:50000),
+        .init(id:"medical",group:"True Expenses",name:"Medical",icon:"cross.case.fill",assigned:10000,activity:0,available:0,target:50000,isEssential:true),
         .init(id:"repair",group:"True Expenses",name:"Home Repair",icon:"hammer.fill",assigned:25000,activity:0,available:0,target:300000),
         .init(id:"christmas",group:"True Expenses",name:"Christmas",icon:"gift.fill",assigned:35000,activity:0,available:0,target:300000,targetDate:"2026-12-01"),
         .init(id:"subscriptions",group:"True Expenses",name:"Annual Subscriptions",icon:"calendar.badge.clock",assigned:12000,activity:0,available:0,target:120000,targetDate:"2027-01-01"),
         .init(id:"buffer",group:"True Expenses",name:"General Buffer",icon:"tray.full.fill",assigned:35000,activity:0,available:0,target:35000),
-        .init(id:"emergency",group:"Goals",name:"Emergency Fund",icon:"shield.fill",assigned:50000,activity:0,available:0,target:1500000,pinned:true),
+        .init(id:"emergency",group:"Goals",name:"Emergency Fund",icon:"shield.fill",assigned:50000,activity:0,available:0,target:1500000,pinned:true,isEmergencyFund:true),
         .init(id:"vacation",group:"Goals",name:"Vacation",icon:"airplane",assigned:40000,activity:0,available:0,target:600000,targetDate:"2027-06-01"),
         .init(id:"cnc",group:"Goals",name:"CNC Machine",icon:"gearshape.2.fill",assigned:25000,activity:0,available:0,target:200000,targetDate:"2027-06-01",pinned:true),
         .init(id:"newcar",group:"Goals",name:"New Car",icon:"car.side.fill",assigned:30000,activity:0,available:0,target:2500000,targetDate:"2029-09-01"),
@@ -1124,7 +1124,7 @@ extension DemoStore {
         archivedGroups = Set(value.groups.filter(\.isArchived).map(\.name))
         categories = value.categories.map { item in
             let target = value.targets.first { $0.categoryID == item.id }
-            return DemoCategory(id: item.id, group: groupNames[item.groupID] ?? "Categories", name: item.name, icon: item.iconName ?? "folder.fill", assigned: 0, activity: 0, available: 0, target: target?.amountMinor, targetDate: target?.targetDate, targetType: target?.targetType ?? "savings_balance", targetRecurrenceMonths: target?.recurrenceMonths.map(Int.init), targetMinimumContribution: target?.minimumContributionMinor ?? 0, targetPriority: target.map { Int($0.priority) } ?? 50, targetIsActive: target?.isActive ?? true, targetSnoozedMonths: Set(target?.snoozedMonths ?? [target?.snoozedMonth].compactMap { $0 }), note: item.note, pinned: item.isFavorite, isHidden: item.isArchived)
+            return DemoCategory(id: item.id, group: groupNames[item.groupID] ?? "Categories", name: item.name, icon: item.iconName ?? "folder.fill", assigned: 0, activity: 0, available: 0, target: target?.amountMinor, targetDate: target?.targetDate, targetType: target?.targetType ?? "savings_balance", targetRecurrenceMonths: target?.recurrenceMonths.map(Int.init), targetMinimumContribution: target?.minimumContributionMinor ?? 0, targetPriority: target.map { Int($0.priority) } ?? 50, targetIsActive: target?.isActive ?? true, targetSnoozedMonths: Set(target?.snoozedMonths ?? [target?.snoozedMonth].compactMap { $0 }), note: item.note, pinned: item.isFavorite, isHidden: item.isArchived, isEssential: item.isEssential, isEmergencyFund: item.isEmergencyFund)
         }
         payees = value.payees.map { item in
             DemoPayee(id: item.id, name: item.name, isArchived: item.isArchived, defaultCategoryID: item.defaultCategoryID, aliases: value.payeeAliases.filter { $0.payeeID == item.id }.map(\.displayName))
@@ -1196,7 +1196,7 @@ extension DemoStore {
             LocalCategoryGroupRecord(id: groupIDs[name]!, budgetID: identity.budgetID, name: name, sortOrder: Int64(index), isArchived: archivedGroups.contains(name))
         }
         let categoryRows = categories.enumerated().map { index, item in
-            LocalCategoryRecord(id: item.id, budgetID: identity.budgetID, groupID: groupIDs[item.group]!, name: item.name, iconName: item.icon, note: item.note, delegatedUserID: nil, isArchived: item.isHidden, sortOrder: Int64(index), isFavorite: item.pinned, favoriteSortOrder: Int64(index))
+            LocalCategoryRecord(id: item.id, budgetID: identity.budgetID, groupID: groupIDs[item.group]!, name: item.name, iconName: item.icon, note: item.note, delegatedUserID: nil, isArchived: item.isHidden, sortOrder: Int64(index), isFavorite: item.pinned, favoriteSortOrder: Int64(index), isEssential: item.isEssential, isEmergencyFund: item.isEmergencyFund)
         }
         let payeeRows = payees.map { item in
             LocalPayeeRecord(id: item.id, budgetID: identity.budgetID, name: item.name, normalizedName: item.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased(), defaultCategoryID: item.defaultCategoryID, isArchived: item.isArchived)

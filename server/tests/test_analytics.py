@@ -1096,6 +1096,78 @@ def test_resilience_report_uses_visible_cash_and_forecast_without_invented_cover
     ).status_code == 422
 
 
+def test_resilience_report_uses_explicit_categories_and_exact_split_refund_activity(
+    client, owner_token, session_factory, monkeypatch
+):
+    from datetime import date
+    from app import analytics_routes, planning_routes
+    from .conftest import freeze_today
+
+    freeze_today(monkeypatch, date(2026, 9, 30), planning_routes)
+    freeze_today(monkeypatch, date(2026, 9, 30), analytics_routes)
+    budget = create_budget(client, owner_token, session_factory)
+    checking, essential = create_budget_structure(client, owner_token, budget["id"])
+    flexible = add_category(client, owner_token, budget["id"], "Food", "Flexible")
+    emergency = add_category(client, owner_token, budget["id"], "Food", "Emergency Fund")
+
+    def classify(category, *, is_essential=False, is_emergency_fund=False):
+        response = client.put(
+            f"/api/v1/budgets/{budget['id']}/categories/{category['id']}",
+            headers=auth(owner_token),
+            json={
+                "group_id": category["group_id"], "name": category["name"],
+                "icon_name": category.get("icon_name"), "note": category.get("note", ""),
+                "sort_order": category.get("sort_order", 0), "is_archived": False,
+                "is_essential": is_essential, "is_emergency_fund": is_emergency_fund,
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    classify(essential, is_essential=True)
+    classify(emergency, is_emergency_fund=True)
+    legacy_update = client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{essential['id']}",
+        headers=auth(owner_token),
+        json={
+            "group_id": essential["group_id"], "name": essential["name"],
+            "icon_name": essential.get("icon_name"), "note": "Older client edit",
+            "sort_order": essential.get("sort_order", 0), "is_archived": False,
+        },
+    )
+    assert legacy_update.status_code == 200, legacy_update.text
+    assert legacy_update.json()["is_essential"] is True
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=100_000,
+           occurred_on="2026-09-01")
+    record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=-9_000,
+           occurred_on="2026-09-10", splits=[
+               {"category_id": essential["id"], "amount_minor": -6_000},
+               {"category_id": flexible["id"], "amount_minor": -3_000},
+           ])
+    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=essential["id"],
+           amount_minor=-3_000, occurred_on="2026-09-11")
+    record(client, owner_token, budget["id"], account_id=checking["id"], category_id=essential["id"],
+           amount_minor=1_000, occurred_on="2026-09-12")
+    assigned = client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{emergency['id']}/assignment",
+        headers=auth(owner_token), json={"month": "2026-09-01", "assigned_minor": 9_000},
+    )
+    assert assigned.status_code == 200, assigned.text
+
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/reports/resilience", headers=auth(owner_token),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    # Total net spending is 11,000 (123/day); exact essential net spending is 8,000 (89/day).
+    assert body["cash_buffer_minor"] == 89_000
+    assert body["daily_burn_rate_minor"] == 123
+    assert body["runway_days"] == 723
+    assert body["essential_expense_coverage_days"] == 1_000
+    assert body["emergency_fund_coverage_days"] == 101
+    assert "essential_expense_coverage_days" not in body["unavailable_metrics"]
+    assert "emergency_fund_coverage_days" not in body["unavailable_metrics"]
+
+
 def test_resilience_report_filters_hidden_accounts_and_schedules_before_aggregation(
     client, owner_token, session_factory, monkeypatch
 ):
@@ -1112,10 +1184,23 @@ def test_resilience_report_filters_hidden_accounts_and_schedules_before_aggregat
         f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
         json={"name": "Private Savings", "account_type": "savings"},
     ).json()
+    private_category = add_category(client, owner_token, budget["id"], "Food", "Private Essential")
+    classified = client.put(
+        f"/api/v1/budgets/{budget['id']}/categories/{private_category['id']}",
+        headers=auth(owner_token),
+        json={
+            "group_id": private_category["group_id"], "name": private_category["name"],
+            "sort_order": private_category.get("sort_order", 0), "is_archived": False,
+            "is_essential": True, "is_emergency_fund": True,
+        },
+    )
+    assert classified.status_code == 200, classified.text
     record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=10000,
            occurred_on="2026-09-01")
     record(client, owner_token, budget["id"], account_id=hidden["id"], amount_minor=900000,
            occurred_on="2026-09-01")
+    record(client, owner_token, budget["id"], account_id=hidden["id"], category_id=private_category["id"],
+           amount_minor=-9000, occurred_on="2026-09-01")
     scheduled = client.post(
         f"/api/v1/budgets/{budget['id']}/scheduled-transactions", headers=auth(owner_token),
         json={"account_id": hidden["id"], "name": "Private bonus", "amount_minor": 500000,
@@ -1137,6 +1222,8 @@ def test_resilience_report_filters_hidden_accounts_and_schedules_before_aggregat
     assert response.status_code == 200, response.text
     assert response.json()["cash_buffer_minor"] == 10000
     assert response.json()["scheduled_income_minor"] == 0
+    assert response.json()["essential_expense_coverage_days"] is None
+    assert response.json()["emergency_fund_coverage_days"] is None
     assert hidden["id"] not in response.text and "Private bonus" not in response.text
 
 

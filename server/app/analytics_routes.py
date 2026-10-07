@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 from starlette.responses import Response
 
 from .access import has_capability, is_household_owner, visible_resource_ids
-from .budgeting_routes import account_working_balances, require_budget_capability, transaction_visibility_conditions
+from .budgeting_routes import account_working_balances, month_summary, require_budget_capability, transaction_visibility_conditions
 from .calendar_dates import month_periods
 from .cash_rollover_repository import cash_rollover_effects
 from .clock import today as current_date
@@ -727,7 +727,7 @@ def resilience_report(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Expose transparent balance/schedule metrics without inventing essential or emergency labels."""
+    """Expose exact scoped resilience metrics using explicit category classifications."""
     budget = require_budget_capability(db, user, budget_id, "view_reports")
     require_budget_capability(db, user, budget_id, "view_account_balances")
     today = current_date()
@@ -760,6 +760,49 @@ def resilience_report(
     daily_burn = (recent_spending + burn_window_days - 1) // burn_window_days if recent_spending > 0 else None
     runway_days = max(cash_buffer, 0) // daily_burn if daily_burn else None
 
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    classified_query = select(Category.id, Category.is_essential, Category.is_emergency_fund).join(
+        CategoryGroup, CategoryGroup.id == Category.group_id,
+    ).where(
+        Category.budget_id == budget_id,
+        Category.is_archived.is_(False),
+        CategoryGroup.is_archived.is_(False),
+    )
+    if visible_categories is not None:
+        classified_query = classified_query.where(Category.id.in_(visible_categories))
+    classified = list(db.execute(classified_query))
+    essential_ids = {row.id for row in classified if row.is_essential}
+    emergency_ids = {row.id for row in classified if row.is_emergency_fund}
+    essential_net = 0
+    for item in recent:
+        if item.transfer_id is not None or item.status == "voided":
+            continue
+        if item.category_id is not None:
+            if item.category_id in essential_ids:
+                essential_net += item.amount_minor
+        else:
+            essential_net += sum(
+                split.amount_minor for split in item.splits if split.category_id in essential_ids
+            )
+    essential_spending = max(-essential_net, 0)
+    essential_daily = (
+        (essential_spending + burn_window_days - 1) // burn_window_days
+        if essential_spending > 0 else None
+    )
+    essential_coverage = max(cash_buffer, 0) // essential_daily if essential_daily else None
+    current_plan = month_summary(
+        budget_id=budget_id,
+        month=today.replace(day=1),
+        user=user,
+        db=db,
+    )
+    emergency_available = sum(
+        max(item.available_minor, 0)
+        for item in current_plan.categories
+        if item.category_id in emergency_ids
+    )
+    emergency_coverage = emergency_available // essential_daily if essential_daily and emergency_ids else None
+
     # Current-money age uses a FIFO lot model over authorized cash-account inflows and posted
     # outflows. Transfers are excluded and categorized refunds become new cash lots on their
     # posting date. This is an observation only; it never changes ledger or planning state.
@@ -791,10 +834,15 @@ def resilience_report(
         sum((today - item[0]).days * int(item[1]) for item in lots) // lot_total
         if lot_total > 0 else None
     )
-    unavailable = {
-        "essential_expense_coverage_days": "Categories do not yet store authoritative essential-expense classification.",
-        "emergency_fund_coverage_days": "Categories do not yet store authoritative emergency-fund classification.",
-    }
+    unavailable = {}
+    if not essential_ids:
+        unavailable["essential_expense_coverage_days"] = "No visible categories are marked as essential expenses."
+    elif essential_daily is None:
+        unavailable["essential_expense_coverage_days"] = "No net essential spending was recorded in the trailing 90 days."
+    if not emergency_ids:
+        unavailable["emergency_fund_coverage_days"] = "No visible categories are marked as emergency funds."
+    elif essential_daily is None:
+        unavailable["emergency_fund_coverage_days"] = "Emergency-fund coverage requires trailing essential spending."
     if average_age is None:
         unavailable["average_age_of_money_days"] = "No positive authorized cash lots are available to age."
     if daily_burn is None:
@@ -811,8 +859,8 @@ def resilience_report(
         "daily_burn_rate_minor": daily_burn,
         "runway_days": runway_days,
         "burn_rate_window_days": burn_window_days,
-        "essential_expense_coverage_days": None,
-        "emergency_fund_coverage_days": None,
+        "essential_expense_coverage_days": essential_coverage,
+        "emergency_fund_coverage_days": emergency_coverage,
         "unavailable_metrics": unavailable,
     }
 

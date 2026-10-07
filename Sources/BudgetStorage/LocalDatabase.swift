@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 9
+    public static let schemaVersion = 10
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -319,6 +319,18 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 10 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV10 { try execute(sql, on: database) }
+                try execute("INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)", values: [.integer(10), .text(Self.timestamp())], on: database)
+                try execute("PRAGMA user_version = 10", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -406,6 +418,11 @@ public actor LocalDatabase {
 
     private static let schemaV9 = [
         "ALTER TABLE scheduled_transactions ADD COLUMN remaining_occurrences INTEGER CHECK(remaining_occurrences IS NULL OR remaining_occurrences >= 0)"
+    ]
+
+    private static let schemaV10 = [
+        "ALTER TABLE categories ADD COLUMN is_essential INTEGER NOT NULL DEFAULT 0 CHECK(is_essential IN (0,1))",
+        "ALTER TABLE categories ADD COLUMN is_emergency_fund INTEGER NOT NULL DEFAULT 0 CHECK(is_emergency_fund IN (0,1))"
     ]
 
     private static func execute(

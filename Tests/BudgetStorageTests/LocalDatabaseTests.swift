@@ -27,6 +27,9 @@ final class LocalDatabaseTests: XCTestCase {
             ($0.group, Set($0.categories))
         })
         XCTAssertEqual(actualCategories, expectedCategories)
+        XCTAssertTrue(snapshot.categories.first(where: { $0.name == "Housing" })?.isEssential == true)
+        XCTAssertTrue(snapshot.categories.first(where: { $0.name == "Emergency Fund" })?.isEmergencyFund == true)
+        XCTAssertTrue(snapshot.categories.first(where: { $0.name == "Dining & Fun" })?.isEssential == false)
         XCTAssertTrue(snapshot.accounts.isEmpty)
         XCTAssertTrue(snapshot.transactions.isEmpty)
         XCTAssertTrue(snapshot.allocations.isEmpty)
@@ -69,6 +72,8 @@ final class LocalDatabaseTests: XCTestCase {
             .init("DROP TABLE statement_imports"),
             .init("ALTER TABLE categories DROP COLUMN icon_name"),
             .init("ALTER TABLE categories DROP COLUMN note"),
+            .init("ALTER TABLE categories DROP COLUMN is_essential"),
+            .init("ALTER TABLE categories DROP COLUMN is_emergency_fund"),
             .init("ALTER TABLE scheduled_transactions DROP COLUMN remaining_occurrences"),
             .init("ALTER TABLE scheduled_transactions DROP COLUMN end_date"),
             .init("DELETE FROM local_schema_migrations WHERE version >= 4"),
@@ -232,7 +237,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.tags, ["income", "monthly"])
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 9)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 10)
     }
 
     func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {
