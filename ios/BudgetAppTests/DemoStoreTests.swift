@@ -2228,6 +2228,82 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalDeviceFutureMonthAssignmentPersistsWithoutRewritingCurrentMonth() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-device-future-plan-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = try LocalAuthorityStore(fileURL: root.appendingPathComponent("authority.sqlite3"))
+        let identity = LocalAuthorityIdentity(
+            householdID: "local-device-household", householdName: "My Household",
+            ownerUserID: "local-device-owner", ownerDisplayName: "You",
+            budgetID: "local-device-budget", budgetName: "My Budget", currencyCode: "USD"
+        )
+        let budget = APIBudget(
+            id: identity.budgetID, householdID: identity.householdID, name: identity.budgetName,
+            currencyCode: identity.currencyCode, effectivePermission: .owner, capabilities: nil
+        )
+        let now = { BudgetWorkspaceStore.parseDate("2026-09-15") }
+        let report = WorkspaceReportQuery(
+            start: BudgetWorkspaceStore.parseDate("2026-09-01"),
+            end: BudgetWorkspaceStore.parseDate("2026-10-31"),
+            accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "",
+            transactionType: "", cleared: "all", flag: "", tag: "",
+            spendingTrendDimension: "category", includeTracking: true
+        )
+        let september = BudgetWorkspaceStore.parseDate("2026-09-01")
+        let october = BudgetWorkspaceStore.parseDate("2026-10-01")
+        let source = DemoWorkspaceDataSource(
+            fresh: true, budgetOverride: budget, localAuthority: authority,
+            localIdentity: identity, now: now
+        )
+
+        _ = try await source.snapshot(planMonth: september, report: report)
+        try await source.createAccount(.init(
+            name: "Planning Cash", kind: "checking", isOnBudget: true,
+            openingBalanceMinor: 50_000
+        ))
+        let funded = try await source.snapshot(planMonth: september, report: report)
+        let fundedSummary = try XCTUnwrap(funded.summary)
+        let category = try XCTUnwrap(fundedSummary.categories.first)
+        XCTAssertEqual(category.assignedMinor, 0)
+        XCTAssertEqual(fundedSummary.readyToAssignMinor, 50_000)
+
+        try await source.assignMoney(.init(
+            categoryID: category.categoryID, month: "2026-10-01", assignedMinor: 20_000,
+            expectedVersion: fundedSummary.allocationVersion
+        ))
+        let octoberAfterAssignment = try await source.snapshot(planMonth: october, report: report)
+        let octoberSummary = try XCTUnwrap(octoberAfterAssignment.summary)
+        XCTAssertEqual(
+            octoberSummary.categories.first { $0.categoryID == category.categoryID }?.assignedMinor,
+            20_000
+        )
+        XCTAssertEqual(octoberSummary.allDateUnassignedMinor, 30_000)
+        let septemberAfterAssignment = try await source.snapshot(planMonth: september, report: report)
+        let septemberSummary = try XCTUnwrap(septemberAfterAssignment.summary)
+        XCTAssertEqual(
+            septemberSummary.categories.first { $0.categoryID == category.categoryID }?.assignedMinor,
+            0
+        )
+        XCTAssertEqual(septemberSummary.readyToAssignMinor, 50_000)
+        XCTAssertEqual(septemberSummary.fundingLimitMinor, 30_000)
+
+        let reopened = DemoWorkspaceDataSource(
+            fresh: true, budgetOverride: budget, localAuthority: authority,
+            localIdentity: identity, now: now
+        )
+        let restoredOctober = try await reopened.snapshot(planMonth: october, report: report)
+        let restoredSummary = try XCTUnwrap(restoredOctober.summary)
+        XCTAssertEqual(
+            restoredSummary.categories.first { $0.categoryID == category.categoryID }?.assignedMinor,
+            20_000
+        )
+        XCTAssertEqual(restoredSummary.allDateUnassignedMinor, 30_000)
+        XCTAssertEqual(restoredOctober.accounts.first?.name, "Planning Cash")
+        XCTAssertEqual(restoredOctober.accountBalances.values.first?.workingBalanceMinor, 50_000)
+    }
+
+    @MainActor
     func testConfirmedLocalEraseRemovesAuthorityAttachmentsKeysAndReopensFreshStarterPlan() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-device-erase-\(UUID().uuidString)", isDirectory: true)

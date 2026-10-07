@@ -16,8 +16,9 @@ Checkpoint inspected: `aecf712`, `codex/development`. Human acceptance pending; 
   AND month scoped, negative carry is preserved, and future assignments consume all-date cash
   without overwriting current-month Assigned. See the production routing checkpoint below.
 - Demo seed now has explicit account/category opening observations at 2025-10-01, dated allocations
-  and chronological posted activity; financial display totals are derived from those facts. The
-  command-routing and monthly read migration below is still required. Do not silently reinterpret
+  and chronological posted activity; financial display totals are derived from those facts. Command
+  routing and monthly reads are migrated. Local Device persistence is proven across canonical
+  assignment, SQLite synchronization and full workspace reconstruction. Do not silently reinterpret
   an arbitrary difference as real income or a real historical transaction.
 - The legacy BudgetCore MonthlyBudget calculator is quarantined, not production authority. Existing
   shared financial command vectors are useful but do not yet prove multi-period behavior.

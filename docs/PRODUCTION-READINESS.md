@@ -1072,9 +1072,20 @@ Live future assignments now use the existing dated allocation service and real-c
 without its obsolete future-month rejection. Fixed-clock regression covers independent months,
 edit/reload, forecast exclusion, no double-use, balanced history and unchanged account observations.
 **360 backend pass, zero skips**, including disposable PostgreSQL; no Swift or migration change.
-Demo month persistence and effective-history rollover remain open, so future-planning parity is not
+Local Device/Demo month persistence was subsequently proven through the production repository and
+SQLite reconstruction; effective-history rollover remains open, so future-planning parity is not
 complete. Next security audit: allocation-history listing checks its capability but appears to lack
 category-resource filtering; reproduce before correcting. Evidence `/tmp/budget-future-assignment-full.log`.
+
+### Local Device future-month planning persistence — 2026-10-07
+
+A focused production-repository regression closes the stale claim that Local Device future-month
+assignments were only in-memory. It creates real on-budget cash, assigns a portion to the following
+month through the canonical service, verifies current/future observations and the all-date funding
+limit independently, then reconstructs the workspace from SQLite and verifies the dated assignment
+and account balance survive. One Xcode 27 Beta native test passed on the preserved iPhone 17 Pro Max
+/ iOS 27 Simulator. Product code was unchanged, so no repetitive broad suite was run. Prospective
+cash-overspending policy history remains a separate genuine financial gap.
 
 ### Coordinated source backup checkpoint — 2026-09-18
 
