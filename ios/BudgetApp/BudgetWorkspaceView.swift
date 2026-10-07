@@ -6352,9 +6352,43 @@ private struct LiveActivityView: View {
     @State private var showTagPrompt = false
     @State private var bulkTag = ""
     private var queryKey: String { "\(search)|\(filter)" }
+    private var recentPlanChanges: [APIAllocationOperation] {
+        Array(store.allocationOperations.sorted {
+            if $0.occurredOn != $1.occurredOn { return $0.occurredOn > $1.occurredOn }
+            return $0.id > $1.id
+        }.prefix(5))
+    }
     var body: some View {
         List {
             Section("Planning") { NavigationLink { LiveScheduledTransactionsView() } label: { Label("Scheduled transactions", systemImage: "calendar.badge.clock") } }
+            if store.budget.can("view_allocation_history") {
+                Section("Plan changes") {
+                    if recentPlanChanges.isEmpty {
+                        Text("Assignments and money moves will appear here.").foregroundStyle(.secondary)
+                            .accessibilityIdentifier("activity-plan-history-empty")
+                    } else {
+                        ForEach(recentPlanChanges) { operation in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Label(allocationTitle(operation.kind), systemImage: allocationSymbol(operation.kind))
+                                        .font(.headline)
+                                    Spacer()
+                                    Text(operation.occurredOn).font(.caption).foregroundStyle(.secondary)
+                                }
+                                if !operation.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    Text(operation.note).font(.subheadline).lineLimit(2)
+                                }
+                                Text("By \(allocationActor(operation.actorUserID)) · \(operation.postings.count) change\(operation.postings.count == 1 ? "" : "s")")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("activity-plan-change-\(operation.id)")
+                        }
+                        NavigationLink("View all plan history") { AllocationHistoryView() }
+                            .accessibilityIdentifier("activity-plan-history-action")
+                    }
+                }
+            }
             Section("Posted activity") {
                 if rows.isEmpty && !loading && errorMessage == nil { ContentUnavailableView("No matching transactions", systemImage: "line.3.horizontal.decrease.circle", description: Text("Try changing your search or filters.")) }
                 ForEach(rows) { transaction in
@@ -6384,6 +6418,27 @@ private struct LiveActivityView: View {
     private func openQuickEntryIfRequested() {
         guard quickEntryRequest > 0, store.budget.can("create_transaction") else { return }
         showAdd = true
+    }
+    private func allocationActor(_ userID: String) -> String {
+        store.householdMembers.first(where: { $0.userID == userID })?.displayName ?? "Household member"
+    }
+    private func allocationTitle(_ kind: String) -> String {
+        switch kind {
+        case "assignment": "Assignment"
+        case "move", "allocation_transfer": "Money move"
+        case "smart_funding": "Smart Funding"
+        case "delegated_funding": "Delegated funding"
+        case "allowance": "Allowance"
+        default: kind.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+    private func allocationSymbol(_ kind: String) -> String {
+        switch kind {
+        case "move", "allocation_transfer": "arrow.left.arrow.right"
+        case "smart_funding": "sparkles"
+        case "delegated_funding", "allowance": "person.2"
+        default: "square.and.pencil"
+        }
     }
     @ViewBuilder private func transfer(_ presentation: TransferPresentation) -> some View {
         LiveTransferView(presentation: presentation, budget: store.budget, accounts: store.accounts, onSaved: reload)

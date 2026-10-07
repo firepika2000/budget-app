@@ -430,3 +430,6 @@ The roadmap is a living document, but changing it is a deliberate product decisi
 
 - SWIFT MT940 statement import is production-wired across Budget Server and Local Device providers,
   preserving exact minor-unit money and the existing explicit reconciliation review boundary.
+- Activity now includes the five most recent authorized Plan changes with actor attribution and a
+  route to the complete immutable allocation history. Posted transactions remain separately searchable
+  and filterable, so Plan changes do not masquerade as ledger activity.

@@ -1353,6 +1353,22 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(row.value as? String, "Uncleared")
     }
 
+    func testActivityShowsActorAttributedPlanChangesAndFullHistory() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        let change = app.descendants(matching: .any).allElementsBoundByIndex.first {
+            $0.identifier.hasPrefix("activity-plan-change-")
+        }
+        XCTAssertNotNil(change)
+        XCTAssertTrue(change?.label.contains("By ") == true)
+        let history = app.buttons["activity-plan-history-action"]
+        for _ in 0..<5 where !history.isHittable { app.swipeUp() }
+        history.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["allocation-history-screen"].waitForExistence(timeout: 5))
+    }
+
     func testMoveMoneyFromCategoryPreservesSourceContextAndUsesUnassignedTerm() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=plan"]
