@@ -940,7 +940,7 @@ final class APIClientTests: XCTestCase {
                 URLQueryItem(name: "end_date", value: "2026-09-30"),
                 URLQueryItem(name: "account_id", value: "card")
             ]))
-            let response = Data(#"{"start_date":"2026-01-01","end_date":"2026-09-30","currency_code":"USD","opening_debt_minor":125000,"debt_minor":90001,"principal_reduction_minor":34999,"recorded_interest_range_minor":1234,"recorded_interest_month_minor":1234,"recorded_interest_ytd_minor":1234,"recorded_interest_trailing_12_minor":1234,"interest_tracking_started_on":"2026-09-15","points":[{"as_of":"2026-01-31","debt_minor":125000},{"as_of":"2026-09-30","debt_minor":90001}],"accounts":[{"account_id":"card","account_name":"Credit Card","account_type":"credit","is_on_budget":true,"debt_minor":90001,"recorded_interest_minor":1234}]}"#.utf8)
+            let response = Data(#"{"start_date":"2026-01-01","end_date":"2026-09-30","currency_code":"USD","opening_debt_minor":125000,"debt_minor":90001,"principal_reduction_minor":34999,"recorded_interest_range_minor":1234,"recorded_interest_month_minor":1234,"recorded_interest_ytd_minor":1234,"recorded_interest_trailing_12_minor":1234,"interest_tracking_started_on":"2026-09-15","points":[{"as_of":"2026-01-31","debt_minor":125000},{"as_of":"2026-09-30","debt_minor":90001,"net_debt_change_minor":34999,"recorded_interest_minor":1234}],"accounts":[{"account_id":"card","account_name":"Credit Card","account_type":"credit","is_on_budget":true,"debt_minor":90001,"recorded_interest_minor":1234}]}"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
@@ -952,6 +952,9 @@ final class APIClientTests: XCTestCase {
         XCTAssertNil(report.recordedInterestLifetimeMinor, "Older responses must not invent an unreported all-history amount")
         XCTAssertEqual(report.interestTrackingStartedOn, "2026-09-15")
         XCTAssertEqual(report.points.map(\.debtMinor), [125_000, 90_001])
+        XCTAssertNil(report.points.first?.netDebtChangeMinor, "Older point payloads remain readable")
+        XCTAssertEqual(report.points.last?.netDebtChangeMinor, 34_999)
+        XCTAssertEqual(report.points.last?.recordedInterestMinor, 1_234)
         XCTAssertEqual(report.accounts.first?.accountID, "card")
     }
 

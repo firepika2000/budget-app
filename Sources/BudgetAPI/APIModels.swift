@@ -1405,7 +1405,13 @@ public struct APIDebtPoint: Identifiable, Decodable, Equatable, Sendable {
     public var id: String { asOf }
     public let asOf: String
     public let debtMinor: Int64
-    enum CodingKeys: String, CodingKey { case asOf = "as_of", debtMinor = "debt_minor" }
+    public let netDebtChangeMinor: Int64?
+    public let recordedInterestMinor: Int64?
+    enum CodingKeys: String, CodingKey {
+        case asOf = "as_of", debtMinor = "debt_minor"
+        case netDebtChangeMinor = "net_debt_change_minor"
+        case recordedInterestMinor = "recorded_interest_minor"
+    }
 }
 
 public struct APIDebtAccount: Identifiable, Decodable, Equatable, Sendable {

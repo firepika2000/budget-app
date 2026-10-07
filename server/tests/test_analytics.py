@@ -548,6 +548,8 @@ def test_debt_history_is_exact_for_loans_cards_and_payments(
     assert body["debt_minor"] == 65000
     assert body["principal_reduction_minor"] == 5000
     assert [point["debt_minor"] for point in body["points"]] == [60000, 65000]
+    assert [point["net_debt_change_minor"] for point in body["points"]] == [10000, -5000]
+    assert [point["recorded_interest_minor"] for point in body["points"]] == [0, 0]
     assert [(row["account_name"], row["debt_minor"]) for row in body["accounts"]] == [
         ("Auto Loan", 40000), ("Card", 25000),
     ]
@@ -601,6 +603,7 @@ def test_recorded_interest_is_explicit_split_aware_filterable_and_netted(
     assert body["recorded_interest_range_minor"] == 13500
     assert body["recorded_interest_month_minor"] == 11000
     assert body["recorded_interest_ytd_minor"] == 13500
+    assert [point["recorded_interest_minor"] for point in body["points"]] == [2500, 11000]
     assert body["interest_tracking_started_on"] == "2026-08-10"
     assert {row["account_name"]: row["recorded_interest_minor"] for row in body["accounts"]} == {
         "Card": 11000, "Loan": 2500,

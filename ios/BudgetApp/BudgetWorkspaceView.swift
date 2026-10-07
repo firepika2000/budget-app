@@ -630,9 +630,15 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             return (item, amount)
         }.filter { $0.1 != 0 }
         let debtRows: [[String: Any]] = debtAccounts.map { account in ["account_id": account.id, "account_name": account.name, "account_type": account.kind.rawValue, "is_on_budget": account.isOnBudget, "debt_minor": max(-balance(account, report.end), 0), "recorded_interest_minor": classifiedInterest.filter { $0.0.accountID == account.id && $0.0.date >= start && $0.0.date <= report.end }.reduce(Int64(0)) { $0 + $1.1 }] }
+        var priorDebt = openingDebt
         let debtPoints: [[String: Any]] = netWorthPoints.map { point in
             let asOf = dateFormatter.date(from: point["as_of"] as! String)!
-            return ["as_of": point["as_of"]!, "debt_minor": debtAccounts.reduce(Int64(0)) { $0 + max(-balance($1, asOf), 0) }]
+            let debt = debtAccounts.reduce(Int64(0)) { $0 + max(-balance($1, asOf), 0) }
+            let periodStart = Calendar(identifier: .gregorian).date(from: Calendar(identifier: .gregorian).dateComponents([.year, .month], from: asOf))!
+            let interest = classifiedInterest.filter { $0.0.date >= max(start, periodStart) && $0.0.date <= asOf }.reduce(Int64(0)) { $0 + $1.1 }
+            let change = priorDebt - debt
+            priorDebt = debt
+            return ["as_of": point["as_of"]!, "debt_minor": debt, "net_debt_change_minor": change, "recorded_interest_minor": interest]
         }
         let endingDebt = debtRows.reduce(Int64(0)) { $0 + ($1["debt_minor"] as? Int64 ?? 0) }
         let reportCalendar = Calendar(identifier: .gregorian)
@@ -8488,11 +8494,22 @@ private struct DebtHistoryContent: View {
                 .accessibilityValue("Recorded debt as of \(report.endDate): \(store.format(report.debtMinor)), \(report.principalReductionMinor >= 0 ? "net debt decrease" : "net debt increase") \(store.format(abs(report.principalReductionMinor)))")
                 DisclosureGroup("Recorded observations") {
                     ForEach(report.points) { point in
-                        LabeledContent(point.asOf, value: store.format(point.debtMinor))
-                            .accessibilityIdentifier("debt-observation-\(point.asOf)")
+                        VStack(alignment: .leading, spacing: 4) {
+                            LabeledContent(point.asOf, value: store.format(point.debtMinor))
+                            if let change = point.netDebtChangeMinor {
+                                LabeledContent(change >= 0 ? "Debt decreased" : "Debt increased", value: store.format(abs(change)))
+                                    .font(.caption)
+                            }
+                            if let interest = point.recordedInterestMinor {
+                                LabeledContent("Recorded interest", value: store.format(interest))
+                                    .font(.caption)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("debt-observation-\(point.asOf)")
                     }
                 }
-                Text("Recorded balance observations, not a payoff forecast. Exact values are available in Recorded observations.")
+                Text("Recorded balance, net debt change, and explicitly classified interest come from posted history. They are observations, not a payoff forecast or an estimate of principal payments.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

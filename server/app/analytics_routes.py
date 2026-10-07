@@ -531,16 +531,6 @@ def debt_report(
         index += 1
     opening_debt = sum(max(-value, 0) for value in balances.values())
 
-    observation_dates = [through for _, through in month_periods(start_date, end_date)]
-    points = []
-    for as_of in observation_dates:
-        while index < len(transactions) and transactions[index].occurred_on <= as_of:
-            transaction = transactions[index]
-            balances[transaction.account_id] += transaction.amount_minor
-            index += 1
-        points.append({"as_of": as_of, "debt_minor": sum(max(-value, 0) for value in balances.values())})
-
-    ending_debt = sum(max(-value, 0) for value in balances.values())
     def recorded_interest(item: Transaction) -> int:
         if item.transfer_id is not None:
             return 0
@@ -557,6 +547,26 @@ def debt_report(
         or item.category_id in visible_categories
         or (bool(item.splits) and all(split.category_id in visible_categories for split in item.splits))
     ) and recorded_interest(item) != 0]
+    points = []
+    prior_debt = opening_debt
+    for period_start, as_of in month_periods(start_date, end_date):
+        while index < len(transactions) and transactions[index].occurred_on <= as_of:
+            transaction = transactions[index]
+            balances[transaction.account_id] += transaction.amount_minor
+            index += 1
+        debt = sum(max(-value, 0) for value in balances.values())
+        points.append({
+            "as_of": as_of,
+            "debt_minor": debt,
+            "net_debt_change_minor": prior_debt - debt,
+            "recorded_interest_minor": sum(
+                recorded_interest(item) for item in classified
+                if period_start <= item.occurred_on <= as_of
+            ),
+        })
+        prior_debt = debt
+
+    ending_debt = sum(max(-value, 0) for value in balances.values())
     range_interest = sum(recorded_interest(item) for item in classified if item.occurred_on >= start_date)
     month_start = date(end_date.year, end_date.month, 1)
     year_start = date(end_date.year, 1, 1)

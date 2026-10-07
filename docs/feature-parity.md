@@ -79,7 +79,7 @@ Status meanings:
 | Income vs. spending | IMPLEMENTED | Transfer-safe server aggregation with drill-through and edit refresh. |
 | Net worth | IMPLEMENTED | Permission-filtered production aggregation, accessible trend chart, account observations, filters, and drill-through. |
 | Savings/goal progress | IMPLEMENTED | Target progress and forecast foundation, native goal list/detail. |
-| Debt progress | PARTIALLY IMPLEMENTED | Payoff estimate exists; persisted interest/principal history is future. |
+| Debt progress | IMPLEMENTED | Authoritative monthly debt observations show ending debt, net debt change, and explicitly classified recorded interest, with account drill-through and payoff projections kept separately labelled. |
 | Household insights | INTENTIONALLY DIFFERENT | Adds allowance usage, requests, member activity, and permission-aware views. |
 | 30/60/90-day, 6-month, 1-year forecast | IMPLEMENTED | Existing forecast API plus clearly labeled projected native UI. |
 | Monthly planned cost | IMPLEMENTED | Exact production-backed sum of active, non-snoozed target recommendations with explicit scope and overflow handling. |

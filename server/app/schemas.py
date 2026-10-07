@@ -953,6 +953,8 @@ class NetWorthReportResponse(BaseModel):
 class DebtPoint(BaseModel):
     as_of: date
     debt_minor: int
+    net_debt_change_minor: int
+    recorded_interest_minor: int
 
 
 class DebtAccount(BaseModel):
