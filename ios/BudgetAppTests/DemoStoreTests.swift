@@ -3091,6 +3091,35 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalStatementCancellationIsMoneyNeutralAndRejectsReplay() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let initialTransactions = source.demo.transactions
+        let initialBalance = account.balance
+        let batch = try await source.stageStatementImport(
+            accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,-12.34,Cancelled import\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd")
+        )
+        let cancelled = try await source.cancelStatementImport(
+            accountID: account.id, batchID: batch.id, expectedVersion: batch.version
+        )
+        XCTAssertEqual(cancelled.status, "cancelled")
+        XCTAssertEqual(cancelled.version, batch.version + 1)
+        XCTAssertEqual(source.demo.transactions, initialTransactions)
+        XCTAssertEqual(source.demo.accounts.first(where: { $0.id == account.id })?.balance, initialBalance)
+        do {
+            _ = try await source.cancelStatementImport(
+                accountID: account.id, batchID: batch.id, expectedVersion: batch.version
+            )
+            XCTFail("A cancelled import must not be cancellable again")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("changed"))
+        }
+    }
+
+    @MainActor
     func testLocalQIFStagingIsMoneyNeutralUntilCanonicalApproval() async throws {
         let source = DemoWorkspaceDataSource()
         let account = try XCTUnwrap(source.demo.accounts.first)

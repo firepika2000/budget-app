@@ -1155,6 +1155,12 @@ public struct APIStatementImportApprove: Encodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case expectedVersion = "expected_version", items }
 }
 
+public struct APIStatementImportCancel: Encodable, Equatable, Sendable {
+    public let expectedVersion: Int
+    public init(expectedVersion: Int) { self.expectedVersion = expectedVersion }
+    enum CodingKeys: String, CodingKey { case expectedVersion = "expected_version" }
+}
+
 public struct APISpendingCategoryReport: Identifiable, Decodable, Equatable, Sendable {
     public var id: String { categoryID }
     public let categoryID: String

@@ -1326,6 +1326,27 @@ final class APIClientTests: XCTestCase {
         )
         XCTAssertEqual(requests, 2)
     }
+
+    func testStatementImportCancellationSendsOnlyOptimisticVersion() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let responseBody = Data(#"{"id":"batch-1","budget_id":"b1","account_id":"a1","status":"cancelled","version":4,"source_format":"csv","candidate_count":0,"candidates":[],"created_at":"2026-10-02T12:00:00Z"}"#.utf8)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/statement-imports/batch-1/cancel")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            let body = try JSONSerialization.jsonObject(with: requestBody(request)) as! [String: Any]
+            XCTAssertEqual(body.count, 1)
+            XCTAssertEqual(body["expected_version"] as? Int, 3)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, responseBody)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let result = try await client.cancelStatementImport(
+            budgetID: "b1", accountID: "a1", batchID: "batch-1", expectedVersion: 3, token: "current"
+        )
+        XCTAssertEqual(result.status, "cancelled")
+        XCTAssertEqual(result.version, 4)
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

@@ -461,6 +461,13 @@ public struct APIClient {
                        method: "POST", token: token, body: approval)
     }
 
+    public func cancelStatementImport(budgetID: String, accountID: String, batchID: String,
+                                      expectedVersion: Int, token: String) async throws -> APIStatementImport {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/statement-imports/\(batchID)/cancel",
+                       method: "POST", token: token,
+                       body: APIStatementImportCancel(expectedVersion: expectedVersion))
+    }
+
     public func updateAssignment(
         budgetID: String,
         categoryID: String,

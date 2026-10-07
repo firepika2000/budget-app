@@ -7,6 +7,12 @@ UI is active for Budget Server workspaces and only explicit approval can post le
 on iPhone now supports CSV, TSV, explicitly delimited text, structured OFX/QFX, QIF, and
 conservatively recognized text-based PDFs through the same review UI.
 
+The native review now treats cancellation as an explicit lifecycle operation. Before preview,
+Close simply leaves the file picker flow because no server state exists. After staging, Cancel
+Import requires confirmation and calls the provider's optimistic-version cancellation contract;
+it does not post or delete transactions. Live, Demo, and Local Device providers share this command
+surface, and stale/replayed cancellation is rejected.
+
 Current endpoints:
 
 - `POST /api/v1/budgets/{budget}/accounts/{account}/statement-imports`
@@ -58,7 +64,8 @@ any later spreadsheet export still requires its own formula-injection defenses.
    `budgeting_routes.create_transaction_in_session` now owns authorization, payee resolution,
    reserve events and audit without committing; the existing HTTP route commits the returned
    transaction. Approval reuses this operation inside one caller-owned transaction.
-6. Native history UX, cancellation after leaving the active flow, partial-error policy and authorized undo.
+6. Native history/reopen UX, partial-error policy and authorized undo. In-flow cancellation is now
+   production-wired; cancelling an older abandoned review still requires the planned history surface.
 7. The production reconciliation sheet now provides file selection, explicit CSV mapping,
    duplicate-aware preview, category selection and all-row post/skip approval through the shared
    workspace command contract. The Budget Server adapter is active for every listed format. The
