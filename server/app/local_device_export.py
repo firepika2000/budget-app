@@ -207,9 +207,12 @@ def build_local_device_projection(
         } for item in portable_categories],
         "payees": [{
             "id": item.id, "budget_id": budget.id, "name": item.display_name,
-            "normalized_name": item.name_key,
+            # A merged source deliberately clears its active namespace key on Server.
+            # Local Device stores a non-null string, while redirect identity remains authoritative.
+            "normalized_name": item.name_key or "",
             "default_category_id": preferences[item.id].default_category_id if item.id in preferences else None,
             "is_archived": item.is_archived,
+            "merged_into_payee_id": item.merged_into_payee_id,
         } for item in payees],
         "payee_aliases": [{
             "id": item.id, "payee_id": item.payee_id, "display_name": item.display_name,

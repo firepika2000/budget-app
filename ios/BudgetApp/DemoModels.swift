@@ -128,6 +128,7 @@ struct DemoPayee: Identifiable, Hashable {
     var isArchived = false
     var defaultCategoryID: String? = nil
     var aliases: [String] = []
+    var mergedIntoPayeeID: String? = nil
 }
 
 struct DemoSchedule: Identifiable, Hashable {

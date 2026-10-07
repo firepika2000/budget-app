@@ -1611,11 +1611,13 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard actorCapabilities.contains("view_transactions") else { return [] }
         let scoped = actorHasResourceScope, categories = actorCategoryScope
         let histories = Dictionary(grouping: resourceVisibleTransactions, by: \.payee)
-        return try decode(demo.payees.filter { (includeArchived || !$0.isArchived) && (!scoped || histories[$0.name] != nil) }.map { item in
+        return try decode(demo.payees.filter { item in
+            item.mergedIntoPayeeID == nil && (includeArchived || !item.isArchived) && (!scoped || histories[item.name] != nil)
+        }.map { item in
             let history = histories[item.name] ?? []
             let defaultID = item.defaultCategoryID.flatMap { id in (categories.map { $0.contains(id) } ?? true) ? id : nil }
             return ["id": item.id, "household_id": budget.householdID, "display_name": item.name, "is_archived": item.isArchived,
-                    "merged_into_payee_id": NSNull(), "default_category_id": defaultID ?? NSNull(),
+                    "merged_into_payee_id": item.mergedIntoPayeeID.map { $0 as Any } ?? NSNull(), "default_category_id": defaultID ?? NSNull(),
                     "transaction_count": history.count, "net_amount_minor": try Money.sumMinorUnits(history.map(\.amount)),
                     "aliases": (scoped ? [] : item.aliases).enumerated().map { ["id": "\(item.id)-alias-\($0.offset)", "display_name": $0.element] }] as [String: Any]
         })
@@ -1650,9 +1652,22 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         for transactionIndex in demo.transactions.indices where demo.transactions[transactionIndex].payee == old { demo.transactions[transactionIndex].payee = demo.payees[index].name }
     }
     func mergePayee(sourceID: String, destinationID: String) async throws { try requireActiveMembership();
-        guard let source = demo.payees.first(where: { $0.id == sourceID }), let destination = demo.payees.first(where: { $0.id == destinationID }) else { throw workspaceRepositoryError("Payee not found.") }
+        guard let sourceIndex = demo.payees.firstIndex(where: { $0.id == sourceID }),
+              let destinationIndex = demo.payees.firstIndex(where: { $0.id == destinationID }),
+              sourceID != destinationID, !demo.payees[sourceIndex].isArchived,
+              !demo.payees[destinationIndex].isArchived,
+              demo.payees[sourceIndex].mergedIntoPayeeID == nil,
+              demo.payees[destinationIndex].mergedIntoPayeeID == nil else { throw workspaceRepositoryError("Choose two active payees.") }
+        let source = demo.payees[sourceIndex]
+        let destination = demo.payees[destinationIndex]
         for index in demo.transactions.indices where demo.transactions[index].payee == source.name { demo.transactions[index].payee = destination.name }
-        demo.payees.removeAll { $0.id == sourceID }
+        for index in demo.schedules.indices where demo.schedules[index].name == source.name { demo.schedules[index].name = destination.name }
+        let sourceNames = [source.name] + source.aliases
+        for name in sourceNames where !demo.payees[destinationIndex].aliases.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+            demo.payees[destinationIndex].aliases.append(name)
+        }
+        demo.payees[sourceIndex].isArchived = true
+        demo.payees[sourceIndex].mergedIntoPayeeID = destinationID
     }
     func createPayeeAlias(payeeID: String, displayName: String) async throws { try requireActiveMembership();
         guard let index = demo.payees.firstIndex(where: { $0.id == payeeID }) else { throw workspaceRepositoryError("Payee not found.") }

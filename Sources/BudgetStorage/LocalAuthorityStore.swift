@@ -95,12 +95,15 @@ public struct LocalPayeeRecord: Equatable, Sendable {
     public let normalizedName: String
     public let defaultCategoryID: String?
     public let isArchived: Bool
+    public let mergedIntoPayeeID: String?
 
     public init(id: String, budgetID: String, name: String, normalizedName: String,
-                defaultCategoryID: String? = nil, isArchived: Bool = false) {
+                defaultCategoryID: String? = nil, isArchived: Bool = false,
+                mergedIntoPayeeID: String? = nil) {
         self.id = id; self.budgetID = budgetID; self.name = name
         self.normalizedName = normalizedName; self.defaultCategoryID = defaultCategoryID
         self.isArchived = isArchived
+        self.mergedIntoPayeeID = mergedIntoPayeeID
     }
 }
 
@@ -494,16 +497,16 @@ public actor LocalAuthorityStore {
 
     public func insertPayee(_ value: LocalPayeeRecord) async throws {
         try await database.execute(.init(
-            "INSERT INTO payees(id,budget_id,name,normalized_name,default_category_id,is_archived) VALUES (?,?,?,?,?,?)",
-            values: [.text(value.id), .text(value.budgetID), .text(value.name), .text(value.normalizedName), optionalText(value.defaultCategoryID), .integer(value.isArchived ? 1 : 0)]
+            "INSERT INTO payees(id,budget_id,name,normalized_name,default_category_id,is_archived,merged_into_payee_id) VALUES (?,?,?,?,?,?,?)",
+            values: [.text(value.id), .text(value.budgetID), .text(value.name), .text(value.normalizedName), optionalText(value.defaultCategoryID), .integer(value.isArchived ? 1 : 0), optionalText(value.mergedIntoPayeeID)]
         ))
     }
 
     public func updatePayee(_ value: LocalPayeeRecord) async throws {
         let changes = try await database.executeReturningChanges(.init(
-            "UPDATE payees SET name=?,normalized_name=?,default_category_id=?,is_archived=? WHERE id=? AND budget_id=?",
+            "UPDATE payees SET name=?,normalized_name=?,default_category_id=?,is_archived=?,merged_into_payee_id=? WHERE id=? AND budget_id=?",
             values: [.text(value.name), .text(value.normalizedName), optionalText(value.defaultCategoryID),
-                     .integer(value.isArchived ? 1 : 0), .text(value.id), .text(value.budgetID)]
+                     .integer(value.isArchived ? 1 : 0), optionalText(value.mergedIntoPayeeID), .text(value.id), .text(value.budgetID)]
         ))
         try requireOneChange(changes, record: "payee")
     }
@@ -732,7 +735,7 @@ public actor LocalAuthorityStore {
             .init("INSERT INTO categories(id,budget_id,group_id,name,icon_name,note,delegated_user_id,is_archived,sort_order,is_favorite,favorite_sort_order,is_essential,is_emergency_fund) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.groupID), .text(item.name), optionalText(item.iconName), .text(item.note), optionalText(item.delegatedUserID), .integer(item.isArchived ? 1 : 0), .integer(item.sortOrder), .integer(item.isFavorite ? 1 : 0), .integer(item.favoriteSortOrder), .integer(item.isEssential ? 1 : 0), .integer(item.isEmergencyFund ? 1 : 0)])
         }
         statements += value.payees.map { item in
-            .init("INSERT INTO payees(id,budget_id,name,normalized_name,default_category_id,is_archived) VALUES (?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.name), .text(item.normalizedName), optionalText(item.defaultCategoryID), .integer(item.isArchived ? 1 : 0)])
+            .init("INSERT INTO payees(id,budget_id,name,normalized_name,default_category_id,is_archived,merged_into_payee_id) VALUES (?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.name), .text(item.normalizedName), optionalText(item.defaultCategoryID), .integer(item.isArchived ? 1 : 0), optionalText(item.mergedIntoPayeeID)])
         }
         statements += value.payeeAliases.map { item in
             .init("INSERT INTO payee_aliases(id,payee_id,display_name,normalized_name) VALUES (?,?,?,?)", values: [.text(item.id), .text(item.payeeID), .text(item.displayName), .text(item.normalizedName)])
@@ -801,7 +804,7 @@ public actor LocalAuthorityStore {
 
     private func loadPayees(budgetID: String) async throws -> [LocalPayeeRecord] {
         try await database.rows(.init("SELECT * FROM payees WHERE budget_id=? ORDER BY normalized_name,id", values: [.text(budgetID)])).map {
-            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), name: text($0, "name"), normalizedName: text($0, "normalized_name"), defaultCategoryID: optionalText($0, "default_category_id"), isArchived: bool($0, "is_archived"))
+            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), name: text($0, "name"), normalizedName: text($0, "normalized_name"), defaultCategoryID: optionalText($0, "default_category_id"), isArchived: bool($0, "is_archived"), mergedIntoPayeeID: optionalText($0, "merged_into_payee_id"))
         }
     }
 

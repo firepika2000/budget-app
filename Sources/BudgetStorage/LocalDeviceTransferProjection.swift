@@ -73,7 +73,7 @@ public enum LocalDeviceTransferProjectionDecoder {
                 isEssential: $0.isEssential ?? false,
                 isEmergencyFund: $0.isEmergencyFund ?? false
             ) },
-            payees: value.payees.map { .init(id: $0.id, budgetID: $0.budgetId, name: $0.name, normalizedName: $0.normalizedName, defaultCategoryID: $0.defaultCategoryId, isArchived: $0.isArchived) },
+            payees: value.payees.map { .init(id: $0.id, budgetID: $0.budgetId, name: $0.name, normalizedName: $0.normalizedName, defaultCategoryID: $0.defaultCategoryId, isArchived: $0.isArchived, mergedIntoPayeeID: $0.mergedIntoPayeeId) },
             payeeAliases: value.payeeAliases.map { .init(id: $0.id, payeeID: $0.payeeId, displayName: $0.displayName, normalizedName: $0.normalizedName) },
             transactions: value.transactions.map { item in .init(
                 id: item.id, budgetID: item.budgetId, accountID: item.accountId,
@@ -217,7 +217,7 @@ private struct CategoryDTO: Decodable {
     let isFavorite: Bool; let favoriteSortOrder: Int64
     let isEssential: Bool?; let isEmergencyFund: Bool?
 }
-private struct PayeeDTO: Decodable { let id: String; let budgetId: String; let name: String; let normalizedName: String; let defaultCategoryId: String?; let isArchived: Bool }
+private struct PayeeDTO: Decodable { let id: String; let budgetId: String; let name: String; let normalizedName: String; let defaultCategoryId: String?; let isArchived: Bool; let mergedIntoPayeeId: String? }
 private struct AliasDTO: Decodable { let id: String; let payeeId: String; let displayName: String; let normalizedName: String }
 private struct SplitDTO: Decodable { let id: String; let categoryId: String; let amountMinor: Int64; let memo: String }
 private struct TransactionDTO: Decodable { let id: String; let budgetId: String; let accountId: String; let payeeId: String?; let payeeName: String; let amountMinor: Int64; let occurredOn: String; let memo: String; let isCleared: Bool; let isReconciled: Bool; let status: String; let transferId: String?; let scheduledTransactionId: String?; let flag: String?; let tags: [String]; let financialClassification: String?; let voidReason: String?; let reversalOfTransactionId: String?; let reversalTransactionId: String?; let createdByUserId: String; let createdAt: String; let splits: [SplitDTO] }

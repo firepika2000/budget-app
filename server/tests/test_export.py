@@ -280,6 +280,36 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
     assert repeated.json()["source_revision"] == value["source_revision"]
 
 
+def test_local_device_transfer_preserves_merged_payee_redirect_history(
+    client, owner_token, session_factory
+):
+    from .test_budgeting_api import create_budget
+
+    budget = create_budget(client, owner_token, session_factory)
+    path = f"/api/v1/budgets/{budget['id']}"
+    source = client.post(f"{path}/payees", headers=auth(owner_token), json={
+        "display_name": "Old Market",
+    })
+    destination = client.post(f"{path}/payees", headers=auth(owner_token), json={
+        "display_name": "Market",
+    })
+    assert source.status_code == destination.status_code == 201
+    merged = client.post(
+        f"{path}/payees/{source.json()['id']}/merge", headers=auth(owner_token),
+        json={"destination_payee_id": destination.json()["id"]},
+    )
+    assert merged.status_code == 200, merged.text
+
+    eligibility = client.get(f"{path}/local-device-transfer-eligibility", headers=auth(owner_token))
+    assert eligibility.status_code == 200
+    assert eligibility.json()["eligible"] is True
+    response = client.get(f"{path}/local-device-transfer", headers=auth(owner_token))
+    assert response.status_code == 200, response.text
+    payees = {item["id"]: item for item in response.json()["payees"]}
+    assert payees[source.json()["id"]]["is_archived"] is True
+    assert payees[source.json()["id"]]["merged_into_payee_id"] == destination.json()["id"]
+
+
 def test_local_device_transfer_fails_closed_for_detached_history_and_non_owner(
     client, owner_token, session_factory
 ):

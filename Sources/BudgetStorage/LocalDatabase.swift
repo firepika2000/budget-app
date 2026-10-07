@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 11
+    public static let schemaVersion = 12
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -343,6 +343,18 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 12 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV12 { try execute(sql, on: database) }
+                try execute("INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)", values: [.integer(12), .text(Self.timestamp())], on: database)
+                try execute("PRAGMA user_version = 12", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -440,6 +452,11 @@ public actor LocalDatabase {
     private static let schemaV11 = [
         // Provenance intentionally survives schedule deletion, matching the server contract.
         "ALTER TABLE transactions ADD COLUMN scheduled_transaction_id TEXT"
+    ]
+
+    private static let schemaV12 = [
+        // Redirect history is audit provenance and remains valid if a destination later changes.
+        "ALTER TABLE payees ADD COLUMN merged_into_payee_id TEXT"
     ]
 
     private static func execute(

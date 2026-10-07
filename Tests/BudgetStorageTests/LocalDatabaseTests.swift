@@ -77,6 +77,7 @@ final class LocalDatabaseTests: XCTestCase {
             .init("ALTER TABLE scheduled_transactions DROP COLUMN remaining_occurrences"),
             .init("ALTER TABLE scheduled_transactions DROP COLUMN end_date"),
             .init("ALTER TABLE transactions DROP COLUMN scheduled_transaction_id"),
+            .init("ALTER TABLE payees DROP COLUMN merged_into_payee_id"),
             .init("DELETE FROM local_schema_migrations WHERE version >= 4"),
             .init("PRAGMA user_version = 3"),
         ])
@@ -146,6 +147,7 @@ final class LocalDatabaseTests: XCTestCase {
         try await store?.insertCategoryGroup(.init(id: "needs", budgetID: "budget", name: "Needs", sortOrder: 0))
         try await store?.insertCategory(.init(id: "groceries", budgetID: "budget", groupID: "needs", name: "Groceries", sortOrder: 0, isFavorite: true, favoriteSortOrder: 3))
         try await store?.insertPayee(.init(id: "market", budgetID: "budget", name: "Market", normalizedName: "market", defaultCategoryID: "groceries"))
+        try await store?.insertPayee(.init(id: "old-market", budgetID: "budget", name: "Old Market", normalizedName: "", isArchived: true, mergedIntoPayeeID: "market"))
         try await store?.insertPayeeAlias(.init(id: "market-alias", payeeID: "market", displayName: "The Market", normalizedName: "the market"))
         try await store?.insertTransaction(.init(
             id: "purchase", budgetID: "budget", accountID: "checking", payeeID: "market",
@@ -172,7 +174,8 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(snapshot.categories.map(\.name), ["Groceries"])
         XCTAssertEqual(snapshot.categories.first?.isFavorite, true)
         XCTAssertEqual(snapshot.categories.first?.favoriteSortOrder, 3)
-        XCTAssertEqual(snapshot.payees.map(\.name), ["Market"])
+        XCTAssertEqual(snapshot.payees.map(\.name), ["Old Market", "Market"])
+        XCTAssertEqual(snapshot.payees.first(where: { $0.id == "old-market" })?.mergedIntoPayeeID, "market")
         XCTAssertEqual(snapshot.payeeAliases.map(\.displayName), ["The Market"])
         XCTAssertEqual(snapshot.transactions.map(\.amountMinor), [-12_345])
         XCTAssertEqual(snapshot.transactions.first?.splits.map(\.amountMinor), [-10_000, -2_345])
@@ -239,7 +242,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.scheduledTransactionID, "deleted-schedule")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 11)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 12)
     }
 
     func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {

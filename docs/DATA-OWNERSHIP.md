@@ -486,8 +486,8 @@ publishes the candidate only if the authority remained unchanged. It then record
 key plus a crash-recoverable cold-launch journal; a first authority activates without inventing a rollback,
 while replacement retains the prior local authority and matching key. The source server is never mutated
 or deleted, and its credentials remain available for a later provider switch. Eligibility also fails closed
-for detached attachment tombstones, unrepresentable allocation shapes, and merged-Payee lineage
-instead of silently dropping them. Eligible owners can now explicitly prepare
+for detached attachment tombstones and unrepresentable allocation shapes instead of silently
+dropping them. Eligible owners can now explicitly prepare
 the move from Backup & Recovery; activation is intentionally deferred until the next cold launch so an
 open Live workspace is never replaced underneath active views.
 
@@ -523,6 +523,11 @@ occurrences, including occurrences whose source schedule is later deleted. The S
 carries both that lineage and the schedule's last-realized observation. Local Device therefore keeps
 the same protections against editing or bulk-changing system-realized transactions, and ordinary
 schedule use no longer strands an otherwise eligible personal budget on Server.
+
+Local schema v12 preserves merged Payee redirect history alongside archived source identity and
+destination aliases. Search and entry continue to expose only canonical active Payees, while audit
+provenance remains available in the private authority snapshot. An owner cleaning up duplicate Payees
+therefore no longer turns a personal budget into a permanently server-only budget.
 
 ## Remaining implementation sequence
 

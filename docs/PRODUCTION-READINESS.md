@@ -1811,3 +1811,12 @@ The local workspace exposes the same lineage to the shared UI, retaining protect
 quick-clearing, or bulk-changing realized occurrences. Existing transfer envelopes remain compatible;
 focused server projection, Swift decoding/persistence, and production-composition verification cover
 the new field without changing any transaction, allocation, or balance amount.
+
+### Merged-Payee transfer portability — 2026-10-07
+
+Server-to-Local Device transfer now carries archived merged Payee identities and their canonical
+redirect IDs instead of rejecting any budget that has used Payee cleanup. Local schema v12 retains
+that audit lineage while normal search and entry continue to omit merged sources. The local merge
+command now mirrors production by retaining the source as an archived redirect, moving transaction
+and schedule identity to the destination, and preserving useful source names as destination aliases.
+No financial values change.

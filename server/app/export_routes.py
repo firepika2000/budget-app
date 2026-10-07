@@ -244,15 +244,6 @@ def local_device_transfer_eligibility(
         ),
     )
     add(
-        "merged_payee_history",
-        "Merged Payee identity history is not represented by the current Local Device schema yet.",
-        count(
-            Payee,
-            Payee.household_id == household.id,
-            Payee.merged_into_payee_id.is_not(None),
-        ),
-    )
-    add(
         "non_owner_financial_attribution",
         "Financial records attributed to another household member cannot be flattened to one owner.",
         count(Transaction, Transaction.budget_id == budget.id, Transaction.created_by_user_id != household.owner_user_id)

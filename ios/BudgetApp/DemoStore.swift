@@ -1169,7 +1169,7 @@ extension DemoStore {
             return DemoCategory(id: item.id, group: groupNames[item.groupID] ?? "Categories", name: item.name, icon: item.iconName ?? "folder.fill", assigned: 0, activity: 0, available: 0, target: target?.amountMinor, targetDate: target?.targetDate, targetType: target?.targetType ?? "savings_balance", targetRecurrenceMonths: target?.recurrenceMonths.map(Int.init), targetMinimumContribution: target?.minimumContributionMinor ?? 0, targetPriority: target.map { Int($0.priority) } ?? 50, targetIsActive: target?.isActive ?? true, targetSnoozedMonths: Set(target?.snoozedMonths ?? [target?.snoozedMonth].compactMap { $0 }), note: item.note, pinned: item.isFavorite, isHidden: item.isArchived, isEssential: item.isEssential, isEmergencyFund: item.isEmergencyFund)
         }
         payees = value.payees.map { item in
-            DemoPayee(id: item.id, name: item.name, isArchived: item.isArchived, defaultCategoryID: item.defaultCategoryID, aliases: value.payeeAliases.filter { $0.payeeID == item.id }.map(\.displayName))
+            DemoPayee(id: item.id, name: item.name, isArchived: item.isArchived, defaultCategoryID: item.defaultCategoryID, aliases: value.payeeAliases.filter { $0.payeeID == item.id }.map(\.displayName), mergedIntoPayeeID: item.mergedIntoPayeeID)
         }
         schedules = value.schedules.map { item in
             DemoSchedule(id: item.id, accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amount: item.amountMinor, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: Int(item.intervalCount), endDate: item.endDate, remainingOccurrences: item.remainingOccurrences.map(Int.init), memo: item.memo, financialClassification: item.financialClassification, isActive: item.isActive, lastRealizedOn: item.lastRealizedOn)
@@ -1242,7 +1242,7 @@ extension DemoStore {
             LocalCategoryRecord(id: item.id, budgetID: identity.budgetID, groupID: groupIDs[item.group]!, name: item.name, iconName: item.icon, note: item.note, delegatedUserID: nil, isArchived: item.isHidden, sortOrder: Int64(index), isFavorite: item.pinned, favoriteSortOrder: Int64(index), isEssential: item.isEssential, isEmergencyFund: item.isEmergencyFund)
         }
         let payeeRows = payees.map { item in
-            LocalPayeeRecord(id: item.id, budgetID: identity.budgetID, name: item.name, normalizedName: item.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased(), defaultCategoryID: item.defaultCategoryID, isArchived: item.isArchived)
+            LocalPayeeRecord(id: item.id, budgetID: identity.budgetID, name: item.name, normalizedName: item.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased(), defaultCategoryID: item.defaultCategoryID, isArchived: item.isArchived, mergedIntoPayeeID: item.mergedIntoPayeeID)
         }
         let aliases = payees.flatMap { payee in payee.aliases.enumerated().map { offset, name in
             LocalPayeeAliasRecord(id: "\(payee.id)-alias-\(offset)", payeeID: payee.id, displayName: name, normalizedName: name.lowercased())
