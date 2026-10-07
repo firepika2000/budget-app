@@ -137,6 +137,11 @@ is a registered external Dropbox application (App-folder permission, redirect UR
 by the fail-closed release script. Do not treat that external credential as unfinished storage code,
 and do not embed a client secret or replace immutable encrypted backup with live SQLite sync.
 
+The privacy-safe v0.11 launcher widget is implemented for small and medium Home Screen families and
+uses the authenticated production shell for navigation. It deliberately shares no financial data or
+credentials with the extension. Rich financial widgets require a future explicit disclosure,
+authorization, shared-container and redaction contract; they are not implied by this launcher.
+
 The sections that follow retain the original milestone scope and historical context. References
 to v0.9 distribution or v1.x import in those sections use the old numbering; the table above is the
 current authorized execution sequence. Human acceptance is pending and no retest is requested now.

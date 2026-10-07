@@ -34,6 +34,16 @@ public app key during archive, then complete one real connect, backup, relaunch,
 walkthrough. No client secret belongs in the app or repository. This external gate does not block
 unrelated roadmap engineering.
 
+Widget checkpoint (2026-10-07): the app now embeds a WidgetKit extension with small and medium
+privacy-safe launch surfaces. The widget contains no shared container, credential, balance, budget,
+transaction or household access; it displays only static ClearPocket navigation and routes validated
+`clearpocket://open` destinations into the existing authenticated active-budget shell. Cold launches
+retain the one-shot request until the workspace appears, while an already-running app consumes the
+request immediately. Unknown destinations and non-ClearPocket URLs are rejected. The Xcode 27 Beta
+app-plus-extension build, embedded extension/plist validation, and focused one-shot routing test pass
+on the existing iPhone 17 Pro Max / iOS 27 Simulator. Financial widgets remain intentionally absent
+until a separate privacy/authorization contract justifies exposing data outside the app.
+
 Transaction audit checkpoint after `e96701f`: transaction detail now exposes bounded,
 actor-attributed change history from the immutable server audit ledger. The route rechecks current
 account/category visibility before loading events and returns action, actor, timestamp and changed

@@ -98,7 +98,7 @@ Status meanings:
 | Export | IMPLEMENTED | Scoped, formula-safe CSV and audit JSON. |
 | Encrypted backup and restore | IMPLEMENTED | Local Device budgets support verified, versioned encrypted backup and new-destination restore through Files and Dropbox. Dropbox uses immutable generations rather than live database sync; shipping it requires ClearPocket's registered public OAuth app key. |
 | Offline behavior | PARTIALLY IMPLEMENTED | Authoritative on-device personal mode works fully offline with durable exact-money state and encrypted attachments. Server mode has a protected last-known workspace cache plus idempotent queued transaction creation and replay. Broader mutation outbox coverage and conflict resolution remain future work. |
-| Widgets | FUTURE | Not part of v0.4.0. |
+| Widgets | IMPLEMENTED | Privacy-safe small and medium launcher widgets open Add Transaction, Plan, Accounts, and Insights through the authenticated production shell without reading or displaying financial data. |
 | Accessibility | PARTIALLY IMPLEMENTED | Dynamic Type/native controls, semantic grouping, non-color status labels, VoiceOver labels, chart summaries; formal assistive-technology audit remains. |
 | Light/Dark Mode | IMPLEMENTED | System-native appearance verified in Simulator. |
 | Bank import/sync | PARTIALLY IMPLEMENTED | Reviewed CSV/OFX/QFX/QBO and text-based statement import is implemented with mapping, matching, approval, history, and undo; direct bank connectivity remains gated by `bank-sync-readiness.md`. |

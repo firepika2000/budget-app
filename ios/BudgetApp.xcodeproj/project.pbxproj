@@ -29,6 +29,8 @@
 		AA0000140000000000000014 /* AppearancePreferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000140000000000000014 /* AppearancePreferenceTests.swift */; };
 		AA0000160000000000000016 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BB0000160000000000000016 /* Assets.xcassets */; };
 		AA0000180000000000000018 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = BB0000180000000000000018 /* PrivacyInfo.xcprivacy */; };
+		EE0000010000000000000001 /* ClearPocketWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE0000020000000000000002 /* ClearPocketWidget.swift */; };
+		EE0000030000000000000003 /* ClearPocketWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = EE0000040000000000000004 /* ClearPocketWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -46,7 +48,12 @@
 			remoteGlobalIDString = DE51103439BB9A5389F0B595;
 			remoteInfo = BudgetApp;
 		};
+		EE0000050000000000000005 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = AD37C1DD4FBCA4DC6B085CD1 /* Project object */; proxyType = 1; remoteGlobalIDString = EE0000100000000000000010; remoteInfo = ClearPocketWidget; };
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		EE0000060000000000000006 /* Embed App Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (EE0000030000000000000003 /* ClearPocketWidget.appex in Embed App Extensions */, ); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		1B486F81EC877C3437C19C5C /* BudgetAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = BudgetAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -72,6 +79,9 @@
 		BB0000180000000000000018 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		BB0000200000000000000020 /* LocalDeviceStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDeviceStorage.swift; sourceTree = "<group>"; };
 		BB0000210000000000000021 /* DropboxBackupCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropboxBackupCoordinator.swift; sourceTree = "<group>"; };
+		EE0000020000000000000002 /* ClearPocketWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClearPocketWidget.swift; sourceTree = "<group>"; };
+		EE0000070000000000000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		EE0000040000000000000004 /* ClearPocketWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClearPocketWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -91,6 +101,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		EE0000080000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -117,6 +128,7 @@
 			isa = PBXGroup;
 			children = (
 				E7B3E1F17E00FB7963AA3BF8 /* BudgetApp */,
+				EE0000090000000000000009 /* ClearPocketWidget */,
 				4FD519930AF57FD856DB07D3 /* BudgetAppTests */,
 				CC0000040000000000000004 /* BudgetAppUITests */,
 				A9D39F70725EDBD6AC98239E /* Packages */,
@@ -138,6 +150,7 @@
 				5D4070DC93D13B19958B946B /* BudgetApp.app */,
 				1B486F81EC877C3437C19C5C /* BudgetAppTests.xctest */,
 				DD0000020000000000000002 /* BudgetAppUITests.xctest */,
+				EE0000040000000000000004 /* ClearPocketWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -163,6 +176,7 @@
 			path = BudgetApp;
 			sourceTree = "<group>";
 		};
+		EE0000090000000000000009 /* ClearPocketWidget */ = {isa = PBXGroup; children = (EE0000020000000000000002 /* ClearPocketWidget.swift */, EE0000070000000000000007 /* Info.plist */, ); path = ClearPocketWidget; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -207,12 +221,12 @@
 				99EB62D84F2C312B4DC5C0BC /* Sources */,
 				32B48C46C55E631622718C8B /* Frameworks */,
 				AA0000170000000000000017 /* Resources */,
+				EE0000060000000000000006 /* Embed App Extensions */,
 				AA0000100000000000000010 /* Inject Runtime Identity */,
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
+			dependencies = (EE0000110000000000000011 /* PBXTargetDependency */, );
 			name = BudgetApp;
 			packageProductDependencies = (
 				8DA19D636EEAAB0BA449F759 /* BudgetAPI */,
@@ -223,6 +237,7 @@
 			productReference = 5D4070DC93D13B19958B946B /* BudgetApp.app */;
 			productType = "com.apple.product-type.application";
 		};
+		EE0000100000000000000010 /* ClearPocketWidget */ = {isa = PBXNativeTarget; buildConfigurationList = EE0000160000000000000016 /* Build configuration list for PBXNativeTarget "ClearPocketWidget" */; buildPhases = (EE0000120000000000000012 /* Sources */, EE0000080000000000000008 /* Frameworks */, ); buildRules = (); dependencies = (); name = ClearPocketWidget; productName = ClearPocketWidget; productReference = EE0000040000000000000004 /* ClearPocketWidget.appex */; productType = "com.apple.product-type.app-extension"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -236,6 +251,7 @@
 					DE51103439BB9A5389F0B595 = {
 						ProvisioningStyle = Automatic;
 					};
+					EE0000100000000000000010 = { ProvisioningStyle = Automatic; };
 				};
 			};
 			buildConfigurationList = EDEA1E200035DB87626E68D9 /* Build configuration list for PBXProject "BudgetApp" */;
@@ -256,6 +272,7 @@
 			projectRoot = "";
 			targets = (
 				DE51103439BB9A5389F0B595 /* BudgetApp */,
+				EE0000100000000000000010 /* ClearPocketWidget */,
 				4852D5FBC10BDDC4D7231FCE /* BudgetAppTests */,
 				CC0000050000000000000005 /* BudgetAppUITests */,
 			);
@@ -336,6 +353,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		EE0000120000000000000012 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (EE0000010000000000000001 /* ClearPocketWidget.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -349,9 +367,12 @@
 			target = DE51103439BB9A5389F0B595 /* BudgetApp */;
 			targetProxy = A3CD3E08C7B85D0DE2E3A332 /* PBXContainerItemProxy */;
 		};
+		EE0000110000000000000011 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = EE0000100000000000000010 /* ClearPocketWidget */; targetProxy = EE0000050000000000000005 /* PBXContainerItemProxy */; };
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		EE0000130000000000000013 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 4; DEVELOPMENT_TEAM = 6JGQ5388N8; INFOPLIST_FILE = ClearPocketWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.8.0; PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp.Widget; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_VERSION = 5.10; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+		EE0000140000000000000014 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 4; DEVELOPMENT_TEAM = 6JGQ5388N8; INFOPLIST_FILE = ClearPocketWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.8.0; PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp.Widget; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_VERSION = 5.10; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
 		CC0000080000000000000008 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -421,7 +442,8 @@
 				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 6JGQ5388N8;
 				DROPBOX_APP_KEY = "";
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BudgetApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ClearPocket;
 				INFOPLIST_KEY_ClearPocketDropboxAppKey = "$(DROPBOX_APP_KEY)";
 				INFOPLIST_KEY_NSCameraUsageDescription = "ClearPocket Budget uses the camera only when you choose to photograph a transaction attachment or scan a device pairing code.";
@@ -513,7 +535,8 @@
 				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 6JGQ5388N8;
 				DROPBOX_APP_KEY = "";
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BudgetApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ClearPocket;
 				INFOPLIST_KEY_ClearPocketDropboxAppKey = "$(DROPBOX_APP_KEY)";
 				INFOPLIST_KEY_NSCameraUsageDescription = "ClearPocket Budget uses the camera only when you choose to photograph a transaction attachment or scan a device pairing code.";
@@ -592,6 +615,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		EE0000160000000000000016 /* Build configuration list for PBXNativeTarget "ClearPocketWidget" */ = {isa = XCConfigurationList; buildConfigurations = (EE0000130000000000000013 /* Debug */, EE0000140000000000000014 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 		CC00000B000000000000000B /* Build configuration list for PBXNativeTarget "BudgetAppUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

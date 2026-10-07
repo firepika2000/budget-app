@@ -27,13 +27,25 @@ enum WorkspaceShortcutDestination: String, AppEnum, CaseIterable {
 
 enum WorkspaceShortcutRequest {
     static let defaultsKey = "clearpocket.pendingWorkspaceDestination"
+    static let notification = Notification.Name("ClearPocketWorkspaceShortcutRequest")
     static func request(_ destination: WorkspaceShortcutDestination) {
         UserDefaults.standard.set(destination.rawValue, forKey: defaultsKey)
+        NotificationCenter.default.post(name: notification, object: nil)
     }
     static func consume() -> WorkspaceShortcutDestination? {
         guard let rawValue = UserDefaults.standard.string(forKey: defaultsKey) else { return nil }
         UserDefaults.standard.removeObject(forKey: defaultsKey)
         return WorkspaceShortcutDestination(rawValue: rawValue)
+    }
+
+    @discardableResult
+    static func handle(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "clearpocket", url.host?.lowercased() == "open",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let rawValue = components.queryItems?.first(where: { $0.name == "destination" })?.value,
+              let destination = WorkspaceShortcutDestination(rawValue: rawValue) else { return false }
+        request(destination)
+        return true
     }
 }
 
@@ -191,6 +203,7 @@ struct BudgetApp: App {
                 .environmentObject(session)
                 .environmentObject(appearance)
                 .preferredColorScheme(appearance.selection.colorScheme)
+                .onOpenURL { _ = WorkspaceShortcutRequest.handle($0) }
         }
     }
 }

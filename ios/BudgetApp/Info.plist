@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key><string>ClearPocket</string>
+    <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key><string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+    <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>CFBundleURLTypes</key>
+    <array><dict><key>CFBundleURLName</key><string>com.firepika.BudgetApp.navigation</string><key>CFBundleURLSchemes</key><array><string>clearpocket</string></array></dict></array>
+    <key>ClearPocketDropboxAppKey</key><string>$(DROPBOX_APP_KEY)</string>
+    <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+    <key>NSCameraUsageDescription</key><string>ClearPocket Budget uses the camera only when you choose to photograph a transaction attachment or scan a device pairing code.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>ClearPocket Budget connects to your self-hosted budget server on the local network.</string>
+    <key>UILaunchScreen</key><dict/>
+</dict>
+</plist>

@@ -3563,6 +3563,9 @@ struct BudgetWorkspaceView: View {
             consumeQuickEntryRequest()
             consumeWorkspaceShortcutRequest()
         }
+        .onReceive(NotificationCenter.default.publisher(for: WorkspaceShortcutRequest.notification)) { _ in
+            consumeWorkspaceShortcutRequest()
+        }
         .task(id: session.sourceMode) {
             guard session.sourceMode == .liveServer else { return }
             while !Task.isCancelled {

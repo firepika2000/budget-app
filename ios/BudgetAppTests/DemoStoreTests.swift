@@ -16,6 +16,19 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(QuickEntryRequest.consume())
         XCTAssertFalse(QuickEntryRequest.consume())
     }
+
+    func testWidgetDeepLinkAcceptsOnlyKnownClearPocketDestinationsAndConsumesOnce() throws {
+        UserDefaults.standard.removeObject(forKey: WorkspaceShortcutRequest.defaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: WorkspaceShortcutRequest.defaultsKey) }
+
+        XCTAssertTrue(WorkspaceShortcutRequest.handle(try XCTUnwrap(URL(string: "clearpocket://open?destination=accounts"))))
+        XCTAssertEqual(WorkspaceShortcutRequest.consume(), .accounts)
+        XCTAssertNil(WorkspaceShortcutRequest.consume())
+
+        XCTAssertFalse(WorkspaceShortcutRequest.handle(try XCTUnwrap(URL(string: "https://example.com/open?destination=plan"))))
+        XCTAssertFalse(WorkspaceShortcutRequest.handle(try XCTUnwrap(URL(string: "clearpocket://open?destination=private-data"))))
+        XCTAssertNil(WorkspaceShortcutRequest.consume())
+    }
     @MainActor
     func testFundedCardPurchaseDoesNotRelabelLaterCashDeficitAsCreditDebt() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
