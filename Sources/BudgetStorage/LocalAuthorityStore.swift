@@ -137,6 +137,7 @@ public struct LocalTransactionRecord: Equatable, Sendable {
     public let isReconciled: Bool
     public let status: String
     public let transferID: String?
+    public let scheduledTransactionID: String?
     public let flag: String?
     public let tags: [String]
     public let financialClassification: String?
@@ -151,6 +152,7 @@ public struct LocalTransactionRecord: Equatable, Sendable {
                 payeeName: String = "",
                 amountMinor: Int64, occurredOn: String, memo: String = "", isCleared: Bool = false,
                 isReconciled: Bool = false, status: String = "posted", transferID: String? = nil,
+                scheduledTransactionID: String? = nil,
                 flag: String? = nil, tags: [String] = [], financialClassification: String? = nil,
                 voidReason: String? = nil, reversalOfTransactionID: String? = nil,
                 reversalTransactionID: String? = nil,
@@ -159,7 +161,8 @@ public struct LocalTransactionRecord: Equatable, Sendable {
         self.payeeName = payeeName
         self.amountMinor = amountMinor; self.occurredOn = occurredOn; self.memo = memo
         self.isCleared = isCleared; self.isReconciled = isReconciled; self.status = status
-        self.transferID = transferID; self.createdByUserID = createdByUserID
+        self.transferID = transferID; self.scheduledTransactionID = scheduledTransactionID
+        self.createdByUserID = createdByUserID
         self.flag = flag; self.tags = tags; self.financialClassification = financialClassification
         self.voidReason = voidReason; self.reversalOfTransactionID = reversalOfTransactionID
         self.reversalTransactionID = reversalTransactionID
@@ -531,10 +534,11 @@ public actor LocalAuthorityStore {
         ))
         guard existing.count == 1 else { throw LocalStorageError.operationFailed("Local transaction was not found") }
         let update = LocalSQLStatement(
-            "UPDATE transactions SET account_id=?,payee_id=?,amount_minor=?,occurred_on=?,memo=?,is_cleared=?,is_reconciled=?,status=?,transfer_id=?,payee_name=?,flag=?,tags_json=?,financial_classification=?,void_reason=?,reversal_of_transaction_id=?,reversal_transaction_id=? WHERE id=? AND budget_id=?",
+            "UPDATE transactions SET account_id=?,payee_id=?,amount_minor=?,occurred_on=?,memo=?,is_cleared=?,is_reconciled=?,status=?,transfer_id=?,scheduled_transaction_id=?,payee_name=?,flag=?,tags_json=?,financial_classification=?,void_reason=?,reversal_of_transaction_id=?,reversal_transaction_id=? WHERE id=? AND budget_id=?",
             values: [.text(value.accountID), optionalText(value.payeeID), .integer(value.amountMinor),
                      .text(value.occurredOn), .text(value.memo), .integer(value.isCleared ? 1 : 0),
                      .integer(value.isReconciled ? 1 : 0), .text(value.status), optionalText(value.transferID),
+                     optionalText(value.scheduledTransactionID),
                      .text(value.payeeName), optionalText(value.flag), .text(json(value.tags)),
                      optionalText(value.financialClassification), optionalText(value.voidReason),
                      optionalText(value.reversalOfTransactionID), optionalText(value.reversalTransactionID),
@@ -819,7 +823,7 @@ public actor LocalAuthorityStore {
             let splits = try await database.rows(.init("SELECT * FROM transaction_splits WHERE transaction_id=? ORDER BY id", values: [.text(transactionID)])).map {
                 try LocalTransactionSplitRecord(id: text($0, "id"), categoryID: text($0, "category_id"), amountMinor: integer($0, "amount_minor"), memo: text($0, "memo"))
             }
-            result.append(try .init(id: transactionID, budgetID: text(row, "budget_id"), accountID: text(row, "account_id"), payeeID: optionalText(row, "payee_id"), payeeName: text(row, "payee_name"), amountMinor: integer(row, "amount_minor"), occurredOn: text(row, "occurred_on"), memo: text(row, "memo"), isCleared: bool(row, "is_cleared"), isReconciled: bool(row, "is_reconciled"), status: text(row, "status"), transferID: optionalText(row, "transfer_id"), flag: optionalText(row, "flag"), tags: stringArray(row, "tags_json"), financialClassification: optionalText(row, "financial_classification"), voidReason: optionalText(row, "void_reason"), reversalOfTransactionID: optionalText(row, "reversal_of_transaction_id"), reversalTransactionID: optionalText(row, "reversal_transaction_id"), createdByUserID: text(row, "created_by_user_id"), createdAt: text(row, "created_at"), splits: splits))
+            result.append(try .init(id: transactionID, budgetID: text(row, "budget_id"), accountID: text(row, "account_id"), payeeID: optionalText(row, "payee_id"), payeeName: text(row, "payee_name"), amountMinor: integer(row, "amount_minor"), occurredOn: text(row, "occurred_on"), memo: text(row, "memo"), isCleared: bool(row, "is_cleared"), isReconciled: bool(row, "is_reconciled"), status: text(row, "status"), transferID: optionalText(row, "transfer_id"), scheduledTransactionID: optionalText(row, "scheduled_transaction_id"), flag: optionalText(row, "flag"), tags: stringArray(row, "tags_json"), financialClassification: optionalText(row, "financial_classification"), voidReason: optionalText(row, "void_reason"), reversalOfTransactionID: optionalText(row, "reversal_of_transaction_id"), reversalTransactionID: optionalText(row, "reversal_transaction_id"), createdByUserID: text(row, "created_by_user_id"), createdAt: text(row, "created_at"), splits: splits))
         }
         return result
     }
@@ -922,11 +926,12 @@ public actor LocalAuthorityStore {
 
     private func transactionInsert(_ value: LocalTransactionRecord) -> LocalSQLStatement {
         .init(
-            "INSERT INTO transactions(id,budget_id,account_id,payee_id,amount_minor,occurred_on,memo,is_cleared,is_reconciled,status,transfer_id,created_by_user_id,created_at,payee_name,flag,tags_json,financial_classification,void_reason,reversal_of_transaction_id,reversal_transaction_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO transactions(id,budget_id,account_id,payee_id,amount_minor,occurred_on,memo,is_cleared,is_reconciled,status,transfer_id,scheduled_transaction_id,created_by_user_id,created_at,payee_name,flag,tags_json,financial_classification,void_reason,reversal_of_transaction_id,reversal_transaction_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             values: [.text(value.id), .text(value.budgetID), .text(value.accountID), optionalText(value.payeeID),
                      .integer(value.amountMinor), .text(value.occurredOn), .text(value.memo),
                      .integer(value.isCleared ? 1 : 0), .integer(value.isReconciled ? 1 : 0),
-                     .text(value.status), optionalText(value.transferID), .text(value.createdByUserID), .text(value.createdAt),
+                     .text(value.status), optionalText(value.transferID), optionalText(value.scheduledTransactionID),
+                     .text(value.createdByUserID), .text(value.createdAt),
                      .text(value.payeeName), optionalText(value.flag), .text(json(value.tags)),
                      optionalText(value.financialClassification), optionalText(value.voidReason),
                      optionalText(value.reversalOfTransactionID), optionalText(value.reversalTransactionID)]

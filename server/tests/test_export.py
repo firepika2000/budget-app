@@ -199,6 +199,19 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
         content=b"Date,Amount,Payee,Memo\n2026-09-03,-2.50,Portable import,Retain review\n",
     )
     assert staged.status_code == 201, staged.text
+    schedule = client.post(
+        f"{path}/scheduled-transactions", headers=auth(owner_token), json={
+            "account_id": account["id"], "category_id": category["id"],
+            "name": "Scheduled groceries", "amount_minor": -500,
+            "next_date": "2026-09-04", "recurrence_unit": "months",
+        },
+    )
+    assert schedule.status_code == 201, schedule.text
+    realized = client.post(
+        f"{path}/scheduled-transactions/{schedule.json()['id']}/realize",
+        headers=auth(owner_token),
+    )
+    assert realized.status_code == 200, realized.text
     eligibility = client.get(f"{path}/local-device-transfer-eligibility", headers=auth(owner_token))
     assert eligibility.status_code == 200 and eligibility.json()["eligible"] is True
 
@@ -215,6 +228,10 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
     assert transactions[income["id"]]["splits"] == []
     assert transactions[purchase["id"]]["splits"][0]["category_id"] == category["id"]
     assert transactions[purchase["id"]]["splits"][0]["amount_minor"] == -1_250
+    realized_transaction_id = realized.json()["transaction_ids"][0]
+    assert transactions[realized_transaction_id]["scheduled_transaction_id"] == schedule.json()["id"]
+    exported_schedule = next(item for item in value["schedules"] if item["id"] == schedule.json()["id"])
+    assert exported_schedule["last_realized_on"] == "2026-09-04"
     assert value["allocations"][0]["category_id"] == category["id"]
     assert value["allocations"][0]["source_category_id"] is None
     assert value["allocations"][0]["amount_minor"] == 4_000
@@ -251,9 +268,9 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
     assert candidate["suggestions_truncated"] is False
     assert candidate["duplicate_source_row"] is False
     observations = value["observations"]
-    assert observations["transaction_count"] == 2
+    assert observations["transaction_count"] == 3
     assert observations["transactions"] == [{
-        "account_id": account["id"], "status": "posted", "amount_minor": 8_750,
+        "account_id": account["id"], "status": "posted", "amount_minor": 8_250,
     }]
     assert observations["allocation_count"] == 2
     assert sum(item["amount_minor"] for item in observations["allocations"]) == 0

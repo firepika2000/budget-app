@@ -1801,3 +1801,13 @@ transfer tests, Swift projection tests, and the Xcode 27 Beta production build p
 assignment rows retained after migration `0006` no longer block transfer because their financial
 effect already exists in the canonical allocation ledger; they are never projected twice.
 Household/server-only attribution remains fail-closed.
+
+### Scheduled-realization transfer portability — 2026-10-07
+
+Server-to-Local Device transfer now preserves each realized transaction's immutable schedule lineage
+and each schedule's last-realized observation. Local schema v11 stores the provenance independently
+of the schedule row so deletion does not erase history, matching the production server contract.
+The local workspace exposes the same lineage to the shared UI, retaining protections against editing,
+quick-clearing, or bulk-changing realized occurrences. Existing transfer envelopes remain compatible;
+focused server projection, Swift decoding/persistence, and production-composition verification cover
+the new field without changing any transaction, allocation, or balance amount.

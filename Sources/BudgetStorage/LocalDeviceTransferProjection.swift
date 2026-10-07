@@ -80,6 +80,7 @@ public enum LocalDeviceTransferProjectionDecoder {
                 payeeID: item.payeeId, payeeName: item.payeeName, amountMinor: item.amountMinor,
                 occurredOn: item.occurredOn, memo: item.memo, isCleared: item.isCleared,
                 isReconciled: item.isReconciled, status: item.status, transferID: item.transferId,
+                scheduledTransactionID: item.scheduledTransactionId,
                 flag: item.flag, tags: item.tags, financialClassification: item.financialClassification,
                 voidReason: item.voidReason, reversalOfTransactionID: item.reversalOfTransactionId,
                 reversalTransactionID: item.reversalTransactionId,
@@ -219,7 +220,7 @@ private struct CategoryDTO: Decodable {
 private struct PayeeDTO: Decodable { let id: String; let budgetId: String; let name: String; let normalizedName: String; let defaultCategoryId: String?; let isArchived: Bool }
 private struct AliasDTO: Decodable { let id: String; let payeeId: String; let displayName: String; let normalizedName: String }
 private struct SplitDTO: Decodable { let id: String; let categoryId: String; let amountMinor: Int64; let memo: String }
-private struct TransactionDTO: Decodable { let id: String; let budgetId: String; let accountId: String; let payeeId: String?; let payeeName: String; let amountMinor: Int64; let occurredOn: String; let memo: String; let isCleared: Bool; let isReconciled: Bool; let status: String; let transferId: String?; let flag: String?; let tags: [String]; let financialClassification: String?; let voidReason: String?; let reversalOfTransactionId: String?; let reversalTransactionId: String?; let createdByUserId: String; let createdAt: String; let splits: [SplitDTO] }
+private struct TransactionDTO: Decodable { let id: String; let budgetId: String; let accountId: String; let payeeId: String?; let payeeName: String; let amountMinor: Int64; let occurredOn: String; let memo: String; let isCleared: Bool; let isReconciled: Bool; let status: String; let transferId: String?; let scheduledTransactionId: String?; let flag: String?; let tags: [String]; let financialClassification: String?; let voidReason: String?; let reversalOfTransactionId: String?; let reversalTransactionId: String?; let createdByUserId: String; let createdAt: String; let splits: [SplitDTO] }
 private struct AllocationDTO: Decodable { let id: String; let operationId: String; let budgetId: String; let sourceCategoryId: String?; let categoryId: String?; let amountMinor: Int64; let occurredOn: String; let kind: String; let actorUserId: String; let note: String; let createdAt: String }
 private struct ReconciliationDTO: Decodable { let id: String; let accountId: String; let statementDate: String; let statementBalanceMinor: Int64; let adjustmentTransactionId: String?; let createdAt: String }
 private struct TargetDTO: Decodable { let categoryId: String; let targetType: String; let amountMinor: Int64; let cadence: String; let effectiveMonth: String; let snoozedMonth: String?; let targetDate: String?; let recurrenceMonths: Int64?; let minimumContributionMinor: Int64; let priority: Int64; let isActive: Bool; let snoozedMonths: [String] }

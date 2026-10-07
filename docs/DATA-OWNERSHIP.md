@@ -486,8 +486,8 @@ publishes the candidate only if the authority remained unchanged. It then record
 key plus a crash-recoverable cold-launch journal; a first authority activates without inventing a rollback,
 while replacement retains the prior local authority and matching key. The source server is never mutated
 or deleted, and its credentials remain available for a later provider switch. Eligibility also fails closed
-for detached attachment tombstones, unrepresentable allocation shapes, realized-schedule lineage,
-and merged-Payee lineage instead of silently dropping them. Eligible owners can now explicitly prepare
+for detached attachment tombstones, unrepresentable allocation shapes, and merged-Payee lineage
+instead of silently dropping them. Eligible owners can now explicitly prepare
 the move from Backup & Recovery; activation is intentionally deferred until the next cold launch so an
 open Live workspace is never replaced underneath active views.
 
@@ -517,6 +517,12 @@ Legacy monthly-assignment rows retained by migration `0006` are not projected in
 money was already converted into the canonical balanced allocation ledger, so transferring both
 would duplicate assignments. Their presence therefore no longer blocks an otherwise eligible
 personal budget.
+
+Local schema v11 also preserves the immutable transaction-to-schedule provenance for realized
+occurrences, including occurrences whose source schedule is later deleted. The Server projection
+carries both that lineage and the schedule's last-realized observation. Local Device therefore keeps
+the same protections against editing or bulk-changing system-realized transactions, and ordinary
+schedule use no longer strands an otherwise eligible personal budget on Server.
 
 ## Remaining implementation sequence
 

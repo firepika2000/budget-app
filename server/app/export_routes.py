@@ -244,15 +244,6 @@ def local_device_transfer_eligibility(
         ),
     )
     add(
-        "scheduled_realization_history",
-        "Realized schedule lineage is not represented by the current Local Device schema yet.",
-        count(
-            Transaction,
-            Transaction.budget_id == budget.id,
-            Transaction.scheduled_transaction_id.is_not(None),
-        ),
-    )
-    add(
         "merged_payee_history",
         "Merged Payee identity history is not represented by the current Local Device schema yet.",
         count(

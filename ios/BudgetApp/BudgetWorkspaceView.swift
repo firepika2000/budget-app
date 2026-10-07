@@ -961,7 +961,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let splitBase = ids.isEmpty ? 0 : item.amount / Int64(ids.count)
             var remainder = ids.isEmpty ? 0 : item.amount % Int64(ids.count)
             let splits: [[String: Any]] = ids.count > 1 ? ids.enumerated().map { index, id in let extra: Int64 = remainder == 0 ? 0 : (remainder > 0 ? 1 : -1); if remainder != 0 { remainder -= extra }; return ["id": "\(item.id)-\(index)", "category_id": id, "amount_minor": item.categoryAmounts[id] ?? splitBase + extra, "memo": "", "financial_classification": item.splitFinancialClassifications[id] ?? NSNull()] } : []
-            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "payee_id": demo.payees.first(where: { $0.name == item.payee })?.id ?? NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "financial_classification": item.financialClassification ?? NSNull(), "is_cleared": item.cleared, "is_reconciled": item.reconciled, "created_by_user_id": item.member == .rey ? "demo-owner" : item.member.rawValue.lowercased(), "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "scheduled_transaction_id": NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "status": item.status, "void_reason": item.voidReason ?? NSNull(), "reversal_of_transaction_id": item.reversalOfTransactionID ?? NSNull(), "reversal_transaction_id": item.reversalTransactionID ?? NSNull(), "splits": splits]
+            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "payee_id": demo.payees.first(where: { $0.name == item.payee })?.id ?? NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "financial_classification": item.financialClassification ?? NSNull(), "is_cleared": item.cleared, "is_reconciled": item.reconciled, "created_by_user_id": item.member == .rey ? "demo-owner" : item.member.rawValue.lowercased(), "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "scheduled_transaction_id": item.scheduledTransactionID.map { $0 as Any } ?? NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "status": item.status, "void_reason": item.voidReason ?? NSNull(), "reversal_of_transaction_id": item.reversalOfTransactionID ?? NSNull(), "reversal_transaction_id": item.reversalTransactionID ?? NSNull(), "splits": splits]
         })
     }
 
@@ -1716,7 +1716,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     func duplicateTransaction(id: String, occurredOn: String) async throws { try requireActiveMembership();
         let source = try transactionCommandSource(id: id, capability: "create_transaction", requiresCreator: false)
-        guard source.status == "posted", source.transferID == nil, !source.scheduled,
+        guard source.status == "posted", source.transferID == nil,
+              source.scheduledTransactionID == nil, !source.scheduled,
               !["Starting Balance", "Reconciliation adjustment"].contains(source.payee) else { throw workspaceRepositoryError("This system-linked transaction must be recreated through its specialized workflow") }
         let amounts = demo.canonicalCategoryAmounts(for: source)
         let singleCategory = amounts.count == 1 ? amounts.keys.first : nil
@@ -1869,7 +1870,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                 throw APIClientError.server(status: 403, message: "You may only edit your own transactions")
             }
         }
-        guard update.transactionIDs.allSatisfy({ id in demo.transactions.contains(where: { $0.id == id && !$0.reconciled && $0.transferID == nil && !$0.scheduled && !["Starting Balance", "Reconciliation adjustment"].contains($0.payee) }) }) else { throw workspaceRepositoryError("System-linked or reconciled transactions cannot be changed in bulk") }
+        guard update.transactionIDs.allSatisfy({ id in demo.transactions.contains(where: { $0.id == id && !$0.reconciled && $0.transferID == nil && $0.scheduledTransactionID == nil && !$0.scheduled && !["Starting Balance", "Reconciliation adjustment"].contains($0.payee) }) }) else { throw workspaceRepositoryError("System-linked or reconciled transactions cannot be changed in bulk") }
         if update.action == "set_cleared" {
             guard let cleared = update.cleared else { throw workspaceRepositoryError("A clearing state is required.") }
             var accounts = demo.accounts
@@ -2160,6 +2161,11 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
         }
         let transactionIDs = demo.transactions.map(\.id).filter { !before.contains($0) }
+        for transactionID in transactionIDs {
+            if let transactionIndex = demo.transactions.firstIndex(where: { $0.id == transactionID }) {
+                demo.transactions[transactionIndex].scheduledTransactionID = id
+            }
+        }
         let candidate = BudgetWorkspaceStore.nextScheduledDate(from: due, unit: item.recurrenceUnit, interval: item.intervalCount)
         let remaining = item.remainingOccurrences.map { max(0, $0 - 1) }
         let next: Date? = candidate.flatMap { value -> Date? in

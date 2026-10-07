@@ -76,6 +76,7 @@ final class LocalDatabaseTests: XCTestCase {
             .init("ALTER TABLE categories DROP COLUMN is_emergency_fund"),
             .init("ALTER TABLE scheduled_transactions DROP COLUMN remaining_occurrences"),
             .init("ALTER TABLE scheduled_transactions DROP COLUMN end_date"),
+            .init("ALTER TABLE transactions DROP COLUMN scheduled_transaction_id"),
             .init("DELETE FROM local_schema_migrations WHERE version >= 4"),
             .init("PRAGMA user_version = 3"),
         ])
@@ -229,15 +230,16 @@ final class LocalDatabaseTests: XCTestCase {
         let timestamp = "2026-09-30T12:00:00Z"
         try await store.bootstrap(.init(householdID: "h", householdName: "Household", ownerUserID: "u", ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD"), createdAt: timestamp)
         try await store.insertAccount(.init(id: "a", budgetID: "b", name: "Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 0, createdAt: timestamp))
-        try await store.insertTransaction(.init(id: "income", budgetID: "b", accountID: "a", payeeName: "Employer", amountMinor: 123_45, occurredOn: "2026-09-30", memo: "Payroll", isCleared: true, flag: "Green", tags: ["income", "monthly"], financialClassification: "income", createdByUserID: "u", createdAt: timestamp, splits: []))
+        try await store.insertTransaction(.init(id: "income", budgetID: "b", accountID: "a", payeeName: "Employer", amountMinor: 123_45, occurredOn: "2026-09-30", memo: "Payroll", isCleared: true, scheduledTransactionID: "deleted-schedule", flag: "Green", tags: ["income", "monthly"], financialClassification: "income", createdByUserID: "u", createdAt: timestamp, splits: []))
 
         let value = try await store.snapshot(budgetID: "b").transactions.first
         XCTAssertEqual(value?.payeeName, "Employer")
         XCTAssertEqual(value?.flag, "Green")
         XCTAssertEqual(value?.tags, ["income", "monthly"])
         XCTAssertEqual(value?.financialClassification, "income")
+        XCTAssertEqual(value?.scheduledTransactionID, "deleted-schedule")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 10)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 11)
     }
 
     func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {

@@ -9,6 +9,7 @@ final class LocalDeviceTransferProjectionTests: XCTestCase {
         XCTAssertEqual(result.sourceRevision, String(repeating: "a", count: 64))
         XCTAssertEqual(result.snapshot.identity.budgetID, "budget")
         XCTAssertEqual(result.snapshot.transactions.first?.amountMinor, 10_000)
+        XCTAssertEqual(result.snapshot.transactions.first?.scheduledTransactionID, "schedule-1")
         XCTAssertEqual(result.snapshot.allocations.first?.amountMinor, 4_000)
         XCTAssertEqual(result.snapshot.categories.first?.iconName, "cart")
         XCTAssertEqual(result.snapshot.categories.first?.note, "Weekly essentials")
@@ -120,9 +121,9 @@ final class LocalDeviceTransferProjectionTests: XCTestCase {
           "groups":[{"id":"group","budget_id":"budget","name":"Needs","sort_order":0,"is_archived":false}],
           "categories":[{"id":"groceries","budget_id":"budget","group_id":"group","name":"Groceries","icon_name":"cart","note":"Weekly essentials","delegated_user_id":null,"is_archived":false,"sort_order":0,"is_favorite":true,"favorite_sort_order":0,"is_essential":true,"is_emergency_fund":false}],
           "payees":[],"payee_aliases":[],
-          "transactions":[{"id":"income","budget_id":"budget","account_id":"checking","payee_id":null,"payee_name":"Payroll","amount_minor":10000,"occurred_on":"2026-09-01","memo":"","is_cleared":true,"is_reconciled":false,"status":"posted","transfer_id":null,"flag":null,"tags":[],"financial_classification":null,"void_reason":null,"reversal_of_transaction_id":null,"reversal_transaction_id":null,"created_by_user_id":"owner","created_at":"2026-09-01T12:00:00+00:00","splits":[]}],
+          "transactions":[{"id":"income","budget_id":"budget","account_id":"checking","payee_id":null,"payee_name":"Payroll","amount_minor":10000,"occurred_on":"2026-09-01","memo":"","is_cleared":true,"is_reconciled":false,"status":"posted","transfer_id":null,"scheduled_transaction_id":"schedule-1","flag":null,"tags":[],"financial_classification":null,"void_reason":null,"reversal_of_transaction_id":null,"reversal_transaction_id":null,"created_by_user_id":"owner","created_at":"2026-09-01T12:00:00+00:00","splits":[]}],
           "allocations":[{"id":"posting","operation_id":"operation","budget_id":"budget","source_category_id":null,"category_id":"groceries","amount_minor":4000,"occurred_on":"2026-09-01","kind":"assignment","actor_user_id":"owner","note":"","created_at":"2026-09-01T12:00:00+00:00"}],
-          "reconciliations":[],"targets":[],"schedules":[],"attachments":[],"debt_terms":[],"cash_rollover_policies":[],"credit_reserve_attributions":[],"transaction_changes":[],"credit_reserve_events":[],
+          "reconciliations":[],"targets":[],"schedules":[{"id":"schedule-1","budget_id":"budget","account_id":"checking","destination_account_id":null,"category_id":null,"payee_id":null,"name":"Payroll","amount_minor":10000,"next_date":"2026-10-01","recurrence_unit":"months","interval_count":1,"memo":"","end_date":null,"remaining_occurrences":null,"is_active":true,"financial_classification":"income","last_realized_on":"2026-09-01"}],"attachments":[],"debt_terms":[],"cash_rollover_policies":[],"credit_reserve_attributions":[],"transaction_changes":[],"credit_reserve_events":[],
           "observations":{"transaction_count":1,"transactions":[{"account_id":"checking","status":"posted","amount_minor":10000}],"allocation_count":2,"allocations":[{"bucket":"category","category_id":"groceries","amount_minor":4000},{"bucket":"ready_to_assign","category_id":null,"amount_minor":-4000}],"reserve_count":0,"reserves":[]}
         }
         """#.utf8)
