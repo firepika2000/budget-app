@@ -1038,6 +1038,21 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(String(decoding: data, as: UTF8.self), "report,amount_minor\nspending,2500\n")
     }
 
+    func testBudgetExportDownloadsStructuredJSONWithBearerCredential() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/export.json")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
+            let response = Data(#"{"format":"clearpocket-budget-export","schema_version":2}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let data = try await client.budgetExportJSON(budgetID: "b1", token: "secret")
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("clearpocket-budget-export"))
+    }
+
     func testStructuredConflictDetailSurfacesActionableMessage() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

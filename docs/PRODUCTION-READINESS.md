@@ -25,6 +25,14 @@ account/category visibility before loading events and returns action, actor, tim
 field names only; private before/after snapshots remain on the server. Focused backend privacy,
 Swift API-contract and native production-composition checks pass.
 
+Complete data export checkpoint: an authorized unrestricted server-budget owner can now prepare and
+share the existing versioned structured JSON export from Profile & Settings → Data Ownership. The
+iPhone requests the canonical server artifact using the current rotating credential; it does not
+reconstruct household, financial, or audit history locally. The UI explicitly identifies the file
+as private, explains that attachment metadata but not attachment payloads is included, and keeps
+operational encrypted backup/restore as a separate workflow. Scoped or unauthorized exports remain
+server-denied. Focused Swift transport and native production-composition tests pass.
+
 ## STOP FEATURE EXPANSION — human Live Debt P0
 
 Human reports repeated PlatformAlertController presentation conflicts followed by code-9 debugger

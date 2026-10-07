@@ -783,6 +783,15 @@ public struct APIClient {
         return body
     }
 
+    public func budgetExportJSON(budgetID: String, token: String) async throws -> Data {
+        let url = baseURL.appending(path: "api/v1/budgets/\(budgetID)/export.json")
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (body, response) = try await session.data(for: request)
+        try validate(response: response, data: body)
+        return body
+    }
+
     public func delegatedBudget(budgetID: String, token: String) async throws -> APIDelegatedBudget? {
         try await send(path: "api/v1/budgets/\(budgetID)/delegated-budgets/me", token: token)
     }

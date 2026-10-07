@@ -303,12 +303,16 @@ protocol WorkspaceDataSource: AnyObject {
     func coreSnapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot
     func reports(planMonth: Date, query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports
     func exportReports(report: WorkspaceReportQuery) async throws -> Data
+    func exportCompleteBudget() async throws -> Data
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection
     func debtCost(accountIDs: [String]) async throws -> APIDebtCost
 }
 
 extension WorkspaceDataSource {
     var actorUserID: String? { nil }
+    func exportCompleteBudget() async throws -> Data {
+        throw workspaceRepositoryError("Complete budget export is unavailable from this provider.")
+    }
     func debtCost(accountIDs: [String]) async throws -> APIDebtCost {
         throw workspaceRepositoryError("Current debt cost is unavailable from this provider.")
     }
@@ -2314,6 +2318,11 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         )
     }
 
+    func exportCompleteBudget() async throws -> Data {
+        try await credentials.prepare()
+        return try await credentials.client().budgetExportJSON(budgetID: budget.id, token: token)
+    }
+
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection {
         try await credentials.prepare()
         return try await credentials.client().debtStrategyProjection(budgetID: budget.id, request: request, token: token)
@@ -2825,6 +2834,21 @@ final class BudgetWorkspaceStore: ObservableObject {
         let data = try await dataSource.exportReports(report: query)
         guard authorityRevision == revision else { throw CancellationError() }
         let name = "budget-reports-\(Self.dateString(range.0))-\(Self.dateString(range.1)).csv"
+        let url = FileManager.default.temporaryDirectory.appending(path: name)
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    func exportCompleteBudget() async throws -> URL {
+        try requireWorkspaceAccess()
+        let revision = authorityRevision
+        guard budget.can("export_data"), let dataSource else {
+            throw APIClientError.server(status: 403, message: "Complete budget export is not available for this budget.")
+        }
+        let data = try await dataSource.exportCompleteBudget()
+        guard authorityRevision == revision else { throw CancellationError() }
+        let safeName = budget.name.replacingOccurrences(of: "[^A-Za-z0-9_-]+", with: "-", options: .regularExpression)
+        let name = "\(safeName.isEmpty ? "ClearPocket" : safeName)-complete-export.json"
         let url = FileManager.default.temporaryDirectory.appending(path: name)
         try data.write(to: url, options: .atomic)
         return url
@@ -3655,6 +3679,9 @@ private struct WorkspaceProfileView: View {
     @State private var showLocalBackup = false
     @State private var showDevices = false
     @State private var showDeleteBudget = false
+    @State private var completeExportURL: URL?
+    @State private var preparingCompleteExport = false
+    @State private var completeExportError: String?
 
     var body: some View {
         NavigationStack {
@@ -3712,6 +3739,27 @@ private struct WorkspaceProfileView: View {
                             }
                             .accessibilityIdentifier("backup-recovery-settings")
                             Text("Review the server’s last encrypted backup and verified restore state.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                            if let completeExportURL {
+                                ShareLink(item: completeExportURL) {
+                                    Label("Share Complete Data Export", systemImage: "square.and.arrow.up")
+                                }
+                                .accessibilityIdentifier("share-complete-budget-export")
+                            }
+                            Button(completeExportURL == nil ? "Prepare Complete Data Export" : "Refresh Complete Data Export",
+                                   systemImage: "doc.badge.gearshape") {
+                                Task { await prepareCompleteExport() }
+                            }
+                            .disabled(preparingCompleteExport || !store.budget.can("export_data"))
+                            .accessibilityIdentifier("prepare-complete-budget-export")
+                            if preparingCompleteExport {
+                                ProgressView("Preparing private data…")
+                            }
+                            if let completeExportError {
+                                Label(completeExportError, systemImage: "exclamationmark.triangle")
+                                    .foregroundStyle(.red)
+                            }
+                            Text("Creates a portable JSON record of this budget, household permissions, and audit history. It contains private financial data and attachment metadata, but not attachment files. Store it securely.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                     } else if session.sourceMode == .localDevice {
@@ -3788,7 +3836,23 @@ private struct WorkspaceProfileView: View {
                 DeleteBudgetConfirmationView(store: store)
                     .environmentObject(session)
             }
+            .onDisappear { removeCompleteExport() }
         }
+    }
+
+    private func prepareCompleteExport() async {
+        guard !preparingCompleteExport else { return }
+        preparingCompleteExport = true
+        completeExportError = nil
+        defer { preparingCompleteExport = false }
+        do { completeExportURL = try await store.exportCompleteBudget() }
+        catch { completeExportURL = nil; completeExportError = error.localizedDescription }
+    }
+
+    private func removeCompleteExport() {
+        guard let completeExportURL else { return }
+        try? FileManager.default.removeItem(at: completeExportURL)
+        self.completeExportURL = nil
     }
 
     private var appVersion: String {
