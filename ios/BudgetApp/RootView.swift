@@ -573,10 +573,12 @@ struct BudgetSelectionView: View {
                             Button { showingBudgetCreation = true } label: {
                                 Image(systemName: "plus")
                             }
+                            .accessibilityLabel("Create Budget")
                         }
                         Button { Task { await session.loadBudgets(caller: "BudgetSelectionView.toolbar") } } label: {
                             Image(systemName: "arrow.clockwise")
                         }
+                        .accessibilityLabel("Refresh Budgets")
                     }
                 }
             }

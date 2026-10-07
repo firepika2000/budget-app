@@ -6120,7 +6120,9 @@ private struct LivePlanView: View {
                     .accessibilityIdentifier("allocation-history-action")
                 }
                 if store.budget.can("request_money") { Button("Request money", systemImage: "hand.raised") { showRequest = true } }
-            } label: { Image(systemName: "plus") }.accessibilityIdentifier("plan-add-menu")
+            } label: { Image(systemName: "plus") }
+                .accessibilityLabel("Plan actions")
+                .accessibilityIdentifier("plan-add-menu")
         }
         .sheet(item: $editing) { category in editAssignment(category) }
         .sheet(item: $movePresentation) { presentation in moveMoney(initialSourceCategoryID: presentation.sourceCategoryID) }
@@ -6772,7 +6774,7 @@ private struct LiveActivityView: View {
         }
             .searchable(text: $search, prompt: "Payee, memo, flag, or tag")
             .navigationTitle("Activity")
-            .toolbar { if store.budget.can("edit_transaction") { Button(selecting ? "Done" : "Select") { selecting.toggle(); if !selecting { selectedIDs.removeAll() } }.accessibilityIdentifier("bulk-select-action") }; Button { showFilters = true } label: { Image(systemName: filter.isEmpty ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill") }.accessibilityLabel("Filter transactions").accessibilityIdentifier("transaction-filter-action"); if !selecting && (store.budget.can("create_transaction") || store.budget.can("manage_planning")) { Menu { if store.budget.can("create_transaction") { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } }; if store.budget.can("manage_planning") { Button("Schedule Transaction", systemImage: "calendar.badge.plus") { showSchedule = true }.accessibilityIdentifier("schedule-transaction-action") } } label: { Image(systemName: "plus") }.accessibilityIdentifier("add-activity-action") } }
+            .toolbar { if store.budget.can("edit_transaction") { Button(selecting ? "Done" : "Select") { selecting.toggle(); if !selecting { selectedIDs.removeAll() } }.accessibilityIdentifier("bulk-select-action") }; Button { showFilters = true } label: { Image(systemName: filter.isEmpty ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill") }.accessibilityLabel("Filter transactions").accessibilityIdentifier("transaction-filter-action"); if !selecting && (store.budget.can("create_transaction") || store.budget.can("manage_planning")) { Menu { if store.budget.can("create_transaction") { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } }; if store.budget.can("manage_planning") { Button("Schedule Transaction", systemImage: "calendar.badge.plus") { showSchedule = true }.accessibilityIdentifier("schedule-transaction-action") } } label: { Image(systemName: "plus") }.accessibilityLabel("Add activity").accessibilityIdentifier("add-activity-action") } }
             .safeAreaInset(edge: .bottom) { if selecting { bulkBar } }
             .alert("Add tag", isPresented: $showTagPrompt) { TextField("Tag", text: $bulkTag); Button("Apply") { Task { await bulkUpdate(action: "add_tags", tags: [bulkTag]) } }.disabled(bulkTag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty); Button("Cancel", role: .cancel) {} } message: { Text("The tag will be added to all selected transactions.") }
             .sheet(isPresented: $showAdd) { entry }
