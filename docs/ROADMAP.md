@@ -115,7 +115,7 @@ as acceptance for later work. No further merge or release tag is authorized by t
 | v0.14 | Data Ownership: production transactional/migratable Local Device storage, encrypted/versioned backup and new-destination restore. Dropbox is a backup destination, not live SQLite sync. |
 | v0.15 | Extended Forecasting: engineering complete with selectable 30/60/90-day, six-month, and one-year horizons plus ephemeral scenarios for temporary income loss, changed recurring costs, and major purchases. Future income, schedules, and scenarios remain non-spendable. Human acceptance remains distinct. |
 | v0.16 | Explainable Smart Planning: engineering complete with structured per-category target type, priority, monthly recommendation, proposed funding, and remaining shortfall. Preview remains non-mutating and only explicit canonical confirmation can move money. Human acceptance remains distinct. |
-| v0.17 | Household Power: readable scopes, requests/allowances, attribution and adversarial privacy closure. |
+| v0.17 | Household Power: engineering complete with human-readable exact scope review, requests/allowances, actor attribution, revocation handling, and adversarial privacy enforcement. Human acceptance remains distinct. |
 | v0.18 | Platform Expansion in dependency order after the iPhone/provider foundation. |
 | v1.0 | Release hardening, production deployment and App Store candidate gates. External signing, commercial choice and human acceptance stay distinct from engineering completion. |
 

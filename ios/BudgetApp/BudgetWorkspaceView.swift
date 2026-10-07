@@ -9499,10 +9499,32 @@ private struct LiveHouseholdOverviewView: View {
         if store.budget.effectivePermission == .owner {
             LabeledContent("Visibility", value: "Entire budget")
         } else {
-            LabeledContent("Visible accounts", value: "\(store.accounts.filter { !$0.isClosed }.count)")
-                .accessibilityIdentifier("household-visible-account-count")
-            LabeledContent("Visible categories", value: "\(store.categories.filter { !$0.isArchived }.count)")
-                .accessibilityIdentifier("household-visible-category-count")
+            NavigationLink {
+                MemberVisibleResourcesView(
+                    title: "Visible Accounts",
+                    emptyTitle: "No accounts visible",
+                    emptyMessage: "Ask the household owner to review your account access.",
+                    resources: store.accounts.filter { !$0.isClosed }.map {
+                        .init(id: $0.id, title: $0.name, detail: $0.accountType.replacingOccurrences(of: "_", with: " ").capitalized)
+                    }
+                )
+            } label: {
+                LabeledContent("Visible accounts", value: "\(store.accounts.filter { !$0.isClosed }.count)")
+            }
+            .accessibilityIdentifier("household-visible-account-count")
+            NavigationLink {
+                MemberVisibleResourcesView(
+                    title: "Visible Categories",
+                    emptyTitle: "No categories visible",
+                    emptyMessage: "Ask the household owner to review your Plan access.",
+                    resources: store.categories.filter { !$0.isArchived }.map { category in
+                        .init(id: category.id, title: category.name, detail: store.groups.first(where: { $0.id == category.groupID })?.name)
+                    }
+                )
+            } label: {
+                LabeledContent("Visible categories", value: "\(store.categories.filter { !$0.isArchived }.count)")
+            }
+            .accessibilityIdentifier("household-visible-category-count")
             LabeledContent("Account balances", value: store.budget.can("view_account_balances") ? "Visible" : "Hidden")
                 .accessibilityIdentifier("household-balance-visibility")
             LabeledContent("Household Ready to Assign", value: store.budget.can("view_budget_totals") ? "Visible when access is unrestricted" : "Hidden")
@@ -9553,6 +9575,56 @@ private struct LiveHouseholdOverviewView: View {
         }
         _ = await inviteLoad
         memberProfiles = loadedProfiles
+    }
+}
+
+private struct MemberVisibleResource: Identifiable {
+    let id: String
+    let title: String
+    let detail: String?
+}
+
+private struct MemberVisibleResourcesView: View {
+    let title: String
+    let emptyTitle: String
+    let emptyMessage: String
+    let resources: [MemberVisibleResource]
+    @State private var query = ""
+
+    private var filtered: [MemberVisibleResource] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return resources }
+        return resources.filter {
+            $0.title.localizedCaseInsensitiveContains(needle)
+                || ($0.detail?.localizedCaseInsensitiveContains(needle) == true)
+        }
+    }
+
+    var body: some View {
+        List {
+            if resources.isEmpty {
+                ContentUnavailableView(emptyTitle, systemImage: "eye.slash", description: Text(emptyMessage))
+            } else {
+                Section("Your authorized access") {
+                    ForEach(filtered) { resource in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(resource.title)
+                            if let detail = resource.detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }
+                    if filtered.isEmpty {
+                        ContentUnavailableView("No matches", systemImage: "magnifyingglass")
+                    }
+                }
+                Section {
+                    Text("This list is filtered by the server. Items outside your access are not downloaded or shown here.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle(title)
+        .searchable(text: $query, prompt: "Search visible items")
+        .accessibilityIdentifier("member-visible-resources")
     }
 }
 

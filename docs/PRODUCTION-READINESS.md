@@ -1745,3 +1745,17 @@ version check, and atomic canonical commit are unchanged. Preview and cancellati
 non-mutating. Focused backend Smart Funding tests, Swift compatibility/contract tests, and an Xcode
 27 Beta production build pass. This closes v0.16 engineering scope without claiming human
 acceptance.
+
+### Household scope readability closure — 2026-10-07
+
+Restricted household members can now open their Profile & Settings access summary and inspect the
+exact authorized account and category names behind the previous numeric counts. Category entries
+include their group to disambiguate repeated names; the searchable lists are built only from the
+already server-scoped workspace and explicitly explain that hidden resources are neither downloaded
+nor displayed. Account balances remain governed by their independent capability and are not exposed
+by this browser. Owners retain the existing per-member presets, exact resource selectors, visibility
+preview, actor-attributed change record, invitations, requests, allowances, and delegated policy
+tools. This adds no permission or data-fetch path and changes no financial state. Together with the
+existing revocation, cache invalidation, query-minimization, resource-scope, request/allowance, and
+adversarial privacy evidence above, this closes v0.17 engineering scope without claiming human
+acceptance.
