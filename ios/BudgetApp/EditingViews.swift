@@ -30,7 +30,7 @@ struct TransactionEntryView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], groups: [APICategoryGroup] = [], initialAccountID: String? = nil, initialCategoryID: String? = nil, onSaved: @escaping () async -> Void) {
+    init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], groups: [APICategoryGroup] = [], initialAccountID: String? = nil, initialCategoryID: String? = nil, initialIsInflow: Bool = false, onSaved: @escaping () async -> Void) {
         self.budget = budget
         self.accounts = accounts
         self.categories = categories
@@ -38,6 +38,7 @@ struct TransactionEntryView: View {
         self.onSaved = onSaved
         _accountID = State(initialValue: initialAccountID ?? "")
         _categoryID = State(initialValue: initialCategoryID)
+        _isInflow = State(initialValue: initialIsInflow)
     }
 
     var body: some View {
@@ -108,6 +109,12 @@ struct TransactionEntryView: View {
                         }
                         .accessibilityIdentifier("category-suggestion")
                     }
+                    if isInflow, categoryID != nil {
+                        Text("Categorized inflows reduce this category's spending, such as a refund or reimbursement. Leave the category empty for new income ready to assign.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("categorized-inflow-explanation")
+                    }
                 }
                 Section {
                     DatePicker("Date", selection: $date, in: ...Date(), displayedComponents: .date)
@@ -146,7 +153,6 @@ struct TransactionEntryView: View {
             }
             .onChange(of: isInflow) { _, inflow in
                 if inflow {
-                    categoryID = nil
                     isSplit = false
                     financialClassification = ""
                 }

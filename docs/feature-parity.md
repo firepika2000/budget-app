@@ -43,6 +43,7 @@ Status meanings:
 | Capability | Status | Budget App position |
 |---|---|---|
 | Manual inflow/outflow | IMPLEMENTED | Live API and fast native entry. |
+| Refunds and reimbursements | IMPLEMENTED | Category detail opens the shared transaction editor preconfigured for an exact categorized inflow; the same canonical posting, card-reserve, reporting, offline-create, and permission paths remain in use. |
 | Account transfer | IMPLEMENTED | Balanced linked transfer preserves total cash. |
 | Credit-card purchase/payment/refund | IMPLEMENTED | Funded reserve accounting, attribution, payments, and reversals. |
 | Split transaction | IMPLEMENTED | API model and native multi-category entry. |
