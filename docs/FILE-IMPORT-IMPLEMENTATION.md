@@ -7,6 +7,10 @@ UI is active for Budget Server workspaces and only explicit approval can post le
 on iPhone now supports CSV, TSV, explicitly delimited text, structured OFX/QFX, QIF, and
 conservatively recognized text-based PDFs through the same review UI.
 
+Local Device import review/history is durable in the Local Device SQLite authority rather than being
+session-only. Review, approved, cancelled and undo metadata survives app/repository relaunch, remains
+account-scoped, and participates automatically in the existing encrypted database backup/restore path.
+
 The native review now treats cancellation as an explicit lifecycle operation. Before preview,
 Close simply leaves the file picker flow because no server state exists. After staging, Cancel
 Import requires confirmation and calls the provider's optimistic-version cancellation contract;
@@ -88,8 +92,8 @@ any later spreadsheet export still requires its own formula-injection defenses.
    deterministic two-digit-year, bounded-input and private-safe validation rules as Budget Server.
    Its PDFKit adapter applies the same conservative signed-row contract as Budget Server and fails
    closed for scanned, encrypted, unsigned-only, or ambiguous statements.
-   Finish Live/Demo/Local Device parity, full privacy,
-   migration/recovery and financial-observation tests before claiming workflow completion.
+   Live and Local Device now both retain bounded history across relaunch. Continue full privacy,
+   recovery and financial-observation testing before claiming workflow completion.
 
 Verification: 22 focused parser tests cover quoted/BOM inputs, refunds, currency scales, exact
 limits, ambiguous/overflow amounts, malformed dates/records, private-content-safe errors and

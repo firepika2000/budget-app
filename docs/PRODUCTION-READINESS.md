@@ -75,6 +75,12 @@ forecast expansion honors it, and realization/skip pause the item instead of adv
 field is metadata-only until an occurrence is explicitly realized, so account balances, category
 activity and Available-to-Assign remain unchanged by creation or editing.
 
+Local statement-import durability checkpoint (2026-10-07): on-device statement review/history is
+now stored in the Local Device SQLite authority instead of an in-memory dictionary. Unfinished,
+approved, cancelled and undone batch metadata survives repository reconstruction and app relaunch,
+remains budget/account scoped, and is automatically covered by existing encrypted SQLite backups.
+Focused schema-upgrade, private-payload paging and production-provider relaunch tests pass.
+
 Transaction audit checkpoint after `e96701f`: transaction detail now exposes bounded,
 actor-attributed change history from the immutable server audit ledger. The route rechecks current
 account/category visibility before loading events and returns action, actor, timestamp and changed

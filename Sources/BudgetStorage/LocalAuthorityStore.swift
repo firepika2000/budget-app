@@ -18,6 +18,18 @@ public struct LocalAuthorityIdentity: Equatable, Sendable {
     }
 }
 
+public struct LocalStatementImportRecord: Equatable, Sendable {
+    public let id: String; public let budgetID: String; public let accountID: String
+    public let status: String; public let version: Int64; public let sourceFormat: String
+    public let candidateCount: Int64; public let payloadJSON: String; public let createdAt: String
+    public init(id: String, budgetID: String, accountID: String, status: String, version: Int64,
+                sourceFormat: String, candidateCount: Int64, payloadJSON: String, createdAt: String) {
+        self.id = id; self.budgetID = budgetID; self.accountID = accountID; self.status = status
+        self.version = version; self.sourceFormat = sourceFormat; self.candidateCount = candidateCount
+        self.payloadJSON = payloadJSON; self.createdAt = createdAt
+    }
+}
+
 public struct LocalAccountRecord: Equatable, Sendable {
     public let id: String
     public let budgetID: String
@@ -583,6 +595,38 @@ public actor LocalAuthorityStore {
         try requireOneChange(changes, record: "schedule")
     }
 
+    public func upsertStatementImport(_ value: LocalStatementImportRecord) async throws {
+        guard value.version > 0, value.candidateCount >= 0 else {
+            throw LocalStorageError.operationFailed("Statement import metadata is invalid")
+        }
+        try await database.execute(.init(
+            "INSERT INTO statement_imports(id,budget_id,account_id,status,version,source_format,candidate_count,payload_json,created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,version=excluded.version,source_format=excluded.source_format,candidate_count=excluded.candidate_count,payload_json=excluded.payload_json",
+            values: [.text(value.id), .text(value.budgetID), .text(value.accountID), .text(value.status),
+                     .integer(value.version), .text(value.sourceFormat), .integer(value.candidateCount),
+                     .text(value.payloadJSON), .text(value.createdAt)]
+        ))
+    }
+
+    public func statementImport(id: String, budgetID: String, accountID: String) async throws -> LocalStatementImportRecord {
+        let rows = try await database.rows(.init(
+            "SELECT * FROM statement_imports WHERE id=? AND budget_id=? AND account_id=? LIMIT 1",
+            values: [.text(id), .text(budgetID), .text(accountID)]
+        ))
+        guard let row = rows.first else { throw LocalStorageError.recordNotFound("statement import") }
+        return try statementImportRecord(row)
+    }
+
+    public func statementImports(budgetID: String, accountID: String, limit: Int, offset: Int) async throws -> [LocalStatementImportRecord] {
+        guard (1...101).contains(limit), offset >= 0 else {
+            throw LocalStorageError.operationFailed("Statement import page is invalid")
+        }
+        let rows = try await database.rows(.init(
+            "SELECT * FROM statement_imports WHERE budget_id=? AND account_id=? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+            values: [.text(budgetID), .text(accountID), .integer(Int64(limit)), .integer(Int64(offset))]
+        ))
+        return try rows.map(statementImportRecord)
+    }
+
     /// Records metadata only after the encrypted object has been durably published by the caller.
     public func insertAttachment(_ value: LocalAttachmentRecord) async throws {
         guard value.sizeBytes >= 0 else { throw LocalStorageError.operationFailed("Attachment size is invalid") }
@@ -900,6 +944,14 @@ public actor LocalAuthorityStore {
     private func optionalInteger(_ row: LocalSQLiteRow, _ key: String) -> Int64? {
         guard case let .integer(value)? = row[key] else { return nil }
         return value
+    }
+    private func statementImportRecord(_ row: LocalSQLiteRow) throws -> LocalStatementImportRecord {
+        try .init(
+            id: text(row, "id"), budgetID: text(row, "budget_id"), accountID: text(row, "account_id"),
+            status: text(row, "status"), version: integer(row, "version"),
+            sourceFormat: text(row, "source_format"), candidateCount: integer(row, "candidate_count"),
+            payloadJSON: text(row, "payload_json"), createdAt: text(row, "created_at")
+        )
     }
     private func integer(_ row: LocalSQLiteRow, _ key: String) throws -> Int64 {
         guard case let .integer(value)? = row[key] else { throw LocalStorageError.operationFailed("Invalid local value for \(key)") }

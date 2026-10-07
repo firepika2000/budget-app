@@ -1033,6 +1033,21 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func statementImports(accountID: String, limit: Int, offset: Int) async throws -> APIStatementImportList { try requireActiveMembership()
         guard demo.visibleAccounts.contains(where: { $0.id == accountID }) else { throw workspaceRepositoryError("Account not found.") }
+        if let localAuthority {
+            let records = try await localAuthority.statementImports(
+                budgetID: budget.id, accountID: accountID, limit: min(limit + 1, 101), offset: offset
+            )
+            let hasMore = records.count > limit
+            let page = records.prefix(limit)
+            let items = page.map { record in
+                APIStatementImportSummary(id: record.id, budgetID: record.budgetID,
+                    accountID: record.accountID, status: record.status, version: Int(record.version),
+                    sourceFormat: record.sourceFormat, candidateCount: Int(record.candidateCount),
+                    createdAt: record.createdAt)
+            }
+            return APIStatementImportList(items: items, hasMore: hasMore,
+                                          nextOffset: hasMore ? offset + items.count : nil)
+        }
         let rows = statementImportBatches.values.filter { $0.accountID == accountID }.sorted {
             ($0.createdAt, $0.id) > ($1.createdAt, $1.id)
         }
@@ -1044,8 +1059,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                                       nextOffset: end < rows.count ? end : nil)
     }
     func statementImport(accountID: String, batchID: String) async throws -> APIStatementImport { try requireActiveMembership()
-        guard let batch = statementImportBatches[batchID], batch.accountID == accountID else { throw workspaceRepositoryError("Statement import not found.") }
-        return batch
+        return try await loadStatementImport(accountID: accountID, batchID: batchID)
     }
     func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try requireActiveMembership();
         guard demo.visibleAccounts.contains(where: { $0.id == accountID }) else { throw workspaceRepositoryError("Account not found.") }
@@ -1079,10 +1093,11 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                                        candidateCount: candidates.count, candidates: candidates,
                                        createdAt: ISO8601DateFormatter().string(from: now()))
         statementImportBatches[batch.id] = batch
+        try await persistStatementImportIfNeeded(batch)
         return batch
     }
     func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try requireActiveMembership();
-        guard let batch = statementImportBatches[batchID], batch.accountID == accountID else { throw workspaceRepositoryError("Statement import not found.") }
+        let batch = try await loadStatementImport(accountID: accountID, batchID: batchID)
         guard batch.status == "review", batch.version == approval.expectedVersion else { throw APIClientError.server(status: 409, message: "This statement review changed. Refresh and try again.") }
         let choices = Dictionary(uniqueKeysWithValues: approval.items.map { ($0.sourceRow, $0) })
         guard Set(choices.keys) == Set(batch.candidates.map(\.sourceRow)) else { throw workspaceRepositoryError("Review every imported row before posting.") }
@@ -1124,10 +1139,11 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             status: "approved", version: batch.version + 1, sourceFormat: batch.sourceFormat,
             candidateCount: batch.candidateCount, candidates: completedCandidates, createdAt: batch.createdAt)
         statementImportBatches[batch.id] = completed
+        try await persistStatementImportIfNeeded(completed)
         return completed
     }
     func undoStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try requireActiveMembership();
-        guard let batch = statementImportBatches[batchID], batch.accountID == accountID else { throw workspaceRepositoryError("Statement import not found.") }
+        let batch = try await loadStatementImport(accountID: accountID, batchID: batchID)
         guard batch.status == "approved", batch.version == expectedVersion,
               batch.candidates.contains(where: { $0.postedTransactionID != nil }),
               batch.candidates.allSatisfy({ $0.reversalTransactionID == nil }) else {
@@ -1155,16 +1171,57 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             status: batch.status, version: batch.version + 1, sourceFormat: batch.sourceFormat,
             candidateCount: batch.candidateCount, candidates: rows, createdAt: batch.createdAt)
         statementImportBatches[batch.id] = result
+        try await persistStatementImportIfNeeded(result)
         return result
     }
     func cancelStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try requireActiveMembership()
-        guard let batch = statementImportBatches[batchID], batch.accountID == accountID else { throw workspaceRepositoryError("Statement import not found.") }
+        let batch = try await loadStatementImport(accountID: accountID, batchID: batchID)
         guard batch.status == "review", batch.version == expectedVersion else { throw APIClientError.server(status: 409, message: "This statement review changed. Refresh and try again.") }
         let cancelled = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
             status: "cancelled", version: batch.version + 1, sourceFormat: batch.sourceFormat,
             candidateCount: batch.candidateCount, candidates: batch.candidates, createdAt: batch.createdAt)
         statementImportBatches[batch.id] = cancelled
+        try await persistStatementImportIfNeeded(cancelled)
         return cancelled
+    }
+
+    private func persistStatementImportIfNeeded(_ value: APIStatementImport) async throws {
+        guard let localAuthority else { return }
+        let data = try JSONEncoder().encode(value)
+        guard let payload = String(data: data, encoding: .utf8) else {
+            throw workspaceRepositoryError("Statement import history could not be stored.")
+        }
+        try await localAuthority.upsertStatementImport(.init(
+            id: value.id, budgetID: value.budgetID, accountID: value.accountID,
+            status: value.status, version: Int64(value.version), sourceFormat: value.sourceFormat,
+            candidateCount: Int64(value.candidateCount), payloadJSON: payload, createdAt: value.createdAt
+        ))
+    }
+
+    private func loadStatementImport(accountID: String, batchID: String) async throws -> APIStatementImport {
+        if let cached = statementImportBatches[batchID], cached.accountID == accountID { return cached }
+        if let localAuthority {
+            do {
+                let record = try await localAuthority.statementImport(id: batchID, budgetID: budget.id, accountID: accountID)
+                let value = try decodeStatementImport(record.payloadJSON)
+                guard value.id == record.id, value.budgetID == record.budgetID,
+                      value.accountID == record.accountID else {
+                    throw workspaceRepositoryError("Statement import history is unreadable.")
+                }
+                statementImportBatches[value.id] = value
+                return value
+            } catch LocalStorageError.recordNotFound(_) {
+                throw workspaceRepositoryError("Statement import not found.")
+            }
+        }
+        throw workspaceRepositoryError("Statement import not found.")
+    }
+
+    private func decodeStatementImport(_ payload: String) throws -> APIStatementImport {
+        guard let data = payload.data(using: .utf8) else {
+            throw workspaceRepositoryError("Statement import history is unreadable.")
+        }
+        return try JSONDecoder().decode(APIStatementImport.self, from: data)
     }
     private func requireHouseholdOwner() throws {
         guard demo.persona == .rey else { throw workspaceRepositoryError("Household not found.") }

@@ -66,6 +66,7 @@ final class LocalDatabaseTests: XCTestCase {
             .init("DROP TABLE credit_reserve_attributions"),
             .init("DROP TABLE credit_reserve_events"),
             .init("DROP TABLE transaction_changes"),
+            .init("DROP TABLE statement_imports"),
             .init("ALTER TABLE categories DROP COLUMN icon_name"),
             .init("ALTER TABLE categories DROP COLUMN note"),
             .init("ALTER TABLE scheduled_transactions DROP COLUMN end_date"),
@@ -229,7 +230,35 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.tags, ["income", "monthly"])
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 7)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 8)
+    }
+
+    func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("imports.sqlite")
+        var store: LocalAuthorityStore? = try LocalAuthorityStore(fileURL: databaseURL)
+        let timestamp = "2026-10-07T12:00:00Z"
+        try await store?.bootstrap(.init(
+            householdID: "household", householdName: "Household", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "budget", budgetName: "Budget", currencyCode: "USD"
+        ), createdAt: timestamp)
+        try await store?.insertAccount(.init(
+            id: "checking", budgetID: "budget", name: "Checking", kind: "checking",
+            isOnBudget: true, openingBalanceMinor: 0, createdAt: timestamp
+        ))
+        let privatePayload = #"{"id":"first","budget_id":"budget","account_id":"checking","status":"review","version":1,"source_format":"csv","candidate_count":1,"candidates":[{"source_row":2,"occurred_on":"2026-10-01","amount_minor":-1234,"payee":"Private Merchant","memo":"","exact_transaction_ids":[],"possible_transaction_ids":[],"suggestions_truncated":false}],"created_at":"2026-10-07T12:00:00Z"}"#
+        try await store?.upsertStatementImport(.init(
+            id: "first", budgetID: "budget", accountID: "checking", status: "review", version: 1,
+            sourceFormat: "csv", candidateCount: 1, payloadJSON: privatePayload, createdAt: timestamp
+        ))
+        store = nil
+
+        let reopened = try LocalAuthorityStore(fileURL: databaseURL)
+        let page = try await reopened.statementImports(budgetID: "budget", accountID: "checking", limit: 25, offset: 0)
+        let detail = try await reopened.statementImport(id: "first", budgetID: "budget", accountID: "checking")
+        let hidden = try await reopened.statementImports(budgetID: "budget", accountID: "other", limit: 25, offset: 0)
+        XCTAssertEqual(page.map(\.id), ["first"])
+        XCTAssertEqual(detail.payloadJSON, privatePayload)
+        XCTAssertTrue(hidden.isEmpty)
     }
 
     func testTypedAuthorityStoreUpdateAndDeleteLifecyclePersistsAcrossReopen() async throws {

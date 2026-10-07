@@ -1095,7 +1095,7 @@ public struct APIReconcileResponse: Decodable, Equatable, Sendable {
     }
 }
 
-public struct APIStatementImportCandidate: Identifiable, Decodable, Equatable, Sendable {
+public struct APIStatementImportCandidate: Identifiable, Codable, Equatable, Sendable {
     public var id: Int { sourceRow }
     public let sourceRow: Int
     public let occurredOn: String
@@ -1131,7 +1131,7 @@ public struct APIStatementImportCandidate: Identifiable, Decodable, Equatable, S
     }
 }
 
-public struct APIStatementImport: Identifiable, Decodable, Equatable, Sendable {
+public struct APIStatementImport: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let budgetID: String
     public let accountID: String

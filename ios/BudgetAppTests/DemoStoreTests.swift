@@ -3391,6 +3391,63 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalDeviceStatementImportHistorySurvivesRepositoryReconstruction() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-import-history-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = try LocalAuthorityStore(fileURL: root.appendingPathComponent("authority.sqlite3"))
+        let identity = LocalAuthorityIdentity(
+            householdID: "household", householdName: "Household", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "budget", budgetName: "Budget", currencyCode: "USD"
+        )
+        let budget = APIBudget(id: identity.budgetID, householdID: identity.householdID,
+                               name: identity.budgetName, currencyCode: "USD",
+                               effectivePermission: .owner, capabilities: nil)
+        let report = WorkspaceReportQuery(
+            start: Date.demo(monthsAgo: 1), end: Date.demo(monthsAgo: 0), accountID: "",
+            categoryID: "", categoryGroup: "", payee: "", memberID: "",
+            transactionType: "", cleared: "all", flag: "", tag: "",
+            spendingTrendDimension: "category", includeTracking: true
+        )
+        try await authority.bootstrap(identity, createdAt: "2026-10-07T12:00:00Z", installStarterPlan: true)
+        try await authority.insertAccount(.init(
+            id: "checking", budgetID: identity.budgetID, name: "Checking", kind: "checking",
+            isOnBudget: true, openingBalanceMinor: 0, createdAt: "2026-10-07T12:00:00Z"
+        ))
+        let first = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget,
+                                            localAuthority: authority, localIdentity: identity)
+        _ = try await first.snapshot(planMonth: Date.demo(monthsAgo: 0), report: report)
+        let account = try XCTUnwrap(first.demo.accounts.first { $0.name == "Checking" })
+        let staged = try await first.stageStatementImport(
+            accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,-12.34,Private Merchant\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd")
+        )
+
+        let relaunched = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget,
+                                                 localAuthority: authority, localIdentity: identity)
+        _ = try await relaunched.snapshot(planMonth: Date.demo(monthsAgo: 0), report: report)
+        let history = try await relaunched.statementImports(accountID: account.id, limit: 25, offset: 0)
+        XCTAssertEqual(history.items.map(\.id), [staged.id])
+        let reopened = try await relaunched.statementImport(accountID: account.id, batchID: staged.id)
+        XCTAssertEqual(reopened.candidates.first?.payee, "Private Merchant")
+        XCTAssertTrue(relaunched.demo.transactions.allSatisfy { $0.payee != "Private Merchant" })
+        let cancelled = try await relaunched.cancelStatementImport(
+            accountID: account.id, batchID: staged.id, expectedVersion: reopened.version
+        )
+        XCTAssertEqual(cancelled.status, "cancelled")
+        let afterMutationRelaunch = DemoWorkspaceDataSource(
+            fresh: true, budgetOverride: budget, localAuthority: authority, localIdentity: identity
+        )
+        let persistedCancellation = try await afterMutationRelaunch.statementImport(
+            accountID: account.id, batchID: staged.id
+        )
+        XCTAssertEqual(persistedCancellation.status, "cancelled")
+        XCTAssertEqual(persistedCancellation.version, staged.version + 1)
+    }
+
+    @MainActor
     func testLocalQIFStagingIsMoneyNeutralUntilCanonicalApproval() async throws {
         let source = DemoWorkspaceDataSource()
         let account = try XCTUnwrap(source.demo.accounts.first)
