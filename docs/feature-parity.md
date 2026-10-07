@@ -1,11 +1,10 @@
-# Feature-capability review — v0.4.0
+# Feature-capability review — current development
 
-Reviewed 2026-09-04 against public YNAB feature and help material. This is a capability benchmark, not a claim of visual or brand equivalence. Budget App uses original navigation, terminology, and presentation.
+Reconciled 2026-10-07 against the current production implementation. This is a capability benchmark, not a claim of visual or brand equivalence. Budget App uses original navigation, terminology, and presentation.
 
 Status meanings:
 
 - **IMPLEMENTED** — workflow works against the v0.2 financial/API foundation or is a complete local calculation.
-- **PARTIALLY IMPLEMENTED** — foundation or UI exists, but the complete production workflow does not.
 - **PARTIALLY IMPLEMENTED** — a useful production slice exists, but the broader benchmark remains incomplete.
 - **FUTURE** — intentionally deferred.
 - **INTENTIONALLY DIFFERENT** — Budget App chooses a different model.
@@ -24,7 +23,7 @@ Status meanings:
 | Category notes, icons, customization | PARTIALLY IMPLEMENTED | Icons and note presentation exist; full live editing/reordering is future work. |
 | Hidden/inactive categories | IMPLEMENTED | The production category manager lists active and hidden categories, supports search, preserves history, and lets authorized users hide or restore categories. |
 | Focused/custom views | IMPLEMENTED | All, Favorites, Underfunded, Overspent, Funded, and Available views run in the shared production Plan and remember the selected view per user and budget. |
-| Category templates/presets | FUTURE | No template engine yet. |
+| Category templates/presets | IMPLEMENTED | New budgets default to an editable zero-money starter Plan across server and on-device authorities; creation can explicitly opt out. |
 
 ## Targets and funding
 
@@ -35,7 +34,7 @@ Status meanings:
 | Weekly/yearly/custom recurrence | PARTIALLY IMPLEMENTED | Recurrence months exists for targets; weekly/custom cadence is not complete. |
 | Target by date and savings balance | IMPLEMENTED | Forecast calculations and progress UI. |
 | Debt payoff target | PARTIALLY IMPLEMENTED | Native local payoff simulator; dedicated persisted payoff target is future. |
-| Snooze/skip target | FUTURE | Not represented in production model. |
+| Snooze/skip target | IMPLEMENTED | Month-scoped, money-neutral target snooze/resume persists across Live and on-device providers without changing the global target rule. |
 | Smart Funding preview | IMPLEMENTED | Shared Before/Proposed/After native workflow and optimistic live batch commit. |
 | Funding recommendations | IMPLEMENTED | Target-based deterministic proposals run against the current authoritative month state. |
 
@@ -49,13 +48,13 @@ Status meanings:
 | Split transaction | IMPLEMENTED | API model and native multi-category entry. |
 | Payee, memo, date, cleared state | IMPLEMENTED | Persisted transaction fields. |
 | Reconciliation | IMPLEMENTED | Explicit adjustment only; native comparison preview. |
-| Search and filters | IMPLEMENTED | Native transaction search/filter plus server-derived Insights dimensions. Server pagination remains future scale work. |
+| Search and filters | IMPLEMENTED | Native transaction search/filter/sort uses bounded cursor-paginated server queries plus server-derived Insights dimensions. |
 | Flags/tags | IMPLEMENTED | Persisted production metadata and shared editor. |
 | Receipt/photo/file attachment | IMPLEMENTED | Camera, Photos, and Files share one validated application-service path; local content is encrypted at rest with a Keychain-protected key. |
-| Edit and delete/void | IMPLEMENTED | Production edit/delete with immutable before/after/delete audit history. A dedicated void UX remains future work. |
-| Duplicate detection | FUTURE | Required before imports; no import pipeline in v0.4.0. |
-| Recurring transactions | IMPLEMENTED | Scheduled transaction planning/forecast API. Materialization UI remains limited. |
-| Remembered payees, rename, merge | FUTURE | No first-class payee table yet. |
+| Edit and delete/void | IMPLEMENTED | Production edit, guarded attachment detach, void/reversal, and immutable before/after/delete audit history. |
+| Duplicate detection | IMPLEMENTED | Statement staging identifies duplicate candidates before explicit approval; imports remain non-mutating until reviewed. |
+| Recurring transactions | IMPLEMENTED | Active/paused schedule management, forecast-only occurrences, and canonical Enter Now realization share the production editor. |
+| Remembered payees, rename, merge | IMPLEMENTED | First-class searchable payees support aliases, defaults, archive, rename, and merge with bounded server-authoritative results. |
 | Local category suggestion | FUTURE | Planned deterministic “2 of last 3” suggestion; never silent mutation. |
 | Calculator keypad | IMPLEMENTED | Shared exact-money fields accept parentheses and +, −, ×, ÷ expressions from a native keyboard toolbar; malformed, fractional-minor-unit, divide-by-zero, and overflow results are rejected. |
 
@@ -68,7 +67,7 @@ Status meanings:
 | Loan/mortgage/tracking asset/liability | PARTIALLY IMPLEMENTED | Native demo and local calculations; production metadata needs dedicated schema. |
 | Closed accounts | IMPLEMENTED | Backend and live client state. |
 | Net-worth-only tracking distinction | PARTIALLY IMPLEMENTED | `is_on_budget` foundation exists; richer live account classification remains. |
-| Payoff simulator | FUTURE | The former demo-only surface was removed rather than presented as production functionality. |
+| Payoff simulator | IMPLEMENTED | Production avalanche, snowball, rollover, and custom-extra scenarios use exact shared projections and authoritative debt terms without mutating the budget. |
 | Card reserve animation | FUTURE | State explanation is present; Reduce Motion-aware animation remains polish work. |
 
 ## Insights and forecast
@@ -78,12 +77,12 @@ Status meanings:
 | Spending by category/group | IMPLEMENTED | Server-derived accessible chart with filters and contributing transaction IDs. |
 | Spending trends and averages | IMPLEMENTED | Shared rolling/calendar/custom range computation over authoritative transactions. |
 | Income vs. spending | IMPLEMENTED | Transfer-safe server aggregation with drill-through and edit refresh. |
-| Net worth | FUTURE | Requires a production aggregation endpoint and shared UI. |
+| Net worth | IMPLEMENTED | Permission-filtered production aggregation, accessible trend chart, account observations, filters, and drill-through. |
 | Savings/goal progress | IMPLEMENTED | Target progress and forecast foundation, native goal list/detail. |
 | Debt progress | PARTIALLY IMPLEMENTED | Payoff estimate exists; persisted interest/principal history is future. |
 | Household insights | INTENTIONALLY DIFFERENT | Adds allowance usage, requests, member activity, and permission-aware views. |
 | 30/60/90-day, 6-month, 1-year forecast | IMPLEMENTED | Existing forecast API plus clearly labeled projected native UI. |
-| Monthly planned cost | FUTURE | The former seeded summary was removed pending a production-backed calculation. |
+| Monthly planned cost | IMPLEMENTED | Exact production-backed sum of active, non-snoozed target recommendations with explicit scope and overflow handling. |
 
 ## Household, privacy, and platform
 
@@ -94,13 +93,13 @@ Status meanings:
 | Delegated child budgets | INTENTIONALLY DIFFERENT | Resource visibility plus independently pre-funded, bounded monetary authority go beyond broad shared-budget roles. |
 | Requests and partial approvals | IMPLEMENTED | Append-only action history and single balanced approval allocation. |
 | Recurring allowances with splits | IMPLEMENTED | Weekly/monthly, rollover/use-it-or-lose-it, explicit issuance. |
-| Hide Amounts | FUTURE | The former demo-only toggle was removed pending persistent shared preference support. |
+| Hide Amounts | IMPLEMENTED | Per-user/per-budget device preference masks values, charts, app-switcher content, and accessibility values without changing shared data. |
 | Export | IMPLEMENTED | Scoped, formula-safe CSV and audit JSON. |
 | Offline behavior | PARTIALLY IMPLEMENTED | Authoritative on-device personal mode works fully offline with durable exact-money state and encrypted attachments. Server-backed offline cache/outbox and conflict resolution remain future work. |
 | Widgets | FUTURE | Not part of v0.4.0. |
 | Accessibility | PARTIALLY IMPLEMENTED | Dynamic Type/native controls, semantic grouping, non-color status labels, VoiceOver labels, chart summaries; formal assistive-technology audit remains. |
 | Light/Dark Mode | IMPLEMENTED | System-native appearance verified in Simulator. |
-| Bank import/sync | FUTURE | Explicitly blocked; see `bank-sync-readiness.md`. |
+| Bank import/sync | PARTIALLY IMPLEMENTED | Reviewed CSV/OFX/QFX/QBO and text-based statement import is implemented with mapping, matching, approval, history, and undo; direct bank connectivity remains gated by `bank-sync-readiness.md`. |
 | Subscription/SaaS dependency | INTENTIONALLY DIFFERENT | Self-host on a home server, local machine, or chosen website; no required subscription. |
 
 ## Where Budget App exceeds the benchmark for household use
@@ -114,7 +113,10 @@ Status meanings:
 
 ## Remaining before bank sync
 
-First-class payees, robust transaction edit/void semantics, duplicate matching, imported-transaction approval, offline conflict resolution, encrypted provider token storage, webhook isolation, retention policy, and formal security review remain prerequisites. No parity claim is made for direct import, Apple Card import, widgets, or production attachment storage.
+Server-backed offline conflict resolution, encrypted future bank-provider token storage, webhook isolation,
+provider retention policy, and formal security review remain prerequisites. No parity claim is made for
+direct bank connectivity, Apple Card automation, or widgets. Manual statement import and encrypted
+production attachment storage are already implemented and must not be treated as missing foundations.
 
 ## Public benchmark sources
 
