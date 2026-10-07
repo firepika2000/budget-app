@@ -19,6 +19,21 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Dropbox completion audit (2026-10-07): the iPhone production path is implemented rather than a
+placeholder. It uses PKCE with offline refresh-token rotation, device-only Keychain custody,
+least-privilege file scopes, immutable encrypted generations, content-hash verification, bounded
+retention, automatic active-app backups, verified download/restore, explicit disconnect/revocation,
+and recovery-key warnings. Local Files backup remains available independently. Unit coverage exercises
+OAuth state/callback validation, refresh concurrency and rotation, 401 recovery, remote revocation,
+chunked upload, pagination, retention, path confinement and corrupt upload/download rejection;
+production-composition UI coverage proves the configured and fail-closed states. Release archives
+require and verify `BUDGET_APP_DROPBOX_APP_KEY`, so a build cannot silently ship a dead Connect button.
+The only remaining Dropbox gate is external configuration and live acceptance: register the public
+Dropbox app with App-folder access and exact redirect URI `clearpocket://dropbox-oauth`, supply its
+public app key during archive, then complete one real connect, backup, relaunch, restore and revoke
+walkthrough. No client secret belongs in the app or repository. This external gate does not block
+unrelated roadmap engineering.
+
 Transaction audit checkpoint after `e96701f`: transaction detail now exposes bounded,
 actor-attributed change history from the immutable server audit ledger. The route rechecks current
 account/category visibility before loading events and returns action, actor, timestamp and changed

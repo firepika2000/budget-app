@@ -96,6 +96,7 @@ Status meanings:
 | Recurring allowances with splits | IMPLEMENTED | Weekly/monthly, rollover/use-it-or-lose-it, explicit issuance. |
 | Hide Amounts | IMPLEMENTED | Per-user/per-budget device preference masks values, charts, app-switcher content, and accessibility values without changing shared data. |
 | Export | IMPLEMENTED | Scoped, formula-safe CSV and audit JSON. |
+| Encrypted backup and restore | IMPLEMENTED | Local Device budgets support verified, versioned encrypted backup and new-destination restore through Files and Dropbox. Dropbox uses immutable generations rather than live database sync; shipping it requires ClearPocket's registered public OAuth app key. |
 | Offline behavior | PARTIALLY IMPLEMENTED | Authoritative on-device personal mode works fully offline with durable exact-money state and encrypted attachments. Server mode has a protected last-known workspace cache plus idempotent queued transaction creation and replay. Broader mutation outbox coverage and conflict resolution remain future work. |
 | Widgets | FUTURE | Not part of v0.4.0. |
 | Accessibility | PARTIALLY IMPLEMENTED | Dynamic Type/native controls, semantic grouping, non-color status labels, VoiceOver labels, chart summaries; formal assistive-technology audit remains. |

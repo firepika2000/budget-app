@@ -131,6 +131,12 @@ ledger is `PRODUCTION-READINESS.md`; every unimplemented requirement must remain
 an explicit evidence-based deferral, never disappear through renumbering. StoreKit remains blocked
 on the paid-download versus non-consumable Lifetime Unlock decision; independent work continues.
 
+Dropbox engineering for v0.14 is complete in the production iPhone composition. The remaining gate
+is a registered external Dropbox application (App-folder permission, redirect URI
+`clearpocket://dropbox-oauth`) and one live-provider acceptance pass with the public app key injected
+by the fail-closed release script. Do not treat that external credential as unfinished storage code,
+and do not embed a client secret or replace immutable encrypted backup with live SQLite sync.
+
 The sections that follow retain the original milestone scope and historical context. References
 to v0.9 distribution or v1.x import in those sections use the old numbering; the table above is the
 current authorized execution sequence. Human acceptance is pending and no retest is requested now.
