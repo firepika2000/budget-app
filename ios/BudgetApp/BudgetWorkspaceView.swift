@@ -8929,6 +8929,24 @@ private struct ResilienceInsightsView: View {
             if let runway = report.runwayDays {
                 LabeledContent("Cash runway", value: "\(runway) day\(runway == 1 ? "" : "s")")
             }
+            if let essentialCoverage = report.essentialExpenseCoverageDays {
+                LabeledContent(
+                    "Essential expense coverage",
+                    value: "\(essentialCoverage) day\(essentialCoverage == 1 ? "" : "s")"
+                )
+                Text("How long visible cash could cover the trailing 90-day daily average of categories marked Essential. Refunds reduce that spending rate.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let emergencyCoverage = report.emergencyFundCoverageDays {
+                LabeledContent(
+                    "Emergency fund coverage",
+                    value: "\(emergencyCoverage) day\(emergencyCoverage == 1 ? "" : "s")"
+                )
+                Text("How long the current positive Available amount in categories marked Emergency Fund could cover essential spending.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             LabeledContent("Scheduled income", value: store.format(report.scheduledIncomeMinor))
             LabeledContent("Scheduled outflows", value: store.format(report.scheduledOutflowsMinor))
             LabeledContent("Expected 30-day margin", value: store.format(report.expectedMarginMinor))

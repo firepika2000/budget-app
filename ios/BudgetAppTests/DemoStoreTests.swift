@@ -1584,6 +1584,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("Average age of money"))
         XCTAssertTrue(contents.contains("Current daily burn rate"))
         XCTAssertTrue(contents.contains("Cash runway"))
+        XCTAssertTrue(contents.contains("Essential expense coverage"))
+        XCTAssertTrue(contents.contains("Emergency fund coverage"))
         XCTAssertTrue(contents.contains("PlanGroupHeader"))
         XCTAssertTrue(contents.contains("group-add-transaction"))
         XCTAssertTrue(contents.contains("Task.sleep(for: .seconds(12))"))
