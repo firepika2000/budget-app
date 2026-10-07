@@ -39,7 +39,7 @@ targets:
         MARKETING_VERSION: 0.8.0
         CURRENT_PROJECT_VERSION: 3
         SWIFT_VERSION: "5.10"
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Budget App

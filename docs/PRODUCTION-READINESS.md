@@ -1759,3 +1759,17 @@ tools. This adds no permission or data-fetch path and changes no financial state
 existing revocation, cache invalidation, query-minimization, resource-scope, request/allowance, and
 adversarial privacy evidence above, this closes v0.17 engineering scope without claiming human
 acceptance.
+
+### Native iPad workspace slice — 2026-10-07
+
+The shipping iOS application and privacy-safe launcher widget now support both iPhone and iPad.
+Regular-width iPad windows use an adaptive two-column production shell: all six destinations remain
+visible in a native sidebar, the selected destination retains its existing `NavigationStack`, and
+Profile & Settings plus the active budget remain directly discoverable. Narrow iPad multitasking
+and iPhone continue to use the existing compact bottom navigation, so Demo, Local Device, and Live
+providers still share one view hierarchy and application-service path. An Xcode 27 Beta build and
+direct deterministic production launch on the iOS 27 iPad Pro 11-inch simulator pass; the captured
+runtime showed the sidebar and real Home content together. A focused XCUITest was added for sidebar
+destination and settings reachability, but the local UI-test runner stalled after launch and was
+stopped at the bounded cutoff rather than repeatedly retried. Human iPad acceptance, macOS, web,
+and Android remain open and must not be inferred from this engineering slice.

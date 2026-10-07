@@ -3630,6 +3630,7 @@ final class BudgetWorkspaceStore: ObservableObject {
 struct BudgetWorkspaceView: View {
     @EnvironmentObject private var session: AppSession
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var store: BudgetWorkspaceStore
     @StateObject private var dropboxBackup = DropboxBackupCoordinator()
     @StateObject private var scheduledReminders: ScheduledReminderSettings
@@ -3665,8 +3666,23 @@ struct BudgetWorkspaceView: View {
             }
             .accessibilityIdentifier("workspace-access-unavailable")
         } else {
-        workspaceContent
-        .safeAreaInset(edge: .bottom, spacing: 0) { WorkspaceBottomBar(selection: tabSelection) }
+        if horizontalSizeClass == .regular {
+            NavigationSplitView {
+                WorkspaceSidebar(
+                    selection: tabSelection,
+                    budgetName: store.budget.name,
+                    openSettings: { showingSettings = true }
+                )
+            } detail: {
+                workspaceContent
+            }
+            .navigationSplitViewStyle(.balanced)
+            .accessibilityIdentifier("workspace-regular-shell")
+        } else {
+            workspaceContent
+                .safeAreaInset(edge: .bottom, spacing: 0) { WorkspaceBottomBar(selection: tabSelection) }
+                .accessibilityIdentifier("workspace-compact-shell")
+        }
         }
         }
         // iOS 27 can change selection without materializing a previously lazy NavigationStack.
@@ -3875,38 +3891,95 @@ struct BudgetWorkspaceView: View {
     }
 }
 
+private struct WorkspaceDestination: Identifiable {
+    let id: Int
+    let title: String
+    let symbol: String
+
+    static let all = [
+        WorkspaceDestination(id: 0, title: "Home", symbol: "house.fill"),
+        WorkspaceDestination(id: 1, title: "Plan", symbol: "square.grid.2x2.fill"),
+        WorkspaceDestination(id: 2, title: "Activity", symbol: "clock.arrow.circlepath"),
+        WorkspaceDestination(id: 3, title: "Accounts", symbol: "creditcard.fill"),
+        WorkspaceDestination(id: 4, title: "Insights", symbol: "chart.xyaxis.line"),
+        WorkspaceDestination(id: 5, title: "Household", symbol: "person.2.fill")
+    ]
+}
+
+private struct WorkspaceSidebar: View {
+    @Binding var selection: Int
+    let budgetName: String
+    let openSettings: () -> Void
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(WorkspaceDestination.all) { destination in
+                    Button {
+                        selection = destination.id
+                    } label: {
+                        Label(destination.title, systemImage: destination.symbol)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(selection == destination.id ? Theme.accent : Color.primary)
+                    .listRowBackground(selection == destination.id ? Theme.accent.opacity(0.12) : Color.clear)
+                    .accessibilityAddTraits(selection == destination.id ? .isSelected : [])
+                    .accessibilityIdentifier("workspace-tab-\(destination.title.lowercased())")
+                }
+            }
+
+            Section {
+                Button(action: openSettings) {
+                    Label("Profile & Settings", systemImage: "person.crop.circle")
+                }
+                .accessibilityIdentifier("workspace-sidebar-settings")
+            }
+        }
+        .navigationTitle("ClearPocket")
+        .safeAreaInset(edge: .bottom) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("ACTIVE BUDGET")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(budgetName)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(.bar)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("workspace-sidebar-active-budget")
+        }
+    }
+}
+
 private struct WorkspaceBottomBar: View {
     @Binding var selection: Int
-    private let destinations: [(title: String, symbol: String)] = [
-        ("Home", "house.fill"),
-        ("Plan", "square.grid.2x2.fill"),
-        ("Activity", "clock.arrow.circlepath"),
-        ("Accounts", "creditcard.fill"),
-        ("Insights", "chart.xyaxis.line"),
-        ("Household", "person.2.fill")
-    ]
 
     var body: some View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 0) {
-                ForEach(destinations.indices, id: \.self) { index in
+                ForEach(WorkspaceDestination.all) { destination in
                     Button {
-                        selection = index
+                        selection = destination.id
                     } label: {
                         VStack(spacing: 4) {
-                            Image(systemName: destinations[index].symbol)
-                                .font(.system(size: 17, weight: selection == index ? .semibold : .regular))
+                            Image(systemName: destination.symbol)
+                                .font(.system(size: 17, weight: selection == destination.id ? .semibold : .regular))
                                 .frame(width: 24, height: 20)
-                            Text(destinations[index].title)
-                                .font(.caption2.weight(selection == index ? .semibold : .regular))
+                            Text(destination.title)
+                                .font(.caption2.weight(selection == destination.id ? .semibold : .regular))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.75)
                         }
-                        .foregroundStyle(selection == index ? Theme.accent : Color.secondary)
+                        .foregroundStyle(selection == destination.id ? Theme.accent : Color.secondary)
                         .frame(maxWidth: .infinity, minHeight: 52)
                         .background {
-                            if selection == index {
+                            if selection == destination.id {
                                 Capsule()
                                     .fill(Theme.accent.opacity(0.10))
                                     .frame(maxWidth: 48, maxHeight: 36)
@@ -3916,9 +3989,9 @@ private struct WorkspaceBottomBar: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(destinations[index].title)
-                    .accessibilityAddTraits(selection == index ? .isSelected : [])
-                    .accessibilityIdentifier("workspace-tab-\(destinations[index].title.lowercased())")
+                    .accessibilityLabel(destination.title)
+                    .accessibilityAddTraits(selection == destination.id ? .isSelected : [])
+                    .accessibilityIdentifier("workspace-tab-\(destination.title.lowercased())")
                 }
             }
             .padding(.horizontal, 4)

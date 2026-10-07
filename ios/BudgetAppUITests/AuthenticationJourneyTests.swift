@@ -13,6 +13,28 @@ private extension XCUIElement {
 }
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testIPadProductionWorkspaceUsesSidebarAndKeepsAllDestinationsReachable() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad)
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=home", "--skip-guided-onboarding"]
+        app.launch()
+
+        XCTAssertTrue(app.descendants(matching: .any)["workspace-regular-shell"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["workspace-tab-home"].exists)
+        XCTAssertTrue(app.buttons["workspace-tab-plan"].exists)
+        XCTAssertTrue(app.buttons["workspace-tab-activity"].exists)
+        XCTAssertTrue(app.buttons["workspace-tab-accounts"].exists)
+        XCTAssertTrue(app.buttons["workspace-tab-insights"].exists)
+        XCTAssertTrue(app.buttons["workspace-tab-household"].exists)
+        XCTAssertTrue(app.staticTexts["Rivera Household"].exists)
+
+        app.buttons["workspace-tab-plan"].tap()
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
+        app.buttons["workspace-sidebar-settings"].tap()
+        XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
+    }
+
     func testProductionHouseholdTabShowsOverviewAndPrivacySummary() {
         continueAfterFailure = false
         let app = XCUIApplication()
