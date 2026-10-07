@@ -5585,6 +5585,14 @@ private struct LivePlanView: View {
                 if store.budget.can("manage_budget_structure") { Button("Add category group", systemImage: "folder.badge.plus") { showGroupCreation = true }.accessibilityIdentifier("add-category-group-action") }
                 if store.budget.can("manage_budget_structure") { Button("Manage groups", systemImage: "folder") { showGroups = true }.accessibilityIdentifier("manage-category-groups-action") }
                 if store.budget.can("move_money") { Button("Move money", systemImage: "arrow.left.arrow.right") { movePresentation = .init(sourceCategoryID: nil) } }
+                if store.budget.can("view_allocation_history") {
+                    NavigationLink {
+                        AllocationHistoryView()
+                    } label: {
+                        Label("Allocation history", systemImage: "clock.arrow.circlepath")
+                    }
+                    .accessibilityIdentifier("allocation-history-action")
+                }
                 if store.budget.can("request_money") { Button("Request money", systemImage: "hand.raised") { showRequest = true } }
             } label: { Image(systemName: "plus") }.accessibilityIdentifier("plan-add-menu")
         }
@@ -5627,6 +5635,98 @@ private struct LivePlanView: View {
     private func reload() async { await store.refresh() }
     private func canManage(_ category: APICategory) -> Bool { store.budget.can("manage_budget_structure") || (store.budget.can("manage_own_categories") && category.delegatedUserID == session.profile?.id) }
     private func changeMonth(_ value: Int) { if let next = Calendar.current.date(byAdding: .month, value: value, to: store.planMonth) { store.planMonth = next; Task { await reload() } } }
+}
+
+private struct AllocationHistoryView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+
+    private var operations: [APIAllocationOperation] {
+        store.allocationOperations.sorted {
+            if $0.occurredOn != $1.occurredOn { return $0.occurredOn > $1.occurredOn }
+            return $0.id > $1.id
+        }
+    }
+
+    var body: some View {
+        List {
+            if operations.isEmpty {
+                ContentUnavailableView(
+                    "No allocation history",
+                    systemImage: "clock.arrow.circlepath",
+                    description: Text("Assignments, money moves, and Smart Funding decisions will appear here.")
+                )
+                .accessibilityIdentifier("allocation-history-empty")
+            } else {
+                ForEach(operations) { operation in
+                    Section {
+                        ForEach(Array(operation.postings.enumerated()), id: \.offset) { _, posting in
+                            LabeledContent(postingLabel(posting)) {
+                                Text(store.format(posting.amountMinor))
+                                    .monospacedDigit()
+                                    .foregroundStyle(posting.amountMinor < 0 ? Theme.danger : Theme.healthy)
+                            }
+                        }
+                    } header: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(operationTitle(operation.kind))
+                            Text(operation.occurredOn).font(.caption)
+                        }
+                        .textCase(nil)
+                    } footer: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            if !operation.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text(operation.note)
+                            }
+                            Text("By \(actorName(operation.actorUserID)) · \(sourceName(operation.source))")
+                        }
+                    }
+                    .accessibilityIdentifier("allocation-history-operation-\(operation.id)")
+                }
+            }
+        }
+        .navigationTitle("Allocation History")
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("allocation-history-screen")
+        .refreshable { await store.refresh() }
+    }
+
+    private func postingLabel(_ posting: APIAllocationPosting) -> String {
+        if let categoryID = posting.categoryID,
+           let category = store.categories.first(where: { $0.id == categoryID }) {
+            let group = store.groups.first(where: { $0.id == category.groupID })?.name
+            return group.map { "\($0) · \(category.name)" } ?? category.name
+        }
+        switch posting.bucket {
+        case "ready_to_assign": return "Available to Assign"
+        case "delegated_pool": return "Delegated funding pool"
+        default: return posting.bucket.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private func actorName(_ userID: String) -> String {
+        store.householdMembers.first(where: { $0.userID == userID })?.displayName ?? "Household member"
+    }
+
+    private func operationTitle(_ kind: String) -> String {
+        switch kind {
+        case "assignment": return "Assignment"
+        case "move", "allocation_transfer": return "Money move"
+        case "smart_funding": return "Smart Funding"
+        case "delegated_funding": return "Delegated funding"
+        case "allowance": return "Allowance"
+        default: return kind.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private func sourceName(_ source: String) -> String {
+        switch source {
+        case "manual": return "Manual"
+        case "smart_funding": return "Smart Funding"
+        case "request": return "Funding request"
+        case "allowance": return "Allowance"
+        default: return source.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
 }
 
 private struct PlanGroupHeader: View {

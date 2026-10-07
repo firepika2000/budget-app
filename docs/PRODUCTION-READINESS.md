@@ -1557,3 +1557,14 @@ the current rotating credential; Demo and Local Device use the same production U
 void/reversal semantics. Focused backend atomicity/accounting tests, Swift request-shape tests, and
 the Xcode 27 Beta native accounting test pass. This is engineering verification, not a claim of
 human acceptance.
+
+### Dedicated allocation history — 2026-10-07
+
+Plan now exposes the existing authoritative allocation ledger as a dedicated history destination
+instead of stranding it inside individual category details. Each operation shows its date, type,
+actor, source, note, and exact balanced postings; category rows include their group name so repeated
+category names remain unambiguous. The browser consumes the same server-filtered operations already
+loaded by the production workspace, so restricted members cannot infer hidden counterpart postings,
+notes, or actors. Pull-to-refresh reloads authoritative state. This adds no mutation path and changes
+no account, allocation, target, forecast, or transaction semantics. Focused production-composition
+verification covers discovery through the real Plan menu and rendered ledger content.

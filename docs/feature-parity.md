@@ -18,7 +18,7 @@ Status meanings:
 | Available to assign | IMPLEMENTED | Derived only from on-budget cash and actual allocations. |
 | Category groups and categories | IMPLEMENTED | API, desktop, live iOS, and richer demo UI. |
 | Monthly allocation and rollover | IMPLEMENTED | Balanced append-only allocation ledger. |
-| Move money and recent moves | PARTIALLY IMPLEMENTED | Auditable native/API moves are implemented; a dedicated recent-moves browser remains future work. |
+| Move money and recent moves | IMPLEMENTED | Auditable native/API moves are implemented with a dedicated, permission-filtered Plan history browser covering assignments, moves, Smart Funding, requests, and allowances. |
 | Future-month assignments | IMPLEMENTED | Month-addressed ledger and summaries. |
 | Underfunded/overspent state | IMPLEMENTED | Native filtered views and attention surfaces. |
 | Category notes, icons, customization | PARTIALLY IMPLEMENTED | Icons and note presentation exist; full live editing/reordering is future work. |

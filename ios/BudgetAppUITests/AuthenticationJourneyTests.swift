@@ -1115,6 +1115,24 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(persistedField.value as? String, "820.00")
     }
 
+    func testProductionPlanExposesDedicatedAllocationHistory() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=plan", "--skip-guided-onboarding"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 8))
+        app.buttons["plan-add-menu"].tap()
+        let history = app.buttons["allocation-history-action"]
+        XCTAssertTrue(history.waitForExistence(timeout: 5))
+        history.tap()
+
+        XCTAssertTrue(app.navigationBars["Allocation History"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["allocation-history-screen"].exists)
+        XCTAssertTrue(app.staticTexts["Assignment"].exists || app.staticTexts["Money move"].exists || app.staticTexts["Smart Funding"].exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Available to Assign'")).firstMatch.exists)
+    }
+
     func testProductionPlanKeepsCurrentAndFutureAssignmentsIndependent() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=plan"]
