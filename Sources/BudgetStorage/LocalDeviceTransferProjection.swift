@@ -92,6 +92,13 @@ public enum LocalDeviceTransferProjectionDecoder {
             targets: value.targets.map { .init(categoryID: $0.categoryId, targetType: $0.targetType, amountMinor: $0.amountMinor, cadence: $0.cadence, effectiveMonth: $0.effectiveMonth, snoozedMonth: $0.snoozedMonth, targetDate: $0.targetDate, recurrenceMonths: $0.recurrenceMonths, minimumContributionMinor: $0.minimumContributionMinor, priority: $0.priority, isActive: $0.isActive, snoozedMonths: $0.snoozedMonths) },
             schedules: value.schedules.map { .init(id: $0.id, budgetID: $0.budgetId, accountID: $0.accountId, destinationAccountID: $0.destinationAccountId, categoryID: $0.categoryId, payeeID: $0.payeeId, name: $0.name, amountMinor: $0.amountMinor, nextDate: $0.nextDate, recurrenceUnit: $0.recurrenceUnit, intervalCount: $0.intervalCount, memo: $0.memo, endDate: $0.endDate, remainingOccurrences: $0.remainingOccurrences, isActive: $0.isActive, financialClassification: $0.financialClassification, lastRealizedOn: $0.lastRealizedOn) },
             attachments: value.attachments.map { .init(id: $0.id, transactionID: $0.transactionId, filename: $0.filename, contentType: $0.contentType, sizeBytes: $0.sizeBytes, sha256: $0.sha256, objectName: $0.objectName, createdAt: $0.createdAt) },
+            attachmentTombstones: (value.attachmentTombstones ?? []).map { .init(
+                id: $0.id, budgetID: $0.budgetId, transactionID: $0.transactionId,
+                filename: $0.filename, contentType: $0.contentType, sizeBytes: $0.sizeBytes,
+                sha256: $0.sha256, createdAt: $0.createdAt, detachedAt: $0.detachedAt,
+                detachedByUserID: $0.detachedByUserId, purgeAfter: $0.purgeAfter,
+                tombstoneObjectName: $0.tombstoneObjectName
+            ) },
             debtTerms: value.debtTerms.map { .init(accountID: $0.accountId, termsType: $0.termsType, annualRateBasisPoints: $0.annualRateBasisPoints, rateType: $0.rateType, paymentFrequency: $0.paymentFrequency, scheduledPaymentMinor: $0.scheduledPaymentMinor, minimumPaymentRule: $0.minimumPaymentRule, minimumPaymentMinor: $0.minimumPaymentMinor, minimumPaymentRateBasisPoints: $0.minimumPaymentRateBasisPoints, dueDay: $0.dueDay, statementDay: $0.statementDay, originalPrincipalMinor: $0.originalPrincipalMinor, originalTermMonths: $0.originalTermMonths, remainingTermMonths: $0.remainingTermMonths, promotionalRateBasisPoints: $0.promotionalRateBasisPoints, promotionalEndsOn: $0.promotionalEndsOn, updatedAt: $0.updatedAt) },
             cashRolloverPolicies: value.cashRolloverPolicies.map { .init(id: $0.id, budgetID: $0.budgetId, effectiveMonth: $0.effectiveMonth, policy: $0.policy, version: $0.version, source: $0.source, actorUserID: $0.actorUserId, createdAt: $0.createdAt) },
             creditReserveAttributions: value.creditReserveAttributions.map { .init(transactionID: $0.transactionId, categoryID: $0.categoryId, amountMinor: $0.amountMinor) },
@@ -120,13 +127,16 @@ public enum LocalDeviceTransferProjectionDecoder {
             + snapshot.transactions.map(\.budgetID) + snapshot.allocations.map(\.budgetID)
             + snapshot.schedules.map(\.budgetID) + snapshot.cashRolloverPolicies.map(\.budgetID)
             + snapshot.statementImports.map(\.budgetID)
+            + snapshot.attachmentTombstones.map(\.budgetID)
             + snapshot.transactionChanges.map(\.budgetID) + snapshot.creditReserveEvents.map(\.budgetID)
         guard budgetRows.allSatisfy({ $0 == budgetID }) else {
             throw LocalStorageError.invalidSnapshot("Server transfer projection mixes budget identities")
         }
         guard Set(snapshot.accounts.map(\.id)).count == snapshot.accounts.count,
               Set(snapshot.transactions.map(\.id)).count == snapshot.transactions.count,
-              Set(snapshot.attachments.map(\.id)).count == snapshot.attachments.count else {
+              Set(snapshot.attachments.map(\.id)).count == snapshot.attachments.count,
+              Set(snapshot.attachmentTombstones.map(\.id)).count == snapshot.attachmentTombstones.count,
+              Set(snapshot.attachments.map(\.id)).isDisjoint(with: snapshot.attachmentTombstones.map(\.id)) else {
             throw LocalStorageError.invalidSnapshot("Server transfer projection contains duplicate identities")
         }
 
@@ -201,6 +211,7 @@ private struct Envelope: Decodable {
     let payees: [PayeeDTO]; let payeeAliases: [AliasDTO]; let transactions: [TransactionDTO]
     let allocations: [AllocationDTO]; let reconciliations: [ReconciliationDTO]
     let targets: [TargetDTO]; let schedules: [ScheduleDTO]; let attachments: [AttachmentDTO]
+    let attachmentTombstones: [AttachmentTombstoneDTO]?
     let debtTerms: [DebtTermsDTO]; let cashRolloverPolicies: [RolloverDTO]
     let statementImports: [StatementImportDTO]?
     let creditReserveAttributions: [AttributionDTO]; let transactionChanges: [ChangeDTO]
@@ -226,6 +237,7 @@ private struct ReconciliationDTO: Decodable { let id: String; let accountId: Str
 private struct TargetDTO: Decodable { let categoryId: String; let targetType: String; let amountMinor: Int64; let cadence: String; let effectiveMonth: String; let snoozedMonth: String?; let targetDate: String?; let recurrenceMonths: Int64?; let minimumContributionMinor: Int64; let priority: Int64; let isActive: Bool; let snoozedMonths: [String] }
 private struct ScheduleDTO: Decodable { let id: String; let budgetId: String; let accountId: String; let destinationAccountId: String?; let categoryId: String?; let payeeId: String?; let name: String; let amountMinor: Int64; let nextDate: String; let recurrenceUnit: String; let intervalCount: Int64; let memo: String; let endDate: String?; let remainingOccurrences: Int64?; let isActive: Bool; let financialClassification: String?; let lastRealizedOn: String? }
 private struct AttachmentDTO: Decodable { let id: String; let transactionId: String; let filename: String; let contentType: String; let sizeBytes: Int64; let sha256: String; let objectName: String; let createdAt: String }
+private struct AttachmentTombstoneDTO: Decodable { let id: String; let budgetId: String; let transactionId: String; let filename: String; let contentType: String; let sizeBytes: Int64; let sha256: String; let createdAt: String; let detachedAt: String; let detachedByUserId: String; let purgeAfter: String; let tombstoneObjectName: String? }
 private struct DebtTermsDTO: Decodable { let accountId: String; let termsType: String; let annualRateBasisPoints: Int64?; let rateType: String?; let paymentFrequency: String?; let scheduledPaymentMinor: Int64?; let minimumPaymentRule: String?; let minimumPaymentMinor: Int64?; let minimumPaymentRateBasisPoints: Int64?; let dueDay: Int64?; let statementDay: Int64?; let originalPrincipalMinor: Int64?; let originalTermMonths: Int64?; let remainingTermMonths: Int64?; let promotionalRateBasisPoints: Int64?; let promotionalEndsOn: String?; let updatedAt: String }
 private struct RolloverDTO: Decodable { let id: String; let budgetId: String; let effectiveMonth: String; let policy: String; let version: Int64; let source: String; let actorUserId: String?; let createdAt: String }
 private struct AttributionDTO: Decodable { let transactionId: String; let categoryId: String; let amountMinor: Int64 }

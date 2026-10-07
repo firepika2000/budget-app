@@ -235,15 +235,6 @@ def local_device_transfer_eligibility(
         unsupported_allocation_operation_count(db, budget.id),
     )
     add(
-        "detached_attachment_history",
-        "Detached attachment retention history must remain on Budget Server.",
-        count(
-            TransactionAttachment,
-            TransactionAttachment.budget_id == budget.id,
-            TransactionAttachment.detached_at.is_not(None),
-        ),
-    )
-    add(
         "non_owner_financial_attribution",
         "Financial records attributed to another household member cannot be flattened to one owner.",
         count(Transaction, Transaction.budget_id == budget.id, Transaction.created_by_user_id != household.owner_user_id)

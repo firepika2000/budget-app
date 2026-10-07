@@ -174,6 +174,10 @@ def build_local_device_projection(
         TransactionAttachment.budget_id == budget.id,
         TransactionAttachment.detached_at.is_(None),
     ).order_by(TransactionAttachment.created_at, TransactionAttachment.id)))
+    attachment_tombstones = list(db.scalars(select(TransactionAttachment).where(
+        TransactionAttachment.budget_id == budget.id,
+        TransactionAttachment.detached_at.is_not(None),
+    ).order_by(TransactionAttachment.detached_at, TransactionAttachment.id)))
     import_batches = list(db.scalars(select(ImportBatch).where(
         ImportBatch.budget_id == budget.id
     ).order_by(ImportBatch.created_at, ImportBatch.id)))
@@ -278,6 +282,20 @@ def build_local_device_projection(
             "size_bytes": item.byte_count, "sha256": item.sha256,
             "object_name": item.id, "created_at": _iso(item.created_at),
         } for item in attachment_rows],
+        # Detached objects are deliberately not downloaded into a new authority. Their immutable
+        # lifecycle metadata is still part of the household record, matching portable-export
+        # semantics while avoiding resurrection of content the user explicitly removed.
+        "attachment_tombstones": [{
+            "id": item.id, "budget_id": budget.id,
+            "transaction_id": item.transaction_id,
+            "filename": item.filename, "content_type": item.content_type,
+            "size_bytes": item.byte_count, "sha256": item.sha256,
+            "created_at": _iso(item.created_at),
+            "detached_at": _iso(item.detached_at),
+            "detached_by_user_id": item.detached_by_user_id,
+            "purge_after": _iso(item.purge_after),
+            "tombstone_object_name": None,
+        } for item in attachment_tombstones],
         "statement_imports": [{
             "id": item.id, "budget_id": item.budget_id, "account_id": item.account_id,
             "status": item.status, "version": item.version + 1,

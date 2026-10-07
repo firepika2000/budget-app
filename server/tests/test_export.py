@@ -310,7 +310,7 @@ def test_local_device_transfer_preserves_merged_payee_redirect_history(
     assert payees[source.json()["id"]]["merged_into_payee_id"] == destination.json()["id"]
 
 
-def test_local_device_transfer_fails_closed_for_detached_history_and_non_owner(
+def test_local_device_transfer_preserves_detached_history_and_rejects_non_owner(
     client, owner_token, session_factory
 ):
     from .test_advanced_ledger import record
@@ -338,10 +338,18 @@ def test_local_device_transfer_fails_closed_for_detached_history_and_non_owner(
     eligibility = client.get(
         f"{path}/local-device-transfer-eligibility", headers=auth(owner_token)
     ).json()
-    assert {item["code"] for item in eligibility["blockers"]} == {"detached_attachment_history"}
-    blocked = client.get(f"{path}/local-device-transfer", headers=auth(owner_token))
-    assert blocked.status_code == 409
-    assert blocked.json()["detail"]["blockers"] == eligibility["blockers"]
+    assert eligibility["eligible"] is True
+    transferred = client.get(f"{path}/local-device-transfer", headers=auth(owner_token))
+    assert transferred.status_code == 200, transferred.text
+    assert transferred.json()["attachments"] == []
+    tombstone = transferred.json()["attachment_tombstones"][0]
+    assert tombstone["id"] == uploaded["id"]
+    assert tombstone["transaction_id"] == transaction["id"]
+    assert tombstone["sha256"] == uploaded["sha256"]
+    assert tombstone["detached_at"] is not None
+    assert tombstone["detached_by_user_id"] is not None
+    assert tombstone["purge_after"] is not None
+    assert tombstone["tombstone_object_name"] is None
 
     child_id, child_token = add_child(session_factory, client)
     client.put(

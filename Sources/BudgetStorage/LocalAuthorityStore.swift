@@ -289,6 +289,24 @@ public struct LocalAttachmentRecord: Equatable, Sendable {
     }
 }
 
+public struct LocalAttachmentTombstoneRecord: Equatable, Sendable {
+    public let id: String; public let budgetID: String; public let transactionID: String
+    public let filename: String; public let contentType: String; public let sizeBytes: Int64
+    public let sha256: String; public let createdAt: String; public let detachedAt: String
+    public let detachedByUserID: String; public let purgeAfter: String
+    public let tombstoneObjectName: String?
+    public init(id: String, budgetID: String, transactionID: String, filename: String,
+                contentType: String, sizeBytes: Int64, sha256: String, createdAt: String,
+                detachedAt: String, detachedByUserID: String, purgeAfter: String,
+                tombstoneObjectName: String? = nil) {
+        self.id = id; self.budgetID = budgetID; self.transactionID = transactionID
+        self.filename = filename; self.contentType = contentType; self.sizeBytes = sizeBytes
+        self.sha256 = sha256; self.createdAt = createdAt; self.detachedAt = detachedAt
+        self.detachedByUserID = detachedByUserID; self.purgeAfter = purgeAfter
+        self.tombstoneObjectName = tombstoneObjectName
+    }
+}
+
 public struct LocalCreditReserveAttributionRecord: Equatable, Sendable {
     public let transactionID: String
     public let categoryID: String
@@ -344,6 +362,7 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
     public let targets: [LocalCategoryTargetRecord]
     public let schedules: [LocalScheduleRecord]
     public let attachments: [LocalAttachmentRecord]
+    public let attachmentTombstones: [LocalAttachmentTombstoneRecord]
     public let debtTerms: [LocalAccountDebtTermsRecord]
     public let cashRolloverPolicies: [LocalCashRolloverPolicyRecord]
     public let creditReserveAttributions: [LocalCreditReserveAttributionRecord]
@@ -357,6 +376,7 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
                 transactions: [LocalTransactionRecord], allocations: [LocalAllocationRecord],
                 reconciliations: [LocalReconciliationRecord], targets: [LocalCategoryTargetRecord],
                 schedules: [LocalScheduleRecord], attachments: [LocalAttachmentRecord],
+                attachmentTombstones: [LocalAttachmentTombstoneRecord] = [],
                 debtTerms: [LocalAccountDebtTermsRecord] = [],
                 cashRolloverPolicies: [LocalCashRolloverPolicyRecord] = [],
                 creditReserveAttributions: [LocalCreditReserveAttributionRecord] = [],
@@ -368,6 +388,7 @@ public struct LocalAuthoritySnapshot: Equatable, Sendable {
         self.transactions = transactions; self.allocations = allocations
         self.reconciliations = reconciliations; self.targets = targets
         self.schedules = schedules; self.attachments = attachments
+        self.attachmentTombstones = attachmentTombstones
         self.debtTerms = debtTerms; self.cashRolloverPolicies = cashRolloverPolicies
         self.creditReserveAttributions = creditReserveAttributions
         self.transactionChanges = transactionChanges; self.creditReserveEvents = creditReserveEvents
@@ -653,12 +674,15 @@ public actor LocalAuthorityStore {
         ))
     }
 
-    /// Removes metadata only after the encrypted object has entered the caller's recoverable tombstone lifecycle.
-    public func deleteAttachment(id: String, transactionID: String) async throws {
-        let changes = try await database.executeReturningChanges(.init(
-            "DELETE FROM attachments WHERE id=? AND transaction_id=?", values: [.text(id), .text(transactionID)]
-        ))
-        try requireOneChange(changes, record: "attachment")
+    /// Atomically moves active metadata into the recoverable retention ledger after the vault has
+    /// moved its encrypted object. Imported server tombstones can omit the local object name.
+    public func detachAttachment(_ value: LocalAttachmentRecord, budgetID: String,
+                                 detachedAt: String, detachedByUserID: String,
+                                 purgeAfter: String, tombstoneObjectName: String?) async throws {
+        try await database.transaction([
+            .init("INSERT INTO attachment_tombstones(id,budget_id,transaction_id,filename,content_type,size_bytes,sha256,created_at,detached_at,detached_by_user_id,purge_after,tombstone_object_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(value.id), .text(budgetID), .text(value.transactionID), .text(value.filename), .text(value.contentType), .integer(value.sizeBytes), .text(value.sha256), .text(value.createdAt), .text(detachedAt), .text(detachedByUserID), .text(purgeAfter), optionalText(tombstoneObjectName)]),
+            .init("DELETE FROM attachments WHERE id=? AND transaction_id=?", values: [.text(value.id), .text(value.transactionID)])
+        ])
     }
 
     public func snapshot(budgetID: String) async throws -> LocalAuthoritySnapshot {
@@ -683,6 +707,7 @@ public actor LocalAuthorityStore {
         let targets = try await loadTargets(categoryIDs: Set(categories.map(\.id)))
         let schedules = try await loadSchedules(budgetID: budgetID)
         let attachments = try await loadAttachments(transactionIDs: Set(transactions.map(\.id)))
+        let attachmentTombstones = try await loadAttachmentTombstones(budgetID: budgetID)
         let debtTerms = try await loadDebtTerms(accountIDs: Set(accounts.map(\.id)))
         let rollover = try await loadCashRolloverPolicies(budgetID: budgetID)
         let reserve = try await loadCreditReserveAttributions(transactionIDs: Set(transactions.map(\.id)))
@@ -692,7 +717,8 @@ public actor LocalAuthorityStore {
         return .init(identity: identity, accounts: accounts, groups: groups, categories: categories,
                      payees: payees, payeeAliases: payeeAliases, transactions: transactions, allocations: allocations,
                      reconciliations: reconciliations, targets: targets, schedules: schedules,
-                     attachments: attachments, debtTerms: debtTerms, cashRolloverPolicies: rollover,
+                     attachments: attachments, attachmentTombstones: attachmentTombstones,
+                     debtTerms: debtTerms, cashRolloverPolicies: rollover,
                      creditReserveAttributions: reserve, transactionChanges: changes,
                      creditReserveEvents: reserveEvents, statementImports: statementImports)
     }
@@ -712,6 +738,7 @@ public actor LocalAuthorityStore {
             .init("DELETE FROM credit_reserve_attributions WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM credit_reserve_events WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM transaction_changes WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM attachment_tombstones WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM attachments WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM reconciliations WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM category_targets WHERE category_id IN (SELECT id FROM categories WHERE budget_id=?)", values: [.text(budgetID)]),
@@ -764,6 +791,9 @@ public actor LocalAuthorityStore {
         }
         statements += value.attachments.map { item in
             .init("INSERT INTO attachments(id,transaction_id,filename,content_type,size_bytes,sha256,object_name,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.transactionID), .text(item.filename), .text(item.contentType), .integer(item.sizeBytes), .text(item.sha256), .text(item.objectName), .text(item.createdAt)])
+        }
+        statements += value.attachmentTombstones.map { item in
+            .init("INSERT INTO attachment_tombstones(id,budget_id,transaction_id,filename,content_type,size_bytes,sha256,created_at,detached_at,detached_by_user_id,purge_after,tombstone_object_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.transactionID), .text(item.filename), .text(item.contentType), .integer(item.sizeBytes), .text(item.sha256), .text(item.createdAt), .text(item.detachedAt), .text(item.detachedByUserID), .text(item.purgeAfter), optionalText(item.tombstoneObjectName)])
         }
         statements += value.statementImports.map { item in
             .init("INSERT INTO statement_imports(id,budget_id,account_id,status,version,source_format,candidate_count,payload_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), .text(item.status), .integer(item.version), .text(item.sourceFormat), .integer(item.candidateCount), .text(item.payloadJSON), .text(item.createdAt)])
@@ -908,6 +938,12 @@ public actor LocalAuthorityStore {
             let transactionID = try text($0, "transaction_id")
             guard transactionIDs.contains(transactionID) else { return nil }
             return try .init(id: text($0, "id"), transactionID: transactionID, filename: text($0, "filename"), contentType: text($0, "content_type"), sizeBytes: integer($0, "size_bytes"), sha256: text($0, "sha256"), objectName: text($0, "object_name"), createdAt: text($0, "created_at"))
+        }
+    }
+
+    private func loadAttachmentTombstones(budgetID: String) async throws -> [LocalAttachmentTombstoneRecord] {
+        try await database.rows(.init("SELECT * FROM attachment_tombstones WHERE budget_id=? ORDER BY detached_at,id", values: [.text(budgetID)])).map { row in
+            try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), transactionID: text(row, "transaction_id"), filename: text(row, "filename"), contentType: text(row, "content_type"), sizeBytes: integer(row, "size_bytes"), sha256: text(row, "sha256"), createdAt: text(row, "created_at"), detachedAt: text(row, "detached_at"), detachedByUserID: text(row, "detached_by_user_id"), purgeAfter: text(row, "purge_after"), tombstoneObjectName: optionalText(row, "tombstone_object_name"))
         }
     }
 

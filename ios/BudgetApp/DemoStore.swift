@@ -1225,6 +1225,7 @@ extension DemoStore {
     }
 
     func localAuthoritySnapshot(identity: LocalAuthorityIdentity, preservingAttachments: [LocalAttachmentRecord] = [],
+                                preservingAttachmentTombstones: [LocalAttachmentTombstoneRecord] = [],
                                 debtTerms: [LocalAccountDebtTermsRecord] = [],
                                 transactionChanges: [LocalTransactionChangeRecord] = [],
                                 creditReserveEvents: [LocalCreditReserveEventRecord] = [],
@@ -1273,6 +1274,6 @@ extension DemoStore {
                 return LocalCreditReserveAttributionRecord(transactionID: transactionID, categoryID: categoryID, amountMinor: amount)
             }
         }
-        return LocalAuthoritySnapshot(identity: identity, accounts: accountRows, groups: groupRows, categories: categoryRows, payees: payeeRows, payeeAliases: aliases, transactions: transactionRows, allocations: allocationRows, reconciliations: reconciliations, targets: targets, schedules: scheduleRows, attachments: preservingAttachments, debtTerms: debtTerms, cashRolloverPolicies: rollover, creditReserveAttributions: reserveRows, transactionChanges: transactionChanges, creditReserveEvents: creditReserveEvents, statementImports: statementImports)
+        return LocalAuthoritySnapshot(identity: identity, accounts: accountRows, groups: groupRows, categories: categoryRows, payees: payeeRows, payeeAliases: aliases, transactions: transactionRows, allocations: allocationRows, reconciliations: reconciliations, targets: targets, schedules: scheduleRows, attachments: preservingAttachments, attachmentTombstones: preservingAttachmentTombstones, debtTerms: debtTerms, cashRolloverPolicies: rollover, creditReserveAttributions: reserveRows, transactionChanges: transactionChanges, creditReserveEvents: creditReserveEvents, statementImports: statementImports)
     }
 }

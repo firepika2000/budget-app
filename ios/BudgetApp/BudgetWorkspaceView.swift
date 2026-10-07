@@ -945,6 +945,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         }
         let value = try demo.localAuthoritySnapshot(
             identity: localIdentity, preservingAttachments: previous.attachments,
+            preservingAttachmentTombstones: previous.attachmentTombstones,
             debtTerms: debtTerms, transactionChanges: previous.transactionChanges,
             creditReserveEvents: previous.creditReserveEvents,
             statementImports: previous.statementImports
@@ -1853,8 +1854,21 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                 guard let item = snapshot.attachments.first(where: { $0.id == attachmentID && $0.transactionID == transactionID }) else {
                     throw APIClientError.server(status: 404, message: "Attachment not found")
                 }
-                _ = try await localAttachmentVault.tombstone(objectName: item.objectName)
-                try await localAuthority.deleteAttachment(id: item.id, transactionID: transactionID)
+                let detachedAt = now()
+                let tombstoneName = try await localAttachmentVault.tombstone(objectName: item.objectName, detachedAt: detachedAt)
+                let formatter = ISO8601DateFormatter()
+                do {
+                    try await localAuthority.detachAttachment(
+                        item, budgetID: localIdentity.budgetID,
+                        detachedAt: formatter.string(from: detachedAt),
+                        detachedByUserID: localIdentity.ownerUserID,
+                        purgeAfter: formatter.string(from: detachedAt.addingTimeInterval(30 * 24 * 60 * 60)),
+                        tombstoneObjectName: tombstoneName
+                    )
+                } catch {
+                    try? await localAttachmentVault.restoreTombstone(named: tombstoneName, as: item.objectName)
+                    throw error
+                }
                 if let index = demo.transactions.firstIndex(where: { $0.id == transactionID }) {
                     demo.transactions[index].attachmentName = snapshot.attachments.first(where: { $0.transactionID == transactionID && $0.id != attachmentID })?.filename
                 }

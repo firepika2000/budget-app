@@ -31,7 +31,14 @@ final class LocalDeviceCandidateImportTests: XCTestCase {
             payeeAliases: [],
             transactions: [.init(id: "transaction", budgetID: "budget", accountID: "checking", payeeID: "market", payeeName: "Market", amountMinor: -1_234, occurredOn: "2026-10-01", createdByUserID: "owner", createdAt: timestamp, splits: [.init(id: "split", categoryID: "food", amountMinor: -1_234)])],
             allocations: [.init(id: "allocation", budgetID: "budget", categoryID: "food", amountMinor: 5_000, occurredOn: "2026-10-01", kind: "assignment", actorUserID: "owner", createdAt: timestamp)],
-            reconciliations: [], targets: [], schedules: [], attachments: [record]
+            reconciliations: [], targets: [], schedules: [], attachments: [record],
+            attachmentTombstones: [.init(
+                id: "removed-attachment", budgetID: "budget", transactionID: "transaction",
+                filename: "old-receipt.pdf", contentType: "application/pdf", sizeBytes: 42,
+                sha256: String(repeating: "c", count: 64), createdAt: timestamp,
+                detachedAt: "2026-10-02T12:00:00Z", detachedByUserID: "owner",
+                purgeAfter: "2026-11-01T12:00:00Z"
+            )]
         )
         return (snapshot, record)
     }
@@ -54,6 +61,7 @@ final class LocalDeviceCandidateImportTests: XCTestCase {
         let reopened = try LocalAuthorityStore(fileURL: destination.appendingPathComponent("authority.sqlite3"))
         let reopenedSnapshot = try await reopened.snapshot(budgetID: "budget")
         XCTAssertEqual(reopenedSnapshot, snapshot)
+        XCTAssertEqual(reopenedSnapshot.attachmentTombstones.map(\.id), ["removed-attachment"])
         let vault = try LocalAttachmentVault(directoryURL: destination.appendingPathComponent("Attachments"), keyData: key)
         let recovered = try await vault.data(objectName: record.objectName, expectedSHA256: record.sha256)
         XCTAssertEqual(recovered, plaintext)

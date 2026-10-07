@@ -70,6 +70,7 @@ final class LocalDatabaseTests: XCTestCase {
             .init("DROP TABLE credit_reserve_events"),
             .init("DROP TABLE transaction_changes"),
             .init("DROP TABLE statement_imports"),
+            .init("DROP TABLE attachment_tombstones"),
             .init("ALTER TABLE categories DROP COLUMN icon_name"),
             .init("ALTER TABLE categories DROP COLUMN note"),
             .init("ALTER TABLE categories DROP COLUMN is_essential"),
@@ -242,7 +243,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.scheduledTransactionID, "deleted-schedule")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 12)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 13)
     }
 
     func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {
@@ -342,13 +343,19 @@ final class LocalDatabaseTests: XCTestCase {
         try await store.upsertTarget(.init(categoryID: "c", targetType: "monthly", amountMinor: 10, cadence: "monthly", effectiveMonth: "2026-09"))
         try await store.upsertSchedule(.init(id: "schedule", budgetID: "b", accountID: "a", categoryID: "c", name: "Plan", amountMinor: -1, nextDate: "2026-10-01", recurrenceUnit: "months", intervalCount: 1))
 
-        try await store.deleteAttachment(id: "attachment", transactionID: "t")
+        try await store.detachAttachment(
+            .init(id: "attachment", transactionID: "t", filename: "receipt.png", contentType: "image/png", sizeBytes: 1, sha256: String(repeating: "b", count: 64), objectName: "objects/a.enc", createdAt: timestamp),
+            budgetID: "b", detachedAt: "2026-09-30T13:00:00Z", detachedByUserID: "u",
+            purgeAfter: "2026-10-30T13:00:00Z", tombstoneObjectName: "retained.enc"
+        )
         try await store.deletePayeeAlias(id: "alias", payeeID: "p")
         try await store.deleteTarget(categoryID: "c")
         try await store.deleteSchedule(id: "schedule", budgetID: "b")
 
         let snapshot = try await store.snapshot(budgetID: "b")
         XCTAssertTrue(snapshot.attachments.isEmpty)
+        XCTAssertEqual(snapshot.attachmentTombstones.map(\.id), ["attachment"])
+        XCTAssertEqual(snapshot.attachmentTombstones.first?.tombstoneObjectName, "retained.enc")
         XCTAssertTrue(snapshot.payeeAliases.isEmpty)
         XCTAssertTrue(snapshot.targets.isEmpty)
         XCTAssertTrue(snapshot.schedules.isEmpty)

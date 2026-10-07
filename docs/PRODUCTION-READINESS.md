@@ -1820,3 +1820,18 @@ that audit lineage while normal search and entry continue to omit merged sources
 command now mirrors production by retaining the source as an archived redirect, moving transaction
 and schedule identity to the destination, and preserving useful source names as destination aliases.
 No financial values change.
+
+### Detached-attachment transfer portability — 2026-10-07
+
+Detaching a file no longer makes an otherwise single-owner budget permanently ineligible for
+Server-to-Local Device transfer. The projection carries the immutable filename, type, size, digest,
+creation, actor, detach, and purge observations in a separate tombstone collection; removed content
+is not downloaded or resurrected. This matches the established portable-archive contract. Local
+Device schema v13 persists that lifecycle metadata through candidate publication, relaunch, encrypted
+backup, and complete workspace replacement. A Local Device detach now atomically moves active
+metadata into the same retention ledger after the encrypted object enters the vault tombstone
+directory, restoring the object if the metadata commit fails. Active attachment limits and UI lists
+remain based only on active files. Focused server export, Swift projection, schema migration,
+candidate-import, and Xcode 27 Beta production-build verification pass. Shared household identity,
+authorization/delegation records, non-owner attribution, and unsupported many-to-many allocation
+history remain deliberately fail-closed rather than being flattened.
