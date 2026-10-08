@@ -9,6 +9,7 @@ import PhotosUI
 import AVFoundation
 import UIKit
 import Accessibility
+import CryptoKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import PDFKit
@@ -318,6 +319,137 @@ private struct LocalCompleteBudgetExport: Encodable {
     let version = 1
     let exportedAt: String
     let authority: LocalAuthoritySnapshot
+}
+
+struct CompleteExportAttachment: Equatable, Sendable {
+    let id: String
+    let transactionID: String
+    let filename: String
+    let contentType: String
+    let byteCount: Int64
+    let sha256: String
+}
+
+enum CompleteBudgetExportPackage {
+    private struct Manifest: Encodable {
+        let format = "com.clearpocket.complete-budget-export-package"
+        let version = 1
+        let dataFile = "data.json"
+        let attachmentPayloadsIncluded = true
+        let attachments: [ManifestAttachment]
+    }
+
+    private struct ManifestAttachment: Encodable {
+        let id: String
+        let transactionID: String
+        let originalFilename: String
+        let contentType: String
+        let byteCount: Int64
+        let sha256: String
+        let relativePath: String
+    }
+
+    static func attachmentMetadata(in data: Data) throws -> [CompleteExportAttachment] {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw workspaceRepositoryError("Complete data export is not a JSON object.")
+        }
+        if let rows = root["transaction_attachments"] as? [[String: Any]] {
+            return try rows.compactMap { row in
+                if let detached = row["detached_at"], !(detached is NSNull) { return nil }
+                return try attachment(
+                    id: row["id"], transactionID: row["transaction_id"],
+                    filename: row["filename"], contentType: row["content_type"],
+                    byteCount: row["byte_count"], sha256: row["sha256"]
+                )
+            }.sorted { ($0.transactionID, $0.id) < ($1.transactionID, $1.id) }
+        }
+        if let authority = root["authority"] as? [String: Any],
+           let rows = authority["attachments"] as? [[String: Any]] {
+            return try rows.map { row in
+                try attachment(
+                    id: row["id"], transactionID: row["transactionID"],
+                    filename: row["filename"], contentType: row["contentType"],
+                    byteCount: row["sizeBytes"], sha256: row["sha256"]
+                )
+            }.sorted { ($0.transactionID, $0.id) < ($1.transactionID, $1.id) }
+        }
+        return []
+    }
+
+    static func build(
+        exportData: Data, at destination: URL,
+        load: @escaping (CompleteExportAttachment) async throws -> Data
+    ) async throws {
+        let fileManager = FileManager.default
+        let attachments = try attachmentMetadata(in: exportData)
+        guard attachments.count <= 25_000 else {
+            throw workspaceRepositoryError("Complete data export contains too many attachments.")
+        }
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: false)
+        do {
+            try exportData.write(to: destination.appending(path: "data.json"), options: [.atomic, .completeFileProtection])
+            let attachmentRoot = destination.appending(path: "attachments", directoryHint: .isDirectory)
+            try fileManager.createDirectory(at: attachmentRoot, withIntermediateDirectories: false)
+            var manifestRows: [ManifestAttachment] = []
+            for item in attachments {
+                try Task.checkCancellation()
+                let content = try await load(item)
+                guard Int64(content.count) == item.byteCount else {
+                    throw workspaceRepositoryError("Attachment \(item.filename) did not match its recorded size.")
+                }
+                let digest = SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined()
+                guard digest.caseInsensitiveCompare(item.sha256) == .orderedSame else {
+                    throw workspaceRepositoryError("Attachment \(item.filename) failed integrity verification.")
+                }
+                let directoryName = safeComponent(item.id, fallback: "attachment")
+                let directory = attachmentRoot.appending(path: directoryName, directoryHint: .isDirectory)
+                try fileManager.createDirectory(at: directory, withIntermediateDirectories: false)
+                let filename = safeComponent(item.filename, fallback: "attachment")
+                let relativePath = "attachments/\(directoryName)/\(filename)"
+                try content.write(to: directory.appending(path: filename), options: [.atomic, .completeFileProtection])
+                manifestRows.append(.init(
+                    id: item.id, transactionID: item.transactionID,
+                    originalFilename: item.filename, contentType: item.contentType,
+                    byteCount: item.byteCount, sha256: digest, relativePath: relativePath
+                ))
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            let manifest = try encoder.encode(Manifest(attachments: manifestRows))
+            try manifest.write(to: destination.appending(path: "manifest.json"), options: [.atomic, .completeFileProtection])
+        } catch {
+            try? fileManager.removeItem(at: destination)
+            throw error
+        }
+    }
+
+    private static func attachment(
+        id: Any?, transactionID: Any?, filename: Any?, contentType: Any?,
+        byteCount: Any?, sha256: Any?
+    ) throws -> CompleteExportAttachment {
+        guard let id = id as? String, !id.isEmpty,
+              let transactionID = transactionID as? String, !transactionID.isEmpty,
+              let filename = filename as? String, !filename.isEmpty,
+              let contentType = contentType as? String, !contentType.isEmpty,
+              let number = byteCount as? NSNumber, number.int64Value >= 0,
+              let sha256 = sha256 as? String, sha256.range(of: "^[0-9A-Fa-f]{64}$", options: .regularExpression) != nil else {
+            throw workspaceRepositoryError("Complete data export contains invalid attachment metadata.")
+        }
+        return .init(id: id, transactionID: transactionID, filename: filename,
+                     contentType: contentType, byteCount: number.int64Value, sha256: sha256.lowercased())
+    }
+
+    private static func safeComponent(_ value: String, fallback: String) -> String {
+        let normalized = value.precomposedStringWithCanonicalMapping
+        let replaced = normalized.unicodeScalars.map { scalar -> Character in
+            if CharacterSet.alphanumerics.contains(scalar) || "-_.".unicodeScalars.contains(scalar) {
+                return Character(String(scalar))
+            }
+            return "-"
+        }
+        let result = String(replaced).trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
+        return String((result.isEmpty ? fallback : result).prefix(180))
+    }
 }
 
 @MainActor
@@ -3464,9 +3596,28 @@ final class BudgetWorkspaceStore: ObservableObject {
         let data = try await dataSource.exportCompleteBudget()
         guard authorityRevision == revision else { throw CancellationError() }
         let safeName = budget.name.replacingOccurrences(of: "[^A-Za-z0-9_-]+", with: "-", options: .regularExpression)
-        let name = "\(safeName.isEmpty ? "ClearPocket" : safeName)-complete-export.json"
-        let url = FileManager.default.temporaryDirectory.appending(path: name)
-        try data.write(to: url, options: .atomic)
+        let parent = FileManager.default.temporaryDirectory
+            .appending(path: "ClearPocketExports", directoryHint: .isDirectory)
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let name = "\(safeName.isEmpty ? "ClearPocket" : safeName)-complete-export.clearpocketexport"
+        let url = parent.appending(path: name, directoryHint: .isDirectory)
+        do {
+            try await CompleteBudgetExportPackage.build(exportData: data, at: url) { [weak self] item in
+                guard let self else { throw CancellationError() }
+                guard self.authorityRevision == revision else { throw CancellationError() }
+                return try await self.downloadTransactionAttachment(
+                    transactionID: item.transactionID, attachmentID: item.id
+                )
+            }
+            guard authorityRevision == revision else {
+                try? FileManager.default.removeItem(at: parent)
+                throw CancellationError()
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: parent)
+            throw error
+        }
         return url
     }
 
@@ -4626,7 +4777,7 @@ private struct WorkspaceProfileView: View {
                                 Label(completeExportError, systemImage: "exclamationmark.triangle")
                                     .foregroundStyle(.red)
                             }
-                            Text("Creates a portable JSON record of this budget, household permissions, and audit history. It contains private financial data and attachment metadata, but not attachment files. Store it securely.")
+                            Text("Creates a portable folder containing the versioned JSON record, audit history, and integrity-checked copies of every active attachment. Store it securely.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                     } else if session.sourceMode == .localDevice {
@@ -4656,7 +4807,7 @@ private struct WorkspaceProfileView: View {
                             }
                             Text("Your complete budget works offline on this iPhone. Create an encrypted backup before moving or restoring data; connecting to a server never deletes the local copy.")
                                 .font(.footnote).foregroundStyle(.secondary)
-                            Text("The JSON export contains private financial data and attachment metadata, but not attachment files. Encrypted Backup & Recovery remains the complete recovery path.")
+                            Text("The export folder contains private financial data and readable attachment files. Encrypted Backup & Recovery remains the complete restore path.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                     }
@@ -4742,13 +4893,20 @@ private struct WorkspaceProfileView: View {
         preparingCompleteExport = true
         completeExportError = nil
         defer { preparingCompleteExport = false }
-        do { completeExportURL = try await store.exportCompleteBudget() }
-        catch { completeExportURL = nil; completeExportError = error.localizedDescription }
+        do {
+            let prepared = try await store.exportCompleteBudget()
+            if let previous = completeExportURL {
+                try? FileManager.default.removeItem(at: previous.deletingLastPathComponent())
+            }
+            completeExportURL = prepared
+        } catch {
+            completeExportError = error.localizedDescription
+        }
     }
 
     private func removeCompleteExport() {
         guard let completeExportURL else { return }
-        try? FileManager.default.removeItem(at: completeExportURL)
+        try? FileManager.default.removeItem(at: completeExportURL.deletingLastPathComponent())
         self.completeExportURL = nil
     }
 

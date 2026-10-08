@@ -138,13 +138,18 @@ account/category visibility before loading events and returns action, actor, tim
 field names only; private before/after snapshots remain on the server. Focused backend privacy,
 Swift API-contract and native production-composition checks pass.
 
-Complete data export checkpoint: an authorized unrestricted server-budget owner can now prepare and
-share the existing versioned structured JSON export from Profile & Settings → Data Ownership. The
-iPhone requests the canonical server artifact using the current rotating credential; it does not
-reconstruct household, financial, or audit history locally. The UI explicitly identifies the file
-as private, explains that attachment metadata but not attachment payloads is included, and keeps
-operational encrypted backup/restore as a separate workflow. Scoped or unauthorized exports remain
-server-denied. Focused Swift transport and native production-composition tests pass.
+Complete data export checkpoint: an authorized unrestricted owner can now prepare and share a
+`.clearpocketexport` package from Profile & Settings → Data Ownership for either Budget Server or
+Local Device authority. Its `data.json` remains the canonical versioned provider export; the iPhone
+does not reconstruct household, financial, or audit history. The package adds ordinary copies of
+every active attachment plus an integrity manifest. Each payload travels through the existing
+authorized provider read path and must match its recorded exact size and SHA-256 before the package
+is offered. Detached files are not resurrected, filename/path traversal is normalized, incomplete
+generations are removed, and scoped or unauthorized server exports remain denied. The UI identifies
+the package as private and unencrypted and keeps operational encrypted backup/restore as the complete
+restore workflow. Focused native regressions cover Server and Local Device metadata shapes, active
+payload coverage, detached exclusion, collision-safe paths, integrity failure cleanup, and regular
+Xcode 27 production compilation.
 
 Shortcuts navigation checkpoint: the existing Add Transaction shortcut is joined by privacy-safe
 Open Plan, Open Accounts, and Open Insights actions. Each intent only records a one-shot destination
@@ -1934,8 +1939,9 @@ tests, and the Xcode 27 Beta production build pass.
 Owner Profile & Settings now offers the same discoverable Prepare/Share Complete Data Export flow
 for Local Device budgets that was previously limited to Budget Server. The versioned, sorted JSON
 artifact contains the full typed Local Device authority—including exact ledger records, planning,
-schedules, import review, audit and attachment metadata—while attachment bytes remain in the
-encrypted backup/recovery package. All authority records now support a verified Codable round trip;
+schedules, import review, audit and attachment metadata. The later shared `.clearpocketexport`
+package layer adds verified readable copies of active attachment bytes while encrypted backup remains
+the complete restore mechanism. All authority records now support a verified Codable round trip;
 13 focused storage/export tests and the Xcode 27 Beta production build pass. The UI explicitly warns
 that the JSON is private financial data and is not a replacement for encrypted recovery backups.
 
@@ -2062,3 +2068,20 @@ event already displayed and offers an explicit retry. Invitation and membership 
 unchanged. Focused server coverage proves 125 events across three non-overlapping pages, and the
 typed Swift API contract proves explicit limit/offset transport. Human presentation acceptance
 remains pending.
+
+### Attachment-inclusive complete data export — 2026-10-08
+
+The production Data Ownership action now shares one `.clearpocketexport` package rather than a lone
+JSON file. Server and Local Device retain their canonical versioned JSON authority document and use
+the same package builder to add every active attachment through the existing authorized download
+service. The package manifest records stable identity, original filename, content type, exact size,
+SHA-256 and a collision-safe relative path. Payloads must match their authority metadata before the
+package is exposed; detached files remain history-only, unsafe path components cannot escape the
+package, and cancellation or corruption removes the incomplete generation. The custom package type
+lets the iOS share sheet treat the readable folder as one export artifact. It remains explicitly
+private and unencrypted, while `.clearpocketbackup` remains the encrypted restorable artifact.
+
+Two focused native tests pass for Server and Local Device shapes, active/detached coverage, path
+normalization, exact payload verification and cleanup. Regular Xcode 27.0 (27A266a) compiles and runs
+the tests on the preserved iPhone 17 Pro Max / iOS 27 simulator. Human share-destination acceptance
+remains separate.

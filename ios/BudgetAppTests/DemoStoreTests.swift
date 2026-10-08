@@ -4070,6 +4070,83 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(posted.amount, 234)
         XCTAssertTrue(posted.cleared)
     }
+
+    func testCompleteExportPackageIncludesOnlyActiveServerAttachmentsAndVerifiesPayloads() async throws {
+        let first = Data("first receipt".utf8)
+        let second = Data("second receipt".utf8)
+        func digest(_ data: Data) -> String {
+            SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        }
+        let export: [String: Any] = [
+            "format": "com.clearpocket.portable-budget-data",
+            "transaction_attachments": [
+                ["id": "attachment-1", "transaction_id": "transaction-1",
+                 "filename": "receipt.jpg", "content_type": "image/jpeg",
+                 "byte_count": first.count, "sha256": digest(first), "detached_at": NSNull()],
+                ["id": "attachment-2", "transaction_id": "transaction-2",
+                 "filename": "../statement.pdf", "content_type": "application/pdf",
+                 "byte_count": second.count, "sha256": digest(second), "detached_at": NSNull()],
+                ["id": "detached", "transaction_id": "transaction-3",
+                 "filename": "old.png", "content_type": "image/png",
+                 "byte_count": 1, "sha256": String(repeating: "0", count: 64),
+                 "detached_at": "2026-10-01T00:00:00Z"],
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: export, options: [.sortedKeys])
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("complete-export-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var requested: [String] = []
+
+        try await CompleteBudgetExportPackage.build(exportData: data, at: root) { item in
+            requested.append(item.id)
+            return item.id == "attachment-1" ? first : second
+        }
+
+        XCTAssertEqual(requested, ["attachment-1", "attachment-2"])
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("data.json")), data)
+        let manifest = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("manifest.json")))
+                as? [String: Any]
+        )
+        XCTAssertEqual(manifest["attachmentPayloadsIncluded"] as? Bool, true)
+        let rows = try XCTUnwrap(manifest["attachments"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows.map { $0["originalFilename"] as? String }, ["receipt.jpg", "../statement.pdf"])
+        for row in rows {
+            let relativePath = try XCTUnwrap(row["relativePath"] as? String)
+            XCTAssertFalse(relativePath.contains("../"))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(relativePath).path))
+        }
+    }
+
+    func testCompleteExportPackageReadsLocalAttachmentIdentityAndRemovesFailedGeneration() async throws {
+        let content = Data("local receipt".utf8)
+        let digest = SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined()
+        let export: [String: Any] = [
+            "authority": ["attachments": [[
+                "id": "local-attachment", "transactionID": "local-transaction",
+                "filename": "receipt.png", "contentType": "image/png",
+                "sizeBytes": content.count, "sha256": digest,
+            ]]],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: export)
+        let metadata = try CompleteBudgetExportPackage.attachmentMetadata(in: data)
+        XCTAssertEqual(metadata.map(\.id), ["local-attachment"])
+        XCTAssertEqual(metadata.first?.transactionID, "local-transaction")
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("failed-complete-export-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        do {
+            try await CompleteBudgetExportPackage.build(exportData: data, at: root) { _ in
+                Data("corrupt".utf8)
+            }
+            XCTFail("Expected integrity validation to fail")
+        } catch {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        }
+    }
 }
 
 private final class InMemorySecretDataStore: SecretDataStoring {

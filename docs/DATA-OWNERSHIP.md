@@ -69,6 +69,17 @@ an explicitly labelled training/example source.
 Destructive-reopen tests prove stable IDs, relationships, lifecycle changes, and exact `Int64` values
 survive repository reconstruction.
 
+Profile & Settings → Data Ownership also creates a provider-neutral `.clearpocketexport` package
+for human-readable data ownership. The package contains the canonical versioned JSON authority
+record, every active attachment as an ordinary readable file, and a manifest mapping stable IDs to
+original filenames, byte counts, content types, relative paths, and SHA-256 digests. Budget Server
+and Local Device use the same production package builder and their existing authorized attachment
+read boundaries. Every payload is size- and digest-checked before sharing; detached attachment
+tombstones remain in JSON history without resurrecting removed content, unsafe path components are
+normalized, and a failed or cancelled build removes the incomplete package. This private export is
+for interoperability and inspection. It is not encrypted and is not a restorable replacement for
+the separately authenticated `.clearpocketbackup` recovery generation.
+
 The storage package also creates immutable `.clearpocketbackup` generations with SQLite online backup
 and the complete encrypted attachment object/tombstone set. Each payload is chunked AES-GCM under an
 independent 256-bit recovery key; the authenticated manifest records exact plaintext and ciphertext

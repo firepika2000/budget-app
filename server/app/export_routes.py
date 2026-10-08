@@ -328,9 +328,9 @@ def export_budget_json(
     payee_ids = {item.id for item in payees}
 
     sections = {
-        # Version 2 is the first completeness-audited contract. It remains a JSON data export;
-        # attachment ciphertext is carried by the encrypted operational backup until the portable
-        # archive container/importer is introduced.
+        # Version 2 is the first completeness-audited contract. It remains the canonical JSON
+        # authority document; native complete-export packages and the encrypted portable-archive
+        # tooling add integrity-checked active attachment payloads without exposing storage keys.
         "budget": row_data(budget),
         "household": row_data(db.get(Household, budget.household_id)),
         "household_members": [row_data(item) for item in db.scalars(select(Membership).where(

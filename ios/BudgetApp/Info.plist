@@ -16,6 +16,16 @@
     <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
     <key>NSCameraUsageDescription</key><string>ClearPocket Budget uses the camera only when you choose to photograph a transaction attachment or scan a device pairing code.</string>
     <key>NSLocalNetworkUsageDescription</key><string>ClearPocket Budget connects to your self-hosted budget server on the local network.</string>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeConformsTo</key><array><string>com.apple.package</string></array>
+            <key>UTTypeDescription</key><string>ClearPocket Complete Data Export</string>
+            <key>UTTypeIdentifier</key><string>com.clearpocket.complete-budget-export</string>
+            <key>UTTypeTagSpecification</key>
+            <dict><key>public.filename-extension</key><array><string>clearpocketexport</string></array></dict>
+        </dict>
+    </array>
     <key>UILaunchScreen</key><dict/>
 </dict>
 </plist>
