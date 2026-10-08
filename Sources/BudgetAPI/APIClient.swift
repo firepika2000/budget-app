@@ -788,6 +788,25 @@ public struct APIClient {
         )
     }
 
+    public func debtPayoffPlan(budgetID: String, token: String) async throws -> APIDebtPayoffPlan? {
+        try await send(path: "api/v1/budgets/\(budgetID)/debt-payoff-plan", token: token)
+    }
+
+    public func saveDebtPayoffPlan(
+        budgetID: String, request: APIDebtPayoffPlanUpsert, token: String
+    ) async throws -> APIDebtPayoffPlan {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/debt-payoff-plan",
+            method: "PUT", token: token, body: request
+        )
+    }
+
+    public func deleteDebtPayoffPlan(budgetID: String, token: String) async throws {
+        let _: EmptyResponse = try await send(
+            path: "api/v1/budgets/\(budgetID)/debt-payoff-plan", method: "DELETE", token: token
+        )
+    }
+
     public func debtCost(budgetID: String, accountIDs: [String] = [], token: String) async throws -> APIDebtCost {
         try await send(path: "api/v1/budgets/\(budgetID)/reports/debt-cost",
                        queryItems: accountIDs.map { URLQueryItem(name: "account_id", value: $0) }, token: token)

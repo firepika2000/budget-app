@@ -22,7 +22,7 @@ def test_legacy_reconciled_account_backfills_one_history_checkpoint(tmp_path, mo
 
     command.upgrade(config, "head")
     with engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0037_reconciliation_history"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0038_debt_payoff_plan"
         row = connection.execute(text("SELECT budget_id,account_id,actor_user_id,statement_date,statement_balance_minor,cleared_balance_before_minor,reconciled_transaction_count,adjustment_transaction_id FROM reconciliations")).one()
         assert row == ("budget", "checking", "owner", "2026-09-30", 12345, 12345, 0, None)
     engine.dispose()

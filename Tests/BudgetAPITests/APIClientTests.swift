@@ -1080,6 +1080,39 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(result.accounts.first?.accountID, "card")
     }
 
+    func testDebtPayoffPlanUsesAuthoritativePersonalPlanContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var methods: [String] = []
+        MockURLProtocol.handler = { request in
+            methods.append(request.httpMethod ?? "")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/debt-payoff-plan")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current-token")
+            if request.httpMethod == "PUT" {
+                let json = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: Any])
+                XCTAssertEqual(json["strategy"] as? String, "custom")
+                XCTAssertEqual(json["extra_payment_minor"] as? Int, 12_345)
+                XCTAssertEqual(json["account_ids"] as? [String], ["card", "loan"])
+                XCTAssertEqual(json["custom_order"] as? [String], ["loan", "card"])
+                XCTAssertEqual(json["target_date"] as? String, "2028-12-31")
+            }
+            if request.httpMethod == "DELETE" {
+                return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data())
+            }
+            let response = Data(#"{"id":"plan1","budget_id":"b1","user_id":"u1","strategy":"custom","rollover":true,"extra_payment_minor":12345,"account_ids":["card","loan"],"custom_order":["loan","card"],"target_date":"2028-12-31","updated_at":"2026-10-08T12:00:00Z"}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let request = APIDebtPayoffPlanUpsert(strategy: "custom", rollover: true, extraPaymentMinor: 12_345, accountIDs: ["card", "loan"], customOrder: ["loan", "card"], targetDate: "2028-12-31")
+        let saved = try await client.saveDebtPayoffPlan(budgetID: "b1", request: request, token: "current-token")
+        XCTAssertEqual(saved.targetDate, "2028-12-31")
+        let loaded = try await client.debtPayoffPlan(budgetID: "b1", token: "current-token")
+        XCTAssertEqual(loaded, saved)
+        try await client.deleteDebtPayoffPlan(budgetID: "b1", token: "current-token")
+        XCTAssertEqual(methods, ["PUT", "GET", "DELETE"])
+    }
+
     func testPlanPerformanceReportDecodesExactHistoricalObservations() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

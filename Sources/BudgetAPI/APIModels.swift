@@ -689,6 +689,43 @@ public struct APIDebtStrategyProjectionRequest: Encodable, Sendable {
     }
 }
 
+public struct APIDebtPayoffPlanUpsert: Encodable, Equatable, Sendable {
+    public let strategy: String
+    public let rollover: Bool
+    public let extraPaymentMinor: Int64
+    public let accountIDs: [String]
+    public let customOrder: [String]
+    public let targetDate: String?
+
+    public init(strategy: String, rollover: Bool, extraPaymentMinor: Int64 = 0, accountIDs: [String] = [], customOrder: [String] = [], targetDate: String? = nil) {
+        self.strategy = strategy; self.rollover = rollover; self.extraPaymentMinor = extraPaymentMinor
+        self.accountIDs = accountIDs; self.customOrder = customOrder; self.targetDate = targetDate
+    }
+    enum CodingKeys: String, CodingKey {
+        case strategy, rollover
+        case extraPaymentMinor = "extra_payment_minor", accountIDs = "account_ids"
+        case customOrder = "custom_order", targetDate = "target_date"
+    }
+}
+
+public struct APIDebtPayoffPlan: Decodable, Equatable, Sendable {
+    public let id: String
+    public let budgetID: String
+    public let userID: String
+    public let strategy: String
+    public let rollover: Bool
+    public let extraPaymentMinor: Int64
+    public let accountIDs: [String]
+    public let customOrder: [String]
+    public let targetDate: String?
+    public let updatedAt: String
+    enum CodingKeys: String, CodingKey {
+        case id, strategy, rollover
+        case budgetID = "budget_id", userID = "user_id", extraPaymentMinor = "extra_payment_minor"
+        case accountIDs = "account_ids", customOrder = "custom_order", targetDate = "target_date", updatedAt = "updated_at"
+    }
+}
+
 public struct APIDebtStrategyIncompleteAccount: Decodable, Equatable, Sendable {
     public let accountID: String
     public let missingProjectionFields: [String]

@@ -334,6 +334,32 @@ class AccountDebtTerms(Base):
     )
 
 
+class DebtPayoffPlan(Base):
+    """A user's saved forecast preference; never a ledger or allocation input."""
+
+    __tablename__ = "debt_payoff_plans"
+    __table_args__ = (
+        UniqueConstraint("budget_id", "user_id", name="uq_debt_payoff_plan_budget_user"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(
+        ForeignKey("budgets.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    strategy: Mapped[str] = mapped_column(String(20), default="avalanche")
+    rollover: Mapped[bool] = mapped_column(Boolean, default=True)
+    extra_payment_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    account_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    custom_order: Mapped[list[str]] = mapped_column(JSON, default=list)
+    target_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+
 class CategoryGroup(Base):
     __tablename__ = "category_groups"
 

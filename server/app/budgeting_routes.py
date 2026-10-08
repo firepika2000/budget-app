@@ -49,6 +49,7 @@ from .category_names import normalized_category_name
 from .models import (
     Account,
     AccountDebtTerms,
+    DebtPayoffPlan,
     AllowancePlan,
     AllowanceSplit,
     AllocationOperation,
@@ -85,6 +86,8 @@ from .schemas import (
     DebtProjectionResponse,
     DebtStrategyProjectionRequest,
     DebtStrategyProjectionResponse,
+    DebtPayoffPlanUpsert,
+    DebtPayoffPlanResponse,
     AccountResponse,
     AllocationOperationResponse,
     AllocationOperationPageResponse,
@@ -672,6 +675,99 @@ def debt_strategy_projection(
             for item in result.debts
         ],
     }
+
+
+def _validated_payoff_plan_account_ids(
+    db: Session, user: User, budget: Budget, account_ids: list[str], custom_order: list[str]
+) -> None:
+    requested = set(account_ids) | set(custom_order)
+    if not requested:
+        return
+    debt_ids = set(db.scalars(select(Account.id).where(
+        Account.budget_id == budget.id,
+        Account.account_type.in_(("credit", "loan", "mortgage")),
+    )))
+    visible = visible_resource_ids(db, user, budget, "account")
+    if any(value not in debt_ids for value in requested) or (
+        visible is not None and any(value not in visible for value in requested)
+    ):
+        raise HTTPException(status_code=404, detail="Payoff plan resource not found")
+
+
+@router.get("/debt-payoff-plan", response_model=Optional[DebtPayoffPlanResponse])
+def get_debt_payoff_plan(
+    budget_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return this user's plan, removing accounts no longer visible to them."""
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
+    require_budget_capability(db, user, budget_id, "view_account_balances")
+    plan = db.scalar(select(DebtPayoffPlan).where(
+        DebtPayoffPlan.budget_id == budget_id, DebtPayoffPlan.user_id == user.id
+    ))
+    if plan is None:
+        return None
+    visible = visible_resource_ids(db, user, budget, "account")
+    debt_ids = set(db.scalars(select(Account.id).where(
+        Account.budget_id == budget_id,
+        Account.account_type.in_(("credit", "loan", "mortgage")),
+    )))
+    allowed = debt_ids if visible is None else debt_ids & visible
+    account_ids = [value for value in plan.account_ids if value in allowed]
+    custom_order = [value for value in plan.custom_order if value in allowed]
+    strategy = plan.strategy
+    if strategy == "custom" and set(custom_order) != set(account_ids):
+        strategy, custom_order = "avalanche", []
+    return {
+        "id": plan.id, "budget_id": plan.budget_id, "user_id": plan.user_id,
+        "strategy": strategy, "rollover": plan.rollover,
+        "extra_payment_minor": plan.extra_payment_minor,
+        "account_ids": account_ids, "custom_order": custom_order,
+        "target_date": plan.target_date, "updated_at": plan.updated_at,
+    }
+
+
+@router.put("/debt-payoff-plan", response_model=DebtPayoffPlanResponse)
+def upsert_debt_payoff_plan(
+    budget_id: str,
+    body: DebtPayoffPlanUpsert,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    budget = require_budget_capability(db, user, budget_id, "manage_planning")
+    require_budget_capability(db, user, budget_id, "view_account_balances")
+    _validated_payoff_plan_account_ids(db, user, budget, body.account_ids, body.custom_order)
+    plan = db.scalar(select(DebtPayoffPlan).where(
+        DebtPayoffPlan.budget_id == budget_id, DebtPayoffPlan.user_id == user.id
+    ))
+    values = body.model_dump()
+    if plan is None:
+        plan = DebtPayoffPlan(budget_id=budget_id, user_id=user.id, **values)
+        db.add(plan)
+    else:
+        for name, value in values.items():
+            setattr(plan, name, value)
+        plan.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(plan)
+    return plan
+
+
+@router.delete("/debt-payoff-plan", status_code=status.HTTP_204_NO_CONTENT)
+def delete_debt_payoff_plan(
+    budget_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    require_budget_capability(db, user, budget_id, "manage_planning")
+    plan = db.scalar(select(DebtPayoffPlan).where(
+        DebtPayoffPlan.budget_id == budget_id, DebtPayoffPlan.user_id == user.id
+    ))
+    if plan is not None:
+        db.delete(plan)
+        db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/accounts/{account_id}/balance", response_model=AccountBalanceResponse)

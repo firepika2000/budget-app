@@ -312,6 +312,34 @@ class DebtStrategyProjectionResponse(BaseModel):
     incomplete_accounts: list[DebtStrategyIncompleteAccount] = Field(default_factory=list)
 
 
+class DebtPayoffPlanUpsert(BaseModel):
+    strategy: Literal["avalanche", "snowball", "custom"]
+    rollover: bool = True
+    extra_payment_minor: int = Field(default=0, ge=0, le=MAX_INT64)
+    account_ids: list[str] = Field(default_factory=list, max_length=100)
+    custom_order: list[str] = Field(default_factory=list, max_length=100)
+    target_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def validate_account_order(self):
+        if len(set(self.account_ids)) != len(self.account_ids):
+            raise ValueError("account_ids must not contain duplicates")
+        if len(set(self.custom_order)) != len(self.custom_order):
+            raise ValueError("custom_order must not contain duplicates")
+        if self.strategy == "custom" and set(self.custom_order) != set(self.account_ids):
+            raise ValueError("custom_order must contain every selected account exactly once")
+        if self.strategy != "custom" and self.custom_order:
+            raise ValueError("custom_order is available only for the custom strategy")
+        return self
+
+
+class DebtPayoffPlanResponse(DebtPayoffPlanUpsert):
+    id: str
+    budget_id: str
+    user_id: str
+    updated_at: datetime
+
+
 class CategoryGroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     sort_order: int = 0
