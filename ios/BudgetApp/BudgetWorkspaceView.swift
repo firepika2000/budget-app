@@ -470,6 +470,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         }
         if let value = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--demo-persona=") })?.split(separator: "=").last,
            let persona = DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == value.lowercased() }) { store.persona = persona }
+        if ProcessInfo.processInfo.arguments.contains("--demo-reconciliation-activity"),
+           let account = store.accounts.first(where: { $0.id == "checking" }) {
+            _ = store.reconcile(accountID: account.id, statementBalance: account.cleared,
+                                throughDate: "2026-09-30", createAdjustment: true,
+                                reason: "UI regression fixture")
+        }
         demo = store
         attachmentData["t1"] = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
         let restricted = store.persona.isChild
@@ -2110,7 +2116,17 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             .sorted { ($0.statementDate, $0.createdAt, $0.id) > ($1.statementDate, $1.createdAt, $1.id) }
             .dropFirst(offset).prefix(limit).map {
                 let actorID = $0.actorUserID ?? demo.persona.rawValue.lowercased()
-                return APIReconciliationHistory(id: $0.id, accountID: $0.accountID, actorUserID: actorID, actorDisplayName: demo.persona.rawValue, statementDate: $0.statementDate, statementBalanceMinor: $0.statementBalanceMinor, clearedBalanceBeforeMinor: $0.clearedBalanceBeforeMinor ?? $0.statementBalanceMinor, reconciledTransactionCount: Int($0.reconciledTransactionCount), adjustmentTransactionID: $0.adjustmentTransactionID, createdAt: $0.createdAt)
+                return APIReconciliationHistory(id: $0.id, accountID: $0.accountID, actorUserID: actorID, actorDisplayName: demo.authorityOwnerDisplayName ?? demo.persona.rawValue, statementDate: $0.statementDate, statementBalanceMinor: $0.statementBalanceMinor, clearedBalanceBeforeMinor: $0.clearedBalanceBeforeMinor ?? $0.statementBalanceMinor, reconciledTransactionCount: Int($0.reconciledTransactionCount), adjustmentTransactionID: $0.adjustmentTransactionID, createdAt: $0.createdAt)
+            }
+    }
+    func recentReconciliationHistory(limit: Int) async throws -> [APIReconciliationHistory] {
+        try requireActiveMembership()
+        let visibleAccounts = actorAccountIDs
+        return demo.reconciliationHistory.filter { visibleAccounts.contains($0.accountID) }
+            .sorted { ($0.createdAt, $0.statementDate, $0.id) > ($1.createdAt, $1.statementDate, $1.id) }
+            .prefix(limit).map {
+                let actorID = $0.actorUserID ?? demo.persona.rawValue.lowercased()
+                return APIReconciliationHistory(id: $0.id, accountID: $0.accountID, actorUserID: actorID, actorDisplayName: demo.authorityOwnerDisplayName ?? demo.persona.rawValue, statementDate: $0.statementDate, statementBalanceMinor: $0.statementBalanceMinor, clearedBalanceBeforeMinor: $0.clearedBalanceBeforeMinor ?? $0.statementBalanceMinor, reconciledTransactionCount: Int($0.reconciledTransactionCount), adjustmentTransactionID: $0.adjustmentTransactionID, createdAt: $0.createdAt)
             }
     }
     func assignMoney(_ operation: AssignMoneyOperation) async throws { try requireActiveMembership();
@@ -2574,6 +2590,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func deleteTransfer(id: String) async throws { try await credentials.prepare(); try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { try await credentials.prepare(); _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID, request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason, expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor), token: token) }
     func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory] { try await credentials.prepare(); return try await client.reconciliationHistory(budgetID: budget.id, accountID: accountID, limit: limit, offset: offset, token: token) }
+    func recentReconciliationHistory(limit: Int) async throws -> [APIReconciliationHistory] { try await credentials.prepare(); return try await client.recentReconciliationHistory(budgetID: budget.id, limit: limit, token: token) }
     func statementImports(accountID: String, limit: Int, offset: Int) async throws -> APIStatementImportList { try await credentials.prepare(); return try await client.statementImports(budgetID: budget.id, accountID: accountID, limit: limit, offset: offset, token: token) }
     func statementImport(accountID: String, batchID: String) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.statementImport(budgetID: budget.id, accountID: accountID, batchID: batchID, token: token) }
     func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.stageStatementImport(budgetID: budget.id, accountID: accountID, data: data, mapping: mapping, token: token) }
@@ -3435,6 +3452,9 @@ final class BudgetWorkspaceStore: ObservableObject {
     func transactionHistory(id: String) async throws -> [APITransactionChange] { try await services().transactions.history(id: id) }
     func reconciliationHistory(accountID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIReconciliationHistory] {
         try await services().accounts.reconciliationHistory(accountID: accountID, limit: limit, offset: offset)
+    }
+    func recentReconciliationHistory(limit: Int = 5) async throws -> [APIReconciliationHistory] {
+        try await services().accounts.recentReconciliationHistory(limit: limit)
     }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await services().transactions.uploadAttachment(id: id, filename: filename, contentType: contentType, data: data); await refresh() }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await services().transactions.downloadAttachment(transactionID: transactionID, attachmentID: attachmentID) }
@@ -7065,6 +7085,10 @@ private struct LiveActivityView: View {
     @State private var selectedIDs: Set<String> = []
     @State private var showTagPrompt = false
     @State private var bulkTag = ""
+    @State private var recentReconciliations: [APIReconciliationHistory] = []
+    @State private var reconciliationLoading = false
+    @State private var reconciliationError: String?
+    @State private var reconciliationAccount: APIAccount?
     private var queryKey: String { "\(search)|\(filter)" }
     private var recentPlanChanges: [APIAllocationOperation] {
         Array(store.allocationOperations.sorted {
@@ -7103,6 +7127,31 @@ private struct LiveActivityView: View {
                     }
                 }
             }
+            Section("Recent reconciliations") {
+                if reconciliationLoading && recentReconciliations.isEmpty {
+                    ProgressView("Loading reconciliation activity…")
+                } else if let reconciliationError, recentReconciliations.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(reconciliationError).foregroundStyle(.secondary)
+                        Button("Retry") { Task { await loadRecentReconciliations() } }
+                    }
+                    .accessibilityIdentifier("activity-reconciliation-error")
+                } else if recentReconciliations.isEmpty {
+                    Text("Completed account reconciliations will appear here.")
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("activity-reconciliation-empty")
+                } else {
+                    ForEach(recentReconciliations) { reconciliation in
+                        if let account = store.accounts.first(where: { $0.id == reconciliation.accountID }) {
+                            Button { reconciliationAccount = account } label: {
+                                reconciliationRow(reconciliation, account: account)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("activity-reconciliation-\(reconciliation.id)")
+                        }
+                    }
+                }
+            }
             Section("Posted activity") {
                 if rows.isEmpty && !loading && errorMessage == nil { ContentUnavailableView("No matching transactions", systemImage: "line.3.horizontal.decrease.circle", description: Text("Try changing your search or filters.")) }
                 ForEach(rows) { transaction in
@@ -7124,10 +7173,12 @@ private struct LiveActivityView: View {
             .sheet(isPresented: $showSchedule) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode) }
             .sheet(item: $transferPresentation) { presentation in transfer(presentation) }
             .sheet(isPresented: $showFilters) { TransactionFilterView(current: filter) { filter = $0 } }
+            .sheet(item: $reconciliationAccount) { account in ReconciliationHistoryView(account: account) }
             .onAppear { openQuickEntryIfRequested() }
             .onChange(of: quickEntryRequest) { _, _ in openQuickEntryIfRequested() }
             .task(id: queryKey) { if !search.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }; guard !Task.isCancelled else { return }; await load(reset: true) }
-            .refreshable { await store.refresh(); await load(reset: true) }
+            .task { await loadRecentReconciliations() }
+            .refreshable { await store.refresh(); await load(reset: true); await loadRecentReconciliations() }
     }
     private func openQuickEntryIfRequested() {
         guard quickEntryRequest > 0, store.budget.can("create_transaction") else { return }
@@ -7153,6 +7204,34 @@ private struct LiveActivityView: View {
         case "delegated_funding", "allowance": "person.2"
         default: "square.and.pencil"
         }
+    }
+    private func reconciliationRow(_ reconciliation: APIReconciliationHistory, account: APIAccount) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Label(account.name, systemImage: "checkmark.seal")
+                    .font(.headline)
+                Spacer()
+                Text(store.format(reconciliation.statementBalanceMinor))
+                    .font(.headline).monospacedDigit()
+            }
+            Text("Statement through \(reconciliation.statementDate)")
+                .font(.subheadline)
+            Text("By \(reconciliation.actorDisplayName) · \(reconciliation.reconciledTransactionCount) transaction\(reconciliation.reconciledTransactionCount == 1 ? "" : "s")")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens reconciliation history for \(account.name)")
+    }
+    private func loadRecentReconciliations() async {
+        guard !reconciliationLoading else { return }
+        reconciliationLoading = true
+        defer { reconciliationLoading = false }
+        do {
+            recentReconciliations = try await store.recentReconciliationHistory()
+            reconciliationError = nil
+        } catch where Task.isCancelled { return }
+        catch { reconciliationError = error.localizedDescription }
     }
     @ViewBuilder private func transfer(_ presentation: TransferPresentation) -> some View {
         LiveTransferView(presentation: presentation, budget: store.budget, accounts: store.accounts, onSaved: reload)

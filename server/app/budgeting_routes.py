@@ -2444,6 +2444,32 @@ def reconciliation_history(
             | {"actor_display_name": actor_names.get(row.actor_user_id)} for row in rows]
 
 
+@router.get("/reconciliations", response_model=list[ReconciliationHistoryResponse])
+def recent_reconciliation_history(
+    budget_id: str,
+    limit: int = Query(default=5, ge=1, le=25),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """Return a bounded cross-account activity feed without widening resource scope."""
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    query = select(Reconciliation).where(Reconciliation.budget_id == budget.id)
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    if visible_accounts is not None:
+        query = query.where(Reconciliation.account_id.in_(visible_accounts))
+    rows = list(db.scalars(query.order_by(
+        Reconciliation.created_at.desc(),
+        Reconciliation.statement_date.desc(),
+        Reconciliation.id.desc(),
+    ).limit(limit)))
+    actor_ids = {row.actor_user_id for row in rows}
+    actor_names = {row.id: row.display_name for row in db.scalars(
+        select(User).where(User.id.in_(actor_ids))
+    )} if actor_ids else {}
+    return [{column.key: getattr(row, column.key) for column in Reconciliation.__table__.columns}
+            | {"actor_display_name": actor_names.get(row.actor_user_id)} for row in rows]
+
+
 @router.post("/accounts/{account_id}/reconcile", response_model=ReconcileResponse)
 def reconcile_account(
     budget_id: str,

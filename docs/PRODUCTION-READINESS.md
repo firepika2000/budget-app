@@ -1997,3 +1997,17 @@ encrypted backup, and restore. Older snapshots and databases migrate without inv
 history. Focused backend lifecycle/privacy tests, populated migration
 backfill, Swift package tests, typed API contract tests, and the regular Xcode 27 iPhone 17 Pro Max
 Simulator build pass. Human presentation acceptance remains pending.
+
+### Activity reconciliation audit feed — 2026-10-08
+
+Activity now includes the five newest reconciliation checkpoints visible to the current member and
+opens the existing canonical account Reconciliation History screen for full detail. Budget Server
+uses one bounded budget-level query, filters authorized accounts before ordering and limiting, and
+batches actor-name resolution; a private account therefore cannot consume a result slot or leak
+through metadata. Local Device and Demo produce the same view from their existing durable authority,
+without changing balances or ledger state.
+
+Focused backend ordering/privacy coverage, Swift API request coverage, Local Device persistence and
+attribution coverage, and a production-composition XCUITest all pass. Native verification used Xcode
+27.0 (27A266a) and the preserved iPhone 17 Pro Max / iOS 27.0 simulator. Human presentation
+acceptance remains pending.

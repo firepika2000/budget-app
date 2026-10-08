@@ -326,6 +326,7 @@ protocol AccountCommandRepository: AnyObject {
     func deleteAccountDebtTerms(accountID: String) async throws
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws
     func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory]
+    func recentReconciliationHistory(limit: Int) async throws -> [APIReconciliationHistory]
 }
 
 @MainActor
@@ -425,6 +426,14 @@ struct AccountService {
 
     func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory] {
         do { return try await repository.reconciliationHistory(accountID: accountID, limit: limit, offset: offset) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func recentReconciliationHistory(limit: Int) async throws -> [APIReconciliationHistory] {
+        guard (1...25).contains(limit) else {
+            throw BudgetApplicationError.invalidOperation("Recent reconciliation history must request between 1 and 25 entries.")
+        }
+        do { return try await repository.recentReconciliationHistory(limit: limit) }
         catch { throw BudgetApplicationError.map(error) }
     }
 }

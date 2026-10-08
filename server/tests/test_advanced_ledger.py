@@ -327,6 +327,13 @@ def test_reconciliation_history_is_append_only_attributed_and_scoped(
     assert history[0]["actor_display_name"]
     assert history[1]["reconciled_transaction_count"] == 1
 
+    recent = client.get(
+        f"/api/v1/budgets/{budget['id']}/reconciliations?limit=1",
+        headers=auth(owner_token),
+    )
+    assert recent.status_code == 200, recent.text
+    assert [row["id"] for row in recent.json()] == [history[0]["id"]]
+
     portable = client.get(
         f"/api/v1/budgets/{budget['id']}/local-device-transfer",
         headers=auth(owner_token),
@@ -351,6 +358,34 @@ def test_reconciliation_history_is_append_only_attributed_and_scoped(
         headers=auth(member_token),
     )
     assert denied.status_code in {403, 404}
+
+    private_account = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(owner_token),
+        json={"name": "Private savings", "account_type": "savings", "is_on_budget": True},
+    ).json()
+    record(client, owner_token, budget["id"], account_id=private_account["id"], amount_minor=7_500, is_cleared=True)
+    private_result = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{private_account['id']}/reconcile",
+        headers=auth(owner_token), json={"statement_balance_minor": 7_500, "through_date": "2026-10-01"},
+    )
+    assert private_result.status_code == 200, private_result.text
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/grants", headers=auth(owner_token),
+        json={"user_id": member_id, "permission": "view"},
+    ).status_code == 200
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{member_id}", headers=auth(owner_token),
+        json={"capabilities": ["view_budget", "view_accounts", "view_transactions"],
+              "restrict_accounts": True, "account_ids": [account["id"]],
+              "restrict_categories": False, "category_ids": []},
+    ).status_code == 200
+    scoped = client.get(
+        f"/api/v1/budgets/{budget['id']}/reconciliations", headers=auth(member_token),
+    )
+    assert scoped.status_code == 200, scoped.text
+    assert scoped.json()
+    assert {row["account_id"] for row in scoped.json()} == {account["id"]}
+    assert private_account["id"] not in str(scoped.json())
 
 
 def test_positive_cash_reconciliation_becomes_explicit_real_money_then_allocates(

@@ -1389,6 +1389,24 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["allocation-history-screen"].waitForExistence(timeout: 5))
     }
 
+    func testActivityShowsRecentReconciliationAndOpensCanonicalHistory() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity", "--demo-reconciliation-activity"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        let event = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "activity-reconciliation-")
+        ).firstMatch
+        XCTAssertTrue(event.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !event.isHittable { app.swipeUp() }
+        XCTAssertTrue(event.isHittable)
+        event.tap()
+        XCTAssertTrue(app.navigationBars["Reconciliation History"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Reconciled by")
+        ).firstMatch.exists)
+    }
+
     func testMoveMoneyFromCategoryPreservesSourceContextAndUsesUnassignedTerm() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=plan"]

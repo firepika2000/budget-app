@@ -432,6 +432,12 @@ Agents and implementation plans must not begin the following merely because adja
 The roadmap is a living document, but changing it is a deliberate product decision—not an incidental side effect of implementation.
 ## Current development checkpoints
 
+- Activity now surfaces the five most recent authorized reconciliation checkpoints across visible
+  accounts, with statement balance/date, actor, and transaction count, and drills into the existing
+  canonical account history. The server performs one bounded budget-scoped read and applies account
+  privacy before ordering and limiting; it does not fan out into one request per account. Live,
+  Demo, and Local Device use the same production presentation and preserve exact minor-unit values.
+
 - Account reconciliation now preserves an append-only, attributed history instead of only the latest
   balance. The production account register exposes a bounded Reconciliation History view showing the
   statement date and balance, prior cleared balance, transaction count, adjustment presence, and actor.

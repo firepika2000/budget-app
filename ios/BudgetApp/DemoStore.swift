@@ -79,6 +79,7 @@ final class DemoStore: ObservableObject {
     private(set) var allocationEvents: [AllocationEvent] = []
     private(set) var reconciliationHistory: [LocalReconciliationRecord] = []
     private var authorityOwnerUserID: String?
+    private(set) var authorityOwnerDisplayName: String?
     private(set) var allocationVersion = 0
 
     func requireAllocationVersion(_ expected: Int) throws {
@@ -1168,6 +1169,7 @@ extension DemoStore {
     func loadLocalAuthority(_ value: LocalAuthoritySnapshot) throws {
         persona = .rey
         authorityOwnerUserID = value.identity.ownerUserID
+        authorityOwnerDisplayName = value.identity.ownerDisplayName
         accounts = value.accounts.map { item in
             DemoAccount(id: item.id, name: item.name, kind: DemoAccountKind(rawValue: item.kind) ?? (item.isOnBudget ? .checking : .asset), balance: item.openingBalanceMinor, cleared: item.openingBalanceMinor, isOnBudget: item.isOnBudget, isClosed: item.isClosed)
         }
