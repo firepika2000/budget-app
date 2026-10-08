@@ -432,6 +432,11 @@ Agents and implementation plans must not begin the following merely because adja
 The roadmap is a living document, but changing it is a deliberate product decision—not an incidental side effect of implementation.
 ## Current development checkpoints
 
+- The Add Transaction App Shortcut now supports optional payee, exact currency text, memo and
+  expense/income type. It prefills the canonical transaction editor rather than maintaining a
+  shortcut-only ledger path, and never saves until the user selects required context and confirms.
+  Its one-shot draft is bounded and expires after five minutes.
+
 - Activity now surfaces the five most recent visible transaction audit events with actor, action,
   ledger date, payee context, and a concise changed-field summary. Selecting an event opens the
   existing production transaction detail and complete Change History; no duplicate editor or audit

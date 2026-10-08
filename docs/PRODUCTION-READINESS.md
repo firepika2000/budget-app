@@ -19,6 +19,14 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Parameterized Quick Entry checkpoint (2026-10-08): the Add ClearPocket Transaction App Intent now
+accepts optional payee, exact currency text, memo and expense/income type, then opens the existing
+production transaction editor with those values prefilled. It never posts money from Shortcuts;
+account/category selection, validation and Save remain in the canonical authorized workflow. The
+one-shot handoff is length-bounded, consumed on read and expires after five minutes so abandoned
+financial drafts do not persist indefinitely. Focused XCTest and production-composition XCUITest pass
+on the preserved iPhone 17 Pro Max / iOS 27 simulator under regular Xcode 27.0 (`27A266a`).
+
 Allocation-attribution checkpoint (2026-10-08): Plan allocation history now carries the current
 server-authoritative display name for the immutable actor user ID. The history UI no longer depends
 on the currently loaded active-member list to explain who assigned or moved money, so actions by a
@@ -1045,7 +1053,7 @@ No claim of provider parity from package-only projection tests. See PERSISTENT-M
 | PERFORMANCE | IN PROGRESS | Live core hydration makes zero detailed-report requests instead of seven; native tests cover caching/invalidation/retry. Hub has a bounded scalar response. Monthly summary now streams historical rows in batches; disposable 10k-transaction/split and 10k-allocation fixtures prove bounded ORM hydration and exact observations. Other report/Demo computation, category/account fan-out and release-scale closure remain open. |
 | UX | IN PROGRESS | Shared shell, onboarding, scalable payee selection and focused Insights exist. Report filters are reachable again; missing debt terms open the shared editor. Demand-loaded reports have independent loading/error/retry. Full workflow/accessibility closure remains open. |
 | ACCESSIBILITY | IN PROGRESS | Historical large-text launch strings were invalid and did not prove the claimed size; corrected tests use UIKit's actual raw value and require the adaptive debt menu. Description/trait audits pass for Cost and debt observations. Full VoiceOver, chart and release-wide accessibility closure remain open. |
-| PLATFORM | IN PROGRESS | Xcode 27 Beta and existing iPhone 17 Pro Max/iOS 27 are required. Preserve Simulator data. A production App Intent now exposes “Add Transaction” in Shortcuts and opens the active workspace's shared transaction editor without mutating money in the intent. Widgets, richer parameterized intents, release configuration and broader platform scope still need closure. |
+| PLATFORM | IN PROGRESS | Regular Xcode 27 and the existing iPhone 17 Pro Max/iOS 27 are the current native verification environment; preserve Simulator data. The Add Transaction App Intent accepts optional payee, exact currency text, memo and expense/income type, then opens the shared authorized editor without mutating money in the intent. Widgets and workspace navigation intents are embedded; release configuration and broader platform scope still need closure. |
 | COMMERCIAL | BLOCKED | HUMAN PRODUCT DECISION REQUIRED: paid download versus free Demo plus non-consumable Lifetime Unlock. Preferred documented hypothesis is the latter; it adds restoration/offline/revocation complexity while allowing evaluation. Paid download reduces entitlement complexity but prevents pre-purchase evaluation. No StoreKit implementation before decision. Independent engineering continues. |
 | APP STORE | IN PROGRESS | Commercial strategy includes positioning and draft screenshot narrative. Verify current Apple primary sources when preparing privacy/distribution artifacts. Signing, developer enrollment, final identity/pricing and submission remain human/external actions. |
 | OPERATIONS | IN PROGRESS | Developer launcher and advanced server documentation exist. Audit production deployment, migration/recovery, attachment key backup, monitoring and normal-user server management. |

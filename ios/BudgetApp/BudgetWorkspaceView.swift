@@ -3994,6 +3994,8 @@ struct BudgetWorkspaceView: View {
     @State private var didEvaluateOnboarding = false
     @State private var selectedTab: Int
     @State private var quickEntryRequest = 0
+    @State private var quickEntryDraft: QuickEntryDraft?
+    @State private var didInstallUITestQuickEntry = false
     private let selectionOverride: Binding<Int>?
 
     init(budget: APIBudget) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: budget.id)); _selectedTab = State(initialValue: 0); selectionOverride = nil }
@@ -4130,11 +4132,15 @@ struct BudgetWorkspaceView: View {
             consumeWorkspaceShortcutRequest()
         }
         .onAppear {
+            installUITestQuickEntryIfNeeded()
             consumeQuickEntryRequest()
             consumeWorkspaceShortcutRequest()
         }
         .onReceive(NotificationCenter.default.publisher(for: WorkspaceShortcutRequest.notification)) { _ in
             consumeWorkspaceShortcutRequest()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: QuickEntryRequest.notification)) { _ in
+            consumeQuickEntryRequest()
         }
         .onChange(of: store.scheduledTransactions) { _, schedules in
             Task { await scheduledReminders.synchronize(schedules) }
@@ -4181,7 +4187,7 @@ struct BudgetWorkspaceView: View {
         case 1:
             NavigationStack { LivePlanView().workspaceProfileToolbar { showingSettings = true } }
         case 2:
-            NavigationStack { LiveActivityView(quickEntryRequest: quickEntryRequest).workspaceProfileToolbar { showingSettings = true } }
+            NavigationStack { LiveActivityView(quickEntryRequest: quickEntryRequest, requestedQuickEntryDraft: quickEntryDraft).workspaceProfileToolbar { showingSettings = true } }
         case 3:
             NavigationStack { LiveAccountsView().workspaceProfileToolbar { showingSettings = true } }
         case 4:
@@ -4206,9 +4212,28 @@ struct BudgetWorkspaceView: View {
     }
 
     private func consumeQuickEntryRequest() {
-        guard QuickEntryRequest.consume() else { return }
+        guard let draft = QuickEntryRequest.consume() else { return }
+        quickEntryDraft = draft
         tabSelection.wrappedValue = 2
         quickEntryRequest += 1
+    }
+
+    private func installUITestQuickEntryIfNeeded() {
+        #if DEBUG
+        guard !didInstallUITestQuickEntry else { return }
+        didInstallUITestQuickEntry = true
+        let arguments = ProcessInfo.processInfo.arguments
+        func value(_ prefix: String) -> String? {
+            arguments.first(where: { $0.hasPrefix(prefix) }).map { String($0.dropFirst(prefix.count)) }
+        }
+        guard arguments.contains("--ui-test-quick-entry") else { return }
+        QuickEntryRequest.request(QuickEntryDraft(
+            payee: value("--ui-test-quick-entry-payee="),
+            amount: value("--ui-test-quick-entry-amount="),
+            memo: value("--ui-test-quick-entry-memo="),
+            isInflow: arguments.contains("--ui-test-quick-entry-income")
+        ))
+        #endif
     }
 
     private func consumeWorkspaceShortcutRequest() {
@@ -7147,6 +7172,7 @@ private struct LiveSmartFundingView: View {
 private struct LiveActivityView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     var quickEntryRequest = 0
+    var requestedQuickEntryDraft: QuickEntryDraft?
     @State private var search = ""
     @State private var filter = TransactionBrowserFilter()
     @State private var rows: [APITransaction] = []
@@ -7156,6 +7182,7 @@ private struct LiveActivityView: View {
     @State private var errorMessage: String?
     @State private var showFilters = false
     @State private var showAdd = false
+    @State private var entryDraft: QuickEntryDraft?
     @State private var showSchedule = false
     @State private var transferPresentation: TransferPresentation?
     @State private var selecting = false
@@ -7272,10 +7299,10 @@ private struct LiveActivityView: View {
         }
             .searchable(text: $search, prompt: "Payee, memo, flag, or tag")
             .navigationTitle("Activity")
-            .toolbar { if store.budget.can("edit_transaction") { Button(selecting ? "Done" : "Select") { selecting.toggle(); if !selecting { selectedIDs.removeAll() } }.accessibilityIdentifier("bulk-select-action") }; Button { showFilters = true } label: { Image(systemName: filter.isEmpty ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill") }.accessibilityLabel("Filter transactions").accessibilityIdentifier("transaction-filter-action"); if !selecting && (store.budget.can("create_transaction") || store.budget.can("manage_planning")) { Menu { if store.budget.can("create_transaction") { Button("Transaction", systemImage: "cart") { showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } }; if store.budget.can("manage_planning") { Button("Schedule Transaction", systemImage: "calendar.badge.plus") { showSchedule = true }.accessibilityIdentifier("schedule-transaction-action") } } label: { Image(systemName: "plus") }.accessibilityLabel("Add activity").accessibilityIdentifier("add-activity-action") } }
+            .toolbar { if store.budget.can("edit_transaction") { Button(selecting ? "Done" : "Select") { selecting.toggle(); if !selecting { selectedIDs.removeAll() } }.accessibilityIdentifier("bulk-select-action") }; Button { showFilters = true } label: { Image(systemName: filter.isEmpty ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill") }.accessibilityLabel("Filter transactions").accessibilityIdentifier("transaction-filter-action"); if !selecting && (store.budget.can("create_transaction") || store.budget.can("manage_planning")) { Menu { if store.budget.can("create_transaction") { Button("Transaction", systemImage: "cart") { entryDraft = nil; showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } }; if store.budget.can("manage_planning") { Button("Schedule Transaction", systemImage: "calendar.badge.plus") { showSchedule = true }.accessibilityIdentifier("schedule-transaction-action") } } label: { Image(systemName: "plus") }.accessibilityLabel("Add activity").accessibilityIdentifier("add-activity-action") } }
             .safeAreaInset(edge: .bottom) { if selecting { bulkBar } }
             .alert("Add tag", isPresented: $showTagPrompt) { TextField("Tag", text: $bulkTag); Button("Apply") { Task { await bulkUpdate(action: "add_tags", tags: [bulkTag]) } }.disabled(bulkTag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty); Button("Cancel", role: .cancel) {} } message: { Text("The tag will be added to all selected transactions.") }
-            .sheet(isPresented: $showAdd) { entry }
+            .sheet(isPresented: $showAdd, onDismiss: { entryDraft = nil }) { entry }
             .sheet(isPresented: $showSchedule) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode) }
             .sheet(item: $transferPresentation) { presentation in transfer(presentation) }
             .sheet(isPresented: $showFilters) { TransactionFilterView(current: filter) { filter = $0 } }
@@ -7288,6 +7315,7 @@ private struct LiveActivityView: View {
     }
     private func openQuickEntryIfRequested() {
         guard quickEntryRequest > 0, store.budget.can("create_transaction") else { return }
+        entryDraft = requestedQuickEntryDraft
         showAdd = true
     }
     private func allocationActor(_ userID: String) -> String {
@@ -7388,7 +7416,17 @@ private struct LiveActivityView: View {
         LiveTransferView(presentation: presentation, budget: store.budget, accounts: store.accounts, onSaved: reload)
     }
     @ViewBuilder private var entry: some View {
-        TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, groups: store.groups, onSaved: reload)
+        TransactionEntryView(
+            budget: store.budget,
+            accounts: store.accounts,
+            categories: store.categories,
+            groups: store.groups,
+            initialPayee: entryDraft?.payee,
+            initialAmount: entryDraft?.amount,
+            initialMemo: entryDraft?.memo,
+            initialIsInflow: entryDraft?.isInflow ?? false,
+            onSaved: reload
+        )
     }
     private func reload() async { await store.refresh(); await load(reset: true) }
     private func bulkRow(_ transaction: APITransaction) -> some View {

@@ -1,14 +1,71 @@
 import SwiftUI
 import AppIntents
 
+struct QuickEntryDraft: Codable, Equatable {
+    var payee: String?
+    var amount: String?
+    var memo: String?
+    var isInflow: Bool
+    var createdAt: Date?
+
+    init(
+        payee: String? = nil,
+        amount: String? = nil,
+        memo: String? = nil,
+        isInflow: Bool = false,
+        createdAt: Date? = Date()
+    ) {
+        self.payee = payee?.quickEntryValue(maxLength: 150)
+        self.amount = amount?.quickEntryValue(maxLength: 64)
+        self.memo = memo?.quickEntryValue(maxLength: 500)
+        self.isInflow = isInflow
+        self.createdAt = createdAt
+    }
+
+    func isFresh(at date: Date = Date()) -> Bool {
+        guard let createdAt else { return true }
+        return date.timeIntervalSince(createdAt) <= 300 && createdAt.timeIntervalSince(date) <= 30
+    }
+}
+
+private extension String {
+    func quickEntryValue(maxLength: Int) -> String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(maxLength))
+    }
+}
+
 enum QuickEntryRequest {
     static let defaultsKey = "clearpocket.pendingQuickEntry"
-    static func request() { UserDefaults.standard.set(true, forKey: defaultsKey) }
-    static func consume() -> Bool {
-        guard UserDefaults.standard.bool(forKey: defaultsKey) else { return false }
-        UserDefaults.standard.removeObject(forKey: defaultsKey)
-        return true
+    static let notification = Notification.Name("ClearPocketQuickEntryRequest")
+    static func request(_ draft: QuickEntryDraft = QuickEntryDraft()) {
+        guard let data = try? JSONEncoder().encode(draft) else { return }
+        UserDefaults.standard.set(data, forKey: defaultsKey)
+        NotificationCenter.default.post(name: notification, object: nil)
     }
+    static func consume() -> QuickEntryDraft? {
+        // Preserve one-shot compatibility with builds that stored a Boolean marker.
+        if UserDefaults.standard.bool(forKey: defaultsKey) {
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+            return QuickEntryDraft()
+        }
+        guard let data = UserDefaults.standard.data(forKey: defaultsKey) else { return nil }
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
+        guard let draft = try? JSONDecoder().decode(QuickEntryDraft.self, from: data),
+              draft.isFresh() else { return nil }
+        return draft
+    }
+}
+
+enum QuickEntryKind: String, AppEnum, CaseIterable {
+    case expense, income
+
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Transaction Type")
+    static let caseDisplayRepresentations: [QuickEntryKind: DisplayRepresentation] = [
+        .expense: "Expense",
+        .income: "Income"
+    ]
 }
 
 enum WorkspaceShortcutDestination: String, AppEnum, CaseIterable {
@@ -54,9 +111,19 @@ struct OpenClearPocketTransactionIntent: AppIntent {
     static let description = IntentDescription("Open the active ClearPocket budget directly to a new transaction.")
     static let openAppWhenRun = true
 
+    @Parameter(title: "Payee") var payee: String?
+    @Parameter(title: "Amount", description: "Enter the amount as currency text, such as 12.34.") var amount: String?
+    @Parameter(title: "Memo") var memo: String?
+    @Parameter(title: "Type") var kind: QuickEntryKind?
+
     @MainActor
     func perform() async throws -> some IntentResult {
-        QuickEntryRequest.request()
+        QuickEntryRequest.request(QuickEntryDraft(
+            payee: payee,
+            amount: amount,
+            memo: memo,
+            isInflow: kind == .income
+        ))
         return .result()
     }
 }

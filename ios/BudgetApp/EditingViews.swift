@@ -34,7 +34,7 @@ struct TransactionEntryView: View {
     @State private var receiptSuggestion: ReceiptSuggestion?
     @State private var isScanningReceipt = false
 
-    init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], groups: [APICategoryGroup] = [], initialAccountID: String? = nil, initialCategoryID: String? = nil, initialIsInflow: Bool = false, onSaved: @escaping () async -> Void) {
+    init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], groups: [APICategoryGroup] = [], initialAccountID: String? = nil, initialCategoryID: String? = nil, initialPayee: String? = nil, initialAmount: String? = nil, initialMemo: String? = nil, initialIsInflow: Bool = false, onSaved: @escaping () async -> Void) {
         self.budget = budget
         self.accounts = accounts
         self.categories = categories
@@ -42,6 +42,9 @@ struct TransactionEntryView: View {
         self.onSaved = onSaved
         _accountID = State(initialValue: initialAccountID ?? "")
         _categoryID = State(initialValue: initialCategoryID)
+        _payee = State(initialValue: initialPayee ?? "")
+        _amount = State(initialValue: initialAmount ?? "")
+        _memo = State(initialValue: initialMemo ?? "")
         _isInflow = State(initialValue: initialIsInflow)
     }
 
@@ -54,12 +57,15 @@ struct TransactionEntryView: View {
                     }
                 }
                 TextField("Payee", text: $payee)
+                    .accessibilityIdentifier("transaction-payee")
                     .onChange(of: payee) { _, value in
                         if payeeID != nil && selectedPayeeName != value { payeeID = nil; selectedPayeeName = ""; suggestedCategoryID = nil }
                     }
                 Button("Choose saved payee", systemImage: "person.text.rectangle") { showPayeeSelector = true }.accessibilityIdentifier("saved-payee-menu")
                 CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode)
+                    .accessibilityIdentifier("transaction-amount")
                 Toggle("Income / inflow", isOn: $isInflow)
+                    .accessibilityIdentifier("transaction-inflow")
                 if selectedAccountIsDebt && !isInflow && !isSplit {
                     Picker("Classification", selection: $financialClassification) {
                         Text("Ordinary transaction").tag("")
@@ -127,6 +133,7 @@ struct TransactionEntryView: View {
                     Text("Transactions record money that has already happened. Use Schedule Transaction for a future expense, income, or transfer.")
                 }
                 TextField("Memo", text: $memo)
+                    .accessibilityIdentifier("transaction-memo")
                 Picker("Flag", selection: $flag) { Text("None").tag(""); Text("Red").tag("red"); Text("Orange").tag("orange"); Text("Yellow").tag("yellow"); Text("Green").tag("green"); Text("Blue").tag("blue"); Text("Purple").tag("purple") }
                 TextField("Tags (comma separated)", text: $tags)
                 Section("Receipt assistance") {

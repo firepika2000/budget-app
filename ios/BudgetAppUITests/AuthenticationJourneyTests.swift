@@ -394,6 +394,27 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.buttons["Cancel"].tap()
     }
 
+    func testParameterizedQuickEntryPrefillsCanonicalEditorWithoutSaving() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--demo", "--demo-screen=home", "--skip-guided-onboarding",
+            "--ui-test-quick-entry",
+            "--ui-test-quick-entry-payee=Corner Market",
+            "--ui-test-quick-entry-amount=12.34",
+            "--ui-test-quick-entry-memo=Shortcut lunch"
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["New Transaction"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["transaction-payee"].value as? String, "Corner Market")
+        XCTAssertEqual(app.textFields["transaction-memo"].value as? String, "Shortcut lunch")
+        XCTAssertEqual(app.textFields["transaction-amount"].value as? String, "12.34")
+        XCTAssertEqual(app.switches["transaction-inflow"].value as? String, "0")
+
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+    }
+
     func testHomeNeedsAttentionOpensCanonicalCategoryResolution() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=home"]

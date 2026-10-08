@@ -85,10 +85,15 @@ final class DemoStoreTests: XCTestCase {
     func testQuickEntryIntentRequestIsConsumedExactlyOnce() {
         UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey)
         defer { UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey) }
-        XCTAssertFalse(QuickEntryRequest.consume())
-        QuickEntryRequest.request()
-        XCTAssertTrue(QuickEntryRequest.consume())
-        XCTAssertFalse(QuickEntryRequest.consume())
+        XCTAssertNil(QuickEntryRequest.consume())
+        let draft = QuickEntryDraft(payee: " Corner Market ", amount: " 12.34 ", memo: " Lunch ", isInflow: false)
+        QuickEntryRequest.request(draft)
+        XCTAssertEqual(QuickEntryRequest.consume(), draft)
+        XCTAssertNil(QuickEntryRequest.consume())
+
+        QuickEntryRequest.request(QuickEntryDraft(payee: "Expired", createdAt: Date(timeIntervalSinceNow: -301)))
+        XCTAssertNil(QuickEntryRequest.consume())
+        XCTAssertNil(UserDefaults.standard.object(forKey: QuickEntryRequest.defaultsKey))
     }
 
     func testWidgetDeepLinkAcceptsOnlyKnownClearPocketDestinationsAndConsumesOnce() throws {
