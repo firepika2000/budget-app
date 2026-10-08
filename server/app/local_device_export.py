@@ -22,7 +22,7 @@ from .models import (
     Account, AccountDebtTerms, AllocationOperation, AllocationPosting, Budget,
     CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget, CategoryTargetRevision,
     CategoryTargetSnooze, CreditCardReserveEvent, Household, Payee, PayeeAlias,
-    DebtPayoffPlan, ImportBatch, PayeeBudgetPreference, ScheduledTransaction, Transaction, TransactionAttachment,
+    DebtPayoffPlan, ImportBatch, PayeeBudgetPreference, ScheduledTransaction, ScheduledTransactionRevision, Transaction, TransactionAttachment,
     Reconciliation, TransactionChange, TransactionSplit, User,
 )
 
@@ -181,6 +181,9 @@ def build_local_device_projection(
     target_revisions = list(db.scalars(select(CategoryTargetRevision).where(
         CategoryTargetRevision.budget_id == budget.id
     ).order_by(CategoryTargetRevision.created_at, CategoryTargetRevision.id)))
+    schedule_revisions = list(db.scalars(select(ScheduledTransactionRevision).where(
+        ScheduledTransactionRevision.budget_id == budget.id
+    ).order_by(ScheduledTransactionRevision.created_at, ScheduledTransactionRevision.id)))
     target_ids = [item.id for item in targets]
     snoozes: dict[str, list[str]] = defaultdict(list)
     if target_ids:
@@ -319,6 +322,13 @@ def build_local_device_projection(
         } for item in db.scalars(select(ScheduledTransaction).where(
             ScheduledTransaction.budget_id == budget.id
         ).order_by(ScheduledTransaction.id))],
+        "schedule_revisions": [{
+            "id": item.id, "budget_id": item.budget_id, "schedule_id": item.schedule_id,
+            "action": item.action, "actor_user_id": item.actor_user_id,
+            "before_json": json.dumps(item.before_snapshot, sort_keys=True, separators=(",", ":")) if item.before_snapshot is not None else None,
+            "after_json": json.dumps(item.after_snapshot, sort_keys=True, separators=(",", ":")) if item.after_snapshot is not None else None,
+            "transaction_ids": item.transaction_ids, "created_at": _iso(item.created_at),
+        } for item in schedule_revisions],
         "attachments": [{
             "id": item.id, "transaction_id": item.transaction_id,
             "filename": item.filename, "content_type": item.content_type,

@@ -443,6 +443,11 @@ Agents and implementation plans must not begin the following merely because adja
 The roadmap is a living document, but changing it is a deliberate product decision—not an incidental side effect of implementation.
 ## Current development checkpoints
 
+- Scheduled Transactions now retain immutable attributed decision history for create, edit,
+  pause/resume, realization and deletion. The bounded production history screen shares one contract
+  across Budget Server, Demo and Local Device; privacy is evaluated against both sides of a resource
+  change before pagination, and exact money plus realization lineage survive export and deletion.
+
 - The v0.10 File Import Engine is an engineering candidate across Budget Server and Local Device.
   CSV/TSV/delimited text, OFX/QFX, QIF, MT940, CAMT and conservative PDF recognition enter one
   bounded, money-neutral review flow with duplicate suggestions, explicit approval, durable history,

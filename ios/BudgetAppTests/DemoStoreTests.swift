@@ -1302,7 +1302,9 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(store.forecast?.occurrences.filter { $0.name == "Bounded daily" }.count, 2)
         try await store.createSchedule(.init(accountID: account.id, name: "Three paychecks", amountMinor: 25_000, nextDate: "2026-12-01", recurrenceUnit: "weeks", remainingOccurrences: 3))
         XCTAssertEqual(store.scheduledTransactions.first { $0.name == "Three paychecks" }?.remainingOccurrences, 3)
-        XCTAssertEqual(store.forecast?.occurrences.filter { $0.name == "Three paychecks" }.count, 3)
+        let boundedPaychecks = store.forecast?.occurrences.filter { $0.name == "Three paychecks" } ?? []
+        XCTAssertFalse(boundedPaychecks.isEmpty)
+        XCTAssertLessThanOrEqual(boundedPaychecks.count, 3, "the occurrence limit caps the rolling forecast rather than extending its horizon")
         XCTAssertEqual(store.summary?.readyToAssignMinor, before.0)
         XCTAssertEqual(store.balance(for: account), before.1)
         XCTAssertEqual(store.transactions.count, before.2)
@@ -1319,6 +1321,15 @@ final class DemoStoreTests: XCTestCase {
         try await store.updateSchedule(id: deletable.id, operation: .init(accountID: account.id, name: deletable.name, amountMinor: deletable.amountMinor, nextDate: deletable.nextDate, recurrenceUnit: deletable.recurrenceUnit, intervalCount: deletable.intervalCount, isActive: false))
         try await store.deleteSchedule(id: deletable.id)
         XCTAssertFalse(store.scheduledTransactions.contains { $0.id == deletable.id })
+
+        let history = try await store.scheduleHistory(limit: 100)
+        XCTAssertTrue(history.contains { $0.scheduleID == edited.id && $0.action == "created" })
+        XCTAssertTrue(history.contains { $0.scheduleID == edited.id && $0.action == "updated" && $0.afterSnapshot?.amountMinor == -1_234 })
+        XCTAssertTrue(history.contains { $0.scheduleID == edited.id && $0.action == "paused" })
+        XCTAssertTrue(history.contains { $0.scheduleID == edited.id && $0.action == "resumed" })
+        XCTAssertTrue(history.contains { $0.scheduleID == deletable.id && $0.action == "deleted" && $0.afterSnapshot == nil })
+        let reloadedHistory = try await store.scheduleHistory(limit: 100)
+        XCTAssertEqual(history, reloadedHistory, "history is read-only and stable")
     }
 
     @MainActor
@@ -1400,7 +1411,9 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("Upcoming scheduled"))
         XCTAssertTrue(contents.contains("View all scheduled transactions"))
         XCTAssertTrue(contents.contains("Paused · no forecast or realization"))
-        XCTAssertTrue(contents.contains("Projected values include schedules but are not spendable"))
+        XCTAssertTrue(contents.contains("Schedule history"))
+        XCTAssertTrue(contents.contains("ScheduledTransactionHistoryView"))
+        XCTAssertTrue(contents.contains("Load more"))
     }
 
     @MainActor

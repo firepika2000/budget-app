@@ -375,6 +375,7 @@ protocol PayeeCommandRepository: AnyObject {
 
 @MainActor
 protocol ScheduleCommandRepository: AnyObject {
+    func scheduleHistory(limit: Int, offset: Int) async throws -> [APIScheduledTransactionRevision]
     func createSchedule(_ operation: ScheduleOperation) async throws
     func updateSchedule(id: String, operation: ScheduleOperation) async throws
     func deleteSchedule(id: String) async throws

@@ -556,6 +556,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var debtPayoffPlanValue: APIDebtPayoffPlanUpsert?
     private var accessProfiles: [String: APIAccessProfile] = [:]
     private var demoTargetRevisions: [APICategoryTargetRevision] = []
+    private var demoScheduleRevisions: [APIScheduledTransactionRevision] = []
     private let now: () -> Date
     private struct InvitationRecord {
         let id: String; let email: String; let role: String
@@ -1158,12 +1159,18 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             to: previous.targetRevisions ?? [], budgetID: localIdentity.budgetID,
             actorUserID: localIdentity.ownerUserID, createdAt: stamp
         )
+        let scheduleRevisions = try appendingScheduleRevisions(
+            previous: previous, current: projected,
+            to: previous.scheduleRevisions ?? [], budgetID: localIdentity.budgetID,
+            actorUserID: localIdentity.ownerUserID, createdAt: stamp
+        )
         let value = LocalAuthoritySnapshot(
             identity: projected.identity, accounts: projected.accounts, groups: projected.groups,
             categories: projected.categories, payees: projected.payees,
             payeeAliases: projected.payeeAliases, transactions: projected.transactions,
             allocations: projected.allocations, reconciliations: projected.reconciliations,
             targets: projected.targets, targetRevisions: targetRevisions, schedules: projected.schedules,
+            scheduleRevisions: scheduleRevisions,
             attachments: projected.attachments,
             attachmentTombstones: projected.attachmentTombstones, debtTerms: projected.debtTerms,
             debtPayoffPlans: debtPayoffPlanValue.map { item in [LocalDebtPayoffPlanRecord(
@@ -1240,6 +1247,53 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private func targetSnapshotJSON(_ value: LocalCategoryTargetRecord) throws -> String {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         return String(decoding: try encoder.encode(targetRuleSnapshot(value)), as: UTF8.self)
+    }
+
+    private func appendingScheduleRevisions(
+        previous: LocalAuthoritySnapshot, current: LocalAuthoritySnapshot,
+        to existing: [LocalScheduledTransactionRevisionRecord], budgetID: String,
+        actorUserID: String, createdAt: String
+    ) throws -> [LocalScheduledTransactionRevisionRecord] {
+        let old = Dictionary(uniqueKeysWithValues: previous.schedules.map { ($0.id, $0) })
+        let new = Dictionary(uniqueKeysWithValues: current.schedules.map { ($0.id, $0) })
+        let previousTransactions = Set(previous.transactions.map(\.id))
+        var result = existing
+        for scheduleID in Set(old.keys).union(new.keys).sorted() {
+            let before = old[scheduleID], after = new[scheduleID]
+            if before == nil, let after {
+                result.append(.init(id: UUID().uuidString, budgetID: budgetID, scheduleID: scheduleID,
+                                    action: "created", actorUserID: actorUserID,
+                                    afterJSON: try scheduleSnapshotJSON(after), createdAt: createdAt))
+            } else if let before, after == nil {
+                result.append(.init(id: UUID().uuidString, budgetID: budgetID, scheduleID: scheduleID,
+                                    action: "deleted", actorUserID: actorUserID,
+                                    beforeJSON: try scheduleSnapshotJSON(before), createdAt: createdAt))
+            } else if let before, let after, before != after {
+                let realized = before.lastRealizedOn != after.lastRealizedOn
+                let action = realized ? "realized" : before.isActive == after.isActive ? "updated" : after.isActive ? "resumed" : "paused"
+                let transactionIDs = realized ? current.transactions.filter {
+                    $0.scheduledTransactionID == scheduleID && !previousTransactions.contains($0.id)
+                }.map(\.id).sorted() : nil
+                result.append(.init(id: UUID().uuidString, budgetID: budgetID, scheduleID: scheduleID,
+                                    action: action, actorUserID: actorUserID,
+                                    beforeJSON: try scheduleSnapshotJSON(before), afterJSON: try scheduleSnapshotJSON(after),
+                                    transactionIDs: transactionIDs, createdAt: createdAt))
+            }
+        }
+        return result
+    }
+
+    private func scheduleSnapshotJSON(_ value: LocalScheduleRecord) throws -> String {
+        let snapshot = APIScheduledTransactionSnapshot(
+            accountID: value.accountID, destinationAccountID: value.destinationAccountID,
+            categoryID: value.categoryID, payeeID: value.payeeID, name: value.name,
+            amountMinor: value.amountMinor, nextDate: value.nextDate,
+            recurrenceUnit: value.recurrenceUnit, intervalCount: Int(value.intervalCount),
+            endDate: value.endDate, remainingOccurrences: value.remainingOccurrences.map(Int.init),
+            memo: value.memo, financialClassification: value.financialClassification,
+            isActive: value.isActive, lastRealizedOn: value.lastRealizedOn)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return String(decoding: try encoder.encode(snapshot), as: UTF8.self)
     }
 
     private func transactionRows(categoryIDs: Set<String>) throws -> [APITransaction] {
@@ -2623,6 +2677,33 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             actorDisplayName: demo.persona.rawValue, beforeSnapshot: before, afterSnapshot: after,
             affectedMonth: affectedMonth, createdAt: ISO8601DateFormatter().string(from: now())))
     }
+    private func scheduleSnapshot(_ value: ScheduleOperation) -> APIScheduledTransactionSnapshot {
+        .init(accountID: value.accountID, destinationAccountID: value.destinationAccountID,
+              categoryID: value.categoryID, payeeID: value.payeeID, name: value.name,
+              amountMinor: value.amountMinor, nextDate: value.nextDate,
+              recurrenceUnit: value.recurrenceUnit, intervalCount: value.intervalCount,
+              endDate: value.endDate, remainingOccurrences: value.remainingOccurrences,
+              memo: value.memo, financialClassification: value.financialClassification,
+              isActive: value.isActive)
+    }
+    private func scheduleSnapshot(_ value: DemoSchedule) -> APIScheduledTransactionSnapshot {
+        .init(accountID: value.accountID, destinationAccountID: value.destinationAccountID,
+              categoryID: value.categoryID, name: value.name, amountMinor: value.amount,
+              nextDate: value.nextDate, recurrenceUnit: value.recurrenceUnit,
+              intervalCount: value.intervalCount, endDate: value.endDate,
+              remainingOccurrences: value.remainingOccurrences, memo: value.memo,
+              financialClassification: value.financialClassification, isActive: value.isActive,
+              lastRealizedOn: value.lastRealizedOn)
+    }
+    private func appendDemoScheduleRevision(scheduleID: String, action: String,
+                                            before: APIScheduledTransactionSnapshot?,
+                                            after: APIScheduledTransactionSnapshot?,
+                                            transactionIDs: [String]? = nil) {
+        demoScheduleRevisions.append(.init(id: UUID().uuidString, scheduleID: scheduleID,
+            action: action, actorUserID: requestActorID, actorDisplayName: demo.persona.rawValue,
+            beforeSnapshot: before, afterSnapshot: after, transactionIDs: transactionIDs,
+            createdAt: ISO8601DateFormatter().string(from: now())))
+    }
     private func scheduleVisible(_ item: DemoSchedule) -> Bool {
         let accounts = actorAccountIDs
         return accounts.contains(item.accountID) && (item.destinationAccountID.map(accounts.contains) ?? true)
@@ -2693,17 +2774,27 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             throw APIClientError.server(status: 422, message: "A new occurrence limit must be at least one")
         }
         try validateScheduleResources(accountID: operation.accountID, destinationID: operation.destinationAccountID, categoryID: operation.categoryID)
-        demo.schedules.append(.init(id: UUID().uuidString, accountID: operation.accountID, destinationAccountID: operation.destinationAccountID, categoryID: operation.categoryID, name: operation.name, amount: operation.amountMinor, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, endDate: operation.endDate, remainingOccurrences: operation.remainingOccurrences, memo: operation.memo, financialClassification: operation.financialClassification, isActive: operation.isActive))
+        let id = UUID().uuidString
+        demo.schedules.append(.init(id: id, accountID: operation.accountID, destinationAccountID: operation.destinationAccountID, categoryID: operation.categoryID, name: operation.name, amount: operation.amountMinor, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, endDate: operation.endDate, remainingOccurrences: operation.remainingOccurrences, memo: operation.memo, financialClassification: operation.financialClassification, isActive: operation.isActive))
+        appendDemoScheduleRevision(scheduleID: id, action: "created", before: nil, after: scheduleSnapshot(operation))
+        try await synchronizeLocalAuthority()
     }
     func updateSchedule(id: String, operation: ScheduleOperation) async throws { try requireActiveMembership();
         let index = try scheduleCommandSource(id: id, capability: "manage_planning")
         try validateScheduleShape(operation)
         try validateScheduleResources(accountID: operation.accountID, destinationID: operation.destinationAccountID, categoryID: operation.categoryID)
+        let before = scheduleSnapshot(demo.schedules[index])
         demo.schedules[index].accountID = operation.accountID; demo.schedules[index].destinationAccountID = operation.destinationAccountID; demo.schedules[index].categoryID = operation.categoryID; demo.schedules[index].name = operation.name; demo.schedules[index].amount = operation.amountMinor; demo.schedules[index].nextDate = operation.nextDate; demo.schedules[index].recurrenceUnit = operation.recurrenceUnit; demo.schedules[index].intervalCount = operation.intervalCount; demo.schedules[index].endDate = operation.endDate; demo.schedules[index].remainingOccurrences = operation.remainingOccurrences; demo.schedules[index].memo = operation.memo; demo.schedules[index].financialClassification = operation.financialClassification; demo.schedules[index].isActive = operation.isActive
+        let after = scheduleSnapshot(demo.schedules[index])
+        if before != after { appendDemoScheduleRevision(scheduleID: id, action: before.isActive == after.isActive ? "updated" : after.isActive ? "resumed" : "paused", before: before, after: after) }
+        try await synchronizeLocalAuthority()
     }
     func deleteSchedule(id: String) async throws { try requireActiveMembership();
         let index = try scheduleCommandSource(id: id, capability: "manage_planning")
+        let before = scheduleSnapshot(demo.schedules[index])
         demo.schedules.remove(at: index)
+        appendDemoScheduleRevision(scheduleID: id, action: "deleted", before: before, after: nil)
+        try await synchronizeLocalAuthority()
     }
     func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation { try requireActiveMembership();
         let index = try scheduleCommandSource(id: id, capability: "create_transaction")
@@ -2729,8 +2820,26 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             guard remaining != 0 else { return nil }
             return item.endDate.map { value <= BudgetWorkspaceStore.parseDate($0) } ?? true ? value : nil
         }
+        let beforeSnapshot = scheduleSnapshot(item)
         demo.schedules[index].remainingOccurrences = remaining; demo.schedules[index].lastRealizedOn = item.nextDate; demo.schedules[index].isActive = next != nil; if let next { demo.schedules[index].nextDate = BudgetWorkspaceStore.dateString(next) }
+        appendDemoScheduleRevision(scheduleID: id, action: "realized", before: beforeSnapshot, after: scheduleSnapshot(demo.schedules[index]), transactionIDs: transactionIDs)
+        try await synchronizeLocalAuthority()
         return ScheduledRealizationObservation(scheduleID: id, transactionIDs: transactionIDs, realizedOn: item.nextDate, nextDate: next.map(BudgetWorkspaceStore.dateString), isActive: next != nil, lastRealizedOn: item.nextDate)
+    }
+    func scheduleHistory(limit: Int, offset: Int) async throws -> [APIScheduledTransactionRevision] {
+        try requireActiveMembership()
+        guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Invalid schedule-history page.") }
+        if let localAuthority, let localIdentity {
+            let decoder = JSONDecoder()
+            return try await localAuthority.scheduledTransactionRevisions(budgetID: localIdentity.budgetID, limit: limit, offset: offset).map { row in
+                .init(id: row.id, scheduleID: row.scheduleID, action: row.action,
+                      actorUserID: row.actorUserID, actorDisplayName: localIdentity.ownerDisplayName,
+                      beforeSnapshot: try row.beforeJSON.map { try decoder.decode(APIScheduledTransactionSnapshot.self, from: Data($0.utf8)) },
+                      afterSnapshot: try row.afterJSON.map { try decoder.decode(APIScheduledTransactionSnapshot.self, from: Data($0.utf8)) },
+                      transactionIDs: row.transactionIDs, createdAt: row.createdAt)
+            }
+        }
+        return Array(demoScheduleRevisions.reversed().dropFirst(offset).prefix(limit))
     }
     func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws { try requireActiveMembership();
         guard requestCapability("approve_request"), let index = demo.requests.firstIndex(where: { $0.id == id }), requestVisible(demo.requests[index]) else { throw workspaceRepositoryError("Request approval is not permitted.") }
@@ -2998,6 +3107,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         try await client.setCategoryTargetSnoozed(budgetID: budget.id, categoryID: categoryID, month: month, isSnoozed: isSnoozed, token: token)
     }
     func createSchedule(_ operation: ScheduleOperation) async throws { try await credentials.prepare(); _ = try await client.createScheduledTransaction(budgetID: budget.id, schedule: operation.apiValue, token: token) }
+    func scheduleHistory(limit: Int, offset: Int) async throws -> [APIScheduledTransactionRevision] { try await credentials.prepare(); return try await client.scheduledTransactionHistory(budgetID: budget.id, limit: limit, offset: offset, token: token) }
     func updateSchedule(id: String, operation: ScheduleOperation) async throws { try await credentials.prepare(); _ = try await client.updateScheduledTransaction(budgetID: budget.id, scheduleID: id, schedule: operation.apiValue, token: token) }
     func deleteSchedule(id: String) async throws { try await credentials.prepare(); try await client.deleteScheduledTransaction(budgetID: budget.id, scheduleID: id, token: token) }
     func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation {
@@ -4149,6 +4259,10 @@ final class BudgetWorkspaceStore: ObservableObject {
     func createSchedule(_ operation: ScheduleOperation) async throws {
         try await services().schedules.create(operation)
         await refresh()
+    }
+
+    func scheduleHistory(limit: Int = 50, offset: Int = 0) async throws -> [APIScheduledTransactionRevision] {
+        try await commands().scheduleHistory(limit: limit, offset: offset)
     }
 
     func updateSchedule(id: String, operation: ScheduleOperation) async throws {
@@ -8336,6 +8450,7 @@ private struct LiveScheduledTransactionsView: View {
     var body: some View {
         List {
             Section { Text("Scheduled money is a forecast only. It changes no balance, category, or Available amount until you explicitly enter it.").font(.footnote).foregroundStyle(.secondary) }
+            Section { NavigationLink { ScheduledTransactionHistoryView() } label: { Label("Schedule history", systemImage: "clock.arrow.circlepath") } }
             if store.scheduledTransactions.isEmpty && !store.isLoading { ContentUnavailableView("No scheduled transactions", systemImage: "calendar.badge.plus", description: Text("Add recurring bills, income, or transfers without posting them early.")) }
             scheduleSection("Due", values: due)
             scheduleSection("Upcoming", values: upcoming)
@@ -8349,6 +8464,38 @@ private struct LiveScheduledTransactionsView: View {
     @ViewBuilder private func scheduleSection(_ title: String, values: [APIScheduledTransaction]) -> some View {
         if !values.isEmpty { Section(title) { ForEach(values) { item in NavigationLink { LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode) } label: { ScheduledTransactionRow(item: item) } } } }
     }
+}
+
+private struct ScheduledTransactionHistoryView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @State private var rows: [APIScheduledTransactionRevision] = []
+    @State private var loading = true
+    @State private var error: String?
+    private let pageSize = 50
+    var body: some View {
+        List {
+            if let error { Section { ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle", description: Text(error)); Button("Try Again") { Task { await load() } } } }
+            else if rows.isEmpty && !loading { ContentUnavailableView("No schedule decisions yet", systemImage: "clock.arrow.circlepath", description: Text("Creates, edits, pauses, entries, and deletions will appear here.")) }
+            ForEach(rows) { row in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack { Label(title(row.action), systemImage: symbol(row.action)).fontWeight(.semibold); Spacer(); Text(BudgetWorkspaceStore.compactDate(String(row.createdAt.prefix(10)))).font(.caption).foregroundStyle(.secondary) }
+                    Text(row.afterSnapshot?.name ?? row.beforeSnapshot?.name ?? "Scheduled transaction")
+                    if let snapshot = row.afterSnapshot ?? row.beforeSnapshot { Text("\(store.format(snapshot.amountMinor)) · \(snapshot.recurrenceUnit == "once" ? "Once" : "Every \(snapshot.intervalCount) \(snapshot.recurrenceUnit)")").font(.caption).foregroundStyle(.secondary) }
+                    Text("By \(row.actorDisplayName ?? "household member")").font(.caption2).foregroundStyle(.secondary)
+                    if row.action == "realized", let count = row.transactionIDs?.count { Text("\(count) posted transaction\(count == 1 ? "" : "s")").font(.caption2).foregroundStyle(.secondary) }
+                }.accessibilityElement(children: .combine)
+            }
+            if rows.count >= pageSize { Section { Button("Load More") { Task { await loadMore() } } } }
+        }
+        .navigationTitle("Schedule History")
+        .overlay { if loading && rows.isEmpty { ProgressView() } }
+        .task { await load() }
+        .refreshable { await load() }
+    }
+    private func title(_ action: String) -> String { switch action { case "created": "Created"; case "updated": "Updated"; case "paused": "Paused"; case "resumed": "Resumed"; case "deleted": "Deleted"; case "realized": "Entered"; default: action.capitalized } }
+    private func symbol(_ action: String) -> String { switch action { case "created": "plus.circle"; case "paused": "pause.circle"; case "resumed": "play.circle"; case "deleted": "trash"; case "realized": "checkmark.circle"; default: "pencil.circle" } }
+    @MainActor private func load() async { loading = true; error = nil; defer { loading = false }; do { rows = try await store.scheduleHistory(limit: pageSize, offset: 0) } catch { self.error = error.localizedDescription } }
+    @MainActor private func loadMore() async { do { rows += try await store.scheduleHistory(limit: pageSize, offset: rows.count) } catch { self.error = error.localizedDescription } }
 }
 
 private struct ScheduledTransactionRow: View {

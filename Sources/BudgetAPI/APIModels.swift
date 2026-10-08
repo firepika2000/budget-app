@@ -434,6 +434,74 @@ public struct APIScheduledRealization: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIScheduledTransactionSnapshot: Codable, Equatable, Sendable {
+    public let accountID: String
+    public let destinationAccountID: String?
+    public let categoryID: String?
+    public let payeeID: String?
+    public let name: String
+    public let amountMinor: Int64
+    public let nextDate: String
+    public let recurrenceUnit: String
+    public let intervalCount: Int
+    public let endDate: String?
+    public let remainingOccurrences: Int?
+    public let memo: String
+    public let financialClassification: String?
+    public let isActive: Bool
+    public let lastRealizedOn: String?
+    public init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil,
+                payeeID: String? = nil, name: String, amountMinor: Int64, nextDate: String,
+                recurrenceUnit: String, intervalCount: Int, endDate: String? = nil,
+                remainingOccurrences: Int? = nil, memo: String = "",
+                financialClassification: String? = nil, isActive: Bool = true,
+                lastRealizedOn: String? = nil) {
+        self.accountID = accountID; self.destinationAccountID = destinationAccountID
+        self.categoryID = categoryID; self.payeeID = payeeID; self.name = name
+        self.amountMinor = amountMinor; self.nextDate = nextDate; self.recurrenceUnit = recurrenceUnit
+        self.intervalCount = intervalCount; self.endDate = endDate
+        self.remainingOccurrences = remainingOccurrences; self.memo = memo
+        self.financialClassification = financialClassification; self.isActive = isActive
+        self.lastRealizedOn = lastRealizedOn
+    }
+    enum CodingKeys: String, CodingKey {
+        case name, memo
+        case accountID = "account_id", destinationAccountID = "destination_account_id"
+        case categoryID = "category_id", payeeID = "payee_id", amountMinor = "amount_minor"
+        case nextDate = "next_date", recurrenceUnit = "recurrence_unit", intervalCount = "interval_count"
+        case endDate = "end_date", remainingOccurrences = "remaining_occurrences"
+        case financialClassification = "financial_classification", isActive = "is_active"
+        case lastRealizedOn = "last_realized_on"
+    }
+}
+
+public struct APIScheduledTransactionRevision: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let scheduleID: String
+    public let action: String
+    public let actorUserID: String
+    public let actorDisplayName: String?
+    public let beforeSnapshot: APIScheduledTransactionSnapshot?
+    public let afterSnapshot: APIScheduledTransactionSnapshot?
+    public let transactionIDs: [String]?
+    public let createdAt: String
+    public init(id: String, scheduleID: String, action: String, actorUserID: String,
+                actorDisplayName: String? = nil, beforeSnapshot: APIScheduledTransactionSnapshot? = nil,
+                afterSnapshot: APIScheduledTransactionSnapshot? = nil, transactionIDs: [String]? = nil,
+                createdAt: String) {
+        self.id = id; self.scheduleID = scheduleID; self.action = action
+        self.actorUserID = actorUserID; self.actorDisplayName = actorDisplayName
+        self.beforeSnapshot = beforeSnapshot; self.afterSnapshot = afterSnapshot
+        self.transactionIDs = transactionIDs; self.createdAt = createdAt
+    }
+    enum CodingKeys: String, CodingKey {
+        case id, action
+        case scheduleID = "schedule_id", actorUserID = "actor_user_id", actorDisplayName = "actor_display_name"
+        case beforeSnapshot = "before_snapshot", afterSnapshot = "after_snapshot"
+        case transactionIDs = "transaction_ids", createdAt = "created_at"
+    }
+}
+
 public struct APIBootstrapStatus: Decodable, Equatable, Sendable {
     public let initialized: Bool
     public let authenticationRequired: Bool

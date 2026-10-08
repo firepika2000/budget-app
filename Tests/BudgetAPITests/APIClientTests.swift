@@ -1319,6 +1319,25 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(methods, ["PUT", "DELETE"])
     }
 
+    func testScheduledHistoryUsesBoundedAttributedExactContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/scheduled-transactions/history")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(items.first(where: { $0.name == "limit" })?.value, "25")
+            XCTAssertEqual(items.first(where: { $0.name == "offset" })?.value, "50")
+            let data = Data(#"[{"id":"revision","schedule_id":"schedule","action":"realized","actor_user_id":"owner","actor_display_name":"Owner","before_snapshot":{"account_id":"checking","destination_account_id":null,"category_id":"groceries","payee_id":"market","name":"Groceries","amount_minor":-9007199254740992,"next_date":"2026-10-01","recurrence_unit":"months","interval_count":1,"end_date":null,"remaining_occurrences":null,"memo":"","financial_classification":null,"is_active":true,"last_realized_on":null},"after_snapshot":{"account_id":"checking","destination_account_id":null,"category_id":"groceries","payee_id":"market","name":"Groceries","amount_minor":-9007199254740992,"next_date":"2026-11-01","recurrence_unit":"months","interval_count":1,"end_date":null,"remaining_occurrences":null,"memo":"","financial_classification":null,"is_active":true,"last_realized_on":"2026-10-01"},"transaction_ids":["transaction"],"created_at":"2026-10-08T18:00:00Z"}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let rows = try await client.scheduledTransactionHistory(budgetID: "b1", limit: 25, offset: 50, token: "rotated")
+        XCTAssertEqual(rows.first?.afterSnapshot?.amountMinor, -9_007_199_254_740_992)
+        XCTAssertEqual(rows.first?.transactionIDs, ["transaction"])
+    }
+
     func testScheduledTransactionCreateListAndRealizeUseContractPaths() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

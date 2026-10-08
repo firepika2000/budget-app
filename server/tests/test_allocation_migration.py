@@ -96,7 +96,7 @@ def test_0031_pairing_upgrade_preserves_existing_refresh_sessions(tmp_path, monk
             "SELECT id,user_id,token_hash,device_name FROM refresh_sessions"
         )).one() == ("existing-device", "pair-user", "a" * 64, None)
         assert connection.execute(text("SELECT COUNT(*) FROM pairing_codes")).scalar_one() == 0
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0032_offline_txn_idempotency"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ScriptDirectory.from_config(config).get_current_head()
 
     command.downgrade(config, "0030_import_staging")
     with engine.connect() as connection:
@@ -155,7 +155,7 @@ def test_0027_interest_classification_preserves_populated_history(tmp_path, monk
     with engine.connect() as connection:
         row = connection.execute(text("SELECT amount_minor, financial_classification FROM transactions WHERE id='t-interest'")).one()
         assert row == (-1234, None)
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0032_offline_txn_idempotency"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ScriptDirectory.from_config(config).get_current_head()
     command.downgrade(config, "0026_debt_terms")
     with engine.connect() as connection:
         assert connection.execute(text("SELECT amount_minor FROM transactions WHERE id='t-interest'")).scalar_one() == -1234
@@ -197,7 +197,7 @@ def test_0028_snooze_upgrade_downgrade_preserves_populated_financial_rows(tmp_pa
                     f"SELECT {', '.join(before_columns[table])} FROM {table}"
                 )).all() == rows
             if revision == "head":
-                assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0032_offline_txn_idempotency"
+                assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ScriptDirectory.from_config(config).get_current_head()
                 assert connection.execute(text("SELECT COUNT(*) FROM category_target_snoozes")).scalar_one() == 0
 
 

@@ -632,6 +632,9 @@ public struct APIClient {
     public func scheduledTransactions(budgetID: String, includeInactive: Bool = false, token: String) async throws -> [APIScheduledTransaction] {
         try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions", queryItems: includeInactive ? [URLQueryItem(name: "include_inactive", value: "true")] : [], token: token)
     }
+    public func scheduledTransactionHistory(budgetID: String, limit: Int = 50, offset: Int = 0, token: String) async throws -> [APIScheduledTransactionRevision] {
+        try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions/history", queryItems: [URLQueryItem(name: "limit", value: String(limit)), URLQueryItem(name: "offset", value: String(offset))], token: token)
+    }
     public func createScheduledTransaction(budgetID: String, schedule: APIScheduledTransactionCreate, token: String) async throws -> APIScheduledTransaction {
         try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions", method: "POST", token: token, body: schedule)
     }

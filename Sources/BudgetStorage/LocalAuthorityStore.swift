@@ -286,6 +286,21 @@ public struct LocalScheduleRecord: Codable, Equatable, Sendable {
     }
 }
 
+public struct LocalScheduledTransactionRevisionRecord: Codable, Equatable, Sendable {
+    public let id: String; public let budgetID: String; public let scheduleID: String
+    public let action: String; public let actorUserID: String
+    public let beforeJSON: String?; public let afterJSON: String?
+    public let transactionIDs: [String]?; public let createdAt: String
+    public init(id: String, budgetID: String, scheduleID: String, action: String,
+                actorUserID: String, beforeJSON: String? = nil, afterJSON: String? = nil,
+                transactionIDs: [String]? = nil, createdAt: String) {
+        self.id = id; self.budgetID = budgetID; self.scheduleID = scheduleID
+        self.action = action; self.actorUserID = actorUserID
+        self.beforeJSON = beforeJSON; self.afterJSON = afterJSON
+        self.transactionIDs = transactionIDs; self.createdAt = createdAt
+    }
+}
+
 public struct LocalAccountDebtTermsRecord: Codable, Equatable, Sendable {
     public let accountID: String; public let termsType: String; public let annualRateBasisPoints: Int64?
     public let rateType: String?; public let paymentFrequency: String?; public let scheduledPaymentMinor: Int64?
@@ -502,6 +517,7 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
     public let targets: [LocalCategoryTargetRecord]
     public let targetRevisions: [LocalCategoryTargetRevisionRecord]?
     public let schedules: [LocalScheduleRecord]
+    public let scheduleRevisions: [LocalScheduledTransactionRevisionRecord]?
     public let attachments: [LocalAttachmentRecord]
     public let attachmentTombstones: [LocalAttachmentTombstoneRecord]
     public let debtTerms: [LocalAccountDebtTermsRecord]
@@ -518,7 +534,8 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
                 transactions: [LocalTransactionRecord], allocations: [LocalAllocationRecord],
                 reconciliations: [LocalReconciliationRecord], targets: [LocalCategoryTargetRecord],
                 targetRevisions: [LocalCategoryTargetRevisionRecord]? = nil,
-                schedules: [LocalScheduleRecord], attachments: [LocalAttachmentRecord],
+                schedules: [LocalScheduleRecord], scheduleRevisions: [LocalScheduledTransactionRevisionRecord]? = nil,
+                attachments: [LocalAttachmentRecord],
                 attachmentTombstones: [LocalAttachmentTombstoneRecord] = [],
                 debtTerms: [LocalAccountDebtTermsRecord] = [],
                 debtPayoffPlans: [LocalDebtPayoffPlanRecord]? = nil,
@@ -531,7 +548,7 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
         self.categories = categories; self.payees = payees; self.payeeAliases = payeeAliases
         self.transactions = transactions; self.allocations = allocations
         self.reconciliations = reconciliations; self.targets = targets; self.targetRevisions = targetRevisions
-        self.schedules = schedules; self.attachments = attachments
+        self.schedules = schedules; self.scheduleRevisions = scheduleRevisions; self.attachments = attachments
         self.attachmentTombstones = attachmentTombstones
         self.debtTerms = debtTerms; self.debtPayoffPlans = debtPayoffPlans
         self.cashRolloverPolicies = cashRolloverPolicies
@@ -793,6 +810,14 @@ public actor LocalAuthorityStore {
         try requireOneChange(changes, record: "schedule")
     }
 
+    public func scheduledTransactionRevisions(budgetID: String, limit: Int = 50, offset: Int = 0) async throws -> [LocalScheduledTransactionRevisionRecord] {
+        guard (1...100).contains(limit), offset >= 0 else { throw LocalStorageError.operationFailed("Invalid schedule-history page") }
+        return try await database.rows(.init(
+            "SELECT * FROM scheduled_transaction_revisions WHERE budget_id=? ORDER BY created_at DESC,rowid DESC LIMIT ? OFFSET ?",
+            values: [.text(budgetID), .integer(Int64(limit)), .integer(Int64(offset))]
+        )).map(scheduleRevisionRecord)
+    }
+
     public func upsertStatementImport(_ value: LocalStatementImportRecord) async throws {
         guard value.version > 0, value.candidateCount >= 0 else {
             throw LocalStorageError.operationFailed("Statement import metadata is invalid")
@@ -900,6 +925,7 @@ public actor LocalAuthorityStore {
         let targets = try await loadTargets(categoryIDs: Set(categories.map(\.id)))
         let targetRevisions = try await loadTargetRevisions(budgetID: budgetID)
         let schedules = try await loadSchedules(budgetID: budgetID)
+        let scheduleRevisions = try await loadScheduleRevisions(budgetID: budgetID)
         let attachments = try await loadAttachments(transactionIDs: Set(transactions.map(\.id)))
         let attachmentTombstones = try await loadAttachmentTombstones(budgetID: budgetID)
         let debtTerms = try await loadDebtTerms(accountIDs: Set(accounts.map(\.id)))
@@ -912,6 +938,7 @@ public actor LocalAuthorityStore {
         return .init(identity: identity, accounts: accounts, groups: groups, categories: categories,
                      payees: payees, payeeAliases: payeeAliases, transactions: transactions, allocations: allocations,
                      reconciliations: reconciliations, targets: targets, targetRevisions: targetRevisions, schedules: schedules,
+                     scheduleRevisions: scheduleRevisions,
                      attachments: attachments, attachmentTombstones: attachmentTombstones,
                      debtTerms: debtTerms, debtPayoffPlans: debtPayoffPlans, cashRolloverPolicies: rollover,
                      creditReserveAttributions: reserve, transactionChanges: changes,
@@ -935,6 +962,7 @@ public actor LocalAuthorityStore {
             .init("DELETE FROM credit_reserve_events WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM transaction_changes WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM category_target_revisions WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM scheduled_transaction_revisions WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM attachment_tombstones WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM attachments WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM reconciliations WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
@@ -988,6 +1016,9 @@ public actor LocalAuthorityStore {
         }
         statements += value.schedules.map { item in
             .init("INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active,financial_classification,last_realized_on,end_date,remaining_occurrences) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), optionalText(item.destinationAccountID), optionalText(item.categoryID), optionalText(item.payeeID), .text(item.name), .integer(item.amountMinor), .text(item.nextDate), .text(item.recurrenceUnit), .integer(item.intervalCount), .text(item.memo), .integer(item.isActive ? 1 : 0), optionalText(item.financialClassification), optionalText(item.lastRealizedOn), optionalText(item.endDate), optionalInteger(item.remainingOccurrences)])
+        }
+        statements += (value.scheduleRevisions ?? []).map { item in
+            .init("INSERT INTO scheduled_transaction_revisions(id,budget_id,schedule_id,action,actor_user_id,before_json,after_json,transaction_ids_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.scheduleID), .text(item.action), .text(item.actorUserID), optionalText(item.beforeJSON), optionalText(item.afterJSON), item.transactionIDs.map { .text(json($0)) } ?? .null, .text(item.createdAt)])
         }
         statements += value.attachments.map { item in
             .init("INSERT INTO attachments(id,transaction_id,filename,content_type,size_bytes,sha256,object_name,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.transactionID), .text(item.filename), .text(item.contentType), .integer(item.sizeBytes), .text(item.sha256), .text(item.objectName), .text(item.createdAt)])
@@ -1118,6 +1149,19 @@ public actor LocalAuthorityStore {
         try await database.rows(.init("SELECT * FROM scheduled_transactions WHERE budget_id=? ORDER BY next_date,id", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), accountID: text($0, "account_id"), destinationAccountID: optionalText($0, "destination_account_id"), categoryID: optionalText($0, "category_id"), payeeID: optionalText($0, "payee_id"), name: text($0, "name"), amountMinor: integer($0, "amount_minor"), nextDate: text($0, "next_date"), recurrenceUnit: text($0, "recurrence_unit"), intervalCount: integer($0, "interval_count"), memo: text($0, "memo"), endDate: optionalText($0, "end_date"), remainingOccurrences: optionalInteger($0, "remaining_occurrences"), isActive: bool($0, "is_active"), financialClassification: optionalText($0, "financial_classification"), lastRealizedOn: optionalText($0, "last_realized_on"))
         }
+    }
+
+    private func loadScheduleRevisions(budgetID: String) async throws -> [LocalScheduledTransactionRevisionRecord] {
+        try await database.rows(.init("SELECT * FROM scheduled_transaction_revisions WHERE budget_id=? ORDER BY created_at,rowid", values: [.text(budgetID)])).map(scheduleRevisionRecord)
+    }
+
+    private func scheduleRevisionRecord(_ row: LocalSQLiteRow) throws -> LocalScheduledTransactionRevisionRecord {
+        let transactionIDs = optionalText(row, "transaction_ids_json") == nil ? nil : stringArray(row, "transaction_ids_json")
+        return try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), scheduleID: text(row, "schedule_id"),
+                  action: text(row, "action"), actorUserID: text(row, "actor_user_id"),
+                  beforeJSON: optionalText(row, "before_json"), afterJSON: optionalText(row, "after_json"),
+                  transactionIDs: transactionIDs,
+                  createdAt: text(row, "created_at"))
     }
 
     private func loadDebtTerms(accountIDs: Set<String>) async throws -> [LocalAccountDebtTermsRecord] {

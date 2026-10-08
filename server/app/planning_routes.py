@@ -20,6 +20,7 @@ from .models import (
     CategoryTargetRevision,
     CategoryTargetSnooze,
     ScheduledTransaction,
+    ScheduledTransactionRevision,
     Transaction,
     User,
 )
@@ -37,11 +38,38 @@ from .schemas import (
     ScheduledRealizationResponse,
     ScheduledTransactionCreate,
     ScheduledTransactionResponse,
+    ScheduledTransactionRevisionResponse,
     ScheduledTransactionUpdate,
 )
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
+
+
+def _schedule_snapshot(schedule: ScheduledTransaction) -> dict:
+    return {
+        "account_id": schedule.account_id, "destination_account_id": schedule.destination_account_id,
+        "category_id": schedule.category_id, "payee_id": schedule.payee_id, "name": schedule.name,
+        "amount_minor": schedule.amount_minor, "next_date": schedule.next_date.isoformat(),
+        "recurrence_unit": schedule.recurrence_unit, "interval_count": schedule.interval_count,
+        "end_date": schedule.end_date.isoformat() if schedule.end_date else None,
+        "remaining_occurrences": schedule.remaining_occurrences, "memo": schedule.memo,
+        "financial_classification": schedule.financial_classification, "is_active": schedule.is_active,
+        "last_realized_on": schedule.last_realized_on.isoformat() if schedule.last_realized_on else None,
+    }
+
+
+def _append_schedule_revision(db: Session, schedule: ScheduledTransaction, action: str, actor_id: str,
+                              before: Optional[dict], after: Optional[dict], transaction_ids: Optional[list[str]] = None) -> None:
+    db.add(ScheduledTransactionRevision(
+        budget_id=schedule.budget_id, schedule_id=schedule.id, account_id=schedule.account_id,
+        destination_account_id=schedule.destination_account_id, category_id=schedule.category_id,
+        before_account_id=before.get("account_id") if before else None,
+        before_destination_account_id=before.get("destination_account_id") if before else None,
+        before_category_id=before.get("category_id") if before else None,
+        action=action, actor_user_id=actor_id, before_snapshot=before, after_snapshot=after,
+        transaction_ids=transaction_ids,
+    ))
 
 
 def _target_snapshot(target: CategoryTarget) -> dict:
@@ -307,6 +335,8 @@ def create_scheduled_transaction(
         **values,
     )
     db.add(schedule)
+    db.flush()
+    _append_schedule_revision(db, schedule, "created", user.id, None, _schedule_snapshot(schedule))
     db.commit()
     db.refresh(schedule)
     return schedule
@@ -364,8 +394,13 @@ def update_scheduled_transaction(
             )
         except ValueError:
             raise HTTPException(status_code=422, detail="Invalid scheduled payee") from None
+    before = _schedule_snapshot(schedule)
     for field, value in values.items():
         setattr(schedule, field, value)
+    after = _schedule_snapshot(schedule)
+    if after != before:
+        action = "paused" if before["is_active"] and not after["is_active"] else "resumed" if not before["is_active"] and after["is_active"] else "updated"
+        _append_schedule_revision(db, schedule, action, user.id, before, after)
     db.commit()
     db.refresh(schedule)
     return schedule
@@ -387,8 +422,45 @@ def delete_scheduled_transaction(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduled transaction not found")
     # Deleting a schedule removes only the future plan. Actual transactions already realized from it
     # are preserved; their `scheduled_transaction_id` lineage remains for audit.
+    _append_schedule_revision(db, schedule, "deleted", user.id, _schedule_snapshot(schedule), None)
+    db.flush()
     db.delete(schedule)
     db.commit()
+
+
+@router.get("/scheduled-transactions/history", response_model=list[ScheduledTransactionRevisionResponse])
+def scheduled_transaction_history(
+    budget_id: str, limit: int = Query(default=50, ge=1, le=100), offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> list[dict]:
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    query = select(ScheduledTransactionRevision).where(ScheduledTransactionRevision.budget_id == budget_id)
+    accounts = visible_resource_ids(db, user, budget, "account")
+    if accounts is not None:
+        query = query.where(
+            ScheduledTransactionRevision.account_id.in_(accounts),
+            or_(ScheduledTransactionRevision.destination_account_id.is_(None), ScheduledTransactionRevision.destination_account_id.in_(accounts)),
+            or_(ScheduledTransactionRevision.before_account_id.is_(None), ScheduledTransactionRevision.before_account_id.in_(accounts)),
+            or_(ScheduledTransactionRevision.before_destination_account_id.is_(None), ScheduledTransactionRevision.before_destination_account_id.in_(accounts)),
+        )
+    categories = visible_resource_ids(db, user, budget, "category")
+    if categories is not None:
+        query = query.where(
+            ScheduledTransactionRevision.category_id.in_(categories),
+            or_(ScheduledTransactionRevision.before_snapshot.is_(None), ScheduledTransactionRevision.before_category_id.in_(categories)),
+        )
+    rows = list(db.scalars(query.order_by(
+        ScheduledTransactionRevision.created_at.desc(), ScheduledTransactionRevision.id.desc()
+    ).limit(limit).offset(offset)))
+    names = {item.id: item.display_name for item in db.scalars(select(User).where(
+        User.id.in_({row.actor_user_id for row in rows})
+    ))} if rows else {}
+    return [{
+        "id": row.id, "schedule_id": row.schedule_id, "action": row.action,
+        "actor_user_id": row.actor_user_id, "actor_display_name": names.get(row.actor_user_id),
+        "before_snapshot": row.before_snapshot, "after_snapshot": row.after_snapshot,
+        "transaction_ids": row.transaction_ids, "created_at": row.created_at,
+    } for row in rows]
 
 
 @router.post("/scheduled-transactions/{schedule_id}/realize", response_model=ScheduledRealizationResponse)
@@ -466,11 +538,13 @@ def realize_scheduled_transaction(
             following = None
     if following is not None and schedule.end_date is not None and following > schedule.end_date:
         following = None
+    before_realization = _schedule_snapshot(schedule)
     schedule.last_realized_on = realized_on
     if following is None:
         schedule.is_active = False
     else:
         schedule.next_date = following
+    _append_schedule_revision(db, schedule, "realized", user.id, before_realization, _schedule_snapshot(schedule), created_ids)
     db.commit()
     return ScheduledRealizationResponse(
         scheduled_transaction_id=schedule.id,

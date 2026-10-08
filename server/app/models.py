@@ -542,6 +542,31 @@ class ScheduledTransaction(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
 
+class ScheduledTransactionRevision(Base):
+    """Append-only schedule decisions; future-plan metadata, never an accounting ledger."""
+    __tablename__ = "scheduled_transaction_revisions"
+    __table_args__ = (
+        CheckConstraint("action IN ('created', 'updated', 'paused', 'resumed', 'deleted', 'realized')", name="ck_schedule_revision_action"),
+        Index("ix_schedule_revision_budget_created", "budget_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    schedule_id: Mapped[str] = mapped_column(String(36), index=True)
+    before_account_id: Mapped[Optional[str]] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=True, index=True)
+    before_destination_account_id: Mapped[Optional[str]] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=True, index=True)
+    before_category_id: Mapped[Optional[str]] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), nullable=True, index=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), index=True)
+    destination_account_id: Mapped[Optional[str]] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=True, index=True)
+    category_id: Mapped[Optional[str]] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(20))
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    before_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    after_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    transaction_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+
+
 class MonthlyAssignment(Base):
     __tablename__ = "monthly_assignments"
     __table_args__ = (UniqueConstraint("category_id", "month"),)

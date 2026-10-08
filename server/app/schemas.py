@@ -587,6 +587,18 @@ class ScheduledTransactionResponse(BaseModel):
     last_realized_on: Optional[date] = None
 
 
+class ScheduledTransactionRevisionResponse(BaseModel):
+    id: str
+    schedule_id: str
+    action: str
+    actor_user_id: str
+    actor_display_name: Optional[str] = None
+    before_snapshot: Optional[dict] = None
+    after_snapshot: Optional[dict] = None
+    transaction_ids: Optional[list[str]] = None
+    created_at: datetime
+
+
 class ScheduledRealizationResponse(BaseModel):
     scheduled_transaction_id: str
     transaction_ids: list[str]

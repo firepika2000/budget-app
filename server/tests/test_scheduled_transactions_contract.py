@@ -12,7 +12,7 @@ from datetime import date, timedelta
 import pytest
 
 from app import planning_routes
-from app.models import AllocationPosting, Membership, Payee, Transaction
+from app.models import AllocationPosting, Membership, Payee, ScheduledTransactionRevision, Transaction
 from app.planning import next_occurrence
 
 from .conftest import auth, freeze_today
@@ -39,6 +39,7 @@ def horizon(days=60): return (CONTRACT_TODAY + timedelta(days=days)).isoformat()
 def sched_url(b): return f"/api/v1/budgets/{b}/scheduled-transactions"
 def item_url(b, s): return f"/api/v1/budgets/{b}/scheduled-transactions/{s}"
 def realize_url(b, s): return f"/api/v1/budgets/{b}/scheduled-transactions/{s}/realize"
+def history_url(b): return f"/api/v1/budgets/{b}/scheduled-transactions/history"
 
 
 def create_schedule(client, token, budget_id, **body):
@@ -119,6 +120,17 @@ def test_schedule_crud_round_trip(client, owner_token, session_factory):
 
     assert client.delete(item_url(budget["id"], sid), headers=auth(owner_token)).status_code == 204
     assert client.delete(item_url(budget["id"], sid), headers=auth(owner_token)).status_code == 404
+
+    history = client.get(history_url(budget["id"]), headers=auth(owner_token))
+    assert history.status_code == 200
+    rows = history.json()
+    assert [row["action"] for row in rows] == ["deleted", "paused", "resumed", "paused", "updated", "created"]
+    assert all(row["actor_display_name"] for row in rows)
+    assert rows[0]["before_snapshot"]["amount_minor"] == -1999 and rows[0]["after_snapshot"] is None
+    assert rows[-1]["before_snapshot"] is None and rows[-1]["after_snapshot"]["amount_minor"] == -1599
+    assert client.get(f"{history_url(budget['id'])}?limit=2&offset=1", headers=auth(owner_token)).json() == rows[1:3]
+    with session_factory() as db:
+        assert db.query(ScheduledTransactionRevision).filter_by(schedule_id=sid).count() == 6
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +304,11 @@ def test_realization_creates_exactly_one_transaction_and_advances(client, owner_
 
     # Exactly one actual transaction created, with lineage.
     assert txn_count(client, owner_token, budget["id"]) == before_count + 1
+    history = client.get(history_url(budget["id"]), headers=auth(owner_token)).json()
+    assert history[0]["action"] == "realized"
+    assert history[0]["transaction_ids"] == body["transaction_ids"]
+    assert history[0]["before_snapshot"]["next_date"] == PAST
+    assert history[0]["after_snapshot"]["last_realized_on"] == PAST
     with session_factory() as db:
         txn = db.get(Transaction, body["transaction_ids"][0])
         assert txn.scheduled_transaction_id == sid
@@ -483,6 +500,19 @@ def test_inactive_listing_preserves_authorization_and_resource_scope(client, own
         "account_id": account["id"], "category_id": private_category["id"], "name": "Nope", "amount_minor": -2000,
         "next_date": future(), "recurrence_unit": "months", "is_active": True,
     }).status_code in {404, 422}
+
+    # Moving a schedule from hidden scope into visible scope must not expose its prior private
+    # values through the immutable before-snapshot on the edit revision.
+    moved = client.put(item_url(budget["id"], hidden["id"]), headers=auth(owner_token), json={
+        "account_id": account["id"], "category_id": category["id"], "name": "Was private",
+        "amount_minor": -2000, "next_date": future(), "recurrence_unit": "months", "is_active": False,
+    })
+    assert moved.status_code == 200
+    history = client.get(history_url(budget["id"]), headers=auth(member_token))
+    assert history.status_code == 200
+    encoded = history.text
+    assert "Private paused" not in encoded and "Was private" not in encoded
+    assert "Visible paused" in encoded
 
 
 def test_realization_rechecks_scope_after_permission_revoked(client, owner_token, session_factory):

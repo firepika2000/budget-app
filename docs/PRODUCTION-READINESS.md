@@ -19,6 +19,16 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Scheduled-decision history checkpoint (2026-10-08): schedule creation, editing, pause/resume,
+realization and deletion now append attributed immutable revisions instead of leaving only the latest
+mutable row. History survives schedule deletion, preserves exact integer-minor-unit snapshots and
+posted-transaction lineage, is exported to Local Device, and appears through one bounded paginated
+production view shared by Live, Demo and Local Device. Budget Server applies account, destination and
+category scope to both the before and after resources before pagination, preventing a move from a
+hidden resource into a visible one from leaking its former details. Existing populated schedules are
+conservatively backfilled as created observations by migration `0040_schedule_revisions`; no money,
+forecast, recurrence or realization semantics change.
+
 Parameterized Quick Entry checkpoint (2026-10-08): the Add ClearPocket Transaction App Intent now
 accepts optional payee, exact currency text, memo, transaction date and expense/income type, then opens the existing
 production transaction editor with those values prefilled. It never posts money from Shortcuts;

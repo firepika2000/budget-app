@@ -51,6 +51,7 @@ from .models import (
     Reconciliation,
     ResourceGrant,
     ScheduledTransaction,
+    ScheduledTransactionRevision,
     Transaction,
     TransactionAttachment,
     TransactionChange,
@@ -373,6 +374,7 @@ def export_budget_json(
             CategoryTargetSnooze.target_id.in_(target_ids)
         ))] if target_ids else [],
         "scheduled_transactions": [row_data(item) for item in db.scalars(select(ScheduledTransaction).where(ScheduledTransaction.budget_id == budget_id))],
+        "scheduled_transaction_revisions": [row_data(item) for item in db.scalars(select(ScheduledTransactionRevision).where(ScheduledTransactionRevision.budget_id == budget_id))],
         "payees": [row_data(item) for item in payees],
         "payee_aliases": [row_data(item) for item in db.scalars(select(PayeeAlias).where(
             PayeeAlias.payee_id.in_(payee_ids)
