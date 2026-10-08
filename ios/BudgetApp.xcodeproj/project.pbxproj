@@ -379,8 +379,8 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		EE0000130000000000000013 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 5; DEVELOPMENT_TEAM = 6JGQ5388N8; INFOPLIST_FILE = ClearPocketWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.9.0; PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp.Widget; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_VERSION = 5.10; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-		EE0000140000000000000014 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 5; DEVELOPMENT_TEAM = 6JGQ5388N8; INFOPLIST_FILE = ClearPocketWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.9.0; PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp.Widget; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_VERSION = 5.10; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		EE0000130000000000000013 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 6; DEVELOPMENT_TEAM = 6JGQ5388N8; INFOPLIST_FILE = ClearPocketWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.10.0; PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp.Widget; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_VERSION = 5.10; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		EE0000140000000000000014 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 6; DEVELOPMENT_TEAM = 6JGQ5388N8; INFOPLIST_FILE = ClearPocketWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.10.0; PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp.Widget; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_VERSION = 5.10; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 		CC0000080000000000000008 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -447,7 +447,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = 6JGQ5388N8;
 				DROPBOX_APP_KEY = 961plkfyok8kf8z;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -462,7 +462,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.0;
+				MARKETING_VERSION = 0.10.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp;
 				PRODUCT_NAME = "Budget App";
 				SDKROOT = iphoneos;
@@ -540,7 +540,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = 6JGQ5388N8;
 				DROPBOX_APP_KEY = 961plkfyok8kf8z;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -555,7 +555,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.0;
+				MARKETING_VERSION = 0.10.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.firepika.BudgetApp;
 				PRODUCT_NAME = "Budget App";
 				SDKROOT = iphoneos;

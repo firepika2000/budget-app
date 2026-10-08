@@ -1,6 +1,6 @@
 # File import implementation
 
-Status: IN PROGRESS. The authenticated server API exposes money-neutral statement staging,
+Status: ENGINEERING COMPLETE FOR v0.10; HUMAN ACCEPTANCE PENDING. The authenticated server API exposes money-neutral statement staging,
 duplicate review, reload, cancellation, explicit approval, and atomic approved-import undo for CSV/TSV/delimited text,
 OFX/QFX, QIF, SWIFT MT940, ISO 20022 CAMT XML, and conservatively recognized PDF statements. The native reconciliation
 UI is active for Budget Server workspaces and only explicit approval can post ledger rows. Local
@@ -194,7 +194,7 @@ The rollback regression initially failed because sqlite3 legacy mode released a 
 before an outer database transaction began. The resolver now explicitly begins only when the
 SQLite driver reports no active transaction; PostgreSQL is untouched. This behavior is documented
 by [SQLAlchemy's SQLite transaction guidance](https://docs.sqlalchemy.org/en/20/dialects/sqlite.html).
-This does not claim the complete import approval/concurrency workflow is implemented.
+The later production staging service completes approval, optimistic replay protection, and concurrency handling.
 
 Additional funded-card verification after `2e9f532`: a funded card purchase creates real reserve
 events inside the caller-owned unit, then a later invalid-category operation fails. Rollback must
@@ -220,9 +220,9 @@ including the full 10,000-by-50,000 repeated-data case.
 
 This module has no database access or security authority. Before exposing it, an application
 service MUST select only currently authorized observations for the chosen budget/account, before
-indexing/counting/ranking. That service must also recheck authority during approval. No API currently
-exposes this matcher, and no complete authorization/matching workflow is claimed. Durable staging,
-external IDs, pagination/refinement for truncated matches, transfer matching and approval remain open.
+indexing/counting/ranking. The production service rechecks authority during approval and exposes the
+matcher only through account-scoped staged review. Transfer auto-matching and bank-specific profiles
+remain bounded enhancements rather than requirements for the v0.10 file-import milestone.
 
 ### Authorized observation retrieval after `04dfefa`
 
@@ -236,8 +236,8 @@ are hydrated for matching. No HTTP endpoint exposes this service yet.
 Fourteen focused review/browser/matcher tests PASS. Review regression excludes hidden-category
 transactions, uncategorized salary and mixed-visible/private splits before producing observations;
 it also checks date filtering and hidden/missing account denial. Current capability checks happen
-on every invocation, but approval must independently recheck them. Durable staging, integration,
-format coverage, approval/replay and native UX remain required.
+on every invocation, and approval independently rechecks them. Durable staging, integration,
+format coverage, approval/replay and native UX are implemented in the later sections below.
 
 ### Durable staging schema after `69bdd0d`
 

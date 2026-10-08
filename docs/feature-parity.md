@@ -102,7 +102,7 @@ Status meanings:
 | Scheduled reminders | IMPLEMENTED | Optional device-local 9:00 AM reminders track the next 60 days of active scheduled items. Lock-screen content is deliberately generic and contains no financial or household details. |
 | Accessibility | PARTIALLY IMPLEMENTED | Dynamic Type/native controls, semantic grouping, non-color status labels, VoiceOver labels, chart summaries; formal assistive-technology audit remains. |
 | Light/Dark Mode | IMPLEMENTED | System-native appearance verified in Simulator. |
-| Bank import/sync | PARTIALLY IMPLEMENTED | Reviewed CSV/OFX/QFX/QBO and text-based statement import is implemented with mapping, matching, approval, history, and undo; direct bank connectivity remains gated by `bank-sync-readiness.md`. |
+| Bank import/sync | PARTIALLY IMPLEMENTED | The v0.10 file-import engine is engineering complete for reviewed CSV/TSV/text, OFX/QFX, QIF, MT940, CAMT and conservative PDF/OCR input with mapping, matching, approval, durable history and undo. Direct bank connectivity remains separately gated by `bank-sync-readiness.md`. |
 | Subscription/SaaS dependency | INTENTIONALLY DIFFERENT | Self-host on a home server, local machine, or chosen website; no required subscription. |
 
 ## Where Budget App exceeds the benchmark for household use

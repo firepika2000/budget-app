@@ -432,6 +432,12 @@ Agents and implementation plans must not begin the following merely because adja
 The roadmap is a living document, but changing it is a deliberate product decision—not an incidental side effect of implementation.
 ## Current development checkpoints
 
+- The v0.10 File Import Engine is an engineering candidate across Budget Server and Local Device.
+  CSV/TSV/delimited text, OFX/QFX, QIF, MT940, CAMT and conservative PDF recognition enter one
+  bounded, money-neutral review flow with duplicate suggestions, explicit approval, durable history,
+  cancellation and canonical undo. Direct bank connectivity remains a separate v0.13 gate. The
+  checked-in app and widget identity is now 0.10.0 (6); no TestFlight upload, merge or tag is implied.
+
 - The Add Transaction App Shortcut now supports optional payee, exact currency text, memo and
   expense/income type. It prefills the canonical transaction editor rather than maintaining a
   shortcut-only ledger path, and never saves until the user selects required context and confirms.
