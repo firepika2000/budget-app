@@ -5,6 +5,7 @@ struct QuickEntryDraft: Codable, Equatable {
     var payee: String?
     var amount: String?
     var memo: String?
+    var occurredOn: Date?
     var isInflow: Bool
     var createdAt: Date?
 
@@ -12,14 +13,24 @@ struct QuickEntryDraft: Codable, Equatable {
         payee: String? = nil,
         amount: String? = nil,
         memo: String? = nil,
+        occurredOn: Date? = nil,
         isInflow: Bool = false,
-        createdAt: Date? = Date()
+        createdAt: Date? = Date(),
+        now: Date = Date(),
+        calendar: Calendar = .current
     ) {
         self.payee = payee?.quickEntryValue(maxLength: 150)
         self.amount = amount?.quickEntryValue(maxLength: 64)
         self.memo = memo?.quickEntryValue(maxLength: 500)
+        self.occurredOn = Self.acceptedOccurredOn(occurredOn, now: now, calendar: calendar)
         self.isInflow = isInflow
         self.createdAt = createdAt
+    }
+
+    static func acceptedOccurredOn(_ value: Date?, now: Date = Date(), calendar: Calendar = .current) -> Date? {
+        guard let value else { return nil }
+        let normalized = calendar.startOfDay(for: value)
+        return normalized <= calendar.startOfDay(for: now) ? normalized : nil
     }
 
     func isFresh(at date: Date = Date()) -> Bool {
@@ -79,6 +90,17 @@ enum QuickEntryKind: String, AppEnum, CaseIterable {
     ]
 }
 
+private enum QuickEntryIntentError: LocalizedError {
+    case futureDate
+
+    var errorDescription: String? {
+        switch self {
+        case .futureDate:
+            "Choose today or an earlier date. Use Schedule Transaction in ClearPocket for future activity."
+        }
+    }
+}
+
 enum WorkspaceShortcutDestination: String, AppEnum, CaseIterable {
     case home, plan, activity, accounts, insights, household
 
@@ -125,14 +147,19 @@ struct OpenClearPocketTransactionIntent: AppIntent {
     @Parameter(title: "Payee") var payee: String?
     @Parameter(title: "Amount", description: "Enter the amount as currency text, such as 12.34.") var amount: String?
     @Parameter(title: "Memo") var memo: String?
+    @Parameter(title: "Date", description: "The date the transaction happened. Future transactions should be scheduled in ClearPocket.") var occurredOn: Date?
     @Parameter(title: "Type") var kind: QuickEntryKind?
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        if occurredOn != nil, QuickEntryDraft.acceptedOccurredOn(occurredOn) == nil {
+            throw QuickEntryIntentError.futureDate
+        }
         QuickEntryRequest.request(QuickEntryDraft(
             payee: payee,
             amount: amount,
             memo: memo,
+            occurredOn: occurredOn,
             isInflow: kind == .income
         ))
         return .result()

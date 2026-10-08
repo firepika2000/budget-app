@@ -82,11 +82,15 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertNil(ScheduledReminderSettings.fireDate(nextDate: "not-a-date", now: now, calendar: calendar))
     }
 
-    func testQuickEntryIntentRequestIsConsumedExactlyOnce() {
+    func testQuickEntryIntentRequestIsConsumedExactlyOnce() throws {
         UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey)
         defer { UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey) }
         XCTAssertNil(QuickEntryRequest.consume())
-        let draft = QuickEntryDraft(payee: " Corner Market ", amount: " 12.34 ", memo: " Lunch ", isInflow: false)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let occurredOn = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 1)))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 8, hour: 12)))
+        let draft = QuickEntryDraft(payee: " Corner Market ", amount: " 12.34 ", memo: " Lunch ", occurredOn: occurredOn, isInflow: false, now: now, calendar: calendar)
         QuickEntryRequest.request(draft)
         XCTAssertEqual(QuickEntryRequest.consume(), draft)
         XCTAssertNil(QuickEntryRequest.consume())
@@ -94,6 +98,20 @@ final class DemoStoreTests: XCTestCase {
         QuickEntryRequest.request(QuickEntryDraft(payee: "Expired", createdAt: Date(timeIntervalSinceNow: -301)))
         XCTAssertNil(QuickEntryRequest.consume())
         XCTAssertNil(UserDefaults.standard.object(forKey: QuickEntryRequest.defaultsKey))
+    }
+
+    func testQuickEntryDateAcceptsPastDatesAndRejectsFutureDates() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 8, hour: 12)))
+        let past = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 1, hour: 18)))
+        let future = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 9)))
+
+        XCTAssertEqual(
+            QuickEntryDraft(payee: "Past", occurredOn: past, now: now, calendar: calendar).occurredOn,
+            calendar.startOfDay(for: past)
+        )
+        XCTAssertNil(QuickEntryDraft(payee: "Future", occurredOn: future, now: now, calendar: calendar).occurredOn)
     }
 
     func testWidgetQuickEntryDeepLinkAcceptsOnlyExactPrivateRoute() throws {

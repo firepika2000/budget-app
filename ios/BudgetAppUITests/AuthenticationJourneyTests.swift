@@ -401,7 +401,8 @@ final class AuthenticationJourneyTests: XCTestCase {
             "--ui-test-quick-entry",
             "--ui-test-quick-entry-payee=Corner Market",
             "--ui-test-quick-entry-amount=12.34",
-            "--ui-test-quick-entry-memo=Shortcut lunch"
+            "--ui-test-quick-entry-memo=Shortcut lunch",
+            "--ui-test-quick-entry-date=2025-01-17"
         ]
         app.launch()
 
@@ -410,6 +411,8 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertEqual(app.textFields["transaction-memo"].value as? String, "Shortcut lunch")
         XCTAssertEqual(app.textFields["transaction-amount"].value as? String, "12.34")
         XCTAssertEqual(app.switches["transaction-inflow"].value as? String, "0")
+        let datePicker = app.datePickers["transaction-date"]
+        XCTAssertTrue(datePicker.exists)
 
         app.buttons["Cancel"].tap()
         XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))

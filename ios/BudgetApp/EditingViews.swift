@@ -34,7 +34,7 @@ struct TransactionEntryView: View {
     @State private var receiptSuggestion: ReceiptSuggestion?
     @State private var isScanningReceipt = false
 
-    init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], groups: [APICategoryGroup] = [], initialAccountID: String? = nil, initialCategoryID: String? = nil, initialPayee: String? = nil, initialAmount: String? = nil, initialMemo: String? = nil, initialIsInflow: Bool = false, onSaved: @escaping () async -> Void) {
+    init(budget: APIBudget, accounts: [APIAccount], categories: [APICategory], groups: [APICategoryGroup] = [], initialAccountID: String? = nil, initialCategoryID: String? = nil, initialPayee: String? = nil, initialAmount: String? = nil, initialMemo: String? = nil, initialDate: Date? = nil, initialIsInflow: Bool = false, onSaved: @escaping () async -> Void) {
         self.budget = budget
         self.accounts = accounts
         self.categories = categories
@@ -45,6 +45,7 @@ struct TransactionEntryView: View {
         _payee = State(initialValue: initialPayee ?? "")
         _amount = State(initialValue: initialAmount ?? "")
         _memo = State(initialValue: initialMemo ?? "")
+        _date = State(initialValue: initialDate ?? Date())
         _isInflow = State(initialValue: initialIsInflow)
     }
 

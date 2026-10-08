@@ -4335,9 +4335,20 @@ struct BudgetWorkspaceView: View {
             payee: value("--ui-test-quick-entry-payee="),
             amount: value("--ui-test-quick-entry-amount="),
             memo: value("--ui-test-quick-entry-memo="),
+            occurredOn: value("--ui-test-quick-entry-date=").flatMap(Self.parseQuickEntryDate),
             isInflow: arguments.contains("--ui-test-quick-entry-income")
         ))
         #endif
+    }
+
+    private static func parseQuickEntryDate(_ value: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.isLenient = false
+        return formatter.date(from: value)
     }
 
     private func consumeWorkspaceShortcutRequest() {
@@ -7530,6 +7541,7 @@ private struct LiveActivityView: View {
             initialPayee: entryDraft?.payee,
             initialAmount: entryDraft?.amount,
             initialMemo: entryDraft?.memo,
+            initialDate: entryDraft?.occurredOn,
             initialIsInflow: entryDraft?.isInflow ?? false,
             onSaved: reload
         )
