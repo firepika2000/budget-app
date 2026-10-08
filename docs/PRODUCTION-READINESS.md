@@ -1909,3 +1909,13 @@ overflow fail closed without including private payee/memo text in errors. The ty
 transmits the selection to the authenticated server route, while on-device import uses the same
 mapping and shared production UI. Focused backend parser/route, Swift API transport and native parser
 tests pass under regular Xcode 27. No migration or existing financial data changes.
+
+### Common bank date separators — 2026-10-08
+
+Explicit CSV date order now accepts slash, dash, or dot separators in Budget Server and Local Device
+imports. The user still chooses year-month-day, month-day-year, or day-month-year; ClearPocket never
+infers an ambiguous order from statement contents or device locale. A single row must use one
+consistent separator and a four-digit year, so mixed or shortened forms fail with private-safe
+validation before staging. Focused backend parser/route tests and the production Local Device parser
+test pass on the preserved iPhone 17 Pro Max / iOS 27 simulator under regular Xcode 27. No migration
+or financial-state change is involved.

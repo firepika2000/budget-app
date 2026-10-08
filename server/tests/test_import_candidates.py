@@ -39,6 +39,29 @@ def test_tab_delimited_input_and_explicit_leap_date():
 
 
 @pytest.mark.parametrize(
+    "date_order,value,expected",
+    [
+        ("ymd", "2026/9/18", "2026-09-18"),
+        ("ymd", "2026.09.18", "2026-09-18"),
+        ("mdy", "9-18-2026", "2026-09-18"),
+        ("dmy", "18.09.2026", "2026-09-18"),
+    ],
+)
+def test_explicit_date_order_accepts_common_consistent_separators(date_order, value, expected):
+    mapping = CSVMapping("Date", "Amount", "Payee", date_order=date_order)
+    rows = parse_csv_candidates(f"Date,Amount,Payee\n{value},1,Store".encode(), mapping, scale=2)
+    assert rows[0].occurred_on.isoformat() == expected
+
+
+@pytest.mark.parametrize("value", ["2026/09-18", "09.18/2026", "9/18/26", "2026-009-18"])
+def test_explicit_date_order_rejects_mixed_or_ambiguous_shapes(value):
+    mapping = CSVMapping("Date", "Amount", "Payee", date_order="ymd" if value.startswith("2026") else "mdy")
+    with pytest.raises(ImportValidationError, match="Invalid date or amount") as error:
+        parse_csv_candidates(f"Date,Amount,Payee\n{value},1,Private".encode(), mapping, scale=2)
+    assert "Private" not in str(error.value)
+
+
+@pytest.mark.parametrize(
     "number_format,value,expected",
     [
         ("dot_decimal", "1,234.56", 123456),

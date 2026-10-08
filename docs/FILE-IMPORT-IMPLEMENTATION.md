@@ -155,9 +155,13 @@ explicit number convention: `1,234.56` or `1.234,56`. Correctly grouped thousand
 before exact integer-minor-unit conversion in both Budget Server and Local Device modes. Mixed
 conventions and malformed grouping fail without echoing private statement content. The choice is
 transmitted independently of the CSV field separator, so semicolon-delimited decimal-comma exports
-do not require locale guessing. Additional date formats remain explicit future mapping work.
+do not require locale guessing.
 
-The native picker exposes the same separator contract for `.csv`, `.tsv`, and `.txt` bank exports.
+The explicit date-order selector accepts the common slash, dash, or dot separators used by bank
+exports (`YYYY/MM/DD`, `MM-DD-YYYY`, and `DD.MM.YYYY`, for example) while requiring one consistent
+separator and a four-digit year. It never guesses whether the first component is month or day.
+
+The native picker exposes the same field-separator contract for `.csv`, `.tsv`, and `.txt` bank exports.
 TSV defaults to a tab separator; CSV and text default to comma. The user can change it explicitly,
 which rebuilds the header mapping rather than sending mismatched column names to the server.
 

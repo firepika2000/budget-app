@@ -91,6 +91,25 @@ def parse_mapped_minor_units(value: str, *, scale: int, number_format: str) -> i
     return parse_minor_units(normalized, scale=scale)
 
 
+def parse_mapped_date(value: str, *, date_order: str) -> date:
+    """Parse a selected field order while accepting common, internally consistent separators."""
+    value = value.strip()
+    if date_order == "ymd":
+        match = re.fullmatch(r"([0-9]{4})([-/.])([0-9]{1,2})\2([0-9]{1,2})", value)
+        if match is None:
+            raise ValueError()
+        year, month, day = int(match[1]), int(match[3]), int(match[4])
+    elif date_order in {"mdy", "dmy"}:
+        match = re.fullmatch(r"([0-9]{1,2})([-/.])([0-9]{1,2})\2([0-9]{4})", value)
+        if match is None:
+            raise ValueError()
+        first, second, year = int(match[1]), int(match[3]), int(match[4])
+        month, day = (first, second) if date_order == "mdy" else (second, first)
+    else:
+        raise ValueError()
+    return date(year, month, day)
+
+
 def parse_csv_candidates(data: bytes, mapping: CSVMapping, *, scale: int) -> list[ImportCandidate]:
     # Validate even empty inputs; no global csv.field_size_limit mutation.
     parse_minor_units("0", scale=scale)
@@ -123,16 +142,7 @@ def parse_csv_candidates(data: bytes, mapping: CSVMapping, *, scale: int) -> lis
                 raise ImportValidationError(f"Invalid column count or field size at row {row_number}")
             raw_date = row[indexes[mapping.date_column]].strip()
             try:
-                if mapping.date_order == "ymd":
-                    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw_date):
-                        raise ValueError()
-                    occurred_on = date.fromisoformat(raw_date)
-                else:
-                    if not re.fullmatch(r"[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}", raw_date):
-                        raise ValueError()
-                    first, second, year = map(int, raw_date.split("/"))
-                    month, day = (first, second) if mapping.date_order == "mdy" else (second, first)
-                    occurred_on = date(year, month, day)
+                occurred_on = parse_mapped_date(raw_date, date_order=mapping.date_order)
                 if mapping.amount_column is not None:
                     amount = parse_mapped_minor_units(row[indexes[mapping.amount_column]], scale=scale, number_format=mapping.number_format)
                 else:

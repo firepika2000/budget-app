@@ -3366,6 +3366,27 @@ final class DemoStoreTests: XCTestCase {
         ))
     }
 
+    func testLocalDelimitedStatementParserUsesExplicitDateOrderWithCommonSeparators() throws {
+        for (order, value) in [("ymd", "2026/9/18"), ("mdy", "9-18-2026"), ("dmy", "18.09.2026")] {
+            let rows = try LocalDelimitedStatementParser.parse(
+                data: Data("Date;Description;Amount\n\(value);Market;-1.00\n".utf8),
+                mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                               amountColumn: "Amount", payeeColumn: "Description", dateOrder: order,
+                               delimiter: ";")
+            )
+            XCTAssertEqual(rows.first?.occurredOn, "2026-09-18")
+        }
+
+        for malformed in ["2026/09-18", "09.18/2026", "9/18/26"] {
+            XCTAssertThrowsError(try LocalDelimitedStatementParser.parse(
+                data: Data("Date;Description;Amount\n\(malformed);Private;-1.00\n".utf8),
+                mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                               amountColumn: "Amount", payeeColumn: "Description",
+                               dateOrder: malformed.hasPrefix("2026") ? "ymd" : "mdy", delimiter: ";")
+            )) { error in XCTAssertFalse(error.localizedDescription.contains("Private")) }
+        }
+    }
+
     func testLocalQIFParserPreservesExactMoneyAndExplicitDateOrder() throws {
         let data = Data("!Type:Bank\nD10/02/2026\nT-1,234.56\nPUtility Company\nMSeptember bill\n^\nD03/10/'26\nT25.00\nPRefund\n^\n".utf8)
         let rows = try LocalQIFStatementParser.parse(data: data, mapping: .init(

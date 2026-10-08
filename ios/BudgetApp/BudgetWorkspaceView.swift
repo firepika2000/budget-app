@@ -8122,10 +8122,19 @@ enum LocalDelimitedStatementParser {
         return rows
     }
     private static func dateString(_ value: String, order: String, row: Int) throws -> String {
-        let pieces = value.trimmingCharacters(in: .whitespacesAndNewlines).split(whereSeparator: { "-/.".contains($0) }).compactMap { Int($0) }
-        guard pieces.count == 3 else { throw workspaceRepositoryError("Statement row \(row) has an invalid date.") }
+        let raw = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expression = order == "ymd" ? #"^([0-9]{4})([-/.])([0-9]{1,2})\2([0-9]{1,2})$"# : #"^([0-9]{1,2})([-/.])([0-9]{1,2})\2([0-9]{4})$"#
+        guard ["ymd", "mdy", "dmy"].contains(order),
+              let regex = try? NSRegularExpression(pattern: expression),
+              let match = regex.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
+              match.numberOfRanges == 5,
+              let firstRange = Range(match.range(at: 1), in: raw),
+              let secondRange = Range(match.range(at: 3), in: raw),
+              let thirdRange = Range(match.range(at: 4), in: raw),
+              let first = Int(raw[firstRange]), let second = Int(raw[secondRange]), let third = Int(raw[thirdRange])
+        else { throw workspaceRepositoryError("Statement row \(row) has an invalid date.") }
         let year: Int, month: Int, day: Int
-        switch order { case "ymd": (year, month, day) = (pieces[0], pieces[1], pieces[2]); case "dmy": (day, month, year) = (pieces[0], pieces[1], pieces[2]); default: (month, day, year) = (pieces[0], pieces[1], pieces[2]) }
+        switch order { case "ymd": (year, month, day) = (first, second, third); case "dmy": (day, month, year) = (first, second, third); default: (month, day, year) = (first, second, third) }
         var components = DateComponents(); components.calendar = Calendar(identifier: .gregorian); components.timeZone = TimeZone(secondsFromGMT: 0); components.year = year; components.month = month; components.day = day
         guard let date = components.date else { throw workspaceRepositoryError("Statement row \(row) has an invalid date.") }
         let verified = Calendar(identifier: .gregorian).dateComponents(in: TimeZone(secondsFromGMT: 0)!, from: date)
