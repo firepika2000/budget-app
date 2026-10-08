@@ -683,7 +683,10 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                             ["bucket": "category", "category_id": leg.destinationCategoryID, "amount_minor": leg.amountMinor]] }
             }
             return ["id": event.operationID, "budget_id": budget.id, "occurred_on": event.occurredOn,
-             "kind": event.kind, "actor_user_id": event.actor, "note": event.note,
+             "kind": event.kind, "actor_user_id": event.actor,
+             "actor_display_name": event.actor == "demo-owner" ? DemoPersona.rey.rawValue :
+                DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == event.actor })?.rawValue ?? "Household member",
+             "note": event.note,
              "source": event.kind == "smart_funding" ? "smart_funding" : event.kind == "allowance_issuance" ? "allowance" : event.kind == "request_approval" ? "approval" : "manual",
              "allocation_version": demo.allocationVersion, "postings": postings]
         }
@@ -6504,7 +6507,7 @@ private struct AllocationHistoryView: View {
                             if !operation.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 Text(operation.note)
                             }
-                            Text("By \(actorName(operation.actorUserID)) · \(sourceName(operation.source))")
+                            Text("By \(operation.actorDisplayName ?? actorName(operation.actorUserID)) · \(sourceName(operation.source))")
                         }
                     }
                     .accessibilityIdentifier("allocation-history-operation-\(operation.id)")

@@ -1161,12 +1161,18 @@ def list_allocation_operations(
         ).exists()
         query = query.where(visible_posting, ~hidden_posting)
     operations = list(db.scalars(query))
+    actor_ids = {operation.actor_user_id for operation in operations}
+    actor_names = {
+        actor.id: actor.display_name
+        for actor in db.scalars(select(User).where(User.id.in_(actor_ids)))
+    } if actor_ids else {}
     return [{
         "id": operation.id,
         "budget_id": operation.budget_id,
         "occurred_on": operation.occurred_on,
         "kind": operation.kind,
         "actor_user_id": operation.actor_user_id,
+        "actor_display_name": actor_names.get(operation.actor_user_id),
         "note": operation.note,
         "source": operation.source,
         "allocation_version": budget.allocation_version,

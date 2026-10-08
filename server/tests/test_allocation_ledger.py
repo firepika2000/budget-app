@@ -143,6 +143,7 @@ def test_assignments_and_category_transfers_are_balanced_and_auditable(
         headers=auth(owner_token),
     ).json()
     assert [item["kind"] for item in history] == ["category_transfer", "assignment"]
+    assert all(item["actor_display_name"] == "Owner" for item in history)
     assert all(sum(posting["amount_minor"] for posting in item["postings"]) == 0 for item in history)
 
 

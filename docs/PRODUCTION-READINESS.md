@@ -19,6 +19,12 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Allocation-attribution checkpoint (2026-10-08): Plan allocation history now carries the current
+server-authoritative display name for the immutable actor user ID. The history UI no longer depends
+on the currently loaded active-member list to explain who assigned or moved money, so actions by a
+removed member remain understandable without weakening the existing whole-operation category-scope
+filter. Demo and Local Device use the same response contract and production view.
+
 Dropbox completion audit (2026-10-07): the iPhone production path is implemented rather than a
 placeholder. It uses PKCE with offline refresh-token rotation, device-only Keychain custody,
 least-privilege file scopes, immutable encrypted generations, content-hash verification, bounded

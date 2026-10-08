@@ -633,6 +633,7 @@ class AllocationOperationResponse(BaseModel):
     occurred_on: date
     kind: str
     actor_user_id: str
+    actor_display_name: Optional[str] = None
     note: str
     source: str
     allocation_version: int

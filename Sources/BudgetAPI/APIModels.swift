@@ -2158,6 +2158,7 @@ public struct APIAllocationOperation: Identifiable, Decodable, Equatable, Sendab
     public let occurredOn: String
     public let kind: String
     public let actorUserID: String
+    public let actorDisplayName: String?
     public let note: String
     public let source: String
     public let allocationVersion: Int
@@ -2168,6 +2169,7 @@ public struct APIAllocationOperation: Identifiable, Decodable, Equatable, Sendab
         case budgetID = "budget_id"
         case occurredOn = "occurred_on"
         case actorUserID = "actor_user_id"
+        case actorDisplayName = "actor_display_name"
         case allocationVersion = "allocation_version"
     }
 }

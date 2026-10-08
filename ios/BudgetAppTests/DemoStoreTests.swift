@@ -1091,6 +1091,14 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testAllocationHistoryCarriesServerAuthoritativeActorDisplayName() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: try XCTUnwrap(URL(string: "http://localhost")), token: "demo")
+        let operation = try XCTUnwrap(store.allocationOperations.first)
+        XCTAssertFalse(try XCTUnwrap(operation.actorDisplayName).isEmpty)
+    }
+
+    @MainActor
     func testProductionWorkspaceRendersFreshAccountsAndPlanTabsWithLivePresentationChrome() async {
         let (defaults, domain) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: domain) }
