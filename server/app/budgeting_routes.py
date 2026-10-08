@@ -1581,8 +1581,129 @@ def _changed_transaction_fields(change: TransactionChange) -> list[str]:
         return []
     if not isinstance(before, dict) or not isinstance(after, dict):
         return []
-    ignored = {"attachment_id", "sha256", "scheduled_transaction_id"}
+    # Creation/deletion snapshots are intentionally summarized by their action. Detailed deltas
+    # are useful only when both sides of a mutation exist.
+    if not before or not after:
+        return []
+    ignored = {"attachment_metadata", "attachment_id", "sha256", "scheduled_transaction_id",
+               "transfer_id", "reversal_of_transaction_id", "reversal_transaction_id"}
     return sorted(key for key in (set(before) | set(after)) if key not in ignored and before.get(key) != after.get(key))
+
+
+def _transaction_history_context(
+    db: Session, user: User, budget: Budget, changes: list[TransactionChange],
+) -> dict:
+    visible_accounts = visible_resource_ids(db, user, budget, "account")
+    visible_categories = visible_resource_ids(db, user, budget, "category")
+    account_ids: set[str] = set()
+    category_ids: set[str] = set()
+    payee_ids: set[str] = set()
+    for change in changes:
+        for raw in (change.before_json, change.after_json):
+            try:
+                snapshot = json.loads(raw) if raw else {}
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(snapshot, dict):
+                continue
+            if isinstance(snapshot.get("account_id"), str):
+                account_ids.add(snapshot["account_id"])
+            if isinstance(snapshot.get("category_id"), str):
+                category_ids.add(snapshot["category_id"])
+            if isinstance(snapshot.get("payee_id"), str):
+                payee_ids.add(snapshot["payee_id"])
+            if isinstance(snapshot.get("splits"), list):
+                category_ids.update(item["category_id"] for item in snapshot["splits"]
+                                    if isinstance(item, dict) and isinstance(item.get("category_id"), str))
+    accounts = {row.id: row.name for row in db.scalars(select(Account).where(Account.id.in_(account_ids)))} if account_ids else {}
+    category_rows = list(db.scalars(select(Category).where(Category.id.in_(category_ids)))) if category_ids else []
+    group_ids = {row.group_id for row in category_rows}
+    group_names = {row.id: row.name for row in db.scalars(select(CategoryGroup).where(CategoryGroup.id.in_(group_ids)))} if group_ids else {}
+    categories = {row.id: f"{group_names.get(row.group_id, 'Category')} · {row.name}" for row in category_rows}
+    payees = {row.id: row.display_name for row in db.scalars(select(Payee).where(Payee.id.in_(payee_ids)))} if payee_ids else {}
+    return {"visible_accounts": visible_accounts, "visible_categories": visible_categories,
+            "accounts": accounts, "categories": categories, "payees": payees}
+
+
+def _transaction_field_changes(change: TransactionChange, context: dict) -> list[dict]:
+    """Project immutable snapshots into useful display values without exposing internal IDs."""
+    try:
+        before = json.loads(change.before_json) if change.before_json else {}
+        after = json.loads(change.after_json) if change.after_json else {}
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return []
+    if not before or not after:
+        return []
+
+    visible_accounts = context["visible_accounts"]
+    visible_categories = context["visible_categories"]
+    accounts = context["accounts"]
+    categories = context["categories"]
+    payees = context["payees"]
+
+    def snapshot_visible(snapshot: dict) -> bool:
+        account_id = snapshot.get("account_id")
+        if visible_accounts is not None and account_id is not None and account_id not in visible_accounts:
+            return False
+        category_ids = {snapshot.get("category_id")}
+        splits = snapshot.get("splits")
+        if isinstance(splits, list):
+            category_ids.update(item.get("category_id") for item in splits if isinstance(item, dict))
+        category_ids.discard(None)
+        return visible_categories is None or category_ids.issubset(visible_categories)
+
+    def identity(value, names: dict[str, str], visible: set[str] | None) -> tuple[str | None, str]:
+        if value is None:
+            return None, "text"
+        if not isinstance(value, str) or (visible is not None and value not in visible):
+            return "Private or unavailable", "restricted"
+        return names.get(value, "Unavailable item"), "text"
+
+    def display(field: str, value, snapshot: dict) -> tuple[str | None, str]:
+        if value is not None and not snapshot_visible(snapshot):
+            return "Private or unavailable", "restricted"
+        if field == "account_id":
+            return identity(value, accounts, visible_accounts)
+        if field == "category_id":
+            return identity(value, categories, visible_categories)
+        if field == "payee_id":
+            return identity(value, payees, None)
+        if field == "amount_minor":
+            return (str(value), "money_minor") if isinstance(value, int) else (None, "money_minor")
+        if field in {"is_cleared", "is_reconciled"}:
+            labels = ({True: "Cleared", False: "Uncleared"} if field == "is_cleared"
+                      else {True: "Reconciled", False: "Not reconciled"})
+            return labels.get(value), "state"
+        if field == "occurred_on":
+            return (str(value), "date") if value is not None else (None, "date")
+        if field == "tags":
+            return (" ".join(f"#{item}" for item in value), "list") if isinstance(value, list) else (None, "list")
+        if field == "splits":
+            count = len(value) if isinstance(value, list) else 0
+            return (f"{count} split line{'s' if count != 1 else ''}", "state")
+        if value is None:
+            return None, "text"
+        if isinstance(value, bool):
+            return ("Yes" if value else "No"), "state"
+        return str(value), "text"
+
+    internal = {"attachment_metadata", "attachment_id", "sha256", "scheduled_transaction_id",
+                "transfer_id", "reversal_of_transaction_id", "reversal_transaction_id"}
+    rows = []
+    for field in sorted((set(before) | set(after)) - internal):
+        if before.get(field) == after.get(field):
+            continue
+        before_value, before_kind = display(field, before.get(field), before)
+        after_value, after_kind = display(field, after.get(field), after)
+        rows.append({
+            "field": field,
+            "value_kind": "restricted" if "restricted" in (before_kind, after_kind) else after_kind if after_value is not None else before_kind,
+            "before_value": before_value,
+            "after_value": after_value,
+        })
+    return rows
 
 
 @router.get("/transactions/{transaction_id}/history", response_model=list[TransactionChangeResponse])
@@ -1607,12 +1728,14 @@ def transaction_history(
     ).order_by(TransactionChange.created_at.desc(), TransactionChange.id.desc()).offset(offset).limit(limit)))
     actor_ids = {item.actor_user_id for item in changes}
     names = {item.id: item.display_name for item in db.scalars(select(User).where(User.id.in_(actor_ids)))} if actor_ids else {}
+    history_context = _transaction_history_context(db, user, budget, changes)
     return [{
         "id": item.id,
         "action": item.action,
         "actor_user_id": item.actor_user_id,
         "actor_display_name": names.get(item.actor_user_id),
         "changed_fields": _changed_transaction_fields(item),
+        "changes": _transaction_field_changes(item, history_context),
         "created_at": item.created_at,
     } for item in changes]
 

@@ -7528,7 +7528,16 @@ private struct TransactionChangeHistoryView: View {
                             Text(change.createdAt).font(.caption).foregroundStyle(.secondary)
                         }
                         Text(change.actorDisplayName ?? "Household member").font(.subheadline)
-                        if !change.changedFields.isEmpty {
+                        if let details = change.changes, !details.isEmpty {
+                            ForEach(details, id: \.field) { detail in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(fieldTitle(detail.field).capitalized).font(.caption.bold())
+                                    Text("\(displayValue(detail.beforeValue, field: detail.field, kind: detail.valueKind)) → \(displayValue(detail.afterValue, field: detail.field, kind: detail.valueKind))")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                .accessibilityElement(children: .combine)
+                            }
+                        } else if !change.changedFields.isEmpty {
                             Text("Changed: \(change.changedFields.map(fieldTitle).joined(separator: ", "))")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
@@ -7581,6 +7590,11 @@ private struct TransactionChangeHistoryView: View {
             "reversal_of_transaction_id": "reversal", "reversal_transaction_id": "reversal",
         ]
         return names[field] ?? field.replacingOccurrences(of: "_", with: " ")
+    }
+    private func displayValue(_ value: String?, field: String, kind: String) -> String {
+        guard let value, !value.isEmpty else { return "None" }
+        if (kind == "money_minor" || field == "amount_minor"), let minor = Int64(value) { return store.format(minor) }
+        return value
     }
 }
 

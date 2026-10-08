@@ -494,13 +494,15 @@ final class APIClientTests: XCTestCase {
             XCTAssertTrue(items.contains(.init(name: "limit", value: "25")))
             XCTAssertTrue(items.contains(.init(name: "offset", value: "50")))
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
-            let response = Data(#"[{"id":"h1","action":"updated","actor_user_id":"u2","actor_display_name":"Sam","changed_fields":["amount_minor","memo"],"created_at":"2026-09-05T13:30:00Z"}]"#.utf8)
+            let response = Data(#"[{"id":"h1","action":"updated","actor_user_id":"u2","actor_display_name":"Sam","changed_fields":["amount_minor","memo"],"changes":[{"field":"amount_minor","value_kind":"money_minor","before_value":"-1200","after_value":"-1350"}],"created_at":"2026-09-05T13:30:00Z"}]"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
         let history = try await client.transactionHistory(budgetID: "b1", transactionID: "t1", limit: 25, offset: 50, token: "secret")
         XCTAssertEqual(history.first?.actorDisplayName, "Sam")
         XCTAssertEqual(history.first?.changedFields, ["amount_minor", "memo"])
+        XCTAssertEqual(history.first?.changes?.first?.beforeValue, "-1200")
+        XCTAssertEqual(history.first?.changes?.first?.afterValue, "-1350")
     }
 
     func testAllocationHistoryUsesBoundedPageContract() async throws {

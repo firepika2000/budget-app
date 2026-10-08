@@ -830,12 +830,20 @@ class TransactionPageResponse(BaseModel):
     total_count: int
 
 
+class TransactionFieldChangeResponse(BaseModel):
+    field: str
+    value_kind: Literal["text", "money_minor", "date", "state", "list", "restricted"]
+    before_value: Optional[str] = None
+    after_value: Optional[str] = None
+
+
 class TransactionChangeResponse(BaseModel):
     id: str
     action: str
     actor_user_id: str
     actor_display_name: Optional[str] = None
     changed_fields: list[str] = Field(default_factory=list)
+    changes: list[TransactionFieldChangeResponse] = Field(default_factory=list)
     created_at: datetime
 
 

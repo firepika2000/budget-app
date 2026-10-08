@@ -432,6 +432,12 @@ Agents and implementation plans must not begin the following merely because adja
 The roadmap is a living document, but changing it is a deliberate product decision—not an incidental side effect of implementation.
 ## Current development checkpoints
 
+- Transaction Change History now explains safe before/after values for ordinary edits instead of
+  listing only field names. Exact money remains integer minor units until native formatting; account
+  and category identities are qualified for display. If either historical snapshot was outside the
+  viewer's current resource scope, that entire side is redacted rather than leaking its former payee,
+  memo, amount, account, category, or split context. Raw audit JSON and internal attachment/lineage
+  identifiers remain server-only.
 - Budget Server allocation history now uses privacy-before-pagination bounded reads in the current
   iPhone composition, with explicit older-history loading and readable actor attribution.
 - SWIFT MT940 statement import is production-wired across Budget Server and Local Device providers,

@@ -952,6 +952,7 @@ public struct APITransactionChange: Identifiable, Decodable, Equatable, Sendable
     public let actorUserID: String
     public let actorDisplayName: String?
     public let changedFields: [String]
+    public let changes: [APITransactionFieldChange]?
     public let createdAt: String
 
     enum CodingKeys: String, CodingKey {
@@ -959,7 +960,22 @@ public struct APITransactionChange: Identifiable, Decodable, Equatable, Sendable
         case actorUserID = "actor_user_id"
         case actorDisplayName = "actor_display_name"
         case changedFields = "changed_fields"
+        case changes
         case createdAt = "created_at"
+    }
+}
+
+public struct APITransactionFieldChange: Decodable, Equatable, Sendable {
+    public let field: String
+    public let valueKind: String
+    public let beforeValue: String?
+    public let afterValue: String?
+
+    enum CodingKeys: String, CodingKey {
+        case field
+        case valueKind = "value_kind"
+        case beforeValue = "before_value"
+        case afterValue = "after_value"
     }
 }
 

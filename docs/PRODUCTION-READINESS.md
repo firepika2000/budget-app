@@ -1964,3 +1964,18 @@ left uncategorized, staging remains money-neutral, and no payee is created from 
 Resource-scoped household members receive no suggestion, preventing the submitted payee text from
 revealing private aliases or category preferences. Focused backend authorization/money-neutrality,
 Swift transport, and native Local Device parity tests cover the contract.
+
+### Explainable transaction change history — 2026-10-08
+
+The immutable transaction audit now projects useful before/after explanations into the production
+Change History screen. Amounts cross the API as exact integer-minor-unit strings and are formatted by
+the native currency presenter; clearing, reconciliation, dates, tags, memo, Payee, account, category,
+status and split-count changes receive human-readable values. The raw stored snapshots, attachment
+metadata, digests, transfer IDs, schedule lineage and reversal IDs are never returned.
+
+Privacy is evaluated against both historical sides before projection. If a transaction snapshot used
+an account, category, or split category outside the viewer's current scope, every value from that side
+is rendered as `Private or unavailable`; this prevents a later move into a visible category from
+revealing the old payee, memo, amount, or resource identity. Identity lookup is batched once for the
+bounded history page. Focused backend tests cover exact values, raw-snapshot exclusion and historical
+scope redaction; the Swift API contract and regular Xcode 27 iPhone Simulator build pass.
