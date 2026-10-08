@@ -2105,3 +2105,15 @@ Two focused native tests pass for Server and Local Device shapes, active/detache
 normalization, exact payload verification and cleanup. Regular Xcode 27.0 (27A266a) compiles and runs
 the tests on the preserved iPhone 17 Pro Max / iOS 27 simulator. Human share-destination acceptance
 remains separate.
+
+### Legacy Local Device transfer normalization — 2026-10-08
+
+Server-to-Local Device candidate creation no longer rejects a valid legacy-compatible snapshot merely
+because an absent optional history collection reopens from current SQLite as an explicit empty
+collection. Target history, schedule history and personal debt-plan collections are normalized at the
+typed snapshot boundary and again before the final losslessness comparison. All actual records,
+financial observations, attachment metadata and integrity checks remain exact and fail closed.
+
+The complete 51-test BudgetStorage target passes, including encrypted backup/restore, Dropbox OAuth
+and generation management, attachment encryption/tombstones, transfer projection, database migration,
+and all four candidate-import publication/failure cases.

@@ -134,9 +134,30 @@ public enum LocalDeviceCandidateImportService {
         expected: LocalAuthoritySnapshot,
         actual: LocalAuthoritySnapshot
     ) throws {
-        guard actual == expected else {
+        guard canonicalSnapshot(actual) == canonicalSnapshot(expected) else {
             throw LocalStorageError.invalidSnapshot("Server transfer projection changed while creating Local Device storage")
         }
+    }
+
+    /// Optional collections exist only so older authority documents remain decodable. Once written
+    /// to the current schema, an absent collection reopens as an explicit empty collection; those
+    /// two representations are semantically identical and must not block an otherwise exact move.
+    private static func canonicalSnapshot(_ value: LocalAuthoritySnapshot) -> LocalAuthoritySnapshot {
+        LocalAuthoritySnapshot(
+            identity: value.identity, accounts: value.accounts, groups: value.groups,
+            categories: value.categories, payees: value.payees, payeeAliases: value.payeeAliases,
+            transactions: value.transactions, allocations: value.allocations,
+            reconciliations: value.reconciliations, targets: value.targets,
+            targetRevisions: value.targetRevisions ?? [], schedules: value.schedules,
+            scheduleRevisions: value.scheduleRevisions ?? [], attachments: value.attachments,
+            attachmentTombstones: value.attachmentTombstones, debtTerms: value.debtTerms,
+            debtPayoffPlans: value.debtPayoffPlans ?? [],
+            cashRolloverPolicies: value.cashRolloverPolicies,
+            creditReserveAttributions: value.creditReserveAttributions,
+            transactionChanges: value.transactionChanges,
+            creditReserveEvents: value.creditReserveEvents,
+            statementImports: value.statementImports
+        )
     }
 
 }

@@ -547,10 +547,10 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
         self.identity = identity; self.accounts = accounts; self.groups = groups
         self.categories = categories; self.payees = payees; self.payeeAliases = payeeAliases
         self.transactions = transactions; self.allocations = allocations
-        self.reconciliations = reconciliations; self.targets = targets; self.targetRevisions = targetRevisions
-        self.schedules = schedules; self.scheduleRevisions = scheduleRevisions; self.attachments = attachments
+        self.reconciliations = reconciliations; self.targets = targets; self.targetRevisions = targetRevisions ?? []
+        self.schedules = schedules; self.scheduleRevisions = scheduleRevisions ?? []; self.attachments = attachments
         self.attachmentTombstones = attachmentTombstones
-        self.debtTerms = debtTerms; self.debtPayoffPlans = debtPayoffPlans
+        self.debtTerms = debtTerms; self.debtPayoffPlans = debtPayoffPlans ?? []
         self.cashRolloverPolicies = cashRolloverPolicies
         self.creditReserveAttributions = creditReserveAttributions
         self.transactionChanges = transactionChanges; self.creditReserveEvents = creditReserveEvents
