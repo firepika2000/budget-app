@@ -246,6 +246,37 @@ public enum DebtProjectionEngine {
         return try result(status: .iterationLimit, date: nil, count: maximumPeriods)
     }
 
+    /// Finds the smallest exact monthly extra payment that reaches the requested date.
+    /// This searches the canonical projection and never changes financial state.
+    public static func requiredExtraPaymentForTarget(
+        debts: [DebtStrategyInput], firstPaymentOn: Date, targetDate: Date,
+        strategy: DebtPayoffStrategy, rollover: Bool, customOrder: [String] = [],
+        calendar: Calendar = Calendar(identifier: .gregorian)
+    ) -> Int64? {
+        guard targetDate >= firstPaymentOn else { return nil }
+        func reaches(_ value: Int64) -> Bool {
+            guard let result = try? projectStrategy(
+                debts: debts, firstPaymentOn: firstPaymentOn, strategy: strategy,
+                rollover: rollover, extraPaymentMinor: value,
+                customOrder: customOrder, calendar: calendar
+            ) else { return false }
+            return result.status == .paidOff && result.debtFreeDate.map { $0 <= targetDate } == true
+        }
+        if reaches(0) { return 0 }
+        var high: Int64 = 1
+        while !reaches(high) {
+            guard high < Int64.max else { return nil }
+            let doubled = high.multipliedReportingOverflow(by: 2)
+            high = doubled.overflow ? Int64.max : doubled.partialValue
+        }
+        var low: Int64 = 0
+        while low + 1 < high {
+            let middle = low + (high - low) / 2
+            if reaches(middle) { high = middle } else { low = middle }
+        }
+        return high
+    }
+
     private static func multipliedAndRounded(_ value: Int64, by multiplier: Int64, dividedBy denominator: Int64) throws -> Int64 {
         let quotient = value / denominator, remainder = value % denominator
         let (whole, overflow) = quotient.multipliedReportingOverflow(by: multiplier)

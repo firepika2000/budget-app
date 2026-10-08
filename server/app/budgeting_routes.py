@@ -42,6 +42,7 @@ from .debt_projection import (
     monthly_strategy_payment,
     project_debt,
     project_debt_strategy,
+    required_extra_payment_for_target,
 )
 from .dependencies import get_current_user
 from .credit import add_payment_reserve_event, add_purchase_reserve_events, ensure_credit_payment_category
@@ -642,6 +643,7 @@ def debt_strategy_projection(
         "strategy": body.strategy,
         "rollover": body.rollover,
         "extra_payment_minor": body.extra_payment_minor,
+        "target_date": body.target_date,
     }
     if incomplete:
         return base | {"status": "incomplete", "incomplete_accounts": incomplete}
@@ -654,6 +656,11 @@ def debt_strategy_projection(
             extra_payment_minor=body.extra_payment_minor,
             custom_order=body.custom_order,
         )
+        required_extra = required_extra_payment_for_target(
+            strategy_debts, body.first_payment_on, body.target_date,
+            strategy=body.strategy, rollover=body.rollover,
+            custom_order=body.custom_order,
+        ) if body.target_date is not None else None
     except (ValueError, OverflowError) as error:
         raise HTTPException(status_code=422, detail="Projection inputs exceed the supported money or date range") from error
     return base | {
@@ -674,6 +681,11 @@ def debt_strategy_projection(
             }
             for item in result.debts
         ],
+        "required_extra_payment_minor": required_extra,
+        "on_target": (
+            result.status == "paid_off" and result.debt_free_date is not None
+            and result.debt_free_date <= body.target_date
+        ) if body.target_date is not None else None,
     }
 
 

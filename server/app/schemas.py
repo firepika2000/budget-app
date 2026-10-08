@@ -281,6 +281,7 @@ class DebtStrategyProjectionRequest(BaseModel):
     extra_payment_minor: int = Field(default=0, ge=0, le=MAX_INT64)
     account_ids: list[str] = Field(default_factory=list, max_length=100)
     custom_order: list[str] = Field(default_factory=list, max_length=100)
+    target_date: Optional[date] = None
 
 
 class DebtStrategyIncompleteAccount(BaseModel):
@@ -310,6 +311,9 @@ class DebtStrategyProjectionResponse(BaseModel):
     projected_total_cost_minor: int = 0
     accounts: list[DebtStrategyAccountResponse] = Field(default_factory=list)
     incomplete_accounts: list[DebtStrategyIncompleteAccount] = Field(default_factory=list)
+    target_date: Optional[date] = None
+    required_extra_payment_minor: Optional[int] = None
+    on_target: Optional[bool] = None
 
 
 class DebtPayoffPlanUpsert(BaseModel):

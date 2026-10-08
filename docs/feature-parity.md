@@ -33,7 +33,7 @@ Status meanings:
 | Refill/up-to behavior | IMPLEMENTED | Persisted Refill Balance targets recommend the exact gap after rollover and current-month spending without moving money automatically. |
 | Weekly/yearly/custom recurrence | IMPLEMENTED | Weekly spending counts the anchored weekday's real four/five calendar occurrences; recurring expenses provide monthly, quarterly, six-month, yearly, and custom month cadences with due-date contribution guidance. |
 | Target by date and savings balance | IMPLEMENTED | Forecast calculations and progress UI. |
-| Debt payoff plan and goal | IMPLEMENTED | Per-user authoritative avalanche/snowball/custom plan, exact extra payment, account order, and optional debt-free goal date persist on Live Server and Local Device and transfer without mutating financial state. |
+| Debt payoff plan and goal | IMPLEMENTED | Per-user authoritative avalanche/snowball/custom plan, exact extra payment, account order, and optional debt-free goal date persist on Live Server and Local Device. Canonical exact-money projections show on-track status and the minimum extra monthly amount required, without mutating financial state. |
 | Snooze/skip target | IMPLEMENTED | Month-scoped, money-neutral target snooze/resume persists across Live and on-device providers without changing the global target rule. |
 | Smart Funding preview | IMPLEMENTED | Shared Before/Proposed/After native workflow and optimistic live batch commit. |
 | Funding recommendations | IMPLEMENTED | Target-based deterministic proposals run against the current authoritative month state. |

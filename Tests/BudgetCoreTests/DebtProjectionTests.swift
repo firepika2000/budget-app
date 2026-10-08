@@ -172,6 +172,36 @@ final class DebtProjectionTests: XCTestCase {
         XCTAssertEqual(debts[0].principalMinor, 10_000)
     }
 
+    func testTargetGoalFindsSmallestExactExtraPayment() throws {
+        let debts = [
+            DebtStrategyInput(debtID: "card", principalMinor: 10_000, annualRateBasisPoints: 1_200, plannedPaymentMinor: 500),
+            DebtStrategyInput(debtID: "loan", principalMinor: 5_000, annualRateBasisPoints: 0, plannedPaymentMinor: 500),
+        ]
+        let first = date("2026-01-15")
+        let target = date("2026-10-15")
+        let required = try XCTUnwrap(DebtProjectionEngine.requiredExtraPaymentForTarget(
+            debts: debts, firstPaymentOn: first, targetDate: target,
+            strategy: .avalanche, rollover: true, calendar: calendar
+        ))
+        XCTAssertGreaterThan(required, 0)
+        let reached = try DebtProjectionEngine.projectStrategy(
+            debts: debts, firstPaymentOn: first, strategy: .avalanche,
+            rollover: true, extraPaymentMinor: required, calendar: calendar
+        )
+        let missed = try DebtProjectionEngine.projectStrategy(
+            debts: debts, firstPaymentOn: first, strategy: .avalanche,
+            rollover: true, extraPaymentMinor: required - 1, calendar: calendar
+        )
+        XCTAssertEqual(reached.status, .paidOff)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(reached.debtFreeDate), target)
+        let missedTarget = missed.status != .paidOff || missed.debtFreeDate.map { $0 > target } == true
+        XCTAssertTrue(missedTarget)
+        XCTAssertNil(DebtProjectionEngine.requiredExtraPaymentForTarget(
+            debts: debts, firstPaymentOn: first, targetDate: date("2025-12-31"),
+            strategy: .avalanche, rollover: true, calendar: calendar
+        ))
+    }
+
     func testCustomStrategyRequiresCompleteOrderAndReportsNonAmortizing() throws {
         let debts = [
             DebtStrategyInput(debtID: "first", principalMinor: 10_000, annualRateBasisPoints: 1_200, plannedPaymentMinor: 50),

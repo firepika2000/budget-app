@@ -1168,12 +1168,28 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                 firstPaymentOn: BudgetWorkspaceStore.parseDate(request.firstPaymentOn), terms: projectionTerms)
             return .init(debtID: account.id, principalMinor: principal, annualRateBasisPoints: Int64(rate), plannedPaymentMinor: payment, promotionalRateBasisPoints: projectionTerms.promotionalRateBasisPoints, promotionalEndsOn: projectionTerms.promotionalEndsOn)
         }
-        let result = try DebtProjectionEngine.projectStrategy(debts: inputs, firstPaymentOn: BudgetWorkspaceStore.parseDate(request.firstPaymentOn), strategy: DebtPayoffStrategy(rawValue: request.strategy) ?? .avalanche, rollover: request.rollover, extraPaymentMinor: request.extraPaymentMinor, customOrder: request.customOrder)
+        let firstPaymentOn = BudgetWorkspaceStore.parseDate(request.firstPaymentOn)
+        let payoffStrategy = DebtPayoffStrategy(rawValue: request.strategy) ?? .avalanche
+        let result = try DebtProjectionEngine.projectStrategy(debts: inputs, firstPaymentOn: firstPaymentOn, strategy: payoffStrategy, rollover: request.rollover, extraPaymentMinor: request.extraPaymentMinor, customOrder: request.customOrder)
+        let requiredExtra = request.targetDate.flatMap {
+            DebtProjectionEngine.requiredExtraPaymentForTarget(
+                debts: inputs, firstPaymentOn: firstPaymentOn,
+                targetDate: BudgetWorkspaceStore.parseDate($0), strategy: payoffStrategy,
+                rollover: request.rollover, customOrder: request.customOrder
+            )
+        }
         let rows = result.debts.map { item in
             ["account_id": item.debtID, "payoff_date": item.payoffDate.map(BudgetWorkspaceStore.dateString) ?? NSNull(), "payoff_month": item.payoffMonth ?? NSNull(), "projected_interest_minor": item.projectedInterestMinor, "projected_total_paid_minor": item.projectedTotalPaidMinor] as [String: Any]
         }
         let status = result.status == .paidOff ? "paid_off" : result.status == .nonAmortizing ? "non_amortizing" : "iteration_limit"
-        return try decode(["currency_code": budget.currencyCode, "status": status, "strategy": request.strategy, "rollover": request.rollover, "extra_payment_minor": request.extraPaymentMinor, "payoff_order": result.payoffOrder, "debt_free_date": result.debtFreeDate.map(BudgetWorkspaceStore.dateString) ?? NSNull(), "payment_count": result.paymentCount, "projected_interest_minor": result.projectedInterestMinor, "projected_total_paid_minor": result.projectedTotalPaidMinor, "projected_total_cost_minor": result.projectedTotalCostMinor, "accounts": rows, "incomplete_accounts": []])
+        let goalDate = request.targetDate.map(BudgetWorkspaceStore.parseDate)
+        let onTarget = goalDate.map { target in
+            result.status == .paidOff && result.debtFreeDate.map { $0 <= target } == true
+        }
+        let targetValue: Any = request.targetDate.map { $0 as Any } ?? NSNull()
+        let requiredValue: Any = requiredExtra.map { $0 as Any } ?? NSNull()
+        let onTargetValue: Any = onTarget.map { $0 as Any } ?? NSNull()
+        return try decode(["currency_code": budget.currencyCode, "status": status, "strategy": request.strategy, "rollover": request.rollover, "extra_payment_minor": request.extraPaymentMinor, "payoff_order": result.payoffOrder, "debt_free_date": result.debtFreeDate.map(BudgetWorkspaceStore.dateString) ?? NSNull(), "payment_count": result.paymentCount, "projected_interest_minor": result.projectedInterestMinor, "projected_total_paid_minor": result.projectedTotalPaidMinor, "projected_total_cost_minor": result.projectedTotalCostMinor, "accounts": rows, "incomplete_accounts": [], "target_date": targetValue, "required_extra_payment_minor": requiredValue, "on_target": onTargetValue])
     }
 
     func debtCost(accountIDs: [String]) async throws -> APIDebtCost { try requireActiveMembership();
@@ -9554,7 +9570,7 @@ private struct DebtPayoffContent: View {
         return value
     }
     private var selectedAccountIDs: [String] { store.reportAccountID.isEmpty ? planAccountIDs : [store.reportAccountID] }
-    private var scenarioKey: String { "\(strategy)|\(rollover)|\(extraPayment.map(String.init) ?? "invalid")|\(customOrder.joined(separator: ","))|\(selectedAccountIDs.joined(separator: ","))|\(termsRevision)|\(store.reportRevision)|\(store.liveCredentialRevision)" }
+    private var scenarioKey: String { "\(strategy)|\(rollover)|\(extraPayment.map(String.init) ?? "invalid")|\(customOrder.joined(separator: ","))|\(selectedAccountIDs.joined(separator: ","))|\(hasTargetDate ? BudgetWorkspaceStore.dateString(targetDate) : "none")|\(termsRevision)|\(store.reportRevision)|\(store.liveCredentialRevision)" }
 
     var body: some View {
         Section("Scenario") {
@@ -9653,6 +9669,24 @@ private struct DebtPayoffContent: View {
     }
 
     @ViewBuilder private func resultSections(_ value: APIDebtStrategyProjection) -> some View {
+        if let target = value.targetDate, let onTarget = value.onTarget {
+            Section("Debt-free goal") {
+                if onTarget {
+                    Label("On track for \(target)", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text("Your current scenario reaches this goal without increasing the planned extra payment.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if let required = value.requiredExtraPaymentMinor {
+                    Label("Increase the monthly extra to reach \(target)", systemImage: "target")
+                    LabeledContent("Suggested extra each month", value: store.format(required))
+                    Button("Use suggested amount") { useSuggestedExtra(required) }
+                        .accessibilityIdentifier("debt-payoff-use-suggested-extra")
+                } else {
+                    Label("This goal is outside the supported projection range", systemImage: "calendar.badge.exclamationmark")
+                }
+            }
+            .accessibilityIdentifier("debt-payoff-goal-guidance")
+        }
         if value.status == "incomplete" {
             Section("Projection unavailable") {
                 ForEach(value.incompleteAccounts, id: \.accountID) { item in
@@ -9765,7 +9799,7 @@ private struct DebtPayoffContent: View {
             ))
             saveMessage = "Saved across your devices"
         } catch {
-            saveMessage = isTransientConnectivityFailure(error) ? "Will save when the server is reachable" : error.localizedDescription
+            saveMessage = isTransientConnectivityFailure(error) ? "Not saved—reconnect and adjust the plan to retry" : error.localizedDescription
         }
     }
     private func editableAmount(_ minorUnits: Int64) -> String {
@@ -9775,6 +9809,10 @@ private struct DebtPayoffContent: View {
         formatter.minimumFractionDigits = digits; formatter.maximumFractionDigits = digits
         let amount = NSDecimalNumber(mantissa: minorUnits.magnitude, exponent: -Int16(digits), isNegative: minorUnits < 0)
         return formatter.string(from: amount) ?? "0"
+    }
+    private func useSuggestedExtra(_ value: Int64) {
+        extraPreset = -1
+        customExtra = editableAmount(value)
     }
     private func resetPlan() async {
         isPlanLoaded = false
@@ -9798,7 +9836,7 @@ private struct DebtPayoffContent: View {
         defer { if calculationID == operation { isLoading = false } }
         do {
             let firstPayment = BudgetWorkspaceStore.dateString(Date())
-            async let loaded = store.debtStrategyProjection(.init(firstPaymentOn: firstPayment, strategy: strategy, rollover: rollover, extraPaymentMinor: extraPayment, accountIDs: selectedAccountIDs, customOrder: strategy == "custom" ? customOrder : []))
+            async let loaded = store.debtStrategyProjection(.init(firstPaymentOn: firstPayment, strategy: strategy, rollover: rollover, extraPaymentMinor: extraPayment, accountIDs: selectedAccountIDs, customOrder: strategy == "custom" ? customOrder : [], targetDate: hasTargetDate ? BudgetWorkspaceStore.dateString(targetDate) : nil))
             async let loadedBaseline = store.debtStrategyProjection(.init(firstPaymentOn: firstPayment, strategy: "avalanche", rollover: false, extraPaymentMinor: 0, accountIDs: selectedAccountIDs))
             let values = try await (loaded, loadedBaseline)
             guard !Task.isCancelled, calculationID == operation, scenarioKey == key else { return }

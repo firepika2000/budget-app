@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from app.debt_projection import ProjectionTerms, StrategyDebt, monthly_strategy_payment, project_debt, project_debt_strategy
+from app.debt_projection import ProjectionTerms, StrategyDebt, monthly_strategy_payment, project_debt, project_debt_strategy, required_extra_payment_for_target
 from .conftest import auth
 from .test_budgeting_api import create_budget
 from .test_delegated_access import add_child
@@ -326,6 +326,61 @@ def test_budget_strategy_endpoint_is_exact_read_only_and_supports_custom_order(
         for item in (high, small)
     }
     assert after == before
+
+
+def test_target_goal_finds_smallest_exact_extra_payment():
+    debts = (
+        StrategyDebt("card", 10_000, 1_200, 500),
+        StrategyDebt("loan", 5_000, 0, 500),
+    )
+    first = date(2026, 1, 15)
+    target = date(2026, 10, 15)
+    required = required_extra_payment_for_target(
+        debts, first, target, strategy="avalanche", rollover=True,
+    )
+    assert required is not None and required > 0
+    reached = project_debt_strategy(
+        debts, first, strategy="avalanche", rollover=True,
+        extra_payment_minor=required,
+    )
+    missed = project_debt_strategy(
+        debts, first, strategy="avalanche", rollover=True,
+        extra_payment_minor=required - 1,
+    )
+    assert reached.status == "paid_off" and reached.debt_free_date <= target
+    assert missed.status != "paid_off" or missed.debt_free_date > target
+    assert required_extra_payment_for_target(
+        debts, first, date(2025, 12, 31), strategy="avalanche", rollover=True,
+    ) is None
+
+
+def test_strategy_endpoint_returns_actionable_target_guidance(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    create_strategy_card(client, owner_token, budget["id"], "Goal card", 10_000, 1_200, 500)
+    path = f"/api/v1/budgets/{budget['id']}/debt-strategy-projection"
+    body = {
+        "first_payment_on": "2026-01-15", "target_date": "2026-10-15",
+        "strategy": "avalanche", "rollover": True, "extra_payment_minor": 0,
+    }
+    response = client.post(path, headers=auth(owner_token), json=body)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    required = payload["required_extra_payment_minor"]
+    assert payload["target_date"] == "2026-10-15"
+    assert payload["on_target"] is False
+    assert required > 0
+    achieved = client.post(path, headers=auth(owner_token), json=body | {
+        "extra_payment_minor": required,
+    })
+    assert achieved.status_code == 200, achieved.text
+    assert achieved.json()["on_target"] is True
+    one_cent_short = client.post(path, headers=auth(owner_token), json=body | {
+        "extra_payment_minor": required - 1,
+    })
+    assert one_cent_short.status_code == 200, one_cent_short.text
+    assert one_cent_short.json()["on_target"] is False
 
 
 def test_strategy_filters_hidden_debt_before_projection_and_rejects_hidden_ids(

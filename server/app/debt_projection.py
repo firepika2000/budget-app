@@ -371,3 +371,53 @@ def project_debt_strategy(
     if total_paid == 0 or all(payments[item] == 0 for item in ids) and extra_payment_minor == 0:
         status = "non_amortizing"
     return StrategyProjectionResult(status, strategy, rollover, tuple(payoff_order), None, max_periods, total_interest, total_paid, total_paid, results)
+
+
+def required_extra_payment_for_target(
+    debts: list[StrategyDebt] | tuple[StrategyDebt, ...],
+    first_payment_on: date,
+    target_date: date,
+    *,
+    strategy: Strategy,
+    rollover: bool,
+    custom_order: list[str] | tuple[str, ...] = (),
+) -> int | None:
+    """Return the smallest exact monthly strategy amount that reaches ``target_date``.
+
+    This is a read-only search over the canonical projection engine. It does not approximate money,
+    mutate debt, or turn the goal into spendable cash. ``None`` means the date is outside the
+    supported projection range.
+    """
+    if target_date < first_payment_on:
+        return None
+
+    def reaches(value: int) -> bool:
+        result = project_debt_strategy(
+            debts, first_payment_on, strategy=strategy, rollover=rollover,
+            extra_payment_minor=value, custom_order=custom_order,
+        )
+        return result.status == "paid_off" and result.debt_free_date is not None and result.debt_free_date <= target_date
+
+    if reaches(0):
+        return 0
+    high = 1
+    while high < MAX_MONEY:
+        try:
+            if reaches(high):
+                break
+        except (OverflowError, ValueError):
+            return None
+        high = min(MAX_MONEY, high * 2)
+    else:
+        return None
+    low = 0
+    while low + 1 < high:
+        middle = low + (high - low) // 2
+        try:
+            if reaches(middle):
+                high = middle
+            else:
+                low = middle
+        except (OverflowError, ValueError):
+            high = middle
+    return high

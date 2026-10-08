@@ -677,15 +677,17 @@ public struct APIDebtStrategyProjectionRequest: Encodable, Sendable {
     public let extraPaymentMinor: Int64
     public let accountIDs: [String]
     public let customOrder: [String]
+    public let targetDate: String?
 
-    public init(firstPaymentOn: String, strategy: String, rollover: Bool, extraPaymentMinor: Int64 = 0, accountIDs: [String] = [], customOrder: [String] = []) {
+    public init(firstPaymentOn: String, strategy: String, rollover: Bool, extraPaymentMinor: Int64 = 0, accountIDs: [String] = [], customOrder: [String] = [], targetDate: String? = nil) {
         self.firstPaymentOn = firstPaymentOn; self.strategy = strategy; self.rollover = rollover
         self.extraPaymentMinor = extraPaymentMinor; self.accountIDs = accountIDs; self.customOrder = customOrder
+        self.targetDate = targetDate
     }
     enum CodingKeys: String, CodingKey {
         case strategy, rollover
         case firstPaymentOn = "first_payment_on", extraPaymentMinor = "extra_payment_minor"
-        case accountIDs = "account_ids", customOrder = "custom_order"
+        case accountIDs = "account_ids", customOrder = "custom_order", targetDate = "target_date"
     }
 }
 
@@ -761,6 +763,9 @@ public struct APIDebtStrategyProjection: Decodable, Equatable, Sendable {
     public let projectedTotalCostMinor: Int64
     public let accounts: [APIDebtStrategyAccount]
     public let incompleteAccounts: [APIDebtStrategyIncompleteAccount]
+    public let targetDate: String?
+    public let requiredExtraPaymentMinor: Int64?
+    public let onTarget: Bool?
     enum CodingKeys: String, CodingKey {
         case status, strategy, rollover, accounts
         case currencyCode = "currency_code", extraPaymentMinor = "extra_payment_minor"
@@ -769,6 +774,8 @@ public struct APIDebtStrategyProjection: Decodable, Equatable, Sendable {
         case projectedTotalPaidMinor = "projected_total_paid_minor"
         case projectedTotalCostMinor = "projected_total_cost_minor"
         case incompleteAccounts = "incomplete_accounts"
+        case targetDate = "target_date", requiredExtraPaymentMinor = "required_extra_payment_minor"
+        case onTarget = "on_target"
     }
 }
 
