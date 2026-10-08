@@ -1229,17 +1229,34 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         default:
             throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, QIF, MT940, CAMT, and text-based PDF statements.")
         }
+        // Match only currently visible, posted observations from the statement's account. A
+        // same-day purchase in another account is not evidence that this bank row is a duplicate.
+        // Keep suggestions bounded and deterministic, matching the server review boundary.
+        let observations = resourceVisibleTransactions.filter {
+            $0.accountID == accountID && $0.status == "posted"
+        }
         let candidates = parsed.map { candidate -> APIStatementImportCandidate in
-            let exact = demo.transactions.filter {
+            let candidateDate = BudgetWorkspaceStore.parseDate(candidate.occurredOn)
+            let exactMatches = observations.filter {
                 BudgetWorkspaceStore.dateString($0.date) == candidate.occurredOn && $0.amount == candidate.amountMinor &&
                 $0.payee.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(candidate.payee) == .orderedSame
-            }.map(\.id)
-            let possible = demo.transactions.filter {
-                $0.amount == candidate.amountMinor && abs($0.date.timeIntervalSince(BudgetWorkspaceStore.parseDate(candidate.occurredOn))) <= 2 * 86_400 && !exact.contains($0.id)
-            }.map(\.id)
+            }.sorted { $0.id < $1.id }
+            let exact = exactMatches.prefix(20).map(\.id)
+            let exactIDs = Set(exactMatches.map(\.id))
+            let possibleMatches = observations.filter {
+                $0.amount == candidate.amountMinor &&
+                abs($0.date.timeIntervalSince(candidateDate)) <= 2 * 86_400 &&
+                !exactIDs.contains($0.id)
+            }.sorted {
+                let leftDistance = abs($0.date.timeIntervalSince(candidateDate))
+                let rightDistance = abs($1.date.timeIntervalSince(candidateDate))
+                return leftDistance != rightDistance ? leftDistance < rightDistance : $0.id < $1.id
+            }
+            let possible = possibleMatches.prefix(20).map(\.id)
             return .init(sourceRow: candidate.sourceRow, occurredOn: candidate.occurredOn,
                          amountMinor: candidate.amountMinor, payee: candidate.payee, memo: candidate.memo,
                          exactTransactionIDs: exact, possibleTransactionIDs: possible,
+                         suggestionsTruncated: exactMatches.count > exact.count || possibleMatches.count > possible.count,
                          duplicateSourceRow: parsed.first(where: {
                              $0.sourceRow < candidate.sourceRow && $0.occurredOn == candidate.occurredOn &&
                              $0.amountMinor == candidate.amountMinor && $0.payee.caseInsensitiveCompare(candidate.payee) == .orderedSame

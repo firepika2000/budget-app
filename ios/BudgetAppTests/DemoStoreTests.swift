@@ -3532,6 +3532,64 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalStatementMatchingUsesSelectedAccountAndPostedRows() async throws {
+        let source = DemoWorkspaceDataSource()
+        let target = try XCTUnwrap(source.demo.accounts.first)
+        let other = try XCTUnwrap(source.demo.accounts.first { $0.id != target.id })
+        let occurredOn = "2026-09-15"
+        let candidate = Data("Date,Amount,Payee\n2026-09-15,-12.34,Account-scoped merchant\n".utf8)
+        let mapping = APIStatementImportMapping(
+            sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+            amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd"
+        )
+
+        try await source.recordTransaction(.init(
+            accountID: other.id, categoryID: nil, amountMinor: -1_234, occurredOn: occurredOn,
+            payeeName: "Account-scoped merchant", memo: "Other account", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: []
+        ))
+        var staged = try await source.stageStatementImport(accountID: target.id, data: candidate, mapping: mapping)
+        XCTAssertTrue(try XCTUnwrap(staged.candidates.first).exactTransactionIDs.isEmpty)
+        XCTAssertTrue(try XCTUnwrap(staged.candidates.first).possibleTransactionIDs.isEmpty)
+
+        try await source.recordTransaction(.init(
+            accountID: target.id, categoryID: nil, amountMinor: -1_234, occurredOn: occurredOn,
+            payeeName: "Account-scoped merchant", memo: "Target account", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: []
+        ))
+        staged = try await source.stageStatementImport(accountID: target.id, data: candidate, mapping: mapping)
+        XCTAssertEqual(try XCTUnwrap(staged.candidates.first).exactTransactionIDs.count, 1)
+
+        let postedID = try XCTUnwrap(staged.candidates.first?.exactTransactionIDs.first)
+        try await source.voidTransaction(id: postedID, reason: "Exclude non-posted observations")
+        staged = try await source.stageStatementImport(accountID: target.id, data: candidate, mapping: mapping)
+        XCTAssertTrue(try XCTUnwrap(staged.candidates.first).exactTransactionIDs.isEmpty)
+    }
+
+    @MainActor
+    func testLocalStatementMatchingBoundsSuggestionsAndReportsTruncation() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        for index in 0..<21 {
+            try await source.recordTransaction(.init(
+                accountID: account.id, categoryID: nil, amountMinor: -1_234,
+                occurredOn: "2026-09-15", payeeName: "Repeated merchant", memo: "Occurrence \(index)",
+                isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: []
+            ))
+        }
+        let staged = try await source.stageStatementImport(
+            accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,-12.34,Repeated merchant\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd")
+        )
+        let candidate = try XCTUnwrap(staged.candidates.first)
+        XCTAssertEqual(candidate.exactTransactionIDs.count, 20)
+        XCTAssertTrue(candidate.suggestionsTruncated)
+        XCTAssertEqual(candidate.exactTransactionIDs, candidate.exactTransactionIDs.sorted())
+    }
+
+    @MainActor
     func testLocalStatementUndoUsesCanonicalVoidAndReversalPath() async throws {
         let source = DemoWorkspaceDataSource()
         let account = try XCTUnwrap(source.demo.accounts.first)

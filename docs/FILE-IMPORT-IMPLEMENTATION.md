@@ -11,6 +11,11 @@ Local Device import review/history is durable in the Local Device SQLite authori
 session-only. Review, approved, cancelled and undo metadata survives app/repository relaunch, remains
 account-scoped, and participates automatically in the existing encrypted database backup/restore path.
 
+Local Device duplicate suggestions now use only currently visible, posted observations from the
+selected statement account. Exact and possible matches are deterministically ordered, capped at 20
+each, and report truncation. A same-date/amount/payee transaction in another account, or a voided
+transaction in the selected account, cannot incorrectly steer review toward skipping a legitimate row.
+
 The native review now treats cancellation as an explicit lifecycle operation. Before preview,
 Close simply leaves the file picker flow because no server state exists. After staging, Cancel
 Import requires confirmation and calls the provider's optimistic-version cancellation contract;
