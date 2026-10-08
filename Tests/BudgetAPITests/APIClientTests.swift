@@ -1338,6 +1338,26 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(rows.first?.transactionIDs, ["transaction"])
     }
 
+    func testDelegatedPolicyHistoryUsesBoundedAttributedExactContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/delegated-budgets/member/history")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(items.first(where: { $0.name == "limit" })?.value, "25")
+            XCTAssertEqual(items.first(where: { $0.name == "offset" })?.value, "50")
+            let data = Data(#"[{"id":"revision","policy_id":"policy","member_user_id":"member","action":"updated","actor_user_id":"owner","actor_display_name":"Owner","before_snapshot":{"user_id":"member","pool_category_id":"pool","authority_minor":100,"allow_category_creation":true,"allow_reallocation":true,"rules":[]},"after_snapshot":{"user_id":"member","pool_category_id":"pool","authority_minor":9007199254740992,"allow_category_creation":false,"allow_reallocation":true,"rules":[{"category_id":"games","rule_kind":"hard_limit","minimum_minor":123,"maximum_minor":null}]},"created_at":"2026-10-08T18:00:00Z"}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let rows = try await client.delegatedBudgetHistory(budgetID: "b1", userID: "member", limit: 25, offset: 50, token: "rotated")
+        XCTAssertEqual(rows.first?.afterSnapshot.authorityMinor, 9_007_199_254_740_992)
+        XCTAssertEqual(rows.first?.afterSnapshot.rules.first?.categoryID, "games")
+        XCTAssertEqual(rows.first?.actorDisplayName, "Owner")
+    }
+
     func testScheduledTransactionCreateListAndRealizeUseContractPaths() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

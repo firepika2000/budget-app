@@ -35,6 +35,7 @@ from .models import (
     CategoryTargetSnooze,
     CreditCardReserveEvent,
     DelegatedBudgetPolicy,
+    DelegatedBudgetPolicyRevision,
     DelegatedCategoryRule,
     DebtPayoffPlan,
     FinancialRequest,
@@ -366,6 +367,9 @@ def export_budget_json(
         "delegated_category_rules": [row_data(item) for item in db.scalars(select(DelegatedCategoryRule).where(
             DelegatedCategoryRule.policy_id.in_(policy_ids)
         ))] if policy_ids else [],
+        "delegated_budget_policy_revisions": [row_data(item) for item in db.scalars(select(DelegatedBudgetPolicyRevision).where(
+            DelegatedBudgetPolicyRevision.budget_id == budget_id
+        ))],
         "targets": [row_data(item) for item in targets],
         "target_revisions": [row_data(item) for item in db.scalars(select(CategoryTargetRevision).where(
             CategoryTargetRevision.budget_id == budget_id

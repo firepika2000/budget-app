@@ -1838,6 +1838,68 @@ public struct APIDelegatedBudgetUpsert: Encodable, Sendable {
     enum CodingKeys: String, CodingKey { case userID = "user_id", poolCategoryID = "pool_category_id", authorityMinor = "authority_minor", allowCategoryCreation = "allow_category_creation", allowReallocation = "allow_reallocation", expectedAllocationVersion = "expected_allocation_version", rules }
 }
 
+public struct APIDelegatedPolicyRuleSnapshot: Codable, Equatable, Sendable {
+    public let categoryID: String
+    public let ruleKind: String
+    public let minimumMinor: Int64?
+    public let maximumMinor: Int64?
+    public init(categoryID: String, ruleKind: String, minimumMinor: Int64? = nil, maximumMinor: Int64? = nil) {
+        self.categoryID = categoryID; self.ruleKind = ruleKind
+        self.minimumMinor = minimumMinor; self.maximumMinor = maximumMinor
+    }
+    enum CodingKeys: String, CodingKey {
+        case categoryID = "category_id", ruleKind = "rule_kind"
+        case minimumMinor = "minimum_minor", maximumMinor = "maximum_minor"
+    }
+}
+
+public struct APIDelegatedPolicySnapshot: Codable, Equatable, Sendable {
+    public let userID: String
+    public let poolCategoryID: String
+    public let authorityMinor: Int64
+    public let allowCategoryCreation: Bool
+    public let allowReallocation: Bool
+    public let rules: [APIDelegatedPolicyRuleSnapshot]
+    public init(userID: String, poolCategoryID: String, authorityMinor: Int64,
+                allowCategoryCreation: Bool, allowReallocation: Bool,
+                rules: [APIDelegatedPolicyRuleSnapshot]) {
+        self.userID = userID; self.poolCategoryID = poolCategoryID; self.authorityMinor = authorityMinor
+        self.allowCategoryCreation = allowCategoryCreation; self.allowReallocation = allowReallocation
+        self.rules = rules
+    }
+    enum CodingKeys: String, CodingKey {
+        case rules
+        case userID = "user_id", poolCategoryID = "pool_category_id", authorityMinor = "authority_minor"
+        case allowCategoryCreation = "allow_category_creation", allowReallocation = "allow_reallocation"
+    }
+}
+
+public struct APIDelegatedPolicyRevision: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let policyID: String
+    public let memberUserID: String
+    public let action: String
+    public let actorUserID: String
+    public let actorDisplayName: String?
+    public let beforeSnapshot: APIDelegatedPolicySnapshot?
+    public let afterSnapshot: APIDelegatedPolicySnapshot
+    public let createdAt: String
+    public init(id: String, policyID: String, memberUserID: String, action: String,
+                actorUserID: String, actorDisplayName: String? = nil,
+                beforeSnapshot: APIDelegatedPolicySnapshot? = nil,
+                afterSnapshot: APIDelegatedPolicySnapshot, createdAt: String) {
+        self.id = id; self.policyID = policyID; self.memberUserID = memberUserID; self.action = action
+        self.actorUserID = actorUserID; self.actorDisplayName = actorDisplayName
+        self.beforeSnapshot = beforeSnapshot; self.afterSnapshot = afterSnapshot; self.createdAt = createdAt
+    }
+    enum CodingKeys: String, CodingKey {
+        case id, action
+        case policyID = "policy_id", memberUserID = "member_user_id", actorUserID = "actor_user_id"
+        case actorDisplayName = "actor_display_name", beforeSnapshot = "before_snapshot"
+        case afterSnapshot = "after_snapshot", createdAt = "created_at"
+    }
+}
+
 struct APICategoryDelegationUpdate: Encodable { let delegatedUserID: String?; enum CodingKeys: String, CodingKey { case delegatedUserID = "delegated_user_id" } }
 
 public struct APISmartFundingProposal: Identifiable, Decodable, Equatable, Sendable {

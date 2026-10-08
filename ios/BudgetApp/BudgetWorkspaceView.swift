@@ -544,6 +544,7 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws
+    func delegatedPolicyHistory(userID: String, limit: Int, offset: Int) async throws -> [APIDelegatedPolicyRevision]
 }
 
 @MainActor
@@ -557,6 +558,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var accessProfiles: [String: APIAccessProfile] = [:]
     private var demoTargetRevisions: [APICategoryTargetRevision] = []
     private var demoScheduleRevisions: [APIScheduledTransactionRevision] = []
+    private var demoDelegatedPolicyRevisions: [APIDelegatedPolicyRevision] = []
     private let now: () -> Date
     private struct InvitationRecord {
         let id: String; let email: String; let role: String
@@ -2931,11 +2933,34 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                       && (rule.minimumMinor ?? 0) >= 0 && (rule.maximumMinor ?? 0) >= 0
                       && (rule.minimumMinor == nil || rule.maximumMinor == nil || rule.minimumMinor! <= rule.maximumMinor!)
               }) else { throw workspaceRepositoryError("Delegated policy categories or limits are invalid.") }
+        let before = delegatedPolicyRecords[userID].map { delegatedSnapshot($0.value) }
         try demo.setDelegatedAuthority(user: member, poolCategoryID: value.poolCategoryID,
                                        authorityMinor: value.authorityMinor,
                                        expectedVersion: value.expectedAllocationVersion)
         let id = delegatedPolicyRecords[userID]?.id ?? "demo-delegated-\(userID)"
         delegatedPolicyRecords[userID] = .init(id: id, value: value)
+        let after = delegatedSnapshot(value)
+        if before != after {
+            demoDelegatedPolicyRevisions.append(.init(
+                id: UUID().uuidString, policyID: id, memberUserID: userID,
+                action: before == nil ? "created" : "updated", actorUserID: "rey",
+                actorDisplayName: "Rey", beforeSnapshot: before, afterSnapshot: after,
+                createdAt: ISO8601DateFormatter().string(from: now())
+            ))
+        }
+    }
+    func delegatedPolicyHistory(userID: String, limit: Int, offset: Int) async throws -> [APIDelegatedPolicyRevision] {
+        try requireActiveMembership()
+        guard budget.can("manage_allowances") else { throw workspaceRepositoryError("You do not have permission to view delegated authority history.") }
+        return Array(demoDelegatedPolicyRevisions.filter { $0.memberUserID == userID }.reversed().dropFirst(offset).prefix(limit))
+    }
+    private func delegatedSnapshot(_ value: APIDelegatedBudgetUpsert) -> APIDelegatedPolicySnapshot {
+        .init(userID: value.userID, poolCategoryID: value.poolCategoryID,
+              authorityMinor: value.authorityMinor, allowCategoryCreation: value.allowCategoryCreation,
+              allowReallocation: value.allowReallocation,
+              rules: value.rules.map { .init(categoryID: $0.categoryID, ruleKind: $0.ruleKind,
+                                               minimumMinor: $0.minimumMinor, maximumMinor: $0.maximumMinor) }
+                  .sorted { $0.categoryID == $1.categoryID ? $0.ruleKind < $1.ruleKind : $0.categoryID < $1.categoryID })
     }
 
 }
@@ -3119,6 +3144,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview { try await credentials.prepare(); return try await client.smartFundingPreview(budgetID: budget.id, month: month, token: token) }
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws { try await credentials.prepare(); _ = try await client.commitSmartFunding(budgetID: budget.id, month: preview.month, expectedAllocationVersion: preview.allocationVersion, token: token) }
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { try await credentials.prepare(); _ = try await client.updateDelegatedBudget(budgetID: budget.id, userID: userID, policy: value, token: token) }
+    func delegatedPolicyHistory(userID: String, limit: Int, offset: Int) async throws -> [APIDelegatedPolicyRevision] { try await credentials.prepare(); return try await client.delegatedBudgetHistory(budgetID: budget.id, userID: userID, limit: limit, offset: offset, token: token) }
 }
 
 @MainActor
@@ -4345,6 +4371,9 @@ final class BudgetWorkspaceStore: ObservableObject {
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws {
         try await commands().updateDelegatedPolicy(userID: userID, value: value)
         await refresh()
+    }
+    func delegatedPolicyHistory(userID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIDelegatedPolicyRevision] {
+        try await commands().delegatedPolicyHistory(userID: userID, limit: limit, offset: offset)
     }
 
     func accessProfile(userID: String) async throws -> APIAccessProfile { try await commands().accessProfile(userID: userID) }
@@ -12365,9 +12394,48 @@ struct LiveDelegatedPolicyView: View {
     let member: APIHouseholdMember
     @State private var poolCategoryID = ""; @State private var authority = ""; @State private var allowCreation = true; @State private var allowReallocation = true; @State private var isSaving = false; @State private var errorMessage: String?
     private var categories: [APICategory] { store.categories.filter { $0.delegatedUserID == member.userID && !$0.isArchived } }
-    var body: some View { Form { Section("Authority") { Picker("To assign category", selection: $poolCategoryID) { ForEach(categories) { Text($0.name).tag($0.id) } }; CurrencyAmountField("Total authority", text: $authority, currencyCode: store.budget.currencyCode, allowsZero: true); Toggle("Can create categories", isOn: $allowCreation); Toggle("Can move money", isOn: $allowReallocation) }; Section { Text("Authority is a hard household boundary. The member can organize only categories delegated to them, and cannot expose or move money into private family categories.").font(.footnote).foregroundStyle(.secondary) } }.navigationTitle(member.displayName).toolbar { Button("Save") { Task { await save() } }.disabled(poolCategoryID.isEmpty || parsed == nil || isSaving) }.onAppear { let existing = store.delegatedBudgets.first(where: { $0.userID == member.userID }); poolCategoryID = existing?.poolCategoryID ?? categories.first?.id ?? ""; authority = CurrencyText.editable(existing?.authorityMinor ?? 0, currencyCode: store.budget.currencyCode); allowCreation = existing?.allowCategoryCreation ?? true; allowReallocation = existing?.allowReallocation ?? true }.alert("Unable to save delegated budget", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
+    var body: some View { Form {
+        Section("Authority") { Picker("To assign category", selection: $poolCategoryID) { ForEach(categories) { Text($0.name).tag($0.id) } }; CurrencyAmountField("Total authority", text: $authority, currencyCode: store.budget.currencyCode, allowsZero: true); Toggle("Can create categories", isOn: $allowCreation); Toggle("Can move money", isOn: $allowReallocation) }
+        if store.delegatedBudgets.contains(where: { $0.userID == member.userID }) {
+            Section { NavigationLink { DelegatedPolicyHistoryView(member: member) } label: { Label("Authority history", systemImage: "clock.arrow.circlepath") } }
+        }
+        Section { Text("Authority is a hard household boundary. The member can organize only categories delegated to them, and cannot expose or move money into private family categories.").font(.footnote).foregroundStyle(.secondary) }
+    }.navigationTitle(member.displayName).toolbar { Button("Save") { Task { await save() } }.disabled(poolCategoryID.isEmpty || parsed == nil || isSaving) }.onAppear { let existing = store.delegatedBudgets.first(where: { $0.userID == member.userID }); poolCategoryID = existing?.poolCategoryID ?? categories.first?.id ?? ""; authority = CurrencyText.editable(existing?.authorityMinor ?? 0, currencyCode: store.budget.currencyCode); allowCreation = existing?.allowCategoryCreation ?? true; allowReallocation = existing?.allowReallocation ?? true }.alert("Unable to save delegated budget", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
     private var parsed: Int64? { guard let amount = CurrencyText.parseMinorUnits(authority, currencyCode: store.budget.currencyCode), amount >= 0 else { return nil }; return amount }
     private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await store.updateDelegatedPolicy(userID: member.userID, value: APIDelegatedBudgetUpsert(userID: member.userID, poolCategoryID: poolCategoryID, authorityMinor: parsed, allowCategoryCreation: allowCreation, allowReallocation: allowReallocation, expectedAllocationVersion: store.summary?.allocationVersion)) } catch { errorMessage = error.localizedDescription } }
+}
+
+private struct DelegatedPolicyHistoryView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let member: APIHouseholdMember
+    @State private var rows: [APIDelegatedPolicyRevision] = []
+    @State private var loading = true
+    @State private var error: String?
+    private let pageSize = 50
+    var body: some View {
+        List {
+            if let error { Section { ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle", description: Text(error)); Button("Try Again") { Task { await load() } } } }
+            else if rows.isEmpty && !loading { ContentUnavailableView("No authority decisions yet", systemImage: "clock.arrow.circlepath", description: Text("Creates and changes to this member's authority will appear here.")) }
+            ForEach(rows) { row in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack { Label(row.action == "created" ? "Authority created" : "Authority updated", systemImage: row.action == "created" ? "plus.circle" : "pencil.circle").fontWeight(.semibold); Spacer(); Text(BudgetWorkspaceStore.compactDate(String(row.createdAt.prefix(10)))).font(.caption).foregroundStyle(.secondary) }
+                    if let before = row.beforeSnapshot, before.authorityMinor != row.afterSnapshot.authorityMinor {
+                        Text("\(store.format(before.authorityMinor)) → \(store.format(row.afterSnapshot.authorityMinor))").monospacedDigit()
+                    } else { Text(store.format(row.afterSnapshot.authorityMinor)).monospacedDigit() }
+                    Text("\(row.afterSnapshot.rules.count) category rule\(row.afterSnapshot.rules.count == 1 ? "" : "s") · \(row.afterSnapshot.allowCategoryCreation ? "Can create categories" : "Cannot create categories") · \(row.afterSnapshot.allowReallocation ? "Can move money" : "Cannot move money")").font(.caption).foregroundStyle(.secondary)
+                    Text("By \(row.actorDisplayName ?? "household owner")").font(.caption2).foregroundStyle(.secondary)
+                }.accessibilityElement(children: .combine)
+            }
+            if rows.count >= pageSize { Section { Button("Load More") { Task { await loadMore() } } } }
+        }
+        .navigationTitle("Authority History")
+        .overlay { if loading && rows.isEmpty { ProgressView() } }
+        .task { await load() }
+        .refreshable { await load() }
+        .accessibilityIdentifier("delegated-authority-history")
+    }
+    @MainActor private func load() async { loading = true; error = nil; defer { loading = false }; do { rows = try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: 0) } catch { self.error = error.localizedDescription } }
+    @MainActor private func loadMore() async { do { rows += try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: rows.count) } catch { self.error = error.localizedDescription } }
 }
 
 private struct LiveTransactionEditView: View {

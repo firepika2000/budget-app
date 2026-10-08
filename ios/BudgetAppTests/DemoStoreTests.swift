@@ -3265,6 +3265,23 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(afterSummary.categories.first { $0.categoryID == "alexallow" }?.assignedMinor, poolAssigned + 3_200)
         XCTAssertEqual(source.demo.allocationEvents.last?.kind, "delegated_authority")
         XCTAssertEqual(source.demo.allocationEvents.last?.amountMinor, 3_200)
+        let history = try await source.delegatedPolicyHistory(userID: "alex", limit: 50, offset: 0)
+        XCTAssertEqual(history.map(\.action), ["created"])
+        XCTAssertEqual(history.first?.afterSnapshot.authorityMinor, 10_000)
+        XCTAssertEqual(history.first?.afterSnapshot.rules.first?.categoryID, "alexsave")
+        XCTAssertEqual(history.first?.actorDisplayName, "Rey")
+
+        // Re-saving the exact same policy is a no-op decision and does not manufacture history.
+        let currentSnapshot = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+        let currentVersion = try XCTUnwrap(currentSnapshot.summary?.allocationVersion)
+        try await source.updateDelegatedPolicy(userID: "alex", value: .init(
+            userID: "alex", poolCategoryID: "alexallow", authorityMinor: 10_000,
+            allowCategoryCreation: false, allowReallocation: true,
+            expectedAllocationVersion: currentVersion,
+            rules: [.init(categoryID: "alexsave", ruleKind: "soft_target", minimumMinor: 1_000, maximumMinor: 5_000)]
+        ))
+        let historyAfterNoOp = try await source.delegatedPolicyHistory(userID: "alex", limit: 50, offset: 0)
+        XCTAssertEqual(historyAfterNoOp, history)
     }
 
     @MainActor

@@ -909,6 +909,8 @@ def list_categories(
         "note": category.note,
         "sort_order": category.sort_order,
         "is_archived": category.is_archived,
+        "is_essential": category.is_essential,
+        "is_emergency_fund": category.is_emergency_fund,
         "system_type": category.system_type,
         "linked_account_id": (
             category.linked_account_id

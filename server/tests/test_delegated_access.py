@@ -4,6 +4,7 @@ from app import budgeting_routes, delegated_routes, request_routes
 
 from app.models import (
     AllocationOperation,
+    DelegatedBudgetPolicyRevision,
     FinancialRequest,
     Household,
     Membership,
@@ -683,6 +684,50 @@ def test_delegated_member_cannot_commit_smart_funding_against_household_rta(
         f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)
     ).json()
     assert owner_summary["ready_to_assign_minor"] == 500000
+
+
+def test_delegated_authority_history_is_exact_attributed_private_and_noop_safe(
+    client, owner_token, session_factory
+):
+    budget, _, pool, games, child_id, child_token = _delegate_with_pool(
+        client, owner_token, session_factory,
+        capabilities=["view_budget", "view_categories", "view_transactions", "move_money"],
+    )
+    path = f"/api/v1/budgets/{budget['id']}/delegated-budgets/{child_id}"
+    initial = client.get(f"{path}/history", headers=auth(owner_token))
+    assert initial.status_code == 200, initial.text
+    assert [item["action"] for item in initial.json()] == ["created"]
+    assert initial.json()[0]["actor_display_name"]
+    assert initial.json()[0]["after_snapshot"]["authority_minor"] == 20000
+
+    update = {
+        "user_id": child_id, "pool_category_id": pool["id"], "authority_minor": 20000,
+        "allow_category_creation": False, "allow_reallocation": True,
+        "rules": [{
+            "category_id": games["id"], "rule_kind": "hard_limit",
+            "minimum_minor": 9007199254740992, "maximum_minor": None,
+        }],
+    }
+    updated_response = client.put(path, headers=auth(owner_token), json=update)
+    assert updated_response.status_code == 200
+    original_rule_ids = [item["id"] for item in updated_response.json()["rules"]]
+    rows = client.get(f"{path}/history", headers=auth(owner_token)).json()
+    assert [item["action"] for item in rows] == ["updated", "created"]
+    assert rows[0]["before_snapshot"]["allow_category_creation"] is True
+    assert rows[0]["after_snapshot"]["allow_category_creation"] is False
+    assert rows[0]["after_snapshot"]["rules"][0]["minimum_minor"] == 9007199254740992
+
+    # An exact no-op does not manufacture a decision, and paging is stable.
+    noop_response = client.put(path, headers=auth(owner_token), json=update)
+    assert noop_response.status_code == 200
+    assert [item["id"] for item in noop_response.json()["rules"]] == original_rule_ids
+    assert client.get(f"{path}/history?limit=1&offset=1", headers=auth(owner_token)).json() == rows[1:2]
+    with session_factory() as db:
+        assert db.query(DelegatedBudgetPolicyRevision).filter_by(member_user_id=child_id).count() == 2
+
+    # The delegate may use current policy behavior but cannot inspect owner decision history.
+    assert client.get(f"{path}/history", headers=auth(child_token)).status_code == 403
+    assert client.get(f"{path}/history?limit=101", headers=auth(owner_token)).status_code == 422
 
 
 def test_double_approval_with_same_initial_version_has_exactly_one_winner(

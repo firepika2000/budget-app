@@ -122,8 +122,11 @@ as acceptance for later work. No further merge or release tag is authorized by t
 Current v0.12 progress: transaction and reconciliation histories were already durable; category-target
 decisions now also retain immutable actor attribution across hosted, Local Device, Demo, complete export,
 and server-to-local transfer. Category detail exposes bounded Target History without changing allocations,
-balances, or recommendations. Remaining v0.12 work should continue auditing other mutable planning and
-administrative observations for overwrite-only or export gaps rather than duplicating established histories.
+balances, or recommendations. Delegated household authority now likewise retains exact, attributed before/after
+snapshots of limits, capabilities and category rules, including populated-database migration, complete export,
+bounded owner-only history, and Demo/Live parity. No-op saves create neither replacement rule identities nor
+duplicate decisions. Remaining v0.12 work should continue auditing other mutable planning and administrative
+observations for overwrite-only or export gaps rather than duplicating established histories.
 
 **Consumer Budget Server distribution remains required.** The earlier v0.9 graphical installer,
 manager, secure pairing and no-Terminal household operating experience below are retained as a

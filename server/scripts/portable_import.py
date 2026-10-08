@@ -55,6 +55,7 @@ SECTION_TABLE_ORDER = (
     ("category_favorites", "category_favorites"),
     ("delegated_budget_policies", "delegated_budget_policies"),
     ("delegated_category_rules", "delegated_category_rules"),
+    ("delegated_budget_policy_revisions", "delegated_budget_policy_revisions"),
     ("targets", "category_targets"),
     ("target_snoozes", "category_target_snoozes"),
     ("scheduled_transactions", "scheduled_transactions"),

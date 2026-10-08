@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -11,11 +11,27 @@ from .budgeting_routes import lock_budget, require_budget_capability, require_ve
 from .clock import today
 from .database import get_db
 from .dependencies import get_current_user
-from .models import Category, DelegatedBudgetPolicy, DelegatedCategoryRule, Membership, User
-from .schemas import DelegatedBudgetPolicyResponse, DelegatedBudgetPolicyUpsert
+from .models import Category, DelegatedBudgetPolicy, DelegatedBudgetPolicyRevision, DelegatedCategoryRule, Membership, User
+from .schemas import DelegatedBudgetPolicyResponse, DelegatedBudgetPolicyRevisionResponse, DelegatedBudgetPolicyUpsert
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/delegated-budgets")
+
+
+def policy_snapshot(policy: DelegatedBudgetPolicy, rules: list[DelegatedCategoryRule]) -> dict:
+    return {
+        "user_id": policy.user_id,
+        "pool_category_id": policy.pool_category_id,
+        "authority_minor": policy.authority_minor,
+        "allow_category_creation": policy.allow_category_creation,
+        "allow_reallocation": policy.allow_reallocation,
+        "rules": [{
+            "category_id": rule.category_id,
+            "rule_kind": rule.rule_kind,
+            "minimum_minor": rule.minimum_minor,
+            "maximum_minor": rule.maximum_minor,
+        } for rule in sorted(rules, key=lambda item: (item.category_id, item.rule_kind))],
+    }
 
 
 def serialize_policy(db: Session, policy: DelegatedBudgetPolicy) -> dict:
@@ -69,6 +85,44 @@ def get_my_delegated_budget(
     return None if policy is None else serialize_policy(db, policy)
 
 
+@router.get("/{user_id}/history", response_model=list[DelegatedBudgetPolicyRevisionResponse])
+def delegated_budget_history(
+    budget_id: str,
+    user_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    require_budget_capability(db, user, budget_id, "manage_allowances")
+    policy = db.scalar(select(DelegatedBudgetPolicy).where(
+        DelegatedBudgetPolicy.budget_id == budget_id,
+        DelegatedBudgetPolicy.user_id == user_id,
+    ))
+    if policy is None:
+        raise HTTPException(status_code=404, detail="Delegated budget not found")
+    revisions = list(db.scalars(select(DelegatedBudgetPolicyRevision).where(
+        DelegatedBudgetPolicyRevision.budget_id == budget_id,
+        DelegatedBudgetPolicyRevision.member_user_id == user_id,
+    ).order_by(
+        DelegatedBudgetPolicyRevision.created_at.desc(),
+        DelegatedBudgetPolicyRevision.id.desc(),
+    ).offset(offset).limit(limit)))
+    actor_ids = {item.actor_user_id for item in revisions}
+    actors = {item.id: item.display_name for item in db.scalars(select(User).where(User.id.in_(actor_ids)))} if actor_ids else {}
+    return [{
+        "id": item.id,
+        "policy_id": item.policy_id,
+        "member_user_id": item.member_user_id,
+        "action": item.action,
+        "actor_user_id": item.actor_user_id,
+        "actor_display_name": actors.get(item.actor_user_id),
+        "before_snapshot": item.before_snapshot,
+        "after_snapshot": item.after_snapshot,
+        "created_at": item.created_at,
+    } for item in revisions]
+
+
 @router.put("/{user_id}", response_model=DelegatedBudgetPolicyResponse)
 def upsert_delegated_budget(
     budget_id: str,
@@ -113,6 +167,8 @@ def upsert_delegated_budget(
         DelegatedBudgetPolicy.budget_id == budget_id,
         DelegatedBudgetPolicy.user_id == user_id,
     ))
+    is_new = policy is None
+    before_snapshot = None
     if policy is None:
         policy = DelegatedBudgetPolicy(
             budget_id=budget_id,
@@ -125,13 +181,43 @@ def upsert_delegated_budget(
         )
         db.add(policy)
         db.flush()
+    else:
+        existing_rules = list(db.scalars(select(DelegatedCategoryRule).where(
+            DelegatedCategoryRule.policy_id == policy.id
+        )))
+        before_snapshot = policy_snapshot(policy, existing_rules)
+        proposed_snapshot = {
+            "user_id": user_id,
+            "pool_category_id": body.pool_category_id,
+            "authority_minor": body.authority_minor,
+            "allow_category_creation": body.allow_category_creation,
+            "allow_reallocation": body.allow_reallocation,
+            "rules": sorted(
+                [rule.model_dump() for rule in body.rules],
+                key=lambda item: (item["category_id"], item["rule_kind"]),
+            ),
+        }
+        if funding_delta == 0 and before_snapshot == proposed_snapshot:
+            return serialize_policy(db, policy)
     policy.pool_category_id = body.pool_category_id
     policy.authority_minor = body.authority_minor
     policy.allow_category_creation = body.allow_category_creation
     policy.allow_reallocation = body.allow_reallocation
     db.execute(delete(DelegatedCategoryRule).where(DelegatedCategoryRule.policy_id == policy.id))
-    for rule in body.rules:
-        db.add(DelegatedCategoryRule(policy_id=policy.id, **rule.model_dump()))
+    new_rules = [DelegatedCategoryRule(policy_id=policy.id, **rule.model_dump()) for rule in body.rules]
+    db.add_all(new_rules)
+    db.flush()
+    after_snapshot = policy_snapshot(policy, new_rules)
+    if is_new or before_snapshot != after_snapshot:
+        db.add(DelegatedBudgetPolicyRevision(
+            budget_id=budget_id,
+            policy_id=policy.id,
+            member_user_id=user_id,
+            action="created" if is_new else "updated",
+            actor_user_id=user.id,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+        ))
     if funding_delta != 0:
         append_operation(
             db,

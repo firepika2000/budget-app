@@ -443,6 +443,25 @@ class DelegatedCategoryRule(Base):
     maximum_minor: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
 
+class DelegatedBudgetPolicyRevision(Base):
+    """Append-only owner decisions that define a member's delegated authority."""
+    __tablename__ = "delegated_budget_policy_revisions"
+    __table_args__ = (
+        CheckConstraint("action IN ('created', 'updated')", name="ck_delegated_policy_revision_action"),
+        Index("ix_delegated_policy_revision_budget_created", "budget_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    policy_id: Mapped[str] = mapped_column(String(36), index=True)
+    member_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    action: Mapped[str] = mapped_column(String(20))
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    before_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    after_snapshot: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+
+
 class CategoryTarget(Base):
     __tablename__ = "category_targets"
     __table_args__ = (

@@ -869,6 +869,10 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/delegated-budgets/\(userID)", method: "PUT", token: token, body: policy)
     }
 
+    public func delegatedBudgetHistory(budgetID: String, userID: String, limit: Int = 50, offset: Int = 0, token: String) async throws -> [APIDelegatedPolicyRevision] {
+        try await send(path: "api/v1/budgets/\(budgetID)/delegated-budgets/\(userID)/history", queryItems: [URLQueryItem(name: "limit", value: String(limit)), URLQueryItem(name: "offset", value: String(offset))], token: token)
+    }
+
     public func smartFundingPreview(budgetID: String, month: String, token: String) async throws -> APISmartFundingPreview {
         try await send(path: "api/v1/budgets/\(budgetID)/smart-funding/\(month)", token: token)
     }

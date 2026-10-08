@@ -459,6 +459,18 @@ class DelegatedBudgetPolicyResponse(BaseModel):
     rules: list[DelegatedCategoryRuleResponse]
 
 
+class DelegatedBudgetPolicyRevisionResponse(BaseModel):
+    id: str
+    policy_id: str
+    member_user_id: str
+    action: Literal["created", "updated"]
+    actor_user_id: str
+    actor_display_name: Optional[str] = None
+    before_snapshot: Optional[dict] = None
+    after_snapshot: dict
+    created_at: datetime
+
+
 class CategoryTargetUpsert(BaseModel):
     target_type: Literal["monthly_funding", "savings_balance", "target_by_date", "recurring_expense", "weekly_spending"]
     target_amount_minor: int = Field(gt=0, le=MAX_INT64)

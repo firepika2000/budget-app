@@ -474,7 +474,7 @@ def test_structured_export_contract_covers_every_persistent_domain_model():
         "payee_budget_preferences", "budget_grants", "budget_access_profiles",
         "capability_grants", "resource_grants", "accounts", "account_debt_terms",
         "category_groups", "categories", "category_favorites", "delegated_budget_policies",
-            "delegated_category_rules", "category_targets", "category_target_snoozes",
+            "delegated_category_rules", "delegated_budget_policy_revisions", "category_targets", "category_target_snoozes",
             "category_target_revisions", "scheduled_transactions", "scheduled_transaction_revisions",
             "monthly_assignments", "allocation_operations",
             "allocation_postings", "transactions", "transaction_splits", "transaction_changes",
