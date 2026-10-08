@@ -176,6 +176,23 @@ private struct PayeeEditorView: View {
                     if !history.isEmpty {
                         Section("Recent transactions") {
                             ForEach(history.prefix(10)) { transaction in LiveTransactionLink(transaction: transaction) }
+                            NavigationLink("View All Transactions") {
+                                ScopedTransactionHistoryView(
+                                    title: payee.displayName,
+                                    filter: TransactionBrowserFilter(payeeID: payee.id, payeeName: payee.displayName)
+                                )
+                            }
+                            .accessibilityIdentifier("payee-view-all-transactions")
+                        }
+                    } else if payee.transactionCount > 0 {
+                        Section("Transactions") {
+                            NavigationLink("View All Transactions") {
+                                ScopedTransactionHistoryView(
+                                    title: payee.displayName,
+                                    filter: TransactionBrowserFilter(payeeID: payee.id, payeeName: payee.displayName)
+                                )
+                            }
+                            .accessibilityIdentifier("payee-view-all-transactions")
                         }
                     }
                     Section("Aliases") {
@@ -7148,7 +7165,119 @@ private struct LivePlanCategoryDetailView: View {
     private var model: APICategory? { store.categories.first { $0.id == categoryID } }
     private var transactions: [APITransaction] { store.transactions.filter { $0.categoryID == categoryID || $0.splits.contains(where: { $0.categoryID == categoryID }) } }
     private var operations: [(APIAllocationOperation, APIAllocationPosting)] { store.allocationOperations.flatMap { operation in operation.postings.filter { $0.categoryID == categoryID }.map { (operation, $0) } } }
-    var body: some View { List { if let model, model.iconName != nil || !model.note.isEmpty { Section { Label(model.name, systemImage: model.iconName ?? "folder.fill"); if !model.note.isEmpty { Text(model.note).foregroundStyle(.secondary) } } }; if store.targets[categoryID] != nil { TargetMonthSnoozeSection(categoryID: categoryID) }; if let row { Section("Plan") { LabeledContent("Available", value: store.format(row.availableMinor)); LabeledContent("Assigned this month", value: store.format(row.assignedMinor)); LabeledContent("Activity this month", value: store.format(row.activityMinor)); LabeledContent("Rollover into month", value: store.format(row.carriedAvailableMinor)); if row.targetType != nil { LabeledContent("Target recommendation", value: store.format(row.recommendedContributionMinor ?? 0)); LabeledContent("Still needed", value: store.format(row.underfundedMinor ?? 0)); if let date = row.targetDate { LabeledContent("Due", value: date) } }; if let overspend = store.overspendSummary(row) { VStack(alignment: .leading, spacing: 2) { Label(overspend, systemImage: (row.creditOverspentMinor ?? 0) > 0 && (row.cashOverspentMinor ?? 0) == 0 ? "creditcard.trianglebadge.exclamationmark" : "exclamationmark.triangle.fill").foregroundStyle(Theme.danger); Text((row.creditOverspentMinor ?? 0) > 0 ? "Unfunded card spending adds to card debt; fund the card payment category to cover it." : "Move available money here or reduce spending to cover the shortfall.").font(.caption).foregroundStyle(.secondary) } } }; Section("Actions") { if store.budget.can("create_transaction"), model?.isArchived == false { Button("Add expense", systemImage: "minus.circle") { transactionMode = .expense }.accessibilityIdentifier("category-add-expense"); Button("Record refund or reimbursement", systemImage: "arrow.uturn.backward.circle") { transactionMode = .reimbursement }.accessibilityIdentifier("category-add-reimbursement") }; if store.budget.can("assign_money") { Button("Assign money", action: assign) }; if store.budget.can("move_money") { Button("Move money", action: move) }; if store.budget.can("manage_planning") { Button(store.targets[categoryID] == nil ? "Create target" : "Manage target") { showTarget = true } }; if let model { Button(model.isFavorite ? "Remove from favorites" : "Add to favorites", systemImage: model.isFavorite ? "star.slash" : "star") { Task { do { try await store.setCategoryFavorite(id: categoryID, isFavorite: !model.isFavorite) } catch { errorMessage = error.localizedDescription } } }.accessibilityIdentifier("category-favorite-action"); Button("Edit category", action: manage) } } }; let schedules = store.scheduledTransactions.filter { $0.isActive && $0.categoryID == categoryID }; if !schedules.isEmpty { Section("Upcoming scheduled") { ForEach(schedules) { item in NavigationLink { LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode) } label: { ScheduledTransactionRow(item: item) } } } }; Section("Recent activity") { if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }; ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) } }; Section("Allocation history") { if operations.isEmpty { Text("No allocation movements available").foregroundStyle(.secondary) }; ForEach(Array(operations.enumerated()), id: \.offset) { _, value in VStack(alignment: .leading) { Text(value.0.note.isEmpty ? value.0.kind.replacingOccurrences(of: "_", with: " ").capitalized : value.0.note); HStack { Text(value.0.occurredOn); Spacer(); Text(store.format(value.1.amountMinor)).monospacedDigit() }.font(.caption).foregroundStyle(.secondary) } } } }.navigationTitle(row?.name ?? "Category").sheet(isPresented: $showTarget) { LiveTargetEditor(categoryID: categoryID, categoryName: row?.name ?? "Category", currencyCode: store.budget.currencyCode, existing: store.targets[categoryID]) }.sheet(item: $transactionMode) { mode in TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, groups: store.groups, initialCategoryID: categoryID, initialIsInflow: mode == .reimbursement, onSaved: store.refresh) }.alert("Unable to update favorite", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
+    private var schedules: [APIScheduledTransaction] {
+        store.scheduledTransactions.filter { $0.isActive && $0.categoryID == categoryID }
+    }
+
+    var body: some View {
+        List {
+            if let model, model.iconName != nil || !model.note.isEmpty {
+                Section {
+                    Label(model.name, systemImage: model.iconName ?? "folder.fill")
+                    if !model.note.isEmpty { Text(model.note).foregroundStyle(.secondary) }
+                }
+            }
+            if store.targets[categoryID] != nil { TargetMonthSnoozeSection(categoryID: categoryID) }
+            if let row { planSection(row) }
+            actionsSection
+            if !schedules.isEmpty {
+                Section("Upcoming scheduled") {
+                    ForEach(schedules) { item in
+                        NavigationLink {
+                            LiveScheduledTransactionEditor(schedule: item, currencyCode: store.budget.currencyCode)
+                        } label: { ScheduledTransactionRow(item: item) }
+                    }
+                }
+            }
+            Section("Recent activity") {
+                if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }
+                ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) }
+                NavigationLink("View All Transactions") {
+                    ScopedTransactionHistoryView(
+                        title: row?.name ?? "Category",
+                        filter: TransactionBrowserFilter(categoryID: categoryID)
+                    )
+                }
+                .accessibilityIdentifier("category-view-all-transactions")
+            }
+            Section("Allocation history") {
+                if operations.isEmpty { Text("No allocation movements available").foregroundStyle(.secondary) }
+                ForEach(Array(operations.enumerated()), id: \.offset) { _, value in
+                    VStack(alignment: .leading) {
+                        Text(value.0.note.isEmpty ? value.0.kind.replacingOccurrences(of: "_", with: " ").capitalized : value.0.note)
+                        HStack {
+                            Text(value.0.occurredOn)
+                            Spacer()
+                            Text(store.format(value.1.amountMinor)).monospacedDigit()
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if store.budget.can("view_allocation_history") {
+                    NavigationLink("View Complete Plan History") { AllocationHistoryView() }
+                        .accessibilityIdentifier("category-view-all-allocation-history")
+                }
+            }
+        }
+        .navigationTitle(row?.name ?? "Category")
+        .sheet(isPresented: $showTarget) {
+            LiveTargetEditor(categoryID: categoryID, categoryName: row?.name ?? "Category", currencyCode: store.budget.currencyCode, existing: store.targets[categoryID])
+        }
+        .sheet(item: $transactionMode) { mode in
+            TransactionEntryView(budget: store.budget, accounts: store.accounts, categories: store.categories, groups: store.groups, initialCategoryID: categoryID, initialIsInflow: mode == .reimbursement, onSaved: store.refresh)
+        }
+        .alert("Unable to update favorite", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(errorMessage ?? "Unknown error") }
+    }
+
+    @ViewBuilder private func planSection(_ row: APICategoryMonth) -> some View {
+        Section("Plan") {
+            LabeledContent("Available", value: store.format(row.availableMinor))
+            LabeledContent("Assigned this month", value: store.format(row.assignedMinor))
+            LabeledContent("Activity this month", value: store.format(row.activityMinor))
+            LabeledContent("Rollover into month", value: store.format(row.carriedAvailableMinor))
+            if row.targetType != nil {
+                LabeledContent("Target recommendation", value: store.format(row.recommendedContributionMinor ?? 0))
+                LabeledContent("Still needed", value: store.format(row.underfundedMinor ?? 0))
+                if let date = row.targetDate { LabeledContent("Due", value: date) }
+            }
+            if let overspend = store.overspendSummary(row) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(overspend, systemImage: (row.creditOverspentMinor ?? 0) > 0 && (row.cashOverspentMinor ?? 0) == 0 ? "creditcard.trianglebadge.exclamationmark" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(Theme.danger)
+                    Text((row.creditOverspentMinor ?? 0) > 0 ? "Unfunded card spending adds to card debt; fund the card payment category to cover it." : "Move available money here or reduce spending to cover the shortfall.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var actionsSection: some View {
+        Section("Actions") {
+            if store.budget.can("create_transaction"), model?.isArchived == false {
+                Button("Add expense", systemImage: "minus.circle") { transactionMode = .expense }
+                    .accessibilityIdentifier("category-add-expense")
+                Button("Record refund or reimbursement", systemImage: "arrow.uturn.backward.circle") { transactionMode = .reimbursement }
+                    .accessibilityIdentifier("category-add-reimbursement")
+            }
+            if store.budget.can("assign_money") { Button("Assign money", action: assign) }
+            if store.budget.can("move_money") { Button("Move money", action: move) }
+            if store.budget.can("manage_planning") {
+                Button(store.targets[categoryID] == nil ? "Create target" : "Manage target") { showTarget = true }
+            }
+            if let model {
+                Button(model.isFavorite ? "Remove from favorites" : "Add to favorites", systemImage: model.isFavorite ? "star.slash" : "star") {
+                    Task {
+                        do { try await store.setCategoryFavorite(id: categoryID, isFavorite: !model.isFavorite) }
+                        catch { errorMessage = error.localizedDescription }
+                    }
+                }
+                .accessibilityIdentifier("category-favorite-action")
+                Button("Edit category", action: manage)
+            }
+        }
+    }
 }
 
 private enum CategoryTransactionMode: String, Identifiable {
@@ -7598,6 +7727,86 @@ private struct TransactionBrowserFilter: Equatable, CustomStringConvertible {
     var description: String { [accountID, categoryID, payeeID, memberID, type, status, lifecycle, sort, linkage, flag, tag, minimum, maximum, String(usesStartDate), BudgetWorkspaceStore.dateString(startDate), String(usesEndDate), BudgetWorkspaceStore.dateString(endDate)].joined(separator: "|") }
     func query(search: String, currencyCode: String, cursor: String?) -> APITransactionQuery {
         APITransactionQuery(search: search, accountIDs: accountID.isEmpty ? [] : [accountID], categoryIDs: categoryID.isEmpty ? [] : [categoryID], payeeIDs: payeeID.isEmpty ? [] : [payeeID], startDate: usesStartDate ? BudgetWorkspaceStore.dateString(startDate) : nil, endDate: usesEndDate ? BudgetWorkspaceStore.dateString(endDate) : nil, minimumAmountMinor: minimum.isEmpty ? nil : CurrencyText.parseMinorUnits(minimum, currencyCode: currencyCode), maximumAmountMinor: maximum.isEmpty ? nil : CurrencyText.parseMinorUnits(maximum, currencyCode: currencyCode), transactionType: type == "all" ? nil : type, lifecycleStatuses: lifecycle == "all" ? [] : [lifecycle], cleared: status == "cleared" ? true : status == "uncleared" ? false : nil, reconciled: status == "reconciled" ? true : nil, flags: flag.isEmpty ? [] : [flag], tags: tag.isEmpty ? [] : [tag], actorUserIDs: memberID.isEmpty ? [] : [memberID], isTransfer: linkage == "transfer" ? true : nil, isScheduledRealization: linkage == "scheduled" ? true : nil, sort: sort, limit: 50, cursor: cursor)
+    }
+}
+
+private struct ScopedTransactionHistoryView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let title: String
+    let filter: TransactionBrowserFilter
+    @State private var rows: [APITransaction] = []
+    @State private var nextCursor: String?
+    @State private var totalCount = 0
+    @State private var loading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            if rows.isEmpty && loading {
+                HStack { Spacer(); ProgressView(); Spacer() }
+            } else if rows.isEmpty, let errorMessage {
+                ContentUnavailableView(
+                    "History Unavailable", systemImage: "exclamationmark.triangle",
+                    description: Text(errorMessage)
+                )
+                Button("Try Again") { Task { await load(reset: true) } }
+            } else if rows.isEmpty {
+                ContentUnavailableView(
+                    "No Transactions", systemImage: "tray",
+                    description: Text("No authorized transactions match this history.")
+                )
+            } else {
+                ForEach(rows) { transaction in
+                    LiveTransactionLink(transaction: transaction, allowsQuickClearing: true) {
+                        await load(reset: true)
+                    }
+                }
+                if let errorMessage {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("More transactions could not be loaded.").font(.subheadline.weight(.semibold))
+                        Text(errorMessage).font(.caption).foregroundStyle(.secondary)
+                        Button("Try Loading More Again") { Task { await load(reset: false) } }
+                    }
+                    .accessibilityIdentifier("scoped-transaction-history-page-error")
+                } else if nextCursor != nil {
+                    Button { Task { await load(reset: false) } } label: {
+                        HStack {
+                            Spacer()
+                            if loading { ProgressView() } else { Text("Load More") }
+                            Spacer()
+                        }
+                    }
+                    .disabled(loading)
+                    .accessibilityIdentifier("scoped-transaction-history-load-more")
+                } else {
+                    Text("Showing \(rows.count) of \(totalCount)")
+                        .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("scoped-transaction-history")
+        .task { await load(reset: true) }
+        .refreshable { await load(reset: true) }
+    }
+
+    private func load(reset: Bool) async {
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            let page = try await store.browseTransactions(
+                filter.query(search: "", currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor)
+            )
+            rows = reset ? page.items : rows + page.items
+            nextCursor = page.nextCursor
+            totalCount = page.totalCount
+            errorMessage = nil
+        } catch where Task.isCancelled {
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

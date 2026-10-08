@@ -1055,6 +1055,12 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(workspace.contains("struct PayeeSearchSelectionView"), "all payee-selection workflows must share the bounded searchable selector")
         XCTAssertTrue(workspace.contains("activity-payee-selector"), "Activity filtering must select an existing first-class payee identity")
         XCTAssertTrue(workspace.contains("limit: 20"), "payee selection must request bounded result pages")
+        XCTAssertTrue(workspace.contains("scoped-transaction-history-load-more"),
+                      "payee and category history must page through the canonical transaction browser")
+        XCTAssertTrue(workspace.contains("payee-view-all-transactions"),
+                      "payee history must not stop at the hydrated recent rows")
+        XCTAssertTrue(workspace.contains("category-view-all-transactions"),
+                      "category history must not stop at the hydrated recent rows")
         XCTAssertTrue(workspace.contains("(\"Household\", \"person.2.fill\")"),
                       "the production workspace must expose Household as a direct first-class destination")
         XCTAssertFalse(workspace.contains("TabView(selection: tabSelection)"),

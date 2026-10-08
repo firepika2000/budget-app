@@ -494,6 +494,10 @@ The roadmap is a living document, but changing it is a deliberate product decisi
   A failed older-page request keeps the history already on screen and offers an explicit retry.
 - Budget Server allocation history now uses privacy-before-pagination bounded reads in the current
   iPhone composition, with explicit older-history loading and readable actor attribution.
+- Payee and category detail no longer stop at the workspace's bounded recent snapshot. Each now
+  links to a reusable, server-authoritative transaction history that preserves its payee/category
+  scope, loads older authorized rows in bounded pages, and retains already loaded history when an
+  older-page request fails. Category detail also links to the complete allocation-history ledger.
 - SWIFT MT940 statement import is production-wired across Budget Server and Local Device providers,
   preserving exact minor-unit money and the existing explicit reconciliation review boundary.
 - Activity now includes the five most recent authorized Plan changes with actor attribution and a
