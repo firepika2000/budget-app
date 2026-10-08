@@ -1120,6 +1120,7 @@ class ImportCandidateResponse(BaseModel):
     possible_transaction_ids: list[str] = Field(default_factory=list)
     suggestions_truncated: bool = False
     duplicate_source_row: Optional[int] = None
+    suggested_category_id: Optional[str] = None
     approval_action: Optional[Literal["post", "skip"]] = None
     posted_transaction_id: Optional[str] = None
     reversal_transaction_id: Optional[str] = None

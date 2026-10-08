@@ -1365,7 +1365,7 @@ final class APIClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
         var requests = 0
-        let responseBody = Data(#"{"id":"batch-1","budget_id":"b1","account_id":"a1","status":"review","version":0,"source_format":"csv","candidate_count":1,"candidates":[{"source_row":2,"occurred_on":"2026-09-15","amount_minor":-1234,"payee":"Market","memo":"Food","exact_transaction_ids":[],"possible_transaction_ids":[],"suggestions_truncated":false,"duplicate_source_row":null,"approval_action":null,"posted_transaction_id":null}],"created_at":"2026-10-02T12:00:00Z"}"#.utf8)
+        let responseBody = Data(#"{"id":"batch-1","budget_id":"b1","account_id":"a1","status":"review","version":0,"source_format":"csv","candidate_count":1,"candidates":[{"source_row":2,"occurred_on":"2026-09-15","amount_minor":-1234,"payee":"Market","memo":"Food","exact_transaction_ids":[],"possible_transaction_ids":[],"suggestions_truncated":false,"duplicate_source_row":null,"suggested_category_id":"c1","approval_action":null,"posted_transaction_id":null}],"created_at":"2026-10-02T12:00:00Z"}"#.utf8)
         MockURLProtocol.handler = { request in
             requests += 1
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
@@ -1392,6 +1392,7 @@ final class APIClientTests: XCTestCase {
             mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd", numberFormat: "comma_decimal"), token: "current"
         )
         XCTAssertEqual(staged.candidates.first?.amountMinor, -1234)
+        XCTAssertEqual(staged.candidates.first?.suggestedCategoryID, "c1")
         _ = try await client.approveStatementImport(
             budgetID: "b1", accountID: "a1", batchID: staged.id,
             approval: .init(expectedVersion: 0, items: [.init(sourceRow: 2, action: "post", categoryID: "c1")]), token: "current"

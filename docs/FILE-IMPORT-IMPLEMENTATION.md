@@ -19,6 +19,13 @@ Exact matching is also first-class-payee alias aware for owners and otherwise un
 both Budget Server and Local Device modes. Resource-scoped members receive no alias observations, so
 statement review cannot reveal private household aliases through exact-match suggestions.
 
+Review also uses an exact active first-class payee or alias match to offer that payee's current
+budget-specific default category for expense rows. The suggestion is preselected in the shared
+review UI but remains editable; refunds and inflows are never inferred into an expense category.
+Staging still creates no payee, category, or transaction and changes no balance. Resource-scoped
+members receive no payee-default suggestion because even an exact submitted description must not
+become an oracle for private household aliases or category preferences.
+
 The native review now treats cancellation as an explicit lifecycle operation. Before preview,
 Close simply leaves the file picker flow because no server state exists. After staging, Cancel
 Import requires confirmation and calls the provider's optimistic-version cancellation contract;

@@ -1939,3 +1939,13 @@ staging with a private-safe validation message. This widens spreadsheet/bank exp
 without changing mapping, money parsing, approval, or ledger semantics. The production column mapper
 now reads headers through that same decoder, closing the parser-only gap that would otherwise leave
 UTF-16 files unable to reach Preview.
+
+### Statement-review category suggestions — 2026-10-08
+
+Statement review now preselects the current budget-specific default category when an expense row
+exactly matches an active first-class payee name or alias. Budget Server and Local Device derive the
+same review-only hint and the user can replace or remove it before approval. Refunds and income are
+left uncategorized, staging remains money-neutral, and no payee is created from imported text.
+Resource-scoped household members receive no suggestion, preventing the submitted payee text from
+revealing private aliases or category preferences. Focused backend authorization/money-neutrality,
+Swift transport, and native Local Device parity tests cover the contract.

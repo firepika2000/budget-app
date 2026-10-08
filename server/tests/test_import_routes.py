@@ -1,4 +1,4 @@
-from app.models import ImportBatch, Transaction
+from app.models import ImportBatch, Transaction, User
 
 from .conftest import auth
 from .test_budgeting_api import add_member, create_budget, create_budget_structure
@@ -77,6 +77,51 @@ def test_csv_import_applies_explicit_comma_decimal_contract(client, owner_token,
     )
     assert mismatched.status_code == 422
     assert "Private" not in mismatched.text and "Must not echo" not in mismatched.text
+
+
+def test_import_suggests_visible_first_class_payee_default_without_mutating(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    payee = client.post(f"/api/v1/budgets/{budget['id']}/payees", headers=auth(owner_token), json={
+        "display_name": "Neighborhood Market", "default_category_id": category["id"],
+    })
+    assert payee.status_code == 201, payee.text
+    alias = client.post(
+        f"/api/v1/budgets/{budget['id']}/payees/{payee.json()['id']}/aliases",
+        headers=auth(owner_token), json={"display_name": "BANK MARKET 4812"},
+    )
+    assert alias.status_code == 201, alias.text
+
+    before = client.get(f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)).json()
+    staged = _stage(
+        client, owner_token, budget["id"], account["id"],
+        b"Date,Amount,Payee,Memo\n2026-09-15,-12.34,BANK MARKET 4812,Food\n2026-09-16,2.00,Neighborhood Market,Refund\n",
+    )
+    assert staged.status_code == 201, staged.text
+    rows = staged.json()["candidates"]
+    assert rows[0]["suggested_category_id"] == category["id"]
+    assert rows[1]["suggested_category_id"] is None
+    assert client.get(f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)).json() == before
+    with session_factory() as db:
+        assert db.query(Transaction).count() == 0
+
+    member_token = add_member(session_factory, client, "contribute", budget["id"])
+    with session_factory() as db:
+        member_id = db.query(User).filter_by(email="contribute@example.com").one().id
+    profile = client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{member_id}", headers=auth(owner_token), json={
+            "capabilities": ["view_transactions", "create_transaction"],
+            "restrict_accounts": True, "account_ids": [account["id"]],
+            "restrict_categories": True, "category_ids": [category["id"]],
+        },
+    )
+    assert profile.status_code == 200, profile.text
+    restricted = _stage(
+        client, member_token, budget["id"], account["id"],
+        b"Date,Amount,Payee,Memo\n2026-09-17,-1.00,BANK MARKET 4812,Private-safe\n",
+    )
+    assert restricted.status_code == 201, restricted.text
+    assert restricted.json()["candidates"][0]["suggested_category_id"] is None
 
 
 def test_import_history_is_bounded_actor_private_and_reopenable(client, owner_token, session_factory):

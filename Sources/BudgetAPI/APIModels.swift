@@ -1118,18 +1118,21 @@ public struct APIStatementImportCandidate: Identifiable, Codable, Equatable, Sen
     public let possibleTransactionIDs: [String]
     public let suggestionsTruncated: Bool
     public let duplicateSourceRow: Int?
+    public let suggestedCategoryID: String?
     public let approvalAction: String?
     public let postedTransactionID: String?
     public let reversalTransactionID: String?
     public init(sourceRow: Int, occurredOn: String, amountMinor: Int64, payee: String, memo: String,
                 exactTransactionIDs: [String] = [], possibleTransactionIDs: [String] = [],
                 suggestionsTruncated: Bool = false, duplicateSourceRow: Int? = nil,
+                suggestedCategoryID: String? = nil,
                 approvalAction: String? = nil, postedTransactionID: String? = nil,
                 reversalTransactionID: String? = nil) {
         self.sourceRow = sourceRow; self.occurredOn = occurredOn; self.amountMinor = amountMinor
         self.payee = payee; self.memo = memo; self.exactTransactionIDs = exactTransactionIDs
         self.possibleTransactionIDs = possibleTransactionIDs; self.suggestionsTruncated = suggestionsTruncated
         self.duplicateSourceRow = duplicateSourceRow; self.approvalAction = approvalAction
+        self.suggestedCategoryID = suggestedCategoryID
         self.postedTransactionID = postedTransactionID
         self.reversalTransactionID = reversalTransactionID
     }
@@ -1138,6 +1141,7 @@ public struct APIStatementImportCandidate: Identifiable, Codable, Equatable, Sen
         case sourceRow = "source_row", occurredOn = "occurred_on", amountMinor = "amount_minor"
         case exactTransactionIDs = "exact_transaction_ids", possibleTransactionIDs = "possible_transaction_ids"
         case suggestionsTruncated = "suggestions_truncated", duplicateSourceRow = "duplicate_source_row"
+        case suggestedCategoryID = "suggested_category_id"
         case approvalAction = "approval_action", postedTransactionID = "posted_transaction_id"
         case reversalTransactionID = "reversal_transaction_id"
     }

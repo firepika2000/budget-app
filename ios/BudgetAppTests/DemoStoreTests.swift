@@ -3681,6 +3681,54 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalStatementReviewSuggestsPayeeDefaultWithoutMutatingLedger() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let category = try XCTUnwrap(source.demo.visibleCategories.first)
+        source.demo.payees.append(.init(
+            id: "statement-payee", name: "Neighborhood Market",
+            defaultCategoryID: category.id, aliases: ["BANK MARKET 4812"]
+        ))
+        let initialTransactions = source.demo.transactions
+
+        let staged = try await source.stageStatementImport(
+            accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,-12.34,BANK MARKET 4812\n2026-09-16,2.00,Neighborhood Market\n".utf8),
+            mapping: .init(
+                sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd"
+            )
+        )
+
+        XCTAssertEqual(staged.candidates[0].suggestedCategoryID, category.id)
+        XCTAssertNil(staged.candidates[1].suggestedCategoryID, "Refunds remain uncategorized until explicitly reviewed")
+        XCTAssertEqual(source.demo.transactions, initialTransactions, "Review-time guidance must remain money-neutral")
+    }
+
+    @MainActor
+    func testRestrictedLocalStatementReviewDoesNotExposePayeeDefaultsOrAliases() async throws {
+        let source = DemoWorkspaceDataSource()
+        source.demo.persona = .alex
+        let account = try XCTUnwrap(source.demo.visibleAccounts.first)
+        let category = try XCTUnwrap(source.demo.visibleCategories.first)
+        source.demo.payees.append(.init(
+            id: "private-statement-payee", name: "Private Merchant",
+            defaultCategoryID: category.id, aliases: ["PRIVATE BANK ALIAS"]
+        ))
+
+        let staged = try await source.stageStatementImport(
+            accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,-12.34,PRIVATE BANK ALIAS\n".utf8),
+            mapping: .init(
+                sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd"
+            )
+        )
+
+        XCTAssertNil(staged.candidates.first?.suggestedCategoryID)
+    }
+
+    @MainActor
     func testLocalStatementMatchingBoundsSuggestionsAndReportsTruncation() async throws {
         let source = DemoWorkspaceDataSource()
         let account = try XCTUnwrap(source.demo.accounts.first)

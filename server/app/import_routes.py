@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from .database import get_db
@@ -15,7 +15,9 @@ from .import_formats import parse_camt_candidates, parse_mt940_candidates, parse
 from .import_matching import review_candidates
 from .import_review import load_match_observations
 from .import_staging import cancel_staged_batch, get_staged_batch, list_staged_batches, stage_candidates
-from .models import ImportBatch, Transaction, User
+from .access import visible_resource_ids
+from .models import Budget, Category, ImportBatch, Payee, PayeeAlias, PayeeBudgetPreference, Transaction, User
+from .payee_names import normalized_payee_name
 from .schemas import (
     StatementImportApproveRequest,
     StatementImportCancelRequest,
@@ -50,6 +52,51 @@ def _candidates(batch: ImportBatch) -> list[ImportCandidate]:
     ) for row in batch.candidates]
 
 
+def _category_suggestions(
+    db: Session, user: User, budget_id: str, candidates: list[ImportCandidate]
+) -> dict[int, str]:
+    """Return owner-level payee defaults without creating a payee or leaking scoped metadata."""
+    budget = db.get(Budget, budget_id)
+    if budget is None or visible_resource_ids(db, user, budget, "account") is not None \
+            or visible_resource_ids(db, user, budget, "category") is not None:
+        return {}
+    keys = {normalized_payee_name(row.payee) for row in candidates if row.amount_minor < 0 and row.payee.strip()}
+    keys.discard("")
+    if not keys:
+        return {}
+    alias_payee_ids = select(PayeeAlias.payee_id).where(PayeeAlias.name_key.in_(keys))
+    payees = list(db.scalars(select(Payee).where(
+        Payee.household_id == budget.household_id,
+        Payee.is_archived.is_(False), Payee.merged_into_payee_id.is_(None),
+        or_(Payee.name_key.in_(keys), Payee.id.in_(alias_payee_ids)),
+    )))
+    payees_by_id = {item.id: item for item in payees}
+    payee_by_key = {item.name_key: item for item in payees if item.name_key in keys}
+    payee_ids = set(payees_by_id)
+    for alias in db.scalars(select(PayeeAlias).where(
+        PayeeAlias.payee_id.in_(payee_ids), PayeeAlias.name_key.in_(keys),
+    )) if payee_ids else []:
+        if payee := payees_by_id.get(alias.payee_id):
+            payee_by_key[alias.name_key] = payee
+    matched_ids = {item.id for item in payee_by_key.values()}
+    preferences = {item.payee_id: item.default_category_id for item in db.scalars(
+        select(PayeeBudgetPreference).where(
+            PayeeBudgetPreference.budget_id == budget_id,
+            PayeeBudgetPreference.payee_id.in_(matched_ids),
+        )
+    )} if matched_ids else {}
+    valid_categories = set(db.scalars(select(Category.id).where(
+        Category.budget_id == budget_id, Category.is_archived.is_(False),
+        Category.id.in_(set(preferences.values())),
+    ))) if preferences else set()
+    return {
+        row.source_row: category_id
+        for row in candidates if row.amount_minor < 0
+        if (payee := payee_by_key.get(normalized_payee_name(row.payee))) is not None
+        if (category_id := preferences.get(payee.id)) in valid_categories
+    }
+
+
 def _response(db: Session, user: User, budget_id: str, batch: ImportBatch,
               match_window_days: int) -> dict:
     candidates = _candidates(batch)
@@ -62,6 +109,7 @@ def _response(db: Session, user: User, budget_id: str, batch: ImportBatch,
     reviews = {row.source_row: row for row in review_candidates(
         candidates, observations, date_window_days=match_window_days,
     )}
+    category_suggestions = _category_suggestions(db, user, budget_id, candidates)
     return {
         "id": batch.id, "budget_id": batch.budget_id, "account_id": batch.account_id,
         "status": batch.status, "version": batch.version,
@@ -74,6 +122,7 @@ def _response(db: Session, user: User, budget_id: str, batch: ImportBatch,
             "possible_transaction_ids": list(reviews[row.source_row].possible_transaction_ids),
             "suggestions_truncated": reviews[row.source_row].suggestions_truncated,
             "duplicate_source_row": reviews[row.source_row].duplicate_source_row,
+            "suggested_category_id": category_suggestions.get(row.source_row),
             "approval_action": batch.candidates[index].get("approval_action"),
             "posted_transaction_id": batch.candidates[index].get("posted_transaction_id"),
             "reversal_transaction_id": batch.candidates[index].get("reversal_transaction_id"),

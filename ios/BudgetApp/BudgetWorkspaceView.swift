@@ -1269,14 +1269,31 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                 return leftDistance != rightDistance ? leftDistance < rightDistance : $0.id < $1.id
             }
             let possible = possibleMatches.prefix(20).map(\.id)
-            return .init(sourceRow: candidate.sourceRow, occurredOn: candidate.occurredOn,
-                         amountMinor: candidate.amountMinor, payee: candidate.payee, memo: candidate.memo,
-                         exactTransactionIDs: exact, possibleTransactionIDs: possible,
-                         suggestionsTruncated: exactMatches.count > exact.count || possibleMatches.count > possible.count,
-                         duplicateSourceRow: parsed.first(where: {
-                             $0.sourceRow < candidate.sourceRow && $0.occurredOn == candidate.occurredOn &&
-                             $0.amountMinor == candidate.amountMinor && $0.payee.caseInsensitiveCompare(candidate.payee) == .orderedSame
-                         })?.sourceRow)
+            let suggestedCategoryID: String? = {
+                guard candidate.amountMinor < 0, includePayeeAliases else { return nil }
+                let key = candidate.payee.trimmingCharacters(in: .whitespacesAndNewlines)
+                return demo.payees.first(where: { payee in
+                    !payee.isArchived && ([payee.name] + payee.aliases).contains {
+                        $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                            .caseInsensitiveCompare(key) == .orderedSame
+                    }
+                })?.defaultCategoryID.flatMap { categoryID in
+                    demo.visibleCategories.contains(where: { $0.id == categoryID }) ? categoryID : nil
+                }
+            }()
+            let suggestionsTruncated = exactMatches.count > exact.count || possibleMatches.count > possible.count
+            let duplicateSourceRow = parsed.first(where: { prior in
+                prior.sourceRow < candidate.sourceRow && prior.occurredOn == candidate.occurredOn &&
+                    prior.amountMinor == candidate.amountMinor &&
+                    prior.payee.caseInsensitiveCompare(candidate.payee) == .orderedSame
+            })?.sourceRow
+            return APIStatementImportCandidate(
+                sourceRow: candidate.sourceRow, occurredOn: candidate.occurredOn,
+                amountMinor: candidate.amountMinor, payee: candidate.payee, memo: candidate.memo,
+                exactTransactionIDs: exact, possibleTransactionIDs: possible,
+                suggestionsTruncated: suggestionsTruncated, duplicateSourceRow: duplicateSourceRow,
+                suggestedCategoryID: suggestedCategoryID
+            )
         }
         let batch = APIStatementImport(id: UUID().uuidString, budgetID: budget.id, accountID: accountID,
                                        status: "review", version: 1, sourceFormat: mapping.sourceFormat,
@@ -1316,13 +1333,15 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                 sourceRow: row.sourceRow, occurredOn: row.occurredOn, amountMinor: row.amountMinor,
                 payee: row.payee, memo: row.memo, exactTransactionIDs: row.exactTransactionIDs,
                 possibleTransactionIDs: row.possibleTransactionIDs, suggestionsTruncated: row.suggestionsTruncated,
-                duplicateSourceRow: row.duplicateSourceRow, approvalAction: "skip") }
+                duplicateSourceRow: row.duplicateSourceRow, suggestedCategoryID: row.suggestedCategoryID,
+                approvalAction: "skip") }
             defer { postedIndex += 1 }
             return APIStatementImportCandidate(
                 sourceRow: row.sourceRow, occurredOn: row.occurredOn, amountMinor: row.amountMinor,
                 payee: row.payee, memo: row.memo, exactTransactionIDs: row.exactTransactionIDs,
                 possibleTransactionIDs: row.possibleTransactionIDs, suggestionsTruncated: row.suggestionsTruncated,
-                duplicateSourceRow: row.duplicateSourceRow, approvalAction: "post",
+                duplicateSourceRow: row.duplicateSourceRow, suggestedCategoryID: row.suggestedCategoryID,
+                approvalAction: "post",
                 postedTransactionID: postedIDs[postedIndex])
         }
         let completed = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
@@ -1354,7 +1373,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             sourceRow: row.sourceRow, occurredOn: row.occurredOn, amountMinor: row.amountMinor,
             payee: row.payee, memo: row.memo, exactTransactionIDs: row.exactTransactionIDs,
             possibleTransactionIDs: row.possibleTransactionIDs, suggestionsTruncated: row.suggestionsTruncated,
-            duplicateSourceRow: row.duplicateSourceRow, approvalAction: row.approvalAction,
+            duplicateSourceRow: row.duplicateSourceRow, suggestedCategoryID: row.suggestedCategoryID,
+            approvalAction: row.approvalAction,
             postedTransactionID: row.postedTransactionID,
             reversalTransactionID: row.postedTransactionID.flatMap { reversals[$0] }) }
         let result = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
@@ -8592,6 +8612,9 @@ private struct StatementImportFlowView: View {
             ? existingBatch.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }
             : existingBatch.candidates.filter { $0.approvalAction == "post" }
         _postRows = State(initialValue: Set(selected.map(\.sourceRow)))
+        _categoryByRow = State(initialValue: Dictionary(uniqueKeysWithValues: existingBatch.candidates.compactMap { row in
+            row.suggestedCategoryID.map { categoryID in (row.sourceRow, categoryID) }
+        }))
     }
     private var headers: [String] { guard let file, file.sourceFormat == "csv" else { return [] }; return Self.csvHeaders(file.data, delimiter: delimiter) }
     private var reviewable: Bool { staged?.status == "review" }
@@ -8668,7 +8691,7 @@ private struct StatementImportFlowView: View {
         memoColumn = Self.preferred(headers, ["memo", "notes", "details"])
         if amountColumn.isEmpty, !debitColumn.isEmpty, !creditColumn.isEmpty { csvAmountLayout = "debit-credit" }
     }
-    private func stage() async { guard let file else { return }; isWorking = true; defer { isWorking = false }; do { let csv = file.sourceFormat == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; let mapping = APIStatementImportMapping(sourceFormat: file.sourceFormat, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder, delimiter: delimiter, numberFormat: numberFormat); let result = try await workspace.stageStatementImport(accountID: account.id, data: file.data, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)) } catch { errorMessage = error.localizedDescription } }
+    private func stage() async { guard let file else { return }; isWorking = true; defer { isWorking = false }; do { let csv = file.sourceFormat == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; let mapping = APIStatementImportMapping(sourceFormat: file.sourceFormat, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder, delimiter: delimiter, numberFormat: numberFormat); let result = try await workspace.stageStatementImport(accountID: account.id, data: file.data, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)); categoryByRow = Dictionary(uniqueKeysWithValues: result.candidates.compactMap { row in row.suggestedCategoryID.map { categoryID in (row.sourceRow, categoryID) } }) } catch { errorMessage = error.localizedDescription } }
     private func approve(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { let items = batch.candidates.map { row in APIStatementImportApprovalItem(sourceRow: row.sourceRow, action: postRows.contains(row.sourceRow) ? "post" : "skip", categoryID: postRows.contains(row.sourceRow) ? categoryByRow[row.sourceRow].flatMap { $0.isEmpty ? nil : $0 } : nil) }; _ = try await workspace.approveStatementImport(accountID: account.id, batchID: batch.id, approval: .init(expectedVersion: batch.version, items: items)); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func cancel(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { _ = try await workspace.cancelStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func undo(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { staged = try await workspace.undoStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version) } catch { errorMessage = error.localizedDescription } }
