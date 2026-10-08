@@ -142,6 +142,11 @@ uses the authenticated production shell for navigation. It deliberately shares n
 credentials with the extension. Rich financial widgets require a future explicit disclosure,
 authorization, shared-container and redaction contract; they are not implied by this launcher.
 
+The v0.11 engineering candidate also includes one-shot Siri/Shortcuts routes for every primary
+workspace surface, parameterized transaction quick entry through the shared editor, optional
+non-future transaction dates, and bounded privacy-safe scheduled reminders. See
+`V0.11-CLOSURE-AUDIT.md`; human acceptance remains separate.
+
 Private receipt assistance now satisfies the product-specification proposal boundary: Vision OCR runs
 locally, suggests payee, exact amount, date and a visible category, and requires both explicit Apply
 and the normal transaction Save. It neither uploads the receipt nor creates financial state on its own.
