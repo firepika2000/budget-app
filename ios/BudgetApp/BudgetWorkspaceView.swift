@@ -1226,8 +1226,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         case "mt940": parsed = try LocalMT940StatementParser.parse(data: data, mapping: mapping)
         case "camt": parsed = try LocalCAMTStatementParser.parse(data: data, mapping: mapping)
         case "pdf": parsed = try LocalPDFStatementParser.parse(data: data, mapping: mapping)
+        case "pdf_ocr": parsed = try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
         default:
-            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, QIF, MT940, CAMT, and text-based PDF statements.")
+            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, QIF, MT940, CAMT, and PDF statements.")
         }
         // Match only currently visible, posted observations from the statement's account. A
         // same-day purchase in another account is not evidence that this bank row is a duplicate.
@@ -8047,11 +8048,12 @@ private struct StatementImportHistoryView: View {
     @State private var isLoading = false; @State private var errorMessage: String?
     var body: some View { NavigationStack { Group {
         if items.isEmpty && !isLoading { ContentUnavailableView("No Statement Imports", systemImage: "doc.text.magnifyingglass", description: Text("Imported statements and unfinished reviews will appear here.")) }
-        else { List { ForEach(items) { item in Button { Task { await open(item) } } label: { HStack { VStack(alignment: .leading, spacing: 4) { Text(item.sourceFormat.uppercased()); Text("\(item.candidateCount) recognized transactions").font(.caption).foregroundStyle(.secondary) }; Spacer(); VStack(alignment: .trailing, spacing: 4) { Label(statusTitle(item.status), systemImage: statusSymbol(item.status)).foregroundStyle(statusColor(item.status)); Text(Self.displayDate(item.createdAt)).font(.caption).foregroundStyle(.secondary) } } }.buttonStyle(.plain).accessibilityLabel("\(item.sourceFormat.uppercased()) statement, \(item.candidateCount) transactions, \(statusTitle(item.status))") }; if nextOffset != nil { Button("Load More") { Task { await load(reset: false) } }.disabled(isLoading) } } }
+        else { List { ForEach(items) { item in Button { Task { await open(item) } } label: { HStack { VStack(alignment: .leading, spacing: 4) { Text(formatTitle(item.sourceFormat)); Text("\(item.candidateCount) recognized transactions").font(.caption).foregroundStyle(.secondary) }; Spacer(); VStack(alignment: .trailing, spacing: 4) { Label(statusTitle(item.status), systemImage: statusSymbol(item.status)).foregroundStyle(statusColor(item.status)); Text(Self.displayDate(item.createdAt)).font(.caption).foregroundStyle(.secondary) } } }.buttonStyle(.plain).accessibilityLabel("\(formatTitle(item.sourceFormat)) statement, \(item.candidateCount) transactions, \(statusTitle(item.status))") }; if nextOffset != nil { Button("Load More") { Task { await load(reset: false) } }.disabled(isLoading) } } }
     }.navigationTitle("Statement Imports").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }.overlay { if isLoading && items.isEmpty { ProgressView("Loading imports…") } }.task { await load(reset: true) }.refreshable { await load(reset: true) }.alert("Unable to load imports", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }.sheet(item: $selected, onDismiss: { Task { await load(reset: true) } }) { batch in StatementImportFlowView(workspace: workspace, budget: budget, account: account, existingBatch: batch) } } }
     private func load(reset: Bool) async { guard !isLoading else { return }; isLoading = true; defer { isLoading = false }; do { let offset = reset ? 0 : (nextOffset ?? items.count); let page = try await workspace.statementImports(accountID: account.id, limit: 25, offset: offset); items = reset ? page.items : items + page.items; nextOffset = page.nextOffset } catch { errorMessage = error.localizedDescription } }
     private func open(_ item: APIStatementImportSummary) async { do { selected = try await workspace.statementImport(accountID: account.id, batchID: item.id) } catch { errorMessage = error.localizedDescription } }
     private func statusTitle(_ status: String) -> String { status == "review" ? "Needs Review" : status.capitalized }
+    private func formatTitle(_ sourceFormat: String) -> String { sourceFormat == "pdf_ocr" ? "PDF (Scanned)" : sourceFormat.uppercased() }
     private func statusSymbol(_ status: String) -> String { status == "review" ? "pencil.circle" : status == "approved" ? "checkmark.circle.fill" : "xmark.circle" }
     private func statusColor(_ status: String) -> Color { status == "review" ? .orange : status == "approved" ? .green : .secondary }
     private static func displayDate(_ value: String) -> String { guard let date = ISO8601DateFormatter().date(from: value) else { return value }; return date.formatted(date: .abbreviated, time: .shortened) }
@@ -8526,6 +8528,13 @@ enum LocalCAMTStatementParser {
 }
 
 enum LocalPDFStatementParser {
+    static func hasExtractableText(_ data: Data) -> Bool {
+        guard let document = PDFDocument(data: data), !document.isEncrypted else { return false }
+        return (0..<document.pageCount).contains { index in
+            document.page(at: index)?.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+    }
+
     static func parse(data: Data, mapping: APIStatementImportMapping) throws -> [LocalDelimitedStatementParser.Candidate] {
         guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Statement files must be 10 MB or smaller.") }
         guard data.starts(with: Data("%PDF-".utf8)), let document = PDFDocument(data: data), !document.isEncrypted,
@@ -8586,6 +8595,29 @@ enum LocalPDFStatementParser {
     }
 
     private static func clean(_ value: String) -> String { value.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+}
+
+enum StatementOCRStaging {
+    static func delimitedData(_ candidates: [LocalDelimitedStatementParser.Candidate], currencyCode: String) -> Data {
+        let formatter = NumberFormatter(); formatter.numberStyle = .currency; formatter.currencyCode = currencyCode
+        let digits = formatter.maximumFractionDigits
+        let divisor = (0..<digits).reduce(UInt64(1)) { value, _ in value * 10 }
+        func amount(_ value: Int64) -> String {
+            let magnitude = value.magnitude, whole = magnitude / divisor, fraction = magnitude % divisor
+            let sign = value < 0 ? "-" : "+"
+            guard digits > 0 else { return "\(sign)\(whole)" }
+            return "\(sign)\(whole).\(String(format: "%0*llu", digits, fraction))"
+        }
+        func escaped(_ value: String) -> String { "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+        var rows = ["date,amount,payee,memo"]
+        rows += candidates.map { [escaped($0.occurredOn), escaped(amount($0.amountMinor)), escaped($0.payee), escaped($0.memo)].joined(separator: ",") }
+        return Data((rows.joined(separator: "\n") + "\n").utf8)
+    }
+
+    static func mapping(currencyCode: String) -> APIStatementImportMapping {
+        .init(sourceFormat: "pdf_ocr", currencyCode: currencyCode, dateColumn: "date", amountColumn: "amount",
+              payeeColumn: "payee", memoColumn: "memo", dateOrder: "ymd", delimiter: ",", numberFormat: "dot_decimal")
+    }
 }
 
 private struct StatementImportFlowView: View {
@@ -8660,7 +8692,7 @@ private struct StatementImportFlowView: View {
         if ["qif", "pdf"].contains(file.sourceFormat) { Section("Date format") { Picker("Order", selection: $dateOrder) { Text("Month / Day / Year").tag("mdy"); Text("Day / Month / Year").tag("dmy") } } }
         if file.sourceFormat == "mt940" { Section { Label("MT940 safety", systemImage: "checkmark.shield"); Text("Only SWIFT :61: transaction records are imported. Balance records are ignored, and every recognized transaction must be reviewed before posting.").font(.footnote).foregroundStyle(.secondary) } }
         if file.sourceFormat == "camt" { Section { Label("CAMT safety", systemImage: "checkmark.shield"); Text("ISO 20022 statement entries are imported for review. XML declarations are refused, and no entry posts until you approve it.").font(.footnote).foregroundStyle(.secondary) } }
-        if file.sourceFormat == "pdf" { Section { Label("PDF safety", systemImage: "checkmark.shield"); Text("Only text rows with an explicit date and signed or parenthesized amount are recognized. Scanned and ambiguous statements are rejected.").font(.footnote).foregroundStyle(.secondary) } }
+        if file.sourceFormat == "pdf" { Section { Label("Private PDF recognition", systemImage: "checkmark.shield"); Text("Text statements are read directly. Image-only statements are recognized privately on this iPhone, then converted to exact review rows. Only rows with an explicit date and signed or parenthesized amount are accepted; nothing posts until you approve it.").font(.footnote).foregroundStyle(.secondary); if isWorking { ProgressView("Reading statement on this iPhone…") } } }
         }
     }
     @ViewBuilder private func review(_ batch: APIStatementImport) -> some View {
@@ -8691,7 +8723,7 @@ private struct StatementImportFlowView: View {
         memoColumn = Self.preferred(headers, ["memo", "notes", "details"])
         if amountColumn.isEmpty, !debitColumn.isEmpty, !creditColumn.isEmpty { csvAmountLayout = "debit-credit" }
     }
-    private func stage() async { guard let file else { return }; isWorking = true; defer { isWorking = false }; do { let csv = file.sourceFormat == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; let mapping = APIStatementImportMapping(sourceFormat: file.sourceFormat, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder, delimiter: delimiter, numberFormat: numberFormat); let result = try await workspace.stageStatementImport(accountID: account.id, data: file.data, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)); categoryByRow = Dictionary(uniqueKeysWithValues: result.candidates.compactMap { row in row.suggestedCategoryID.map { categoryID in (row.sourceRow, categoryID) } }) } catch { errorMessage = error.localizedDescription } }
+    private func stage() async { guard let file else { return }; isWorking = true; defer { isWorking = false }; do { let csv = file.sourceFormat == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; var mapping = APIStatementImportMapping(sourceFormat: file.sourceFormat, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder, delimiter: delimiter, numberFormat: numberFormat); var upload = file.data; if file.sourceFormat == "pdf", !LocalPDFStatementParser.hasExtractableText(file.data) { let lines = try await StatementPDFOCR.recognizeLines(file.data); let candidates = try LocalPDFStatementParser.parse(lines: lines, mapping: mapping); upload = StatementOCRStaging.delimitedData(candidates, currencyCode: budget.currencyCode); mapping = StatementOCRStaging.mapping(currencyCode: budget.currencyCode) }; let result = try await workspace.stageStatementImport(accountID: account.id, data: upload, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)); categoryByRow = Dictionary(uniqueKeysWithValues: result.candidates.compactMap { row in row.suggestedCategoryID.map { categoryID in (row.sourceRow, categoryID) } }) } catch { errorMessage = error.localizedDescription } }
     private func approve(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { let items = batch.candidates.map { row in APIStatementImportApprovalItem(sourceRow: row.sourceRow, action: postRows.contains(row.sourceRow) ? "post" : "skip", categoryID: postRows.contains(row.sourceRow) ? categoryByRow[row.sourceRow].flatMap { $0.isEmpty ? nil : $0 } : nil) }; _ = try await workspace.approveStatementImport(accountID: account.id, batchID: batch.id, approval: .init(expectedVersion: batch.version, items: items)); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func cancel(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { _ = try await workspace.cancelStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func undo(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { staged = try await workspace.undoStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version) } catch { errorMessage = error.localizedDescription } }

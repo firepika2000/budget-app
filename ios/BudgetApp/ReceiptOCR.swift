@@ -2,6 +2,7 @@ import BudgetAPI
 import Foundation
 import UIKit
 import Vision
+import PDFKit
 
 struct ReceiptSuggestion: Identifiable, Equatable {
     let id = UUID()
@@ -96,6 +97,59 @@ enum ReceiptOCRError: LocalizedError {
         switch self {
         case .invalidImage: "The selected receipt image could not be read."
         case .noText: "No readable receipt text was found. Try a clearer, well-lit photo."
+        }
+    }
+}
+
+enum StatementPDFOCR {
+    static func recognizeLines(_ data: Data) async throws -> [String] {
+        guard data.count <= 10 * 1024 * 1024, data.starts(with: Data("%PDF-".utf8)),
+              let document = PDFDocument(data: data), !document.isEncrypted,
+              (1...50).contains(document.pageCount) else {
+            throw StatementPDFOCRError.unsupportedDocument
+        }
+        var lines: [String] = []
+        for index in 0..<document.pageCount {
+            guard let page = document.page(at: index) else { throw StatementPDFOCRError.unreadablePage }
+            let bounds = page.bounds(for: .mediaBox)
+            let width: CGFloat = 2_000
+            let height = max(1, width * bounds.height / max(bounds.width, 1))
+            guard let image = page.thumbnail(of: CGSize(width: width, height: height), for: .mediaBox).cgImage else {
+                throw StatementPDFOCRError.unreadablePage
+            }
+            let pageLines = try await Task.detached(priority: .userInitiated) {
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                request.usesLanguageCorrection = true
+                try VNImageRequestHandler(cgImage: image).perform([request])
+                return (request.results ?? []).sorted {
+                    let verticalDifference = abs($0.boundingBox.midY - $1.boundingBox.midY)
+                    return verticalDifference > 0.01
+                        ? $0.boundingBox.midY > $1.boundingBox.midY
+                        : $0.boundingBox.minX < $1.boundingBox.minX
+                }.compactMap { $0.topCandidates(1).first?.string }
+            }.value
+            lines.append(contentsOf: pageLines)
+            guard lines.count <= 50_000 else { throw StatementPDFOCRError.tooMuchText }
+        }
+        guard !lines.isEmpty else { throw StatementPDFOCRError.noText }
+        return lines
+    }
+}
+
+enum StatementPDFOCRError: LocalizedError {
+    case unsupportedDocument, unreadablePage, tooMuchText, noText
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedDocument:
+            "Scanned PDF recognition supports unencrypted statements up to 10 MB and 50 pages."
+        case .unreadablePage:
+            "A page in this scanned statement could not be read."
+        case .tooMuchText:
+            "The scanned statement contains more text than can be reviewed safely."
+        case .noText:
+            "No readable statement text was found. Try a clearer scan or download CSV, OFX, or QFX from your bank."
         }
     }
 }

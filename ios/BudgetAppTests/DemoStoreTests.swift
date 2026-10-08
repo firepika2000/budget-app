@@ -3570,6 +3570,32 @@ final class DemoStoreTests: XCTestCase {
         }
     }
 
+    func testScannedPDFReviewRowsPreserveExactMoneyAndEscapedDescriptions() throws {
+        let candidates = try LocalPDFStatementParser.parse(lines: [
+            "09/14/2026 Corner, \"Market\" -12.34",
+            "09/15/2026 Payroll +1,234.56",
+        ], mapping: .init(sourceFormat: "pdf", currencyCode: "USD", dateOrder: "mdy"))
+        let data = StatementOCRStaging.delimitedData(candidates, currencyCode: "USD")
+        let mapping = StatementOCRStaging.mapping(currencyCode: "USD")
+        let reparsed = try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
+        XCTAssertEqual(reparsed.map(\.occurredOn), ["2026-09-14", "2026-09-15"])
+        XCTAssertEqual(reparsed.map(\.amountMinor), [-1_234, 123_456])
+        XCTAssertEqual(reparsed.map(\.payee), ["Corner, \"Market\"", "Payroll"])
+        XCTAssertEqual(mapping.sourceFormat, "pdf_ocr")
+    }
+
+    func testScannedPDFReviewRowsSupportZeroDigitCurrencyWithoutRounding() throws {
+        let candidate = LocalDelimitedStatementParser.Candidate(
+            sourceRow: 1, occurredOn: "2026-09-14", amountMinor: -1_234,
+            payee: "Tokyo Market", memo: "Exact JPY"
+        )
+        let mapping = StatementOCRStaging.mapping(currencyCode: "JPY")
+        let reparsed = try LocalDelimitedStatementParser.parse(
+            data: StatementOCRStaging.delimitedData([candidate], currencyCode: "JPY"), mapping: mapping
+        )
+        XCTAssertEqual(reparsed.first?.amountMinor, -1_234)
+    }
+
     @MainActor
     func testLocalPDFDocumentUsesMoneyNeutralStatementStaging() async throws {
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))

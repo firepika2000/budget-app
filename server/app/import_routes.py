@@ -158,7 +158,7 @@ def stage_statement_import(
     budget_id: str,
     account_id: str,
     content: bytes = Body(..., media_type="application/octet-stream"),
-    source_format: Literal["csv", "ofx", "qfx", "qif", "mt940", "camt", "pdf"] = Header(..., alias="X-Statement-Format"),
+    source_format: Literal["csv", "ofx", "qfx", "qif", "mt940", "camt", "pdf", "pdf_ocr"] = Header(..., alias="X-Statement-Format"),
     currency_code: str = Header(..., alias="X-Statement-Currency"),
     date_column: Optional[str] = Header(default=None, alias="X-CSV-Date-Column"),
     amount_column: Optional[str] = Header(default=None, alias="X-CSV-Amount-Column"),
@@ -176,9 +176,9 @@ def stage_statement_import(
     normalized_currency = currency_code.strip().upper()
     try:
         scale = _currency_scale(normalized_currency)
-        if source_format == "csv":
+        if source_format in {"csv", "pdf_ocr"}:
             if date_column is None or payee_column is None:
-                raise ImportValidationError("CSV date and payee columns are required")
+                raise ImportValidationError("Delimited date and payee columns are required")
             candidates = parse_csv_candidates(content, CSVMapping(
                 date_column=date_column, amount_column=amount_column,
                 payee_column=payee_column, memo_column=memo_column,

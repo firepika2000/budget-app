@@ -213,6 +213,30 @@ def test_pdf_uses_conservative_review_boundary(client, owner_token, session_fact
     assert response.json()["candidates"][0]["amount_minor"] == -425
 
 
+def test_locally_ocrd_pdf_rows_use_owned_money_neutral_review_boundary(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    summary_path = f"/api/v1/budgets/{budget['id']}/months/2026-09-01"
+    before = client.get(summary_path, headers=auth(owner_token)).json()
+    response = _stage(
+        client, owner_token, budget["id"], account["id"],
+        b'date,amount,payee,memo\n"2026-09-16","-4.25","Recognized purchase","Recognized purchase"\n',
+        **{
+            "X-Statement-Format": "pdf_ocr",
+            "X-CSV-Date-Column": "date",
+            "X-CSV-Amount-Column": "amount",
+            "X-CSV-Payee-Column": "payee",
+            "X-CSV-Memo-Column": "memo",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["source_format"] == "pdf_ocr"
+    assert response.json()["candidates"][0]["amount_minor"] == -425
+    assert client.get(summary_path, headers=auth(owner_token)).json() == before
+    with session_factory() as db:
+        assert db.query(Transaction).count() == 0
+
+
 def test_import_rejects_wrong_currency_bad_mapping_and_unowned_review(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, _ = create_budget_structure(client, owner_token, budget["id"])

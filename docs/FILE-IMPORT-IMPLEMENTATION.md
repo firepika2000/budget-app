@@ -2,10 +2,15 @@
 
 Status: IN PROGRESS. The authenticated server API exposes money-neutral statement staging,
 duplicate review, reload, cancellation, explicit approval, and atomic approved-import undo for CSV/TSV/delimited text,
-OFX/QFX, QIF, SWIFT MT940, ISO 20022 CAMT XML, and conservatively recognized text-based PDF statements. The native reconciliation
+OFX/QFX, QIF, SWIFT MT940, ISO 20022 CAMT XML, and conservatively recognized PDF statements. The native reconciliation
 UI is active for Budget Server workspaces and only explicit approval can post ledger rows. Local
 on iPhone now supports CSV, TSV, explicitly delimited text, structured OFX/QFX, QIF, MT940, CAMT, and
-conservatively recognized text-based PDFs through the same review UI.
+text-based PDFs and image-only PDFs recognized privately on-device through the same review UI.
+
+Image-only PDF recognition uses PDFKit and Vision locally on the iPhone. The server never receives
+the statement image: it receives a bounded `pdf_ocr` transport containing only rows that match the
+same explicit-date and signed-amount contract as text PDFs. Exact integer minor units are preserved,
+and every recognized row remains money-neutral until the user reviews and approves it.
 
 Local Device import review/history is durable in the Local Device SQLite authority rather than being
 session-only. Review, approved, cancelled and undo metadata survives app/repository relaunch, remains
@@ -79,11 +84,11 @@ any later spreadsheet export still requires its own formula-injection defenses.
 
 ## Required next dependencies
 
-1. Additional bank-specific PDF mapping profiles and optional local OCR. Arbitrary PDF layout is
-   not trusted as structured financial data. The current extractor accepts only unencrypted,
-   text-based statements whose transaction lines begin with an explicit date and end in a signed
-   or parenthesized amount. Unsigned values, balances, headers and totals are ignored; unsupported
-   or scanned statements fail clearly rather than silently inventing transactions.
+1. Additional bank-specific PDF mapping profiles. Arbitrary PDF layout is not trusted as structured
+   financial data. Text extraction and local Vision OCR accept only unencrypted statements whose
+   transaction lines begin with an explicit date and end in a signed or parenthesized amount.
+   Unsigned values, balances, headers and totals are ignored; unsupported or ambiguous statements
+   fail clearly rather than silently inventing transactions.
 2. Provider-neutral staged batch/candidate contracts; durable staging must remain money-neutral.
 3. Current resource authorization before matching, suggestions, duplicate counts or preview.
 4. Stable external identity/fingerprints and bounded canonical-transaction matching. Ambiguous
@@ -110,8 +115,8 @@ any later spreadsheet export still requires its own formula-injection defenses.
    accepts bounded OFX 1.x SGML and OFX 2.x XML-style transaction records while rejecting entity
    and document-type declarations. QIF uses the same explicit date-order, strict grouped-amount,
    deterministic two-digit-year, bounded-input and private-safe validation rules as Budget Server.
-   Its PDFKit adapter applies the same conservative signed-row contract as Budget Server and fails
-   closed for scanned, encrypted, unsigned-only, or ambiguous statements.
+   Its PDFKit/Vision adapter applies the same conservative signed-row contract as Budget Server and
+   fails closed for encrypted, unsigned-only, or ambiguous statements.
    Live and Local Device now both retain bounded history across relaunch. Continue full privacy,
    recovery and financial-observation testing before claiming workflow completion.
 

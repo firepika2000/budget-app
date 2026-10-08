@@ -1,13 +1,13 @@
 # v0.4.0 Simulator and live review
 
-## Current autonomous verification environment (2026-09-18)
+## Current verification environment (2026-10-08)
 
-The walkthrough below is historical. For the current production-readiness run, use **only**
-`/Users/firepika/Downloads/Xcode-beta.app/Contents/Developer` (Xcode 27.0, `27A5252f`) and the existing
-iPhone 17 Pro Max / iOS 27 Simulator `3ABD861E-D38D-4AFD-A356-959266051564`. Set `DEVELOPER_DIR`
-explicitly for every `xcodebuild`/`xcrun` operation; the global developer selection may differ.
-Do not erase the device, reset preferences, migrate human Live, or launch the stable Simulator.
-Human acceptance is pending: **DO NOT RETEST** during the autonomous run.
+Use the public Xcode 27 toolchain at `/Applications/Xcode.app/Contents/Developer` (Xcode 27.0,
+`27A266a`) and preserve the existing iPhone 17 Pro Max / iOS 27 Simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`. Set `DEVELOPER_DIR` explicitly for every
+`xcodebuild`/`xcrun` operation so a retired beta installation or a different global developer
+selection cannot be selected accidentally. Do not erase the device, reset preferences, or migrate
+human Live data.
 
 For unattended native tests, a process-scoped `/usr/bin/caffeinate -i env DEVELOPER_DIR=... xcodebuild
 ...` prevents idle system sleep until that command exits without changing permanent power settings.
@@ -20,7 +20,7 @@ diagnostics after failed test cases; distinguish completed test assertions from 
 exit status. Keep logs/results and report failures even when a focused rerun passes.
 
 If macOS signs a generated Swift package test bundle unsuccessfully because of Finder/resource-fork
-metadata, build with `swift test --scratch-path /tmp/<new-test-build-directory>` under the same Beta
+metadata, build with `swift test --scratch-path /tmp/<new-test-build-directory>` under the same public
 toolchain. Do not disable signing or remove attributes from user data to make tests pass.
 
 The Debug build opens a deterministic fictional household through the same `BudgetWorkspaceView` and `BudgetWorkspaceStore` used by authenticated operation. Demo data is ephemeral and is a repository fixture, not a security boundary or substitute for a live test.

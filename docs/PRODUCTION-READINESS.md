@@ -1231,8 +1231,10 @@ Never run migration, destructive, scale or restore tests against human Live. Kno
 Recheck the source graph before migration work. Use disposable populated PostgreSQL databases and
 restore to new destinations. Preserve human attachments, transactions and reconciliation history.
 
-Native toolchain: `/Users/firepika/Downloads/Xcode-beta.app/Contents/Developer`.
-Preserved Simulator UDID: `3ABD861E-D38D-4AFD-A356-959266051564` (reverify runtime before use).
+Current native toolchain: `/Applications/Xcode.app/Contents/Developer` (Xcode 27.0, build `27A266a`).
+Preserved Simulator UDID: `3ABD861E-D38D-4AFD-A356-959266051564` (iPhone 17 Pro Max / iOS 27;
+reverify availability before use and never erase it). Earlier checkpoint entries below retain the
+beta toolchain names and build numbers that produced that historical evidence.
 
 ## Checkpoint evidence
 
