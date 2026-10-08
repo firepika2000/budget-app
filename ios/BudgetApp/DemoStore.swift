@@ -77,6 +77,7 @@ final class DemoStore: ObservableObject {
     }
     // Command history only. Seed opening observations are not invented historical operations.
     private(set) var allocationEvents: [AllocationEvent] = []
+    private(set) var reconciliationHistory: [LocalReconciliationRecord] = []
     private(set) var allocationVersion = 0
 
     func requireAllocationVersion(_ expected: Int) throws {
@@ -703,8 +704,10 @@ final class DemoStore: ObservableObject {
         guard !result.overflow else { return fail(.invalidAmount) }
         let difference = result.partialValue
         guard difference == 0 || createAdjustment else { return failMessage("Cleared balance does not match statement. Confirm an adjustment before continuing.") }
+        var adjustmentTransactionID: String?
         if difference != 0 {
             guard recordCanonicalTransaction(.init(accountID: accountID, categoryID: nil, amountMinor: difference, occurredOn: cutoff.iso, payeeName: "Reconciliation adjustment", memo: reason.trimmingCharacters(in: .whitespacesAndNewlines), isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])) else { return false }
+            adjustmentTransactionID = transactions[0].id
             transactions[0].reconciled = true
         }
         accounts[index].reconciledBalance = statementBalance
@@ -712,6 +715,7 @@ final class DemoStore: ObservableObject {
         for transactionIndex in transactions.indices where eligibleIDs.contains(transactions[transactionIndex].id) {
             transactions[transactionIndex].reconciled = true
         }
+        reconciliationHistory.append(.init(id: UUID().uuidString, accountID: accountID, statementDate: cutoff.iso, statementBalanceMinor: statementBalance, adjustmentTransactionID: adjustmentTransactionID, createdAt: ISO8601DateFormatter().string(from: planningNow())))
         errorMessage = nil
         return true
     }
@@ -1179,6 +1183,7 @@ extension DemoStore {
             AllocationEvent(id: item.id, operationID: item.operationID, occurredOn: item.occurredOn, kind: item.kind, actor: item.actorUserID, note: item.note, sourceCategoryID: item.sourceCategoryID, destinationCategoryID: item.categoryID ?? "", amountMinor: item.amountMinor)
         }.filter { !$0.destinationCategoryID.isEmpty }
         allocationVersion = Set(allocationEvents.map(\.operationID)).count
+        reconciliationHistory = value.reconciliations
         cashRolloverPolicies = try value.cashRolloverPolicies.map { item in
             guard let policy = CashRolloverProjection.Policy(rawValue: item.policy) else {
                 throw LocalStorageError.invalidSnapshot("Cash rollover policy is invalid")
@@ -1255,9 +1260,7 @@ extension DemoStore {
         let allocationRows = allocationEvents.map { item in
             LocalAllocationRecord(id: item.id, operationID: item.operationID, budgetID: identity.budgetID, sourceCategoryID: item.sourceCategoryID, categoryID: item.destinationCategoryID, amountMinor: item.amountMinor, occurredOn: item.occurredOn, kind: item.kind, actorUserID: identity.ownerUserID, note: item.note, createdAt: stamp)
         }
-        let reconciliations = accounts.compactMap { item -> LocalReconciliationRecord? in
-            item.reconciledBalance.map { LocalReconciliationRecord(id: "local-reconciliation-\(item.id)", accountID: item.id, statementDate: BudgetWorkspaceStore.dateString(planningNow()), statementBalanceMinor: $0, createdAt: stamp) }
-        }
+        let reconciliations = reconciliationHistory
         let targets = categories.compactMap { item -> LocalCategoryTargetRecord? in
             item.target.map { LocalCategoryTargetRecord(categoryID: item.id, targetType: item.targetType, amountMinor: $0, cadence: "monthly", effectiveMonth: currentPlanningMonth, snoozedMonth: item.targetSnoozedMonths.sorted().last, targetDate: item.targetDate, recurrenceMonths: item.targetRecurrenceMonths.map(Int64.init), minimumContributionMinor: item.targetMinimumContribution, priority: Int64(item.targetPriority), isActive: item.targetIsActive, snoozedMonths: item.targetSnoozedMonths.sorted()) }
         }

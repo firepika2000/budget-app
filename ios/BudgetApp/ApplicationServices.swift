@@ -325,6 +325,7 @@ protocol AccountCommandRepository: AnyObject {
     func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms
     func deleteAccountDebtTerms(accountID: String) async throws
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws
+    func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory]
 }
 
 @MainActor
@@ -419,6 +420,11 @@ struct AccountService {
 
     func reconcile(_ operation: ReconcileAccountOperation) async throws {
         do { try await repository.reconcileAccount(operation) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory] {
+        do { return try await repository.reconciliationHistory(accountID: accountID, limit: limit, offset: offset) }
         catch { throw BudgetApplicationError.map(error) }
     }
 }

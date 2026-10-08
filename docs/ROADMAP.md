@@ -432,6 +432,12 @@ Agents and implementation plans must not begin the following merely because adja
 The roadmap is a living document, but changing it is a deliberate product decision—not an incidental side effect of implementation.
 ## Current development checkpoints
 
+- Account reconciliation now preserves an append-only, attributed history instead of only the latest
+  balance. The production account register exposes a bounded Reconciliation History view showing the
+  statement date and balance, prior cleared balance, transaction count, adjustment presence, and actor.
+  Existing reconciled accounts receive one conservative legacy checkpoint during migration; no ledger
+  or balance is recalculated.
+
 - Transaction Change History now explains safe before/after values for ordinary edits instead of
   listing only field names. Exact money remains integer minor units until native formatting; account
   and category identities are qualified for display. If either historical snapshot was outside the

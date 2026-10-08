@@ -46,6 +46,7 @@ from .models import (
     PayeeAlias,
     PayeeBudgetPreference,
     RequestAction,
+    Reconciliation,
     ResourceGrant,
     ScheduledTransaction,
     Transaction,
@@ -240,7 +241,8 @@ def local_device_transfer_eligibility(
         count(Transaction, Transaction.budget_id == budget.id, Transaction.created_by_user_id != household.owner_user_id)
         + count(AllocationOperation, AllocationOperation.budget_id == budget.id, AllocationOperation.actor_user_id != household.owner_user_id)
         + count(TransactionChange, TransactionChange.budget_id == budget.id, TransactionChange.actor_user_id != household.owner_user_id)
-        + count(CreditCardReserveEvent, CreditCardReserveEvent.budget_id == budget.id, CreditCardReserveEvent.actor_user_id != household.owner_user_id),
+        + count(CreditCardReserveEvent, CreditCardReserveEvent.budget_id == budget.id, CreditCardReserveEvent.actor_user_id != household.owner_user_id)
+        + count(Reconciliation, Reconciliation.budget_id == budget.id, Reconciliation.actor_user_id != household.owner_user_id),
     )
 
     return {
@@ -348,6 +350,9 @@ def export_budget_json(
             Membership.household_id == budget.household_id
         ))))],
         "accounts": [row_data(item) for item in db.scalars(select(Account).where(Account.budget_id == budget_id))],
+        "reconciliations": [row_data(item) for item in db.scalars(select(Reconciliation).where(
+            Reconciliation.budget_id == budget_id
+        ))],
         "account_debt_terms": [row_data(item) for item in db.scalars(select(AccountDebtTerms).where(AccountDebtTerms.budget_id == budget_id))],
         "cash_rollover_policy_changes": [row_data(item) for item in db.scalars(select(CashRolloverPolicyChange).where(CashRolloverPolicyChange.budget_id == budget_id))],
         "category_groups": [row_data(item) for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))],

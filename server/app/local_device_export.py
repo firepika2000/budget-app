@@ -23,7 +23,7 @@ from .models import (
     CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget,
     CategoryTargetSnooze, CreditCardReserveEvent, Household, Payee, PayeeAlias,
     ImportBatch, PayeeBudgetPreference, ScheduledTransaction, Transaction, TransactionAttachment,
-    TransactionChange, TransactionSplit, User,
+    Reconciliation, TransactionChange, TransactionSplit, User,
 )
 
 
@@ -272,11 +272,14 @@ def build_local_device_projection(
         } for item in transactions],
         "allocations": allocation_rows,
         "reconciliations": [{
-            "id": f"server-reconciliation-{item.id}", "account_id": item.id,
-            "statement_date": _iso(item.reconciled_at.date()),
-            "statement_balance_minor": item.reconciled_balance_minor,
-            "adjustment_transaction_id": None, "created_at": _iso(item.reconciled_at),
-        } for item in accounts if item.reconciled_at is not None and item.reconciled_balance_minor is not None],
+            "id": item.id, "account_id": item.account_id,
+            "statement_date": _iso(item.statement_date),
+            "statement_balance_minor": item.statement_balance_minor,
+            "adjustment_transaction_id": item.adjustment_transaction_id,
+            "created_at": _iso(item.created_at),
+        } for item in db.scalars(select(Reconciliation).where(
+            Reconciliation.budget_id == budget.id
+        ).order_by(Reconciliation.statement_date, Reconciliation.created_at, Reconciliation.id))],
         "targets": [{
             "category_id": item.category_id, "target_type": item.target_type,
             "amount_minor": item.target_amount_minor, "cadence": "monthly",

@@ -294,6 +294,54 @@ def test_reconciliation_adjustment_is_an_explicit_auditable_transaction(
     assert balance["reconciled_balance_minor"] == 48750
 
 
+def test_reconciliation_history_is_append_only_attributed_and_scoped(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    original = record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=50_000, is_cleared=True)
+
+    first = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/reconcile",
+        headers=auth(owner_token),
+        json={"statement_balance_minor": 50_000, "through_date": "2026-09-15"},
+    )
+    assert first.status_code == 200, first.text
+    second = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/reconcile",
+        headers=auth(owner_token),
+        json={"statement_balance_minor": 49_000, "through_date": "2026-09-30", "create_adjustment": True, "adjustment_reason": "Statement fee"},
+    )
+    assert second.status_code == 200, second.text
+
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/reconciliations",
+        headers=auth(owner_token),
+    )
+    assert response.status_code == 200, response.text
+    history = response.json()
+    assert [row["statement_date"] for row in history] == ["2026-09-30", "2026-09-15"]
+    assert [row["statement_balance_minor"] for row in history] == [49_000, 50_000]
+    assert history[0]["cleared_balance_before_minor"] == 50_000
+    assert history[0]["adjustment_transaction_id"] == second.json()["adjustment_transaction_id"]
+    assert history[0]["actor_display_name"]
+    assert history[1]["reconciled_transaction_count"] == 1
+
+    changes = client.get(
+        f"/api/v1/budgets/{budget['id']}/transactions/{original['id']}/history",
+        headers=auth(owner_token),
+    )
+    assert changes.status_code == 200
+    assert any(row["action"] == "reconciled" and row["actor_display_name"] for row in changes.json())
+
+    member_id, member_token = add_restricted_member(session_factory, client)
+    denied = client.get(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/reconciliations",
+        headers=auth(member_token),
+    )
+    assert denied.status_code in {403, 404}
+
+
 def test_positive_cash_reconciliation_becomes_explicit_real_money_then_allocates(
     client, owner_token, session_factory
 ):

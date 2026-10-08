@@ -505,6 +505,26 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(history.first?.changes?.first?.afterValue, "-1350")
     }
 
+    func testReconciliationHistoryUsesBoundedAccountContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/reconciliations")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertTrue(items.contains(.init(name: "limit", value: "25")))
+            XCTAssertTrue(items.contains(.init(name: "offset", value: "50")))
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
+            let response = Data(#"[{"id":"r1","account_id":"a1","actor_user_id":"u1","actor_display_name":"Rey","statement_date":"2026-09-30","statement_balance_minor":198800,"cleared_balance_before_minor":199000,"reconciled_transaction_count":4,"adjustment_transaction_id":"t9","created_at":"2026-10-01T12:00:00Z"}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let history = try await client.reconciliationHistory(budgetID: "b1", accountID: "a1", limit: 25, offset: 50, token: "secret")
+        XCTAssertEqual(history.first?.statementBalanceMinor, 198_800)
+        XCTAssertEqual(history.first?.actorDisplayName, "Rey")
+        XCTAssertEqual(history.first?.adjustmentTransactionID, "t9")
+    }
+
     func testAllocationHistoryUsesBoundedPageContract() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

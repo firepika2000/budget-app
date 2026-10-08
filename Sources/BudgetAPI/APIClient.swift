@@ -448,6 +448,12 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/reconcile", method: "POST", token: token, body: request)
     }
 
+    public func reconciliationHistory(budgetID: String, accountID: String, limit: Int = 50, offset: Int = 0, token: String) async throws -> [APIReconciliationHistory] {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/reconciliations", queryItems: [
+            URLQueryItem(name: "limit", value: String(limit)), URLQueryItem(name: "offset", value: String(offset)),
+        ], token: token)
+    }
+
     public func stageStatementImport(budgetID: String, accountID: String, data: Data,
                                      mapping: APIStatementImportMapping, token: String) async throws -> APIStatementImport {
         guard data.count <= 10 * 1024 * 1024 else {

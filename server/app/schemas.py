@@ -1124,6 +1124,19 @@ class ReconcileResponse(BaseModel):
     adjustment_amount_minor: int = 0
 
 
+class ReconciliationHistoryResponse(BaseModel):
+    id: str
+    account_id: str
+    actor_user_id: str
+    actor_display_name: Optional[str] = None
+    statement_date: date
+    statement_balance_minor: int
+    cleared_balance_before_minor: int
+    reconciled_transaction_count: int
+    adjustment_transaction_id: Optional[str] = None
+    created_at: datetime
+
+
 class ImportCandidateResponse(BaseModel):
     source_row: int
     occurred_on: date

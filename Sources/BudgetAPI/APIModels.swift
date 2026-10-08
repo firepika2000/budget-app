@@ -1123,6 +1123,33 @@ public struct APIReconcileResponse: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIReconciliationHistory: Identifiable, Decodable, Equatable, Sendable {
+    public let id: String
+    public let accountID: String
+    public let actorUserID: String
+    public let actorDisplayName: String
+    public let statementDate: String
+    public let statementBalanceMinor: Int64
+    public let clearedBalanceBeforeMinor: Int64
+    public let reconciledTransactionCount: Int
+    public let adjustmentTransactionID: String?
+    public let createdAt: String
+    public init(id: String, accountID: String, actorUserID: String, actorDisplayName: String, statementDate: String, statementBalanceMinor: Int64, clearedBalanceBeforeMinor: Int64, reconciledTransactionCount: Int, adjustmentTransactionID: String?, createdAt: String) {
+        self.id = id; self.accountID = accountID; self.actorUserID = actorUserID; self.actorDisplayName = actorDisplayName
+        self.statementDate = statementDate; self.statementBalanceMinor = statementBalanceMinor
+        self.clearedBalanceBeforeMinor = clearedBalanceBeforeMinor; self.reconciledTransactionCount = reconciledTransactionCount
+        self.adjustmentTransactionID = adjustmentTransactionID; self.createdAt = createdAt
+    }
+    enum CodingKeys: String, CodingKey {
+        case id, accountID = "account_id", actorUserID = "actor_user_id"
+        case actorDisplayName = "actor_display_name", statementDate = "statement_date"
+        case statementBalanceMinor = "statement_balance_minor"
+        case clearedBalanceBeforeMinor = "cleared_balance_before_minor"
+        case reconciledTransactionCount = "reconciled_transaction_count"
+        case adjustmentTransactionID = "adjustment_transaction_id", createdAt = "created_at"
+    }
+}
+
 public struct APIStatementImportCandidate: Identifiable, Codable, Equatable, Sendable {
     public var id: Int { sourceRow }
     public let sourceRow: Int

@@ -462,8 +462,8 @@ def test_structured_export_contract_covers_every_persistent_domain_model():
         "category_groups", "categories", "category_favorites", "delegated_budget_policies",
         "delegated_category_rules", "category_targets", "category_target_snoozes",
         "scheduled_transactions", "monthly_assignments", "allocation_operations",
-        "allocation_postings", "transactions", "transaction_splits", "transaction_changes",
-        "transaction_attachments", "credit_card_reserve_events", "allowance_plans",
+            "allocation_postings", "transactions", "transaction_splits", "transaction_changes",
+            "transaction_attachments", "reconciliations", "credit_card_reserve_events", "allowance_plans",
         "allowance_splits", "allowance_issuances", "financial_requests", "request_actions",
         "import_batches",
     }

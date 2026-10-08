@@ -66,6 +66,7 @@ from .models import (
     DelegatedCategoryRule,
     Membership,
     Payee,
+    Reconciliation,
     ResourceGrant,
     Transaction,
     TransactionAttachment,
@@ -103,6 +104,7 @@ from .schemas import (
     MonthSummaryResponse,
     ReconcileRequest,
     ReconcileResponse,
+    ReconciliationHistoryResponse,
     SmartFundingCommit,
     SmartFundingPreviewResponse,
     ScheduledTransactionResponse,
@@ -2416,6 +2418,32 @@ def delete_transfer(
     db.commit()
 
 
+@router.get("/accounts/{account_id}/reconciliations", response_model=list[ReconciliationHistoryResponse])
+def reconciliation_history(
+    budget_id: str,
+    account_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    account = db.scalar(select(Account).where(Account.id == account_id, Account.budget_id == budget.id))
+    if account is None or not can_access_resource(db, user, budget, "account", account_id):
+        raise HTTPException(status_code=404, detail="Account not found")
+    rows = list(db.scalars(select(Reconciliation).where(
+        Reconciliation.budget_id == budget.id,
+        Reconciliation.account_id == account.id,
+    ).order_by(Reconciliation.statement_date.desc(), Reconciliation.created_at.desc(), Reconciliation.id.desc())
+        .offset(offset).limit(limit)))
+    actor_ids = {row.actor_user_id for row in rows}
+    actor_names = {row.id: row.display_name for row in db.scalars(
+        select(User).where(User.id.in_(actor_ids))
+    )} if actor_ids else {}
+    return [{column.key: getattr(row, column.key) for column in Reconciliation.__table__.columns}
+            | {"actor_display_name": actor_names.get(row.actor_user_id)} for row in rows]
+
+
 @router.post("/accounts/{account_id}/reconcile", response_model=ReconcileResponse)
 def reconcile_account(
     budget_id: str,
@@ -2469,14 +2497,29 @@ def reconcile_account(
             created_by_user_id=user.id,
         )
         db.add(adjustment_transaction)
-        transactions.append(adjustment_transaction)
+        db.flush()
+        record_transaction_change(db, adjustment_transaction, user, "created",
+                                  after=transaction_snapshot(adjustment_transaction))
     newly_reconciled = 0
     for transaction in transactions:
         if not transaction.is_reconciled:
+            before = transaction_snapshot(transaction)
             transaction.is_reconciled = True
             newly_reconciled += 1
+            record_transaction_change(db, transaction, user, "reconciled", before=before,
+                                      after=transaction_snapshot(transaction))
     account.reconciled_balance_minor = body.statement_balance_minor
     account.reconciled_at = datetime.now(timezone.utc)
+    db.add(Reconciliation(
+        budget_id=budget.id,
+        account_id=account.id,
+        actor_user_id=user.id,
+        statement_date=body.through_date,
+        statement_balance_minor=body.statement_balance_minor,
+        cleared_balance_before_minor=cleared_balance,
+        reconciled_transaction_count=newly_reconciled,
+        adjustment_transaction_id=adjustment_transaction.id if adjustment_transaction else None,
+    ))
     db.commit()
     return ReconcileResponse(
         account_id=account.id,

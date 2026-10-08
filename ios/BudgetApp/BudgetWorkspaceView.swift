@@ -2103,6 +2103,16 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard actorAccountIDs.contains(operation.accountID) else { throw APIClientError.server(status: 404, message: "Account not found") }
         guard demo.reconcile(accountID: operation.accountID, statementBalance: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, reason: operation.reason, expectedClearedBalance: operation.expectedClearedBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
+    func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory] {
+        try requireActiveMembership()
+        guard actorAccountIDs.contains(accountID) else { throw APIClientError.server(status: 404, message: "Account not found") }
+        let actorName = demo.persona.rawValue
+        return demo.reconciliationHistory.filter { $0.accountID == accountID }
+            .sorted { ($0.statementDate, $0.createdAt, $0.id) > ($1.statementDate, $1.createdAt, $1.id) }
+            .dropFirst(offset).prefix(limit).map {
+                APIReconciliationHistory(id: $0.id, accountID: $0.accountID, actorUserID: demo.persona.rawValue, actorDisplayName: actorName, statementDate: $0.statementDate, statementBalanceMinor: $0.statementBalanceMinor, clearedBalanceBeforeMinor: $0.statementBalanceMinor, reconciledTransactionCount: 0, adjustmentTransactionID: $0.adjustmentTransactionID, createdAt: $0.createdAt)
+            }
+    }
     func assignMoney(_ operation: AssignMoneyOperation) async throws { try requireActiveMembership();
         guard budget.can("assign_money") else { throw workspaceRepositoryError("You do not have permission to assign money.") }
         try demo.requireAllocationVersion(operation.expectedVersion)
@@ -2563,6 +2573,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: operation.apiValue, token: token) }
     func deleteTransfer(id: String) async throws { try await credentials.prepare(); try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { try await credentials.prepare(); _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID, request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason, expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor), token: token) }
+    func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory] { try await credentials.prepare(); return try await client.reconciliationHistory(budgetID: budget.id, accountID: accountID, limit: limit, offset: offset, token: token) }
     func statementImports(accountID: String, limit: Int, offset: Int) async throws -> APIStatementImportList { try await credentials.prepare(); return try await client.statementImports(budgetID: budget.id, accountID: accountID, limit: limit, offset: offset, token: token) }
     func statementImport(accountID: String, batchID: String) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.statementImport(budgetID: budget.id, accountID: accountID, batchID: batchID, token: token) }
     func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.stageStatementImport(budgetID: budget.id, accountID: accountID, data: data, mapping: mapping, token: token) }
@@ -3422,6 +3433,9 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await services().transactions.attachments(id: id) }
     func transactionHistory(id: String) async throws -> [APITransactionChange] { try await services().transactions.history(id: id) }
+    func reconciliationHistory(accountID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIReconciliationHistory] {
+        try await services().accounts.reconciliationHistory(accountID: accountID, limit: limit, offset: offset)
+    }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await services().transactions.uploadAttachment(id: id, filename: filename, contentType: contentType, data: data); await refresh() }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await services().transactions.downloadAttachment(transactionID: transactionID, attachmentID: attachmentID) }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await services().transactions.detachAttachment(transactionID: transactionID, attachmentID: attachmentID); await refresh() }
@@ -7870,6 +7884,7 @@ struct LiveAccountRegisterView: View {
     @State private var transferPresentation: TransferPresentation?
     @State private var showReconcile = false
     @State private var showSettings = false
+    @State private var showReconciliationHistory = false
 
     private var account: APIAccount { store.accounts.first(where: { $0.id == initialAccount.id }) ?? initialAccount }
 
@@ -7887,6 +7902,7 @@ struct LiveAccountRegisterView: View {
                 LabeledContent("Uncleared", value: store.format(store.unclearedBalance(for: account)))
                 if let reconciled = account.reconciledBalanceMinor {
                     LabeledContent("Last reconciled balance", value: store.format(reconciled))
+                    Button("Reconciliation History", systemImage: "clock.arrow.circlepath") { showReconciliationHistory = true }
                 } else {
                     LabeledContent("Reconciliation", value: "Not reconciled")
                 }
@@ -7924,6 +7940,7 @@ struct LiveAccountRegisterView: View {
         .sheet(item: $transferPresentation) { presentation in transfer(presentation) }
         .sheet(isPresented: $showReconcile) { reconcile }
         .sheet(isPresented: $showSettings) { AccountSettingsView(account: account) }
+        .sheet(isPresented: $showReconciliationHistory) { ReconciliationHistoryView(account: account) }
         .refreshable { await store.refresh() }
     }
 
@@ -7944,6 +7961,65 @@ struct LiveAccountRegisterView: View {
     }
     @ViewBuilder private var reconcile: some View {
         LiveReconcileView(budget: store.budget, account: account, currentBalance: store.clearedBalance(for: account), onSaved: store.refresh)
+    }
+}
+
+private struct ReconciliationHistoryView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let account: APIAccount
+    @State private var rows: [APIReconciliationHistory] = []
+    @State private var loading = true
+    @State private var loadingOlder = false
+    @State private var errorMessage: String?
+    @State private var hasMore = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if loading {
+                    ProgressView("Loading reconciliation history…")
+                } else if rows.isEmpty {
+                    ContentUnavailableView("No reconciliation history", systemImage: "checkmark.seal", description: Text("Completed reconciliations will remain here as an audit trail."))
+                } else {
+                    ForEach(rows) { row in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(row.statementDate).font(.headline)
+                                Spacer()
+                                Text(store.format(row.statementBalanceMinor)).font(.headline).monospacedDigit()
+                            }
+                            Text("Reconciled by \(row.actorDisplayName)")
+                            Text("\(row.reconciledTransactionCount) transaction\(row.reconciledTransactionCount == 1 ? "" : "s") · prior cleared \(store.format(row.clearedBalanceBeforeMinor))")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if row.adjustmentTransactionID != nil {
+                                Label("Included a reconciliation adjustment", systemImage: "plusminus.circle").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                    if hasMore {
+                        Button(loadingOlder ? "Loading…" : "Load Older") { Task { await load(append: true) } }.disabled(loadingOlder)
+                    }
+                }
+            }
+            .navigationTitle("Reconciliation History")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .task { await load(append: false) }
+            .refreshable { await load(append: false) }
+            .alert("Unable to load history", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
+        }
+    }
+
+    private func load(append: Bool) async {
+        if append { loadingOlder = true } else { loading = true }
+        defer { loading = false; loadingOlder = false }
+        do {
+            let next = try await store.reconciliationHistory(accountID: account.id, offset: append ? rows.count : 0)
+            rows = append ? rows + next : next
+            hasMore = next.count == 50
+        } catch { errorMessage = error.localizedDescription }
     }
 }
 

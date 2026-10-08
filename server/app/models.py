@@ -283,6 +283,26 @@ class Account(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class Reconciliation(Base):
+    __tablename__ = "reconciliations"
+    __table_args__ = (
+        Index("ix_reconciliations_account_date", "account_id", "statement_date", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), index=True)
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    statement_date: Mapped[date] = mapped_column(Date)
+    statement_balance_minor: Mapped[int] = mapped_column(BigInteger)
+    cleared_balance_before_minor: Mapped[int] = mapped_column(BigInteger)
+    reconciled_transaction_count: Mapped[int] = mapped_column(Integer)
+    adjustment_transaction_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 class AccountDebtTerms(Base):
     """Optional planning metadata for a debt account; never a ledger balance."""
 

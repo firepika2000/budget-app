@@ -1979,3 +1979,18 @@ is rendered as `Private or unavailable`; this prevents a later move into a visib
 revealing the old payee, memo, amount, or resource identity. Identity lookup is batched once for the
 bounded history page. Focused backend tests cover exact values, raw-snapshot exclusion and historical
 scope redaction; the Swift API contract and regular Xcode 27 iPhone Simulator build pass.
+
+### Durable reconciliation history — 2026-10-08
+
+Reconciliation is no longer represented only by the latest balance on an account. Budget Server now
+appends an immutable checkpoint for every completed reconciliation with exact statement and prior
+cleared balances, statement date, actor, affected transaction count, optional adjustment identity and
+timestamp. The account-scoped read is permission-filtered and bounded. Existing reconciled accounts
+are migrated to one explicitly conservative legacy checkpoint without changing any transaction,
+balance, allocation, reserve or reconciliation result.
+
+The iPhone account register provides Reconciliation History with explicit older-page loading. Live,
+Demo and Local Device compositions use the same view; Local Device retains each checkpoint in its
+existing durable reconciliation table. Focused backend lifecycle/privacy tests, populated migration
+backfill, Swift package tests, typed API contract tests, and the regular Xcode 27 iPhone 17 Pro Max
+Simulator build pass. Human presentation acceptance remains pending.
