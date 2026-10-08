@@ -3,7 +3,7 @@ from hashlib import sha256
 import secrets
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
@@ -312,6 +312,8 @@ def list_members(
 @router.get("/households/{household_id}/access-events", response_model=list[HouseholdAccessEventResponse])
 def list_access_events(
     household_id: str,
+    limit: int = Query(default=200, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict]:
@@ -322,7 +324,8 @@ def list_access_events(
     .outerjoin(actor, actor.id == HouseholdAccessEvent.actor_user_id)
     .outerjoin(subject, subject.id == HouseholdAccessEvent.subject_user_id).where(
         HouseholdAccessEvent.household_id == household_id
-    ).order_by(HouseholdAccessEvent.created_at.desc(), HouseholdAccessEvent.id.desc()).limit(200)).all()
+    ).order_by(HouseholdAccessEvent.created_at.desc(), HouseholdAccessEvent.id.desc())
+    .offset(offset).limit(limit)).all()
     return [{"id": row.id, "event_type": row.event_type,
              "actor_display_name": actor_name if actor_name is not None else "Former member",
              "subject_display_name": subject_name,

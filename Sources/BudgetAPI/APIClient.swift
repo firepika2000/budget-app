@@ -134,8 +134,15 @@ public struct APIClient {
         let _: EmptyResponse = try await send(path: "api/v1/households/\(householdID)/members/\(userID)", method: "DELETE", token: token)
     }
 
-    public func householdAccessEvents(householdID: String, token: String) async throws -> [APIHouseholdAccessEvent] {
-        try await send(path: "api/v1/households/\(householdID)/access-events", token: token)
+    public func householdAccessEvents(householdID: String, limit: Int = 200, offset: Int = 0, token: String) async throws -> [APIHouseholdAccessEvent] {
+        try await send(
+            path: "api/v1/households/\(householdID)/access-events",
+            queryItems: [
+                URLQueryItem(name: "limit", value: String(limit)),
+                URLQueryItem(name: "offset", value: String(offset)),
+            ],
+            token: token
+        )
     }
 
     public func accessProfile(budgetID: String, userID: String, token: String) async throws -> APIAccessProfile {

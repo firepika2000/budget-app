@@ -498,6 +498,9 @@ The roadmap is a living document, but changing it is a deliberate product decisi
   links to a reusable, server-authoritative transaction history that preserves its payee/category
   scope, loads older authorized rows in bounded pages, and retains already loaded history when an
   older-page request fails. Category detail also links to the complete allocation-history ledger.
+- Owner-visible household access activity is a bounded, continuable audit trail rather than a
+  silent 20/200-event truncation. Budget Server, Local Device/Demo and the production Members UI
+  share deterministic newest-first pages; failed older-page loads retain the history already on screen.
 - SWIFT MT940 statement import is production-wired across Budget Server and Local Device providers,
   preserving exact minor-unit money and the existing explicit reconciliation review boundary.
 - Activity now includes the five most recent authorized Plan changes with actor attribution and a

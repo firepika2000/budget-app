@@ -598,9 +598,12 @@ final class FinancialGoldenVectorTests: XCTestCase {
             clock = clock.addingTimeInterval(1)
             _ = try await source.createHouseholdInvitation(.init(email: "scale-\(index)@example.test", role: "adult"))
         }
-        let bounded = try await source.householdAccessEvents()
+        let bounded = try await source.householdAccessEvents(limit: 200, offset: 0)
         XCTAssertEqual(bounded.count, 200)
         XCTAssertEqual(bounded.first?.detail, "scale-204@example.test")
+        let older = try await source.householdAccessEvents(limit: 50, offset: 200)
+        XCTAssertEqual(older.count, 8)
+        XCTAssertTrue(Set(bounded.map(\.id)).isDisjoint(with: older.map(\.id)))
         XCTAssertEqual(source.demo.accounts, accounts); XCTAssertEqual(source.demo.transactions, transactions)
         XCTAssertEqual(source.demo.allocationVersion, version)
     }

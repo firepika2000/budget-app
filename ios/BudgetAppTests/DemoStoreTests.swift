@@ -1061,6 +1061,10 @@ final class DemoStoreTests: XCTestCase {
                       "payee history must not stop at the hydrated recent rows")
         XCTAssertTrue(workspace.contains("category-view-all-transactions"),
                       "category history must not stop at the hydrated recent rows")
+        XCTAssertTrue(workspace.contains("household-access-history-load-more"),
+                      "owner-visible household access history must not silently stop at a recent-row cap")
+        XCTAssertTrue(workspace.contains("householdAccessEvents(limit: eventPageSize, offset: events.count)"),
+                      "household access history must request older authoritative pages instead of slicing one snapshot")
         XCTAssertTrue(workspace.contains("(\"Household\", \"person.2.fill\")"),
                       "the production workspace must expose Household as a direct first-class destination")
         XCTAssertFalse(workspace.contains("TabView(selection: tabSelection)"),

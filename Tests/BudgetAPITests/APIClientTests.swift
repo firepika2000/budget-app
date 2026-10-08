@@ -183,10 +183,15 @@ final class APIClientTests: XCTestCase {
         let session = URLSession(configuration: configuration)
         var requests: [String] = []
         MockURLProtocol.handler = { request in
-            requests.append("\(request.httpMethod ?? "") \(request.url?.path ?? "")")
+            let components = try XCTUnwrap(request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) })
+            let path = components.path
+            let recordedTarget = components.percentEncodedQuery.map { "\(path)?\($0)" } ?? path
+            requests.append("\(request.httpMethod ?? "") \(recordedTarget)")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current-token")
-            let path = request.url?.path ?? ""
-            if path.hasSuffix("/access-events") {
+            if request.url?.absoluteString.contains("/access-events") == true {
+                let query = components.queryItems ?? []
+                XCTAssertTrue(query.contains(.init(name: "limit", value: "25")))
+                XCTAssertTrue(query.contains(.init(name: "offset", value: "50")))
                 return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(#"[{"id":"e1","event_type":"member_removed","actor_display_name":"Owner","subject_display_name":"Sam","detail":null,"created_at":"2026-09-16T12:00:00Z"}]"#.utf8))
             }
             if request.httpMethod == "POST" {
@@ -203,14 +208,14 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(secret.invitationToken, "private-code")
         try await client.cancelHouseholdInvitation(householdID: "h1", invitationID: "i1", token: "current-token")
         try await client.removeHouseholdMember(householdID: "h1", userID: "u2", token: "current-token")
-        let events = try await client.householdAccessEvents(householdID: "h1", token: "current-token")
+        let events = try await client.householdAccessEvents(householdID: "h1", limit: 25, offset: 50, token: "current-token")
         XCTAssertEqual(events.first?.eventType, "member_removed")
         XCTAssertEqual(requests, [
             "GET /api/v1/households/h1/invitations",
             "POST /api/v1/households/h1/invitations",
             "DELETE /api/v1/households/h1/invitations/i1",
             "DELETE /api/v1/households/h1/members/u2",
-            "GET /api/v1/households/h1/access-events",
+            "GET /api/v1/households/h1/access-events?limit=25&offset=50",
         ])
     }
 

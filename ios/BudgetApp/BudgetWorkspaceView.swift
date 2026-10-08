@@ -385,7 +385,7 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
     func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret
     func cancelHouseholdInvitation(id: String) async throws
     func removeHouseholdMember(userID: String) async throws
-    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent]
+    func householdAccessEvents(limit: Int, offset: Int) async throws -> [APIHouseholdAccessEvent]
     func accessProfile(userID: String) async throws -> APIAccessProfile
     func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws
@@ -1551,10 +1551,11 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         membershipVersions[member] = (membershipVersions[member] ?? 1) + 1
         accessEventRecords.append(.init(id: UUID().uuidString, kind: "member_removed", detail: "", date: now(), subject: member))
     }
-    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] { try requireActiveMembership();
+    func householdAccessEvents(limit: Int = 50, offset: Int = 0) async throws -> [APIHouseholdAccessEvent] { try requireActiveMembership();
         try requireHouseholdOwner()
+        guard (1...200).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Invalid access-history page.") }
         let formatter = ISO8601DateFormatter()
-        return try decode(accessEventRecords.sorted { ($0.date, $0.id) > ($1.date, $1.id) }.prefix(200).map {
+        return try decode(accessEventRecords.sorted { ($0.date, $0.id) > ($1.date, $1.id) }.dropFirst(offset).prefix(limit).map {
             ["id": $0.id, "event_type": $0.kind, "actor_display_name": "Rey Rivera",
              "subject_display_name": $0.subject.map { "\($0.rawValue) Rivera" } as Any? ?? NSNull(), "detail": $0.detail, "created_at": formatter.string(from: $0.date)] as [String: Any]
         })
@@ -2662,7 +2663,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret { try await credentials.prepare(); return try await client.resendHouseholdInvitation(householdID: budget.householdID, invitationID: id, token: token) }
     func cancelHouseholdInvitation(id: String) async throws { try await credentials.prepare(); try await client.cancelHouseholdInvitation(householdID: budget.householdID, invitationID: id, token: token) }
     func removeHouseholdMember(userID: String) async throws { try await credentials.prepare(); try await client.removeHouseholdMember(householdID: budget.householdID, userID: userID, token: token) }
-    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] { try await credentials.prepare(); return try await client.householdAccessEvents(householdID: budget.householdID, token: token) }
+    func householdAccessEvents(limit: Int = 50, offset: Int = 0) async throws -> [APIHouseholdAccessEvent] { try await credentials.prepare(); return try await client.householdAccessEvents(householdID: budget.householdID, limit: limit, offset: offset, token: token) }
 
     func accessProfile(userID: String) async throws -> APIAccessProfile { try await credentials.prepare(); return try await client.accessProfile(budgetID: budget.id, userID: userID, token: token) }
     func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile { try await credentials.prepare(); return try await client.updateAccessProfile(budgetID: budget.id, userID: userID, profile: value, token: token) }
@@ -3975,7 +3976,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret { try await commands().resendHouseholdInvitation(id: id) }
     func cancelHouseholdInvitation(id: String) async throws { try await commands().cancelHouseholdInvitation(id: id) }
     func removeHouseholdMember(userID: String) async throws { try await commands().removeHouseholdMember(userID: userID); await refresh() }
-    func householdAccessEvents() async throws -> [APIHouseholdAccessEvent] { try await commands().householdAccessEvents() }
+    func householdAccessEvents(limit: Int = 50, offset: Int = 0) async throws -> [APIHouseholdAccessEvent] { try await commands().householdAccessEvents(limit: limit, offset: offset) }
 
     func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile {
         try await commands().updateAccessProfile(userID: userID, value: value)
@@ -11169,7 +11170,12 @@ private struct HouseholdMemberLifecycleView: View {
     @State private var pendingInvitationSecret: APIInvitationSecret?
     @State private var removing: APIHouseholdMember?
     @State private var isLoading = true
+    @State private var loadingMoreEvents = false
+    @State private var hasMoreEvents = false
+    @State private var eventPageError: String?
     @State private var errorMessage: String?
+
+    private let eventPageSize = 50
 
     var body: some View {
         List {
@@ -11215,12 +11221,30 @@ private struct HouseholdMemberLifecycleView: View {
                 if invitations.isEmpty && !isLoading { Text("No invitations").foregroundStyle(.secondary) }
             }
             if !events.isEmpty {
-                Section("Recent access activity") {
-                    ForEach(events.prefix(20)) { event in
+                Section("Access activity") {
+                    ForEach(events) { event in
                         VStack(alignment: .leading, spacing: 3) {
                             Text(eventTitle(event))
                             Text("\(event.actorDisplayName) · \(event.createdAt)").font(.caption).foregroundStyle(.secondary)
                         }
+                    }
+                    if let eventPageError {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Older access activity could not be loaded.").font(.subheadline.weight(.semibold))
+                            Text(eventPageError).font(.caption).foregroundStyle(.secondary)
+                            Button("Try Again") { Task { await loadMoreEvents() } }
+                        }
+                        .accessibilityIdentifier("household-access-history-page-error")
+                    } else if hasMoreEvents {
+                        Button { Task { await loadMoreEvents() } } label: {
+                            HStack {
+                                Spacer()
+                                if loadingMoreEvents { ProgressView() } else { Text("Load Older Activity") }
+                                Spacer()
+                            }
+                        }
+                        .disabled(loadingMoreEvents)
+                        .accessibilityIdentifier("household-access-history-load-more")
                     }
                 }
             }
@@ -11256,7 +11280,32 @@ private struct HouseholdMemberLifecycleView: View {
         default: return event.eventType.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
-    private func load() async { isLoading = true; defer { isLoading = false }; do { async let invitationRows = store.householdInvitations(); async let eventRows = store.householdAccessEvents(); invitations = try await invitationRows; events = try await eventRows; errorMessage = nil } catch { errorMessage = error.localizedDescription } }
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            async let invitationRows = store.householdInvitations()
+            async let eventRows = store.householdAccessEvents(limit: eventPageSize, offset: 0)
+            invitations = try await invitationRows
+            events = try await eventRows
+            hasMoreEvents = events.count == eventPageSize
+            eventPageError = nil
+            errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func loadMoreEvents() async {
+        guard hasMoreEvents, !loadingMoreEvents else { return }
+        loadingMoreEvents = true
+        defer { loadingMoreEvents = false }
+        do {
+            let older = try await store.householdAccessEvents(limit: eventPageSize, offset: events.count)
+            let knownIDs = Set(events.map(\.id))
+            events.append(contentsOf: older.filter { !knownIDs.contains($0.id) })
+            hasMoreEvents = older.count == eventPageSize
+            eventPageError = nil
+        } catch { eventPageError = error.localizedDescription }
+    }
     private func resend(_ invitation: APIInvitationSummary) async { do { secret = try await store.resendHouseholdInvitation(id: invitation.id); await load() } catch { errorMessage = error.localizedDescription } }
     private func cancel(_ invitation: APIInvitationSummary) async { do { try await store.cancelHouseholdInvitation(id: invitation.id); await load() } catch { errorMessage = error.localizedDescription } }
     private func remove(_ member: APIHouseholdMember) async { removing = nil; do { try await store.removeHouseholdMember(userID: member.userID); await load() } catch { errorMessage = error.localizedDescription } }

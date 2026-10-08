@@ -2051,3 +2051,14 @@ preservation, path-boundary rejection, atomic publication, integrity failure, pa
 large-file upload. The production iPhone target builds successfully with regular Xcode 27.0
 (27A266a) for the preserved iPhone 17 Pro Max / iOS 27 simulator. Live Dropbox provider acceptance
 still requires the external app-console configuration and is not claimed by this checkpoint.
+
+### Paged household access audit — 2026-10-08
+
+The owner-visible Members screen no longer silently shows only 20 access events from a server list
+that itself stopped permanently at 200. Household access activity now loads deterministic newest-first,
+owner-authorized pages on demand across Budget Server and Local Device/Demo. Each request is bounded
+to 200 rows; invalid limits and offsets fail validation. A failed older-page request preserves every
+event already displayed and offers an explicit retry. Invitation and membership authority is
+unchanged. Focused server coverage proves 125 events across three non-overlapping pages, and the
+typed Swift API contract proves explicit limit/offset transport. Human presentation acceptance
+remains pending.

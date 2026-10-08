@@ -1,4 +1,6 @@
-from app.models import Household, Membership, User
+from datetime import datetime, timedelta, timezone
+
+from app.models import Household, HouseholdAccessEvent, Membership, User
 from app.security import create_access_token, hash_password
 from sqlalchemy import event, insert
 
@@ -56,6 +58,48 @@ def test_household_lists_do_not_hydrate_global_user_directory(client, owner_toke
     assert "Private " not in invitations.text + events.text
     global_user_scans = [sql for sql in statements if "from users" in sql and "where" not in sql]
     assert not global_user_scans, "Household lists must not load every user's record to resolve authorized names"
+
+
+def test_household_access_history_is_stably_paged_and_owner_only(client, owner_token, session_factory):
+    with session_factory() as db:
+        household = db.query(Household).one()
+        start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        db.add_all([
+            HouseholdAccessEvent(
+                id=f"paged-access-{index:03d}", household_id=household.id,
+                actor_user_id=household.owner_user_id, event_type="access_profile_updated",
+                detail=f"event-{index:03d}", created_at=start + timedelta(seconds=index),
+            )
+            for index in range(125)
+        ])
+        db.commit()
+        household_id = household.id
+
+    first = client.get(
+        f"/api/v1/households/{household_id}/access-events?limit=50&offset=0",
+        headers=auth(owner_token),
+    )
+    second = client.get(
+        f"/api/v1/households/{household_id}/access-events?limit=50&offset=50",
+        headers=auth(owner_token),
+    )
+    final = client.get(
+        f"/api/v1/households/{household_id}/access-events?limit=50&offset=100",
+        headers=auth(owner_token),
+    )
+
+    assert first.status_code == second.status_code == final.status_code == 200
+    assert [len(first.json()), len(second.json()), len(final.json())] == [50, 50, 25]
+    ids = [row["id"] for page in (first.json(), second.json(), final.json()) for row in page]
+    assert len(ids) == len(set(ids)) == 125
+    assert first.json()[0]["detail"] == "event-124"
+    assert final.json()[-1]["detail"] == "event-000"
+    assert client.get(
+        f"/api/v1/households/{household_id}/access-events?limit=0", headers=auth(owner_token)
+    ).status_code == 422
+    assert client.get(
+        f"/api/v1/households/{household_id}/access-events?offset=-1", headers=auth(owner_token)
+    ).status_code == 422
 
 
 def test_owner_can_inspect_legacy_and_persist_versioned_human_access_profile(
