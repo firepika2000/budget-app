@@ -42,6 +42,7 @@ SECTION_TABLE_ORDER = (
     ("budget", "budgets"),
     ("category_groups", "category_groups"),
     ("accounts", "accounts"),
+    ("account_revisions", "account_revisions"),
     ("account_debt_terms", "account_debt_terms"),
     ("categories", "categories"),
     ("payees", "payees"),

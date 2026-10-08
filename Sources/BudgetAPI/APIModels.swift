@@ -598,6 +598,58 @@ public struct APIAccountBalance: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case accountID = "account_id", currencyCode = "currency_code", clearedBalanceMinor = "cleared_balance_minor", unclearedBalanceMinor = "uncleared_balance_minor", workingBalanceMinor = "working_balance_minor", reconciledBalanceMinor = "reconciled_balance_minor" }
 }
 
+public struct APIAccountRevisionSnapshot: Codable, Equatable, Sendable {
+    public let name: String
+    public let accountType: String
+    public let isOnBudget: Bool
+    public let isClosed: Bool
+    public let paymentCategoryID: String?
+
+    public init(name: String, accountType: String, isOnBudget: Bool, isClosed: Bool,
+                paymentCategoryID: String?) {
+        self.name = name; self.accountType = accountType; self.isOnBudget = isOnBudget
+        self.isClosed = isClosed; self.paymentCategoryID = paymentCategoryID
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case accountType = "account_type"
+        case isOnBudget = "is_on_budget"
+        case isClosed = "is_closed"
+        case paymentCategoryID = "payment_category_id"
+    }
+}
+
+public struct APIAccountRevision: Identifiable, Codable, Equatable, Sendable {
+    public let id: String
+    public let accountID: String
+    public let action: String
+    public let actorUserID: String
+    public let actorDisplayName: String?
+    public let beforeSnapshot: APIAccountRevisionSnapshot?
+    public let afterSnapshot: APIAccountRevisionSnapshot
+    public let createdAt: String
+
+    public init(id: String, accountID: String, action: String, actorUserID: String,
+                actorDisplayName: String?, beforeSnapshot: APIAccountRevisionSnapshot?,
+                afterSnapshot: APIAccountRevisionSnapshot, createdAt: String) {
+        self.id = id; self.accountID = accountID; self.action = action
+        self.actorUserID = actorUserID; self.actorDisplayName = actorDisplayName
+        self.beforeSnapshot = beforeSnapshot; self.afterSnapshot = afterSnapshot
+        self.createdAt = createdAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, action
+        case accountID = "account_id"
+        case actorUserID = "actor_user_id"
+        case actorDisplayName = "actor_display_name"
+        case beforeSnapshot = "before_snapshot"
+        case afterSnapshot = "after_snapshot"
+        case createdAt = "created_at"
+    }
+}
+
 public struct APIAccountCreate: Encodable, Sendable {
     public let name: String
     public let accountType: String

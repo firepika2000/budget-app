@@ -382,6 +382,26 @@ def test_account_metadata_edit_preserves_balance_and_ready_to_assign(
     assert client.get(f"/api/v1/budgets/{budget['id']}/accounts/{account_id}/balance", headers=auth(owner_token)).json() == before_balance
     assert client.get(f"/api/v1/budgets/{budget['id']}/months/{month}", headers=auth(owner_token)).json()["ready_to_assign_minor"] == before_rta == 200000
 
+    history_path = f"/api/v1/budgets/{budget['id']}/accounts/{account_id}/history"
+    revisions = client.get(history_path, headers=auth(owner_token))
+    assert revisions.status_code == 200, revisions.text
+    rows = revisions.json()
+    assert [item["action"] for item in rows] == ["updated", "created"]
+    assert rows[0]["before_snapshot"]["name"] == "Everyday"
+    assert rows[0]["after_snapshot"]["name"] == "Emergency Savings"
+    assert rows[0]["actor_display_name"]
+    assert "starting_balance_minor" not in rows[1]["after_snapshot"]
+
+    # An exact retry is a true no-op: no duplicate decision and no financial mutation.
+    noop = client.patch(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account_id}", headers=auth(owner_token),
+        json={"name": "Emergency Savings", "account_type": "savings"},
+    )
+    assert noop.status_code == 200
+    assert client.get(history_path, headers=auth(owner_token)).json() == rows
+    assert client.get(f"{history_path}?limit=1&offset=1", headers=auth(owner_token)).json() == rows[1:]
+    assert client.get(f"{history_path}?limit=101", headers=auth(owner_token)).status_code == 422
+
 
 def test_close_and_reopen_account_preserves_financial_state_and_blocks_new_posting(
     client, owner_token, session_factory

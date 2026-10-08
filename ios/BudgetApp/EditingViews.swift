@@ -924,6 +924,7 @@ struct AccountSettingsView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showDebtTerms = false
+    @State private var showHistory = false
     @State private var isClosed: Bool
     @State private var confirmStatusChange = false
 
@@ -971,6 +972,14 @@ struct AccountSettingsView: View {
                     Text(isClosed ? "Reopening allows new transactions, transfers, and reconciliation again." : "Closing keeps all history and balances but removes the account from new transaction and transfer choices.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                Section("History") {
+                    Button { showHistory = true } label: {
+                        Label("Account History", systemImage: "clock.arrow.circlepath")
+                    }
+                    .accessibilityIdentifier("account-history-action")
+                    Text("See when this account was created, renamed, retyped, closed, or reopened—and who made each change.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("Account Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -985,6 +994,9 @@ struct AccountSettingsView: View {
             .sheet(isPresented: $showDebtTerms) {
                 DebtTermsEditorView(account: account)
                     .environmentObject(workspace)
+            }
+            .sheet(isPresented: $showHistory) {
+                AccountHistoryView(account: account).environmentObject(workspace)
             }
             .confirmationDialog(isClosed ? "Reopen this account?" : "Close this account?", isPresented: $confirmStatusChange) {
                 Button(isClosed ? "Reopen Account" : "Close Account", role: isClosed ? nil : .destructive) {
@@ -1013,6 +1025,79 @@ struct AccountSettingsView: View {
             try await workspace.updateAccount(.init(accountID: account.id, name: name, currentKind: account.accountType, kind: accountType, isOnBudget: account.isOnBudget, isClosed: isClosed))
             dismiss()
         } catch { errorMessage = error.localizedDescription }
+    }
+}
+
+struct AccountHistoryView: View {
+    @EnvironmentObject private var workspace: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let account: APIAccount
+    @State private var items: [APIAccountRevision] = []
+    @State private var isLoading = true
+    @State private var isLoadingMore = false
+    @State private var errorMessage: String?
+    private let pageSize = 25
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading { ProgressView("Loading history…") }
+                else if let errorMessage {
+                    ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle",
+                                           description: Text(errorMessage))
+                        .overlay(alignment: .bottom) { Button("Try Again") { Task { await load(reset: true) } }.buttonStyle(.borderedProminent).padding() }
+                } else if items.isEmpty {
+                    ContentUnavailableView("No account changes", systemImage: "clock",
+                                           description: Text("Changes to this account will appear here."))
+                } else {
+                    List {
+                        ForEach(items) { revision in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(title(revision)).font(.headline)
+                                if let detail = detail(revision) { Text(detail).font(.subheadline) }
+                                Text("\(revision.actorDisplayName ?? "Unknown member") · \(revision.createdAt)")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                        if items.count.isMultiple(of: pageSize) {
+                            Button(isLoadingMore ? "Loading…" : "Load Earlier Changes") {
+                                Task { await load(reset: false) }
+                            }.disabled(isLoadingMore)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Account History")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .task { await load(reset: true) }
+        }
+    }
+
+    private func load(reset: Bool) async {
+        if reset { isLoading = true; errorMessage = nil } else { isLoadingMore = true }
+        defer { isLoading = false; isLoadingMore = false }
+        do {
+            let next = try await workspace.accountHistory(accountID: account.id, limit: pageSize,
+                                                          offset: reset ? 0 : items.count)
+            if reset { items = next } else { items.append(contentsOf: next) }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func title(_ revision: APIAccountRevision) -> String {
+        guard revision.action != "created", let before = revision.beforeSnapshot else { return "Account created" }
+        if before.isClosed != revision.afterSnapshot.isClosed { return revision.afterSnapshot.isClosed ? "Account closed" : "Account reopened" }
+        if before.name != revision.afterSnapshot.name { return "Account renamed" }
+        if before.accountType != revision.afterSnapshot.accountType { return "Account type changed" }
+        return "Account updated"
+    }
+
+    private func detail(_ revision: APIAccountRevision) -> String? {
+        guard let before = revision.beforeSnapshot else { return revision.afterSnapshot.name }
+        if before.name != revision.afterSnapshot.name { return "\(before.name) → \(revision.afterSnapshot.name)" }
+        if before.accountType != revision.afterSnapshot.accountType { return "\(before.accountType.capitalized) → \(revision.afterSnapshot.accountType.capitalized)" }
+        return nil
     }
 }
 

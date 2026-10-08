@@ -19,6 +19,14 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Account-decision history checkpoint (2026-10-08): account creation and real metadata changes now
+append immutable, attributed before/after observations. True no-op saves append nothing. Hosted and
+Local Device databases migrate populated accounts without changing balances or posted activity;
+complete export and server-to-local transfer retain the history. Account Settings exposes one bounded,
+paginated production history view shared by Live, Local Device and Demo. The history contains only
+name, safe type, budget treatment, open/closed status and payment-category identity—never balance or
+transaction values—and remains subject to account visibility authorization.
+
 Scheduled-decision history checkpoint (2026-10-08): schedule creation, editing, pause/resume,
 realization and deletion now append attributed immutable revisions instead of leaving only the latest
 mutable row. History survives schedule deletion, preserves exact integer-minor-unit snapshots and

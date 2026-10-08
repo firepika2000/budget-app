@@ -67,6 +67,7 @@ final class LocalDatabaseTests: XCTestCase {
         try await database?.transaction(fixtureStatements)
         try await database?.transaction([
             .init("DROP TABLE credit_reserve_attributions"),
+            .init("DROP TABLE account_revisions"),
             .init("DROP TABLE credit_reserve_events"),
             .init("DROP TABLE transaction_changes"),
             .init("DROP TABLE statement_imports"),
@@ -359,7 +360,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.scheduledTransactionID, "deleted-schedule")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 18)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 19)
     }
 
     func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {
@@ -388,6 +389,36 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(page.map(\.id), ["first"])
         XCTAssertEqual(detail.payloadJSON, privatePayload)
         XCTAssertTrue(hidden.isEmpty)
+    }
+
+    func testAccountDecisionHistoryPersistsAcrossReopenAndPaginates() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("account-history.sqlite")
+        var store: LocalAuthorityStore? = try LocalAuthorityStore(fileURL: databaseURL)
+        let stamp = "2026-10-08T12:00:00Z"
+        try await store?.bootstrap(.init(householdID: "h", householdName: "Home", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD"), createdAt: stamp)
+        try await store?.insertAccount(.init(id: "a", budgetID: "b", name: "Checking", kind: "checking",
+            isOnBudget: true, openingBalanceMinor: 123_45, createdAt: stamp))
+        let original = try await XCTUnwrap(store).snapshot(budgetID: "b")
+        let after = #"{"account_type":"checking","is_closed":false,"is_on_budget":true,"name":"Daily Checking","payment_category_id":null}"#
+        let updated = LocalAuthoritySnapshot(identity: original.identity, accounts: original.accounts,
+            accountRevisions: [.init(id: "r1", budgetID: "b", accountID: "a", action: "updated",
+                                     actorUserID: "owner", beforeJSON: nil, afterJSON: after, createdAt: stamp)],
+            groups: original.groups, categories: original.categories, payees: original.payees,
+            payeeAliases: original.payeeAliases, transactions: original.transactions,
+            allocations: original.allocations, reconciliations: original.reconciliations,
+            targets: original.targets, schedules: original.schedules, attachments: original.attachments)
+        try await store?.replaceWorkspaceState(updated)
+        await store?.close(); store = nil
+
+        store = try LocalAuthorityStore(fileURL: databaseURL)
+        let rows = try await XCTUnwrap(store).accountRevisions(accountID: "a", budgetID: "b", limit: 1, offset: 0)
+        XCTAssertEqual(rows.map(\.id), ["r1"])
+        XCTAssertEqual(rows.first?.afterJSON, after)
+        let secondPage = try await XCTUnwrap(store).accountRevisions(
+            accountID: "a", budgetID: "b", limit: 1, offset: 1
+        )
+        XCTAssertEqual(secondPage, [])
     }
 
     func testScheduleDecisionHistorySurvivesDeletionReopenAndPaginates() async throws {

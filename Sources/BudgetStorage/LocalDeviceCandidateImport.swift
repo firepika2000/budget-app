@@ -144,7 +144,8 @@ public enum LocalDeviceCandidateImportService {
     /// two representations are semantically identical and must not block an otherwise exact move.
     private static func canonicalSnapshot(_ value: LocalAuthoritySnapshot) -> LocalAuthoritySnapshot {
         LocalAuthoritySnapshot(
-            identity: value.identity, accounts: value.accounts, groups: value.groups,
+            identity: value.identity, accounts: value.accounts,
+            accountRevisions: value.accountRevisions ?? [], groups: value.groups,
             categories: value.categories, payees: value.payees, payeeAliases: value.payeeAliases,
             transactions: value.transactions, allocations: value.allocations,
             reconciliations: value.reconciliations, targets: value.targets,

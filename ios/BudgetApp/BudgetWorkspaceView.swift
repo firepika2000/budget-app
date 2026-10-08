@@ -559,6 +559,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var demoTargetRevisions: [APICategoryTargetRevision] = []
     private var demoScheduleRevisions: [APIScheduledTransactionRevision] = []
     private var demoDelegatedPolicyRevisions: [APIDelegatedPolicyRevision] = []
+    private var demoAccountRevisions: [APIAccountRevision] = []
     private let now: () -> Date
     private struct InvitationRecord {
         let id: String; let email: String; let role: String
@@ -645,6 +646,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         debtTermsValues["visa"] = .init(termsType: "credit_card", annualRateBasisPoints: 2049, rateType: "variable", paymentFrequency: "monthly", minimumPaymentRule: "fixed", minimumPaymentMinor: 4500, dueDay: 18)
         debtTermsValues["mastercard"] = .init(termsType: "credit_card", annualRateBasisPoints: 1899, rateType: "variable", paymentFrequency: "monthly", minimumPaymentRule: "fixed", minimumPaymentMinor: 3500, dueDay: 24)
         debtTermsValues["auto"] = .init(termsType: "installment_loan", annualRateBasisPoints: 625, rateType: "fixed", paymentFrequency: "monthly", scheduledPaymentMinor: 41200, dueDay: 1)
+        let createdAt = ISO8601DateFormatter().string(from: now())
+        demoAccountRevisions = store.accounts.map { account in
+            APIAccountRevision(id: "demo-account-created-\(account.id)", accountID: account.id,
+                action: "created", actorUserID: requestActorID, actorDisplayName: store.persona.rawValue,
+                beforeSnapshot: nil, afterSnapshot: accountRevisionSnapshot(account), createdAt: createdAt)
+        }
     }
 
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot { try requireActiveMembership();
@@ -1108,6 +1115,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                 value = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
             }
             try demo.loadLocalAuthority(value)
+            demoAccountRevisions = try (value.accountRevisions ?? []).map(localAccountRevision)
             debtTermsValues = Dictionary(uniqueKeysWithValues: value.debtTerms.map { item in
                 (item.accountID, APIAccountDebtTermsUpsert(termsType: item.termsType,
                     annualRateBasisPoints: item.annualRateBasisPoints.map(Int.init), rateType: item.rateType,
@@ -1166,8 +1174,14 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             to: previous.scheduleRevisions ?? [], budgetID: localIdentity.budgetID,
             actorUserID: localIdentity.ownerUserID, createdAt: stamp
         )
+        let accountRevisions = try appendingAccountRevisions(
+            previous: previous.accounts, current: projected.accounts,
+            to: previous.accountRevisions ?? [], budgetID: localIdentity.budgetID,
+            actorUserID: localIdentity.ownerUserID, createdAt: stamp
+        )
         let value = LocalAuthoritySnapshot(
-            identity: projected.identity, accounts: projected.accounts, groups: projected.groups,
+            identity: projected.identity, accounts: projected.accounts,
+            accountRevisions: accountRevisions, groups: projected.groups,
             categories: projected.categories, payees: projected.payees,
             payeeAliases: projected.payeeAliases, transactions: projected.transactions,
             allocations: projected.allocations, reconciliations: projected.reconciliations,
@@ -1190,6 +1204,42 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         )
         try await localAuthority.replaceWorkspaceState(value)
         try await localAuthority.integrityCheck()
+    }
+
+    private func appendingAccountRevisions(
+        previous: [LocalAccountRecord], current: [LocalAccountRecord],
+        to existing: [LocalAccountRevisionRecord], budgetID: String,
+        actorUserID: String, createdAt: String
+    ) throws -> [LocalAccountRevisionRecord] {
+        let old = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+        let new = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        var result = existing
+        for accountID in new.keys.sorted() {
+            let before = old[accountID], after = new[accountID]!
+            let beforeJSON = try before.map(accountRevisionJSON)
+            let afterJSON = try accountRevisionJSON(after)
+            guard before == nil || beforeJSON != afterJSON else { continue }
+            result.append(.init(id: UUID().uuidString, budgetID: budgetID, accountID: accountID,
+                                action: before == nil ? "created" : "updated", actorUserID: actorUserID,
+                                beforeJSON: beforeJSON, afterJSON: afterJSON, createdAt: createdAt))
+        }
+        return result
+    }
+
+    private func accountRevisionJSON(_ value: LocalAccountRecord) throws -> String {
+        let snapshot = APIAccountRevisionSnapshot(name: value.name, accountType: value.kind,
+            isOnBudget: value.isOnBudget, isClosed: value.isClosed, paymentCategoryID: nil)
+        return String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)
+    }
+
+    private func localAccountRevision(_ value: LocalAccountRevisionRecord) throws -> APIAccountRevision {
+        let decoder = JSONDecoder()
+        return APIAccountRevision(id: value.id, accountID: value.accountID, action: value.action,
+            actorUserID: value.actorUserID,
+            actorDisplayName: value.actorUserID == localIdentity?.ownerUserID ? localIdentity?.ownerDisplayName : nil,
+            beforeSnapshot: try value.beforeJSON.map { try decoder.decode(APIAccountRevisionSnapshot.self, from: Data($0.utf8)) },
+            afterSnapshot: try decoder.decode(APIAccountRevisionSnapshot.self, from: Data(value.afterJSON.utf8)),
+            createdAt: value.createdAt)
     }
 
     private func appendingTargetRevisions(
@@ -2523,9 +2573,35 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func createGroup(name: String) async throws { try requireActiveMembership(); demo.createCategoryGroup(named: name) }
     func createAccount(_ operation: CreateAccountOperation) async throws { try requireActiveMembership();
         guard demo.createAccount(name: operation.name, type: operation.kind, isOnBudget: operation.isOnBudget, startingBalance: operation.openingBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
+        if let account = demo.accounts.last {
+            demoAccountRevisions.append(.init(id: UUID().uuidString, accountID: account.id,
+                action: "created", actorUserID: requestActorID, actorDisplayName: demo.persona.rawValue,
+                beforeSnapshot: nil, afterSnapshot: accountRevisionSnapshot(account),
+                createdAt: ISO8601DateFormatter().string(from: now())))
+        }
     }
     func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws { try requireActiveMembership();
+        let before = demo.accounts.first(where: { $0.id == operation.accountID }).map(accountRevisionSnapshot)
         guard demo.updateAccount(id: operation.accountID, name: operation.name, type: operation.kind, isClosed: operation.isClosed) else { throw workspaceRepositoryError("Account not found.") }
+        if let before, let account = demo.accounts.first(where: { $0.id == operation.accountID }) {
+            let after = accountRevisionSnapshot(account)
+            if before != after {
+                demoAccountRevisions.append(.init(id: UUID().uuidString, accountID: account.id,
+                    action: "updated", actorUserID: requestActorID, actorDisplayName: demo.persona.rawValue,
+                    beforeSnapshot: before, afterSnapshot: after,
+                    createdAt: ISO8601DateFormatter().string(from: now())))
+            }
+        }
+    }
+    func accountHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIAccountRevision] {
+        try requireActiveMembership()
+        guard actorAccountIDs.contains(accountID) else { throw APIClientError.server(status: 404, message: "Account not found") }
+        if let localAuthority, let localIdentity {
+            return try await localAuthority.accountRevisions(accountID: accountID, budgetID: localIdentity.budgetID,
+                                                              limit: limit, offset: offset).map(localAccountRevision)
+        }
+        return Array(demoAccountRevisions.filter { $0.accountID == accountID }
+            .reversed().dropFirst(offset).prefix(limit))
     }
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? { try requireActiveMembership();
         guard let value = debtTermsValues[accountID] else { return nil }
@@ -2967,6 +3043,11 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
 
 private func workspaceRepositoryError(_ message: String?) -> NSError { NSError(domain: "BudgetWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: message ?? "Unable to complete the change."]) }
 
+private func accountRevisionSnapshot(_ account: DemoAccount) -> APIAccountRevisionSnapshot {
+    .init(name: account.name, accountType: account.kind.rawValue, isOnBudget: account.isOnBudget,
+          isClosed: account.isClosed, paymentCategoryID: nil)
+}
+
 @MainActor
 final class LiveWorkspaceCredentials {
     typealias Resolver = @MainActor (_ forceRefresh: Bool) async throws -> (URL, String)
@@ -3110,6 +3191,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func createGroup(name: String) async throws { try await credentials.prepare(); _ = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: name), token: token) }
     func createAccount(_ operation: CreateAccountOperation) async throws { try await credentials.prepare(); _ = try await client.createAccount(budgetID: budget.id, account: APIAccountCreate(name: operation.name, accountType: operation.kind, isOnBudget: operation.isOnBudget, startingBalanceMinor: operation.openingBalanceMinor), token: token) }
     func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws { try await credentials.prepare(); _ = try await client.updateAccount(budgetID: budget.id, accountID: operation.accountID, account: APIAccountUpdate(name: operation.name, accountType: operation.kind, isClosed: operation.isClosed), token: token) }
+    func accountHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIAccountRevision] { try await credentials.prepare(); return try await client.accountHistory(budgetID: budget.id, accountID: accountID, limit: limit, offset: offset, token: token) }
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? { try await credentials.prepare(); return try await client.accountDebtTerms(budgetID: budget.id, accountID: accountID, token: token) }
     func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms { try await credentials.prepare(); return try await client.updateAccountDebtTerms(budgetID: budget.id, accountID: accountID, terms: value, token: token) }
     func deleteAccountDebtTerms(accountID: String) async throws { try await credentials.prepare(); try await client.deleteAccountDebtTerms(budgetID: budget.id, accountID: accountID, token: token) }
@@ -4160,6 +4242,10 @@ final class BudgetWorkspaceStore: ObservableObject {
     func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws {
         try await services().accounts.update(operation)
         await refresh()
+    }
+
+    func accountHistory(accountID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIAccountRevision] {
+        try await services().accounts.history(accountID: accountID, limit: limit, offset: offset)
     }
 
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? {

@@ -321,6 +321,7 @@ func isTransientConnectivityFailure(_ error: Error) -> Bool {
 protocol AccountCommandRepository: AnyObject {
     func createAccount(_ operation: CreateAccountOperation) async throws
     func updateAccount(_ operation: UpdateAccountMetadataOperation) async throws
+    func accountHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIAccountRevision]
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms?
     func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms
     func deleteAccountDebtTerms(accountID: String) async throws
@@ -418,6 +419,14 @@ struct AccountService {
             throw BudgetApplicationError.invalidOperation("This type change could reinterpret financial history. Create the appropriate account and move or reconcile explicitly instead.")
         }
         do { try await repository.updateAccount(operation) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func history(accountID: String, limit: Int, offset: Int) async throws -> [APIAccountRevision] {
+        guard (1...100).contains(limit), offset >= 0 else {
+            throw BudgetApplicationError.invalidOperation("Account history request is out of range.")
+        }
+        do { return try await repository.accountHistory(accountID: accountID, limit: limit, offset: offset) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

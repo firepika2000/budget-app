@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 18
+    public static let schemaVersion = 19
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -427,6 +427,18 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 19 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV19 { try execute(sql, on: database) }
+                try execute("INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)", values: [.integer(19), .text(Self.timestamp())], on: database)
+                try execute("PRAGMA user_version = 19", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -487,6 +499,12 @@ public actor LocalDatabase {
         "CREATE TABLE scheduled_transaction_revisions (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, schedule_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('created','updated','paused','resumed','deleted','realized')), actor_user_id TEXT NOT NULL REFERENCES users(id), before_json TEXT, after_json TEXT, transaction_ids_json TEXT, created_at TEXT NOT NULL) STRICT",
         "CREATE INDEX idx_schedule_revisions_budget_created ON scheduled_transaction_revisions(budget_id,created_at,id)",
         "CREATE INDEX idx_schedule_revisions_schedule_created ON scheduled_transaction_revisions(schedule_id,created_at,id)"
+    ]
+
+    private static let schemaV19 = [
+        "CREATE TABLE account_revisions (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, account_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('created','updated')), actor_user_id TEXT NOT NULL REFERENCES users(id), before_json TEXT, after_json TEXT NOT NULL, created_at TEXT NOT NULL) STRICT",
+        "CREATE INDEX idx_account_revisions_account_created ON account_revisions(account_id,created_at,id)",
+        "INSERT INTO account_revisions(id,budget_id,account_id,action,actor_user_id,before_json,after_json,created_at) SELECT 'account-created-' || a.id,a.budget_id,a.id,'created',m.user_id,NULL,json_object('name',a.name,'account_type',a.kind,'is_on_budget',json(iif(a.is_on_budget=1,'true','false')),'is_closed',json(iif(a.is_closed=1,'true','false')),'payment_category_id',NULL),a.created_at FROM accounts a JOIN budgets b ON b.id=a.budget_id JOIN memberships m ON m.household_id=b.household_id AND m.role='owner' AND m.is_active=1"
     ]
 
     private static let schemaV2 = [

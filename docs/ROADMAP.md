@@ -125,7 +125,10 @@ and server-to-local transfer. Category detail exposes bounded Target History wit
 balances, or recommendations. Delegated household authority now likewise retains exact, attributed before/after
 snapshots of limits, capabilities and category rules, including populated-database migration, complete export,
 bounded owner-only history, and Demo/Live parity. No-op saves create neither replacement rule identities nor
-duplicate decisions. Remaining v0.12 work should continue auditing other mutable planning and administrative
+duplicate decisions. Account creation, rename, safe type changes, close and reopen decisions now retain the same
+immutable actor-attributed history across hosted, Local Device and Demo providers, complete export and
+server-to-local transfer; balances, transactions and reconciliation observations are deliberately excluded from
+metadata snapshots. Remaining v0.12 work should continue auditing other mutable planning and administrative
 observations for overwrite-only or export gaps rather than duplicating established histories.
 
 **Consumer Budget Server distribution remains required.** The earlier v0.9 graphical installer,

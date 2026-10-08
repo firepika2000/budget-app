@@ -289,6 +289,27 @@ final class APIClientTests: XCTestCase {
         XCTAssertTrue(account.isClosed)
     }
 
+    func testAccountHistoryUsesBoundedAccountScopedContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/history")
+            XCTAssertEqual(request.url?.query, "limit=25&offset=50")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current-token")
+            let response = Data(#"[{"id":"r1","account_id":"a1","action":"updated","actor_user_id":"u1","actor_display_name":"Owner","before_snapshot":{"name":"Checking","account_type":"checking","is_on_budget":true,"is_closed":false,"payment_category_id":null},"after_snapshot":{"name":"Daily Checking","account_type":"checking","is_on_budget":true,"is_closed":false,"payment_category_id":null},"created_at":"2026-10-08T12:00:00Z"}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let history = try await client.accountHistory(
+            budgetID: "b1", accountID: "a1", limit: 25, offset: 50, token: "current-token"
+        )
+        XCTAssertEqual(history.first?.beforeSnapshot?.name, "Checking")
+        XCTAssertEqual(history.first?.afterSnapshot.name, "Daily Checking")
+        XCTAssertEqual(history.first?.actorDisplayName, "Owner")
+    }
+
     func testDebtTermsUseExactTypedAccountScopedContract() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

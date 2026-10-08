@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import (
-    Account, AccountDebtTerms, AllocationOperation, AllocationPosting, Budget,
+    Account, AccountRevision, AccountDebtTerms, AllocationOperation, AllocationPosting, Budget,
     CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget, CategoryTargetRevision,
     CategoryTargetSnooze, CreditCardReserveEvent, Household, Payee, PayeeAlias,
     DebtPayoffPlan, ImportBatch, PayeeBudgetPreference, ScheduledTransaction, ScheduledTransactionRevision, Transaction, TransactionAttachment,
@@ -151,6 +151,9 @@ def build_local_device_projection(
     db: Session, *, budget: Budget, household: Household, owner: User
 ) -> dict[str, Any]:
     accounts = list(db.scalars(select(Account).where(Account.budget_id == budget.id).order_by(Account.id)))
+    account_revisions = list(db.scalars(select(AccountRevision).where(
+        AccountRevision.budget_id == budget.id
+    ).order_by(AccountRevision.created_at, AccountRevision.id)))
     groups = list(db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget.id).order_by(CategoryGroup.sort_order, CategoryGroup.id)))
     categories = list(db.scalars(select(Category).where(Category.budget_id == budget.id).order_by(Category.sort_order, Category.id)))
     portable_categories = [item for item in categories if item.system_type is None]
@@ -226,6 +229,13 @@ def build_local_device_projection(
             "is_closed": item.is_closed, "opening_balance_minor": 0,
             "created_at": _iso(item.created_at),
         } for item in accounts],
+        "account_revisions": [{
+            "id": item.id, "budget_id": item.budget_id, "account_id": item.account_id,
+            "action": item.action, "actor_user_id": item.actor_user_id,
+            "before_json": json.dumps(item.before_snapshot, sort_keys=True, separators=(",", ":")) if item.before_snapshot is not None else None,
+            "after_json": json.dumps(item.after_snapshot, sort_keys=True, separators=(",", ":")),
+            "created_at": _iso(item.created_at),
+        } for item in account_revisions],
         "groups": [{
             "id": item.id, "budget_id": budget.id, "name": item.name,
             "sort_order": item.sort_order, "is_archived": item.is_archived,

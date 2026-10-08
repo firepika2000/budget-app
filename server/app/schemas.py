@@ -185,6 +185,17 @@ class AccountResponse(BaseModel):
     payment_category_id: Optional[str]
 
 
+class AccountRevisionResponse(BaseModel):
+    id: str
+    account_id: str
+    action: Literal["created", "updated"]
+    actor_user_id: str
+    actor_display_name: Optional[str] = None
+    before_snapshot: Optional[dict] = None
+    after_snapshot: dict
+    created_at: datetime
+
+
 class AccountBalanceResponse(BaseModel):
     account_id: str
     currency_code: str

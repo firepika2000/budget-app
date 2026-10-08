@@ -17,6 +17,7 @@ from .dependencies import get_settings
 from .models import (
     Account,
     AccountDebtTerms,
+    AccountRevision,
     AllocationOperation,
     AllocationPosting,
     AllowanceIssuance,
@@ -354,6 +355,9 @@ def export_budget_json(
             Membership.household_id == budget.household_id
         ))))],
         "accounts": [row_data(item) for item in db.scalars(select(Account).where(Account.budget_id == budget_id))],
+        "account_revisions": [row_data(item) for item in db.scalars(select(AccountRevision).where(
+            AccountRevision.budget_id == budget_id
+        ))],
         "reconciliations": [row_data(item) for item in db.scalars(select(Reconciliation).where(
             Reconciliation.budget_id == budget_id
         ))],

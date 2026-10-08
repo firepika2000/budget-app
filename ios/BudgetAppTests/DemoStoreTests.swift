@@ -1192,6 +1192,15 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(store.accountBalances[account.id], balanceBefore)
         XCTAssertEqual(store.summary, summaryBefore)
         XCTAssertEqual(store.transactions.count, transactionCountBefore)
+        let history = try await store.accountHistory(accountID: account.id, limit: 25, offset: 0)
+        XCTAssertEqual(history.map(\.action), ["updated", "created"])
+        XCTAssertEqual(history.first?.beforeSnapshot?.name, "Everyday")
+        XCTAssertEqual(history.first?.afterSnapshot.name, "Emergency Savings")
+        XCTAssertNotNil(history.first?.actorDisplayName)
+
+        try await store.updateAccount(.init(accountID: account.id, name: "Emergency Savings", currentKind: "savings", kind: "savings", isOnBudget: true, isClosed: false))
+        let afterNoOp = try await store.accountHistory(accountID: account.id, limit: 25, offset: 0)
+        XCTAssertEqual(afterNoOp, history, "A true no-op must not invent another account decision")
 
         do {
             try await store.updateAccount(.init(accountID: account.id, name: "Card", currentKind: "savings", kind: "credit", isOnBudget: true, isClosed: false))

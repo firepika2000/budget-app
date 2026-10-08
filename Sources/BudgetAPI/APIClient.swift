@@ -196,6 +196,18 @@ public struct APIClient {
         )
     }
 
+    public func accountHistory(
+        budgetID: String, accountID: String, limit: Int = 50, offset: Int = 0, token: String
+    ) async throws -> [APIAccountRevision] {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/history",
+            queryItems: [
+                URLQueryItem(name: "limit", value: String(limit)),
+                URLQueryItem(name: "offset", value: String(offset)),
+            ], token: token
+        )
+    }
+
     public func accountDebtTerms(budgetID: String, accountID: String, token: String) async throws -> APIAccountDebtTerms? {
         try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/debt-terms", token: token)
     }

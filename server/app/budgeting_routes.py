@@ -49,6 +49,7 @@ from .credit import add_payment_reserve_event, add_purchase_reserve_events, ensu
 from .category_names import normalized_category_name
 from .models import (
     Account,
+    AccountRevision,
     AccountDebtTerms,
     DebtPayoffPlan,
     AllowancePlan,
@@ -92,6 +93,7 @@ from .schemas import (
     DebtPayoffPlanUpsert,
     DebtPayoffPlanResponse,
     AccountResponse,
+    AccountRevisionResponse,
     AllocationOperationResponse,
     AllocationOperationPageResponse,
     AllocationTransferCreate,
@@ -133,6 +135,16 @@ from .attachment_storage import AttachmentStorage, safe_filename, validate_conte
 
 ON_BUDGET_CASH_TYPES = {"checking", "savings", "cash"}
 TRACKING_TYPES = {"loan", "mortgage", "asset", "tracking"}
+
+
+def account_snapshot(account: Account) -> dict:
+    return {
+        "name": account.name,
+        "account_type": account.account_type,
+        "is_on_budget": account.is_on_budget,
+        "is_closed": account.is_closed,
+        "payment_category_id": account.payment_category_id,
+    }
 
 
 def debt_terms_readiness(terms: AccountDebtTerms) -> tuple[bool, list[str]]:
@@ -422,6 +434,10 @@ def create_account(
     db.flush()
     if account.account_type == "credit":
         ensure_credit_payment_category(db, account)
+    db.add(AccountRevision(
+        budget_id=budget_id, account_id=account.id, action="created",
+        actor_user_id=user.id, before_snapshot=None, after_snapshot=account_snapshot(account),
+    ))
     if body.starting_balance_minor:
         db.add(Transaction(
             budget_id=budget_id,
@@ -451,6 +467,7 @@ def update_account(
     account = db.get(Account, account_id)
     if account is None or account.budget_id != budget_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    before = account_snapshot(account)
     validate_account_type_transition(account, body.account_type)
     account.name = body.name.strip()
     if not account.name:
@@ -463,6 +480,13 @@ def update_account(
         if payment_category is not None and payment_category.system_type == "credit_payment":
             payment_category.name = f"{account.name} Payment"
             payment_category.name_key = normalized_category_name(payment_category.name)
+    after = account_snapshot(account)
+    if before == after:
+        return account
+    db.add(AccountRevision(
+        budget_id=budget_id, account_id=account.id, action="updated",
+        actor_user_id=user.id, before_snapshot=before, after_snapshot=after,
+    ))
     try:
         db.commit()
     except IntegrityError:
@@ -470,6 +494,34 @@ def update_account(
         raise HTTPException(status_code=409, detail="A category with this name already exists in the group")
     db.refresh(account)
     return account
+
+
+@router.get("/accounts/{account_id}/history", response_model=list[AccountRevisionResponse])
+def account_history(
+    budget_id: str,
+    account_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    budget = require_budget_capability(db, user, budget_id, "view_accounts")
+    account = db.get(Account, account_id)
+    if account is None or account.budget_id != budget_id or not can_access_resource(db, user, budget, "account", account_id):
+        raise HTTPException(status_code=404, detail="Account not found")
+    revisions = list(db.scalars(select(AccountRevision).where(
+        AccountRevision.budget_id == budget_id,
+        AccountRevision.account_id == account_id,
+    ).order_by(AccountRevision.created_at.desc(), AccountRevision.id.desc()).offset(offset).limit(limit)))
+    actor_ids = {item.actor_user_id for item in revisions}
+    actors = {item.id: item.display_name for item in db.scalars(select(User).where(User.id.in_(actor_ids)))} if actor_ids else {}
+    return [{
+        "id": item.id, "account_id": item.account_id, "action": item.action,
+        "actor_user_id": item.actor_user_id,
+        "actor_display_name": actors.get(item.actor_user_id),
+        "before_snapshot": item.before_snapshot, "after_snapshot": item.after_snapshot,
+        "created_at": item.created_at,
+    } for item in revisions]
 
 
 @router.get("/accounts/{account_id}/debt-terms", response_model=Optional[AccountDebtTermsResponse])
