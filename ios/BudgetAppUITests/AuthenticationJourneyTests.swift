@@ -654,6 +654,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["debt-value-kind-projected"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.segmentedControls["debt-payoff-strategy"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.switches["debt-payoff-rollover"].exists)
+        XCTAssertTrue(app.switches["debt-payoff-target-toggle"].exists)
         let outcome = app.descendants(matching: .any)["debt-payoff-outcome"]
         for _ in 0..<8 where !outcome.exists { app.swipeUp() }
         XCTAssertTrue(outcome.waitForExistence(timeout: 8))

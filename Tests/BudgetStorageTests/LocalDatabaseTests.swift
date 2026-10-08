@@ -71,6 +71,7 @@ final class LocalDatabaseTests: XCTestCase {
             .init("DROP TABLE transaction_changes"),
             .init("DROP TABLE statement_imports"),
             .init("DROP TABLE attachment_tombstones"),
+            .init("DROP TABLE debt_payoff_plans"),
             .init("ALTER TABLE categories DROP COLUMN icon_name"),
             .init("ALTER TABLE categories DROP COLUMN note"),
             .init("ALTER TABLE categories DROP COLUMN is_essential"),
@@ -172,7 +173,7 @@ final class LocalDatabaseTests: XCTestCase {
 
         let reopened = try LocalAuthorityStore(fileURL: databaseURL)
         var snapshot = try await reopened.snapshot(budgetID: "budget")
-        try await reopened.replaceWorkspaceState(.init(identity: snapshot.identity, accounts: snapshot.accounts, groups: snapshot.groups, categories: snapshot.categories, payees: snapshot.payees, payeeAliases: snapshot.payeeAliases, transactions: snapshot.transactions, allocations: snapshot.allocations, reconciliations: snapshot.reconciliations, targets: snapshot.targets, schedules: snapshot.schedules, attachments: snapshot.attachments, debtTerms: [.init(accountID: "checking", termsType: "credit_card", annualRateBasisPoints: 1999, minimumPaymentMinor: 25_00, dueDay: 15, updatedAt: timestamp)], cashRolloverPolicies: [.init(id: "rollover-1", budgetID: "budget", effectiveMonth: "2026-10-01", policy: "absorb_next_month", version: 1, source: "user_selection", actorUserID: "owner", createdAt: timestamp)], creditReserveAttributions: [.init(transactionID: "purchase", categoryID: "groceries", amountMinor: 12_345)], transactionChanges: [.init(id: "change", budgetID: "budget", transactionID: "purchase", actorUserID: "owner", action: "create", afterJSON: "{\"amount_minor\":-12345}", createdAt: timestamp)], creditReserveEvents: [.init(id: "reserve", budgetID: "budget", creditAccountID: "checking", paymentCategoryID: "payment-category", spendingCategoryID: "groceries", sourceTransactionID: "purchase", occurredOn: "2026-09-27", amountMinor: 12_345, kind: "funded_purchase", actorUserID: "owner", createdAt: timestamp)]))
+        try await reopened.replaceWorkspaceState(.init(identity: snapshot.identity, accounts: snapshot.accounts, groups: snapshot.groups, categories: snapshot.categories, payees: snapshot.payees, payeeAliases: snapshot.payeeAliases, transactions: snapshot.transactions, allocations: snapshot.allocations, reconciliations: snapshot.reconciliations, targets: snapshot.targets, schedules: snapshot.schedules, attachments: snapshot.attachments, debtTerms: [.init(accountID: "checking", termsType: "credit_card", annualRateBasisPoints: 1999, minimumPaymentMinor: 25_00, dueDay: 15, updatedAt: timestamp)], debtPayoffPlans: [.init(id: "payoff-plan", budgetID: "budget", userID: "owner", strategy: "custom", rollover: true, extraPaymentMinor: 12_345, accountIDs: ["checking"], customOrder: ["checking"], targetDate: "2028-12-31", updatedAt: timestamp)], cashRolloverPolicies: [.init(id: "rollover-1", budgetID: "budget", effectiveMonth: "2026-10-01", policy: "absorb_next_month", version: 1, source: "user_selection", actorUserID: "owner", createdAt: timestamp)], creditReserveAttributions: [.init(transactionID: "purchase", categoryID: "groceries", amountMinor: 12_345)], transactionChanges: [.init(id: "change", budgetID: "budget", transactionID: "purchase", actorUserID: "owner", action: "create", afterJSON: "{\"amount_minor\":-12345}", createdAt: timestamp)], creditReserveEvents: [.init(id: "reserve", budgetID: "budget", creditAccountID: "checking", paymentCategoryID: "payment-category", spendingCategoryID: "groceries", sourceTransactionID: "purchase", occurredOn: "2026-09-27", amountMinor: 12_345, kind: "funded_purchase", actorUserID: "owner", createdAt: timestamp)]))
         snapshot = try await reopened.snapshot(budgetID: "budget")
         XCTAssertEqual(snapshot.identity.currencyCode, "USD")
         XCTAssertEqual(snapshot.accounts.map(\.openingBalanceMinor), [9_007_199_254_740_991])
@@ -205,6 +206,8 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(snapshot.schedules.first?.endDate, "2026-12-27")
         XCTAssertEqual(snapshot.attachments.map(\.objectName), ["objects/receipt.enc"])
         XCTAssertEqual(snapshot.debtTerms.first?.annualRateBasisPoints, 1999)
+        XCTAssertEqual(snapshot.debtPayoffPlans?.first?.extraPaymentMinor, 12_345)
+        XCTAssertEqual(snapshot.debtPayoffPlans?.first?.targetDate, "2028-12-31")
         XCTAssertEqual(snapshot.cashRolloverPolicies.first?.policy, "absorb_next_month")
         XCTAssertEqual(snapshot.creditReserveAttributions, [.init(transactionID: "purchase", categoryID: "groceries", amountMinor: 12_345)])
         XCTAssertEqual(snapshot.transactionChanges.first?.afterJSON, "{\"amount_minor\":-12345}")
@@ -335,7 +338,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.scheduledTransactionID, "deleted-schedule")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 15)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 16)
     }
 
     func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {

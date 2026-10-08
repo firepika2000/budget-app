@@ -33,7 +33,7 @@ Status meanings:
 | Refill/up-to behavior | IMPLEMENTED | Persisted Refill Balance targets recommend the exact gap after rollover and current-month spending without moving money automatically. |
 | Weekly/yearly/custom recurrence | IMPLEMENTED | Weekly spending counts the anchored weekday's real four/five calendar occurrences; recurring expenses provide monthly, quarterly, six-month, yearly, and custom month cadences with due-date contribution guidance. |
 | Target by date and savings balance | IMPLEMENTED | Forecast calculations and progress UI. |
-| Debt payoff target | PARTIALLY IMPLEMENTED | Native local payoff simulator; dedicated persisted payoff target is future. |
+| Debt payoff plan and goal | IMPLEMENTED | Per-user authoritative avalanche/snowball/custom plan, exact extra payment, account order, and optional debt-free goal date persist on Live Server and Local Device and transfer without mutating financial state. |
 | Snooze/skip target | IMPLEMENTED | Month-scoped, money-neutral target snooze/resume persists across Live and on-device providers without changing the global target rule. |
 | Smart Funding preview | IMPLEMENTED | Shared Before/Proposed/After native workflow and optimistic live batch commit. |
 | Funding recommendations | IMPLEMENTED | Target-based deterministic proposals run against the current authoritative month state. |
@@ -68,7 +68,7 @@ Status meanings:
 | Loan/mortgage/tracking asset/liability | IMPLEMENTED | Live and local creation support first-class loan, mortgage, and tracking types; mortgage/loan debt terms, cost, and payoff projections share exact production semantics. |
 | Closed accounts | IMPLEMENTED | Owner-managed close/reopen lifecycle, preserved history and balances, separate open/closed presentation, and transaction-entry protections across Live, local, and demo authorities. |
 | Net-worth-only tracking distinction | IMPLEMENTED | First-class Asset and Other Tracking types remain outside the Plan while contributing to permission-filtered net worth. |
-| Payoff simulator | IMPLEMENTED | Production avalanche, snowball, rollover, and custom-extra scenarios use exact shared projections and authoritative debt terms without mutating the budget. |
+| Payoff simulator | IMPLEMENTED | Production avalanche, snowball, rollover, and custom-extra scenarios use exact shared projections and authoritative debt terms; saved plans synchronize across devices without mutating the budget. |
 | Card reserve animation | IMPLEMENTED | Exact reserve values use a subtle native numeric transition in Plan and card registers, disabled automatically when Reduce Motion is enabled. |
 
 ## Insights and forecast

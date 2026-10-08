@@ -22,7 +22,7 @@ from .models import (
     Account, AccountDebtTerms, AllocationOperation, AllocationPosting, Budget,
     CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget,
     CategoryTargetSnooze, CreditCardReserveEvent, Household, Payee, PayeeAlias,
-    ImportBatch, PayeeBudgetPreference, ScheduledTransaction, Transaction, TransactionAttachment,
+    DebtPayoffPlan, ImportBatch, PayeeBudgetPreference, ScheduledTransaction, Transaction, TransactionAttachment,
     Reconciliation, TransactionChange, TransactionSplit, User,
 )
 
@@ -349,6 +349,18 @@ def build_local_device_projection(
             key: _iso(value) if key in {"promotional_ends_on", "updated_at"} else value
             for key, value in vars(item).items() if not key.startswith("_") and key != "budget_id"
         } for item in db.scalars(select(AccountDebtTerms).where(AccountDebtTerms.budget_id == budget.id))],
+        # Payoff scenarios are personal forecast preferences. A single-user Local Device transfer
+        # carries only the owner's plan and never exposes another household member's preferences.
+        "debt_payoff_plans": [{
+            "id": item.id, "budget_id": item.budget_id, "user_id": item.user_id,
+            "strategy": item.strategy, "rollover": item.rollover,
+            "extra_payment_minor": item.extra_payment_minor,
+            "account_ids": item.account_ids, "custom_order": item.custom_order,
+            "target_date": _iso(item.target_date), "updated_at": _iso(item.updated_at),
+        } for item in db.scalars(select(DebtPayoffPlan).where(
+            DebtPayoffPlan.budget_id == budget.id,
+            DebtPayoffPlan.user_id == owner.id,
+        ))],
         "cash_rollover_policies": [{
             "id": item.id, "budget_id": budget.id,
             "effective_month": _iso(item.effective_month), "policy": item.policy,

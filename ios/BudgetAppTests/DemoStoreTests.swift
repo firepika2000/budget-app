@@ -2503,6 +2503,40 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalDeviceDebtPayoffPlanPersistsAcrossWorkspaceReconstruction() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-device-payoff-plan-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let keyManager = LocalDeviceKeyManager(store: InMemorySecretDataStore())
+        let first = BudgetWorkspaceStore.localDevice(
+            applicationSupportDirectory: root, keyManager: keyManager
+        )
+        await first.refresh()
+        try await first.createAccount(.init(
+            name: "Payoff Card", kind: "credit", isOnBudget: true,
+            openingBalanceMinor: -250_000
+        ))
+        let debtID = try XCTUnwrap(first.accounts.first(where: { $0.name == "Payoff Card" })?.id)
+
+        let saved = try await first.saveDebtPayoffPlan(.init(
+            strategy: "snowball", rollover: true, extraPaymentMinor: 12_345,
+            accountIDs: [debtID], customOrder: [], targetDate: "2028-12-31"
+        ))
+        XCTAssertEqual(saved.extraPaymentMinor, 12_345)
+
+        let reopened = BudgetWorkspaceStore.localDevice(
+            applicationSupportDirectory: root, keyManager: keyManager
+        )
+        await reopened.refresh()
+        let loaded = try await reopened.debtPayoffPlan()
+        let restored = try XCTUnwrap(loaded)
+        XCTAssertEqual(restored.strategy, "snowball")
+        XCTAssertEqual(restored.accountIDs, [debtID])
+        XCTAssertEqual(restored.extraPaymentMinor, 12_345)
+        XCTAssertEqual(restored.targetDate, "2028-12-31")
+    }
+
+    @MainActor
     func testLocalDeviceFutureMonthAssignmentPersistsWithoutRewritingCurrentMonth() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-device-future-plan-\(UUID().uuidString)", isDirectory: true)

@@ -5,7 +5,7 @@ from io import StringIO
 import json
 import pytest
 
-from app.models import Household, MonthlyAssignment, Payee, TransactionSplit
+from app.models import DebtPayoffPlan, Household, MonthlyAssignment, Payee, TransactionSplit
 from app.local_device_export import source_revision
 from .test_delegated_access import add_child
 
@@ -229,6 +229,14 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
         headers=auth(owner_token),
     )
     assert realized.status_code == 200, realized.text
+    with session_factory() as db:
+        owner_id = db.query(Household.owner_user_id).scalar()
+        db.add(DebtPayoffPlan(
+            budget_id=budget["id"], user_id=owner_id, strategy="snowball",
+            rollover=True, extra_payment_minor=12_345, account_ids=[], custom_order=[],
+            target_date=date(2028, 12, 31),
+        ))
+        db.commit()
     eligibility = client.get(f"{path}/local-device-transfer-eligibility", headers=auth(owner_token))
     assert eligibility.status_code == 200 and eligibility.json()["eligible"] is True
 
@@ -258,6 +266,12 @@ def test_local_device_transfer_projects_exact_ledgers_and_attachment_manifest(
     assert value["allocations"][0]["category_id"] == category["id"]
     assert value["allocations"][0]["source_category_id"] is None
     assert value["allocations"][0]["amount_minor"] == 4_000
+    assert value["debt_payoff_plans"] == [{
+        **{key: value["debt_payoff_plans"][0][key] for key in ("id", "updated_at")},
+        "budget_id": budget["id"], "user_id": value["identity"]["owner_user_id"],
+        "strategy": "snowball", "rollover": True, "extra_payment_minor": 12_345,
+        "account_ids": [], "custom_order": [], "target_date": "2028-12-31",
+    }]
     assert value["attachments"] == [{
         "id": uploaded.json()["id"], "transaction_id": purchase["id"],
         "filename": "receipt.pdf", "content_type": "application/pdf",
@@ -465,7 +479,7 @@ def test_structured_export_contract_covers_every_persistent_domain_model():
             "allocation_postings", "transactions", "transaction_splits", "transaction_changes",
             "transaction_attachments", "reconciliations", "credit_card_reserve_events", "allowance_plans",
         "allowance_splits", "allowance_issuances", "financial_requests", "request_actions",
-        "import_batches",
+        "import_batches", "debt_payoff_plans",
     }
     deliberately_deployment_local = {"setup_state", "refresh_sessions", "pairing_codes"}
 

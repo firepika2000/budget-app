@@ -35,6 +35,7 @@ from .models import (
     CreditCardReserveEvent,
     DelegatedBudgetPolicy,
     DelegatedCategoryRule,
+    DebtPayoffPlan,
     FinancialRequest,
     Household,
     HouseholdAccessEvent,
@@ -354,6 +355,7 @@ def export_budget_json(
             Reconciliation.budget_id == budget_id
         ))],
         "account_debt_terms": [row_data(item) for item in db.scalars(select(AccountDebtTerms).where(AccountDebtTerms.budget_id == budget_id))],
+        "debt_payoff_plans": [row_data(item) for item in db.scalars(select(DebtPayoffPlan).where(DebtPayoffPlan.budget_id == budget_id))],
         "cash_rollover_policy_changes": [row_data(item) for item in db.scalars(select(CashRolloverPolicyChange).where(CashRolloverPolicyChange.budget_id == budget_id))],
         "category_groups": [row_data(item) for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))],
         "categories": [row_data(item) for item in db.scalars(select(Category).where(Category.budget_id == budget_id))],

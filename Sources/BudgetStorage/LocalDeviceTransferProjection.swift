@@ -100,6 +100,13 @@ public enum LocalDeviceTransferProjectionDecoder {
                 tombstoneObjectName: $0.tombstoneObjectName
             ) },
             debtTerms: value.debtTerms.map { .init(accountID: $0.accountId, termsType: $0.termsType, annualRateBasisPoints: $0.annualRateBasisPoints, rateType: $0.rateType, paymentFrequency: $0.paymentFrequency, scheduledPaymentMinor: $0.scheduledPaymentMinor, minimumPaymentRule: $0.minimumPaymentRule, minimumPaymentMinor: $0.minimumPaymentMinor, minimumPaymentRateBasisPoints: $0.minimumPaymentRateBasisPoints, dueDay: $0.dueDay, statementDay: $0.statementDay, originalPrincipalMinor: $0.originalPrincipalMinor, originalTermMonths: $0.originalTermMonths, remainingTermMonths: $0.remainingTermMonths, promotionalRateBasisPoints: $0.promotionalRateBasisPoints, promotionalEndsOn: $0.promotionalEndsOn, updatedAt: $0.updatedAt) },
+            debtPayoffPlans: (value.debtPayoffPlans ?? []).map { .init(
+                id: $0.id, budgetID: $0.budgetId, userID: $0.userId,
+                strategy: $0.strategy, rollover: $0.rollover,
+                extraPaymentMinor: $0.extraPaymentMinor, accountIDs: $0.accountIds,
+                customOrder: $0.customOrder, targetDate: $0.targetDate,
+                updatedAt: $0.updatedAt
+            ) },
             cashRolloverPolicies: value.cashRolloverPolicies.map { .init(id: $0.id, budgetID: $0.budgetId, effectiveMonth: $0.effectiveMonth, policy: $0.policy, version: $0.version, source: $0.source, actorUserID: $0.actorUserId, createdAt: $0.createdAt) },
             creditReserveAttributions: value.creditReserveAttributions.map { .init(transactionID: $0.transactionId, categoryID: $0.categoryId, amountMinor: $0.amountMinor) },
             transactionChanges: value.transactionChanges.map { .init(id: $0.id, budgetID: $0.budgetId, transactionID: $0.transactionId, actorUserID: $0.actorUserId, action: $0.action, beforeJSON: $0.beforeJson, afterJSON: $0.afterJson, createdAt: $0.createdAt) },
@@ -126,6 +133,7 @@ public enum LocalDeviceTransferProjectionDecoder {
             + snapshot.categories.map(\.budgetID) + snapshot.payees.map(\.budgetID)
             + snapshot.transactions.map(\.budgetID) + snapshot.allocations.map(\.budgetID)
             + snapshot.schedules.map(\.budgetID) + snapshot.cashRolloverPolicies.map(\.budgetID)
+            + (snapshot.debtPayoffPlans ?? []).map(\.budgetID)
             + snapshot.statementImports.map(\.budgetID)
             + snapshot.attachmentTombstones.map(\.budgetID)
             + snapshot.transactionChanges.map(\.budgetID) + snapshot.creditReserveEvents.map(\.budgetID)
@@ -212,7 +220,8 @@ private struct Envelope: Decodable {
     let allocations: [AllocationDTO]; let reconciliations: [ReconciliationDTO]
     let targets: [TargetDTO]; let schedules: [ScheduleDTO]; let attachments: [AttachmentDTO]
     let attachmentTombstones: [AttachmentTombstoneDTO]?
-    let debtTerms: [DebtTermsDTO]; let cashRolloverPolicies: [RolloverDTO]
+    let debtTerms: [DebtTermsDTO]; let debtPayoffPlans: [DebtPayoffPlanDTO]?
+    let cashRolloverPolicies: [RolloverDTO]
     let statementImports: [StatementImportDTO]?
     let creditReserveAttributions: [AttributionDTO]; let transactionChanges: [ChangeDTO]
     let creditReserveEvents: [ReserveEventDTO]; let observations: ObservationsDTO
@@ -239,6 +248,11 @@ private struct ScheduleDTO: Decodable { let id: String; let budgetId: String; le
 private struct AttachmentDTO: Decodable { let id: String; let transactionId: String; let filename: String; let contentType: String; let sizeBytes: Int64; let sha256: String; let objectName: String; let createdAt: String }
 private struct AttachmentTombstoneDTO: Decodable { let id: String; let budgetId: String; let transactionId: String; let filename: String; let contentType: String; let sizeBytes: Int64; let sha256: String; let createdAt: String; let detachedAt: String; let detachedByUserId: String; let purgeAfter: String; let tombstoneObjectName: String? }
 private struct DebtTermsDTO: Decodable { let accountId: String; let termsType: String; let annualRateBasisPoints: Int64?; let rateType: String?; let paymentFrequency: String?; let scheduledPaymentMinor: Int64?; let minimumPaymentRule: String?; let minimumPaymentMinor: Int64?; let minimumPaymentRateBasisPoints: Int64?; let dueDay: Int64?; let statementDay: Int64?; let originalPrincipalMinor: Int64?; let originalTermMonths: Int64?; let remainingTermMonths: Int64?; let promotionalRateBasisPoints: Int64?; let promotionalEndsOn: String?; let updatedAt: String }
+private struct DebtPayoffPlanDTO: Decodable {
+    let id: String; let budgetId: String; let userId: String; let strategy: String
+    let rollover: Bool; let extraPaymentMinor: Int64; let accountIds: [String]
+    let customOrder: [String]; let targetDate: String?; let updatedAt: String
+}
 private struct RolloverDTO: Decodable { let id: String; let budgetId: String; let effectiveMonth: String; let policy: String; let version: Int64; let source: String; let actorUserId: String?; let createdAt: String }
 private struct AttributionDTO: Decodable { let transactionId: String; let categoryId: String; let amountMinor: Int64 }
 private struct ChangeDTO: Decodable { let id: String; let budgetId: String; let transactionId: String; let actorUserId: String; let action: String; let beforeJson: String?; let afterJson: String?; let createdAt: String }

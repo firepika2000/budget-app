@@ -354,6 +354,9 @@ extension WorkspaceDataSource {
 
 @MainActor
 protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRepository, TransactionCommandRepository, TransactionBrowserRepository, ScheduleCommandRepository, PayeeCommandRepository {
+    func debtPayoffPlan() async throws -> APIDebtPayoffPlan?
+    func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan
+    func deleteDebtPayoffPlan() async throws
     func statementImports(accountID: String, limit: Int, offset: Int) async throws -> APIStatementImportList
     func statementImport(accountID: String, batchID: String) async throws -> APIStatementImport
     func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport
@@ -400,6 +403,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     var actorUserID: String? { requestActorID }
     private var attachmentData: [String: Data] = [:]
     private var debtTermsValues: [String: APIAccountDebtTermsUpsert] = [:]
+    private var debtPayoffPlanValue: APIDebtPayoffPlanUpsert?
     private var accessProfiles: [String: APIAccessProfile] = [:]
     private let now: () -> Date
     private struct InvitationRecord {
@@ -962,6 +966,13 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                     promotionalRateBasisPoints: item.promotionalRateBasisPoints.map(Int.init),
                     promotionalEndsOn: item.promotionalEndsOn))
             })
+            if let item = value.debtPayoffPlans?.first(where: { $0.userID == localIdentity.ownerUserID }) {
+                debtPayoffPlanValue = .init(
+                    strategy: item.strategy, rollover: item.rollover,
+                    extraPaymentMinor: item.extraPaymentMinor, accountIDs: item.accountIDs,
+                    customOrder: item.customOrder, targetDate: item.targetDate
+                )
+            }
             localAuthorityLoaded = true
             return
         }
@@ -999,6 +1010,13 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             targets: projected.targets, schedules: projected.schedules,
             attachments: projected.attachments,
             attachmentTombstones: projected.attachmentTombstones, debtTerms: projected.debtTerms,
+            debtPayoffPlans: debtPayoffPlanValue.map { item in [LocalDebtPayoffPlanRecord(
+                id: "local-debt-payoff-plan", budgetID: localIdentity.budgetID,
+                userID: localIdentity.ownerUserID, strategy: item.strategy,
+                rollover: item.rollover, extraPaymentMinor: item.extraPaymentMinor,
+                accountIDs: item.accountIDs, customOrder: item.customOrder,
+                targetDate: item.targetDate, updatedAt: ISO8601DateFormatter().string(from: now())
+            )] },
             cashRolloverPolicies: projected.cashRolloverPolicies,
             creditReserveAttributions: projected.creditReserveAttributions,
             transactionChanges: transactionChanges,
@@ -2240,6 +2258,32 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return result
     }
     func deleteAccountDebtTerms(accountID: String) async throws { try requireActiveMembership(); debtTermsValues.removeValue(forKey: accountID) }
+    func debtPayoffPlan() async throws -> APIDebtPayoffPlan? { try requireActiveMembership()
+        guard let value = debtPayoffPlanValue else { return nil }
+        return try decode([
+            "id": "local-debt-payoff-plan", "budget_id": budget.id,
+            "user_id": requestActorID, "strategy": value.strategy, "rollover": value.rollover,
+            "extra_payment_minor": value.extraPaymentMinor, "account_ids": value.accountIDs,
+            "custom_order": value.customOrder, "target_date": value.targetDate ?? NSNull(),
+            "updated_at": "2026-10-08T12:00:00Z",
+        ] as [String: Any])
+    }
+    func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan { try requireActiveMembership()
+        guard budget.can("manage_planning") else { throw APIClientError.server(status: 403, message: "You do not have permission to manage payoff plans.") }
+        let visibleDebtIDs = Set(demo.accounts.filter { actorAccountIDs.contains($0.id) && [.credit, .loan, .mortgage].contains($0.kind) }.map(\.id))
+        guard Set(value.accountIDs).isSubset(of: visibleDebtIDs), Set(value.customOrder).isSubset(of: visibleDebtIDs) else {
+            throw APIClientError.server(status: 404, message: "Payoff plan resource not found")
+        }
+        debtPayoffPlanValue = value
+        try await synchronizeLocalAuthority()
+        guard let saved = try await debtPayoffPlan() else { throw workspaceRepositoryError("Payoff plan was not saved.") }
+        return saved
+    }
+    func deleteDebtPayoffPlan() async throws { try requireActiveMembership()
+        guard budget.can("manage_planning") else { throw APIClientError.server(status: 403, message: "You do not have permission to manage payoff plans.") }
+        debtPayoffPlanValue = nil
+        try await synchronizeLocalAuthority()
+    }
     func createRequest(_ value: APIFinancialRequestCreate) async throws { try requireActiveMembership();
         try validateRequest(value)
         var item = DemoRequest(id: UUID().uuidString, member: demo.persona, amount: value.requestedAmountMinor,
@@ -2647,6 +2691,9 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? { try await credentials.prepare(); return try await client.accountDebtTerms(budgetID: budget.id, accountID: accountID, token: token) }
     func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms { try await credentials.prepare(); return try await client.updateAccountDebtTerms(budgetID: budget.id, accountID: accountID, terms: value, token: token) }
     func deleteAccountDebtTerms(accountID: String) async throws { try await credentials.prepare(); try await client.deleteAccountDebtTerms(budgetID: budget.id, accountID: accountID, token: token) }
+    func debtPayoffPlan() async throws -> APIDebtPayoffPlan? { try await credentials.prepare(); return try await client.debtPayoffPlan(budgetID: budget.id, token: token) }
+    func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan { try await credentials.prepare(); return try await client.saveDebtPayoffPlan(budgetID: budget.id, request: value, token: token) }
+    func deleteDebtPayoffPlan() async throws { try await credentials.prepare(); try await client.deleteDebtPayoffPlan(budgetID: budget.id, token: token) }
     func createRequest(_ value: APIFinancialRequestCreate) async throws { try await credentials.prepare(); _ = try await client.createFinancialRequest(budgetID: budget.id, request: value, token: token) }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws { try await credentials.prepare(); _ = try await client.updateCategory(budgetID: budget.id, categoryID: id, category: value, token: token); if existingDelegatedUserID != delegatedUserID { _ = try await client.updateCategoryDelegation(budgetID: budget.id, categoryID: id, delegatedUserID: delegatedUserID, token: token) } }
     func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { try await credentials.prepare(); _ = try await client.updateCategoryGroup(budgetID: budget.id, groupID: id, group: value, token: token) }
@@ -3684,6 +3731,21 @@ final class BudgetWorkspaceStore: ObservableObject {
     func deleteAccountDebtTerms(accountID: String) async throws {
         try await commands().deleteAccountDebtTerms(accountID: accountID)
         await refresh()
+    }
+
+    func debtPayoffPlan() async throws -> APIDebtPayoffPlan? {
+        try requireWorkspaceAccess()
+        return try await commands().debtPayoffPlan()
+    }
+
+    func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan {
+        try requireWorkspaceAccess()
+        return try await commands().saveDebtPayoffPlan(value)
+    }
+
+    func deleteDebtPayoffPlan() async throws {
+        try requireWorkspaceAccess()
+        try await commands().deleteDebtPayoffPlan()
     }
 
     func createRequest(_ value: APIFinancialRequestCreate) async throws {
@@ -9467,7 +9529,6 @@ private struct DebtInterestContent: View {
 
 private struct DebtPayoffContent: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    @EnvironmentObject private var session: AppSession
     let report: APIDebtReport
     @Binding var editingTermsAccount: APIAccount?
     let termsRevision: Int
@@ -9476,26 +9537,23 @@ private struct DebtPayoffContent: View {
     @State private var extraPreset: Int64 = 0
     @State private var customExtra = ""
     @State private var customOrder: [String] = []
+    @State private var planAccountIDs: [String] = []
+    @State private var hasTargetDate = false
+    @State private var targetDate = Date()
+    @State private var isPlanLoaded = false
+    @State private var saveMessage: String?
     @State private var result: APIDebtStrategyProjection?
     @State private var baseline: APIDebtStrategyProjection?
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var calculationID = UUID()
 
-    private struct SavedScenario: Codable {
-        let strategy: String
-        let rollover: Bool
-        let extraPreset: Int64
-        let customExtra: String
-        let customOrder: [String]
-    }
-
     private var extraPayment: Int64? {
         if extraPreset >= 0 { return extraPreset }
         guard let value = CurrencyText.parseMinorUnits(customExtra, currencyCode: store.budget.currencyCode), value >= 0 else { return nil }
         return value
     }
-    private var selectedAccountIDs: [String] { store.reportAccountID.isEmpty ? [] : [store.reportAccountID] }
+    private var selectedAccountIDs: [String] { store.reportAccountID.isEmpty ? planAccountIDs : [store.reportAccountID] }
     private var scenarioKey: String { "\(strategy)|\(rollover)|\(extraPayment.map(String.init) ?? "invalid")|\(customOrder.joined(separator: ","))|\(selectedAccountIDs.joined(separator: ","))|\(termsRevision)|\(store.reportRevision)|\(store.liveCredentialRevision)" }
 
     var body: some View {
@@ -9523,10 +9581,18 @@ private struct DebtPayoffContent: View {
                 CurrencyAmountField("Extra each month", text: $customExtra, currencyCode: store.budget.currencyCode, allowsZero: true)
                     .accessibilityIdentifier("debt-payoff-custom-extra")
             }
-            Button("Reset saved scenario", systemImage: "arrow.counterclockwise") { resetScenario() }
+            Toggle("Set a debt-free goal date", isOn: $hasTargetDate)
+                .accessibilityIdentifier("debt-payoff-target-toggle")
+            if hasTargetDate {
+                DatePicker("Goal date", selection: $targetDate, in: Date()..., displayedComponents: .date)
+                    .accessibilityIdentifier("debt-payoff-target-date")
+            }
+            if let saveMessage { Text(saveMessage).font(.caption).foregroundStyle(.secondary) }
+            Button("Reset saved plan", systemImage: "arrow.counterclockwise") { Task { await resetPlan() } }
                 .disabled(isDefaultScenario)
                 .accessibilityIdentifier("debt-payoff-reset-scenario")
         }
+        .disabled(!store.budget.can("manage_planning"))
         if strategy == "custom" { customOrderSection }
         if isLoading { Section { HStack { Spacer(); ProgressView("Calculating projected payoff…"); Spacer() } } }
         if let result { resultSections(result) }
@@ -9556,12 +9622,13 @@ private struct DebtPayoffContent: View {
             guard !Task.isCancelled else { return }
             await calculate()
         }
-        .onAppear { restoreScenario() }
-        .onChange(of: strategy) { _, _ in saveScenario() }
-        .onChange(of: rollover) { _, _ in saveScenario() }
-        .onChange(of: extraPreset) { _, _ in saveScenario() }
-        .onChange(of: customExtra) { _, _ in saveScenario() }
-        .onChange(of: customOrder) { _, _ in saveScenario() }
+        .task { await restorePlan() }
+        .task(id: persistenceKey) {
+            guard isPlanLoaded, store.budget.can("manage_planning") else { return }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            await savePlan()
+        }
         .alert("Unable to calculate payoff", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
     }
 
@@ -9654,41 +9721,73 @@ private struct DebtPayoffContent: View {
     private func accountName(_ id: String) -> String { report.accounts.first(where: { $0.accountID == id })?.accountName ?? "Debt account" }
     private func friendlyMissingField(_ field: String) -> String { field == "debt_terms" ? "Debt Terms" : field.replacingOccurrences(of: "_", with: " ") }
     private func move(_ id: String, by offset: Int) { guard let index = customOrder.firstIndex(of: id) else { return }; let destination = index + offset; guard customOrder.indices.contains(destination) else { return }; customOrder.swapAt(index, destination) }
-    private var scenarioPreferenceKey: String {
-        let identity = session.profile?.id ?? (session.sourceMode == .deterministic ? "deterministic-demo-user" : "local-device-owner")
-        return "budget.debt.payoff.scenario.\(identity).\(store.budget.id)"
-    }
     private var visibleAccountIDs: [String] { report.accounts.map(\.accountID) }
-    private var isDefaultScenario: Bool {
-        strategy == "avalanche" && rollover && extraPreset == 0 && customExtra.isEmpty && customOrder == visibleAccountIDs
+    private var persistenceKey: String {
+        "\(isPlanLoaded)|\(strategy)|\(rollover)|\(extraPayment.map(String.init) ?? "invalid")|\(selectedAccountIDs.joined(separator: ","))|\(customOrder.joined(separator: ","))|\(hasTargetDate)|\(hasTargetDate ? BudgetWorkspaceStore.dateString(targetDate) : "")"
     }
-    private func restoreScenario() {
-        let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: scenarioPreferenceKey),
-           let saved = try? JSONDecoder().decode(SavedScenario.self, from: data) {
-            strategy = ["avalanche", "snowball", "custom"].contains(saved.strategy) ? saved.strategy : "avalanche"
-            rollover = saved.rollover
-            extraPreset = [Int64(0), 5_000, 10_000, 25_000, -1].contains(saved.extraPreset) ? saved.extraPreset : 0
-            customExtra = saved.customExtra
-            let retained = saved.customOrder.filter(visibleAccountIDs.contains)
-            customOrder = retained + visibleAccountIDs.filter { !retained.contains($0) }
-        } else {
-            customOrder = visibleAccountIDs
+    private var isDefaultScenario: Bool {
+        strategy == "avalanche" && rollover && extraPreset == 0 && customExtra.isEmpty && customOrder == visibleAccountIDs && !hasTargetDate
+    }
+    private func restorePlan() async {
+        guard !isPlanLoaded else { return }
+        planAccountIDs = visibleAccountIDs
+        customOrder = visibleAccountIDs
+        do {
+            if let saved = try await store.debtPayoffPlan() {
+                strategy = saved.strategy; rollover = saved.rollover
+                if [Int64(0), 5_000, 10_000, 25_000].contains(saved.extraPaymentMinor) {
+                    extraPreset = saved.extraPaymentMinor; customExtra = ""
+                } else {
+                    extraPreset = -1; customExtra = editableAmount(saved.extraPaymentMinor)
+                }
+                let retainedAccounts = saved.accountIDs.filter(visibleAccountIDs.contains)
+                planAccountIDs = retainedAccounts.isEmpty ? visibleAccountIDs : retainedAccounts
+                let retainedOrder = saved.customOrder.filter(planAccountIDs.contains)
+                customOrder = retainedOrder + planAccountIDs.filter { !retainedOrder.contains($0) }
+                if let raw = saved.targetDate {
+                    targetDate = BudgetWorkspaceStore.parseDate(raw); hasTargetDate = true
+                }
+                saveMessage = "Saved plan loaded"
+            }
+        } catch {
+            saveMessage = isTransientConnectivityFailure(error) ? "Using this device's current scenario while offline" : error.localizedDescription
+        }
+        isPlanLoaded = true
+    }
+    private func savePlan() async {
+        guard let extraPayment else { return }
+        do {
+            _ = try await store.saveDebtPayoffPlan(.init(
+                strategy: strategy, rollover: rollover, extraPaymentMinor: extraPayment,
+                accountIDs: selectedAccountIDs,
+                customOrder: strategy == "custom" ? customOrder.filter(selectedAccountIDs.contains) : [],
+                targetDate: hasTargetDate ? BudgetWorkspaceStore.dateString(targetDate) : nil
+            ))
+            saveMessage = "Saved across your devices"
+        } catch {
+            saveMessage = isTransientConnectivityFailure(error) ? "Will save when the server is reachable" : error.localizedDescription
         }
     }
-    private func saveScenario() {
-        guard !customOrder.isEmpty else { return }
-        let saved = SavedScenario(strategy: strategy, rollover: rollover, extraPreset: extraPreset, customExtra: customExtra, customOrder: customOrder)
-        guard let data = try? JSONEncoder().encode(saved) else { return }
-        UserDefaults.standard.set(data, forKey: scenarioPreferenceKey)
+    private func editableAmount(_ minorUnits: Int64) -> String {
+        let formatter = NumberFormatter(); formatter.numberStyle = .decimal
+        formatter.currencyCode = store.budget.currencyCode
+        let digits = formatter.maximumFractionDigits
+        formatter.minimumFractionDigits = digits; formatter.maximumFractionDigits = digits
+        let amount = NSDecimalNumber(mantissa: minorUnits.magnitude, exponent: -Int16(digits), isNegative: minorUnits < 0)
+        return formatter.string(from: amount) ?? "0"
     }
-    private func resetScenario() {
+    private func resetPlan() async {
+        isPlanLoaded = false
         strategy = "avalanche"
         rollover = true
         extraPreset = 0
         customExtra = ""
+        planAccountIDs = visibleAccountIDs
         customOrder = visibleAccountIDs
-        UserDefaults.standard.removeObject(forKey: scenarioPreferenceKey)
+        hasTargetDate = false
+        do { try await store.deleteDebtPayoffPlan(); saveMessage = "Saved plan reset" }
+        catch { saveMessage = error.localizedDescription }
+        isPlanLoaded = true
     }
     private func calculate() async {
         guard let extraPayment else { return }
