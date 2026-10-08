@@ -44,6 +44,16 @@ rehydration, the user returns to Plan, Activity, Accounts, Insights, or Househol
 sent to Home. Explicit test/demo launch routes still override the preference and invalid stored
 values fail closed to Home. This persists navigation context only, never an unsaved financial edit.
 
+Funding-request Activity checkpoint (2026-10-08): Activity now includes the newest five authorized
+request actions with actor, exact amount, qualified visible category, decision type and note, then
+drills into the existing canonical request detail and complete decision history. The shared production
+presentation derives from already scoped request observations (Local Device personal budgets currently
+have no household-request records); the timeline performs no mutation and cannot reveal an otherwise
+invisible request or category. The deterministic sample now includes stable create/approve/reject action records so its
+visible status is backed by the same kind of immutable evidence expected from production providers.
+The focused production-composition XCUITest passes on the preserved iPhone 17 Pro Max / iOS 27
+simulator under regular Xcode 27.0 (`27A266a`).
+
 Allocation-attribution checkpoint (2026-10-08): Plan allocation history now carries the current
 server-authoritative display name for the immutable actor user ID. The history UI no longer depends
 on the currently loaded active-member list to explain who assigned or moved money, so actions by a

@@ -463,6 +463,13 @@ The roadmap is a living document, but changing it is a deliberate product decisi
   store was introduced. Budget Server applies account/category/split privacy before its bounded
   order/limit, while Demo and Local Device project the same immutable audit records.
 
+- Activity now also surfaces the five most recent authorized funding-request actions—including
+  submission, revision, approval, partial approval, requested changes, rejection, cancellation and
+  expiry—with exact money, qualified category context, actor attribution and direct drill-through to
+  the existing complete request history. It derives only from the already scoped request response;
+  no new aggregate or hidden request identity is exposed. The deterministic sample now carries
+  stable request-action fixtures instead of presenting status without the history that produced it.
+
 - Dropbox backup management now lets a Local Device owner deliberately remove one encrypted remote
   generation through a separate destructive swipe/accessibility action and explicit confirmation.
   The provider boundary rejects deletion outside the configured direct-child backup folder, refreshes

@@ -1142,9 +1142,17 @@ final class DemoStore: ObservableObject {
     }
 
     static let seedRequests: [DemoRequest] = [
-        .init(id:"request-game",member:.alex,amount:3500,categoryID:"alexallow",reason:"New game",status:"Pending",date:.demo(monthsAgo:0,day:4)),
-        .init(id:"request-art",member:.mia,amount:1800,approvedAmount:1800,categoryID:"miaallow",reason:"Art supplies",status:"Approved",date:.demo(monthsAgo:1,day:15)),
-        .init(id:"request-concert",member:.alex,amount:6500,categoryID:"alexallow",reason:"Concert ticket",status:"Declined",date:.demo(monthsAgo:2,day:8))
+        .init(id:"request-game",member:.alex,amount:3500,categoryID:"alexallow",reason:"New game",status:"Pending",date:.demo(monthsAgo:0,day:4), actions:[
+            .init(id:"request-game-created",actorID:"alex",action:"created",amount:3500,note:"New game",date:.demo(monthsAgo:0,day:4))
+        ]),
+        .init(id:"request-art",member:.mia,amount:1800,approvedAmount:1800,categoryID:"miaallow",reason:"Art supplies",status:"Approved",date:.demo(monthsAgo:1,day:15), actions:[
+            .init(id:"request-art-created",actorID:"mia",action:"created",amount:1800,note:"Art supplies",date:.demo(monthsAgo:1,day:15)),
+            .init(id:"request-art-approved",actorID:"demo-owner",action:"approved",amount:1800,note:"Approved for art supplies",date:.demo(monthsAgo:1,day:16))
+        ]),
+        .init(id:"request-concert",member:.alex,amount:6500,categoryID:"alexallow",reason:"Concert ticket",status:"Declined",date:.demo(monthsAgo:2,day:8), actions:[
+            .init(id:"request-concert-created",actorID:"alex",action:"created",amount:6500,note:"Concert ticket",date:.demo(monthsAgo:2,day:8)),
+            .init(id:"request-concert-rejected",actorID:"demo-owner",action:"rejected",amount:nil,note:"Not this month",date:.demo(monthsAgo:2,day:9))
+        ])
     ]
 
     static let seedAllowances: [DemoAllowance] = [

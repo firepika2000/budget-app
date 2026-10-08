@@ -1434,6 +1434,26 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["allocation-history-screen"].waitForExistence(timeout: 5))
     }
 
+    func testActivityShowsAuthorizedFundingRequestDecisionsAndOpensCanonicalHistory() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        let event = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "activity-request-action-")
+        ).firstMatch
+        for _ in 0..<5 where !event.exists { app.swipeUp() }
+        XCTAssertTrue(event.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !event.isHittable { app.swipeUp() }
+        XCTAssertTrue(event.isHittable)
+        XCTAssertTrue(event.label.contains("By "))
+        event.tap()
+
+        XCTAssertTrue(app.navigationBars["Funding Request"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["History"].exists)
+    }
+
     func testActivityShowsRecentReconciliationAndOpensCanonicalHistory() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=activity", "--demo-reconciliation-activity"]

@@ -7578,6 +7578,11 @@ private struct LiveSmartFundingView: View {
 }
 
 private struct LiveActivityView: View {
+    private struct RequestActivity: Identifiable {
+        let request: APIFinancialRequest
+        let action: APIRequestAction
+        var id: String { action.id }
+    }
     @EnvironmentObject private var store: BudgetWorkspaceStore
     var quickEntryRequest = 0
     var requestedQuickEntryDraft: QuickEntryDraft?
@@ -7611,6 +7616,17 @@ private struct LiveActivityView: View {
             return $0.id > $1.id
         }.prefix(5))
     }
+    private var recentRequestActivity: [RequestActivity] {
+        store.requests.flatMap { request in
+            request.actions.map { RequestActivity(request: request, action: $0) }
+        }
+        .sorted {
+            if $0.action.createdAt != $1.action.createdAt { return $0.action.createdAt > $1.action.createdAt }
+            return $0.action.id > $1.action.id
+        }
+        .prefix(5)
+        .map { $0 }
+    }
     var body: some View {
         List {
             Section("Planning") { NavigationLink { LiveScheduledTransactionsView() } label: { Label("Scheduled transactions", systemImage: "calendar.badge.clock") } }
@@ -7639,6 +7655,26 @@ private struct LiveActivityView: View {
                         }
                         NavigationLink("View all plan history") { AllocationHistoryView() }
                             .accessibilityIdentifier("activity-plan-history-action")
+                    }
+                }
+            }
+            if store.budget.can("request_money") || store.budget.can("approve_request") {
+                Section("Funding requests") {
+                    if recentRequestActivity.isEmpty {
+                        Text("Requests and household decisions will appear here.")
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("activity-request-history-empty")
+                    } else {
+                        ForEach(recentRequestActivity) { item in
+                            NavigationLink {
+                                LiveRequestDetailView(requestID: item.request.id)
+                            } label: {
+                                requestActivityRow(item)
+                            }
+                            .accessibilityIdentifier("activity-request-action-\(item.action.id)")
+                        }
+                        NavigationLink("View all requests") { LiveRequestsView() }
+                            .accessibilityIdentifier("activity-request-history-action")
                     }
                 }
             }
@@ -7746,6 +7782,55 @@ private struct LiveActivityView: View {
         case "delegated_funding", "allowance": "person.2"
         default: "square.and.pencil"
         }
+    }
+    private func requestActivityRow(_ item: RequestActivity) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Label(requestActionTitle(item.action.action), systemImage: requestActionSymbol(item.action.action))
+                    .font(.headline)
+                Spacer()
+                Text(store.format(item.action.amountMinor ?? item.request.requestedAmountMinor))
+                    .font(.headline).monospacedDigit()
+            }
+            Text(requestCategoryName(item.request.destinationCategoryID))
+                .font(.subheadline)
+            Text("By \(requestActorName(item.action.actorUserID)) · \(BudgetWorkspaceStore.compactDate(item.action.createdAt))")
+                .font(.caption).foregroundStyle(.secondary)
+            if !item.action.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(item.action.note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the funding request and its complete decision history")
+    }
+    private func requestActionTitle(_ action: String) -> String {
+        switch action {
+        case "created", "revised": "Funding requested"
+        case "approved": "Request approved"
+        case "partially_approved": "Request partly approved"
+        case "rejected": "Request rejected"
+        case "changes_requested": "Changes requested"
+        case "cancelled": "Request cancelled"
+        case "expired": "Request expired"
+        default: action.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+    private func requestActionSymbol(_ action: String) -> String {
+        switch action {
+        case "approved", "partially_approved": "checkmark.circle.fill"
+        case "rejected", "cancelled", "expired": "xmark.circle"
+        case "changes_requested": "arrow.uturn.backward.circle"
+        default: "hand.raised.fill"
+        }
+    }
+    private func requestActorName(_ userID: String?) -> String {
+        guard let userID else { return "System" }
+        return store.householdMembers.first(where: { $0.userID == userID })?.displayName ?? "Household member"
+    }
+    private func requestCategoryName(_ categoryID: String) -> String {
+        guard let category = store.categories.first(where: { $0.id == categoryID }) else { return "Authorized category" }
+        let group = store.groups.first(where: { $0.id == category.groupID })?.name
+        return group.map { "\($0) · \(category.name)" } ?? category.name
     }
     private func reconciliationRow(_ reconciliation: APIReconciliationHistory, account: APIAccount) -> some View {
         VStack(alignment: .leading, spacing: 5) {
