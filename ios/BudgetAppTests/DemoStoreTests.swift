@@ -3567,6 +3567,27 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalStatementMatchingRecognizesFirstClassPayeeAlias() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let payeeIndex = try XCTUnwrap(source.demo.payees.indices.first)
+        let canonicalName = source.demo.payees[payeeIndex].name
+        source.demo.payees[payeeIndex].aliases.append("BANK DESCRIPTION 4812")
+        try await source.recordTransaction(.init(
+            accountID: account.id, categoryID: nil, amountMinor: -1_234,
+            occurredOn: "2026-09-15", payeeName: canonicalName, memo: "Alias match",
+            isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: []
+        ))
+        let staged = try await source.stageStatementImport(
+            accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,-12.34,bank description 4812\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd")
+        )
+        XCTAssertEqual(try XCTUnwrap(staged.candidates.first).exactTransactionIDs.count, 1)
+    }
+
+    @MainActor
     func testLocalStatementMatchingBoundsSuggestionsAndReportsTruncation() async throws {
         let source = DemoWorkspaceDataSource()
         let account = try XCTUnwrap(source.demo.accounts.first)

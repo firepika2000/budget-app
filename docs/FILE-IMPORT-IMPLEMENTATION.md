@@ -15,6 +15,9 @@ Local Device duplicate suggestions now use only currently visible, posted observ
 selected statement account. Exact and possible matches are deterministically ordered, capped at 20
 each, and report truncation. A same-date/amount/payee transaction in another account, or a voided
 transaction in the selected account, cannot incorrectly steer review toward skipping a legitimate row.
+Exact matching is also first-class-payee alias aware for owners and otherwise unrestricted actors in
+both Budget Server and Local Device modes. Resource-scoped members receive no alias observations, so
+statement review cannot reveal private household aliases through exact-match suggestions.
 
 The native review now treats cancellation as an explicit lifecycle operation. Before preview,
 Close simply leaves the file picker flow because no server state exists. After staging, Cancel
@@ -179,8 +182,9 @@ durable batch identity, concurrency, matching and user approval are still not im
 `import_matching.py` produces review suggestions only. Same exact signed amount/date/normalized
 payee yields an exact suggestion, never automatic approval. Same amount in an explicitly selected
 zero-to-seven-day window yields possible suggestions. Debit and refund directions remain distinct.
-Name normalization reuses the canonical payee normalization; alias/first-class identity integration
-is still open. Repeated identical candidate date/amount/name/memo flags the first source record;
+Name normalization reuses the canonical payee normalization. Authorized adapters may also supply
+first-class-payee aliases; the production adapter does so only for unrestricted actors and the local
+adapter follows the same rule. Repeated identical candidate date/amount/name/memo flags the first source record;
 neither candidate is discarded because identical legitimate purchases can exist.
 
 Inputs are capped at 10,000 candidates and 50,000 observations. Amount/date/name indexes avoid

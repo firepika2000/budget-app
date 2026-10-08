@@ -24,6 +24,14 @@ def test_exact_possible_refunds_and_repeated_candidates_are_not_auto_consumed():
     assert reviews[2].duplicate_source_row is None
 
 
+def test_exact_match_recognizes_first_class_payee_alias_without_duplicate_ids():
+    observation = MatchObservation("txn", DAY, -100, "Coffee House", ("BANK COFFEE 4812", "Café"))
+    alias_candidate = ImportCandidate(2, DAY, -100, "bank coffee 4812", "")
+    canonical_candidate = ImportCandidate(3, DAY, -100, "Coffee House", "")
+    assert review_candidates([alias_candidate], [observation])[0].exact_transaction_ids == ("txn",)
+    assert review_candidates([canonical_candidate], [observation])[0].exact_transaction_ids == ("txn",)
+
+
 def test_date_window_is_explicit_and_deterministic():
     observations = [MatchObservation("next", date(2026, 9, 19), -100, "Café"), MatchObservation("prior", date(2026, 9, 17), -100, "Café")]
     assert review_candidates([candidate()], observations)[0].possible_transaction_ids == ()

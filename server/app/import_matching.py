@@ -24,6 +24,7 @@ class MatchObservation:
     occurred_on: date
     amount_minor: int
     payee: str
+    payee_aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,12 +59,18 @@ def review_candidates(
     counts = defaultdict(int)
     for row in sorted(observations, key=lambda row: row.transaction_id):
         key = (row.amount_minor, row.occurred_on.toordinal())
-        exact_key = (*key, normalized_payee_name(row.payee))
         counts[key] += 1
         if len(buckets[key]) < MAX_SUGGESTIONS:
             buckets[key].append(row.transaction_id)
-        if len(exact_buckets[exact_key]) < MAX_SUGGESTIONS:
-            exact_buckets[exact_key].append(row.transaction_id)
+        # An imported bank description may be a known alias for the canonical
+        # first-class payee stored on the transaction. Adapters decide whether
+        # aliases are safe to expose for the current actor before supplying them.
+        payee_keys = {normalized_payee_name(row.payee)}
+        payee_keys.update(normalized_payee_name(alias) for alias in row.payee_aliases)
+        for payee_key in payee_keys:
+            exact_key = (*key, payee_key)
+            if len(exact_buckets[exact_key]) < MAX_SUGGESTIONS:
+                exact_buckets[exact_key].append(row.transaction_id)
     seen = {}
     result = []
     for row in candidates:

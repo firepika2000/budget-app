@@ -1235,11 +1235,27 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let observations = resourceVisibleTransactions.filter {
             $0.accountID == accountID && $0.status == "posted"
         }
+        let includePayeeAliases = !actorHasResourceScope
+        func matchesPayee(_ transaction: DemoTransaction, candidatePayee: String) -> Bool {
+            let candidate = candidatePayee.trimmingCharacters(in: .whitespacesAndNewlines)
+            var names = [transaction.payee]
+            if includePayeeAliases,
+               let payee = demo.payees.first(where: {
+                   $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                       .caseInsensitiveCompare(transaction.payee.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+               }) {
+                names.append(contentsOf: payee.aliases)
+            }
+            return names.contains {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .caseInsensitiveCompare(candidate) == .orderedSame
+            }
+        }
         let candidates = parsed.map { candidate -> APIStatementImportCandidate in
             let candidateDate = BudgetWorkspaceStore.parseDate(candidate.occurredOn)
             let exactMatches = observations.filter {
                 BudgetWorkspaceStore.dateString($0.date) == candidate.occurredOn && $0.amount == candidate.amountMinor &&
-                $0.payee.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(candidate.payee) == .orderedSame
+                matchesPayee($0, candidatePayee: candidate.payee)
             }.sorted { $0.id < $1.id }
             let exact = exactMatches.prefix(20).map(\.id)
             let exactIDs = Set(exactMatches.map(\.id))
