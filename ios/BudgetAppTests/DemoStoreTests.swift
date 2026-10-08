@@ -3387,6 +3387,34 @@ final class DemoStoreTests: XCTestCase {
         }
     }
 
+    func testLocalDelimitedStatementParserAcceptsBOMMarkedUTF16() throws {
+        let source = "Date,Description,Amount\r\n2026-09-18,Caf\u{00e9},-12.34\r\n"
+        for littleEndian in [true, false] {
+            var data = Data(littleEndian ? [0xff, 0xfe] : [0xfe, 0xff])
+            for unit in source.utf16 {
+                let low = UInt8(unit & 0xff), high = UInt8(unit >> 8)
+                data.append(contentsOf: littleEndian ? [low, high] : [high, low])
+            }
+            let rows = try LocalDelimitedStatementParser.parse(
+                data: data,
+                mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                               amountColumn: "Amount", payeeColumn: "Description", dateOrder: "ymd")
+            )
+            XCTAssertEqual(rows.first?.payee, "Caf\u{00e9}")
+            XCTAssertEqual(rows.first?.amountMinor, -1234)
+        }
+
+        var unmarked = Data()
+        for unit in source.utf16 {
+            unmarked.append(contentsOf: [UInt8(unit & 0xff), UInt8(unit >> 8)])
+        }
+        XCTAssertThrowsError(try LocalDelimitedStatementParser.parse(
+            data: unmarked,
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Description", dateOrder: "ymd")
+        ))
+    }
+
     func testLocalQIFParserPreservesExactMoneyAndExplicitDateOrder() throws {
         let data = Data("!Type:Bank\nD10/02/2026\nT-1,234.56\nPUtility Company\nMSeptember bill\n^\nD03/10/'26\nT25.00\nPRefund\n^\n".utf8)
         let rows = try LocalQIFStatementParser.parse(data: data, mapping: .init(

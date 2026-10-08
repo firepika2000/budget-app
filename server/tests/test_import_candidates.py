@@ -100,6 +100,21 @@ def test_csv_mapping_quotes_utf8_bom_and_exact_signed_money():
     assert rows[0].occurred_on.isoformat() == "2026-09-18"
 
 
+@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be"])
+def test_bom_marked_utf16_bank_exports(encoding):
+    text = "Date,Amount,Payee,Memo\r\n2026-09-18,-12.34,Caf\u00e9,statement\r\n"
+    bom = b"\xff\xfe" if encoding.endswith("le") else b"\xfe\xff"
+    rows = parse_csv_candidates(bom + text.encode(encoding), MAPPING, scale=2)
+    assert (rows[0].amount_minor, rows[0].payee) == (-1234, "Caf\u00e9")
+
+
+def test_unmarked_or_malformed_utf16_fails_closed():
+    text = "Date,Amount,Payee,Memo\n2026-09-18,-1.00,Private,memo\n"
+    with pytest.raises(ImportValidationError, match="UTF-8 or BOM-marked UTF-16") as error:
+        parse_csv_candidates(text.encode("utf-16-le"), MAPPING, scale=2)
+    assert "Private" not in str(error.value)
+
+
 @pytest.mark.parametrize("value,scale,expected", [("92233720368547758.07", 2, 2**63-1), ("-92233720368547758.08", 2, -(2**63)), ("123", 0, 123), ("0.001", 3, 1), ("-0", 2, 0)])
 def test_exact_currency_boundaries(value, scale, expected):
     assert parse_minor_units(value, scale=scale) == expected

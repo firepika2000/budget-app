@@ -117,10 +117,14 @@ def parse_csv_candidates(data: bytes, mapping: CSVMapping, *, scale: int) -> lis
     if len(data) > MAX_FILE_BYTES:
         raise ImportValidationError("File exceeds 10 MB")
     try:
-        text = data.decode("utf-8-sig")
+        # Spreadsheet exports commonly use UTF-16. Accept it only when a BOM makes the
+        # byte order explicit; otherwise retain UTF-8 as the deterministic default.
+        text = data.decode("utf-16" if data.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig")
     except UnicodeDecodeError:
-        raise ImportValidationError("CSV must use UTF-8 encoding") from None
+        raise ImportValidationError("CSV must use UTF-8 or BOM-marked UTF-16 encoding") from None
     if "\x00" in text:
+        if not data.startswith((b"\xff\xfe", b"\xfe\xff")):
+            raise ImportValidationError("CSV must use UTF-8 or BOM-marked UTF-16 encoding")
         raise ImportValidationError("CSV contains an unsupported control character")
     reader = csv.reader(io.StringIO(text, newline=""), strict=True, delimiter=mapping.delimiter)
     candidates = []

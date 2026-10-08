@@ -1929,3 +1929,11 @@ collects alongside the existing race harness and the equivalent canonical approv
 passes locally. This Mac has neither Docker nor a configured disposable PostgreSQL test URL, so the
 new race remains an explicit local skip until the PostgreSQL CI/test environment runs it; no Live
 database was used and no concurrency PASS is claimed from SQLite.
+
+### UTF-16 statement export compatibility — 2026-10-08
+
+Delimited statement import now accepts UTF-8 plus BOM-marked UTF-16 little- and big-endian files in
+both Budget Server and Local Device modes. The BOM is required so ClearPocket never guesses byte
+order or falls back through locale-dependent decoders. Malformed or unmarked UTF-16 fails before
+staging with a private-safe validation message. This widens spreadsheet/bank export compatibility
+without changing mapping, money parsing, approval, or ledger semantics.

@@ -50,7 +50,8 @@ row rolls back the entire claim and write set; a concurrent or replayed approval
 
 `server/app/import_candidates.py` is a side-effect-free CSV adapter. Explicit unique column
 mapping selects ISO calendar date, signed decimal amount, payee text and optional memo. UTF-8
-with optional BOM, quoted delimiters and quoted multiline fields are supported. Date/locale
+with optional BOM and explicitly BOM-marked UTF-16 little/big endian, quoted delimiters and quoted
+multiline fields are supported. Unmarked UTF-16 remains rejected rather than guessing an encoding. Date/locale
 guessing, currency conversion and rounding are deliberately absent: later mapping UI must make
 these choices explicit rather than silently changing financial meaning.
 

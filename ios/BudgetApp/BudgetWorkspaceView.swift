@@ -8068,7 +8068,9 @@ enum LocalDelimitedStatementParser {
         guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Statement files must be 10 MB or smaller.") }
         guard mapping.delimiter.count == 1, let delimiter = mapping.delimiter.first,
               [",", ";", "\t"].contains(mapping.delimiter) else { throw workspaceRepositoryError("Choose comma, semicolon, or tab as the separator.") }
-        guard let text = String(data: data, encoding: .utf8) else { throw workspaceRepositoryError("The statement must be UTF-8 text.") }
+        let text = decodedText(data)
+        guard let text else { throw workspaceRepositoryError("The statement must use UTF-8 or BOM-marked UTF-16 text.") }
+        guard !text.contains("\0") else { throw workspaceRepositoryError("The statement must use UTF-8 or BOM-marked UTF-16 text.") }
         let rows = try records(text, delimiter: delimiter)
         guard let header = rows.first, rows.count > 1 else { throw workspaceRepositoryError("The statement does not contain transaction rows.") }
         let names = header.enumerated().reduce(into: [String: Int]()) { result, item in
@@ -8103,6 +8105,34 @@ enum LocalDelimitedStatementParser {
         }
         return output
     }
+
+    private static func decodedText(_ data: Data) -> String? {
+        let bytes = [UInt8](data)
+        guard bytes.count >= 2 else { return String(data: data, encoding: .utf8) }
+        let isLittleEndian = bytes[0] == 0xff && bytes[1] == 0xfe
+        let isBigEndian = bytes[0] == 0xfe && bytes[1] == 0xff
+        guard isLittleEndian || isBigEndian else { return String(data: data, encoding: .utf8) }
+        guard (bytes.count - 2).isMultiple(of: 2) else { return nil }
+
+        var units: [UInt16] = []
+        units.reserveCapacity((bytes.count - 2) / 2)
+        for index in stride(from: 2, to: bytes.count, by: 2) {
+            let first = UInt16(bytes[index]), second = UInt16(bytes[index + 1])
+            units.append(isLittleEndian ? first | (second << 8) : (first << 8) | second)
+        }
+        var index = 0
+        while index < units.count {
+            let unit = units[index]
+            if (0xd800...0xdbff).contains(unit) {
+                guard index + 1 < units.count, (0xdc00...0xdfff).contains(units[index + 1]) else { return nil }
+                index += 2
+            } else {
+                guard !(0xdc00...0xdfff).contains(unit) else { return nil }
+                index += 1
+            }
+        }
+        return String(decoding: units, as: UTF16.self)
+    }
     private static func records(_ text: String, delimiter: Character) throws -> [[String]] {
         var rows: [[String]] = [], row: [String] = [], field = "", quoted = false, index = text.startIndex
         while index < text.endIndex {
@@ -8111,7 +8141,7 @@ enum LocalDelimitedStatementParser {
                 let next = text.index(after: index)
                 if quoted && next < text.endIndex && text[next] == "\"" { field.append("\""); index = next } else { quoted.toggle() }
             } else if char == delimiter && !quoted { row.append(field); field = "" }
-            else if (char == "\n" || char == "\r") && !quoted {
+            else if (char == "\n" || char == "\r" || char == "\r\n") && !quoted {
                 if char == "\r" { let next = text.index(after: index); if next < text.endIndex && text[next] == "\n" { index = next } }
                 row.append(field); field = ""; if row.contains(where: { !$0.isEmpty }) { rows.append(row) }; row = []
             } else { field.append(char) }
