@@ -193,13 +193,39 @@ public struct LocalAllocationRecord: Codable, Equatable, Sendable {
 
 public struct LocalReconciliationRecord: Codable, Equatable, Sendable {
     public let id: String; public let accountID: String; public let statementDate: String
-    public let statementBalanceMinor: Int64; public let adjustmentTransactionID: String?
+    public let statementBalanceMinor: Int64; public let actorUserID: String?
+    public let clearedBalanceBeforeMinor: Int64?; public let reconciledTransactionCount: Int64
+    public let adjustmentTransactionID: String?
     public let createdAt: String
     public init(id: String, accountID: String, statementDate: String, statementBalanceMinor: Int64,
+                actorUserID: String? = nil, clearedBalanceBeforeMinor: Int64? = nil,
+                reconciledTransactionCount: Int64 = 0,
                 adjustmentTransactionID: String? = nil, createdAt: String) {
         self.id = id; self.accountID = accountID; self.statementDate = statementDate
         self.statementBalanceMinor = statementBalanceMinor
+        self.actorUserID = actorUserID; self.clearedBalanceBeforeMinor = clearedBalanceBeforeMinor
+        self.reconciledTransactionCount = reconciledTransactionCount
         self.adjustmentTransactionID = adjustmentTransactionID; self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, accountID, statementDate, statementBalanceMinor, actorUserID
+        case clearedBalanceBeforeMinor, reconciledTransactionCount, adjustmentTransactionID, createdAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try values.decode(String.self, forKey: .id),
+            accountID: try values.decode(String.self, forKey: .accountID),
+            statementDate: try values.decode(String.self, forKey: .statementDate),
+            statementBalanceMinor: try values.decode(Int64.self, forKey: .statementBalanceMinor),
+            actorUserID: try values.decodeIfPresent(String.self, forKey: .actorUserID),
+            clearedBalanceBeforeMinor: try values.decodeIfPresent(Int64.self, forKey: .clearedBalanceBeforeMinor),
+            reconciledTransactionCount: try values.decodeIfPresent(Int64.self, forKey: .reconciledTransactionCount) ?? 0,
+            adjustmentTransactionID: try values.decodeIfPresent(String.self, forKey: .adjustmentTransactionID),
+            createdAt: try values.decode(String.self, forKey: .createdAt)
+        )
     }
 }
 
@@ -673,9 +699,11 @@ public actor LocalAuthorityStore {
 
     public func insertReconciliation(_ value: LocalReconciliationRecord) async throws {
         try await database.execute(.init(
-            "INSERT INTO reconciliations(id,account_id,statement_date,statement_balance_minor,adjustment_transaction_id,created_at) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO reconciliations(id,account_id,statement_date,statement_balance_minor,actor_user_id,cleared_balance_before_minor,reconciled_transaction_count,adjustment_transaction_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
             values: [.text(value.id), .text(value.accountID), .text(value.statementDate),
-                     .integer(value.statementBalanceMinor), optionalText(value.adjustmentTransactionID), .text(value.createdAt)]
+                     .integer(value.statementBalanceMinor), optionalText(value.actorUserID),
+                     optionalInteger(value.clearedBalanceBeforeMinor), .integer(value.reconciledTransactionCount),
+                     optionalText(value.adjustmentTransactionID), .text(value.createdAt)]
         ))
     }
 
@@ -885,7 +913,7 @@ public actor LocalAuthorityStore {
             .init("INSERT INTO allocation_operations(id,budget_id,category_id,amount_minor,occurred_on,kind,actor_user_id,note,created_at,operation_id,source_category_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), optionalText(item.categoryID), .integer(item.amountMinor), .text(item.occurredOn), .text(item.kind), .text(item.actorUserID), .text(item.note), .text(item.createdAt), .text(item.operationID), optionalText(item.sourceCategoryID)])
         }
         statements += value.reconciliations.map { item in
-            .init("INSERT INTO reconciliations(id,account_id,statement_date,statement_balance_minor,adjustment_transaction_id,created_at) VALUES (?,?,?,?,?,?)", values: [.text(item.id), .text(item.accountID), .text(item.statementDate), .integer(item.statementBalanceMinor), optionalText(item.adjustmentTransactionID), .text(item.createdAt)])
+            .init("INSERT INTO reconciliations(id,account_id,statement_date,statement_balance_minor,actor_user_id,cleared_balance_before_minor,reconciled_transaction_count,adjustment_transaction_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.accountID), .text(item.statementDate), .integer(item.statementBalanceMinor), optionalText(item.actorUserID), optionalInteger(item.clearedBalanceBeforeMinor), .integer(item.reconciledTransactionCount), optionalText(item.adjustmentTransactionID), .text(item.createdAt)])
         }
         statements += value.targets.map { item in
             .init("INSERT INTO category_targets(category_id,target_type,amount_minor,cadence,effective_month,snoozed_month,target_date,recurrence_months,minimum_contribution_minor,priority,is_active,snoozed_months_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.categoryID), .text(item.targetType), .integer(item.amountMinor), .text(item.cadence), .text(item.effectiveMonth), optionalText(item.snoozedMonth), optionalText(item.targetDate), optionalInteger(item.recurrenceMonths), .integer(item.minimumContributionMinor), .integer(item.priority), .integer(item.isActive ? 1 : 0), .text(json(item.snoozedMonths))])
@@ -977,7 +1005,7 @@ public actor LocalAuthorityStore {
         return try rows.compactMap {
             let accountID = try text($0, "account_id")
             guard accountIDs.contains(accountID) else { return nil }
-            return try .init(id: text($0, "id"), accountID: accountID, statementDate: text($0, "statement_date"), statementBalanceMinor: integer($0, "statement_balance_minor"), adjustmentTransactionID: optionalText($0, "adjustment_transaction_id"), createdAt: text($0, "created_at"))
+            return try .init(id: text($0, "id"), accountID: accountID, statementDate: text($0, "statement_date"), statementBalanceMinor: integer($0, "statement_balance_minor"), actorUserID: optionalText($0, "actor_user_id"), clearedBalanceBeforeMinor: optionalInteger($0, "cleared_balance_before_minor"), reconciledTransactionCount: integer($0, "reconciled_transaction_count"), adjustmentTransactionID: optionalText($0, "adjustment_transaction_id"), createdAt: text($0, "created_at"))
         }
     }
 

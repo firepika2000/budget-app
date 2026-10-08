@@ -275,6 +275,9 @@ def build_local_device_projection(
             "id": item.id, "account_id": item.account_id,
             "statement_date": _iso(item.statement_date),
             "statement_balance_minor": item.statement_balance_minor,
+            "actor_user_id": item.actor_user_id,
+            "cleared_balance_before_minor": item.cleared_balance_before_minor,
+            "reconciled_transaction_count": item.reconciled_transaction_count,
             "adjustment_transaction_id": item.adjustment_transaction_id,
             "created_at": _iso(item.created_at),
         } for item in db.scalars(select(Reconciliation).where(

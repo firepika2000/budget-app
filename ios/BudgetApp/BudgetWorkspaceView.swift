@@ -2106,11 +2106,11 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory] {
         try requireActiveMembership()
         guard actorAccountIDs.contains(accountID) else { throw APIClientError.server(status: 404, message: "Account not found") }
-        let actorName = demo.persona.rawValue
         return demo.reconciliationHistory.filter { $0.accountID == accountID }
             .sorted { ($0.statementDate, $0.createdAt, $0.id) > ($1.statementDate, $1.createdAt, $1.id) }
             .dropFirst(offset).prefix(limit).map {
-                APIReconciliationHistory(id: $0.id, accountID: $0.accountID, actorUserID: demo.persona.rawValue, actorDisplayName: actorName, statementDate: $0.statementDate, statementBalanceMinor: $0.statementBalanceMinor, clearedBalanceBeforeMinor: $0.statementBalanceMinor, reconciledTransactionCount: 0, adjustmentTransactionID: $0.adjustmentTransactionID, createdAt: $0.createdAt)
+                let actorID = $0.actorUserID ?? demo.persona.rawValue.lowercased()
+                return APIReconciliationHistory(id: $0.id, accountID: $0.accountID, actorUserID: actorID, actorDisplayName: demo.persona.rawValue, statementDate: $0.statementDate, statementBalanceMinor: $0.statementBalanceMinor, clearedBalanceBeforeMinor: $0.clearedBalanceBeforeMinor ?? $0.statementBalanceMinor, reconciledTransactionCount: Int($0.reconciledTransactionCount), adjustmentTransactionID: $0.adjustmentTransactionID, createdAt: $0.createdAt)
             }
     }
     func assignMoney(_ operation: AssignMoneyOperation) async throws { try requireActiveMembership();

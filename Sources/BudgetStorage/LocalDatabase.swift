@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 14
+    public static let schemaVersion = 15
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -379,6 +379,18 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 15 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV15 { try execute(sql, on: database) }
+                try execute("INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)", values: [.integer(15), .text(Self.timestamp())], on: database)
+                try execute("PRAGMA user_version = 15", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -418,6 +430,12 @@ public actor LocalDatabase {
 
     private static let schemaV14 = [
         "ALTER TABLE transaction_splits ADD COLUMN financial_classification TEXT"
+    ]
+
+    private static let schemaV15 = [
+        "ALTER TABLE reconciliations ADD COLUMN actor_user_id TEXT REFERENCES users(id)",
+        "ALTER TABLE reconciliations ADD COLUMN cleared_balance_before_minor INTEGER",
+        "ALTER TABLE reconciliations ADD COLUMN reconciled_transaction_count INTEGER NOT NULL DEFAULT 0 CHECK(reconciled_transaction_count >= 0)"
     ]
 
     private static let schemaV2 = [

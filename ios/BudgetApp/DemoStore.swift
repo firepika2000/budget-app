@@ -78,6 +78,7 @@ final class DemoStore: ObservableObject {
     // Command history only. Seed opening observations are not invented historical operations.
     private(set) var allocationEvents: [AllocationEvent] = []
     private(set) var reconciliationHistory: [LocalReconciliationRecord] = []
+    private var authorityOwnerUserID: String?
     private(set) var allocationVersion = 0
 
     func requireAllocationVersion(_ expected: Int) throws {
@@ -711,11 +712,20 @@ final class DemoStore: ObservableObject {
             transactions[0].reconciled = true
         }
         accounts[index].reconciledBalance = statementBalance
+        let newlyReconciledCount = eligible.filter { !$0.reconciled }.count
         let eligibleIDs = Set(eligible.map(\.id))
         for transactionIndex in transactions.indices where eligibleIDs.contains(transactions[transactionIndex].id) {
             transactions[transactionIndex].reconciled = true
         }
-        reconciliationHistory.append(.init(id: UUID().uuidString, accountID: accountID, statementDate: cutoff.iso, statementBalanceMinor: statementBalance, adjustmentTransactionID: adjustmentTransactionID, createdAt: ISO8601DateFormatter().string(from: planningNow())))
+        reconciliationHistory.append(.init(
+            id: UUID().uuidString, accountID: accountID, statementDate: cutoff.iso,
+            statementBalanceMinor: statementBalance,
+            actorUserID: authorityOwnerUserID ?? persona.rawValue.lowercased(),
+            clearedBalanceBeforeMinor: cleared,
+            reconciledTransactionCount: Int64(newlyReconciledCount),
+            adjustmentTransactionID: adjustmentTransactionID,
+            createdAt: ISO8601DateFormatter().string(from: planningNow())
+        ))
         errorMessage = nil
         return true
     }
@@ -1157,6 +1167,7 @@ extension DemoStore {
     /// local facts. No example fixtures or demo personas are installed on this path.
     func loadLocalAuthority(_ value: LocalAuthoritySnapshot) throws {
         persona = .rey
+        authorityOwnerUserID = value.identity.ownerUserID
         accounts = value.accounts.map { item in
             DemoAccount(id: item.id, name: item.name, kind: DemoAccountKind(rawValue: item.kind) ?? (item.isOnBudget ? .checking : .asset), balance: item.openingBalanceMinor, cleared: item.openingBalanceMinor, isOnBudget: item.isOnBudget, isClosed: item.isClosed)
         }

@@ -327,6 +327,17 @@ def test_reconciliation_history_is_append_only_attributed_and_scoped(
     assert history[0]["actor_display_name"]
     assert history[1]["reconciled_transaction_count"] == 1
 
+    portable = client.get(
+        f"/api/v1/budgets/{budget['id']}/local-device-transfer",
+        headers=auth(owner_token),
+    )
+    assert portable.status_code == 200, portable.text
+    exported = {row["id"]: row for row in portable.json()["reconciliations"]}
+    for row in history:
+        assert exported[row["id"]]["actor_user_id"] == row["actor_user_id"]
+        assert exported[row["id"]]["cleared_balance_before_minor"] == row["cleared_balance_before_minor"]
+        assert exported[row["id"]]["reconciled_transaction_count"] == row["reconciled_transaction_count"]
+
     changes = client.get(
         f"/api/v1/budgets/{budget['id']}/transactions/{original['id']}/history",
         headers=auth(owner_token),

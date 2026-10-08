@@ -79,6 +79,9 @@ final class LocalDatabaseTests: XCTestCase {
             .init("ALTER TABLE scheduled_transactions DROP COLUMN end_date"),
             .init("ALTER TABLE transactions DROP COLUMN scheduled_transaction_id"),
             .init("ALTER TABLE transaction_splits DROP COLUMN financial_classification"),
+            .init("ALTER TABLE reconciliations DROP COLUMN actor_user_id"),
+            .init("ALTER TABLE reconciliations DROP COLUMN cleared_balance_before_minor"),
+            .init("ALTER TABLE reconciliations DROP COLUMN reconciled_transaction_count"),
             .init("ALTER TABLE payees DROP COLUMN merged_into_payee_id"),
             .init("DELETE FROM local_schema_migrations WHERE version >= 4"),
             .init("PRAGMA user_version = 3"),
@@ -160,7 +163,7 @@ final class LocalDatabaseTests: XCTestCase {
                      .init(id: "tax", categoryID: "groceries", amountMinor: -2_345)]
         ))
         try await store?.insertAllocation(.init(id: "allocation", budgetID: "budget", categoryID: "groceries", amountMinor: 50_00, occurredOn: "2026-09-01", kind: "assign", actorUserID: "owner", createdAt: timestamp))
-        try await store?.insertReconciliation(.init(id: "reconciliation", accountID: "checking", statementDate: "2026-09-27", statementBalanceMinor: 9_007_199_254_728_646, createdAt: timestamp))
+        try await store?.insertReconciliation(.init(id: "reconciliation", accountID: "checking", statementDate: "2026-09-27", statementBalanceMinor: 9_007_199_254_728_646, actorUserID: "owner", clearedBalanceBeforeMinor: 9_007_199_254_728_600, reconciledTransactionCount: 3, createdAt: timestamp))
         try await store?.upsertTarget(.init(categoryID: "groceries", targetType: "monthly", amountMinor: 60_00, cadence: "monthly", effectiveMonth: "2026-09", targetDate: "2027-01-01", recurrenceMonths: 3, minimumContributionMinor: 5_00, priority: 80, isActive: false, snoozedMonths: ["2026-10-01", "2026-11-01"]))
         try await store?.upsertSchedule(.init(id: "schedule", budgetID: "budget", accountID: "checking", categoryID: "groceries", payeeID: "market", name: "Weekly market", amountMinor: -12_345, nextDate: "2026-10-04", recurrenceUnit: "weeks", intervalCount: 1, endDate: "2026-12-27", remainingOccurrences: 6, financialClassification: "interest_charge", lastRealizedOn: "2026-09-27"))
         try await store?.insertAttachment(.init(id: "receipt", transactionID: "purchase", filename: "receipt.jpg", contentType: "image/jpeg", sizeBytes: 4_096, sha256: String(repeating: "a", count: 64), objectName: "objects/receipt.enc", createdAt: timestamp))
@@ -177,6 +180,9 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(snapshot.categories.map(\.name), ["Groceries"])
         XCTAssertEqual(snapshot.categories.first?.isFavorite, true)
         XCTAssertEqual(snapshot.categories.first?.favoriteSortOrder, 3)
+        XCTAssertEqual(snapshot.reconciliations.first?.actorUserID, "owner")
+        XCTAssertEqual(snapshot.reconciliations.first?.clearedBalanceBeforeMinor, 9_007_199_254_728_600)
+        XCTAssertEqual(snapshot.reconciliations.first?.reconciledTransactionCount, 3)
         XCTAssertEqual(snapshot.payees.map(\.name), ["Old Market", "Market"])
         XCTAssertEqual(snapshot.payees.first(where: { $0.id == "old-market" })?.mergedIntoPayeeID, "market")
         XCTAssertEqual(snapshot.payeeAliases.map(\.displayName), ["The Market"])
@@ -289,7 +295,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.scheduledTransactionID, "deleted-schedule")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 14)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 15)
     }
 
     func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {

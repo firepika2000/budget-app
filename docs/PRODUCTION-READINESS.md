@@ -1991,6 +1991,9 @@ balance, allocation, reserve or reconciliation result.
 
 The iPhone account register provides Reconciliation History with explicit older-page loading. Live,
 Demo and Local Device compositions use the same view; Local Device retains each checkpoint in its
-existing durable reconciliation table. Focused backend lifecycle/privacy tests, populated migration
+existing durable reconciliation table. Local schema 15 and the Server-to-Local projection now retain
+actor identity, prior cleared balance, and affected transaction count across transfer, relaunch,
+encrypted backup, and restore. Older snapshots and databases migrate without inventing unavailable
+history. Focused backend lifecycle/privacy tests, populated migration
 backfill, Swift package tests, typed API contract tests, and the regular Xcode 27 iPhone 17 Pro Max
 Simulator build pass. Human presentation acceptance remains pending.

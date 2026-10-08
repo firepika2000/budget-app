@@ -436,7 +436,8 @@ The roadmap is a living document, but changing it is a deliberate product decisi
   balance. The production account register exposes a bounded Reconciliation History view showing the
   statement date and balance, prior cleared balance, transaction count, adjustment presence, and actor.
   Existing reconciled accounts receive one conservative legacy checkpoint during migration; no ledger
-  or balance is recalculated.
+  or balance is recalculated. Server-to-Local Device transfer and encrypted Local Device snapshots
+  preserve those audit fields losslessly; legacy snapshots remain readable without fabricating facts.
 
 - Transaction Change History now explains safe before/after values for ordinary edits instead of
   listing only field names. Exact money remains integer minor units until native formatting; account
