@@ -2002,6 +2002,40 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testPlanningGuidanceRecomputesAfterCanonicalTransactionChange() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        await store.loadPlanningGuidance()
+        let before = try XCTUnwrap(store.planningSpendingReport?.totalSpendingMinor)
+        let account = try XCTUnwrap(store.accounts.first(where: { $0.isOnBudget && !$0.isClosed }))
+        let category = try XCTUnwrap(store.categories.first(where: { !$0.isArchived && $0.systemType == nil }))
+        let operation = RecordTransactionOperation(
+            accountID: account.id,
+            categoryID: category.id,
+            amountMinor: -1_234,
+            occurredOn: "2026-09-05",
+            payeeName: "Guidance refresh",
+            memo: "",
+            isCleared: false,
+            splits: [],
+            flag: nil,
+            tags: [],
+            attachmentMetadata: []
+        )
+
+        try await store.createTransaction(operation)
+        await store.loadPlanningGuidance()
+
+        XCTAssertEqual(store.planningSpendingReport?.totalSpendingMinor, before + 1_234)
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        XCTAssertTrue(source.contains(".task(id: \"\\(store.reportRevision)|\\(store.planMonth.timeIntervalSinceReferenceDate)\")"))
+        XCTAssertTrue(source.contains("if !isTransientConnectivityFailure(error) { planningSpendingReport = nil }"))
+    }
+
+    @MainActor
     func testLocalDeviceWorkspacePersistsCanonicalMoneyAndMetadataAcrossReconstruction() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("LocalWorkspace-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

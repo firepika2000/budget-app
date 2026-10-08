@@ -438,6 +438,10 @@ The roadmap is a living document, but changing it is a deliberate product decisi
   Its one-shot draft is bounded and expires after five minutes. The privacy-safe launcher widget's
   Add Transaction control opens this same editor without placing private values in a widget URL.
 
+- Plan group Suggested and Average Spent guidance follows authoritative workspace revisions while
+  Plan is visible. It keeps the last authorized observation through temporary connectivity loss but
+  clears it on scope denial, preventing stale cross-permission aggregates without moving money.
+
 - Activity now surfaces the five most recent visible transaction audit events with actor, action,
   ledger date, payee context, and a concise changed-field summary. Selecting an event opens the
   existing production transaction detail and complete Change History; no duplicate editor or audit

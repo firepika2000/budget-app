@@ -2828,6 +2828,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var planPerformanceReport: APIPlanPerformanceReport?
     @Published var resilienceReport: APIResilienceReport?
     @Published var planningSpendingReport: APISpendingReport?
+    private var planningGuidanceOperationID: UUID?
     @Published var insightsSummary: APIInsightsSummary?
     @Published private(set) var reportRevision = 0
     @Published private(set) var loadedReportKinds: Set<WorkspaceReportKind> = []
@@ -3259,7 +3260,13 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func loadPlanningGuidance() async {
-        guard !workspaceAccessDenied, let dataSource, budget.can("view_reports") else { return }
+        guard !workspaceAccessDenied, let dataSource, budget.can("view_reports") else {
+            planningGuidanceOperationID = nil
+            planningSpendingReport = nil
+            return
+        }
+        let operationID = UUID()
+        planningGuidanceOperationID = operationID
         let end = Calendar.current.startOfDay(for: Date())
         let start = Calendar.current.date(byAdding: .day, value: -89, to: end) ?? end
         let query = WorkspaceReportQuery(
@@ -3267,8 +3274,17 @@ final class BudgetWorkspaceStore: ObservableObject {
             payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "",
             spendingTrendDimension: "group", includeTracking: false
         )
-        do { planningSpendingReport = try await dataSource.reports(planMonth: planMonth, query: query, kinds: [.spending]).spending }
-        catch { /* Core planning remains usable when optional guidance is unavailable. */ }
+        do {
+            let report = try await dataSource.reports(planMonth: planMonth, query: query, kinds: [.spending]).spending
+            guard planningGuidanceOperationID == operationID else { return }
+            planningSpendingReport = report
+        } catch {
+            guard planningGuidanceOperationID == operationID else { return }
+            // Retain the last authorized observation only for a temporary network outage. A
+            // permission/resource denial or malformed response must fail closed instead of leaving
+            // an aggregate from a scope the member may no longer possess.
+            if !isTransientConnectivityFailure(error) { planningSpendingReport = nil }
+        }
     }
 
     func fetchReports(query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
@@ -6586,7 +6602,9 @@ private struct LivePlanView: View {
         .sheet(isPresented: $showCategories) { LiveCategoryManagementView() }
         .sheet(isPresented: $showGroupCreation) { GroupCreationView() }
         .sheet(item: $selectedGroup) { LivePlanGroupDetailView(group: $0) }
-        .task { await store.loadPlanningGuidance() }
+        .task(id: "\(store.reportRevision)|\(store.planMonth.timeIntervalSinceReferenceDate)") {
+            await store.loadPlanningGuidance()
+        }
         .onAppear { restoreFocusPreference() }
         .onChange(of: focus) { _, value in
             UserDefaults.standard.set(value.rawValue, forKey: focusPreferenceKey)

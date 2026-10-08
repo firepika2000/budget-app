@@ -30,6 +30,13 @@ The privacy-safe launcher widget's **Add transaction** control now opens that sa
 instead of merely navigating to Activity. Its deep link accepts no payee, amount, memo or other
 private query data; unknown or decorated quick-entry routes fail closed.
 
+Plan guidance freshness checkpoint (2026-10-08): group Suggested and Average Spent guidance now
+reloads when the authoritative workspace revision or selected Plan month changes, including the
+existing bounded foreground polling path used for another-device updates. Overlapping responses are
+generation-guarded. Temporary connectivity loss retains the last authorized aggregate, while a
+permission/resource denial or invalid response clears it so an aggregate from a former scope cannot
+remain visible. This changes presentation freshness only; no assignment or transaction is created.
+
 Allocation-attribution checkpoint (2026-10-08): Plan allocation history now carries the current
 server-authoritative display name for the immutable actor user ID. The history UI no longer depends
 on the currently loaded active-member list to explain who assigned or moved money, so actions by a
