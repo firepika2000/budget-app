@@ -36,11 +36,20 @@ from app.models import (
     Category,
     CreditCardReserveEvent,
     FinancialRequest,
+    ImportBatch,
     ScheduledTransaction,
     Transaction,
     User,
 )
-from app.schemas import AllocationTransferCreate, FinancialRequestDecision, ReconcileRequest, TransactionBulkUpdateRequest
+from app.schemas import (
+    AllocationTransferCreate,
+    FinancialRequestDecision,
+    ReconcileRequest,
+    StatementImportApprovalItem,
+    StatementImportApproveRequest,
+    TransactionBulkUpdateRequest,
+)
+from app.import_routes import approve_statement_import
 from app.planning_routes import realize_scheduled_transaction
 from app.request_routes import decide_request
 from app.budgeting_routes import bulk_update_transactions, transfer_allocation, reconcile_account
@@ -268,6 +277,53 @@ def test_concurrent_target_snoozes_are_idempotent_and_money_neutral(pg):
                               route_attempt(pg.factory, pg.owner_id, attempt)])) == ["ok", "ok"]
     with pg.factory() as db:
         assert db.scalar(text("SELECT COUNT(*) FROM category_target_snoozes")) == 1
+
+
+def test_concurrent_statement_import_approval_posts_exactly_once(pg):
+    """The same reviewed statement row has one winner under a real PostgreSQL row race."""
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    staged = pg.client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/statement-imports",
+        headers={
+            **auth(pg.token), "Content-Type": "application/octet-stream",
+            "X-Statement-Format": "csv", "X-Statement-Currency": "USD",
+            "X-CSV-Date-Column": "Date", "X-CSV-Amount-Column": "Amount",
+            "X-CSV-Payee-Column": "Payee", "X-Statement-Date-Order": "ymd",
+        },
+        content=b"Date,Amount,Payee\n2026-09-18,-12.34,Market\n",
+    )
+    assert staged.status_code == 201, staged.text
+    batch = staged.json()
+    body = StatementImportApproveRequest(
+        expected_version=batch["version"],
+        items=[StatementImportApprovalItem(
+            source_row=2, action="post", category_id=category["id"],
+        )],
+    )
+
+    def call(db, user):
+        return approve_statement_import(
+            budget_id=budget["id"], account_id=account["id"], batch_id=batch["id"],
+            body=body, user=user, db=db,
+        )
+
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["conflict", "ok"], results
+    assert next(status for kind, status in results if kind == "conflict") == 409
+    with pg.factory() as db:
+        stored = db.get(ImportBatch, batch["id"])
+        assert (stored.status, stored.version) == ("approved", batch["version"] + 1)
+        assert db.scalar(select(func.count()).select_from(Transaction).where(
+            Transaction.account_id == account["id"],
+            Transaction.payee_name == "Market",
+        )) == 1
+        posted_id = stored.candidates[0].get("posted_transaction_id")
+        transaction = db.get(Transaction, posted_id)
+        assert transaction is not None
+        assert (transaction.amount_minor, transaction.category_id, transaction.is_cleared) == (
+            -1234, category["id"], True,
+        )
     after = pg.client.get(f"{root}/months/2026-09-01", headers=auth(pg.token)).json()
     assert after["allocation_version"] == before["allocation_version"]
     assert after["ready_to_assign_minor"] == before["ready_to_assign_minor"]

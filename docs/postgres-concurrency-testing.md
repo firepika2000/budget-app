@@ -16,6 +16,7 @@
 | `test_concurrent_realize_credit_purchase_moves_reserve_once` | Concurrent credit-purchase realization → one reserve movement, no duplicate |
 | `test_concurrent_full_approvals_move_money_once` | Two full approvals → one wins (409 other); one `request_approval` op, two postings |
 | `test_concurrent_partial_approvals_move_money_once` | Two partial approvals from the same version → money moves once |
+| `test_concurrent_statement_import_approval_posts_exactly_once` | Two approvals of one staged bank row → one cleared canonical transaction; stale reviewer gets 409 |
 | `test_concurrent_delegated_moves_cannot_exceed_authority` | Two in-sandbox moves that together exceed the pool → at most one succeeds; controlled allocation stays == authority; pool never negative |
 | `test_concurrent_moves_from_same_version_have_one_winner` | Optimistic version race → one applies, stale writer 409; ledger balanced; no lost update |
 | `test_concurrent_reconciliation_creates_one_adjustment` | Two adjusting reconciliations → exactly one adjustment (account lock + expected-cleared guard) |

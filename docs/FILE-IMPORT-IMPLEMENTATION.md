@@ -77,9 +77,10 @@ any later spreadsheet export still requires its own formula-injection defenses.
 3. Current resource authorization before matching, suggestions, duplicate counts or preview.
 4. Stable external identity/fingerprints and bounded canonical-transaction matching. Ambiguous
    candidates remain explicitly reviewable; no silent merge or payee creation.
-5. Continue hardening explicit approval with PostgreSQL concurrency coverage.
-   Canonical transaction commands, optimistic replay protection, audit attribution and unchanged
-   reconciliation/credit-reserve protections are active.
+5. Explicit approval has PostgreSQL concurrency coverage: two genuinely overlapping approvals of
+   one reviewed batch produce one canonical cleared transaction and one `409` conflict. Canonical
+   transaction commands, optimistic replay protection, audit attribution and unchanged
+   reconciliation/credit-reserve protections remain active.
    `budgeting_routes.create_transaction_in_session` now owns authorization, payee resolution,
    reserve events and audit without committing; the existing HTTP route commits the returned
    transaction. Approval reuses this operation inside one caller-owned transaction.

@@ -1919,3 +1919,13 @@ consistent separator and a four-digit year, so mixed or shortened forms fail wit
 validation before staging. Focused backend parser/route tests and the production Local Device parser
 test pass on the preserved iPhone 17 Pro Max / iOS 27 simulator under regular Xcode 27. No migration
 or financial-state change is involved.
+
+### Statement-import approval concurrency gate — 2026-10-08
+
+The real PostgreSQL concurrency suite now includes simultaneous approval of one reviewed statement
+batch. Its independent final-state assertions require one winner, one `409`, one approved version,
+and exactly one cleared canonical transaction with the selected category and exact amount. The test
+collects alongside the existing race harness and the equivalent canonical approval integration test
+passes locally. This Mac has neither Docker nor a configured disposable PostgreSQL test URL, so the
+new race remains an explicit local skip until the PostgreSQL CI/test environment runs it; no Live
+database was used and no concurrency PASS is claimed from SQLite.
