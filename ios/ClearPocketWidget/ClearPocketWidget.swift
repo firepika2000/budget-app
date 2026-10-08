@@ -20,9 +20,9 @@ private struct ClearPocketWidgetView: View {
             Text("Your budget stays private. Choose where to pick up.")
                 .font(.caption).foregroundStyle(.secondary).lineLimit(2)
             if family == .systemSmall {
-                destination("Add transaction", "activity", "plus.circle.fill")
+                quickEntry()
             } else {
-                HStack { destination("Plan", "plan", "list.bullet.rectangle"); destination("Activity", "activity", "plus.circle.fill") }
+                HStack { destination("Plan", "plan", "list.bullet.rectangle"); quickEntry() }
                 HStack { destination("Accounts", "accounts", "building.columns"); destination("Insights", "insights", "chart.pie.fill") }
             }
         }
@@ -34,6 +34,15 @@ private struct ClearPocketWidgetView: View {
             Label(title, systemImage: symbol).font(.caption.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityLabel("Open ClearPocket \(title)")
+    }
+
+    private func quickEntry() -> some View {
+        Link(destination: URL(string: "clearpocket://quick-entry")!) {
+            Label("Add transaction", systemImage: "plus.circle.fill")
+                .font(.caption.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityLabel("Add a ClearPocket transaction")
     }
 }
 

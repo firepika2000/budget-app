@@ -96,6 +96,25 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertNil(UserDefaults.standard.object(forKey: QuickEntryRequest.defaultsKey))
     }
 
+    func testWidgetQuickEntryDeepLinkAcceptsOnlyExactPrivateRoute() throws {
+        UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: QuickEntryRequest.defaultsKey) }
+
+        XCTAssertTrue(QuickEntryRequest.handle(try XCTUnwrap(URL(string: "clearpocket://quick-entry"))))
+        XCTAssertNotNil(QuickEntryRequest.consume())
+        XCTAssertNil(QuickEntryRequest.consume())
+
+        for value in [
+            "https://quick-entry",
+            "clearpocket://quick-entry/extra",
+            "clearpocket://quick-entry?payee=Private",
+            "clearpocket://open?destination=activity"
+        ] {
+            XCTAssertFalse(QuickEntryRequest.handle(try XCTUnwrap(URL(string: value))), value)
+            XCTAssertNil(QuickEntryRequest.consume())
+        }
+    }
+
     func testWidgetDeepLinkAcceptsOnlyKnownClearPocketDestinationsAndConsumesOnce() throws {
         UserDefaults.standard.removeObject(forKey: WorkspaceShortcutRequest.defaultsKey)
         defer { UserDefaults.standard.removeObject(forKey: WorkspaceShortcutRequest.defaultsKey) }

@@ -26,6 +26,9 @@ account/category selection, validation and Save remain in the canonical authoriz
 one-shot handoff is length-bounded, consumed on read and expires after five minutes so abandoned
 financial drafts do not persist indefinitely. Focused XCTest and production-composition XCUITest pass
 on the preserved iPhone 17 Pro Max / iOS 27 simulator under regular Xcode 27.0 (`27A266a`).
+The privacy-safe launcher widget's **Add transaction** control now opens that same canonical editor
+instead of merely navigating to Activity. Its deep link accepts no payee, amount, memo or other
+private query data; unknown or decorated quick-entry routes fail closed.
 
 Allocation-attribution checkpoint (2026-10-08): Plan allocation history now carries the current
 server-authoritative display name for the immutable actor user ID. The history UI no longer depends

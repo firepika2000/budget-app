@@ -56,6 +56,17 @@ enum QuickEntryRequest {
               draft.isFresh() else { return nil }
         return draft
     }
+
+    @discardableResult
+    static func handle(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "clearpocket",
+              url.host?.lowercased() == "quick-entry",
+              url.path.isEmpty,
+              url.query == nil,
+              url.fragment == nil else { return false }
+        request()
+        return true
+    }
 }
 
 enum QuickEntryKind: String, AppEnum, CaseIterable {
@@ -270,7 +281,9 @@ struct BudgetApp: App {
                 .environmentObject(session)
                 .environmentObject(appearance)
                 .preferredColorScheme(appearance.selection.colorScheme)
-                .onOpenURL { _ = WorkspaceShortcutRequest.handle($0) }
+                .onOpenURL { url in
+                    if !QuickEntryRequest.handle(url) { _ = WorkspaceShortcutRequest.handle(url) }
+                }
         }
     }
 }
