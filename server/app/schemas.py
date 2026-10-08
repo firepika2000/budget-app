@@ -640,6 +640,11 @@ class AllocationOperationResponse(BaseModel):
     postings: list[AllocationPostingResponse]
 
 
+class AllocationOperationPageResponse(BaseModel):
+    items: list[AllocationOperationResponse]
+    next_cursor: Optional[str] = None
+
+
 class TransactionSplitCreate(BaseModel):
     category_id: str
     amount_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)

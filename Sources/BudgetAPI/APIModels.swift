@@ -2174,6 +2174,16 @@ public struct APIAllocationOperation: Identifiable, Decodable, Equatable, Sendab
     }
 }
 
+public struct APIAllocationOperationPage: Decodable, Equatable, Sendable {
+    public let items: [APIAllocationOperation]
+    public let nextCursor: String?
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case nextCursor = "next_cursor"
+    }
+}
+
 public struct APIBackupDestination: Decodable, Equatable, Sendable {
     public let destination: String?
     public let path: String?

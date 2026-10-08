@@ -25,6 +25,13 @@ on the currently loaded active-member list to explain who assigned or moved mone
 removed member remain understandable without weakening the existing whole-operation category-scope
 filter. Demo and Local Device use the same response contract and production view.
 
+Allocation-history scale checkpoint (2026-10-08): Budget Server workspaces now load the newest 50
+authorized Plan operations through a bounded page contract and expose an explicit **Load Older
+History** action until no page remains. Whole-operation category privacy is applied in SQL before
+cursor/limit, so page boundaries cannot reveal a hidden transfer leg, note, actor or the existence of
+an otherwise private operation. The original unpaged endpoint remains available for backward
+compatibility with older clients; the current production iPhone composition uses the bounded route.
+
 Dropbox completion audit (2026-10-07): the iPhone production path is implemented rather than a
 placeholder. It uses PKCE with offline refresh-token rotation, device-only Keychain custody,
 least-privilege file scopes, immutable encrypted generations, content-hash verification, bounded

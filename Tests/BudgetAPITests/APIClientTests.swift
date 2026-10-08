@@ -503,6 +503,25 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(history.first?.changedFields, ["amount_minor", "memo"])
     }
 
+    func testAllocationHistoryUsesBoundedPageContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/allocations/page")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertTrue(items.contains(.init(name: "limit", value: "50")))
+            XCTAssertTrue(items.contains(.init(name: "cursor", value: "opaque-cursor")))
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
+            let response = Data(#"{"items":[{"id":"op1","budget_id":"b1","occurred_on":"2026-09-05","kind":"assignment","actor_user_id":"u1","actor_display_name":"Alex","note":"","source":"manual","allocation_version":7,"postings":[{"bucket":"ready_to_assign","category_id":null,"amount_minor":-500},{"bucket":"category","category_id":"c1","amount_minor":500}]}],"next_cursor":"next-page"}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let page = try await client.allocationOperationsPage(budgetID: "b1", limit: 50, cursor: "opaque-cursor", token: "secret")
+        XCTAssertEqual(page.items.first?.actorDisplayName, "Alex")
+        XCTAssertEqual(page.nextCursor, "next-page")
+    }
+
     func testTransactionBrowserEncodesTypedFiltersAndDecodesPage() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

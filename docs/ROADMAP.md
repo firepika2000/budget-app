@@ -432,6 +432,8 @@ Agents and implementation plans must not begin the following merely because adja
 The roadmap is a living document, but changing it is a deliberate product decision—not an incidental side effect of implementation.
 ## Current development checkpoints
 
+- Budget Server allocation history now uses privacy-before-pagination bounded reads in the current
+  iPhone composition, with explicit older-history loading and readable actor attribution.
 - SWIFT MT940 statement import is production-wired across Budget Server and Local Device providers,
   preserving exact minor-unit money and the existing explicit reconciliation review boundary.
 - Activity now includes the five most recent authorized Plan changes with actor attribution and a

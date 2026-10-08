@@ -27,6 +27,16 @@ def test_allocation_history_filters_complete_operations_before_exposing_metadata
     assert move.status_code == 201
     owner_history = client.get(f"{root}/allocations", headers=auth(owner_token)).json()
     assert len(owner_history) == 3
+    first_page = client.get(f"{root}/allocations/page?limit=2", headers=auth(owner_token))
+    assert first_page.status_code == 200
+    cursor = first_page.json()["next_cursor"]
+    assert first_page.json()["items"] == owner_history[:2]
+    assert cursor
+    final_page = client.get(f"{root}/allocations/page?limit=2&cursor={cursor}", headers=auth(owner_token))
+    assert final_page.json() == {"items": owner_history[2:], "next_cursor": None}
+    invalid_cursor = client.get(f"{root}/allocations/page?cursor=not-a-cursor", headers=auth(owner_token))
+    assert invalid_cursor.status_code == 422
+    assert invalid_cursor.json()["detail"] == "Invalid allocation history cursor"
     visible_operation = next(row for row in owner_history if row["kind"] == "assignment"
                              and any(p["category_id"] == visible["id"] for p in row["postings"]))
     child_id, token = add_child(session_factory, client)
@@ -44,6 +54,9 @@ def test_allocation_history_filters_complete_operations_before_exposing_metadata
     assert move.json()["id"] not in scoped.text
     # Do not expose half a balanced operation or its private free-text note.
     assert all(sum(p["amount_minor"] for p in row["postings"]) == 0 for row in scoped.json())
+    scoped_page = client.get(f"{root}/allocations/page?limit=1", headers=auth(token))
+    assert scoped_page.json() == {"items": [visible_operation], "next_cursor": None}
+    assert "Secret" not in scoped_page.text
 
     grant([visible["id"], hidden["id"]])
     assert client.get(f"{root}/allocations", headers=auth(token)).json() == owner_history
@@ -51,6 +64,7 @@ def test_allocation_history_filters_complete_operations_before_exposing_metadata
     assert client.get(f"{root}/allocations", headers=auth(token)).json() == []
     grant([visible["id"]], capabilities=("view_budget",))
     assert client.get(f"{root}/allocations", headers=auth(token)).status_code == 403
+    assert client.get(f"{root}/allocations/page", headers=auth(token)).status_code == 403
     assert client.get(f"{root}/allocations").status_code == 401
     other = create_budget(client, owner_token, session_factory, name="Separate private budget")
     assert client.get(f"/api/v1/budgets/{other['id']}/allocations", headers=auth(token)).status_code == 404

@@ -216,6 +216,16 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/allocations", token: token)
     }
 
+    public func allocationOperationsPage(budgetID: String, limit: Int = 50, cursor: String? = nil, token: String) async throws -> APIAllocationOperationPage {
+        var queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        if let cursor { queryItems.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try await send(
+            path: "api/v1/budgets/\(budgetID)/allocations/page",
+            queryItems: queryItems,
+            token: token
+        )
+    }
+
     public func createCategoryGroup(
         budgetID: String,
         group: APICategoryGroupCreate,

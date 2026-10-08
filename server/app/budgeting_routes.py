@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import base64
+import binascii
 import json
 from datetime import date, datetime, timezone, timedelta
 import hashlib
@@ -85,6 +86,7 @@ from .schemas import (
     DebtStrategyProjectionResponse,
     AccountResponse,
     AllocationOperationResponse,
+    AllocationOperationPageResponse,
     AllocationTransferCreate,
     AssignmentResponse,
     AssignmentUpsert,
@@ -1131,23 +1133,18 @@ def upsert_assignment(
     }
 
 
-@router.get("/allocations", response_model=list[AllocationOperationResponse])
-def list_allocation_operations(
-    budget_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[dict]:
-    budget = require_budget_capability(db, user, budget_id, "view_allocation_history")
+def _visible_allocation_operations_query(db: Session, user: User, budget: Budget):
+    """Apply whole-operation privacy before any history pagination."""
     query = (
         select(AllocationOperation)
         .options(selectinload(AllocationOperation.postings))
-        .where(AllocationOperation.budget_id == budget_id)
+        .where(AllocationOperation.budget_id == budget.id)
         .order_by(AllocationOperation.occurred_on.desc(), AllocationOperation.created_at.desc(), AllocationOperation.id)
     )
     visible_categories = visible_resource_ids(db, user, budget, "category")
     if visible_categories is not None:
         if not visible_categories:
-            return []
+            return query.where(false())
         # Filter whole operations in SQL before loading notes, actors or counterpart postings.
         # Returning just the visible leg would leak private transfers and break balanced history.
         visible_posting = select(AllocationPosting.id).where(
@@ -1160,7 +1157,10 @@ def list_allocation_operations(
             AllocationPosting.category_id.not_in(visible_categories),
         ).exists()
         query = query.where(visible_posting, ~hidden_posting)
-    operations = list(db.scalars(query))
+    return query
+
+
+def _allocation_operation_rows(db: Session, budget: Budget, operations: list[AllocationOperation]) -> list[dict]:
     actor_ids = {operation.actor_user_id for operation in operations}
     actor_names = {
         actor.id: actor.display_name
@@ -1178,6 +1178,62 @@ def list_allocation_operations(
         "allocation_version": budget.allocation_version,
         "postings": operation.postings,
     } for operation in operations]
+
+
+@router.get("/allocations/page", response_model=AllocationOperationPageResponse)
+def list_allocation_operations_page(
+    budget_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: Optional[str] = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    budget = require_budget_capability(db, user, budget_id, "view_allocation_history")
+    query = _visible_allocation_operations_query(db, user, budget)
+    if cursor:
+        try:
+            padding = "=" * (-len(cursor) % 4)
+            decoded = json.loads(base64.urlsafe_b64decode(cursor + padding).decode("utf-8"))
+            cursor_date = date.fromisoformat(decoded["date"])
+            cursor_created = datetime.fromisoformat(decoded["created"])
+            cursor_id = str(decoded["id"])
+            if decoded.get("v") != 1 or not cursor_id:
+                raise ValueError
+        except (binascii.Error, KeyError, TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            raise HTTPException(status_code=422, detail="Invalid allocation history cursor")
+        query = query.where(or_(
+            AllocationOperation.occurred_on < cursor_date,
+            and_(AllocationOperation.occurred_on == cursor_date, AllocationOperation.created_at < cursor_created),
+            and_(AllocationOperation.occurred_on == cursor_date, AllocationOperation.created_at == cursor_created,
+                 AllocationOperation.id > cursor_id),
+        ))
+    operations = list(db.scalars(query.limit(limit + 1)))
+    has_more = len(operations) > limit
+    page = operations[:limit]
+    next_cursor = None
+    if has_more:
+        last = page[-1]
+        payload = json.dumps({
+            "v": 1, "date": last.occurred_on.isoformat(),
+            "created": last.created_at.isoformat(), "id": last.id,
+        }, separators=(",", ":"))
+        next_cursor = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+    return {
+        "items": _allocation_operation_rows(db, budget, page),
+        "next_cursor": next_cursor,
+    }
+
+
+@router.get("/allocations", response_model=list[AllocationOperationResponse])
+def list_allocation_operations(
+    budget_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """Backward-compatible unpaged contract for older clients."""
+    budget = require_budget_capability(db, user, budget_id, "view_allocation_history")
+    operations = list(db.scalars(_visible_allocation_operations_query(db, user, budget)))
+    return _allocation_operation_rows(db, budget, operations)
 
 
 @router.post(

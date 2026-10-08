@@ -261,6 +261,7 @@ struct WorkspaceSnapshot {
     var delegated: APIDelegatedBudget?; var forecast: APIForecast?
     var members: [APIHouseholdMember]; var delegatedBudgets: [APIDelegatedBudget]
     var allocationOperations: [APIAllocationOperation] = []
+    var allocationNextCursor: String? = nil
     var targets: [APICategoryTarget] = []
     var schedules: [APIScheduledTransaction] = []
 }
@@ -2432,6 +2433,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let id = delegatedPolicyRecords[userID]?.id ?? "demo-delegated-\(userID)"
         delegatedPolicyRecords[userID] = .init(id: id, value: value)
     }
+
 }
 
 private func workspaceRepositoryError(_ message: String?) -> NSError { NSError(domain: "BudgetWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: message ?? "Unable to complete the change."]) }
@@ -2688,7 +2690,10 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
             (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedReports)
         let spending = reports.spending, spendingTrends = reports.spendingTrends, income = reports.income
         let netWorth = reports.netWorth, debt = reports.debt, planPerformance = reports.planPerformance, resilience = reports.resilience
-        let allocationOperations = budget.can("view_allocation_history") ? (try? await client.allocationOperations(budgetID: budget.id, token: token)) ?? [] : []
+        let allocationPage = budget.can("view_allocation_history")
+            ? try? await client.allocationOperationsPage(budgetID: budget.id, limit: 50, cursor: nil, token: token)
+            : nil
+        let allocationOperations = allocationPage?.items ?? []
         let schedules = budget.can("view_transactions") ? try await client.scheduledTransactions(budgetID: budget.id, includeInactive: true, token: token) : []
         let targets = await withTaskGroup(of: APICategoryTarget?.self) { group in for category in categories { group.addTask { try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: self.token) } }; var values: [APICategoryTarget] = []; for await target in group { if let target { values.append(target) } }; return values }
         let balances = await withTaskGroup(of: APIAccountBalance?.self) { group in for account in accounts { group.addTask { try? await client.accountBalance(budgetID: self.budget.id, accountID: account.id, token: self.token) } }; var values: [APIAccountBalance] = []; for await value in group { if let value { values.append(value) } }; return values }
@@ -2698,7 +2703,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let forecast: APIForecast? = if budget.can("view_account_balances") { try? await client.forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(Calendar.current.date(byAdding: .day, value: 90, to: Date())!), token: token) } else { nil }
         let members = budget.can("manage_allowances") ? (try? await client.householdMembers(householdID: budget.householdID, token: token)) ?? [] : []
         let delegatedBudgets = budget.can("manage_allowances") ? (try? await client.delegatedBudgets(budgetID: budget.id, token: token)) ?? [] : []
-        return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, payees: [], requests: requests, allowances: allowances, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, targets: targets, schedules: schedules)
+        return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, payees: [], requests: requests, allowances: allowances, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, allocationNextCursor: allocationPage?.nextCursor, targets: targets, schedules: schedules)
     }
 
     func exportReports(report: WorkspaceReportQuery) async throws -> Data {
@@ -2728,6 +2733,12 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         try await credentials.prepare()
         let through = Calendar.current.date(byAdding: .day, value: days, to: Date())!
         return try await credentials.client().forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(through), token: credentials.token)
+    }
+    func allocationOperationsPage(limit: Int, cursor: String?) async throws -> APIAllocationOperationPage {
+        try await credentials.prepare()
+        return try await credentials.client().allocationOperationsPage(
+            budgetID: budget.id, limit: limit, cursor: cursor, token: credentials.token
+        )
     }
 }
 
@@ -2761,6 +2772,8 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var householdMembers: [APIHouseholdMember] = []
     @Published var delegatedBudgets: [APIDelegatedBudget] = []
     @Published var allocationOperations: [APIAllocationOperation] = []
+    @Published private(set) var allocationHistoryNextCursor: String?
+    @Published private(set) var isLoadingOlderAllocationHistory = false
     @Published var targets: [String: APICategoryTarget] = [:]
     @Published var scheduledTransactions: [APIScheduledTransaction] = []
     @Published var forecast: APIForecast?
@@ -3082,7 +3095,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 // Preserve report-backed destination identity while new authoritative reports load.
                 // Readiness is invalidated below; report screens never display these as current.
                 delegatedBudget = value.delegated; forecast = value.forecast
-                householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; allocationOperations = value.allocationOperations; errorMessage = nil
+                householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; allocationOperations = value.allocationOperations; allocationHistoryNextCursor = value.allocationNextCursor; errorMessage = nil
                 targets = Dictionary(uniqueKeysWithValues: value.targets.map { ($0.categoryID, $0) })
                 scheduledTransactions = value.schedules
                 let cachedRead = (dataSource as? LiveWorkspaceDataSource)?.lastReadWasCached == true
@@ -3129,7 +3142,7 @@ final class BudgetWorkspaceStore: ObservableObject {
         forecastOperationID = nil; isForecastLoading = false
         summary = nil; accounts = []; accountBalances = [:]; payees = []; categories = []; groups = []
         transactions = []; requests = []; allowances = []; householdMembers = []; delegatedBudgets = []
-        allocationOperations = []; targets = [:]; scheduledTransactions = []; delegatedBudget = nil; forecast = nil
+        allocationOperations = []; allocationHistoryNextCursor = nil; targets = [:]; scheduledTransactions = []; delegatedBudget = nil; forecast = nil
         spendingReport = nil; spendingTrendsReport = nil; incomeReport = nil; netWorthReport = nil
         debtReport = nil; planPerformanceReport = nil; resilienceReport = nil; insightsSummary = nil
         resetReportSelection()
@@ -3142,6 +3155,22 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func refresh() async { await loadSnapshot() }
+
+    func loadOlderAllocationHistory() async {
+        guard !isLoadingOlderAllocationHistory,
+              let cursor = allocationHistoryNextCursor,
+              let source = dataSource as? LiveWorkspaceDataSource else { return }
+        isLoadingOlderAllocationHistory = true
+        defer { isLoadingOlderAllocationHistory = false }
+        do {
+            let page = try await source.allocationOperationsPage(limit: 50, cursor: cursor)
+            let existing = Set(allocationOperations.map(\.id))
+            allocationOperations.append(contentsOf: page.items.filter { !existing.contains($0.id) })
+            allocationHistoryNextCursor = page.nextCursor
+        } catch {
+            if !isTransientConnectivityFailure(error) { errorMessage = error.localizedDescription }
+        }
+    }
 
     func loadForecast(days: Int) async {
         guard !workspaceAccessDenied, let dataSource else { return }
@@ -6511,6 +6540,19 @@ private struct AllocationHistoryView: View {
                         }
                     }
                     .accessibilityIdentifier("allocation-history-operation-\(operation.id)")
+                }
+                if store.allocationHistoryNextCursor != nil {
+                    Button {
+                        Task { await store.loadOlderAllocationHistory() }
+                    } label: {
+                        if store.isLoadingOlderAllocationHistory {
+                            HStack { ProgressView(); Text("Loading older history…") }
+                        } else {
+                            Label("Load Older History", systemImage: "clock.arrow.circlepath")
+                        }
+                    }
+                    .disabled(store.isLoadingOlderAllocationHistory)
+                    .accessibilityIdentifier("allocation-history-load-older")
                 }
             }
         }
