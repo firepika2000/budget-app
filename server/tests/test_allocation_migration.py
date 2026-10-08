@@ -60,7 +60,7 @@ def test_database_at_0017_upgrades_to_current_head(tmp_path, monkeypatch):
         debt_term_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('account_debt_terms')"))}
         transaction_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('transactions')"))}
         category_columns = {row[1] for row in connection.execute(text("PRAGMA table_info('categories')"))}
-        assert version == "0036_category_resilience"
+        assert version == ScriptDirectory.from_config(config).get_current_head()
         assert attachment_count == 0
         assert "ix_transaction_budget_date_id" in report_indexes
         assert {"budget_id", "user_id", "category_id", "sort_order"} <= favorite_columns

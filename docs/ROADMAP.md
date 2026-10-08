@@ -119,6 +119,12 @@ as acceptance for later work. No further merge or release tag is authorized by t
 | v0.18 | Platform Expansion: iPad engineering slice complete with the shared production workspace, adaptive sidebar/detail navigation, compact multitasking fallback, and privacy-safe widget support. macOS, web, and Android remain separate future slices; human iPad acceptance remains distinct. |
 | v1.0 | Release hardening, production deployment and App Store candidate gates. External signing, commercial choice and human acceptance stay distinct from engineering completion. |
 
+Current v0.12 progress: transaction and reconciliation histories were already durable; category-target
+decisions now also retain immutable actor attribution across hosted, Local Device, Demo, complete export,
+and server-to-local transfer. Category detail exposes bounded Target History without changing allocations,
+balances, or recommendations. Remaining v0.12 work should continue auditing other mutable planning and
+administrative observations for overwrite-only or export gaps rather than duplicating established histories.
+
 **Consumer Budget Server distribution remains required.** The earlier v0.9 graphical installer,
 manager, secure pairing and no-Terminal household operating experience below are retained as a
 cross-cutting distribution workstream through v1.0; a developer launcher is not a substitute.

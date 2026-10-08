@@ -247,6 +247,21 @@ public struct LocalCategoryTargetRecord: Codable, Equatable, Sendable {
     }
 }
 
+public struct LocalCategoryTargetRevisionRecord: Codable, Equatable, Sendable {
+    public let id: String; public let budgetID: String; public let categoryID: String
+    public let targetID: String?; public let action: String; public let actorUserID: String
+    public let beforeJSON: String?; public let afterJSON: String?; public let affectedMonth: String?
+    public let createdAt: String
+    public init(id: String, budgetID: String, categoryID: String, targetID: String? = nil,
+                action: String, actorUserID: String, beforeJSON: String? = nil,
+                afterJSON: String? = nil, affectedMonth: String? = nil, createdAt: String) {
+        self.id = id; self.budgetID = budgetID; self.categoryID = categoryID
+        self.targetID = targetID; self.action = action; self.actorUserID = actorUserID
+        self.beforeJSON = beforeJSON; self.afterJSON = afterJSON
+        self.affectedMonth = affectedMonth; self.createdAt = createdAt
+    }
+}
+
 public struct LocalScheduleRecord: Codable, Equatable, Sendable {
     public let id: String; public let budgetID: String; public let accountID: String
     public let destinationAccountID: String?; public let categoryID: String?; public let payeeID: String?
@@ -485,6 +500,7 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
     public let allocations: [LocalAllocationRecord]
     public let reconciliations: [LocalReconciliationRecord]
     public let targets: [LocalCategoryTargetRecord]
+    public let targetRevisions: [LocalCategoryTargetRevisionRecord]?
     public let schedules: [LocalScheduleRecord]
     public let attachments: [LocalAttachmentRecord]
     public let attachmentTombstones: [LocalAttachmentTombstoneRecord]
@@ -501,6 +517,7 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
                 payees: [LocalPayeeRecord], payeeAliases: [LocalPayeeAliasRecord],
                 transactions: [LocalTransactionRecord], allocations: [LocalAllocationRecord],
                 reconciliations: [LocalReconciliationRecord], targets: [LocalCategoryTargetRecord],
+                targetRevisions: [LocalCategoryTargetRevisionRecord]? = nil,
                 schedules: [LocalScheduleRecord], attachments: [LocalAttachmentRecord],
                 attachmentTombstones: [LocalAttachmentTombstoneRecord] = [],
                 debtTerms: [LocalAccountDebtTermsRecord] = [],
@@ -513,7 +530,7 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
         self.identity = identity; self.accounts = accounts; self.groups = groups
         self.categories = categories; self.payees = payees; self.payeeAliases = payeeAliases
         self.transactions = transactions; self.allocations = allocations
-        self.reconciliations = reconciliations; self.targets = targets
+        self.reconciliations = reconciliations; self.targets = targets; self.targetRevisions = targetRevisions
         self.schedules = schedules; self.attachments = attachments
         self.attachmentTombstones = attachmentTombstones
         self.debtTerms = debtTerms; self.debtPayoffPlans = debtPayoffPlans
@@ -743,6 +760,20 @@ public actor LocalAuthorityStore {
         try requireOneChange(changes, record: "category target")
     }
 
+    public func targetRevisions(categoryID: String, limit: Int = 50, offset: Int = 0) async throws -> [LocalCategoryTargetRevisionRecord] {
+        guard (1...100).contains(limit), offset >= 0 else { throw LocalStorageError.operationFailed("Invalid target-history page") }
+        return try await database.rows(.init(
+            "SELECT * FROM category_target_revisions WHERE category_id=? ORDER BY created_at DESC,rowid DESC LIMIT ? OFFSET ?",
+            values: [.text(categoryID), .integer(Int64(limit)), .integer(Int64(offset))]
+        )).map {
+            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), categoryID: text($0, "category_id"),
+                      targetID: optionalText($0, "target_id"), action: text($0, "action"),
+                      actorUserID: text($0, "actor_user_id"), beforeJSON: optionalText($0, "before_json"),
+                      afterJSON: optionalText($0, "after_json"), affectedMonth: optionalText($0, "affected_month"),
+                      createdAt: text($0, "created_at"))
+        }
+    }
+
     public func upsertSchedule(_ value: LocalScheduleRecord) async throws {
         guard value.intervalCount > 0 else { throw LocalStorageError.operationFailed("Schedule interval must be positive") }
         try await database.execute(.init(
@@ -867,6 +898,7 @@ public actor LocalAuthorityStore {
         let allocations = try await loadAllocations(budgetID: budgetID)
         let reconciliations = try await loadReconciliations(accountIDs: Set(accounts.map(\.id)))
         let targets = try await loadTargets(categoryIDs: Set(categories.map(\.id)))
+        let targetRevisions = try await loadTargetRevisions(budgetID: budgetID)
         let schedules = try await loadSchedules(budgetID: budgetID)
         let attachments = try await loadAttachments(transactionIDs: Set(transactions.map(\.id)))
         let attachmentTombstones = try await loadAttachmentTombstones(budgetID: budgetID)
@@ -879,7 +911,7 @@ public actor LocalAuthorityStore {
         let statementImports = try await loadStatementImports(budgetID: budgetID)
         return .init(identity: identity, accounts: accounts, groups: groups, categories: categories,
                      payees: payees, payeeAliases: payeeAliases, transactions: transactions, allocations: allocations,
-                     reconciliations: reconciliations, targets: targets, schedules: schedules,
+                     reconciliations: reconciliations, targets: targets, targetRevisions: targetRevisions, schedules: schedules,
                      attachments: attachments, attachmentTombstones: attachmentTombstones,
                      debtTerms: debtTerms, debtPayoffPlans: debtPayoffPlans, cashRolloverPolicies: rollover,
                      creditReserveAttributions: reserve, transactionChanges: changes,
@@ -902,6 +934,7 @@ public actor LocalAuthorityStore {
             .init("DELETE FROM credit_reserve_attributions WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM credit_reserve_events WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM transaction_changes WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM category_target_revisions WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM attachment_tombstones WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM attachments WHERE transaction_id IN (SELECT id FROM transactions WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM reconciliations WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
@@ -949,6 +982,9 @@ public actor LocalAuthorityStore {
         }
         statements += value.targets.map { item in
             .init("INSERT INTO category_targets(category_id,target_type,amount_minor,cadence,effective_month,snoozed_month,target_date,recurrence_months,minimum_contribution_minor,priority,is_active,snoozed_months_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.categoryID), .text(item.targetType), .integer(item.amountMinor), .text(item.cadence), .text(item.effectiveMonth), optionalText(item.snoozedMonth), optionalText(item.targetDate), optionalInteger(item.recurrenceMonths), .integer(item.minimumContributionMinor), .integer(item.priority), .integer(item.isActive ? 1 : 0), .text(json(item.snoozedMonths))])
+        }
+        statements += (value.targetRevisions ?? []).map { item in
+            .init("INSERT INTO category_target_revisions(id,budget_id,category_id,target_id,action,actor_user_id,before_json,after_json,affected_month,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.categoryID), optionalText(item.targetID), .text(item.action), .text(item.actorUserID), optionalText(item.beforeJSON), optionalText(item.afterJSON), optionalText(item.affectedMonth), .text(item.createdAt)])
         }
         statements += value.schedules.map { item in
             .init("INSERT INTO scheduled_transactions(id,budget_id,account_id,destination_account_id,category_id,payee_id,name,amount_minor,next_date,recurrence_unit,interval_count,memo,is_active,financial_classification,last_realized_on,end_date,remaining_occurrences) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), optionalText(item.destinationAccountID), optionalText(item.categoryID), optionalText(item.payeeID), .text(item.name), .integer(item.amountMinor), .text(item.nextDate), .text(item.recurrenceUnit), .integer(item.intervalCount), .text(item.memo), .integer(item.isActive ? 1 : 0), optionalText(item.financialClassification), optionalText(item.lastRealizedOn), optionalText(item.endDate), optionalInteger(item.remainingOccurrences)])
@@ -1065,6 +1101,16 @@ public actor LocalAuthorityStore {
             let categoryID = try text($0, "category_id")
             guard categoryIDs.contains(categoryID) else { return nil }
             return try .init(categoryID: categoryID, targetType: text($0, "target_type"), amountMinor: integer($0, "amount_minor"), cadence: text($0, "cadence"), effectiveMonth: text($0, "effective_month"), snoozedMonth: optionalText($0, "snoozed_month"), targetDate: optionalText($0, "target_date"), recurrenceMonths: optionalInteger($0, "recurrence_months"), minimumContributionMinor: integer($0, "minimum_contribution_minor"), priority: integer($0, "priority"), isActive: bool($0, "is_active"), snoozedMonths: stringArray($0, "snoozed_months_json"))
+        }
+    }
+
+    private func loadTargetRevisions(budgetID: String) async throws -> [LocalCategoryTargetRevisionRecord] {
+        try await database.rows(.init("SELECT * FROM category_target_revisions WHERE budget_id=? ORDER BY created_at,rowid", values: [.text(budgetID)])).map {
+            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), categoryID: text($0, "category_id"),
+                      targetID: optionalText($0, "target_id"), action: text($0, "action"),
+                      actorUserID: text($0, "actor_user_id"), beforeJSON: optionalText($0, "before_json"),
+                      afterJSON: optionalText($0, "after_json"), affectedMonth: optionalText($0, "affected_month"),
+                      createdAt: text($0, "created_at"))
         }
     }
 

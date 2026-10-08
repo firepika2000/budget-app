@@ -17,6 +17,7 @@ from .models import (
     Category,
     CategoryGroup,
     CategoryTarget,
+    CategoryTargetRevision,
     CategoryTargetSnooze,
     ScheduledTransaction,
     Transaction,
@@ -26,6 +27,7 @@ from .payee_identity import resolve_or_create_payee, resolve_payee
 from .planning import next_occurrence, occurrences_between
 from .schemas import (
     CategoryTargetResponse,
+    CategoryTargetRevisionResponse,
     CategoryTargetUpsert,
     CategoryTargetSnoozeUpdate,
     CategoryTargetSnoozeResponse,
@@ -40,6 +42,27 @@ from .schemas import (
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
+
+
+def _target_snapshot(target: CategoryTarget) -> dict:
+    return {
+        "target_type": target.target_type,
+        "target_amount_minor": target.target_amount_minor,
+        "target_date": target.target_date.isoformat() if target.target_date else None,
+        "recurrence_months": target.recurrence_months,
+        "minimum_contribution_minor": target.minimum_contribution_minor,
+        "priority": target.priority,
+        "is_active": target.is_active,
+    }
+
+
+def _append_target_revision(db: Session, target: CategoryTarget, action: str, actor_id: str,
+                            before: Optional[dict], after: Optional[dict], affected_month: Optional[date] = None) -> None:
+    db.add(CategoryTargetRevision(
+        budget_id=target.budget_id, category_id=target.category_id, target_id=target.id,
+        action=action, actor_user_id=actor_id, before_snapshot=before,
+        after_snapshot=after, affected_month=affected_month,
+    ))
 
 
 @router.put("/categories/{category_id}/target/snooze/{month}", response_model=CategoryTargetSnoozeResponse)
@@ -68,8 +91,10 @@ def set_category_target_snooze(
     ))
     if body.is_snoozed and snooze is None:
         db.add(CategoryTargetSnooze(budget_id=budget_id, target_id=target.id, month=month, created_by_user_id=user.id))
+        _append_target_revision(db, target, "snoozed", user.id, _target_snapshot(target), _target_snapshot(target), month)
     elif not body.is_snoozed and snooze is not None:
         db.delete(snooze)
+        _append_target_revision(db, target, "resumed", user.id, _target_snapshot(target), _target_snapshot(target), month)
     db.commit()
     return {"category_id": category_id, "month": month, "is_snoozed": body.is_snoozed}
 
@@ -102,9 +127,15 @@ def upsert_category_target(
             **values,
         )
         db.add(target)
+        db.flush()
+        _append_target_revision(db, target, "created", user.id, None, _target_snapshot(target))
     else:
+        before = _target_snapshot(target)
         for field, value in values.items():
             setattr(target, field, value)
+        after = _target_snapshot(target)
+        if after != before:
+            _append_target_revision(db, target, "updated", user.id, before, after)
     db.commit()
     db.refresh(target)
     return target
@@ -126,6 +157,32 @@ def get_category_target(
         CategoryTarget.category_id == category_id,
     ))
     return target
+
+
+@router.get("/categories/{category_id}/target/history", response_model=list[CategoryTargetRevisionResponse])
+def get_category_target_history(
+    budget_id: str, category_id: str,
+    limit: int = Query(default=50, ge=1, le=100), offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> list[dict]:
+    budget = require_budget_capability(db, user, budget_id, "view_categories")
+    category = db.get(Category, category_id)
+    if category is None or category.budget_id != budget_id or not can_access_resource(db, user, budget, "category", category_id):
+        raise HTTPException(status_code=404, detail="Target history not found")
+    rows = list(db.scalars(select(CategoryTargetRevision).where(
+        CategoryTargetRevision.budget_id == budget_id,
+        CategoryTargetRevision.category_id == category_id,
+    ).order_by(CategoryTargetRevision.created_at.desc(), CategoryTargetRevision.id.desc()).limit(limit).offset(offset)))
+    names = {item.id: item.display_name for item in db.scalars(select(User).where(
+        User.id.in_({row.actor_user_id for row in rows})
+    ))} if rows else {}
+    return [{
+        "id": row.id, "category_id": row.category_id, "target_id": row.target_id,
+        "action": row.action, "actor_user_id": row.actor_user_id,
+        "actor_display_name": names.get(row.actor_user_id), "before_snapshot": row.before_snapshot,
+        "after_snapshot": row.after_snapshot, "affected_month": row.affected_month,
+        "created_at": row.created_at,
+    } for row in rows]
 
 
 @router.delete("/categories/{category_id}/target", status_code=status.HTTP_204_NO_CONTENT)
@@ -150,6 +207,8 @@ def delete_category_target(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target not found")
     # Targets are planning metadata only. Removing one deletes no allocations or transactions
     # and moves no money; recommendations simply stop being produced for the category.
+    _append_target_revision(db, target, "deleted", user.id, _target_snapshot(target), None)
+    db.flush()
     db.delete(target)
     db.commit()
 

@@ -39,6 +39,12 @@ One target per category (`UNIQUE(category_id)`).
 - **Returns:** `204`. `404` when no target / out of scope.
 - **Guarantee:** deletes only the target row; **no allocations or transactions are removed and no balances change.**
 
+### `GET /categories/{category_id}/target/history` — immutable decision history
+- **Capability:** `view_categories`. **Scope:** enforced with the same non-leaking category-resource check as target read.
+- **Query:** bounded `limit=1...100` and nonnegative `offset`; newest decisions first.
+- **Returns:** actor-attributed `created`, `updated`, `deleted`, `snoozed`, and `resumed` revisions with exact before/after target snapshots and the affected month when applicable.
+- **Guarantees:** identical writes do not create duplicate revisions; deleting a target preserves its history; history is included in complete export and Local Device transfer. Existing hosted targets receive one conservative creation observation during migration from their stored creator and creation timestamp.
+
 ## Recommendation / underfunded math (from `planning.target_funding`, surfaced in `GET /months/{month}`)
 Per category, the month summary carries `recommended_contribution_minor` and `underfunded_minor`:
 - `monthly_funding`: recommend `max(amount, minimum)`.
@@ -48,10 +54,15 @@ Per category, the month summary carries `recommended_contribution_minor` and `un
 - Rollover: existing category Available reduces the recommendation (proven in `test_planning`).
 
 ## Supported vs deferred target behaviors
-- **Supported:** monthly funding, savings-balance (up-to), by-date sinking fund, recurring (monthly multiples incl. **annual = 12**), needed-this-period, funded/underfunded, progress via summary, rollover interaction, future-month recommendation without creating cash, enable/disable via `is_active`, aggregate plan cost via summing `recommended_contribution_minor`.
-- **Deferred (documented, not blocking):** **weekly cadence** (model is month-granular; weekly not representable), per-month **snooze/skip** as distinct from `is_active` disable, spending-style "refill/spent" nuance beyond monthly_funding, target versioning/optimistic concurrency.
+- **Supported:** monthly funding, savings-balance (up-to), by-date sinking fund, recurring (monthly multiples incl. **annual = 12**), needed-this-period, funded/underfunded, progress via summary, rollover interaction, future-month recommendation without creating cash, enable/disable via `is_active`, month-scoped snooze/resume, aggregate plan cost, and immutable actor-attributed decision history.
+- **Deferred (documented, not blocking):** **weekly cadence** (model is month-granular; weekly not representable), spending-style "refill/spent" nuance beyond monthly_funding, and optimistic conflict rejection. Last-writer-wins remains intentional for non-monetary target metadata; history preserves what changed and who changed it.
 
-## Verified test coverage (`test_targets_contract.py`, 10 tests)
+## Verified test coverage
+- Server contract: `test_targets_contract.py` plus populated migration and migration-graph coverage.
+- Typed client and Local Device: `APIClientTests` and `LocalDatabaseTests` preserve exact `Int64` snapshots, paging, durable reopen, transfer/export, and stable ordering.
+- Native production store: Demo/Local/Live use the same Target History destination; the native regression exercises create → edit → snooze → resume → delete and proves money remains unchanged.
+
+Server coverage includes:
 - **Types & round-trip:** all four types create + read back; annual via `recurrence_months=12`.
 - **Math:** monthly & savings recommendation/underfunded (by-date in `test_planning`).
 - **Accounting invariants:** create/edit/deactivate/delete leave RTA, `allocation_version`, assigned, Σ allocation postings, account balance, and transaction count unchanged; large future target adds no spendable cash; recommendation ≠ assignment; delete removes no transactions.
@@ -61,4 +72,4 @@ Per category, the month summary carries `recommended_contribution_minor` and `un
 - **Concurrency:** deterministic last-writer-wins; exactly one row per category.
 
 ## Verdict
-**TARGET CONTRACT READY WITH CAVEATS** — full CRUD, scoped authorization, and the money-safety invariants are locked and tested; the only caveats are deferred **weekly cadence**, per-month **snooze**, and (optional) **optimistic concurrency**, none of which block the P1 Targets UI.
+**TARGET CONTRACT READY WITH CAVEATS** — full CRUD, scoped authorization, month snooze/resume, immutable decision history, export/transfer preservation, and money-safety invariants are locked and tested. Weekly cadence and optional optimistic conflict rejection remain documented caveats.

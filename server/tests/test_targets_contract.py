@@ -7,7 +7,7 @@ invariants (a target never creates/moves money), delete semantics, validation,
 and deterministic (last-writer-wins) upsert for this non-monetary metadata.
 """
 
-from app.models import AllocationPosting, CategoryTarget, Membership
+from app.models import AllocationPosting, CategoryTarget, CategoryTargetRevision, Membership
 
 from .conftest import auth
 from .test_advanced_ledger import add_category
@@ -174,6 +174,52 @@ def test_delete_target_is_idempotent_contract(client, owner_token, session_facto
                       json={"target_type": "monthly_funding", "target_amount_minor": 12000}).status_code == 200
 
 
+def test_target_history_is_immutable_attributed_bounded_and_money_neutral(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], account["id"], amount=250000)
+    url = target_url(budget["id"], category["id"])
+    history_url = f"{url}/history"
+    before = summary(client, owner_token, budget["id"])
+
+    created = {"target_type": "monthly_funding", "target_amount_minor": 40000, "priority": 60}
+    updated = {"target_type": "target_by_date", "target_amount_minor": 120000,
+               "target_date": "2027-06-01", "minimum_contribution_minor": 5000, "priority": 80}
+    assert client.put(url, headers=auth(owner_token), json=created).status_code == 200
+    # An identical idempotent write is not a decision and creates no duplicate revision.
+    assert client.put(url, headers=auth(owner_token), json=created).status_code == 200
+    assert client.put(url, headers=auth(owner_token), json=updated).status_code == 200
+    assert client.put(f"{url}/snooze/2027-02-01", headers=auth(owner_token), json={"is_snoozed": True}).status_code == 200
+    assert client.put(f"{url}/snooze/2027-02-01", headers=auth(owner_token), json={"is_snoozed": True}).status_code == 200
+    assert client.put(f"{url}/snooze/2027-02-01", headers=auth(owner_token), json={"is_snoozed": False}).status_code == 200
+    assert client.delete(url, headers=auth(owner_token)).status_code == 204
+
+    rows = client.get(history_url, headers=auth(owner_token)).json()
+    assert [row["action"] for row in rows] == ["deleted", "resumed", "snoozed", "updated", "created"]
+    assert all(row["actor_user_id"] and row["actor_display_name"] for row in rows)
+    assert rows[0]["before_snapshot"]["target_amount_minor"] == 120000
+    assert rows[0]["after_snapshot"] is None
+    assert rows[1]["affected_month"] == "2027-02-01"
+    assert rows[-1]["before_snapshot"] is None
+    assert rows[-1]["after_snapshot"]["target_amount_minor"] == 40000
+    assert client.get(f"{history_url}?limit=2&offset=1", headers=auth(owner_token)).json() == rows[1:3]
+    assert client.get(f"{history_url}?limit=101", headers=auth(owner_token)).status_code == 422
+    exported = client.get(f"/api/v1/budgets/{budget['id']}/export.json", headers=auth(owner_token))
+    assert exported.status_code == 200
+    assert {item["action"] for item in exported.json()["target_revisions"]} == {"created", "updated", "snoozed", "resumed", "deleted"}
+    transferred = client.get(f"/api/v1/budgets/{budget['id']}/local-device-transfer", headers=auth(owner_token))
+    assert transferred.status_code == 200
+    assert len(transferred.json()["target_revisions"]) == 5
+    # Deleting the now-targetless category must not cascade away immutable decisions.
+    assert client.delete(f"/api/v1/budgets/{budget['id']}/categories/{category['id']}", headers=auth(owner_token)).status_code == 409
+    assert len(client.get(history_url, headers=auth(owner_token)).json()) == 5
+    after = summary(client, owner_token, budget["id"])
+    assert after["ready_to_assign_minor"] == before["ready_to_assign_minor"]
+    assert after["allocation_version"] == before["allocation_version"]
+    with session_factory() as db:
+        assert len(list(db.query(CategoryTargetRevision).filter_by(category_id=category["id"]))) == 5
+
+
 # ---------------------------------------------------------------------------
 # Authorization and privacy: deny by default
 # ---------------------------------------------------------------------------
@@ -204,7 +250,12 @@ def test_target_management_requires_manage_planning_and_respects_scope(client, o
     assert client.put(target_url(budget["id"], hidden["id"]), headers=auth(member_token),
                       json={"target_type": "monthly_funding", "target_amount_minor": 40000}).status_code == 404
     assert client.get(target_url(budget["id"], hidden["id"]), headers=auth(member_token)).status_code == 404
+    assert client.get(f"{target_url(budget['id'], hidden['id'])}/history", headers=auth(member_token)).status_code == 404
     assert client.delete(target_url(budget["id"], hidden["id"]), headers=auth(member_token)).status_code == 404
+
+    visible_history = client.get(f"{target_url(budget['id'], visible['id'])}/history", headers=auth(member_token))
+    assert visible_history.status_code == 200
+    assert [row["action"] for row in visible_history.json()] == ["created"]
 
     # Hidden high-priority needs must not influence counts, amounts or ordering.
     assert client.put(target_url(budget["id"], hidden["id"]), headers=auth(owner_token),

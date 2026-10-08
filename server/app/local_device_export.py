@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from .models import (
     Account, AccountDebtTerms, AllocationOperation, AllocationPosting, Budget,
-    CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget,
+    CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget, CategoryTargetRevision,
     CategoryTargetSnooze, CreditCardReserveEvent, Household, Payee, PayeeAlias,
     DebtPayoffPlan, ImportBatch, PayeeBudgetPreference, ScheduledTransaction, Transaction, TransactionAttachment,
     Reconciliation, TransactionChange, TransactionSplit, User,
@@ -178,6 +178,9 @@ def build_local_device_projection(
     payee_ids = [item.id for item in payees]
     aliases = list(db.scalars(select(PayeeAlias).where(PayeeAlias.payee_id.in_(payee_ids)).order_by(PayeeAlias.id))) if payee_ids else []
     targets = list(db.scalars(select(CategoryTarget).where(CategoryTarget.budget_id == budget.id).order_by(CategoryTarget.category_id)))
+    target_revisions = list(db.scalars(select(CategoryTargetRevision).where(
+        CategoryTargetRevision.budget_id == budget.id
+    ).order_by(CategoryTargetRevision.created_at, CategoryTargetRevision.id)))
     target_ids = [item.id for item in targets]
     snoozes: dict[str, list[str]] = defaultdict(list)
     if target_ids:
@@ -293,6 +296,14 @@ def build_local_device_projection(
             "priority": item.priority, "is_active": item.is_active,
             "snoozed_months": sorted(snoozes[item.id]),
         } for item in targets],
+        "target_revisions": [{
+            "id": item.id, "budget_id": item.budget_id, "category_id": item.category_id,
+            "target_id": item.target_id, "action": item.action,
+            "actor_user_id": item.actor_user_id,
+            "before_json": json.dumps(item.before_snapshot, sort_keys=True, separators=(",", ":")) if item.before_snapshot is not None else None,
+            "after_json": json.dumps(item.after_snapshot, sort_keys=True, separators=(",", ":")) if item.after_snapshot is not None else None,
+            "affected_month": _iso(item.affected_month), "created_at": _iso(item.created_at),
+        } for item in target_revisions],
         "schedules": [{
             "id": item.id, "budget_id": budget.id, "account_id": item.account_id,
             "destination_account_id": item.destination_account_id,

@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 16
+    public static let schemaVersion = 17
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -403,6 +403,18 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 17 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV17 { try execute(sql, on: database) }
+                try execute("INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)", values: [.integer(17), .text(Self.timestamp())], on: database)
+                try execute("PRAGMA user_version = 17", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -452,6 +464,11 @@ public actor LocalDatabase {
 
     private static let schemaV16 = [
         "CREATE TABLE debt_payoff_plans (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, strategy TEXT NOT NULL, rollover INTEGER NOT NULL CHECK(rollover IN (0,1)), extra_payment_minor INTEGER NOT NULL CHECK(extra_payment_minor >= 0), account_ids_json TEXT NOT NULL, custom_order_json TEXT NOT NULL, target_date TEXT, updated_at TEXT NOT NULL, UNIQUE(budget_id,user_id)) STRICT"
+    ]
+
+    private static let schemaV17 = [
+        "CREATE TABLE category_target_revisions (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE, target_id TEXT, action TEXT NOT NULL CHECK(action IN ('created','updated','deleted','snoozed','resumed')), actor_user_id TEXT NOT NULL REFERENCES users(id), before_json TEXT, after_json TEXT, affected_month TEXT, created_at TEXT NOT NULL) STRICT",
+        "CREATE INDEX idx_target_revisions_category_created ON category_target_revisions(category_id,created_at,id)"
     ]
 
     private static let schemaV2 = [

@@ -122,6 +122,27 @@ final class APIClientTests: XCTestCase {
         try await client.setCategoryTargetSnoozed(budgetID: "b1", categoryID: "c1", month: "2027-02-01", isSnoozed: true, token: "current")
     }
 
+    func testTargetHistoryUsesBoundedAttributedContractAndExactMoney() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/categories/c1/target/history")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(items.first(where: { $0.name == "limit" })?.value, "25")
+            XCTAssertEqual(items.first(where: { $0.name == "offset" })?.value, "50")
+            let body = Data(#"[{"id":"r1","category_id":"c1","target_id":"tg1","action":"updated","actor_user_id":"u1","actor_display_name":"Alex","before_snapshot":{"target_type":"monthly_funding","target_amount_minor":9007199254740991,"target_date":null,"recurrence_months":null,"minimum_contribution_minor":0,"priority":50,"is_active":true},"after_snapshot":{"target_type":"target_by_date","target_amount_minor":9007199254740992,"target_date":"2027-06-01","recurrence_months":null,"minimum_contribution_minor":5000,"priority":80,"is_active":true},"affected_month":null,"created_at":"2026-10-08T17:00:00Z"}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let rows = try await client.categoryTargetHistory(budgetID: "b1", categoryID: "c1", limit: 25, offset: 50, token: "rotated")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].actorDisplayName, "Alex")
+        XCTAssertEqual(rows[0].beforeSnapshot?.targetAmountMinor, 9_007_199_254_740_991)
+        XCTAssertEqual(rows[0].afterSnapshot?.targetAmountMinor, 9_007_199_254_740_992)
+    }
+
     func testDebtCostUsesAuthorizedAccountFilterAndPreservesUnknownAndExactMoney() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

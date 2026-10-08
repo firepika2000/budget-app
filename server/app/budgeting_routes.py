@@ -62,6 +62,7 @@ from .models import (
     CategoryFavorite,
     CategoryGroup,
     CategoryTarget,
+    CategoryTargetRevision,
     CategoryTargetSnooze,
     CreditCardReserveEvent,
     DelegatedBudgetPolicy,
@@ -1169,6 +1170,7 @@ def delete_category(budget_id: str, category_id: str, user: User = Depends(get_c
         db.scalar(select(TransactionSplit.id).where(TransactionSplit.category_id == category_id).limit(1)),
         db.scalar(select(AllocationPosting.id).where(AllocationPosting.category_id == category_id).limit(1)),
         db.scalar(select(CategoryTarget.id).where(CategoryTarget.category_id == category_id).limit(1)),
+        db.scalar(select(CategoryTargetRevision.id).where(CategoryTargetRevision.category_id == category_id).limit(1)),
     ))
     if linked:
         raise HTTPException(status_code=409, detail="This category has financial history. Archive it to preserve the audit trail")

@@ -504,6 +504,19 @@ class CategoryTargetResponse(BaseModel):
     is_active: bool
 
 
+class CategoryTargetRevisionResponse(BaseModel):
+    id: str
+    category_id: str
+    target_id: Optional[str] = None
+    action: Literal["created", "updated", "deleted", "snoozed", "resumed"]
+    actor_user_id: str
+    actor_display_name: Optional[str] = None
+    before_snapshot: Optional[dict] = None
+    after_snapshot: Optional[dict] = None
+    affected_month: Optional[date] = None
+    created_at: datetime
+
+
 class ScheduledTransactionCreate(BaseModel):
     account_id: str
     destination_account_id: Optional[str] = None

@@ -531,6 +531,7 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
     func deleteCategory(id: String) async throws
     func setCategoryFavorite(id: String, isFavorite: Bool, sortOrder: Int) async throws
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws
+    func targetHistory(categoryID: String, limit: Int, offset: Int) async throws -> [APICategoryTargetRevision]
     func deleteTarget(categoryID: String) async throws
     func setTargetSnoozed(categoryID: String, month: String, isSnoozed: Bool) async throws
     func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws
@@ -554,6 +555,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var debtTermsValues: [String: APIAccountDebtTermsUpsert] = [:]
     private var debtPayoffPlanValue: APIDebtPayoffPlanUpsert?
     private var accessProfiles: [String: APIAccessProfile] = [:]
+    private var demoTargetRevisions: [APICategoryTargetRevision] = []
     private let now: () -> Date
     private struct InvitationRecord {
         let id: String; let email: String; let role: String
@@ -1151,12 +1153,17 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             to: previous.transactionChanges, budgetID: localIdentity.budgetID,
             actorUserID: localIdentity.ownerUserID, createdAt: stamp
         )
+        let targetRevisions = try appendingTargetRevisions(
+            previous: previous.targets, current: projected.targets,
+            to: previous.targetRevisions ?? [], budgetID: localIdentity.budgetID,
+            actorUserID: localIdentity.ownerUserID, createdAt: stamp
+        )
         let value = LocalAuthoritySnapshot(
             identity: projected.identity, accounts: projected.accounts, groups: projected.groups,
             categories: projected.categories, payees: projected.payees,
             payeeAliases: projected.payeeAliases, transactions: projected.transactions,
             allocations: projected.allocations, reconciliations: projected.reconciliations,
-            targets: projected.targets, schedules: projected.schedules,
+            targets: projected.targets, targetRevisions: targetRevisions, schedules: projected.schedules,
             attachments: projected.attachments,
             attachmentTombstones: projected.attachmentTombstones, debtTerms: projected.debtTerms,
             debtPayoffPlans: debtPayoffPlanValue.map { item in [LocalDebtPayoffPlanRecord(
@@ -1174,6 +1181,65 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         )
         try await localAuthority.replaceWorkspaceState(value)
         try await localAuthority.integrityCheck()
+    }
+
+    private func appendingTargetRevisions(
+        previous: [LocalCategoryTargetRecord], current: [LocalCategoryTargetRecord],
+        to existing: [LocalCategoryTargetRevisionRecord], budgetID: String,
+        actorUserID: String, createdAt: String
+    ) throws -> [LocalCategoryTargetRevisionRecord] {
+        let old = Dictionary(uniqueKeysWithValues: previous.map { ($0.categoryID, $0) })
+        let new = Dictionary(uniqueKeysWithValues: current.map { ($0.categoryID, $0) })
+        var result = existing
+        for categoryID in Set(old.keys).union(new.keys).sorted() {
+            let before = old[categoryID], after = new[categoryID]
+            let targetID = "local-target-\(categoryID)"
+            if before == nil, let after {
+                result.append(.init(id: UUID().uuidString, budgetID: budgetID, categoryID: categoryID,
+                                    targetID: targetID, action: "created", actorUserID: actorUserID,
+                                    afterJSON: try targetSnapshotJSON(after), createdAt: createdAt))
+                continue
+            }
+            if let before, after == nil {
+                result.append(.init(id: UUID().uuidString, budgetID: budgetID, categoryID: categoryID,
+                                    targetID: targetID, action: "deleted", actorUserID: actorUserID,
+                                    beforeJSON: try targetSnapshotJSON(before), createdAt: createdAt))
+                continue
+            }
+            guard let before, let after else { continue }
+            let oldMonths = Set(before.snoozedMonths), newMonths = Set(after.snoozedMonths)
+            for month in newMonths.subtracting(oldMonths).sorted() {
+                result.append(.init(id: UUID().uuidString, budgetID: budgetID, categoryID: categoryID,
+                                    targetID: targetID, action: "snoozed", actorUserID: actorUserID,
+                                    beforeJSON: try targetSnapshotJSON(before), afterJSON: try targetSnapshotJSON(after),
+                                    affectedMonth: month, createdAt: createdAt))
+            }
+            for month in oldMonths.subtracting(newMonths).sorted() {
+                result.append(.init(id: UUID().uuidString, budgetID: budgetID, categoryID: categoryID,
+                                    targetID: targetID, action: "resumed", actorUserID: actorUserID,
+                                    beforeJSON: try targetSnapshotJSON(before), afterJSON: try targetSnapshotJSON(after),
+                                    affectedMonth: month, createdAt: createdAt))
+            }
+            if targetRuleSnapshot(before) != targetRuleSnapshot(after) {
+                result.append(.init(id: UUID().uuidString, budgetID: budgetID, categoryID: categoryID,
+                                    targetID: targetID, action: "updated", actorUserID: actorUserID,
+                                    beforeJSON: try targetSnapshotJSON(before), afterJSON: try targetSnapshotJSON(after),
+                                    createdAt: createdAt))
+            }
+        }
+        return result
+    }
+
+    private func targetRuleSnapshot(_ value: LocalCategoryTargetRecord) -> APICategoryTargetSnapshot {
+        .init(targetType: value.targetType, targetAmountMinor: value.amountMinor,
+              targetDate: value.targetDate, recurrenceMonths: value.recurrenceMonths.map(Int.init),
+              minimumContributionMinor: value.minimumContributionMinor,
+              priority: Int(value.priority), isActive: value.isActive)
+    }
+
+    private func targetSnapshotJSON(_ value: LocalCategoryTargetRecord) throws -> String {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return String(decoding: try encoder.encode(targetRuleSnapshot(value)), as: UTF8.self)
     }
 
     private func transactionRows(categoryIDs: Set<String>) throws -> [APITransaction] {
@@ -2486,12 +2552,17 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws { try requireActiveMembership();
         guard let index = demo.categories.firstIndex(where: { $0.id == categoryID }) else { throw workspaceRepositoryError("Category not found.") }
+        let before = demoTargetSnapshot(index: index)
         demo.categories[index].target = value.targetAmountMinor; demo.categories[index].targetDate = value.targetDate; demo.categories[index].targetType = value.targetType; demo.categories[index].targetRecurrenceMonths = value.recurrenceMonths; demo.categories[index].targetMinimumContribution = value.minimumContributionMinor; demo.categories[index].targetPriority = value.priority; demo.categories[index].targetIsActive = value.isActive
+        let after = demoTargetSnapshot(index: index)
+        if before != after { appendDemoTargetRevision(categoryID: categoryID, action: before == nil ? "created" : "updated", before: before, after: after) }
     }
     func deleteTarget(categoryID: String) async throws { try requireActiveMembership();
         guard let index = demo.categories.firstIndex(where: { $0.id == categoryID }) else { throw workspaceRepositoryError("Category not found.") }
+        let before = demoTargetSnapshot(index: index)
         demo.categories[index].targetSnoozedMonths = []
         demo.categories[index].target = nil; demo.categories[index].targetDate = nil; demo.categories[index].targetType = "savings_balance"; demo.categories[index].targetRecurrenceMonths = nil; demo.categories[index].targetMinimumContribution = 0; demo.categories[index].targetPriority = 50; demo.categories[index].targetIsActive = true
+        if let before { appendDemoTargetRevision(categoryID: categoryID, action: "deleted", before: before, after: nil) }
     }
     func setTargetSnoozed(categoryID: String, month: String, isSnoozed: Bool) async throws { try requireActiveMembership();
         guard budget.can("manage_planning"), !demo.isRestricted else { throw workspaceRepositoryError("Target management is not permitted.") }
@@ -2501,8 +2572,56 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard let index = demo.categories.firstIndex(where: { $0.id == categoryID }),
               demo.categories[index].target != nil, !demo.categories[index].isHidden,
               !demo.archivedGroups.contains(demo.categories[index].group) else { throw workspaceRepositoryError("Target not found.") }
-        if isSnoozed { demo.categories[index].targetSnoozedMonths.insert(month) }
-        else { demo.categories[index].targetSnoozedMonths.remove(month) }
+        let changed: Bool
+        if isSnoozed { changed = demo.categories[index].targetSnoozedMonths.insert(month).inserted }
+        else { changed = demo.categories[index].targetSnoozedMonths.remove(month) != nil }
+        if changed { let snapshot = demoTargetSnapshot(index: index); appendDemoTargetRevision(categoryID: categoryID, action: isSnoozed ? "snoozed" : "resumed", before: snapshot, after: snapshot, affectedMonth: month) }
+    }
+    func targetHistory(categoryID: String, limit: Int, offset: Int) async throws -> [APICategoryTargetRevision] {
+        try requireActiveMembership()
+        guard (1...100).contains(limit), offset >= 0,
+              demo.categories.contains(where: { $0.id == categoryID && (!demo.isRestricted || $0.delegatedTo == demo.persona) }) else {
+            throw workspaceRepositoryError("Target history not found.")
+        }
+        if let localAuthority, let localIdentity {
+            let decoder = JSONDecoder()
+            return try await localAuthority.targetRevisions(categoryID: categoryID, limit: limit, offset: offset).map { row in
+                APICategoryTargetRevision(id: row.id, categoryID: row.categoryID, targetID: row.targetID,
+                    action: row.action, actorUserID: row.actorUserID,
+                    actorDisplayName: row.actorUserID == localIdentity.ownerUserID ? localIdentity.ownerDisplayName : nil,
+                    beforeSnapshot: try row.beforeJSON.map { try decoder.decode(APICategoryTargetSnapshot.self, from: Data($0.utf8)) },
+                    afterSnapshot: try row.afterJSON.map { try decoder.decode(APICategoryTargetSnapshot.self, from: Data($0.utf8)) },
+                    affectedMonth: row.affectedMonth, createdAt: row.createdAt)
+            }
+        }
+        // Revisions are append-only. Reverse insertion order so several decisions made within
+        // the same clock tick retain their real sequence instead of sorting random UUIDs.
+        let rows = demoTargetRevisions.filter { $0.categoryID == categoryID }.reversed()
+        if rows.isEmpty, let index = demo.categories.firstIndex(where: { $0.id == categoryID }), let snapshot = demoTargetSnapshot(index: index) {
+            return offset == 0 ? [.init(id: "demo-target-created-\(categoryID)", categoryID: categoryID,
+                targetID: "demo-target-\(categoryID)", action: "created", actorUserID: requestActorID,
+                actorDisplayName: demo.persona.rawValue, afterSnapshot: snapshot,
+                createdAt: ISO8601DateFormatter().string(from: now()))].prefix(limit).map { $0 } : []
+        }
+        return Array(rows.dropFirst(offset).prefix(limit))
+    }
+
+    private func demoTargetSnapshot(index: Int) -> APICategoryTargetSnapshot? {
+        let item = demo.categories[index]
+        guard let amount = item.target else { return nil }
+        return .init(targetType: item.targetType, targetAmountMinor: amount, targetDate: item.targetDate,
+                     recurrenceMonths: item.targetRecurrenceMonths,
+                     minimumContributionMinor: item.targetMinimumContribution,
+                     priority: item.targetPriority, isActive: item.targetIsActive)
+    }
+
+    private func appendDemoTargetRevision(categoryID: String, action: String,
+                                          before: APICategoryTargetSnapshot?, after: APICategoryTargetSnapshot?,
+                                          affectedMonth: String? = nil) {
+        demoTargetRevisions.append(.init(id: UUID().uuidString, categoryID: categoryID,
+            targetID: "demo-target-\(categoryID)", action: action, actorUserID: requestActorID,
+            actorDisplayName: demo.persona.rawValue, beforeSnapshot: before, afterSnapshot: after,
+            affectedMonth: affectedMonth, createdAt: ISO8601DateFormatter().string(from: now())))
     }
     private func scheduleVisible(_ item: DemoSchedule) -> Bool {
         let accounts = actorAccountIDs
@@ -2872,6 +2991,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func deleteCategory(id: String) async throws { try await credentials.prepare(); try await client.deleteCategory(budgetID: budget.id, categoryID: id, token: token) }
     func setCategoryFavorite(id: String, isFavorite: Bool, sortOrder: Int) async throws { try await credentials.prepare(); if isFavorite { _ = try await client.favoriteCategory(budgetID: budget.id, categoryID: id, sortOrder: sortOrder, token: token) } else { try await client.unfavoriteCategory(budgetID: budget.id, categoryID: id, token: token) } }
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws { try await credentials.prepare(); _ = try await client.upsertCategoryTarget(budgetID: budget.id, categoryID: categoryID, target: value, token: token) }
+    func targetHistory(categoryID: String, limit: Int, offset: Int) async throws -> [APICategoryTargetRevision] { try await credentials.prepare(); return try await client.categoryTargetHistory(budgetID: budget.id, categoryID: categoryID, limit: limit, offset: offset, token: token) }
     func deleteTarget(categoryID: String) async throws { try await credentials.prepare(); try await client.deleteCategoryTarget(budgetID: budget.id, categoryID: categoryID, token: token) }
     func setTargetSnoozed(categoryID: String, month: String, isSnoozed: Bool) async throws {
         try await credentials.prepare()
@@ -4013,6 +4133,9 @@ final class BudgetWorkspaceStore: ObservableObject {
     func saveTarget(categoryID: String, value: APICategoryTargetUpsert) async throws {
         try await commands().saveTarget(categoryID: categoryID, value: value)
         await refresh()
+    }
+    func targetHistory(categoryID: String, limit: Int = 50, offset: Int = 0) async throws -> [APICategoryTargetRevision] {
+        try await commands().targetHistory(categoryID: categoryID, limit: limit, offset: offset)
     }
     func setTargetSnoozed(categoryID: String, month: String, isSnoozed: Bool) async throws {
         try await commands().setTargetSnoozed(categoryID: categoryID, month: month, isSnoozed: isSnoozed)
@@ -7425,6 +7548,12 @@ private struct LivePlanCategoryDetailView: View {
             if store.budget.can("manage_planning") {
                 Button(store.targets[categoryID] == nil ? "Create target" : "Manage target") { showTarget = true }
             }
+            NavigationLink {
+                TargetHistoryView(categoryID: categoryID, categoryName: row?.name ?? "Category")
+            } label: {
+                Label("Target history", systemImage: "clock.arrow.circlepath")
+            }
+            .accessibilityIdentifier("category-target-history")
             if let model {
                 Button(model.isFavorite ? "Remove from favorites" : "Add to favorites", systemImage: model.isFavorite ? "star.slash" : "star") {
                     Task {
@@ -7442,6 +7571,127 @@ private struct LivePlanCategoryDetailView: View {
 private enum CategoryTransactionMode: String, Identifiable {
     case expense, reimbursement
     var id: String { rawValue }
+}
+
+private struct TargetHistoryView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let categoryID: String
+    let categoryName: String
+    @State private var rows: [APICategoryTargetRevision] = []
+    @State private var loading = false
+    @State private var loadingOlder = false
+    @State private var canLoadOlder = false
+    @State private var errorMessage: String?
+    private let pageSize = 50
+
+    var body: some View {
+        List {
+            if loading && rows.isEmpty {
+                ProgressView("Loading target history…")
+            } else if rows.isEmpty && errorMessage == nil {
+                ContentUnavailableView("No target history", systemImage: "target",
+                    description: Text("Target decisions for \(categoryName) will remain here."))
+            } else {
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(title(row.action), systemImage: symbol(row.action)).font(.headline)
+                        if let month = row.affectedMonth {
+                            Text("Month: \(month)").font(.subheadline)
+                        }
+                        if let explanation = explanation(row) {
+                            Text(explanation).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            Text(row.actorDisplayName ?? "Household member")
+                            Spacer()
+                            Text(BudgetWorkspaceStore.parseDate(String(row.createdAt.prefix(10))), style: .date)
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("target-history-row-\(row.id)")
+                }
+                if canLoadOlder {
+                    Button {
+                        Task { await loadOlder() }
+                    } label: {
+                        if loadingOlder { HStack { ProgressView(); Text("Loading older history…") } }
+                        else { Text("Load Older History") }
+                    }
+                    .disabled(loadingOlder)
+                    .accessibilityIdentifier("target-history-load-older")
+                }
+            }
+            if let errorMessage {
+                Section {
+                    Text(errorMessage).foregroundStyle(.secondary)
+                    Button(rows.isEmpty ? "Retry" : "Retry Older History") {
+                        Task { if rows.isEmpty { await load() } else { await loadOlder() } }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Target History")
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: store.liveCredentialRevision) { await load() }
+        .accessibilityIdentifier("target-history-screen")
+    }
+
+    private func load() async {
+        guard !loading else { return }
+        loading = true; defer { loading = false }
+        do {
+            let page = try await store.targetHistory(categoryID: categoryID, limit: pageSize, offset: 0)
+            rows = page; canLoadOlder = page.count == pageSize; errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func loadOlder() async {
+        guard !loadingOlder else { return }
+        loadingOlder = true; defer { loadingOlder = false }
+        do {
+            let page = try await store.targetHistory(categoryID: categoryID, limit: pageSize, offset: rows.count)
+            rows += page.filter { item in !rows.contains(where: { $0.id == item.id }) }
+            canLoadOlder = page.count == pageSize; errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func title(_ action: String) -> String {
+        switch action {
+        case "created": "Target created"
+        case "updated": "Target updated"
+        case "deleted": "Target deleted"
+        case "snoozed": "Guidance snoozed"
+        case "resumed": "Guidance resumed"
+        default: "Target changed"
+        }
+    }
+
+    private func symbol(_ action: String) -> String {
+        switch action {
+        case "created": "plus.circle"
+        case "deleted": "trash"
+        case "snoozed": "pause.circle"
+        case "resumed": "play.circle"
+        default: "pencil.circle"
+        }
+    }
+
+    private func explanation(_ row: APICategoryTargetRevision) -> String? {
+        if let after = row.afterSnapshot, let before = row.beforeSnapshot, after != before {
+            return "\(targetLabel(before)) → \(targetLabel(after))"
+        }
+        if let snapshot = row.afterSnapshot ?? row.beforeSnapshot { return targetLabel(snapshot) }
+        return nil
+    }
+
+    private func targetLabel(_ value: APICategoryTargetSnapshot) -> String {
+        var parts = [store.format(value.targetAmountMinor), value.targetType.replacingOccurrences(of: "_", with: " ").capitalized]
+        if let date = value.targetDate { parts.append("due \(date)") }
+        if !value.isActive { parts.append("inactive") }
+        parts.append("priority \(value.priority)")
+        return parts.joined(separator: " · ")
+    }
 }
 
 private struct TargetMonthSnoozeSection: View {

@@ -890,6 +890,60 @@ public struct APICategoryTarget: Identifiable, Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case id, priority; case categoryID="category_id", targetType="target_type", targetAmountMinor="target_amount_minor", targetDate="target_date", recurrenceMonths="recurrence_months", minimumContributionMinor="minimum_contribution_minor", isActive="is_active" }
 }
 
+public struct APICategoryTargetSnapshot: Codable, Equatable, Sendable {
+    public let targetType: String
+    public let targetAmountMinor: Int64
+    public let targetDate: String?
+    public let recurrenceMonths: Int?
+    public let minimumContributionMinor: Int64
+    public let priority: Int
+    public let isActive: Bool
+    public init(targetType: String, targetAmountMinor: Int64, targetDate: String? = nil,
+                recurrenceMonths: Int? = nil, minimumContributionMinor: Int64 = 0,
+                priority: Int = 50, isActive: Bool = true) {
+        self.targetType = targetType; self.targetAmountMinor = targetAmountMinor
+        self.targetDate = targetDate; self.recurrenceMonths = recurrenceMonths
+        self.minimumContributionMinor = minimumContributionMinor
+        self.priority = priority; self.isActive = isActive
+    }
+    enum CodingKeys: String, CodingKey {
+        case priority
+        case targetType = "target_type", targetAmountMinor = "target_amount_minor"
+        case targetDate = "target_date", recurrenceMonths = "recurrence_months"
+        case minimumContributionMinor = "minimum_contribution_minor", isActive = "is_active"
+    }
+}
+
+public struct APICategoryTargetRevision: Identifiable, Codable, Equatable, Sendable {
+    public let id: String
+    public let categoryID: String
+    public let targetID: String?
+    public let action: String
+    public let actorUserID: String
+    public let actorDisplayName: String?
+    public let beforeSnapshot: APICategoryTargetSnapshot?
+    public let afterSnapshot: APICategoryTargetSnapshot?
+    public let affectedMonth: String?
+    public let createdAt: String
+    public init(id: String, categoryID: String, targetID: String? = nil, action: String,
+                actorUserID: String, actorDisplayName: String? = nil,
+                beforeSnapshot: APICategoryTargetSnapshot? = nil,
+                afterSnapshot: APICategoryTargetSnapshot? = nil,
+                affectedMonth: String? = nil, createdAt: String) {
+        self.id = id; self.categoryID = categoryID; self.targetID = targetID; self.action = action
+        self.actorUserID = actorUserID; self.actorDisplayName = actorDisplayName
+        self.beforeSnapshot = beforeSnapshot; self.afterSnapshot = afterSnapshot
+        self.affectedMonth = affectedMonth; self.createdAt = createdAt
+    }
+    enum CodingKeys: String, CodingKey {
+        case id, action
+        case categoryID = "category_id", targetID = "target_id"
+        case actorUserID = "actor_user_id", actorDisplayName = "actor_display_name"
+        case beforeSnapshot = "before_snapshot", afterSnapshot = "after_snapshot"
+        case affectedMonth = "affected_month", createdAt = "created_at"
+    }
+}
+
 struct APITargetSnoozeUpdate: Encodable {
     let isSnoozed: Bool
     enum CodingKeys: String, CodingKey { case isSnoozed = "is_snoozed" }

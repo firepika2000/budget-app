@@ -31,6 +31,7 @@ from .models import (
     CategoryFavorite,
     CategoryGroup,
     CategoryTarget,
+    CategoryTargetRevision,
     CategoryTargetSnooze,
     CreditCardReserveEvent,
     DelegatedBudgetPolicy,
@@ -365,6 +366,9 @@ def export_budget_json(
             DelegatedCategoryRule.policy_id.in_(policy_ids)
         ))] if policy_ids else [],
         "targets": [row_data(item) for item in targets],
+        "target_revisions": [row_data(item) for item in db.scalars(select(CategoryTargetRevision).where(
+            CategoryTargetRevision.budget_id == budget_id
+        ))],
         "target_snoozes": [row_data(item) for item in db.scalars(select(CategoryTargetSnooze).where(
             CategoryTargetSnooze.target_id.in_(target_ids)
         ))] if target_ids else [],

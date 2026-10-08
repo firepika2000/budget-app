@@ -1620,6 +1620,28 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testTargetDecisionHistoryUsesProductionStoreAndRemainsMoneyNeutral() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let category = try XCTUnwrap(store.categories.first { store.targets[$0.id] == nil })
+        let before = (store.summary?.readyToAssignMinor, store.accounts.map { store.balance(for: $0) }, store.transactions.count)
+        try await store.saveTarget(categoryID: category.id, value: .init(targetType: "monthly_funding", targetAmountMinor: 12_345, minimumContributionMinor: 500, priority: 60))
+        try await store.saveTarget(categoryID: category.id, value: .init(targetType: "target_by_date", targetAmountMinor: 25_000, targetDate: "2027-09-05", minimumContributionMinor: 1_000, priority: 80))
+        try await store.setTargetSnoozed(categoryID: category.id, month: "2027-08-01", isSnoozed: true)
+        try await store.setTargetSnoozed(categoryID: category.id, month: "2027-08-01", isSnoozed: false)
+        try await store.deleteTarget(categoryID: category.id)
+
+        let history = try await store.targetHistory(categoryID: category.id)
+        XCTAssertEqual(history.map(\.action), ["deleted", "resumed", "snoozed", "updated", "created"])
+        XCTAssertEqual(history.last?.afterSnapshot?.targetAmountMinor, 12_345)
+        XCTAssertEqual(history.first?.beforeSnapshot?.targetAmountMinor, 25_000)
+        XCTAssertEqual(history.first?.actorDisplayName, "Rey")
+        XCTAssertEqual(store.summary?.readyToAssignMinor, before.0)
+        XCTAssertEqual(store.accounts.map { store.balance(for: $0) }, before.1)
+        XCTAssertEqual(store.transactions.count, before.2)
+    }
+
+    @MainActor
     func testCategoryFavoritePersistsThroughRefreshWithoutChangingMoney() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
@@ -1683,6 +1705,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("spending-trend-payee-"))
         XCTAssertTrue(contents.contains("debt-account-"))
         XCTAssertTrue(contents.contains("plan-performance-category-"))
+        XCTAssertTrue(contents.contains("category-target-history"))
+        XCTAssertTrue(contents.contains("TargetHistoryView"))
         XCTAssertTrue(contents.contains(".chartXSelection(value: $selectedDate)"))
         XCTAssertTrue(contents.contains("income-spending-selected-period"))
         XCTAssertTrue(contents.contains("net-worth-selected-point"))
