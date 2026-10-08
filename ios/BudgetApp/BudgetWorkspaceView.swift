@@ -1940,10 +1940,47 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             }
         }
         return [try decode([
-            "id": "demo-history-\(id)", "action": "created", "actor_user_id": transaction.member,
-            "actor_display_name": transaction.member, "changed_fields": [],
+            "id": "demo-history-\(id)", "transaction_id": id,
+            "transaction_payee_name": transaction.payee,
+            "transaction_occurred_on": BudgetWorkspaceStore.dateString(transaction.date),
+            "action": "created", "actor_user_id": transaction.member.rawValue,
+            "actor_display_name": transaction.member.rawValue, "changed_fields": [],
             "created_at": ISO8601DateFormatter().string(from: transaction.date),
         ] as [String: Any])]
+    }
+    func recentTransactionChanges(limit: Int) async throws -> [APITransactionChange] { try requireActiveMembership()
+        guard (1...25).contains(limit) else { throw workspaceRepositoryError("Recent transaction history limit is invalid") }
+        let visibleByID = Dictionary(uniqueKeysWithValues: resourceVisibleTransactions.map { ($0.id, $0) })
+        if let localAuthority, let localIdentity {
+            let rows = try await localAuthority.recentTransactionChanges(
+                budgetID: localIdentity.budgetID, limit: 25
+            ).filter { visibleByID[$0.transactionID] != nil }.prefix(limit)
+            return try rows.map { item in
+                let transaction = visibleByID[item.transactionID]!
+                return try decode([
+                    "id": item.id, "transaction_id": item.transactionID,
+                    "transaction_payee_name": transaction.payee,
+                    "transaction_occurred_on": BudgetWorkspaceStore.dateString(transaction.date),
+                    "action": item.action, "actor_user_id": item.actorUserID,
+                    "actor_display_name": item.actorUserID == localIdentity.ownerUserID
+                        ? localIdentity.ownerDisplayName : "Household member",
+                    "changed_fields": item.changedFields,
+                    "created_at": item.createdAt,
+                ] as [String: Any])
+            }
+        }
+        return try resourceVisibleTransactions.sorted {
+            ($0.date, $0.id) > ($1.date, $1.id)
+        }.prefix(limit).map { transaction in
+            try decode([
+                "id": "demo-history-\(transaction.id)", "transaction_id": transaction.id,
+                "transaction_payee_name": transaction.payee,
+                "transaction_occurred_on": BudgetWorkspaceStore.dateString(transaction.date),
+                "action": "created", "actor_user_id": transaction.member.rawValue,
+                "actor_display_name": transaction.member.rawValue, "changed_fields": [],
+                "created_at": ISO8601DateFormatter().string(from: transaction.date),
+            ] as [String: Any])
+        }
     }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try requireActiveMembership();
         let transaction = try attachmentTransaction(id: id, editing: true)
@@ -2581,6 +2618,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws { try await credentials.prepare(); _ = try await client.createScheduleFromTransaction(budgetID: budget.id, transactionID: id, request: .init(recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, nextDate: operation.nextDate), token: token) }
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await credentials.prepare(); return try await client.transactionAttachments(budgetID: budget.id, transactionID: id, token: token) }
     func transactionHistory(id: String) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.transactionHistory(budgetID: budget.id, transactionID: id, token: token) }
+    func recentTransactionChanges(limit: Int) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.recentTransactionChanges(budgetID: budget.id, limit: limit, token: token) }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await credentials.prepare(); _ = try await client.uploadTransactionAttachment(budgetID: budget.id, transactionID: id, filename: filename, contentType: contentType, data: data, token: token) }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await credentials.prepare(); return try await client.downloadTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await credentials.prepare(); try await client.detachTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
@@ -3450,6 +3488,7 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await services().transactions.attachments(id: id) }
     func transactionHistory(id: String) async throws -> [APITransactionChange] { try await services().transactions.history(id: id) }
+    func recentTransactionChanges(limit: Int = 5) async throws -> [APITransactionChange] { try await services().transactions.recentChanges(limit: limit) }
     func reconciliationHistory(accountID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIReconciliationHistory] {
         try await services().accounts.reconciliationHistory(accountID: accountID, limit: limit, offset: offset)
     }
@@ -7127,6 +7166,9 @@ private struct LiveActivityView: View {
     @State private var reconciliationLoading = false
     @State private var reconciliationError: String?
     @State private var reconciliationAccount: APIAccount?
+    @State private var recentTransactionChanges: [APITransactionChange] = []
+    @State private var transactionChangesLoading = false
+    @State private var transactionChangesError: String?
     private var queryKey: String { "\(search)|\(filter)" }
     private var recentPlanChanges: [APIAllocationOperation] {
         Array(store.allocationOperations.sorted {
@@ -7162,6 +7204,32 @@ private struct LiveActivityView: View {
                         }
                         NavigationLink("View all plan history") { AllocationHistoryView() }
                             .accessibilityIdentifier("activity-plan-history-action")
+                    }
+                }
+            }
+            Section("Recent transaction changes") {
+                if transactionChangesLoading && recentTransactionChanges.isEmpty {
+                    ProgressView("Loading transaction changes…")
+                } else if let transactionChangesError, recentTransactionChanges.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(transactionChangesError).foregroundStyle(.secondary)
+                        Button("Retry") { Task { await loadRecentTransactionChanges() } }
+                    }
+                    .accessibilityIdentifier("activity-transaction-history-error")
+                } else if recentTransactionChanges.isEmpty {
+                    Text("Transaction edits will appear here with who made each change.")
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("activity-transaction-history-empty")
+                } else {
+                    ForEach(recentTransactionChanges) { change in
+                        if let transactionID = change.transactionID {
+                            NavigationLink {
+                                LiveTransactionDetailView(transactionID: transactionID)
+                            } label: {
+                                transactionChangeRow(change)
+                            }
+                            .accessibilityIdentifier("activity-transaction-change-\(change.id)")
+                        }
                     }
                 }
             }
@@ -7215,8 +7283,8 @@ private struct LiveActivityView: View {
             .onAppear { openQuickEntryIfRequested() }
             .onChange(of: quickEntryRequest) { _, _ in openQuickEntryIfRequested() }
             .task(id: queryKey) { if !search.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }; guard !Task.isCancelled else { return }; await load(reset: true) }
-            .task { await loadRecentReconciliations() }
-            .refreshable { await store.refresh(); await load(reset: true); await loadRecentReconciliations() }
+            .task { async let changes: Void = loadRecentTransactionChanges(); async let reconciliations: Void = loadRecentReconciliations(); _ = await (changes, reconciliations) }
+            .refreshable { await store.refresh(); await load(reset: true); async let changes: Void = loadRecentTransactionChanges(); async let reconciliations: Void = loadRecentReconciliations(); _ = await (changes, reconciliations) }
     }
     private func openQuickEntryIfRequested() {
         guard quickEntryRequest > 0, store.budget.can("create_transaction") else { return }
@@ -7260,6 +7328,51 @@ private struct LiveActivityView: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens reconciliation history for \(account.name)")
+    }
+    private func transactionChangeRow(_ change: APITransactionChange) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Label(transactionChangeTitle(change.action), systemImage: "clock.arrow.circlepath")
+                    .font(.headline)
+                Spacer()
+                Text(BudgetWorkspaceStore.compactDate(change.transactionOccurredOn ?? ""))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text(change.transactionPayeeName?.isEmpty == false ? change.transactionPayeeName! : "Transaction")
+                .font(.subheadline)
+            Text("By \(change.actorDisplayName ?? "Household member")\(transactionChangeFields(change))")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the transaction and its complete change history")
+    }
+    private func transactionChangeTitle(_ action: String) -> String {
+        switch action {
+        case "created": "Transaction added"
+        case "deleted": "Transaction deleted"
+        case "voided": "Transaction voided"
+        case "duplicated": "Transaction duplicated"
+        case "bulk_updated": "Transaction updated"
+        case "payee_renamed": "Payee renamed"
+        case "payee_merged": "Payee merged"
+        case "schedule_created": "Schedule created"
+        default: "Transaction updated"
+        }
+    }
+    private func transactionChangeFields(_ change: APITransactionChange) -> String {
+        guard !change.changedFields.isEmpty else { return "" }
+        let names = change.changedFields.prefix(3).map { $0.replacingOccurrences(of: "_", with: " ") }
+        return " · " + names.joined(separator: ", ")
+    }
+    private func loadRecentTransactionChanges() async {
+        guard !transactionChangesLoading else { return }
+        transactionChangesLoading = true
+        defer { transactionChangesLoading = false }
+        do {
+            recentTransactionChanges = try await store.recentTransactionChanges()
+            transactionChangesError = nil
+        } catch where Task.isCancelled { return }
+        catch { transactionChangesError = error.localizedDescription }
     }
     private func loadRecentReconciliations() async {
         guard !reconciliationLoading else { return }

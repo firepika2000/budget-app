@@ -432,6 +432,12 @@ Agents and implementation plans must not begin the following merely because adja
 The roadmap is a living document, but changing it is a deliberate product decision—not an incidental side effect of implementation.
 ## Current development checkpoints
 
+- Activity now surfaces the five most recent visible transaction audit events with actor, action,
+  ledger date, payee context, and a concise changed-field summary. Selecting an event opens the
+  existing production transaction detail and complete Change History; no duplicate editor or audit
+  store was introduced. Budget Server applies account/category/split privacy before its bounded
+  order/limit, while Demo and Local Device project the same immutable audit records.
+
 - Dropbox backup management now lets a Local Device owner deliberately remove one encrypted remote
   generation through a separate destructive swipe/accessibility action and explicit confirmation.
   The provider boundary rejects deletion outside the configured direct-child backup folder, refreshes

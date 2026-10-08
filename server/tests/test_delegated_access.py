@@ -816,6 +816,64 @@ def test_transaction_edit_and_delete_enforce_scope_and_ownership(
     ).status_code == 204
 
 
+def test_recent_transaction_changes_filter_privacy_before_limit(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, private_category = create_budget_structure(client, owner_token, budget["id"])
+    visible_category = add_category(client, owner_token, budget["id"], "Delegated", "Child Fun")
+    child_id, child_token = add_child(session_factory, client)
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/grants", headers=auth(owner_token),
+        json={"user_id": child_id, "permission": "contribute"},
+    ).status_code == 200
+    assert client.put(
+        f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token),
+        json={
+            "capabilities": ["view_budget", "view_accounts", "view_categories", "view_transactions", "create_transaction"],
+            "restrict_accounts": True, "account_ids": [checking["id"]],
+            "restrict_categories": True, "category_ids": [visible_category["id"]],
+        },
+    ).status_code == 200
+
+    visible = record(
+        client, child_token, budget["id"], account_id=checking["id"],
+        category_id=visible_category["id"], amount_minor=-1000, payee_name="Visible snack",
+    )
+    # The newest audit row is private. Applying LIMIT before scope filtering would return an
+    # empty feed and reveal that hidden household activity occurred.
+    private = record(
+        client, owner_token, budget["id"], account_id=checking["id"],
+        category_id=private_category["id"], amount_minor=-5000, payee_name="Private purchase",
+    )
+
+    response = client.get(
+        f"/api/v1/budgets/{budget['id']}/transaction-changes?limit=1",
+        headers=auth(child_token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == [{
+        "id": response.json()[0]["id"],
+        "transaction_id": visible["id"],
+        "transaction_payee_name": "Visible snack",
+        "transaction_occurred_on": "2026-09-04",
+        "action": "created",
+        "actor_user_id": child_id,
+        "actor_display_name": "Child",
+        "changed_fields": [],
+        "changes": [],
+        "created_at": response.json()[0]["created_at"],
+    }]
+    assert private["id"] not in {item["transaction_id"] for item in response.json()}
+
+    owner_feed = client.get(
+        f"/api/v1/budgets/{budget['id']}/transaction-changes?limit=2",
+        headers=auth(owner_token),
+    )
+    assert owner_feed.status_code == 200
+    assert [item["transaction_id"] for item in owner_feed.json()] == [private["id"], visible["id"]]
+
+
 def test_scoped_transfer_requires_both_directions_and_attributes_actor(
     client, owner_token, session_factory
 ):

@@ -839,6 +839,9 @@ class TransactionFieldChangeResponse(BaseModel):
 
 class TransactionChangeResponse(BaseModel):
     id: str
+    transaction_id: Optional[str] = None
+    transaction_payee_name: Optional[str] = None
+    transaction_occurred_on: Optional[date] = None
     action: str
     actor_user_id: str
     actor_display_name: Optional[str] = None

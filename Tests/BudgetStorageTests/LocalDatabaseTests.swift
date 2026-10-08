@@ -233,6 +233,46 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertFalse(value.changedFields.contains("private after"))
     }
 
+    func testRecentTransactionChangesAreBoundedAndExcludeDeletedTransactions() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("recent-changes.sqlite")
+        let store = try LocalAuthorityStore(fileURL: databaseURL)
+        let identity = LocalAuthorityIdentity(
+            householdID: "household", householdName: "Household", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "budget", budgetName: "Budget", currencyCode: "USD"
+        )
+        try await store.bootstrap(identity, createdAt: "2026-09-27T12:00:00Z")
+        try await store.insertAccount(.init(
+            id: "checking", budgetID: "budget", name: "Checking", kind: "checking",
+            isOnBudget: true, openingBalanceMinor: 0, createdAt: "2026-09-27T12:00:00Z"
+        ))
+        try await store.insertTransaction(.init(
+            id: "purchase", budgetID: "budget", accountID: "checking", payeeName: "Market",
+            amountMinor: -100, occurredOn: "2026-09-27", createdByUserID: "owner",
+            createdAt: "2026-09-27T12:00:00Z", splits: []
+        ))
+        let snapshot = try await store.snapshot(budgetID: "budget")
+        let changes = [
+            LocalTransactionChangeRecord(id: "change-1", budgetID: "budget", transactionID: "purchase", actorUserID: "owner", action: "updated", createdAt: "2026-09-28T12:00:00Z"),
+            LocalTransactionChangeRecord(id: "change-2", budgetID: "budget", transactionID: "purchase", actorUserID: "owner", action: "updated", createdAt: "2026-09-29T12:00:00Z"),
+            LocalTransactionChangeRecord(id: "deleted-only", budgetID: "budget", transactionID: "missing", actorUserID: "owner", action: "deleted", createdAt: "2026-09-30T12:00:00Z"),
+        ]
+        try await store.replaceWorkspaceState(.init(
+            identity: snapshot.identity, accounts: snapshot.accounts, groups: snapshot.groups,
+            categories: snapshot.categories, payees: snapshot.payees, payeeAliases: snapshot.payeeAliases,
+            transactions: snapshot.transactions, allocations: snapshot.allocations,
+            reconciliations: snapshot.reconciliations, targets: snapshot.targets,
+            schedules: snapshot.schedules, attachments: snapshot.attachments,
+            attachmentTombstones: snapshot.attachmentTombstones, debtTerms: snapshot.debtTerms,
+            cashRolloverPolicies: snapshot.cashRolloverPolicies,
+            creditReserveAttributions: snapshot.creditReserveAttributions,
+            transactionChanges: changes, creditReserveEvents: snapshot.creditReserveEvents,
+            statementImports: snapshot.statementImports
+        ))
+
+        let recent = try await store.recentTransactionChanges(budgetID: "budget", limit: 2)
+        XCTAssertEqual(recent.map(\.id), ["change-2", "change-1"])
+    }
+
     func testLocalTransactionAuditAppendsOnlyRealTransactionDeltas() throws {
         let first = transaction(id: "first", amountMinor: -100, memo: "before")
         let unchanged = transaction(id: "same", amountMinor: -200, memo: "same")

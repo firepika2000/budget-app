@@ -948,6 +948,9 @@ public struct APITransactionPage: Decodable, Equatable, Sendable {
 
 public struct APITransactionChange: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
+    public let transactionID: String?
+    public let transactionPayeeName: String?
+    public let transactionOccurredOn: String?
     public let action: String
     public let actorUserID: String
     public let actorDisplayName: String?
@@ -957,6 +960,9 @@ public struct APITransactionChange: Identifiable, Decodable, Equatable, Sendable
 
     enum CodingKeys: String, CodingKey {
         case id, action
+        case transactionID = "transaction_id"
+        case transactionPayeeName = "transaction_payee_name"
+        case transactionOccurredOn = "transaction_occurred_on"
         case actorUserID = "actor_user_id"
         case actorDisplayName = "actor_display_name"
         case changedFields = "changed_fields"

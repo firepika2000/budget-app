@@ -1407,6 +1407,27 @@ final class AuthenticationJourneyTests: XCTestCase {
         ).firstMatch.exists)
     }
 
+    func testActivityShowsAttributedTransactionChangesAndOpensCanonicalTransaction() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+        let change = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "activity-transaction-change-")
+        ).firstMatch
+        XCTAssertTrue(change.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !change.isHittable { app.swipeUp() }
+        XCTAssertTrue(change.isHittable)
+        XCTAssertTrue(change.label.contains("By "))
+        change.tap()
+
+        XCTAssertTrue(app.navigationBars["Transaction"].waitForExistence(timeout: 5))
+        let history = app.buttons["View Change History"]
+        for _ in 0..<5 where !history.isHittable { app.swipeUp() }
+        XCTAssertTrue(history.isHittable)
+    }
+
     func testMoveMoneyFromCategoryPreservesSourceContextAndUsesUnassignedTerm() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=plan"]

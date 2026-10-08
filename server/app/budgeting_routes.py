@@ -1708,6 +1708,53 @@ def _transaction_field_changes(change: TransactionChange, context: dict) -> list
     return rows
 
 
+def _transaction_change_rows(
+    db: Session, user: User, budget: Budget, changes: list[TransactionChange],
+    transactions: dict[str, Transaction] | None = None,
+) -> list[dict]:
+    actor_ids = {item.actor_user_id for item in changes}
+    names = {item.id: item.display_name for item in db.scalars(
+        select(User).where(User.id.in_(actor_ids))
+    )} if actor_ids else {}
+    history_context = _transaction_history_context(db, user, budget, changes)
+    transactions = transactions or {}
+    return [{
+        "id": item.id,
+        "transaction_id": item.transaction_id,
+        "transaction_payee_name": transactions[item.transaction_id].payee_name
+            if item.transaction_id in transactions else None,
+        "transaction_occurred_on": transactions[item.transaction_id].occurred_on
+            if item.transaction_id in transactions else None,
+        "action": item.action,
+        "actor_user_id": item.actor_user_id,
+        "actor_display_name": names.get(item.actor_user_id),
+        "changed_fields": _changed_transaction_fields(item),
+        "changes": _transaction_field_changes(item, history_context),
+        "created_at": item.created_at,
+    } for item in changes]
+
+
+@router.get("/transaction-changes", response_model=list[TransactionChangeResponse])
+def recent_transaction_changes(
+    budget_id: str,
+    limit: int = Query(default=5, ge=1, le=25),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """Return recent visible edits for Activity without leaking hidden transaction activity."""
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    visible_transactions = select(Transaction.id).where(*transaction_visibility_conditions(db, user, budget))
+    changes = list(db.scalars(select(TransactionChange).where(
+        TransactionChange.budget_id == budget.id,
+        TransactionChange.transaction_id.in_(visible_transactions),
+    ).order_by(TransactionChange.created_at.desc(), TransactionChange.id.desc()).limit(limit)))
+    transaction_ids = {item.transaction_id for item in changes}
+    transactions = {item.id: item for item in db.scalars(select(Transaction).where(
+        Transaction.id.in_(transaction_ids)
+    ))} if transaction_ids else {}
+    return _transaction_change_rows(db, user, budget, changes, transactions)
+
+
 @router.get("/transactions/{transaction_id}/history", response_model=list[TransactionChangeResponse])
 def transaction_history(
     budget_id: str,
@@ -1728,18 +1775,7 @@ def transaction_history(
         TransactionChange.budget_id == budget.id,
         TransactionChange.transaction_id == transaction.id,
     ).order_by(TransactionChange.created_at.desc(), TransactionChange.id.desc()).offset(offset).limit(limit)))
-    actor_ids = {item.actor_user_id for item in changes}
-    names = {item.id: item.display_name for item in db.scalars(select(User).where(User.id.in_(actor_ids)))} if actor_ids else {}
-    history_context = _transaction_history_context(db, user, budget, changes)
-    return [{
-        "id": item.id,
-        "action": item.action,
-        "actor_user_id": item.actor_user_id,
-        "actor_display_name": names.get(item.actor_user_id),
-        "changed_fields": _changed_transaction_fields(item),
-        "changes": _transaction_field_changes(item, history_context),
-        "created_at": item.created_at,
-    } for item in changes]
+    return _transaction_change_rows(db, user, budget, changes)
 
 
 @router.post("/transactions", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)

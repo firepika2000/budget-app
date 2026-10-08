@@ -294,6 +294,14 @@ public struct APIClient {
         )
     }
 
+    public func recentTransactionChanges(budgetID: String, limit: Int = 5, token: String) async throws -> [APITransactionChange] {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/transaction-changes",
+            queryItems: [URLQueryItem(name: "limit", value: String(limit))],
+            token: token
+        )
+    }
+
     public func uploadTransactionAttachment(budgetID: String, transactionID: String, filename: String, contentType: String, data: Data, token: String) async throws -> APITransactionAttachment {
         var request = URLRequest(url: baseURL.appending(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/attachments"))
         request.httpMethod = "POST"; request.httpBody = data

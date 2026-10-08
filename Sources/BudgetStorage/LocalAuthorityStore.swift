@@ -817,6 +817,18 @@ public actor LocalAuthorityStore {
         )).map(transactionChangeRecord)
     }
 
+    public func recentTransactionChanges(
+        budgetID: String, limit: Int = 5
+    ) async throws -> [LocalTransactionChangeRecord] {
+        guard (1...25).contains(limit) else {
+            throw LocalStorageError.invalidSnapshot("Recent transaction history limit is invalid")
+        }
+        return try await database.rows(.init(
+            "SELECT c.* FROM transaction_changes c JOIN transactions t ON t.id=c.transaction_id AND t.budget_id=c.budget_id WHERE c.budget_id=? ORDER BY c.created_at DESC,c.id DESC LIMIT ?",
+            values: [.text(budgetID), .integer(Int64(limit))]
+        )).map(transactionChangeRecord)
+    }
+
     public func snapshot(budgetID: String) async throws -> LocalAuthoritySnapshot {
         let identityRows = try await database.rows(.init(
             "SELECT h.id AS household_id,h.name AS household_name,u.id AS owner_user_id,u.display_name AS owner_display_name,b.id AS budget_id,b.name AS budget_name,b.currency_code FROM budgets b JOIN households h ON h.id=b.household_id JOIN memberships m ON m.household_id=h.id AND m.role='owner' AND m.is_active=1 JOIN users u ON u.id=m.user_id WHERE b.id=? ORDER BY u.id LIMIT 1",

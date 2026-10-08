@@ -40,7 +40,7 @@ discoverability; P3 missing user-facing functionality; P4 backend/architecture e
 | Onboarding | Existing guided onboarding | Current empty Live composition unverified | Fresh disposable household |
 | Payee management | Search and management views exist | Prior evidence must be reconciled | Search/management walkthrough |
 | Attachments | Existing provider/service/native workflow | Prior human evidence retained, not blanket acceptance | Presentation audit |
-| Audit/history | Transaction audit/backend exists | User-visible coverage inventory incomplete | Trace each history destination |
+| Audit/history | Activity exposes bounded actor-attributed transaction edits and drills into canonical detail/history; Plan and reconciliation history are also production-wired | Automated composition coverage exists; current-device human walkthrough remains | Verify Activity attribution and drill-through with two household actors |
 | Import | Parsers/matching/staging foundations only; Swift API/native UI absent | Not discoverable; no end-to-end UI/human acceptance | Resume vertical integration only after P0/P1 closure |
 
 For each row, the completed audit must explicitly resolve backend, Swift API and native UI
