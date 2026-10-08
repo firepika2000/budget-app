@@ -55,6 +55,9 @@ multiline fields are supported. Unmarked UTF-16 remains rejected rather than gue
 guessing, currency conversion and rounding are deliberately absent: later mapping UI must make
 these choices explicit rather than silently changing financial meaning.
 
+The native column mapper uses this same decoder and record splitter, so BOM-marked UTF-16 and quoted
+headers are selectable in the production import screen rather than being supported only after staging.
+
 Currency scale is an explicit input; an eventual application service must supply the authoritative
 budget scale, not trust a client-supplied override. Integer arithmetic checks signed Int64 bounds.
 The authenticated staging route resolves the ISO 4217 minor-unit exponent at the server boundary;

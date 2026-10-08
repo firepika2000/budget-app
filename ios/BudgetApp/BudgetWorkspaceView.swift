@@ -8106,6 +8106,15 @@ enum LocalDelimitedStatementParser {
         return output
     }
 
+    static func headers(data: Data, delimiter: Character) -> [String] {
+        guard data.count <= 10 * 1024 * 1024, let text = decodedText(data), !text.contains("\0"),
+              let first = try? records(text, delimiter: delimiter).first else { return [] }
+        return first.map {
+            $0.replacingOccurrences(of: "\u{feff}", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+    }
+
     private static func decodedText(_ data: Data) -> String? {
         let bytes = [UInt8](data)
         guard bytes.count >= 2 else { return String(data: data, encoding: .utf8) }
@@ -8664,7 +8673,10 @@ private struct StatementImportFlowView: View {
     private func cancel(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { _ = try await workspace.cancelStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func undo(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { staged = try await workspace.undoStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version) } catch { errorMessage = error.localizedDescription } }
     private static func preferred(_ headers: [String], _ names: [String]) -> String { for name in names { if let match = headers.first(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == name }) { return match } }; return "" }
-    private static func csvHeaders(_ data: Data, delimiter: String) -> [String] { guard let separator = delimiter.first, let text = String(data: data.prefix(64 * 1024), encoding: .utf8), let line = text.split(whereSeparator: \.isNewline).first else { return [] }; var values: [String] = [], value = "", quoted = false; let chars = Array(line); var index = 0; while index < chars.count { let char = chars[index]; if char == "\"" { if quoted && index + 1 < chars.count && chars[index + 1] == "\"" { value.append("\""); index += 1 } else { quoted.toggle() } } else if char == separator && !quoted { values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); value = "" } else { value.append(char) }; index += 1 }; values.append(value.trimmingCharacters(in: .whitespacesAndNewlines)); if !values.isEmpty { values[0] = values[0].replacingOccurrences(of: "\u{feff}", with: "") }; return values.filter { !$0.isEmpty } }
+    private static func csvHeaders(_ data: Data, delimiter: String) -> [String] {
+        guard let separator = delimiter.first else { return [] }
+        return LocalDelimitedStatementParser.headers(data: data, delimiter: separator)
+    }
 }
 
 private struct ReportLoadModifier: ViewModifier {

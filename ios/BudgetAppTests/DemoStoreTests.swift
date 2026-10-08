@@ -3395,6 +3395,8 @@ final class DemoStoreTests: XCTestCase {
                 let low = UInt8(unit & 0xff), high = UInt8(unit >> 8)
                 data.append(contentsOf: littleEndian ? [low, high] : [high, low])
             }
+            XCTAssertEqual(LocalDelimitedStatementParser.headers(data: data, delimiter: ","),
+                           ["Date", "Description", "Amount"])
             let rows = try LocalDelimitedStatementParser.parse(
                 data: data,
                 mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",

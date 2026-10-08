@@ -1936,4 +1936,6 @@ Delimited statement import now accepts UTF-8 plus BOM-marked UTF-16 little- and 
 both Budget Server and Local Device modes. The BOM is required so ClearPocket never guesses byte
 order or falls back through locale-dependent decoders. Malformed or unmarked UTF-16 fails before
 staging with a private-safe validation message. This widens spreadsheet/bank export compatibility
-without changing mapping, money parsing, approval, or ledger semantics.
+without changing mapping, money parsing, approval, or ledger semantics. The production column mapper
+now reads headers through that same decoder, closing the parser-only gap that would otherwise leave
+UTF-16 files unable to reach Preview.
