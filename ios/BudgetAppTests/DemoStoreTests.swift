@@ -2245,6 +2245,13 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDropboxCoordinatorFailsClosedWithAnExplicitBlankAppKey() {
+        let coordinator = DropboxBackupCoordinator(appKey: "   ")
+        XCTAssertFalse(coordinator.isConfigured)
+        XCTAssertFalse(coordinator.isConnected)
+    }
+
+    @MainActor
     func testDropboxSuccessfulBackupStatusPersistsAcrossCoordinatorReconstruction() {
         let suite = "BudgetAppTests.DropboxStatus.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

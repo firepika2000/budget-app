@@ -26,13 +26,15 @@ retention, automatic active-app backups, verified download/restore, explicit dis
 and recovery-key warnings. Local Files backup remains available independently. Unit coverage exercises
 OAuth state/callback validation, refresh concurrency and rotation, 401 recovery, remote revocation,
 chunked upload, pagination, retention, path confinement and corrupt upload/download rejection;
-production-composition UI coverage proves the configured and fail-closed states. Release archives
-require and verify `BUDGET_APP_DROPBOX_APP_KEY`, so a build cannot silently ship a dead Connect button.
-The only remaining Dropbox gate is external configuration and live acceptance: register the public
-Dropbox app with App-folder access and exact redirect URI `clearpocket://dropbox-oauth`, supply its
-public app key during archive, then complete one real connect, backup, relaunch, restore and revoke
-walkthrough. No client secret belongs in the app or repository. This external gate does not block
-unrelated roadmap engineering.
+coordinator coverage proves fail-closed behavior while production-composition UI coverage proves the
+configured destination remains alongside Local Files recovery. ClearPocket's
+registered public app identifier is now included in ordinary Debug and Release build settings; it is
+not a client secret. The release helper still requires and verifies the same identifier explicitly,
+so an archive cannot silently ship a dead Connect button or an unintended Dropbox application.
+The remaining Dropbox gate is external-console/live acceptance: confirm App-folder access and exact
+redirect URI `clearpocket://dropbox-oauth`, then complete one real connect, backup, relaunch, restore
+and revoke walkthrough. No client secret belongs in the app or repository. This external gate does
+not block unrelated roadmap engineering.
 
 Widget checkpoint (2026-10-07): the app now embeds a WidgetKit extension with small and medium
 privacy-safe launch surfaces. The widget contains no shared container, credential, balance, budget,

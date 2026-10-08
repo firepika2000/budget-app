@@ -449,7 +449,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 6JGQ5388N8;
-				DROPBOX_APP_KEY = "";
+				DROPBOX_APP_KEY = 961plkfyok8kf8z;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BudgetApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ClearPocket;
@@ -542,7 +542,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 6JGQ5388N8;
-				DROPBOX_APP_KEY = "";
+				DROPBOX_APP_KEY = 961plkfyok8kf8z;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BudgetApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ClearPocket;

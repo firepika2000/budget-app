@@ -140,8 +140,6 @@ final class AuthenticationJourneyTests: XCTestCase {
         entry.tap()
 
         XCTAssertTrue(app.navigationBars["Backup & Recovery"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["dropbox-not-configured"].exists,
-                      "A build without a registered public Dropbox key must fail closed without hiding local recovery")
         let create = app.buttons["create-local-device-backup"]
         XCTAssertTrue(create.waitForExistence(timeout: 5))
         create.tap()

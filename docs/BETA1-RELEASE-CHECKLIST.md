@@ -100,9 +100,10 @@ under the ignored `artifacts/archives/` directory. It does not upload, change Ap
 commit provisioning material. Validate and upload the resulting archive deliberately through Xcode
 Organizer after the remaining release gates pass.
 
-`BUDGET_APP_DROPBOX_APP_KEY` is the public OAuth app key, not a client secret. The helper refuses to
-archive without it and confirms that the exact key reached the archived Info.plist, so TestFlight can
-no longer silently ship the completed Dropbox UI in an unavailable state. In the Dropbox App Console,
+`BUDGET_APP_DROPBOX_APP_KEY` is the public OAuth app key, not a client secret. Ordinary app builds now
+carry the registered public identifier; the helper still refuses to archive without an explicit matching
+value and confirms that it reached the archived Info.plist, so TestFlight cannot silently ship the
+completed Dropbox UI in an unavailable or misdirected state. In the Dropbox App Console,
 configure a scoped **App folder** application, enable `files.content.read`, `files.content.write`,
 `files.metadata.read`, and `files.metadata.write`, and register the exact redirect URI
 `clearpocket://dropbox-oauth`. ClearPocket uses PKCE and never embeds a Dropbox app secret.
