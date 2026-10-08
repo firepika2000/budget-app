@@ -4869,6 +4869,7 @@ private struct LocalDeviceBackupRecoveryView: View {
     @State private var deletingRollback: LocalDeviceRollbackGeneration?
     @State private var dropboxMessage: String?
     @State private var confirmingDropboxDisconnect = false
+    @State private var deletingDropboxGeneration: DropboxBackupEntry?
     @State private var dropboxRestorePackage: URL?
     @State private var dropboxRecoveryKey: String?
     @State private var dropboxKeyCopied = false
@@ -4948,6 +4949,17 @@ private struct LocalDeviceBackupRecoveryView: View {
                             }
                             .disabled(dropbox.isWorking || preparedRestore != nil)
                             .accessibilityLabel("Choose Dropbox backup \(generation.name)")
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button("Delete", role: .destructive) {
+                                    deletingDropboxGeneration = generation
+                                }
+                                .accessibilityIdentifier("delete-dropbox-generation-\(generation.name)")
+                            }
+                            .accessibilityAction(named: "Delete Dropbox backup") {
+                                if !dropbox.isWorking, preparedRestore == nil {
+                                    deletingDropboxGeneration = generation
+                                }
+                            }
                         }
                     }
                     Button("Disconnect Dropbox", role: .destructive) { confirmingDropboxDisconnect = true }
@@ -5223,6 +5235,23 @@ private struct LocalDeviceBackupRecoveryView: View {
             Text("This removes the retained database, encrypted attachments, and matching device-only key. It cannot be undone.")
         }
         .confirmationDialog(
+            "Delete this Dropbox backup?",
+            isPresented: Binding(
+                get: { deletingDropboxGeneration != nil },
+                set: { if !$0 { deletingDropboxGeneration = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Backup", role: .destructive) {
+                guard let generation = deletingDropboxGeneration else { return }
+                deletingDropboxGeneration = nil
+                Task { await deleteDropboxGeneration(generation) }
+            }
+            Button("Cancel", role: .cancel) { deletingDropboxGeneration = nil }
+        } message: {
+            Text("This permanently removes the encrypted generation from Dropbox. Your live budget and other backups are unchanged.")
+        }
+        .confirmationDialog(
             "Disconnect Dropbox?",
             isPresented: $confirmingDropboxDisconnect,
             titleVisibility: .visible
@@ -5361,6 +5390,15 @@ private struct LocalDeviceBackupRecoveryView: View {
                 ? "Downloaded and verified. Enter its separate recovery key below."
                 : "Downloaded and verified. This iPhone's Dropbox recovery key is ready below."
         } catch { dropboxMessage = nil }
+    }
+
+    private func deleteDropboxGeneration(_ generation: DropboxBackupEntry) async {
+        do {
+            try await dropbox.delete(generation)
+            dropboxMessage = "Deleted \(generation.name) from Dropbox."
+        } catch {
+            dropboxMessage = nil
+        }
     }
 
     private func removeDropboxRestoreDownload() {

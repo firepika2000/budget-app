@@ -110,6 +110,37 @@ final class DropboxBackupDestinationTests: XCTestCase {
         } catch let error as DropboxBackupDestinationError {
             guard case .invalidPackage = error else { return XCTFail("Unexpected error: \(error)") }
         }
+
+        for unsafe in [
+            "/Other/Generation.clearpocketbackup",
+            "/Backups/Nested/Generation.clearpocketbackup",
+            "/Backups/not-a-generation",
+        ] {
+            do {
+                try await destination.deleteGeneration(remotePath: unsafe)
+                XCTFail("Deletion outside one direct encrypted generation must fail")
+            } catch let error as DropboxBackupDestinationError {
+                guard case .invalidPackage = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+        }
+    }
+
+    func testExplicitGenerationDeletionRemovesOnlySelectedBackup() async throws {
+        let transport = FakeDropboxBackupTransport()
+        await transport.seedFolder("/Backups/First.clearpocketbackup")
+        await transport.seedFolder("/Backups/First.clearpocketbackup/payload")
+        await transport.seedFile("/Backups/First.clearpocketbackup/payload/000000.cpenc", data: Data("one".utf8))
+        await transport.seedFolder("/Backups/Second.clearpocketbackup")
+        await transport.seedFile("/Backups/Second.clearpocketbackup/manifest.json", data: Data("two".utf8))
+        let destination = try DropboxBackupDestination(transport: transport)
+
+        try await destination.deleteGeneration(remotePath: "/Backups/First.clearpocketbackup")
+
+        let paths = await transport.paths()
+        XCTAssertFalse(paths.contains { $0.hasPrefix("/Backups/First.clearpocketbackup") })
+        XCTAssertTrue(paths.contains("/Backups/Second.clearpocketbackup"))
+        let remaining = try await destination.generations().map(\.name)
+        XCTAssertEqual(remaining, ["Second.clearpocketbackup"])
     }
 
     private func makePackage(root: URL, name: String, payloads: [Data]) throws -> URL {
@@ -150,6 +181,7 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     }
 
     func seedFolder(_ path: String) { folders.insert(path) }
+    func seedFile(_ path: String, data: Data) { files[path] = data }
     func paths() -> Set<String> { folders.union(files.keys) }
     func listCalls() -> Int { calls }
     func uploadSessionCount() -> Int { sessionStarts }

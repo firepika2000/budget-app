@@ -432,6 +432,12 @@ Agents and implementation plans must not begin the following merely because adja
 The roadmap is a living document, but changing it is a deliberate product decision—not an incidental side effect of implementation.
 ## Current development checkpoints
 
+- Dropbox backup management now lets a Local Device owner deliberately remove one encrypted remote
+  generation through a separate destructive swipe/accessibility action and explicit confirmation.
+  The provider boundary rejects deletion outside the configured direct-child backup folder, refreshes
+  the authoritative generation list after success, and leaves the live budget and other generations
+  unchanged. This complements automatic retention without turning Dropbox into a live database.
+
 - Activity now surfaces the five most recent authorized reconciliation checkpoints across visible
   accounts, with statement balance/date, actor, and transaction count, and drills into the existing
   canonical account history. The server performs one bounded budget-scoped read and applies account

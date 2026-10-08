@@ -144,6 +144,22 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         }
     }
 
+    func delete(_ generation: DropboxBackupEntry) async throws {
+        let destination = try destination()
+        isWorking = true; errorMessage = nil
+        defer { isWorking = false }
+        do {
+            try await destination.deleteGeneration(remotePath: generation.path)
+            generations.removeAll { $0.path == generation.path }
+            // Deletion is already authoritative. A transient list failure must not misreport the
+            // completed destructive operation as failed or encourage the user to repeat it.
+            if let refreshed = try? await destination.generations() { generations = refreshed }
+        } catch {
+            errorMessage = error.localizedDescription
+            throw error
+        }
+    }
+
     func revoke() async {
         guard let credential, !isWorking else { return }
         isWorking = true; errorMessage = nil

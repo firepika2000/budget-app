@@ -2011,3 +2011,18 @@ Focused backend ordering/privacy coverage, Swift API request coverage, Local Dev
 attribution coverage, and a production-composition XCUITest all pass. Native verification used Xcode
 27.0 (27A266a) and the preserved iPhone 17 Pro Max / iOS 27.0 simulator. Human presentation
 acceptance remains pending.
+
+### Explicit Dropbox generation management — 2026-10-08
+
+The production Local Device Backup & Recovery screen now supports intentional deletion of one
+encrypted Dropbox generation. Restore selection and deletion remain separate hit targets; deletion
+requires a visible confirmation and is also exposed as a named accessibility action. The storage
+boundary accepts only a direct `.clearpocketbackup` child of the configured backup folder, preventing
+stale or compromised presentation state from deleting unrelated Dropbox content. On success the app
+reloads the remote generation list; the live SQLite authority and every other backup are untouched.
+
+Six focused Dropbox destination tests pass, including exact selected-generation deletion, sibling
+preservation, path-boundary rejection, atomic publication, integrity failure, pagination and bounded
+large-file upload. The production iPhone target builds successfully with regular Xcode 27.0
+(27A266a) for the preserved iPhone 17 Pro Max / iOS 27 simulator. Live Dropbox provider acceptance
+still requires the external app-console configuration and is not claimed by this checkpoint.

@@ -143,6 +143,19 @@ public actor DropboxBackupDestination {
             .sorted { $0.name > $1.name }
     }
 
+    /// Removes one complete immutable generation. The same direct-child validation used by restore
+    /// prevents a compromised or stale UI value from deleting anything outside the backup folder.
+    public func deleteGeneration(remotePath: String) async throws {
+        let remoteName = (remotePath as NSString).lastPathComponent
+        guard (remotePath as NSString).deletingLastPathComponent == folder,
+              Self.safeName(remoteName), remoteName.hasSuffix(".clearpocketbackup") else {
+            throw DropboxBackupDestinationError.invalidPackage(
+                "The selected Dropbox generation is outside the configured backup folder."
+            )
+        }
+        try await transport.delete(path: remotePath)
+    }
+
     public func download(remotePath: String, destinationURL: URL) async throws {
         let remoteName = (remotePath as NSString).lastPathComponent
         guard (remotePath as NSString).deletingLastPathComponent == folder,
