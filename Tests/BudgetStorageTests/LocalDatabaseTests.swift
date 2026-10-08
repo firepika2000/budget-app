@@ -67,6 +67,7 @@ final class LocalDatabaseTests: XCTestCase {
         try await database?.transaction(fixtureStatements)
         try await database?.transaction([
             .init("DROP TABLE credit_reserve_attributions"),
+            .init("DROP TABLE budget_structure_revisions"),
             .init("DROP TABLE account_revisions"),
             .init("DROP TABLE credit_reserve_events"),
             .init("DROP TABLE transaction_changes"),
@@ -360,7 +361,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.scheduledTransactionID, "deleted-schedule")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 19)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 20)
     }
 
     func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {
@@ -396,7 +397,8 @@ final class LocalDatabaseTests: XCTestCase {
         var store: LocalAuthorityStore? = try LocalAuthorityStore(fileURL: databaseURL)
         let stamp = "2026-10-08T12:00:00Z"
         try await store?.bootstrap(.init(householdID: "h", householdName: "Home", ownerUserID: "owner",
-            ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD"), createdAt: stamp)
+            ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD"),
+            createdAt: stamp)
         try await store?.insertAccount(.init(id: "a", budgetID: "b", name: "Checking", kind: "checking",
             isOnBudget: true, openingBalanceMinor: 123_45, createdAt: stamp))
         let original = try await XCTUnwrap(store).snapshot(budgetID: "b")
@@ -419,6 +421,45 @@ final class LocalDatabaseTests: XCTestCase {
             accountID: "a", budgetID: "b", limit: 1, offset: 1
         )
         XCTAssertEqual(secondPage, [])
+    }
+
+    func testBudgetStructureHistoryPersistsAcrossReopenAndRemainsResourceScoped() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("structure-history.sqlite")
+        var store: LocalAuthorityStore? = try LocalAuthorityStore(fileURL: databaseURL)
+        let stamp = "2026-10-08T12:00:00Z"
+        try await store?.bootstrap(.init(householdID: "h", householdName: "Home", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD"),
+            createdAt: stamp, installStarterPlan: true)
+        let original = try await XCTUnwrap(store).snapshot(budgetID: "b")
+        let groupID = try XCTUnwrap(original.groups.first?.id)
+        let categoryID = try XCTUnwrap(original.categories.first(where: { $0.groupID == groupID })?.id)
+        let groupJSON = #"{"is_archived":false,"name":"Updated group","sort_order":0}"#
+        let categoryJSON = #"{"delegated_user_id":null,"group_id":"GROUP","icon_name":null,"is_archived":false,"is_emergency_fund":false,"is_essential":true,"name":"Updated category","note":null,"sort_order":0}"#
+            .replacingOccurrences(of: "GROUP", with: groupID)
+        let updated = LocalAuthoritySnapshot(identity: original.identity, accounts: original.accounts,
+            accountRevisions: original.accountRevisions, structureRevisions: [
+                .init(id: "g-update", budgetID: "b", resourceType: "category_group", resourceID: groupID,
+                      action: "updated", actorUserID: "owner", beforeJSON: nil, afterJSON: groupJSON, createdAt: stamp),
+                .init(id: "c-update", budgetID: "b", resourceType: "category", resourceID: categoryID,
+                      action: "updated", actorUserID: "owner", beforeJSON: nil, afterJSON: categoryJSON, createdAt: stamp),
+            ], groups: original.groups, categories: original.categories,
+            payees: original.payees, payeeAliases: original.payeeAliases,
+            transactions: original.transactions, allocations: original.allocations,
+            reconciliations: original.reconciliations, targets: original.targets,
+            schedules: original.schedules, attachments: original.attachments)
+        try await store?.replaceWorkspaceState(updated)
+        await store?.close(); store = nil
+
+        let reopened = try LocalAuthorityStore(fileURL: databaseURL)
+        let categoryRows = try await reopened.structureRevisions(
+            resourceType: "category", resourceID: categoryID, budgetID: "b", limit: 1, offset: 0
+        )
+        let groupRows = try await reopened.structureRevisions(
+            resourceType: "category_group", resourceID: groupID, budgetID: "b", limit: 1, offset: 0
+        )
+        XCTAssertEqual(categoryRows.map(\.id), ["c-update"])
+        XCTAssertEqual(groupRows.map(\.id), ["g-update"])
+        XCTAssertEqual(categoryRows.first?.afterJSON, categoryJSON)
     }
 
     func testScheduleDecisionHistorySurvivesDeletionReopenAndPaginates() async throws {

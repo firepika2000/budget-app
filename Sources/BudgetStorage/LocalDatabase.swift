@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 19
+    public static let schemaVersion = 20
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -439,6 +439,18 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 20 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV20 { try execute(sql, on: database) }
+                try execute("INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)", values: [.integer(20), .text(Self.timestamp())], on: database)
+                try execute("PRAGMA user_version = 20", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -505,6 +517,13 @@ public actor LocalDatabase {
         "CREATE TABLE account_revisions (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, account_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('created','updated')), actor_user_id TEXT NOT NULL REFERENCES users(id), before_json TEXT, after_json TEXT NOT NULL, created_at TEXT NOT NULL) STRICT",
         "CREATE INDEX idx_account_revisions_account_created ON account_revisions(account_id,created_at,id)",
         "INSERT INTO account_revisions(id,budget_id,account_id,action,actor_user_id,before_json,after_json,created_at) SELECT 'account-created-' || a.id,a.budget_id,a.id,'created',m.user_id,NULL,json_object('name',a.name,'account_type',a.kind,'is_on_budget',json(iif(a.is_on_budget=1,'true','false')),'is_closed',json(iif(a.is_closed=1,'true','false')),'payment_category_id',NULL),a.created_at FROM accounts a JOIN budgets b ON b.id=a.budget_id JOIN memberships m ON m.household_id=b.household_id AND m.role='owner' AND m.is_active=1"
+    ]
+
+    private static let schemaV20 = [
+        "CREATE TABLE budget_structure_revisions (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, resource_type TEXT NOT NULL CHECK(resource_type IN ('category_group','category')), resource_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('created','updated')), actor_user_id TEXT NOT NULL REFERENCES users(id), before_json TEXT, after_json TEXT NOT NULL, created_at TEXT NOT NULL) STRICT",
+        "CREATE INDEX idx_structure_revisions_resource_created ON budget_structure_revisions(resource_type,resource_id,created_at,id)",
+        "INSERT INTO budget_structure_revisions(id,budget_id,resource_type,resource_id,action,actor_user_id,before_json,after_json,created_at) SELECT 'group-created-' || g.id,g.budget_id,'category_group',g.id,'created',m.user_id,NULL,json_object('name',g.name,'sort_order',g.sort_order,'is_archived',json(iif(g.is_archived=1,'true','false'))),b.created_at FROM category_groups g JOIN budgets b ON b.id=g.budget_id JOIN memberships m ON m.household_id=b.household_id AND m.role='owner' AND m.is_active=1",
+        "INSERT INTO budget_structure_revisions(id,budget_id,resource_type,resource_id,action,actor_user_id,before_json,after_json,created_at) SELECT 'category-created-' || c.id,c.budget_id,'category',c.id,'created',m.user_id,NULL,json_object('group_id',c.group_id,'name',c.name,'icon_name',c.icon_name,'note',c.note,'sort_order',c.sort_order,'is_archived',json(iif(c.is_archived=1,'true','false')),'is_essential',json(iif(c.is_essential=1,'true','false')),'is_emergency_fund',json(iif(c.is_emergency_fund=1,'true','false')),'delegated_user_id',c.delegated_user_id),b.created_at FROM categories c JOIN budgets b ON b.id=c.budget_id JOIN memberships m ON m.household_id=b.household_id AND m.role='owner' AND m.is_active=1"
     ]
 
     private static let schemaV2 = [

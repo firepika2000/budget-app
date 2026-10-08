@@ -19,6 +19,15 @@ Updated: 2026-09-18. Active branch: `codex/development`.
 Mission starting checkpoint: `e3f2922`. Production release readiness: **IN PROGRESS**.
 Human acceptance: **HUMAN REQUIRED — HUMAN ACCEPTANCE PENDING — DO NOT RETEST**.
 
+Budget-structure history checkpoint (2026-10-08): category groups and categories now append immutable,
+actor-attributed snapshots for creation and real metadata or ordering changes; identical no-op writes append
+nothing. The snapshot deliberately contains structure and presentation metadata only—group identity, name,
+icon, note, order, archive state, resilience classification and delegation—not money or derived financial
+observations. Populated hosted and Local Device databases are backfilled without changing posted transactions,
+allocations, balances or reconciliation. Complete export and server-to-local transfer preserve the records,
+and the shared production category/group views expose bounded paginated history for Live, Local Device and Demo.
+Current resource authorization is rechecked before history is returned.
+
 Account-decision history checkpoint (2026-10-08): account creation and real metadata changes now
 append immutable, attributed before/after observations. True no-op saves append nothing. Hosted and
 Local Device databases migrate populated accounts without changing balances or posted activity;

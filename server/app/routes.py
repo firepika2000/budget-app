@@ -314,7 +314,7 @@ def create_budget(
     db.add(budget)
     db.flush()
     if body.starter_template:
-        install_starter_plan(db, budget.id)
+        install_starter_plan(db, budget.id, user.id)
     if body.cash_rollover_policy is not None:
         db.add(CashRolloverPolicyChange(
             budget_id=budget.id, effective_month=date.min, policy=body.cash_rollover_policy,

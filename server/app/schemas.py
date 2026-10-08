@@ -380,6 +380,18 @@ class CategoryGroupResponse(BaseModel):
     is_archived: bool
 
 
+class BudgetStructureRevisionResponse(BaseModel):
+    id: str
+    resource_type: Literal["category_group", "category"]
+    resource_id: str
+    action: Literal["created", "updated"]
+    actor_user_id: str
+    actor_display_name: Optional[str] = None
+    before_snapshot: Optional[dict] = None
+    after_snapshot: dict
+    created_at: datetime
+
+
 class CategoryCreate(BaseModel):
     group_id: str
     name: str = Field(min_length=1, max_length=100)

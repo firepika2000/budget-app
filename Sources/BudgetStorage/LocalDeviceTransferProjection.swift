@@ -64,6 +64,7 @@ public enum LocalDeviceTransferProjectionDecoder {
             identity: identity,
             accounts: value.accounts.map { .init(id: $0.id, budgetID: $0.budgetId, name: $0.name, kind: $0.kind, isOnBudget: $0.isOnBudget, isClosed: $0.isClosed, openingBalanceMinor: $0.openingBalanceMinor, createdAt: $0.createdAt) },
             accountRevisions: (value.accountRevisions ?? []).map { .init(id: $0.id, budgetID: $0.budgetId, accountID: $0.accountId, action: $0.action, actorUserID: $0.actorUserId, beforeJSON: $0.beforeJson, afterJSON: $0.afterJson, createdAt: $0.createdAt) },
+            structureRevisions: (value.structureRevisions ?? []).map { .init(id: $0.id, budgetID: $0.budgetId, resourceType: $0.resourceType, resourceID: $0.resourceId, action: $0.action, actorUserID: $0.actorUserId, beforeJSON: $0.beforeJson, afterJSON: $0.afterJson, createdAt: $0.createdAt) },
             groups: value.groups.map { .init(id: $0.id, budgetID: $0.budgetId, name: $0.name, sortOrder: $0.sortOrder, isArchived: $0.isArchived) },
             categories: value.categories.map { .init(
                 id: $0.id, budgetID: $0.budgetId, groupID: $0.groupId, name: $0.name,
@@ -219,6 +220,7 @@ private struct Envelope: Decodable {
     let format: String; let version: Int; let generatedAt: String; let authorityCreatedAt: String
     let sourceRevision: String; let identity: IdentityDTO
     let accounts: [AccountDTO]; let accountRevisions: [AccountRevisionDTO]?
+    let structureRevisions: [StructureRevisionDTO]?
     let groups: [GroupDTO]; let categories: [CategoryDTO]
     let payees: [PayeeDTO]; let payeeAliases: [AliasDTO]; let transactions: [TransactionDTO]
     let allocations: [AllocationDTO]; let reconciliations: [ReconciliationDTO]
@@ -235,6 +237,7 @@ private struct Envelope: Decodable {
 private struct IdentityDTO: Decodable { let householdId: String; let householdName: String; let ownerUserId: String; let ownerDisplayName: String; let budgetId: String; let budgetName: String; let currencyCode: String }
 private struct AccountDTO: Decodable { let id: String; let budgetId: String; let name: String; let kind: String; let isOnBudget: Bool; let isClosed: Bool; let openingBalanceMinor: Int64; let createdAt: String }
 private struct AccountRevisionDTO: Decodable { let id: String; let budgetId: String; let accountId: String; let action: String; let actorUserId: String; let beforeJson: String?; let afterJson: String; let createdAt: String }
+private struct StructureRevisionDTO: Decodable { let id: String; let budgetId: String; let resourceType: String; let resourceId: String; let action: String; let actorUserId: String; let beforeJson: String?; let afterJson: String; let createdAt: String }
 private struct GroupDTO: Decodable { let id: String; let budgetId: String; let name: String; let sortOrder: Int64; let isArchived: Bool }
 private struct CategoryDTO: Decodable {
     let id: String; let budgetId: String; let groupId: String; let name: String

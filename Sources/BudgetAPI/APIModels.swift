@@ -650,6 +650,54 @@ public struct APIAccountRevision: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+public struct APIBudgetStructureSnapshot: Codable, Equatable, Sendable {
+    public let groupID: String?; public let name: String; public let iconName: String?
+    public let note: String?; public let sortOrder: Int; public let isArchived: Bool
+    public let isEssential: Bool?; public let isEmergencyFund: Bool?; public let delegatedUserID: String?
+    public init(groupID: String? = nil, name: String, iconName: String? = nil, note: String? = nil,
+                sortOrder: Int, isArchived: Bool, isEssential: Bool? = nil,
+                isEmergencyFund: Bool? = nil, delegatedUserID: String? = nil) {
+        self.groupID = groupID; self.name = name; self.iconName = iconName; self.note = note
+        self.sortOrder = sortOrder; self.isArchived = isArchived; self.isEssential = isEssential
+        self.isEmergencyFund = isEmergencyFund; self.delegatedUserID = delegatedUserID
+    }
+    enum CodingKeys: String, CodingKey {
+        case name, note
+        case groupID = "group_id", iconName = "icon_name", sortOrder = "sort_order"
+        case isArchived = "is_archived", isEssential = "is_essential"
+        case isEmergencyFund = "is_emergency_fund", delegatedUserID = "delegated_user_id"
+    }
+}
+
+public struct APIBudgetStructureRevision: Identifiable, Codable, Equatable, Sendable {
+    public let id: String
+    public let resourceType: String
+    public let resourceID: String
+    public let action: String
+    public let actorUserID: String
+    public let actorDisplayName: String?
+    public let beforeSnapshot: APIBudgetStructureSnapshot?
+    public let afterSnapshot: APIBudgetStructureSnapshot
+    public let createdAt: String
+
+    public init(id: String, resourceType: String, resourceID: String, action: String,
+                actorUserID: String, actorDisplayName: String?,
+                beforeSnapshot: APIBudgetStructureSnapshot?, afterSnapshot: APIBudgetStructureSnapshot,
+                createdAt: String) {
+        self.id = id; self.resourceType = resourceType; self.resourceID = resourceID; self.action = action
+        self.actorUserID = actorUserID; self.actorDisplayName = actorDisplayName
+        self.beforeSnapshot = beforeSnapshot; self.afterSnapshot = afterSnapshot; self.createdAt = createdAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, action
+        case resourceType = "resource_type", resourceID = "resource_id"
+        case actorUserID = "actor_user_id", actorDisplayName = "actor_display_name"
+        case beforeSnapshot = "before_snapshot", afterSnapshot = "after_snapshot"
+        case createdAt = "created_at"
+    }
+}
+
 public struct APIAccountCreate: Encodable, Sendable {
     public let name: String
     public let accountType: String

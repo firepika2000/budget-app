@@ -516,10 +516,24 @@ public struct LocalAccountRevisionRecord: Codable, Equatable, Sendable {
     }
 }
 
+public struct LocalBudgetStructureRevisionRecord: Codable, Equatable, Sendable {
+    public let id: String; public let budgetID: String; public let resourceType: String
+    public let resourceID: String; public let action: String; public let actorUserID: String
+    public let beforeJSON: String?; public let afterJSON: String; public let createdAt: String
+    public init(id: String, budgetID: String, resourceType: String, resourceID: String,
+                action: String, actorUserID: String, beforeJSON: String?, afterJSON: String,
+                createdAt: String) {
+        self.id = id; self.budgetID = budgetID; self.resourceType = resourceType
+        self.resourceID = resourceID; self.action = action; self.actorUserID = actorUserID
+        self.beforeJSON = beforeJSON; self.afterJSON = afterJSON; self.createdAt = createdAt
+    }
+}
+
 public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
     public let identity: LocalAuthorityIdentity
     public let accounts: [LocalAccountRecord]
     public let accountRevisions: [LocalAccountRevisionRecord]?
+    public let structureRevisions: [LocalBudgetStructureRevisionRecord]?
     public let groups: [LocalCategoryGroupRecord]
     public let categories: [LocalCategoryRecord]
     public let payees: [LocalPayeeRecord]
@@ -543,6 +557,7 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
 
     public init(identity: LocalAuthorityIdentity, accounts: [LocalAccountRecord],
                 accountRevisions: [LocalAccountRevisionRecord]? = nil,
+                structureRevisions: [LocalBudgetStructureRevisionRecord]? = nil,
                 groups: [LocalCategoryGroupRecord], categories: [LocalCategoryRecord],
                 payees: [LocalPayeeRecord], payeeAliases: [LocalPayeeAliasRecord],
                 transactions: [LocalTransactionRecord], allocations: [LocalAllocationRecord],
@@ -558,7 +573,8 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
                 transactionChanges: [LocalTransactionChangeRecord] = [],
                 creditReserveEvents: [LocalCreditReserveEventRecord] = [],
                 statementImports: [LocalStatementImportRecord] = []) {
-        self.identity = identity; self.accounts = accounts; self.accountRevisions = accountRevisions ?? []; self.groups = groups
+        self.identity = identity; self.accounts = accounts; self.accountRevisions = accountRevisions ?? []
+        self.structureRevisions = structureRevisions ?? []; self.groups = groups
         self.categories = categories; self.payees = payees; self.payeeAliases = payeeAliases
         self.transactions = transactions; self.allocations = allocations
         self.reconciliations = reconciliations; self.targets = targets; self.targetRevisions = targetRevisions ?? []
@@ -612,10 +628,21 @@ public actor LocalAuthorityStore {
                     "INSERT INTO category_groups(id,budget_id,name,sort_order,is_archived) VALUES (?,?,?,?,0)",
                     values: [.text(groupID), .text(identity.budgetID), .text(template.group), .integer(Int64((groupIndex + 1) * 100))]
                 ))
+                let groupSnapshot = "{\"is_archived\":false,\"name\":\"\(template.group.replacingOccurrences(of: "\"", with: "\\\""))\",\"sort_order\":\((groupIndex + 1) * 100)}"
+                statements.append(.init(
+                    "INSERT INTO budget_structure_revisions(id,budget_id,resource_type,resource_id,action,actor_user_id,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,NULL,?,?)",
+                    values: [.text(UUID().uuidString.lowercased()), .text(identity.budgetID), .text("category_group"), .text(groupID), .text("created"), .text(identity.ownerUserID), .text(groupSnapshot), .text(createdAt)]
+                ))
                 for (categoryIndex, categoryName) in template.categories.enumerated() {
+                    let categoryID = UUID().uuidString.lowercased()
                     statements.append(.init(
                         "INSERT INTO categories(id,budget_id,group_id,name,delegated_user_id,is_archived,sort_order,is_favorite,favorite_sort_order,is_essential,is_emergency_fund) VALUES (?,?,?,?,NULL,0,?,0,0,?,?)",
-                        values: [.text(UUID().uuidString.lowercased()), .text(identity.budgetID), .text(groupID), .text(categoryName), .integer(Int64((categoryIndex + 1) * 100)), .integer(Self.starterEssentialNames.contains(categoryName) ? 1 : 0), .integer(categoryName == "Emergency Fund" ? 1 : 0)]
+                        values: [.text(categoryID), .text(identity.budgetID), .text(groupID), .text(categoryName), .integer(Int64((categoryIndex + 1) * 100)), .integer(Self.starterEssentialNames.contains(categoryName) ? 1 : 0), .integer(categoryName == "Emergency Fund" ? 1 : 0)]
+                    ))
+                    let categorySnapshot = "{\"delegated_user_id\":null,\"group_id\":\"\(groupID)\",\"icon_name\":null,\"is_archived\":false,\"is_emergency_fund\":\(categoryName == "Emergency Fund"),\"is_essential\":\(Self.starterEssentialNames.contains(categoryName)),\"name\":\"\(categoryName.replacingOccurrences(of: "\"", with: "\\\""))\",\"note\":\"\",\"sort_order\":\((categoryIndex + 1) * 100)}"
+                    statements.append(.init(
+                        "INSERT INTO budget_structure_revisions(id,budget_id,resource_type,resource_id,action,actor_user_id,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,NULL,?,?)",
+                        values: [.text(UUID().uuidString.lowercased()), .text(identity.budgetID), .text("category"), .text(categoryID), .text("created"), .text(identity.ownerUserID), .text(categorySnapshot), .text(createdAt)]
                     ))
                 }
             }
@@ -930,6 +957,7 @@ public actor LocalAuthorityStore {
         )
         let accounts = try await loadAccounts(budgetID: budgetID)
         let accountRevisions = try await loadAccountRevisions(budgetID: budgetID)
+        let structureRevisions = try await loadStructureRevisions(budgetID: budgetID)
         let groups = try await loadGroups(budgetID: budgetID)
         let categories = try await loadCategories(budgetID: budgetID)
         let payees = try await loadPayees(budgetID: budgetID)
@@ -951,6 +979,7 @@ public actor LocalAuthorityStore {
         let reserveEvents = try await loadCreditReserveEvents(budgetID: budgetID)
         let statementImports = try await loadStatementImports(budgetID: budgetID)
         return .init(identity: identity, accounts: accounts, accountRevisions: accountRevisions,
+                     structureRevisions: structureRevisions,
                      groups: groups, categories: categories,
                      payees: payees, payeeAliases: payeeAliases, transactions: transactions, allocations: allocations,
                      reconciliations: reconciliations, targets: targets, targetRevisions: targetRevisions, schedules: schedules,
@@ -971,6 +1000,7 @@ public actor LocalAuthorityStore {
         let budgetID = value.identity.budgetID
         var statements: [LocalSQLStatement] = [
             .init("DELETE FROM account_revisions WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM budget_structure_revisions WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM debt_payoff_plans WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM account_debt_terms WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM statement_imports WHERE budget_id=?", values: [.text(budgetID)]),
@@ -999,6 +1029,9 @@ public actor LocalAuthorityStore {
         }
         statements += (value.accountRevisions ?? []).map { item in
             .init("INSERT INTO account_revisions(id,budget_id,account_id,action,actor_user_id,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), .text(item.action), .text(item.actorUserID), optionalText(item.beforeJSON), .text(item.afterJSON), .text(item.createdAt)])
+        }
+        statements += (value.structureRevisions ?? []).map { item in
+            .init("INSERT INTO budget_structure_revisions(id,budget_id,resource_type,resource_id,action,actor_user_id,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.resourceType), .text(item.resourceID), .text(item.action), .text(item.actorUserID), optionalText(item.beforeJSON), .text(item.afterJSON), .text(item.createdAt)])
         }
         statements += value.groups.map { item in
             .init("INSERT INTO category_groups(id,budget_id,name,sort_order,is_archived) VALUES (?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.name), .integer(item.sortOrder), .integer(item.isArchived ? 1 : 0)])
@@ -1091,6 +1124,33 @@ public actor LocalAuthorityStore {
             "SELECT * FROM account_revisions WHERE budget_id=? AND account_id=? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
             values: [.text(budgetID), .text(accountID), .integer(Int64(limit)), .integer(Int64(offset))]
         )).map(accountRevisionRecord)
+    }
+
+    private func loadStructureRevisions(budgetID: String) async throws -> [LocalBudgetStructureRevisionRecord] {
+        try await database.rows(.init(
+            "SELECT * FROM budget_structure_revisions WHERE budget_id=? ORDER BY created_at,id",
+            values: [.text(budgetID)]
+        )).map(structureRevisionRecord)
+    }
+
+    private func structureRevisionRecord(_ row: LocalSQLiteRow) throws -> LocalBudgetStructureRevisionRecord {
+        try .init(id: text(row, "id"), budgetID: text(row, "budget_id"),
+                  resourceType: text(row, "resource_type"), resourceID: text(row, "resource_id"),
+                  action: text(row, "action"), actorUserID: text(row, "actor_user_id"),
+                  beforeJSON: optionalText(row, "before_json"), afterJSON: text(row, "after_json"),
+                  createdAt: text(row, "created_at"))
+    }
+
+    public func structureRevisions(
+        resourceType: String, resourceID: String, budgetID: String, limit: Int = 50, offset: Int = 0
+    ) async throws -> [LocalBudgetStructureRevisionRecord] {
+        guard ["category_group", "category"].contains(resourceType), (1...100).contains(limit), offset >= 0 else {
+            throw LocalStorageError.invalidSnapshot("Structure history request is invalid")
+        }
+        return try await database.rows(.init(
+            "SELECT * FROM budget_structure_revisions WHERE budget_id=? AND resource_type=? AND resource_id=? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+            values: [.text(budgetID), .text(resourceType), .text(resourceID), .integer(Int64(limit)), .integer(Int64(offset))]
+        )).map(structureRevisionRecord)
     }
 
     private func loadStatementImports(budgetID: String) async throws -> [LocalStatementImportRecord] {

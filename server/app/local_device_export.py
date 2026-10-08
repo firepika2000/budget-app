@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from .models import (
     Account, AccountRevision, AccountDebtTerms, AllocationOperation, AllocationPosting, Budget,
-    CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget, CategoryTargetRevision,
+    BudgetStructureRevision, CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget, CategoryTargetRevision,
     CategoryTargetSnooze, CreditCardReserveEvent, Household, Payee, PayeeAlias,
     DebtPayoffPlan, ImportBatch, PayeeBudgetPreference, ScheduledTransaction, ScheduledTransactionRevision, Transaction, TransactionAttachment,
     Reconciliation, TransactionChange, TransactionSplit, User,
@@ -154,6 +154,9 @@ def build_local_device_projection(
     account_revisions = list(db.scalars(select(AccountRevision).where(
         AccountRevision.budget_id == budget.id
     ).order_by(AccountRevision.created_at, AccountRevision.id)))
+    structure_revisions = list(db.scalars(select(BudgetStructureRevision).where(
+        BudgetStructureRevision.budget_id == budget.id
+    ).order_by(BudgetStructureRevision.created_at, BudgetStructureRevision.id)))
     groups = list(db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget.id).order_by(CategoryGroup.sort_order, CategoryGroup.id)))
     categories = list(db.scalars(select(Category).where(Category.budget_id == budget.id).order_by(Category.sort_order, Category.id)))
     portable_categories = [item for item in categories if item.system_type is None]
@@ -236,6 +239,18 @@ def build_local_device_projection(
             "after_json": json.dumps(item.after_snapshot, sort_keys=True, separators=(",", ":")),
             "created_at": _iso(item.created_at),
         } for item in account_revisions],
+        "structure_revisions": [{
+            "id": item.id, "budget_id": item.budget_id, "resource_type": item.resource_type,
+            "resource_id": item.resource_id, "action": item.action,
+            "actor_user_id": item.actor_user_id,
+            "before_json": json.dumps(item.before_snapshot, sort_keys=True, separators=(",", ":")) if item.before_snapshot is not None else None,
+            "after_json": json.dumps(item.after_snapshot, sort_keys=True, separators=(",", ":")),
+            "created_at": _iso(item.created_at),
+        } for item in structure_revisions if (
+            item.resource_type == "category_group" and item.resource_id in portable_group_ids
+        ) or (
+            item.resource_type == "category" and item.resource_id in {category.id for category in portable_categories}
+        )],
         "groups": [{
             "id": item.id, "budget_id": budget.id, "name": item.name,
             "sort_order": item.sort_order, "is_archived": item.is_archived,

@@ -128,7 +128,11 @@ bounded owner-only history, and Demo/Live parity. No-op saves create neither rep
 duplicate decisions. Account creation, rename, safe type changes, close and reopen decisions now retain the same
 immutable actor-attributed history across hosted, Local Device and Demo providers, complete export and
 server-to-local transfer; balances, transactions and reconciliation observations are deliberately excluded from
-metadata snapshots. Remaining v0.12 work should continue auditing other mutable planning and administrative
+metadata snapshots. Category-group and category creation, rename, organization, archival, presentation,
+resilience classification and delegation decisions now also retain immutable actor-attributed history across
+hosted, Local Device and Demo providers, complete export and server-to-local transfer. Detail and group settings
+expose bounded history without changing allocations, activity or balances. Remaining v0.12 work should continue
+auditing other mutable planning and administrative
 observations for overwrite-only or export gaps rather than duplicating established histories.
 
 **Consumer Budget Server distribution remains required.** The earlier v0.9 graphical installer,

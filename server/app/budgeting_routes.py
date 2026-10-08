@@ -59,6 +59,7 @@ from .models import (
     Budget,
     BudgetAccessProfile,
     BudgetPermission,
+    BudgetStructureRevision,
     Category,
     CategoryFavorite,
     CategoryGroup,
@@ -106,6 +107,7 @@ from .schemas import (
     CategoryGroupCreate,
     CategoryGroupUpdate,
     CategoryGroupResponse,
+    BudgetStructureRevisionResponse,
     OrderedIDsUpdate,
     CategoryMonthSummary,
     CategoryResponse,
@@ -145,6 +147,46 @@ def account_snapshot(account: Account) -> dict:
         "is_closed": account.is_closed,
         "payment_category_id": account.payment_category_id,
     }
+
+
+def category_group_snapshot(group: CategoryGroup) -> dict:
+    return {"name": group.name, "sort_order": group.sort_order, "is_archived": group.is_archived}
+
+
+def category_snapshot(category: Category) -> dict:
+    return {
+        "group_id": category.group_id, "name": category.name, "icon_name": category.icon_name,
+        "note": category.note, "sort_order": category.sort_order, "is_archived": category.is_archived,
+        "is_essential": category.is_essential, "is_emergency_fund": category.is_emergency_fund,
+        "delegated_user_id": category.delegated_user_id,
+    }
+
+
+def append_structure_revision(db: Session, *, budget_id: str, resource_type: str,
+                              resource_id: str, actor_user_id: str,
+                              before: dict | None, after: dict) -> None:
+    if before == after:
+        return
+    db.add(BudgetStructureRevision(
+        budget_id=budget_id, resource_type=resource_type, resource_id=resource_id,
+        action="created" if before is None else "updated", actor_user_id=actor_user_id,
+        before_snapshot=before, after_snapshot=after,
+    ))
+
+
+def structure_revision_rows(db: Session, query) -> list[dict]:
+    revisions = list(db.scalars(query))
+    actor_ids = {item.actor_user_id for item in revisions}
+    actors = {item.id: item.display_name for item in db.scalars(
+        select(User).where(User.id.in_(actor_ids))
+    )} if actor_ids else {}
+    return [{
+        "id": item.id, "resource_type": item.resource_type, "resource_id": item.resource_id,
+        "action": item.action, "actor_user_id": item.actor_user_id,
+        "actor_display_name": actors.get(item.actor_user_id),
+        "before_snapshot": item.before_snapshot, "after_snapshot": item.after_snapshot,
+        "created_at": item.created_at,
+    } for item in revisions]
 
 
 def debt_terms_readiness(terms: AccountDebtTerms) -> tuple[bool, list[str]]:
@@ -889,6 +931,10 @@ def create_category_group(
     require_budget_capability(db, user, budget_id, "manage_budget_structure")
     group = CategoryGroup(budget_id=budget_id, **body.model_dump())
     db.add(group)
+    db.flush()
+    append_structure_revision(db, budget_id=budget_id, resource_type="category_group",
+                              resource_id=group.id, actor_user_id=user.id,
+                              before=None, after=category_group_snapshot(group))
     db.commit()
     db.refresh(group)
     return group
@@ -907,7 +953,12 @@ def reorder_category_groups(
     if len(body.ordered_ids) != len(set(body.ordered_ids)) or set(body.ordered_ids) != set(by_id):
         raise HTTPException(status_code=422, detail="Order must contain every active category group exactly once")
     for index, item_id in enumerate(body.ordered_ids):
-        by_id[item_id].sort_order = index * 10
+        group = by_id[item_id]
+        before = category_group_snapshot(group)
+        group.sort_order = index * 10
+        append_structure_revision(db, budget_id=budget_id, resource_type="category_group",
+                                  resource_id=group.id, actor_user_id=user.id,
+                                  before=before, after=category_group_snapshot(group))
     db.commit()
     return [by_id[item_id] for item_id in body.ordered_ids]
 
@@ -918,8 +969,35 @@ def update_category_group(budget_id: str, group_id: str, body: CategoryGroupUpda
     group = db.get(CategoryGroup, group_id)
     if group is None or group.budget_id != budget_id:
         raise HTTPException(status_code=404, detail="Category group not found")
+    before = category_group_snapshot(group)
     group.name = body.name.strip(); group.sort_order = body.sort_order; group.is_archived = body.is_archived
+    append_structure_revision(db, budget_id=budget_id, resource_type="category_group",
+                              resource_id=group.id, actor_user_id=user.id,
+                              before=before, after=category_group_snapshot(group))
     db.commit(); db.refresh(group); return group
+
+
+@router.get("/category-groups/{group_id}/history", response_model=list[BudgetStructureRevisionResponse])
+def category_group_history(
+    budget_id: str, group_id: str, limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    budget = require_budget_capability(db, user, budget_id, "view_categories")
+    group = db.get(CategoryGroup, group_id)
+    visible = visible_resource_ids(db, user, budget, "category")
+    if group is None or group.budget_id != budget_id or (
+        visible is not None and db.scalar(select(Category.id).where(
+            Category.group_id == group_id, Category.id.in_(visible)
+        ).limit(1)) is None
+    ):
+        raise HTTPException(status_code=404, detail="Category group not found")
+    return structure_revision_rows(db, select(BudgetStructureRevision).where(
+        BudgetStructureRevision.budget_id == budget_id,
+        BudgetStructureRevision.resource_type == "category_group",
+        BudgetStructureRevision.resource_id == group_id,
+    ).order_by(BudgetStructureRevision.created_at.desc(), BudgetStructureRevision.id.desc())
+      .offset(offset).limit(limit))
 
 
 @router.delete("/category-groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -993,7 +1071,12 @@ def reorder_categories(
     if len(body.ordered_ids) != len(set(body.ordered_ids)) or set(body.ordered_ids) != set(by_id):
         raise HTTPException(status_code=422, detail="Order must contain every category in the group exactly once")
     for index, item_id in enumerate(body.ordered_ids):
-        by_id[item_id].sort_order = index * 10
+        category = by_id[item_id]
+        before = category_snapshot(category)
+        category.sort_order = index * 10
+        append_structure_revision(db, budget_id=budget_id, resource_type="category",
+                                  resource_id=category.id, actor_user_id=user.id,
+                                  before=before, after=category_snapshot(category))
     db.commit()
     return [by_id[item_id] for item_id in body.ordered_ids]
 
@@ -1026,6 +1109,7 @@ def favorite_category(
         "id": category.id, "budget_id": category.budget_id, "group_id": category.group_id,
         "name": category.name, "icon_name": category.icon_name, "note": category.note,
         "sort_order": category.sort_order, "is_archived": category.is_archived,
+        "is_essential": category.is_essential, "is_emergency_fund": category.is_emergency_fund,
         "system_type": category.system_type, "linked_account_id": (
             category.linked_account_id
             if category.linked_account_id is None or can_access_resource(
@@ -1106,6 +1190,9 @@ def create_category(
     try:
         db.add(category)
         db.flush()
+        append_structure_revision(db, budget_id=budget_id, resource_type="category",
+                                  resource_id=category.id, actor_user_id=user.id,
+                                  before=None, after=category_snapshot(category))
         if is_own_delegated_creation:
             profile = db.scalar(select(BudgetAccessProfile).where(
                 BudgetAccessProfile.budget_id == budget_id,
@@ -1154,7 +1241,11 @@ def update_category_delegation(
     ))
     if active_plan is not None and body.delegated_user_id != category.delegated_user_id:
         raise HTTPException(status_code=409, detail="Deactivate the category's allowance plan first")
+    before = category_snapshot(category)
     category.delegated_user_id = body.delegated_user_id
+    append_structure_revision(db, budget_id=budget_id, resource_type="category",
+                              resource_id=category.id, actor_user_id=user.id,
+                              before=before, after=category_snapshot(category))
     db.commit()
     db.refresh(category)
     return category
@@ -1176,6 +1267,7 @@ def update_category(
     may_manage_own = has_capability(db, user, budget, "manage_own_categories") and category.delegated_user_id == user.id
     if not may_manage_all and not may_manage_own:
         raise HTTPException(status_code=403, detail="You may only manage categories in your delegated budget")
+    before = category_snapshot(category)
     group = db.get(CategoryGroup, body.group_id)
     if group is None or group.budget_id != budget_id:
         raise HTTPException(status_code=422, detail="Invalid category group")
@@ -1202,6 +1294,9 @@ def update_category(
         category.is_essential = body.is_essential
     if body.is_emergency_fund is not None:
         category.is_emergency_fund = body.is_emergency_fund
+    append_structure_revision(db, budget_id=budget_id, resource_type="category",
+                              resource_id=category.id, actor_user_id=user.id,
+                              before=before, after=category_snapshot(category))
     try:
         db.commit()
     except IntegrityError:
@@ -1209,6 +1304,26 @@ def update_category(
         raise HTTPException(status_code=409, detail="A category with this name already exists in the group")
     db.refresh(category)
     return category
+
+
+@router.get("/categories/{category_id}/history", response_model=list[BudgetStructureRevisionResponse])
+def category_history(
+    budget_id: str, category_id: str, limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    budget = require_budget_capability(db, user, budget_id, "view_categories")
+    category = db.get(Category, category_id)
+    if category is None or category.budget_id != budget_id or not can_access_resource(
+        db, user, budget, "category", category_id
+    ):
+        raise HTTPException(status_code=404, detail="Category not found")
+    return structure_revision_rows(db, select(BudgetStructureRevision).where(
+        BudgetStructureRevision.budget_id == budget_id,
+        BudgetStructureRevision.resource_type == "category",
+        BudgetStructureRevision.resource_id == category_id,
+    ).order_by(BudgetStructureRevision.created_at.desc(), BudgetStructureRevision.id.desc())
+      .offset(offset).limit(limit))
 
 
 @router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -387,6 +387,27 @@ class CategoryGroup(Base):
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class BudgetStructureRevision(Base):
+    """Immutable category/group metadata history; it never owns financial state."""
+
+    __tablename__ = "budget_structure_revisions"
+    __table_args__ = (
+        CheckConstraint("resource_type IN ('category_group', 'category')", name="ck_structure_revision_resource_type"),
+        CheckConstraint("action IN ('created', 'updated')", name="ck_structure_revision_action"),
+        Index("ix_structure_revision_resource_created", "resource_type", "resource_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    resource_type: Mapped[str] = mapped_column(String(20), index=True)
+    resource_id: Mapped[str] = mapped_column(String(36), index=True)
+    action: Mapped[str] = mapped_column(String(20))
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    before_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    after_snapshot: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+
+
 class Category(Base):
     __tablename__ = "categories"
     __table_args__ = (

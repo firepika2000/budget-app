@@ -310,6 +310,35 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(history.first?.actorDisplayName, "Owner")
     }
 
+    func testBudgetStructureHistoryUsesBoundedResourceScopedContracts() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var requestedPaths: [String] = []
+        MockURLProtocol.handler = { request in
+            requestedPaths.append(request.url?.path ?? "")
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.query, "limit=10&offset=20")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current-token")
+            let response = Data(#"[{"id":"r1","resource_type":"category","resource_id":"c1","action":"updated","actor_user_id":"u1","actor_display_name":"Owner","before_snapshot":{"group_id":"g1","name":"Food","icon_name":null,"note":null,"sort_order":0,"is_archived":false,"is_essential":true,"is_emergency_fund":false,"delegated_user_id":null},"after_snapshot":{"group_id":"g1","name":"Groceries","icon_name":null,"note":null,"sort_order":0,"is_archived":false,"is_essential":true,"is_emergency_fund":false,"delegated_user_id":null},"created_at":"2026-10-08T12:00:00Z"}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let category = try await client.categoryHistory(
+            budgetID: "b1", categoryID: "c1", limit: 10, offset: 20, token: "current-token"
+        )
+        let group = try await client.categoryGroupHistory(
+            budgetID: "b1", groupID: "g1", limit: 10, offset: 20, token: "current-token"
+        )
+        XCTAssertEqual(requestedPaths, [
+            "/api/v1/budgets/b1/categories/c1/history",
+            "/api/v1/budgets/b1/category-groups/g1/history",
+        ])
+        XCTAssertEqual(category.first?.beforeSnapshot?.name, "Food")
+        XCTAssertEqual(category.first?.afterSnapshot.name, "Groceries")
+        XCTAssertEqual(group.first?.actorDisplayName, "Owner")
+    }
+
     func testDebtTermsUseExactTypedAccountScopedContract() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

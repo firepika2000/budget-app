@@ -26,6 +26,7 @@ from .models import (
     Budget,
     BudgetGrant,
     BudgetAccessProfile,
+    BudgetStructureRevision,
     CashRolloverPolicyChange,
     CapabilityGrant,
     Category,
@@ -357,6 +358,9 @@ def export_budget_json(
         "accounts": [row_data(item) for item in db.scalars(select(Account).where(Account.budget_id == budget_id))],
         "account_revisions": [row_data(item) for item in db.scalars(select(AccountRevision).where(
             AccountRevision.budget_id == budget_id
+        ))],
+        "budget_structure_revisions": [row_data(item) for item in db.scalars(select(BudgetStructureRevision).where(
+            BudgetStructureRevision.budget_id == budget_id
         ))],
         "reconciliations": [row_data(item) for item in db.scalars(select(Reconciliation).where(
             Reconciliation.budget_id == budget_id

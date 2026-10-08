@@ -525,6 +525,8 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
     func createRequest(_ value: APIFinancialRequestCreate) async throws
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws
     func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws
+    func categoryHistory(categoryID: String, limit: Int, offset: Int) async throws -> [APIBudgetStructureRevision]
+    func categoryGroupHistory(groupID: String, limit: Int, offset: Int) async throws -> [APIBudgetStructureRevision]
     func reorderCategoryGroups(_ orderedIDs: [String]) async throws
     func reorderCategories(groupID: String, orderedIDs: [String]) async throws
     func deleteGroup(id: String, currentName: String?) async throws
@@ -560,6 +562,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var demoScheduleRevisions: [APIScheduledTransactionRevision] = []
     private var demoDelegatedPolicyRevisions: [APIDelegatedPolicyRevision] = []
     private var demoAccountRevisions: [APIAccountRevision] = []
+    private var demoStructureRevisions: [APIBudgetStructureRevision] = []
     private let now: () -> Date
     private struct InvitationRecord {
         let id: String; let email: String; let role: String
@@ -651,6 +654,13 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             APIAccountRevision(id: "demo-account-created-\(account.id)", accountID: account.id,
                 action: "created", actorUserID: requestActorID, actorDisplayName: store.persona.rawValue,
                 beforeSnapshot: nil, afterSnapshot: accountRevisionSnapshot(account), createdAt: createdAt)
+        }
+        demoStructureRevisions = store.groupOrder.enumerated().map { index, group in
+            demoStructureRevision(resourceType: "category_group", resourceID: demoGroupID(group),
+                                  action: "created", before: nil, after: demoGroupSnapshot(group, sortOrder: index), createdAt: createdAt)
+        } + store.categories.enumerated().map { index, category in
+            demoStructureRevision(resourceType: "category", resourceID: category.id,
+                                  action: "created", before: nil, after: demoCategorySnapshot(category, sortOrder: index), createdAt: createdAt)
         }
     }
 
@@ -1116,6 +1126,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             }
             try demo.loadLocalAuthority(value)
             demoAccountRevisions = try (value.accountRevisions ?? []).map(localAccountRevision)
+            demoStructureRevisions = try (value.structureRevisions ?? []).map(localStructureRevision)
             debtTermsValues = Dictionary(uniqueKeysWithValues: value.debtTerms.map { item in
                 (item.accountID, APIAccountDebtTermsUpsert(termsType: item.termsType,
                     annualRateBasisPoints: item.annualRateBasisPoints.map(Int.init), rateType: item.rateType,
@@ -1179,9 +1190,14 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             to: previous.accountRevisions ?? [], budgetID: localIdentity.budgetID,
             actorUserID: localIdentity.ownerUserID, createdAt: stamp
         )
+        let structureRevisions = try appendingStructureRevisions(
+            previous: previous, current: projected, to: previous.structureRevisions ?? [],
+            budgetID: localIdentity.budgetID, actorUserID: localIdentity.ownerUserID, createdAt: stamp
+        )
         let value = LocalAuthoritySnapshot(
             identity: projected.identity, accounts: projected.accounts,
-            accountRevisions: accountRevisions, groups: projected.groups,
+            accountRevisions: accountRevisions, structureRevisions: structureRevisions,
+            groups: projected.groups,
             categories: projected.categories, payees: projected.payees,
             payeeAliases: projected.payeeAliases, transactions: projected.transactions,
             allocations: projected.allocations, reconciliations: projected.reconciliations,
@@ -1239,6 +1255,56 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             actorDisplayName: value.actorUserID == localIdentity?.ownerUserID ? localIdentity?.ownerDisplayName : nil,
             beforeSnapshot: try value.beforeJSON.map { try decoder.decode(APIAccountRevisionSnapshot.self, from: Data($0.utf8)) },
             afterSnapshot: try decoder.decode(APIAccountRevisionSnapshot.self, from: Data(value.afterJSON.utf8)),
+            createdAt: value.createdAt)
+    }
+
+    private func appendingStructureRevisions(
+        previous: LocalAuthoritySnapshot, current: LocalAuthoritySnapshot,
+        to existing: [LocalBudgetStructureRevisionRecord], budgetID: String,
+        actorUserID: String, createdAt: String
+    ) throws -> [LocalBudgetStructureRevisionRecord] {
+        var result = existing
+        let oldGroups = Dictionary(uniqueKeysWithValues: previous.groups.map { ($0.id, $0) })
+        for item in current.groups.sorted(by: { $0.id < $1.id }) {
+            let before = try oldGroups[item.id].map(structureGroupJSON)
+            let after = try structureGroupJSON(item)
+            guard before == nil || before != after else { continue }
+            result.append(.init(id: UUID().uuidString, budgetID: budgetID, resourceType: "category_group",
+                resourceID: item.id, action: before == nil ? "created" : "updated", actorUserID: actorUserID,
+                beforeJSON: before, afterJSON: after, createdAt: createdAt))
+        }
+        let oldCategories = Dictionary(uniqueKeysWithValues: previous.categories.map { ($0.id, $0) })
+        for item in current.categories.sorted(by: { $0.id < $1.id }) {
+            let before = try oldCategories[item.id].map(structureCategoryJSON)
+            let after = try structureCategoryJSON(item)
+            guard before == nil || before != after else { continue }
+            result.append(.init(id: UUID().uuidString, budgetID: budgetID, resourceType: "category",
+                resourceID: item.id, action: before == nil ? "created" : "updated", actorUserID: actorUserID,
+                beforeJSON: before, afterJSON: after, createdAt: createdAt))
+        }
+        return result
+    }
+
+    private func structureGroupJSON(_ value: LocalCategoryGroupRecord) throws -> String {
+        String(decoding: try JSONEncoder().encode(APIBudgetStructureSnapshot(
+            name: value.name, sortOrder: Int(value.sortOrder), isArchived: value.isArchived)), as: UTF8.self)
+    }
+
+    private func structureCategoryJSON(_ value: LocalCategoryRecord) throws -> String {
+        String(decoding: try JSONEncoder().encode(APIBudgetStructureSnapshot(
+            groupID: value.groupID, name: value.name, iconName: value.iconName, note: value.note,
+            sortOrder: Int(value.sortOrder), isArchived: value.isArchived,
+            isEssential: value.isEssential, isEmergencyFund: value.isEmergencyFund,
+            delegatedUserID: value.delegatedUserID)), as: UTF8.self)
+    }
+
+    private func localStructureRevision(_ value: LocalBudgetStructureRevisionRecord) throws -> APIBudgetStructureRevision {
+        let decoder = JSONDecoder()
+        return .init(id: value.id, resourceType: value.resourceType, resourceID: value.resourceID,
+            action: value.action, actorUserID: value.actorUserID,
+            actorDisplayName: value.actorUserID == localIdentity?.ownerUserID ? localIdentity?.ownerDisplayName : nil,
+            beforeSnapshot: try value.beforeJSON.map { try decoder.decode(APIBudgetStructureSnapshot.self, from: Data($0.utf8)) },
+            afterSnapshot: try decoder.decode(APIBudgetStructureSnapshot.self, from: Data(value.afterJSON.utf8)),
             createdAt: value.createdAt)
     }
 
@@ -2069,6 +2135,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard demo.persona != .rey, let profile = accessProfiles[requestActorID], profile.restrictCategories else { return delegated }
         return delegated.map { $0.intersection(profile.categoryIDs) } ?? Set(profile.categoryIDs)
     }
+    private var actorCategoryIDs: Set<String> {
+        actorCategoryScope ?? Set(demo.categories.map(\.id))
+    }
     private var actorHasResourceScope: Bool {
         demo.isRestricted || (demo.persona != .rey && (accessProfiles[requestActorID].map { $0.restrictAccounts || $0.restrictCategories } ?? false))
     }
@@ -2569,8 +2638,17 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard delegatedUserID == nil || member != nil, !demo.isRestricted || member == nil || member == demo.persona else { throw workspaceRepositoryError("Invalid delegated category recipient.") }
         guard demo.createCategory(name: name, group: groupName.isEmpty ? newGroupName : groupName) else { throw workspaceRepositoryError(demo.errorMessage) }
         if !demo.isRestricted { demo.categories[demo.categories.count - 1].delegatedTo = member }
+        if let category = demo.categories.last {
+            appendDemoStructureRevision(resourceType: "category", resourceID: category.id,
+                before: nil, after: demoCategorySnapshot(category, sortOrder: demo.categories.count - 1))
+        }
     }
-    func createGroup(name: String) async throws { try requireActiveMembership(); demo.createCategoryGroup(named: name) }
+    func createGroup(name: String) async throws { try requireActiveMembership(); demo.createCategoryGroup(named: name)
+        if let index = demo.groupOrder.firstIndex(of: name) {
+            appendDemoStructureRevision(resourceType: "category_group", resourceID: demoGroupID(name),
+                before: nil, after: demoGroupSnapshot(name, sortOrder: index))
+        }
+    }
     func createAccount(_ operation: CreateAccountOperation) async throws { try requireActiveMembership();
         guard demo.createAccount(name: operation.name, type: operation.kind, isOnBudget: operation.isOnBudget, startingBalance: operation.openingBalanceMinor) else { throw workspaceRepositoryError(demo.errorMessage) }
         if let account = demo.accounts.last {
@@ -2601,6 +2679,30 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                                                               limit: limit, offset: offset).map(localAccountRevision)
         }
         return Array(demoAccountRevisions.filter { $0.accountID == accountID }
+            .reversed().dropFirst(offset).prefix(limit))
+    }
+    func categoryHistory(categoryID: String, limit: Int, offset: Int) async throws -> [APIBudgetStructureRevision] {
+        try requireActiveMembership()
+        guard actorCategoryIDs.contains(categoryID) else { throw APIClientError.server(status: 404, message: "Category not found") }
+        if let localAuthority, let localIdentity {
+            return try await localAuthority.structureRevisions(resourceType: "category", resourceID: categoryID,
+                budgetID: localIdentity.budgetID, limit: limit, offset: offset).map(localStructureRevision)
+        }
+        return Array(demoStructureRevisions.filter { $0.resourceType == "category" && $0.resourceID == categoryID }
+            .reversed().dropFirst(offset).prefix(limit))
+    }
+    func categoryGroupHistory(groupID: String, limit: Int, offset: Int) async throws -> [APIBudgetStructureRevision] {
+        try requireActiveMembership()
+        if let localAuthority, let localIdentity {
+            return try await localAuthority.structureRevisions(resourceType: "category_group", resourceID: groupID,
+                budgetID: localIdentity.budgetID, limit: limit, offset: offset).map(localStructureRevision)
+        }
+        let currentName = demo.groupOrder.first { demoGroupID($0) == groupID }
+        let stableIDs = Set(demoStructureRevisions.compactMap { revision in
+            revision.resourceType == "category_group" && revision.afterSnapshot.name == currentName
+                ? revision.resourceID : nil
+        }).union([groupID])
+        return Array(demoStructureRevisions.filter { $0.resourceType == "category_group" && stableIDs.contains($0.resourceID) }
             .reversed().dropFirst(offset).prefix(limit))
     }
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? { try requireActiveMembership();
@@ -2661,17 +2763,42 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws { try requireActiveMembership();
         guard let index = demo.categories.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError("Category not found.") }
+        let before = demoCategorySnapshot(demo.categories[index], sortOrder: index)
         let targetGroup = groupName ?? demo.categories[index].group
         guard !demo.categories.contains(where: { $0.id != id && $0.group == targetGroup && normalizedCategoryName($0.name) == normalizedCategoryName(value.name) }) else { throw workspaceRepositoryError("A category with this name already exists in the group.") }
         demo.categories[index].name = value.name.trimmingCharacters(in: .whitespacesAndNewlines); demo.categories[index].group = targetGroup; demo.categories[index].icon = value.iconName ?? "folder.fill"; demo.categories[index].note = value.note; demo.categories[index].isHidden = value.isArchived; demo.categories[index].isEssential = value.isEssential; demo.categories[index].isEmergencyFund = value.isEmergencyFund
+        demo.categories[index].delegatedTo = delegatedUserID.flatMap { id in DemoPersona.allCases.first { $0.rawValue.lowercased() == id } }
+        let after = demoCategorySnapshot(demo.categories[index], sortOrder: index)
+        if before != after { appendDemoStructureRevision(resourceType: "category", resourceID: id, before: before, after: after) }
     }
     func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { try requireActiveMembership();
         guard let currentName else { throw workspaceRepositoryError("Category group not found.") }
+        let oldIndex = demo.groupOrder.firstIndex(of: currentName) ?? value.sortOrder
+        let before = demoGroupSnapshot(currentName, sortOrder: oldIndex, archived: demo.archivedGroups.contains(currentName))
         demo.renameCategoryGroup(from: currentName, to: value.name, sortOrder: value.sortOrder)
         demo.archivedGroups.remove(currentName); if value.isArchived { demo.archivedGroups.insert(value.name) }
+        let after = demoGroupSnapshot(value.name, sortOrder: value.sortOrder, archived: value.isArchived)
+        if before != after { appendDemoStructureRevision(resourceType: "category_group", resourceID: id, before: before, after: after) }
     }
-    func reorderCategoryGroups(_ orderedIDs: [String]) async throws { try requireActiveMembership(); demo.groupOrder = orderedIDs.compactMap { id in demo.groupOrder.first { "demo-group-\($0.lowercased().replacingOccurrences(of: " ", with: "-"))" == id } } }
-    func reorderCategories(groupID: String, orderedIDs: [String]) async throws { try requireActiveMembership(); let ranks = Dictionary(uniqueKeysWithValues: orderedIDs.enumerated().map { ($0.element, $0.offset) }); demo.categories.sort { (ranks[$0.id] ?? Int.max) < (ranks[$1.id] ?? Int.max) } }
+    func reorderCategoryGroups(_ orderedIDs: [String]) async throws { try requireActiveMembership()
+        let before = Dictionary(uniqueKeysWithValues: demo.groupOrder.enumerated().map {
+            (demoGroupID($0.element), demoGroupSnapshot($0.element, sortOrder: $0.offset, archived: demo.archivedGroups.contains($0.element)))
+        })
+        demo.groupOrder = orderedIDs.compactMap { id in demo.groupOrder.first { demoGroupID($0) == id } }
+        for (index, name) in demo.groupOrder.enumerated() {
+            let id = demoGroupID(name); let after = demoGroupSnapshot(name, sortOrder: index, archived: demo.archivedGroups.contains(name))
+            if let old = before[id], old != after { appendDemoStructureRevision(resourceType: "category_group", resourceID: id, before: old, after: after) }
+        }
+    }
+    func reorderCategories(groupID: String, orderedIDs: [String]) async throws { try requireActiveMembership()
+        let before = Dictionary(uniqueKeysWithValues: demo.categories.enumerated().map { ($0.element.id, demoCategorySnapshot($0.element, sortOrder: $0.offset)) })
+        let ranks = Dictionary(uniqueKeysWithValues: orderedIDs.enumerated().map { ($0.element, $0.offset) })
+        demo.categories.sort { (ranks[$0.id] ?? Int.max) < (ranks[$1.id] ?? Int.max) }
+        for (index, category) in demo.categories.enumerated() {
+            let after = demoCategorySnapshot(category, sortOrder: index)
+            if let old = before[category.id], old != after { appendDemoStructureRevision(resourceType: "category", resourceID: category.id, before: old, after: after) }
+        }
+    }
     func deleteGroup(id: String, currentName: String?) async throws { try requireActiveMembership();
         guard let currentName else { throw workspaceRepositoryError("Category group not found.") }
         guard !demo.categories.contains(where: { $0.group == currentName }) else { throw workspaceRepositoryError("Move or archive every category before deleting this group") }
@@ -3039,6 +3166,17 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                   .sorted { $0.categoryID == $1.categoryID ? $0.ruleKind < $1.ruleKind : $0.categoryID < $1.categoryID })
     }
 
+    private func appendDemoStructureRevision(resourceType: String, resourceID: String,
+                                             before: APIBudgetStructureSnapshot?,
+                                             after: APIBudgetStructureSnapshot) {
+        demoStructureRevisions.append(.init(
+            id: UUID().uuidString, resourceType: resourceType, resourceID: resourceID,
+            action: before == nil ? "created" : "updated", actorUserID: requestActorID,
+            actorDisplayName: demo.persona.rawValue, beforeSnapshot: before, afterSnapshot: after,
+            createdAt: ISO8601DateFormatter().string(from: now())
+        ))
+    }
+
 }
 
 private func workspaceRepositoryError(_ message: String?) -> NSError { NSError(domain: "BudgetWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: message ?? "Unable to complete the change."]) }
@@ -3046,6 +3184,30 @@ private func workspaceRepositoryError(_ message: String?) -> NSError { NSError(d
 private func accountRevisionSnapshot(_ account: DemoAccount) -> APIAccountRevisionSnapshot {
     .init(name: account.name, accountType: account.kind.rawValue, isOnBudget: account.isOnBudget,
           isClosed: account.isClosed, paymentCategoryID: nil)
+}
+
+private func demoGroupID(_ name: String) -> String {
+    "demo-group-\(name.lowercased().replacingOccurrences(of: " ", with: "-"))"
+}
+
+private func demoGroupSnapshot(_ name: String, sortOrder: Int, archived: Bool = false) -> APIBudgetStructureSnapshot {
+    .init(name: name, sortOrder: sortOrder, isArchived: archived)
+}
+
+private func demoCategorySnapshot(_ category: DemoCategory, sortOrder: Int) -> APIBudgetStructureSnapshot {
+    .init(groupID: demoGroupID(category.group), name: category.name, iconName: category.icon,
+          note: category.note, sortOrder: sortOrder, isArchived: category.isHidden,
+          isEssential: category.isEssential, isEmergencyFund: category.isEmergencyFund,
+          delegatedUserID: category.delegatedTo?.rawValue.lowercased())
+}
+
+private func demoStructureRevision(resourceType: String, resourceID: String, action: String,
+                                   before: APIBudgetStructureSnapshot?, after: APIBudgetStructureSnapshot,
+                                   createdAt: String, actorID: String = "rey",
+                                   actorName: String = "Rey") -> APIBudgetStructureRevision {
+    .init(id: UUID().uuidString, resourceType: resourceType, resourceID: resourceID, action: action,
+          actorUserID: actorID, actorDisplayName: actorName, beforeSnapshot: before,
+          afterSnapshot: after, createdAt: createdAt)
 }
 
 @MainActor
@@ -3201,6 +3363,8 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func createRequest(_ value: APIFinancialRequestCreate) async throws { try await credentials.prepare(); _ = try await client.createFinancialRequest(budgetID: budget.id, request: value, token: token) }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws { try await credentials.prepare(); _ = try await client.updateCategory(budgetID: budget.id, categoryID: id, category: value, token: token); if existingDelegatedUserID != delegatedUserID { _ = try await client.updateCategoryDelegation(budgetID: budget.id, categoryID: id, delegatedUserID: delegatedUserID, token: token) } }
     func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { try await credentials.prepare(); _ = try await client.updateCategoryGroup(budgetID: budget.id, groupID: id, group: value, token: token) }
+    func categoryHistory(categoryID: String, limit: Int, offset: Int) async throws -> [APIBudgetStructureRevision] { try await credentials.prepare(); return try await client.categoryHistory(budgetID: budget.id, categoryID: categoryID, limit: limit, offset: offset, token: token) }
+    func categoryGroupHistory(groupID: String, limit: Int, offset: Int) async throws -> [APIBudgetStructureRevision] { try await credentials.prepare(); return try await client.categoryGroupHistory(budgetID: budget.id, groupID: groupID, limit: limit, offset: offset, token: token) }
     func reorderCategoryGroups(_ orderedIDs: [String]) async throws { try await credentials.prepare(); _ = try await client.reorderCategoryGroups(budgetID: budget.id, orderedIDs: orderedIDs, token: token) }
     func reorderCategories(groupID: String, orderedIDs: [String]) async throws { try await credentials.prepare(); _ = try await client.reorderCategories(budgetID: budget.id, groupID: groupID, orderedIDs: orderedIDs, token: token) }
     func deleteGroup(id: String, currentName: String?) async throws { try await credentials.prepare(); try await client.deleteCategoryGroup(budgetID: budget.id, groupID: id, token: token) }
@@ -4290,6 +4454,14 @@ final class BudgetWorkspaceStore: ObservableObject {
         }
         try await commands().updateCategory(id: id, value: value, groupName: groups.first(where: { $0.id == value.groupID })?.name, existingDelegatedUserID: existing?.delegatedUserID, delegatedUserID: delegatedUserID)
         await refresh()
+    }
+    func categoryHistory(categoryID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIBudgetStructureRevision] {
+        guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Category history request is out of range.") }
+        return try await commands().categoryHistory(categoryID: categoryID, limit: limit, offset: offset)
+    }
+    func categoryGroupHistory(groupID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIBudgetStructureRevision] {
+        guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Group history request is out of range.") }
+        return try await commands().categoryGroupHistory(groupID: groupID, limit: limit, offset: offset)
     }
     func updateGroup(id: String, value: APICategoryGroupUpdate) async throws {
         try await commands().updateGroup(id: id, currentName: groups.first(where: { $0.id == id })?.name, value: value)
@@ -7646,7 +7818,7 @@ private struct LiveGroupEditor: View {
     let group: APICategoryGroup
     @State private var name: String; @State private var archived: Bool; @State private var saving=false; @State private var error:String?; @State private var confirmDelete=false
     init(group: APICategoryGroup){self.group=group;_name=State(initialValue:group.name);_archived=State(initialValue:group.isArchived)}
-    var body: some View { NavigationStack { Form { TextField("Name",text:$name);Toggle("Hidden",isOn:$archived);Section{Text("Hiding a group preserves every category and its financial history.").font(.footnote).foregroundStyle(.secondary)};Section{Button("Delete Empty Group",role:.destructive){confirmDelete=true}} }.navigationTitle("Manage Group").toolbar{ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || saving)}}.confirmationDialog("Delete this group?",isPresented:$confirmDelete){Button("Delete Empty Group",role:.destructive){Task{await remove()}}} .alert("Unable to update group",isPresented:Binding(get:{error != nil},set:{if !$0{error=nil}})){Button("OK",role:.cancel){}}message:{Text(error ?? "Unknown error")} } }
+    var body: some View { NavigationStack { Form { TextField("Name",text:$name);Toggle("Hidden",isOn:$archived);Section{Text("Hiding a group preserves every category and its financial history.").font(.footnote).foregroundStyle(.secondary);NavigationLink("Group History"){BudgetStructureHistoryView(resourceType:"category_group",resourceID:group.id,title:group.name)}};Section{Button("Delete Empty Group",role:.destructive){confirmDelete=true}} }.navigationTitle("Manage Group").toolbar{ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || saving)}}.confirmationDialog("Delete this group?",isPresented:$confirmDelete){Button("Delete Empty Group",role:.destructive){Task{await remove()}}} .alert("Unable to update group",isPresented:Binding(get:{error != nil},set:{if !$0{error=nil}})){Button("OK",role:.cancel){}}message:{Text(error ?? "Unknown error")} } }
     private func save()async{saving=true;defer{saving=false};do{try await store.updateGroup(id:group.id,value:APICategoryGroupUpdate(name:name,sortOrder:group.sortOrder,isArchived:archived));dismiss()}catch{self.error=error.localizedDescription}}
     private func remove()async{saving=true;defer{saving=false};do{try await store.deleteGroup(id:group.id);dismiss()}catch{self.error=error.localizedDescription}}
 }
@@ -7783,6 +7955,13 @@ private struct LivePlanCategoryDetailView: View {
                 Label("Target history", systemImage: "clock.arrow.circlepath")
             }
             .accessibilityIdentifier("category-target-history")
+            NavigationLink {
+                BudgetStructureHistoryView(resourceType: "category", resourceID: categoryID,
+                                           title: row?.name ?? "Category")
+            } label: {
+                Label("Category history", systemImage: "clock.arrow.circlepath")
+            }
+            .accessibilityIdentifier("category-structure-history")
             if let model {
                 Button(model.isFavorite ? "Remove from favorites" : "Add to favorites", systemImage: model.isFavorite ? "star.slash" : "star") {
                     Task {
@@ -7800,6 +7979,79 @@ private struct LivePlanCategoryDetailView: View {
 private enum CategoryTransactionMode: String, Identifiable {
     case expense, reimbursement
     var id: String { rawValue }
+}
+
+private struct BudgetStructureHistoryView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let resourceType: String; let resourceID: String; let title: String
+    @State private var rows: [APIBudgetStructureRevision] = []
+    @State private var loading = false; @State private var loadingOlder = false
+    @State private var canLoadOlder = false; @State private var errorMessage: String?
+    private let pageSize = 50
+
+    var body: some View {
+        List {
+            if loading && rows.isEmpty { ProgressView("Loading history…") }
+            else if rows.isEmpty && errorMessage == nil {
+                ContentUnavailableView("No structure history", systemImage: "clock",
+                    description: Text("Changes to \(title) will remain here."))
+            } else {
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(changeTitle(row), systemImage: row.action == "created" ? "plus.circle" : "pencil.circle")
+                            .font(.headline)
+                        if let detail = changeDetail(row) { Text(detail).font(.subheadline) }
+                        Text("\(row.actorDisplayName ?? "Unknown member") · \(row.createdAt)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.accessibilityElement(children: .combine)
+                }
+                if canLoadOlder {
+                    Button(loadingOlder ? "Loading…" : "Load Earlier Changes") { Task { await load(reset: false) } }
+                        .disabled(loadingOlder)
+                }
+            }
+        }
+        .navigationTitle(resourceType == "category" ? "Category History" : "Group History")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load(reset: true) }
+        .refreshable { await load(reset: true) }
+        .alert("History unavailable", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("Try Again") { Task { await load(reset: true) } }; Button("Cancel", role: .cancel) {}
+        } message: { Text(errorMessage ?? "Unknown error") }
+    }
+
+    private func load(reset: Bool) async {
+        if reset { loading = true; errorMessage = nil } else { loadingOlder = true }
+        defer { loading = false; loadingOlder = false }
+        do {
+            let offset = reset ? 0 : rows.count
+            let next = try await (resourceType == "category"
+                ? store.categoryHistory(categoryID: resourceID, limit: pageSize, offset: offset)
+                : store.categoryGroupHistory(groupID: resourceID, limit: pageSize, offset: offset))
+            if reset { rows = next } else { rows.append(contentsOf: next) }
+            canLoadOlder = next.count == pageSize
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func changeTitle(_ row: APIBudgetStructureRevision) -> String {
+        guard row.action != "created", let before = row.beforeSnapshot else {
+            return resourceType == "category" ? "Category created" : "Group created"
+        }
+        if before.isArchived != row.afterSnapshot.isArchived { return row.afterSnapshot.isArchived ? "Archived" : "Restored" }
+        if before.name != row.afterSnapshot.name { return "Renamed" }
+        if before.groupID != row.afterSnapshot.groupID { return "Moved to another group" }
+        if before.sortOrder != row.afterSnapshot.sortOrder { return "Reordered" }
+        if before.delegatedUserID != row.afterSnapshot.delegatedUserID { return "Delegation changed" }
+        return "Details updated"
+    }
+
+    private func changeDetail(_ row: APIBudgetStructureRevision) -> String? {
+        guard let before = row.beforeSnapshot else { return row.afterSnapshot.name }
+        if before.name != row.afterSnapshot.name { return "\(before.name) → \(row.afterSnapshot.name)" }
+        if before.note != row.afterSnapshot.note { return "Note updated" }
+        if before.iconName != row.afterSnapshot.iconName { return "Icon updated" }
+        return nil
+    }
 }
 
 private struct TargetHistoryView: View {

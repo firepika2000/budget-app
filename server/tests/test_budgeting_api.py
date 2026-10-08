@@ -188,6 +188,59 @@ def test_category_and_group_reordering_is_atomic_and_authorized(client, owner_to
     assert denied.status_code == 403
 
 
+def test_category_and_group_metadata_history_is_attributed_bounded_and_noop_safe(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory, name="Audited Plan")
+    root = f"/api/v1/budgets/{budget['id']}"
+    group = client.post(f"{root}/category-groups", headers=auth(owner_token), json={
+        "name": "Everyday", "sort_order": 10,
+    }).json()
+    category = client.post(f"{root}/categories", headers=auth(owner_token), json={
+        "group_id": group["id"], "name": "Food", "icon_name": "cart",
+        "note": "Original", "sort_order": 10,
+    }).json()
+
+    same = client.put(f"{root}/categories/{category['id']}", headers=auth(owner_token), json={
+        "group_id": group["id"], "name": "Food", "icon_name": "cart",
+        "note": "Original", "sort_order": 10, "is_archived": False,
+        "is_essential": False, "is_emergency_fund": False,
+    })
+    assert same.status_code == 200, same.text
+    renamed = client.put(f"{root}/categories/{category['id']}", headers=auth(owner_token), json={
+        "group_id": group["id"], "name": "Groceries", "icon_name": "basket",
+        "note": "Weekly food", "sort_order": 20, "is_archived": True,
+        "is_essential": True, "is_emergency_fund": False,
+    })
+    assert renamed.status_code == 200, renamed.text
+    group_updated = client.put(f"{root}/category-groups/{group['id']}", headers=auth(owner_token), json={
+        "name": "Daily Life", "sort_order": 20, "is_archived": True,
+    })
+    assert group_updated.status_code == 200, group_updated.text
+
+    history = client.get(f"{root}/categories/{category['id']}/history?limit=1", headers=auth(owner_token))
+    assert history.status_code == 200, history.text
+    assert len(history.json()) == 1
+    latest = history.json()[0]
+    assert latest["action"] == "updated"
+    assert latest["actor_display_name"] == "Owner"
+    assert latest["before_snapshot"]["name"] == "Food"
+    assert latest["after_snapshot"] == {
+        "group_id": group["id"], "name": "Groceries", "icon_name": "basket",
+        "note": "Weekly food", "sort_order": 20, "is_archived": True,
+        "is_essential": True, "is_emergency_fund": False, "delegated_user_id": None,
+    }
+    all_history = client.get(f"{root}/categories/{category['id']}/history", headers=auth(owner_token)).json()
+    assert [item["action"] for item in all_history] == ["updated", "created"]
+
+    group_history = client.get(f"{root}/category-groups/{group['id']}/history", headers=auth(owner_token))
+    assert group_history.status_code == 200, group_history.text
+    assert [item["action"] for item in group_history.json()] == ["updated", "created"]
+    assert group_history.json()[0]["after_snapshot"]["name"] == "Daily Life"
+
+    assert client.get(f"{root}/categories/{category['id']}/history?limit=0", headers=auth(owner_token)).status_code == 422
+
+
 def add_member(session_factory, client, permission, budget_id):
     with session_factory() as db:
         household = db.query(Household).one()

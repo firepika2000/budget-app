@@ -208,6 +208,22 @@ public struct APIClient {
         )
     }
 
+    public func categoryHistory(
+        budgetID: String, categoryID: String, limit: Int = 50, offset: Int = 0, token: String
+    ) async throws -> [APIBudgetStructureRevision] {
+        try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/history",
+                       queryItems: [.init(name: "limit", value: String(limit)),
+                                    .init(name: "offset", value: String(offset))], token: token)
+    }
+
+    public func categoryGroupHistory(
+        budgetID: String, groupID: String, limit: Int = 50, offset: Int = 0, token: String
+    ) async throws -> [APIBudgetStructureRevision] {
+        try await send(path: "api/v1/budgets/\(budgetID)/category-groups/\(groupID)/history",
+                       queryItems: [.init(name: "limit", value: String(limit)),
+                                    .init(name: "offset", value: String(offset))], token: token)
+    }
+
     public func accountDebtTerms(budgetID: String, accountID: String, token: String) async throws -> APIAccountDebtTerms? {
         try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/debt-terms", token: token)
     }
