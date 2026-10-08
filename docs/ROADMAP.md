@@ -488,6 +488,10 @@ The roadmap is a living document, but changing it is a deliberate product decisi
   viewer's current resource scope, that entire side is redacted rather than leaking its former payee,
   memo, amount, account, category, or split context. Raw audit JSON and internal attachment/lineage
   identifiers remain server-only.
+- Transaction Change History no longer silently stops at the newest 50 events. The shared production
+  view pages older authorized history on demand, and both Budget Server and Local Device providers
+  honor the same bounded limit/offset contract without loading an unbounded audit trail into memory.
+  A failed older-page request keeps the history already on screen and offers an explicit retry.
 - Budget Server allocation history now uses privacy-before-pagination bounded reads in the current
   iPhone composition, with explicit older-history loading and readable actor attribution.
 - SWIFT MT940 statement import is production-wired across Budget Server and Local Device providers,

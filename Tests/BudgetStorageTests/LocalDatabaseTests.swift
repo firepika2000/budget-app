@@ -254,10 +254,14 @@ final class LocalDatabaseTests: XCTestCase {
             createdAt: "2026-09-27T12:00:00Z", splits: []
         ))
         let snapshot = try await store.snapshot(budgetID: "budget")
-        let changes = [
-            LocalTransactionChangeRecord(id: "change-1", budgetID: "budget", transactionID: "purchase", actorUserID: "owner", action: "updated", createdAt: "2026-09-28T12:00:00Z"),
-            LocalTransactionChangeRecord(id: "change-2", budgetID: "budget", transactionID: "purchase", actorUserID: "owner", action: "updated", createdAt: "2026-09-29T12:00:00Z"),
-            LocalTransactionChangeRecord(id: "deleted-only", budgetID: "budget", transactionID: "missing", actorUserID: "owner", action: "deleted", createdAt: "2026-09-30T12:00:00Z"),
+        let changes = (1...55).map { index in
+            LocalTransactionChangeRecord(
+                id: String(format: "change-%02d", index), budgetID: "budget",
+                transactionID: "purchase", actorUserID: "owner", action: "updated",
+                createdAt: String(format: "2026-09-28T12:%02d:00Z", index)
+            )
+        } + [
+            LocalTransactionChangeRecord(id: "deleted-only", budgetID: "budget", transactionID: "missing", actorUserID: "owner", action: "deleted", createdAt: "2026-09-30T12:00:00Z")
         ]
         try await store.replaceWorkspaceState(.init(
             identity: snapshot.identity, accounts: snapshot.accounts, groups: snapshot.groups,
@@ -273,7 +277,19 @@ final class LocalDatabaseTests: XCTestCase {
         ))
 
         let recent = try await store.recentTransactionChanges(budgetID: "budget", limit: 2)
-        XCTAssertEqual(recent.map(\.id), ["change-2", "change-1"])
+        XCTAssertEqual(recent.map(\.id), ["change-55", "change-54"])
+
+        let firstPage = try await store.transactionChanges(
+            transactionID: "purchase", budgetID: "budget", limit: 50, offset: 0
+        )
+        let secondPage = try await store.transactionChanges(
+            transactionID: "purchase", budgetID: "budget", limit: 50, offset: 50
+        )
+        XCTAssertEqual(firstPage.count, 50)
+        XCTAssertEqual(firstPage.first?.id, "change-55")
+        XCTAssertEqual(firstPage.last?.id, "change-06")
+        XCTAssertEqual(secondPage.map(\.id), ["change-05", "change-04", "change-03", "change-02", "change-01"])
+        XCTAssertTrue(Set(firstPage.map(\.id)).isDisjoint(with: secondPage.map(\.id)))
     }
 
     func testLocalTransactionAuditAppendsOnlyRealTransactionDeltas() throws {

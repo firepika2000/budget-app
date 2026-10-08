@@ -1954,11 +1954,13 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let contentType = name.lowercased().hasSuffix(".png") ? "image/png" : "application/pdf"
         return [try JSONDecoder().decode(APITransactionAttachment.self, from: JSONSerialization.data(withJSONObject: ["id": "demo-attachment-\(id)", "transaction_id": id, "filename": name, "content_type": contentType, "byte_count": data.count, "sha256": "demo", "created_at": "2026-09-14T00:00:00Z", "detached_at": NSNull()]))]
     }
-    func transactionHistory(id: String) async throws -> [APITransactionChange] { try requireActiveMembership();
+    func transactionHistory(id: String, limit: Int, offset: Int) async throws -> [APITransactionChange] { try requireActiveMembership();
+        guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Transaction history page is invalid") }
         let transaction = try attachmentTransaction(id: id)
         if let localAuthority, let localIdentity {
             let rows = try await localAuthority.transactionChanges(
-                transactionID: id, budgetID: localIdentity.budgetID
+                transactionID: id, budgetID: localIdentity.budgetID,
+                limit: limit, offset: offset
             )
             if !rows.isEmpty {
                 return try rows.map { item in
@@ -1973,6 +1975,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                 }
             }
         }
+        guard offset == 0 else { return [] }
         return [try decode([
             "id": "demo-history-\(id)", "transaction_id": id,
             "transaction_payee_name": transaction.payee,
@@ -2677,7 +2680,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func voidTransaction(id: String, reason: String) async throws { try await credentials.prepare(); _ = try await client.voidTransaction(budgetID: budget.id, transactionID: id, reason: reason, token: token) }
     func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws { try await credentials.prepare(); _ = try await client.createScheduleFromTransaction(budgetID: budget.id, transactionID: id, request: .init(recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, nextDate: operation.nextDate), token: token) }
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await credentials.prepare(); return try await client.transactionAttachments(budgetID: budget.id, transactionID: id, token: token) }
-    func transactionHistory(id: String) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.transactionHistory(budgetID: budget.id, transactionID: id, token: token) }
+    func transactionHistory(id: String, limit: Int, offset: Int) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.transactionHistory(budgetID: budget.id, transactionID: id, limit: limit, offset: offset, token: token) }
     func recentTransactionChanges(limit: Int) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.recentTransactionChanges(budgetID: budget.id, limit: limit, token: token) }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await credentials.prepare(); _ = try await client.uploadTransactionAttachment(budgetID: budget.id, transactionID: id, filename: filename, contentType: contentType, data: data, token: token) }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await credentials.prepare(); return try await client.downloadTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
@@ -3566,7 +3569,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await services().transactions.attachments(id: id) }
-    func transactionHistory(id: String) async throws -> [APITransactionChange] { try await services().transactions.history(id: id) }
+    func transactionHistory(id: String, limit: Int = 50, offset: Int = 0) async throws -> [APITransactionChange] { try await services().transactions.history(id: id, limit: limit, offset: offset) }
     func recentTransactionChanges(limit: Int = 5) async throws -> [APITransactionChange] { try await services().transactions.recentChanges(limit: limit) }
     func reconciliationHistory(accountID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIReconciliationHistory] {
         try await services().accounts.reconciliationHistory(accountID: accountID, limit: limit, offset: offset)
@@ -7907,16 +7910,18 @@ private struct TransactionChangeHistoryView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let transactionID: String
     @State private var changes: [APITransactionChange] = []
-    @State private var loading = true
+    @State private var loading = false
+    @State private var loadingOlder = false
+    @State private var hasMore = false
     @State private var errorMessage: String?
 
     var body: some View {
         List {
             if loading {
                 HStack { Spacer(); ProgressView(); Spacer() }
-            } else if let errorMessage {
+            } else if let errorMessage, changes.isEmpty {
                 ContentUnavailableView("History Unavailable", systemImage: "exclamationmark.triangle", description: Text(errorMessage))
-                Button("Try Again") { Task { await load() } }
+                Button("Try Again") { Task { await load(append: false) } }
             } else if changes.isEmpty {
                 ContentUnavailableView("No Recorded Changes", systemImage: "clock.arrow.circlepath", description: Text("Future edits to this transaction will appear here."))
             } else {
@@ -7944,16 +7949,38 @@ private struct TransactionChangeHistoryView: View {
                     }
                     .accessibilityIdentifier("transaction-change-\(change.id)")
                 }
+                if hasMore {
+                    Button(loadingOlder ? "Loading…" : "Load Older") { Task { await load(append: true) } }
+                        .disabled(loadingOlder)
+                        .accessibilityIdentifier("transaction-history-load-older")
+                }
+                if let errorMessage {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Older history could not be loaded.")
+                            .font(.subheadline.weight(.semibold))
+                        Text(errorMessage).font(.caption).foregroundStyle(.secondary)
+                        Button("Try Loading Older Again") { Task { await load(append: true) } }
+                            .disabled(loadingOlder)
+                    }
+                    .accessibilityIdentifier("transaction-history-older-error")
+                }
             }
         }
         .navigationTitle("Change History")
-        .task { await load() }
+        .task { await load(append: false) }
+        .refreshable { await load(append: false) }
     }
 
-    private func load() async {
-        loading = true
-        defer { loading = false }
-        do { changes = try await store.transactionHistory(id: transactionID); errorMessage = nil }
+    private func load(append: Bool) async {
+        guard !loading, !loadingOlder else { return }
+        if append { loadingOlder = true } else { loading = true }
+        defer { loading = false; loadingOlder = false }
+        do {
+            let next = try await store.transactionHistory(id: transactionID, limit: 50, offset: append ? changes.count : 0)
+            changes = append ? changes + next : next
+            hasMore = next.count == 50
+            errorMessage = nil
+        }
         catch { errorMessage = error.localizedDescription }
     }
     private func actionTitle(_ action: String) -> String {

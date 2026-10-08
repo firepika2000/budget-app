@@ -824,14 +824,14 @@ public actor LocalAuthorityStore {
     }
 
     public func transactionChanges(
-        transactionID: String, budgetID: String, limit: Int = 50
+        transactionID: String, budgetID: String, limit: Int = 50, offset: Int = 0
     ) async throws -> [LocalTransactionChangeRecord] {
-        guard (1...100).contains(limit) else {
+        guard (1...100).contains(limit), offset >= 0 else {
             throw LocalStorageError.invalidSnapshot("Transaction history limit is invalid")
         }
         return try await database.rows(.init(
-            "SELECT * FROM transaction_changes WHERE budget_id=? AND transaction_id=? ORDER BY created_at DESC,id DESC LIMIT ?",
-            values: [.text(budgetID), .text(transactionID), .integer(Int64(limit))]
+            "SELECT * FROM transaction_changes WHERE budget_id=? AND transaction_id=? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+            values: [.text(budgetID), .text(transactionID), .integer(Int64(limit)), .integer(Int64(offset))]
         )).map(transactionChangeRecord)
     }
 

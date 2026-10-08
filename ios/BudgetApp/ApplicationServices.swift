@@ -347,7 +347,7 @@ protocol TransactionCommandRepository: AnyObject {
     func voidTransaction(id: String, reason: String) async throws
     func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment]
-    func transactionHistory(id: String) async throws -> [APITransactionChange]
+    func transactionHistory(id: String, limit: Int, offset: Int) async throws -> [APITransactionChange]
     func recentTransactionChanges(limit: Int) async throws -> [APITransactionChange]
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data
@@ -521,8 +521,11 @@ struct TransactionService {
         catch { throw BudgetApplicationError.map(error) }
     }
 
-    func history(id: String) async throws -> [APITransactionChange] {
-        do { return try await repository.transactionHistory(id: id) }
+    func history(id: String, limit: Int = 50, offset: Int = 0) async throws -> [APITransactionChange] {
+        guard (1...100).contains(limit), offset >= 0 else {
+            throw BudgetApplicationError.invalidOperation("Transaction history page is invalid.")
+        }
+        do { return try await repository.transactionHistory(id: id, limit: limit, offset: offset) }
         catch { throw BudgetApplicationError.map(error) }
     }
 
