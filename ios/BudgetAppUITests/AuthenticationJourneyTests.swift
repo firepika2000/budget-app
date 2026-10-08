@@ -921,6 +921,26 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertFalse(app.buttons["Budgets"].exists)
     }
 
+    func testProductionWorkspaceRestoresSelectedTabAfterRelaunch() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--local", "--skip-guided-onboarding"]
+        app.launchEnvironment["BUDGETAPP_UI_TEST_LOCAL_ID"] = UUID().uuidString
+        app.launch()
+
+        let activity = app.buttons["Activity"]
+        XCTAssertTrue(activity.waitForExistence(timeout: 8))
+        activity.tap()
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+
+        app.terminate()
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 8),
+                      "Reconstructing the production workspace must not send the user back to Home")
+        XCTAssertTrue(app.buttons["Activity"].isSelected)
+    }
+
     func testFreshProductionWorkspaceGuidedOnboardingCanSkipResumeAndRoute() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-fresh-budget", "--ui-test-reset-guided-onboarding"]

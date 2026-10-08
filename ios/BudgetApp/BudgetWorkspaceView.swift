@@ -4014,16 +4014,22 @@ struct BudgetWorkspaceView: View {
     @State private var didInstallUITestQuickEntry = false
     private let selectionOverride: Binding<Int>?
 
-    init(budget: APIBudget) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: budget.id)); _selectedTab = State(initialValue: 0); selectionOverride = nil }
-    init(store: BudgetWorkspaceStore) { _store = StateObject(wrappedValue: store); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: store.budget.id)); _selectedTab = State(initialValue: Self.launchTab); selectionOverride = nil }
-    private init(demo: Bool) { let store = BudgetWorkspaceStore.demo(); _store = StateObject(wrappedValue: store); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: store.budget.id)); _selectedTab = State(initialValue: Self.launchTab); selectionOverride = nil }
+    init(budget: APIBudget) { _store = StateObject(wrappedValue: BudgetWorkspaceStore(budget: budget)); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: budget.id)); _selectedTab = State(initialValue: Self.initialTab(for: budget.id)); selectionOverride = nil }
+    init(store: BudgetWorkspaceStore) { _store = StateObject(wrappedValue: store); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: store.budget.id)); _selectedTab = State(initialValue: Self.initialTab(for: store.budget.id)); selectionOverride = nil }
+    private init(demo: Bool) { let store = BudgetWorkspaceStore.demo(); _store = StateObject(wrappedValue: store); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: store.budget.id)); _selectedTab = State(initialValue: Self.initialTab(for: store.budget.id)); selectionOverride = nil }
     init(testStore: BudgetWorkspaceStore, selection: Binding<Int>) { _store = StateObject(wrappedValue: testStore); _scheduledReminders = StateObject(wrappedValue: ScheduledReminderSettings(budgetID: testStore.budget.id)); _selectedTab = State(initialValue: 0); selectionOverride = selection }
     static func demo() -> BudgetWorkspaceView { BudgetWorkspaceView(demo: true) }
     private var tabSelection: Binding<Int> { selectionOverride ?? $selectedTab }
     private var activeTab: Int { selectionOverride?.wrappedValue ?? selectedTab }
-    private static var launchTab: Int {
-        let screen = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--demo-screen=") }?.split(separator: "=").last.map(String.init) ?? "home"
-        return ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4,"household":5,"members":5][screen] ?? 0
+    private static var launchTabOverride: Int? {
+        guard let screen = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--demo-screen=") })?.split(separator: "=").last.map(String.init) else { return nil }
+        return ["home":0,"plan":1,"activity":2,"transaction":2,"accounts":3,"credit":3,"insights":4,"household":5,"members":5][screen]
+    }
+    private static func tabPreferenceKey(_ budgetID: String) -> String { "workspace.last-tab.\(budgetID)" }
+    private static func initialTab(for budgetID: String) -> Int {
+        if let launchTabOverride { return launchTabOverride }
+        let saved = UserDefaults.standard.integer(forKey: tabPreferenceKey(budgetID))
+        return (0...5).contains(saved) ? saved : 0
     }
 
     var body: some View {
@@ -4151,6 +4157,10 @@ struct BudgetWorkspaceView: View {
             installUITestQuickEntryIfNeeded()
             consumeQuickEntryRequest()
             consumeWorkspaceShortcutRequest()
+        }
+        .onChange(of: activeTab) { _, tab in
+            guard selectionOverride == nil, Self.launchTabOverride == nil, (0...5).contains(tab) else { return }
+            UserDefaults.standard.set(tab, forKey: Self.tabPreferenceKey(store.budget.id))
         }
         .onReceive(NotificationCenter.default.publisher(for: WorkspaceShortcutRequest.notification)) { _ in
             consumeWorkspaceShortcutRequest()

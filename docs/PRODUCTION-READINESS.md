@@ -37,6 +37,12 @@ generation-guarded. Temporary connectivity loss retains the last authorized aggr
 permission/resource denial or invalid response clears it so an aggregate from a former scope cannot
 remain visible. This changes presentation freshness only; no assignment or transaction is created.
 
+Workspace continuity checkpoint (2026-10-08): the compact and regular production shells retain the
+last valid selected tab per Budget. If SwiftUI reconstructs the workspace during lifecycle or route
+rehydration, the user returns to Plan, Activity, Accounts, Insights, or Household rather than being
+sent to Home. Explicit test/demo launch routes still override the preference and invalid stored
+values fail closed to Home. This persists navigation context only, never an unsaved financial edit.
+
 Allocation-attribution checkpoint (2026-10-08): Plan allocation history now carries the current
 server-authoritative display name for the immutable actor user ID. The history UI no longer depends
 on the currently loaded active-member list to explain who assigned or moved money, so actions by a

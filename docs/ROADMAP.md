@@ -442,6 +442,10 @@ The roadmap is a living document, but changing it is a deliberate product decisi
   Plan is visible. It keeps the last authorized observation through temporary connectivity loss but
   clears it on scope denial, preventing stale cross-permission aggregates without moving money.
 
+- The shared production workspace remembers its selected tab per Budget so foreground or route
+  reconstruction no longer returns an in-progress Plan, Activity, Accounts, Insights, or Household
+  task to Home. Unsaved editor drafts remain intentionally owned by their live presentation.
+
 - Activity now surfaces the five most recent visible transaction audit events with actor, action,
   ledger date, payee context, and a concise changed-field summary. Selecting an event opens the
   existing production transaction detail and complete Change History; no duplicate editor or audit
