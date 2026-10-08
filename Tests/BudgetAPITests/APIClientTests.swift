@@ -1374,6 +1374,7 @@ final class APIClientTests: XCTestCase {
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/octet-stream")
                 XCTAssertEqual(request.value(forHTTPHeaderField: "X-Statement-Format"), "csv")
                 XCTAssertEqual(request.value(forHTTPHeaderField: "X-CSV-Date-Column"), "Date")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "X-CSV-Number-Format"), "comma_decimal")
                 XCTAssertEqual(try requestBody(request), Data("Date,Amount,Payee\n".utf8))
             } else {
                 XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/statement-imports/batch-1/approve")
@@ -1388,7 +1389,7 @@ final class APIClientTests: XCTestCase {
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
         let staged = try await client.stageStatementImport(
             budgetID: "b1", accountID: "a1", data: Data("Date,Amount,Payee\n".utf8),
-            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd"), token: "current"
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd", numberFormat: "comma_decimal"), token: "current"
         )
         XCTAssertEqual(staged.candidates.first?.amountMinor, -1234)
         _ = try await client.approveStatementImport(

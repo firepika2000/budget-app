@@ -1898,3 +1898,14 @@ schedules, import review, audit and attachment metadata—while attachment bytes
 encrypted backup/recovery package. All authority records now support a verified Codable round trip;
 13 focused storage/export tests and the Xcode 27 Beta production build pass. The UI explicitly warns
 that the JSON is private financial data and is not a replacement for encrypted recovery backups.
+
+### Explicit CSV number conventions — 2026-10-08
+
+Statement import now handles the two common grouped decimal conventions through an explicit user
+choice: `1,234.56` or `1.234,56`. Budget Server and Local Device normalize the selected convention
+into exact integer minor units before the existing money-neutral review boundary; neither guesses
+from device locale or file contents. Mixed separators, malformed grouping, excessive precision and
+overflow fail closed without including private payee/memo text in errors. The typed Swift client
+transmits the selection to the authenticated server route, while on-device import uses the same
+mapping and shared production UI. Focused backend parser/route, Swift API transport and native parser
+tests pass under regular Xcode 27. No migration or existing financial data changes.

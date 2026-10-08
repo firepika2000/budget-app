@@ -22,7 +22,7 @@ def test_split_amount_columns_refuse_ambiguous_or_invalid_values(debit, credit):
         parse_csv_candidates(f"Date,Debit,Credit,Payee\n2026-09-18,{debit},{credit},Store".encode(), mapping, scale=2)
 
 
-@pytest.mark.parametrize("options", [dict(amount_column=None), dict(debit_column="Debit"), dict(debit_column="Debit", credit_column="Credit"), dict(date_order="auto"), dict(delimiter="|")])
+@pytest.mark.parametrize("options", [dict(amount_column=None), dict(debit_column="Debit"), dict(debit_column="Debit", credit_column="Credit"), dict(date_order="auto"), dict(delimiter="|"), dict(number_format="auto")])
 def test_invalid_mapping_rejected_even_for_empty_file(options):
     arguments = dict(date_column="Date", amount_column="Amount", payee_column="Payee")
     arguments.update(options)
@@ -36,6 +36,37 @@ def test_tab_delimited_input_and_explicit_leap_date():
     assert rows[0].occurred_on.isoformat() == "2024-02-29"
     with pytest.raises(ImportValidationError):
         parse_csv_candidates(b"Date\tAmount\tPayee\n29/2/2025\t1\tStore", mapping, scale=2)
+
+
+@pytest.mark.parametrize(
+    "number_format,value,expected",
+    [
+        ("dot_decimal", "1,234.56", 123456),
+        ("dot_decimal", "-12,345", -1234500),
+        ("comma_decimal", "1.234,56", 123456),
+        ("comma_decimal", "-12.345", -1234500),
+    ],
+)
+def test_explicit_grouping_and_decimal_conventions(number_format, value, expected):
+    mapping = CSVMapping("Date", "Amount", "Payee", delimiter=";", number_format=number_format)
+    rows = parse_csv_candidates(f"Date;Amount;Payee\n2026-09-18;{value};Store".encode(), mapping, scale=2)
+    assert rows[0].amount_minor == expected
+
+
+@pytest.mark.parametrize(
+    "number_format,value",
+    [
+        ("dot_decimal", "1.234,56"),
+        ("dot_decimal", "12,34.56"),
+        ("comma_decimal", "1,234.56"),
+        ("comma_decimal", "12.34,56"),
+    ],
+)
+def test_selected_number_convention_rejects_mixed_or_malformed_grouping(number_format, value):
+    mapping = CSVMapping("Date", "Amount", "Payee", delimiter=";", number_format=number_format)
+    with pytest.raises(ImportValidationError, match="Invalid date or amount") as error:
+        parse_csv_candidates(f"Date;Amount;Payee\n2026-09-18;{value};Private".encode(), mapping, scale=2)
+    assert "Private" not in str(error.value)
 
 
 def test_csv_mapping_quotes_utf8_bom_and_exact_signed_money():

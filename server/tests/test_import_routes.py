@@ -59,6 +59,26 @@ def test_csv_import_is_money_neutral_and_returns_duplicate_review(client, owner_
     assert (cancelled.status_code, cancelled.json()["status"], cancelled.json()["version"]) == (200, "cancelled", 1)
 
 
+def test_csv_import_applies_explicit_comma_decimal_contract(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    response = _stage(
+        client, owner_token, budget["id"], account["id"],
+        b"Date;Amount;Payee;Memo\n2026-09-15;-1.234,56;Market;Grouped export\n",
+        **{"X-CSV-Delimiter": ";", "X-CSV-Number-Format": "comma_decimal"},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["candidates"][0]["amount_minor"] == -123456
+
+    mismatched = _stage(
+        client, owner_token, budget["id"], account["id"],
+        b"Date;Amount;Payee;Memo\n2026-09-15;-1,234.56;Private;Must not echo\n",
+        **{"X-CSV-Delimiter": ";", "X-CSV-Number-Format": "comma_decimal"},
+    )
+    assert mismatched.status_code == 422
+    assert "Private" not in mismatched.text and "Must not echo" not in mismatched.text
+
+
 def test_import_history_is_bounded_actor_private_and_reopenable(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, _ = create_budget_structure(client, owner_token, budget["id"])

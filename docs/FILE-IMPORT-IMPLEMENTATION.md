@@ -150,8 +150,12 @@ No date-order sniffing occurs. Split amount columns must be nonnegative and cann
 blank plus a valid opposite column is supported, while both blank is invalid. Debit subtracts and
 credit adds using exact integer arithmetic. Unsupported separators, conflicting column modes,
 negative debit/credit values, invalid leap dates and overprecision fail before returning candidates.
-Thirty-five focused tests cover these contracts. Grouping separators, decimal-comma amounts and
-additional date formats remain explicit mapping work, not silently guessed behavior.
+Thirty-five focused tests cover these contracts. The production mapper now additionally requires an
+explicit number convention: `1,234.56` or `1.234,56`. Correctly grouped thousands are normalized
+before exact integer-minor-unit conversion in both Budget Server and Local Device modes. Mixed
+conventions and malformed grouping fail without echoing private statement content. The choice is
+transmitted independently of the CSV field separator, so semicolon-delimited decimal-comma exports
+do not require locale guessing. Additional date formats remain explicit future mapping work.
 
 The native picker exposes the same separator contract for `.csv`, `.tsv`, and `.txt` bank exports.
 TSV defaults to a tab separator; CSV and text default to comma. The user can change it explicitly,

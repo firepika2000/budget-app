@@ -3331,6 +3331,41 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(rows.map(\.occurredOn), ["2026-09-15", "2026-09-16"])
     }
 
+    func testLocalDelimitedStatementParserUsesExplicitNumberConvention() throws {
+        let commaDecimal = try LocalDelimitedStatementParser.parse(
+            data: Data("Date;Description;Amount\n15/09/2026;Market;-1.234,56\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "EUR", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Description", dateOrder: "dmy",
+                           delimiter: ";", numberFormat: "comma_decimal")
+        )
+        XCTAssertEqual(commaDecimal.first?.amountMinor, -123_456)
+
+        let dotDecimal = try LocalDelimitedStatementParser.parse(
+            data: Data("Date;Description;Amount\n2026-09-15;Market;1,234.56\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Description", dateOrder: "ymd",
+                           delimiter: ";", numberFormat: "dot_decimal")
+        )
+        XCTAssertEqual(dotDecimal.first?.amountMinor, 123_456)
+
+        XCTAssertThrowsError(try LocalDelimitedStatementParser.parse(
+            data: Data("Date;Description;Amount\n2026-09-15;Private;1.234,56\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Description", dateOrder: "ymd",
+                           delimiter: ";", numberFormat: "dot_decimal")
+        )) { error in
+            XCTAssertFalse(error.localizedDescription.contains("Private"))
+            XCTAssertTrue(error.localizedDescription.contains("selected number format"))
+        }
+
+        XCTAssertThrowsError(try LocalDelimitedStatementParser.parse(
+            data: Data("Date;Description;Debit;Credit\n2026-09-15;Private;-1.00;\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           payeeColumn: "Description", debitColumn: "Debit", creditColumn: "Credit",
+                           dateOrder: "ymd", delimiter: ";")
+        ))
+    }
+
     func testLocalQIFParserPreservesExactMoneyAndExplicitDateOrder() throws {
         let data = Data("!Type:Bank\nD10/02/2026\nT-1,234.56\nPUtility Company\nMSeptember bill\n^\nD03/10/'26\nT25.00\nPRefund\n^\n".utf8)
         let rows = try LocalQIFStatementParser.parse(data: data, mapping: .init(

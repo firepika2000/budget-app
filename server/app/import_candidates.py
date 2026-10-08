@@ -33,6 +33,7 @@ class CSVMapping:
     credit_column: str | None = None
     date_order: str = "ymd"
     delimiter: str = ","
+    number_format: str = "dot_decimal"
 
     def validate(self) -> None:
         signed = self.amount_column is not None
@@ -43,6 +44,8 @@ class CSVMapping:
             raise ImportValidationError("Unsupported date order")
         if self.delimiter not in {",", ";", "\t"}:
             raise ImportValidationError("Unsupported delimiter")
+        if self.number_format not in {"dot_decimal", "comma_decimal"}:
+            raise ImportValidationError("Unsupported number format")
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,22 @@ def parse_minor_units(value: str, *, scale: int) -> int:
     if not -(2**63) <= minor <= 2**63 - 1:
         raise ImportValidationError("Amount exceeds supported range")
     return minor
+
+
+def parse_mapped_minor_units(value: str, *, scale: int, number_format: str) -> int:
+    """Parse an explicitly selected CSV number convention without locale guessing."""
+    value = value.strip()
+    if number_format == "dot_decimal":
+        pattern = r"[+-]?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?"
+        normalized = value.replace(",", "")
+    elif number_format == "comma_decimal":
+        pattern = r"[+-]?(?:[0-9]+|[0-9]{1,3}(?:\.[0-9]{3})+)(?:,[0-9]+)?"
+        normalized = value.replace(".", "").replace(",", ".")
+    else:
+        raise ImportValidationError("Unsupported number format")
+    if len(value) > 40 or not re.fullmatch(pattern, value):
+        raise ImportValidationError("Amount does not match the selected number format")
+    return parse_minor_units(normalized, scale=scale)
 
 
 def parse_csv_candidates(data: bytes, mapping: CSVMapping, *, scale: int) -> list[ImportCandidate]:
@@ -115,14 +134,14 @@ def parse_csv_candidates(data: bytes, mapping: CSVMapping, *, scale: int) -> lis
                     month, day = (first, second) if mapping.date_order == "mdy" else (second, first)
                     occurred_on = date(year, month, day)
                 if mapping.amount_column is not None:
-                    amount = parse_minor_units(row[indexes[mapping.amount_column]], scale=scale)
+                    amount = parse_mapped_minor_units(row[indexes[mapping.amount_column]], scale=scale, number_format=mapping.number_format)
                 else:
                     debit_text = row[indexes[mapping.debit_column]].strip()
                     credit_text = row[indexes[mapping.credit_column]].strip()
                     if not debit_text and not credit_text:
                         raise ValueError()
-                    debit = parse_minor_units(debit_text or "0", scale=scale)
-                    credit = parse_minor_units(credit_text or "0", scale=scale)
+                    debit = parse_mapped_minor_units(debit_text or "0", scale=scale, number_format=mapping.number_format)
+                    credit = parse_mapped_minor_units(credit_text or "0", scale=scale, number_format=mapping.number_format)
                     if debit < 0 or credit < 0 or (debit and credit):
                         raise ValueError()
                     amount = credit - debit

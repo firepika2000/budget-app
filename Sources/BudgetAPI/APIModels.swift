@@ -1213,14 +1213,15 @@ public struct APIStatementImportMapping: Equatable, Sendable {
     public let creditColumn: String?
     public let dateOrder: String
     public let delimiter: String
+    public let numberFormat: String
     public init(sourceFormat: String, currencyCode: String, dateColumn: String? = nil,
                 amountColumn: String? = nil, payeeColumn: String? = nil, memoColumn: String? = nil,
                 debitColumn: String? = nil, creditColumn: String? = nil,
-                dateOrder: String = "mdy", delimiter: String = ",") {
+                dateOrder: String = "mdy", delimiter: String = ",", numberFormat: String = "dot_decimal") {
         self.sourceFormat = sourceFormat; self.currencyCode = currencyCode
         self.dateColumn = dateColumn; self.amountColumn = amountColumn; self.payeeColumn = payeeColumn
         self.memoColumn = memoColumn; self.debitColumn = debitColumn; self.creditColumn = creditColumn
-        self.dateOrder = dateOrder; self.delimiter = delimiter
+        self.dateOrder = dateOrder; self.delimiter = delimiter; self.numberFormat = numberFormat
     }
 }
 

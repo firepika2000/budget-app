@@ -119,6 +119,7 @@ def stage_statement_import(
     credit_column: Optional[str] = Header(default=None, alias="X-CSV-Credit-Column"),
     date_order: str = Header(default="ymd", alias="X-Statement-Date-Order"),
     delimiter: str = Header(default=",", alias="X-CSV-Delimiter"),
+    number_format: str = Header(default="dot_decimal", alias="X-CSV-Number-Format"),
     match_window_days: int = Query(default=2, ge=0, le=7),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -133,7 +134,7 @@ def stage_statement_import(
                 date_column=date_column, amount_column=amount_column,
                 payee_column=payee_column, memo_column=memo_column,
                 debit_column=debit_column, credit_column=credit_column,
-                date_order=date_order, delimiter=delimiter,
+                date_order=date_order, delimiter=delimiter, number_format=number_format,
             ), scale=scale)
         elif source_format in {"ofx", "qfx"}:
             candidates = parse_ofx_candidates(content, scale=scale)

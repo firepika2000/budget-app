@@ -8088,11 +8088,12 @@ enum LocalDelimitedStatementParser {
             guard row.count == header.count else { throw workspaceRepositoryError("Statement row \(sourceRow) has a different number of columns.") }
             let date = try dateString(row[dateIndex], order: mapping.dateOrder, row: sourceRow)
             let amount: Int64
-            if let amountIndex { amount = try minorUnits(row[amountIndex], currency: mapping.currencyCode, row: sourceRow) }
+            if let amountIndex { amount = try minorUnits(row[amountIndex], currency: mapping.currencyCode, numberFormat: mapping.numberFormat, row: sourceRow) }
             else {
-                let debit = try optionalMinorUnits(row[debitIndex!], currency: mapping.currencyCode, row: sourceRow)
-                let credit = try optionalMinorUnits(row[creditIndex!], currency: mapping.currencyCode, row: sourceRow)
-                guard debit == nil || credit == nil, debit != nil || credit != nil else { throw workspaceRepositoryError("Statement row \(sourceRow) must contain either a debit or a credit.") }
+                let debit = try optionalMinorUnits(row[debitIndex!], currency: mapping.currencyCode, numberFormat: mapping.numberFormat, row: sourceRow)
+                let credit = try optionalMinorUnits(row[creditIndex!], currency: mapping.currencyCode, numberFormat: mapping.numberFormat, row: sourceRow)
+                guard debit == nil || credit == nil, debit != nil || credit != nil,
+                      (debit ?? 0) >= 0, (credit ?? 0) >= 0 else { throw workspaceRepositoryError("Statement row \(sourceRow) must contain one nonnegative debit or credit.") }
                 amount = credit ?? -(debit ?? 0)
             }
             guard amount != 0 else { throw workspaceRepositoryError("Statement row \(sourceRow) has a zero amount.") }
@@ -8131,15 +8132,20 @@ enum LocalDelimitedStatementParser {
         guard verified.year == year, verified.month == month, verified.day == day else { throw workspaceRepositoryError("Statement row \(row) has an invalid date.") }
         return String(format: "%04d-%02d-%02d", year, month, day)
     }
-    private static func optionalMinorUnits(_ value: String, currency: String, row: Int) throws -> Int64? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines); return trimmed.isEmpty ? nil : try minorUnits(trimmed, currency: currency, row: row)
+    private static func optionalMinorUnits(_ value: String, currency: String, numberFormat: String, row: Int) throws -> Int64? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines); return trimmed.isEmpty ? nil : try minorUnits(trimmed, currency: currency, numberFormat: numberFormat, row: row)
     }
-    static func minorUnits(_ value: String, currency: String, row: Int) throws -> Int64 {
+    static func minorUnits(_ value: String, currency: String, numberFormat: String = "dot_decimal", row: Int) throws -> Int64 {
         let scale = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"].contains(currency.uppercased()) ? 3 : (["BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF"].contains(currency.uppercased()) ? 0 : 2)
-        var text = value.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "$", with: "").replacingOccurrences(of: ",", with: "")
-        let negative = text.hasPrefix("(") && text.hasSuffix(")"); if negative { text = String(text.dropFirst().dropLast()) }
+        let raw = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expression: String, grouping: String, decimal: String
+        if numberFormat == "dot_decimal" { expression = #"[+-]?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?"#; grouping = ","; decimal = "." }
+        else if numberFormat == "comma_decimal" { expression = #"[+-]?(?:[0-9]+|[0-9]{1,3}(?:\.[0-9]{3})+)(?:,[0-9]+)?"#; grouping = "."; decimal = "," }
+        else { throw workspaceRepositoryError("Choose a supported statement number format.") }
+        guard raw.range(of: "^(?:\(expression))$", options: .regularExpression) != nil else { throw workspaceRepositoryError("Statement row \(row) does not match the selected number format.") }
+        let text = raw.replacingOccurrences(of: grouping, with: "").replacingOccurrences(of: decimal, with: ".")
         guard let decimal = Decimal(string: text, locale: Locale(identifier: "en_US_POSIX")) else { throw workspaceRepositoryError("Statement row \(row) has an invalid amount.") }
-        var input = negative ? -decimal : decimal, factor = Decimal(1); for _ in 0..<scale { factor *= 10 }; input *= factor
+        var input = decimal, factor = Decimal(1); for _ in 0..<scale { factor *= 10 }; input *= factor
         var rounded = Decimal(); NSDecimalRound(&rounded, &input, 0, .plain)
         guard rounded == input, rounded <= Decimal(Int64.max), rounded >= Decimal(Int64.min) else { throw workspaceRepositoryError("Statement row \(row) has unsupported amount precision.") }
         return NSDecimalNumber(decimal: rounded).int64Value
@@ -8522,6 +8528,7 @@ private struct StatementImportFlowView: View {
     @State private var dateColumn = ""; @State private var amountColumn = ""; @State private var debitColumn = ""; @State private var creditColumn = ""; @State private var payeeColumn = ""; @State private var memoColumn = ""
     @State private var csvAmountLayout = "amount"
     @State private var delimiter = ","
+    @State private var numberFormat = "dot_decimal"
     @State private var dateOrder = "mdy"; @State private var postRows: Set<Int> = []; @State private var categoryByRow: [Int: String] = [:]
     @State private var isWorking = false; @State private var errorMessage: String?
     @State private var confirmingCancel = false
@@ -8563,6 +8570,7 @@ private struct StatementImportFlowView: View {
             Section("CSV format") {
                 Picker("Separator", selection: $delimiter) { Text("Comma").tag(","); Text("Semicolon").tag(";"); Text("Tab").tag("\t") }
                 Picker("Date order", selection: $dateOrder) { Text("Year-Month-Day").tag("ymd"); Text("Month / Day / Year").tag("mdy"); Text("Day / Month / Year").tag("dmy") }
+                Picker("Number format", selection: $numberFormat) { Text("1,234.56").tag("dot_decimal"); Text("1.234,56").tag("comma_decimal") }
                 Picker("Money columns", selection: $csvAmountLayout) { Text("One signed amount").tag("amount"); Text("Separate debit and credit").tag("debit-credit") }
             }
             Section("CSV columns") {
@@ -8612,7 +8620,7 @@ private struct StatementImportFlowView: View {
         memoColumn = Self.preferred(headers, ["memo", "notes", "details"])
         if amountColumn.isEmpty, !debitColumn.isEmpty, !creditColumn.isEmpty { csvAmountLayout = "debit-credit" }
     }
-    private func stage() async { guard let file else { return }; isWorking = true; defer { isWorking = false }; do { let csv = file.sourceFormat == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; let mapping = APIStatementImportMapping(sourceFormat: file.sourceFormat, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder, delimiter: delimiter); let result = try await workspace.stageStatementImport(accountID: account.id, data: file.data, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)) } catch { errorMessage = error.localizedDescription } }
+    private func stage() async { guard let file else { return }; isWorking = true; defer { isWorking = false }; do { let csv = file.sourceFormat == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; let mapping = APIStatementImportMapping(sourceFormat: file.sourceFormat, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder, delimiter: delimiter, numberFormat: numberFormat); let result = try await workspace.stageStatementImport(accountID: account.id, data: file.data, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)) } catch { errorMessage = error.localizedDescription } }
     private func approve(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { let items = batch.candidates.map { row in APIStatementImportApprovalItem(sourceRow: row.sourceRow, action: postRows.contains(row.sourceRow) ? "post" : "skip", categoryID: postRows.contains(row.sourceRow) ? categoryByRow[row.sourceRow].flatMap { $0.isEmpty ? nil : $0 } : nil) }; _ = try await workspace.approveStatementImport(accountID: account.id, batchID: batch.id, approval: .init(expectedVersion: batch.version, items: items)); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func cancel(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { _ = try await workspace.cancelStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func undo(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { staged = try await workspace.undoStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version) } catch { errorMessage = error.localizedDescription } }

@@ -457,6 +457,7 @@ public struct APIClient {
             ("X-CSV-Payee-Column", mapping.payeeColumn), ("X-CSV-Memo-Column", mapping.memoColumn),
             ("X-CSV-Debit-Column", mapping.debitColumn), ("X-CSV-Credit-Column", mapping.creditColumn),
             ("X-Statement-Date-Order", mapping.dateOrder), ("X-CSV-Delimiter", mapping.delimiter),
+            ("X-CSV-Number-Format", mapping.numberFormat),
         ]
         for (name, value) in headers { if let value { request.setValue(value, forHTTPHeaderField: name) } }
         let (body, response) = try await session.data(for: request)
