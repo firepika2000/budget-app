@@ -10,6 +10,18 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testCashRolloverClearsDeniedScopeAndKeepsPostSaveReloadInsideLock() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct CashRolloverSettingsView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct AppearanceSettingsView: View", range: start.upperBound..<source.endIndex))
+        let view = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(view.contains("observation = nil; history = []; nextBeforeVersion = nil; effectiveMonth = \"\"; confirm = false"))
+        XCTAssertEqual(view.components(separatedBy: "await fetchPolicyObservations()").count - 1, 2)
+        XCTAssertEqual(view.components(separatedBy: "guard !store.workspaceAccessDenied else { discardPolicyObservations(); return }").count - 1, 2)
+        XCTAssertTrue(view.contains(".onChange(of: store.workspaceAccessDenied)"))
+        XCTAssertTrue(view.contains("if HistoryObservationPolicy.mustDiscard(after: failure) { discardPolicyObservations() }"))
+    }
     func testDebtTermsEditorDiscardsDeniedDraftAndGuardsCommands() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/EditingViews.swift")
         let source = try String(contentsOf: file)

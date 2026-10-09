@@ -6927,6 +6927,8 @@ private struct CashRolloverSettingsView: View {
                         Button("Load earlier decisions") { Task { await loadHistory(before: cursor) } }
                     }
                 }
+            } else if store.workspaceAccessDenied {
+                ContentUnavailableView("Policy unavailable", systemImage: "lock", description: Text("Your access to this workspace is no longer available."))
             } else if busy { ProgressView("Loading policy…") }
             if let error {
                 Section {
@@ -6939,6 +6941,9 @@ private struct CashRolloverSettingsView: View {
         .navigationTitle("Cash Rollover")
         .navigationBarTitleDisplayMode(.inline)
         .task { await reload() }
+        .onChange(of: store.workspaceAccessDenied) { _, denied in
+            if denied { discardPolicyObservations() }
+        }
         .alert("Change Cash Rollover?", isPresented: $confirm) {
             Button("Schedule Policy Change") { Task { await save() } }
             Button("Cancel", role: .cancel) {}
@@ -6947,34 +6952,48 @@ private struct CashRolloverSettingsView: View {
         }
     }
     private func reload() async {
+        guard !busy, !store.workspaceAccessDenied else { return }
         busy = true; error = nil
         defer { busy = false }
+        await fetchPolicyObservations()
+    }
+    private func fetchPolicyObservations() async {
         do {
             let value = try await store.cashRolloverPolicy()
             let page = try await store.cashRolloverPolicyHistory()
+            guard !store.workspaceAccessDenied else { discardPolicyObservations(); return }
             observation = value; history = page.items; nextBeforeVersion = page.nextBeforeVersion
             effectiveMonth = months.first ?? ""
             selection = value.pending.first(where: { $0.effectiveMonth == effectiveMonth })?.policy ?? value.currentPolicy
-        } catch { self.error = error.localizedDescription }
+        } catch { handlePolicyError(error) }
     }
     private func loadHistory(before: Int) async {
+        guard !busy, !store.workspaceAccessDenied else { return }
         busy = true; error = nil
         defer { busy = false }
         do {
             let page = try await store.cashRolloverPolicyHistory(beforeVersion: before)
+            guard !store.workspaceAccessDenied else { discardPolicyObservations(); return }
             history += page.items.filter { row in !history.contains(where: { $0.id == row.id }) }
             nextBeforeVersion = page.nextBeforeVersion
-        } catch { self.error = error.localizedDescription }
+        } catch { handlePolicyError(error) }
     }
     private func save() async {
-        guard let observation, !busy else { return }
+        guard let observation, !busy, !store.workspaceAccessDenied else { return }
         busy = true; error = nil
+        defer { busy = false }
         do {
             _ = try await store.selectCashRolloverPolicy(.init(policy: selection, effectiveMonth: effectiveMonth,
                 expectedPolicyVersion: observation.policyVersion, expectedAllocationVersion: observation.allocationVersion))
-            await reload()
-        } catch { self.error = error.localizedDescription }
-        busy = false
+            await fetchPolicyObservations()
+        } catch { handlePolicyError(error) }
+    }
+    private func discardPolicyObservations() {
+        observation = nil; history = []; nextBeforeVersion = nil; effectiveMonth = ""; confirm = false
+    }
+    private func handlePolicyError(_ failure: Error) {
+        if HistoryObservationPolicy.mustDiscard(after: failure) { discardPolicyObservations() }
+        error = failure.localizedDescription
     }
 }
 
