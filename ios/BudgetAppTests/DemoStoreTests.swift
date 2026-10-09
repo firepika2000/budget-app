@@ -10,6 +10,20 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testAccountHistoryExplainsAllFieldsAndResolvesOnlyAuthorizedNames() {
+        let before = APIAccountRevisionSnapshot(name: "Old", accountType: "checking", isOnBudget: true, isClosed: false, paymentCategoryID: "hidden-old")
+        let after = APIAccountRevisionSnapshot(name: "New", accountType: "tracking", isOnBudget: false, isClosed: true, paymentCategoryID: "hidden-new")
+        func revision(_ old: APIAccountRevisionSnapshot?) -> APIAccountRevision {
+            .init(id: "r", accountID: "a", action: "updated", actorUserID: "owner", actorDisplayName: "Owner", beforeSnapshot: old, afterSnapshot: after, createdAt: "2026-10-09")
+        }
+        let changes = AccountHistoryPresentation.changes(revision(before), categoryName: { _ in "Category no longer available" })
+        XCTAssertEqual(changes.map(\.id), ["name", "type", "budget", "closed", "payment"])
+        XCTAssertEqual(changes.first(where: { $0.id == "budget" })?.after, "Tracking")
+        XCTAssertEqual(changes.last?.before, changes.last?.after)
+        XCTAssertFalse(String(describing: changes).contains("hidden-"))
+        XCTAssertTrue(AccountHistoryPresentation.changes(revision(after), categoryName: { $0 }).isEmpty)
+        XCTAssertTrue(AccountHistoryPresentation.changes(revision(nil), categoryName: { _ in "Cards · Payment" }).allSatisfy { $0.before == nil })
+    }
     func testAllowanceHistoryAndMutationsCannotOverlapInProductionComposition() throws {
         let sourceURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: sourceURL)

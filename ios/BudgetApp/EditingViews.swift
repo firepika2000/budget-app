@@ -1115,11 +1115,20 @@ struct AccountHistoryView: View {
                         ForEach(items) { revision in
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(title(revision)).font(.headline)
-                                if let detail = detail(revision) { Text(detail).font(.subheadline) }
+                                DisclosureGroup("Account decision details") {
+                                    ForEach(AccountHistoryPresentation.changes(revision, categoryName: { id in
+                                        workspace.categories.first(where: { $0.id == id }).map { workspace.categoryDisplayName($0) } ?? "Category no longer available"
+                                    })) { change in
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(change.label).font(.caption).foregroundStyle(.secondary)
+                                            Text("\(change.before ?? "Not set") → \(change.after ?? "Not set")").font(.subheadline)
+                                        }.accessibilityElement(children: .combine)
+                                    }
+                                }
                                 Text("\(revision.actorDisplayName ?? "Unknown member") · \(revision.createdAt)")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
-                            .accessibilityElement(children: .combine)
+                            .accessibilityElement(children: .contain)
                         }
                         if hasMore {
                             Button(isLoadingMore ? "Loading…" : "Load Earlier Changes") {
@@ -1157,11 +1166,33 @@ struct AccountHistoryView: View {
         return "Account updated"
     }
 
-    private func detail(_ revision: APIAccountRevision) -> String? {
-        guard let before = revision.beforeSnapshot else { return revision.afterSnapshot.name }
-        if before.name != revision.afterSnapshot.name { return "\(before.name) → \(revision.afterSnapshot.name)" }
-        if before.accountType != revision.afterSnapshot.accountType { return "\(before.accountType.capitalized) → \(revision.afterSnapshot.accountType.capitalized)" }
-        return nil
+}
+
+enum AccountHistoryPresentation {
+    struct Change: Identifiable, Equatable {
+        let id: String
+        let label: String
+        let before: String?
+        let after: String?
+    }
+
+    static func changes(_ revision: APIAccountRevision, categoryName: (String) -> String) -> [Change] {
+        let before = revision.beforeSnapshot
+        let after = revision.afterSnapshot
+        var result: [Change] = []
+        func add(_ id: String, _ label: String, _ old: String?, _ new: String?) {
+            if old != new { result.append(.init(id: id, label: label, before: old, after: new)) }
+        }
+        add("name", "Name", before?.name, after.name)
+        add("type", "Account type", before?.accountType.capitalized, after.accountType.capitalized)
+        add("budget", "Budget treatment", before.map { $0.isOnBudget ? "On budget" : "Tracking" }, after.isOnBudget ? "On budget" : "Tracking")
+        add("closed", "Status", before.map { $0.isClosed ? "Closed" : "Open" }, after.isClosed ? "Closed" : "Open")
+        // Compare identity before resolving authorized names, which may legitimately be identical.
+        if before?.paymentCategoryID != after.paymentCategoryID {
+            result.append(.init(id: "payment", label: "Payment category",
+                before: before?.paymentCategoryID.map(categoryName), after: after.paymentCategoryID.map(categoryName)))
+        }
+        return result
     }
 }
 

@@ -189,8 +189,10 @@ on the paid-download versus non-consumable Lifetime Unlock decision; independent
 
 Dropbox engineering for v0.14 is complete in the production iPhone composition. The registered public
 Dropbox app identifier is included in ordinary app builds and independently verified by the fail-closed
-release script. The remaining gate is external-console confirmation (App-folder permission and redirect
-URI `clearpocket://dropbox-oauth`) plus one live-provider acceptance pass. Do not treat that external gate as unfinished storage code,
+release script. The authenticated developer console has now confirmed App-folder permission, the
+redirect URI `clearpocket://dropbox-oauth`, public-client PKCE and the required file scopes. The
+remaining gate is one live-provider acceptance pass (the Dropbox app remains in Development status).
+Do not treat that external gate as unfinished storage code,
 and do not embed a client secret or replace immutable encrypted backup with live SQLite sync.
 Verified Dropbox publication now remains successful when subsequent retention cleanup or backup-list
 refresh fails. A non-fatal maintenance warning distinguishes that state from an actual upload/integrity
