@@ -325,6 +325,7 @@ protocol AccountCommandRepository: AnyObject {
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms?
     func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms
     func deleteAccountDebtTerms(accountID: String) async throws
+    func accountDebtTermsHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIAccountDebtTermsRevision]
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws
     func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory]
     func recentReconciliationHistory(limit: Int) async throws -> [APIReconciliationHistory]

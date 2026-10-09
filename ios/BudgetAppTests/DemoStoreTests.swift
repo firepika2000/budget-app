@@ -2634,6 +2634,35 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalDeviceDebtTermsAndHistoryPersistAcrossWorkspaceReconstruction() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("debt-history-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let keys = LocalDeviceKeyManager(store: InMemorySecretDataStore())
+        let first = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: root, keyManager: keys)
+        await first.refresh()
+        try await first.createAccount(.init(name: "History Card", kind: "credit", isOnBudget: true, openingBalanceMinor: -250_000))
+        let id = try XCTUnwrap(first.accounts.first(where: { $0.name == "History Card" })?.id)
+        let terms = APIAccountDebtTermsUpsert(termsType: "credit_card", annualRateBasisPoints: 2199, rateType: "variable", paymentFrequency: "monthly", minimumPaymentRule: "fixed", minimumPaymentMinor: 3500, dueDay: 18)
+        _ = try await first.updateAccountDebtTerms(accountID: id, value: terms)
+        _ = try await first.updateAccountDebtTerms(accountID: id, value: terms)
+        let reopened = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: root, keyManager: keys)
+        await reopened.refresh()
+        let restored = try await reopened.accountDebtTerms(accountID: id)
+        XCTAssertEqual(restored?.annualRateBasisPoints, 2199)
+        XCTAssertEqual(restored?.minimumPaymentMinor, 3500)
+        let created = try await reopened.accountDebtTermsHistory(accountID: id)
+        XCTAssertEqual(created.map(\.action), ["created"])
+        try await reopened.deleteAccountDebtTerms(accountID: id)
+        let again = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: root, keyManager: keys)
+        await again.refresh()
+        let removed = try await again.accountDebtTerms(accountID: id)
+        XCTAssertNil(removed)
+        let history = try await again.accountDebtTermsHistory(accountID: id)
+        XCTAssertEqual(history.map(\.action), ["deleted", "created"])
+        XCTAssertEqual(history.first?.beforeSnapshot?.minimumPaymentMinor, 3500)
+    }
+
+    @MainActor
     func testLocalDeviceFutureMonthAssignmentPersistsWithoutRewritingCurrentMonth() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-device-future-plan-\(UUID().uuidString)", isDirectory: true)

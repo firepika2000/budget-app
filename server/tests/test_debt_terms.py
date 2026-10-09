@@ -176,15 +176,28 @@ def test_debt_terms_follow_account_scope_and_export(client, owner_token, session
     assert client.get(
         f"{path}/accounts/{visible['id']}/debt-terms", headers=auth(child_token)
     ).status_code == 200
+    visible_history = client.get(
+        f"{path}/accounts/{visible['id']}/debt-terms/history", headers=auth(child_token)
+    )
+    assert visible_history.status_code == 200
+    assert visible_history.json()[0]["action"] == "created"
     hidden_response = client.get(
         f"{path}/accounts/{hidden['id']}/debt-terms", headers=auth(child_token)
     )
     assert hidden_response.status_code == 404
     assert hidden["id"] not in hidden_response.text
+    hidden_history = client.get(
+        f"{path}/accounts/{hidden['id']}/debt-terms/history", headers=auth(child_token)
+    )
+    assert hidden_history.status_code == 404
+    assert hidden["id"] not in hidden_history.text
 
     exported = client.get(f"{path}/export.json", headers=auth(owner_token))
     assert exported.status_code == 200
     assert {item["account_id"] for item in exported.json()["account_debt_terms"]} == {
+        visible["id"], hidden["id"]
+    }
+    assert {item["account_id"] for item in exported.json()["account_debt_terms_revisions"]} == {
         visible["id"], hidden["id"]
     }
 
@@ -194,3 +207,39 @@ def test_debt_terms_follow_account_scope_and_export(client, owner_token, session
     assert client.get(
         f"{path}/accounts/{visible['id']}/debt-terms", headers=auth(owner_token)
     ).json() is None
+
+
+def test_debt_terms_history_is_attributed_exact_bounded_and_suppresses_noops(
+    client, owner_token, session_factory
+):
+    budget = create_budget(client, owner_token, session_factory)
+    card = create_account(client, owner_token, budget["id"], "History card", "credit", True)
+    path = f"/api/v1/budgets/{budget['id']}/accounts/{card['id']}/debt-terms"
+    created = {
+        "terms_type": "credit_card", "annual_rate_basis_points": 1999,
+        "rate_type": "variable", "payment_frequency": "monthly",
+        "minimum_payment_rule": "fixed", "minimum_payment_minor": 9_007_199_254_740_993,
+        "due_day": 18,
+    }
+    assert client.put(path, headers=auth(owner_token), json=created).status_code == 200
+    assert client.put(path, headers=auth(owner_token), json=created).status_code == 200
+    updated = created | {"annual_rate_basis_points": 2199, "due_day": 19}
+    assert client.put(path, headers=auth(owner_token), json=updated).status_code == 200
+    assert client.delete(path, headers=auth(owner_token)).status_code == 204
+
+    history = client.get(f"{path}/history?limit=2&offset=0", headers=auth(owner_token))
+    assert history.status_code == 200, history.text
+    rows = history.json()
+    assert [row["action"] for row in rows] == ["deleted", "updated"]
+    assert rows[0]["actor_display_name"]
+    assert rows[0]["before_snapshot"]["minimum_payment_minor"] == 9_007_199_254_740_993
+    assert rows[0]["after_snapshot"] is None
+    assert rows[1]["before_snapshot"]["annual_rate_basis_points"] == 1999
+    assert rows[1]["after_snapshot"]["annual_rate_basis_points"] == 2199
+    earlier = client.get(f"{path}/history?limit=2&offset=2", headers=auth(owner_token))
+    assert [row["action"] for row in earlier.json()] == ["created"]
+    assert client.get(f"{path}/history?limit=101", headers=auth(owner_token)).status_code == 422
+    transfer = client.get(f"/api/v1/budgets/{budget['id']}/local-device-transfer", headers=auth(owner_token))
+    assert transfer.status_code == 200, transfer.text
+    assert len(transfer.json()["debt_terms_revisions"]) == 3
+    assert any("9007199254740993" in (row["before_json"] or row["after_json"] or "") for row in transfer.json()["debt_terms_revisions"])

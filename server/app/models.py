@@ -374,6 +374,28 @@ class AccountDebtTerms(Base):
     )
 
 
+class AccountDebtTermsRevision(Base):
+    """Append-only record of debt planning assumptions; never ledger state."""
+
+    __tablename__ = "account_debt_terms_revisions"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('created', 'updated', 'deleted')",
+            name="ck_account_debt_terms_revision_action",
+        ),
+        Index("ix_debt_terms_revision_account_created", "account_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    account_id: Mapped[str] = mapped_column(String(36), index=True)
+    action: Mapped[str] = mapped_column(String(20))
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    before_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    after_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+
+
 class DebtPayoffPlan(Base):
     """A user's saved forecast preference; never a ledger or allocation input."""
 

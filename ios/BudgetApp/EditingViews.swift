@@ -1119,6 +1119,9 @@ struct DebtTermsEditorView: View {
     @State private var promoRate = ""
     @State private var promoEnd = ""
     @State private var hasStoredTerms = false
+    @State private var history: [APIAccountDebtTermsRevision] = []
+    @State private var hasMoreHistory = false
+    @State private var isLoadingHistory = false
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -1144,6 +1147,25 @@ struct DebtTermsEditorView: View {
                         .foregroundStyle(isReady ? Color.secondary : Color.orange)
                     Text("These are planning assumptions. Posted balances and actual interest remain separate financial facts.")
                         .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Change history") {
+                    ForEach(history) { revision in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(revision.action == "created" ? "Terms added" : revision.action == "deleted" ? "Terms removed" : "Terms updated")
+                                .font(.subheadline.weight(.semibold))
+                            Text("\(revision.actorDisplayName ?? "Household member") · \(formattedTimestamp(revision.createdAt))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                    if history.isEmpty {
+                        Text("Changes to these planning assumptions will appear here.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if hasMoreHistory {
+                        Button("Load Earlier Changes") { Task { await loadEarlierHistory() } }
+                            .disabled(isLoadingHistory)
+                    }
                 }
                 if hasStoredTerms {
                     Section {
@@ -1267,7 +1289,11 @@ struct DebtTermsEditorView: View {
     private func load() async {
         defer { isLoading = false }
         do {
-            guard let value = try await workspace.accountDebtTerms(accountID: account.id) else { return }
+            async let stored = workspace.accountDebtTerms(accountID: account.id)
+            async let revisions = workspace.accountDebtTermsHistory(accountID: account.id, limit: 10)
+            history = try await revisions
+            hasMoreHistory = history.count == 10
+            guard let value = try await stored else { return }
             hasStoredTerms = true; apr = Self.percentText(value.annualRateBasisPoints)
             rateType = value.rateType ?? "fixed"; frequency = value.paymentFrequency ?? "monthly"
             payment = value.scheduledPaymentMinor.map { CurrencyText.editable($0, currencyCode: currencyCode) }
@@ -1278,6 +1304,21 @@ struct DebtTermsEditorView: View {
             originalPrincipal = value.originalPrincipalMinor.map { CurrencyText.editable($0, currencyCode: currencyCode) } ?? ""
             originalTerm = value.originalTermMonths.map(String.init) ?? ""; remainingTerm = value.remainingTermMonths.map(String.init) ?? ""
             promoRate = Self.percentText(value.promotionalRateBasisPoints); promoEnd = value.promotionalEndsOn ?? ""
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func formattedTimestamp(_ value: String) -> String {
+        guard let date = ISO8601DateFormatter().date(from: value) else { return value }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func loadEarlierHistory() async {
+        isLoadingHistory = true
+        defer { isLoadingHistory = false }
+        do {
+            let next = try await workspace.accountDebtTermsHistory(accountID: account.id, limit: 10, offset: history.count)
+            history.append(contentsOf: next)
+            hasMoreHistory = next.count == 10
         } catch { errorMessage = error.localizedDescription }
     }
 

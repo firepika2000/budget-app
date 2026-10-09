@@ -44,6 +44,7 @@ from .debt_projection import (
     project_debt_strategy,
     required_extra_payment_for_target,
 )
+from .debt_terms_history import debt_terms_snapshot
 from .dependencies import get_current_user
 from .credit import add_payment_reserve_event, add_purchase_reserve_events, ensure_credit_payment_category
 from .category_names import normalized_category_name
@@ -51,6 +52,7 @@ from .models import (
     Account,
     AccountRevision,
     AccountDebtTerms,
+    AccountDebtTermsRevision,
     DebtPayoffPlan,
     AllowancePlan,
     AllowanceSplit,
@@ -86,6 +88,7 @@ from .schemas import (
     AccountUpdate,
     AccountBalanceResponse,
     AccountDebtTermsResponse,
+    AccountDebtTermsRevisionResponse,
     AccountDebtTermsUpsert,
     DebtProjectionRequest,
     DebtProjectionResponse,
@@ -608,13 +611,23 @@ def upsert_account_debt_terms(
         raise HTTPException(status_code=422, detail=f"Use {expected_type} terms for this account")
     values = body.model_dump()
     terms = db.get(AccountDebtTerms, account_id)
+    before = debt_terms_snapshot(terms) if terms is not None else None
     if terms is None:
         terms = AccountDebtTerms(account_id=account_id, budget_id=budget_id, **values)
         db.add(terms)
+        db.flush()
     else:
         for name, value in values.items():
             setattr(terms, name, value)
         terms.updated_at = datetime.now(timezone.utc)
+    after = debt_terms_snapshot(terms)
+    if before == after:
+        return debt_terms_response(terms)
+    db.add(AccountDebtTermsRevision(
+        budget_id=budget_id, account_id=account_id,
+        action="created" if before is None else "updated", actor_user_id=user.id,
+        before_snapshot=before, after_snapshot=after,
+    ))
     db.commit()
     db.refresh(terms)
     return debt_terms_response(terms)
@@ -635,9 +648,51 @@ def delete_account_debt_terms(
         raise HTTPException(status_code=404, detail="Account not found")
     terms = db.get(AccountDebtTerms, account_id)
     if terms is not None:
+        db.add(AccountDebtTermsRevision(
+            budget_id=budget_id, account_id=account_id, action="deleted",
+            actor_user_id=user.id, before_snapshot=debt_terms_snapshot(terms),
+            after_snapshot=None,
+        ))
         db.delete(terms)
         db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/accounts/{account_id}/debt-terms/history",
+    response_model=list[AccountDebtTermsRevisionResponse],
+)
+def account_debt_terms_history(
+    budget_id: str,
+    account_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    budget = require_budget_capability(db, user, budget_id, "view_account_balances")
+    account = db.get(Account, account_id)
+    if account is None or account.budget_id != budget_id or account.account_type not in {"credit", "loan", "mortgage"} or not can_access_resource(
+        db, user, budget, "account", account_id
+    ):
+        raise HTTPException(status_code=404, detail="Account not found")
+    revisions = list(db.scalars(select(AccountDebtTermsRevision).where(
+        AccountDebtTermsRevision.budget_id == budget_id,
+        AccountDebtTermsRevision.account_id == account_id,
+    ).order_by(
+        AccountDebtTermsRevision.created_at.desc(), AccountDebtTermsRevision.id.desc()
+    ).offset(offset).limit(limit)))
+    actor_ids = {item.actor_user_id for item in revisions}
+    actors = {item.id: item.display_name for item in db.scalars(
+        select(User).where(User.id.in_(actor_ids))
+    )} if actor_ids else {}
+    return [{
+        "id": item.id, "account_id": item.account_id, "action": item.action,
+        "actor_user_id": item.actor_user_id,
+        "actor_display_name": actors.get(item.actor_user_id),
+        "before_snapshot": item.before_snapshot, "after_snapshot": item.after_snapshot,
+        "created_at": item.created_at,
+    } for item in revisions]
 
 
 @router.post("/accounts/{account_id}/debt-projection", response_model=DebtProjectionResponse)

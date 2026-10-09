@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import (
-    Account, AccountRevision, AccountDebtTerms, AllocationOperation, AllocationPosting, Budget,
+    Account, AccountRevision, AccountDebtTerms, AccountDebtTermsRevision, AllocationOperation, AllocationPosting, Budget,
     BudgetStructureRevision, CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget, CategoryTargetRevision,
     CategoryTargetSnooze, CreditCardReserveEvent, Household, Payee, PayeeAlias,
     DebtPayoffPlan, ImportBatch, PayeeBudgetPreference, PayeeRevision, ScheduledTransaction, ScheduledTransactionRevision, Transaction, TransactionAttachment,
@@ -154,6 +154,9 @@ def build_local_device_projection(
     account_revisions = list(db.scalars(select(AccountRevision).where(
         AccountRevision.budget_id == budget.id
     ).order_by(AccountRevision.created_at, AccountRevision.id)))
+    debt_terms_revisions = list(db.scalars(select(AccountDebtTermsRevision).where(
+        AccountDebtTermsRevision.budget_id == budget.id
+    ).order_by(AccountDebtTermsRevision.created_at, AccountDebtTermsRevision.id)))
     structure_revisions = list(db.scalars(select(BudgetStructureRevision).where(
         BudgetStructureRevision.budget_id == budget.id
     ).order_by(BudgetStructureRevision.created_at, BudgetStructureRevision.id)))
@@ -243,6 +246,13 @@ def build_local_device_projection(
             "after_json": json.dumps(item.after_snapshot, sort_keys=True, separators=(",", ":")),
             "created_at": _iso(item.created_at),
         } for item in account_revisions],
+        "debt_terms_revisions": [{
+            "id": item.id, "budget_id": item.budget_id, "account_id": item.account_id,
+            "action": item.action, "actor_user_id": item.actor_user_id,
+            "before_json": json.dumps(item.before_snapshot, sort_keys=True, separators=(",", ":")) if item.before_snapshot is not None else None,
+            "after_json": json.dumps(item.after_snapshot, sort_keys=True, separators=(",", ":")) if item.after_snapshot is not None else None,
+            "created_at": _iso(item.created_at),
+        } for item in debt_terms_revisions],
         "structure_revisions": [{
             "id": item.id, "budget_id": item.budget_id, "resource_type": item.resource_type,
             "resource_id": item.resource_id, "action": item.action,

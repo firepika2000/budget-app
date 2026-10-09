@@ -516,6 +516,18 @@ public struct LocalAccountRevisionRecord: Codable, Equatable, Sendable {
     }
 }
 
+public struct LocalDebtTermsRevisionRecord: Codable, Equatable, Sendable {
+    public let id: String; public let budgetID: String; public let accountID: String
+    public let action: String; public let actorUserID: String
+    public let beforeJSON: String?; public let afterJSON: String?; public let createdAt: String
+    public init(id: String, budgetID: String, accountID: String, action: String,
+                actorUserID: String, beforeJSON: String?, afterJSON: String?, createdAt: String) {
+        self.id = id; self.budgetID = budgetID; self.accountID = accountID; self.action = action
+        self.actorUserID = actorUserID; self.beforeJSON = beforeJSON
+        self.afterJSON = afterJSON; self.createdAt = createdAt
+    }
+}
+
 public struct LocalBudgetStructureRevisionRecord: Codable, Equatable, Sendable {
     public let id: String; public let budgetID: String; public let resourceType: String
     public let resourceID: String; public let action: String; public let actorUserID: String
@@ -561,6 +573,7 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
     public let attachments: [LocalAttachmentRecord]
     public let attachmentTombstones: [LocalAttachmentTombstoneRecord]
     public let debtTerms: [LocalAccountDebtTermsRecord]
+    public let debtTermsRevisions: [LocalDebtTermsRevisionRecord]?
     public let debtPayoffPlans: [LocalDebtPayoffPlanRecord]?
     public let cashRolloverPolicies: [LocalCashRolloverPolicyRecord]
     public let creditReserveAttributions: [LocalCreditReserveAttributionRecord]
@@ -581,6 +594,7 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
                 attachments: [LocalAttachmentRecord],
                 attachmentTombstones: [LocalAttachmentTombstoneRecord] = [],
                 debtTerms: [LocalAccountDebtTermsRecord] = [],
+                debtTermsRevisions: [LocalDebtTermsRevisionRecord]? = nil,
                 debtPayoffPlans: [LocalDebtPayoffPlanRecord]? = nil,
                 cashRolloverPolicies: [LocalCashRolloverPolicyRecord] = [],
                 creditReserveAttributions: [LocalCreditReserveAttributionRecord] = [],
@@ -595,7 +609,8 @@ public struct LocalAuthoritySnapshot: Codable, Equatable, Sendable {
         self.reconciliations = reconciliations; self.targets = targets; self.targetRevisions = targetRevisions ?? []
         self.schedules = schedules; self.scheduleRevisions = scheduleRevisions ?? []; self.attachments = attachments
         self.attachmentTombstones = attachmentTombstones
-        self.debtTerms = debtTerms; self.debtPayoffPlans = debtPayoffPlans ?? []
+        self.debtTerms = debtTerms; self.debtTermsRevisions = debtTermsRevisions ?? []
+        self.debtPayoffPlans = debtPayoffPlans ?? []
         self.cashRolloverPolicies = cashRolloverPolicies
         self.creditReserveAttributions = creditReserveAttributions
         self.transactionChanges = transactionChanges; self.creditReserveEvents = creditReserveEvents
@@ -988,6 +1003,7 @@ public actor LocalAuthorityStore {
         let attachments = try await loadAttachments(transactionIDs: Set(transactions.map(\.id)))
         let attachmentTombstones = try await loadAttachmentTombstones(budgetID: budgetID)
         let debtTerms = try await loadDebtTerms(accountIDs: Set(accounts.map(\.id)))
+        let debtTermsRevisions = try await loadDebtTermsRevisions(budgetID: budgetID)
         let debtPayoffPlans = try await loadDebtPayoffPlans(budgetID: budgetID)
         let rollover = try await loadCashRolloverPolicies(budgetID: budgetID)
         let reserve = try await loadCreditReserveAttributions(transactionIDs: Set(transactions.map(\.id)))
@@ -1002,7 +1018,8 @@ public actor LocalAuthorityStore {
                      reconciliations: reconciliations, targets: targets, targetRevisions: targetRevisions, schedules: schedules,
                      scheduleRevisions: scheduleRevisions,
                      attachments: attachments, attachmentTombstones: attachmentTombstones,
-                     debtTerms: debtTerms, debtPayoffPlans: debtPayoffPlans, cashRolloverPolicies: rollover,
+                     debtTerms: debtTerms, debtTermsRevisions: debtTermsRevisions,
+                     debtPayoffPlans: debtPayoffPlans, cashRolloverPolicies: rollover,
                      creditReserveAttributions: reserve, transactionChanges: changes,
                      creditReserveEvents: reserveEvents, statementImports: statementImports)
     }
@@ -1019,6 +1036,7 @@ public actor LocalAuthorityStore {
             .init("DELETE FROM account_revisions WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM budget_structure_revisions WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM payee_revisions WHERE budget_id=?", values: [.text(budgetID)]),
+            .init("DELETE FROM account_debt_terms_revisions WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM debt_payoff_plans WHERE budget_id=?", values: [.text(budgetID)]),
             .init("DELETE FROM account_debt_terms WHERE account_id IN (SELECT id FROM accounts WHERE budget_id=?)", values: [.text(budgetID)]),
             .init("DELETE FROM statement_imports WHERE budget_id=?", values: [.text(budgetID)]),
@@ -1106,6 +1124,9 @@ public actor LocalAuthorityStore {
         statements += value.debtTerms.map { item in
             .init("INSERT INTO account_debt_terms(account_id,terms_type,annual_rate_basis_points,rate_type,payment_frequency,scheduled_payment_minor,minimum_payment_rule,minimum_payment_minor,minimum_payment_rate_basis_points,due_day,statement_day,original_principal_minor,original_term_months,remaining_term_months,promotional_rate_basis_points,promotional_ends_on,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values: [.text(item.accountID), .text(item.termsType), optionalInteger(item.annualRateBasisPoints), optionalText(item.rateType), optionalText(item.paymentFrequency), optionalInteger(item.scheduledPaymentMinor), optionalText(item.minimumPaymentRule), optionalInteger(item.minimumPaymentMinor), optionalInteger(item.minimumPaymentRateBasisPoints), optionalInteger(item.dueDay), optionalInteger(item.statementDay), optionalInteger(item.originalPrincipalMinor), optionalInteger(item.originalTermMonths), optionalInteger(item.remainingTermMonths), optionalInteger(item.promotionalRateBasisPoints), optionalText(item.promotionalEndsOn), .text(item.updatedAt)])
         }
+        statements += (value.debtTermsRevisions ?? []).map { item in
+            .init("INSERT INTO account_debt_terms_revisions(id,budget_id,account_id,action,actor_user_id,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), .text(item.action), .text(item.actorUserID), optionalText(item.beforeJSON), optionalText(item.afterJSON), .text(item.createdAt)])
+        }
         statements += (value.debtPayoffPlans ?? []).map { item in
             .init("INSERT INTO debt_payoff_plans(id,budget_id,user_id,strategy,rollover,extra_payment_minor,account_ids_json,custom_order_json,target_date,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.userID), .text(item.strategy), .integer(item.rollover ? 1 : 0), .integer(item.extraPaymentMinor), .text(json(item.accountIDs)), .text(json(item.customOrder)), optionalText(item.targetDate), .text(item.updatedAt)])
         }
@@ -1118,6 +1139,12 @@ public actor LocalAuthorityStore {
     private func loadAccounts(budgetID: String) async throws -> [LocalAccountRecord] {
         try await database.rows(.init("SELECT * FROM accounts WHERE budget_id=? ORDER BY created_at,id", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), name: text($0, "name"), kind: text($0, "kind"), isOnBudget: bool($0, "is_on_budget"), isClosed: bool($0, "is_closed"), openingBalanceMinor: integer($0, "opening_balance_minor"), createdAt: text($0, "created_at"))
+        }
+    }
+
+    private func loadDebtTermsRevisions(budgetID: String) async throws -> [LocalDebtTermsRevisionRecord] {
+        try await database.rows(.init("SELECT * FROM account_debt_terms_revisions WHERE budget_id=? ORDER BY created_at,rowid", values: [.text(budgetID)])).map {
+            try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), accountID: text($0, "account_id"), action: text($0, "action"), actorUserID: text($0, "actor_user_id"), beforeJSON: optionalText($0, "before_json"), afterJSON: optionalText($0, "after_json"), createdAt: text($0, "created_at"))
         }
     }
 

@@ -257,6 +257,17 @@ class AccountDebtTermsResponse(AccountDebtTermsUpsert):
     updated_at: datetime
 
 
+class AccountDebtTermsRevisionResponse(BaseModel):
+    id: str
+    account_id: str
+    action: Literal["created", "updated", "deleted"]
+    actor_user_id: str
+    actor_display_name: Optional[str] = None
+    before_snapshot: Optional[dict] = None
+    after_snapshot: Optional[dict] = None
+    created_at: datetime
+
+
 class DebtProjectionRequest(BaseModel):
     first_payment_on: date
     extra_payment_minor: int = Field(default=0, ge=0, le=MAX_INT64)

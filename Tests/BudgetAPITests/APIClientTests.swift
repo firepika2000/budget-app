@@ -1741,6 +1741,28 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(rows.first?.afterSnapshot.amountMinor, 9_007_199_254_740_992)
         XCTAssertEqual(rows.first?.afterSnapshot.isActive, false)
     }
+
+    func testDebtTermsHistoryUsesBoundedAttributedExactMoneyContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/debt-terms/history")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(query.first(where: { $0.name == "limit" })?.value, "25")
+            XCTAssertEqual(query.first(where: { $0.name == "offset" })?.value, "50")
+            let body = Data(#"[{"id":"r1","account_id":"a1","action":"deleted","actor_user_id":"owner","actor_display_name":"Rey","before_snapshot":{"terms_type":"credit_card","annual_rate_basis_points":2199,"rate_type":"variable","payment_frequency":"monthly","scheduled_payment_minor":null,"minimum_payment_rule":"fixed","minimum_payment_minor":9007199254740993,"minimum_payment_rate_basis_points":null,"due_day":18,"statement_day":21,"original_principal_minor":null,"original_term_months":null,"remaining_term_months":null,"promotional_rate_basis_points":null,"promotional_ends_on":null},"after_snapshot":null,"created_at":"2026-10-08T18:00:00Z"}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let rows = try await client.accountDebtTermsHistory(
+            budgetID: "b1", accountID: "a1", limit: 25, offset: 50, token: "rotated"
+        )
+        XCTAssertEqual(rows.first?.action, "deleted")
+        XCTAssertEqual(rows.first?.actorDisplayName, "Rey")
+        XCTAssertEqual(rows.first?.beforeSnapshot?.minimumPaymentMinor, 9_007_199_254_740_993)
+        XCTAssertNil(rows.first?.afterSnapshot)
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

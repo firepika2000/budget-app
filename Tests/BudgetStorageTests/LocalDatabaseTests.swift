@@ -68,6 +68,7 @@ final class LocalDatabaseTests: XCTestCase {
         try await database?.transaction([
             .init("DROP TABLE credit_reserve_attributions"),
             .init("DROP TABLE payee_revisions"),
+            .init("DROP TABLE account_debt_terms_revisions"),
             .init("DROP TABLE budget_structure_revisions"),
             .init("DROP TABLE account_revisions"),
             .init("DROP TABLE credit_reserve_events"),
@@ -362,7 +363,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.scheduledTransactionID, "deleted-schedule")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 21)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 22)
     }
 
     func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {
@@ -589,6 +590,21 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(secondPage.map(\.action), ["created"])
         XCTAssertEqual(snapshot.payeeRevisions, history)
         XCTAssertEqual(snapshot.accounts.first?.openingBalanceMinor, 12_345)
+        try await reopened.integrityCheck()
+    }
+
+    func testDebtTermsHistorySurvivesReopenAndKeepsExactMoney() async throws {
+        let url = try temporaryDirectory().appendingPathComponent("debt-history.sqlite")
+        let store = try LocalAuthorityStore(fileURL: url)
+        try await store.bootstrap(.init(householdID: "h", householdName: "Home", ownerUserID: "u", ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD"), createdAt: "2026-10-09T12:00:00Z")
+        try await store.insertAccount(.init(id: "a", budgetID: "b", name: "Card", kind: "credit", isOnBudget: true, openingBalanceMinor: -12345, createdAt: "2026-10-09T12:00:00Z"))
+        let base = try await store.snapshot(budgetID: "b")
+        let history = [LocalDebtTermsRevisionRecord(id: "r", budgetID: "b", accountID: "a", action: "deleted", actorUserID: "u", beforeJSON: #"{"terms_type":"credit_card","minimum_payment_minor":9007199254740993}"#, afterJSON: nil, createdAt: "2026-10-09T12:00:00Z")]
+        try await store.replaceWorkspaceState(.init(identity: base.identity, accounts: base.accounts, groups: base.groups, categories: base.categories, payees: [], payeeAliases: [], transactions: [], allocations: [], reconciliations: [], targets: [], schedules: [], attachments: [], debtTermsRevisions: history))
+        let reopened = try LocalAuthorityStore(fileURL: url)
+        let restored = try await reopened.snapshot(budgetID: "b")
+        XCTAssertEqual(restored.debtTermsRevisions, history)
+        XCTAssertEqual(restored.accounts.first?.openingBalanceMinor, -12345)
         try await reopened.integrityCheck()
     }
 

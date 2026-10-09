@@ -2134,3 +2134,31 @@ financial observations, attachment metadata and integrity checks remain exact an
 The complete 51-test BudgetStorage target passes, including encrypted backup/restore, Dropbox OAuth
 and generation management, attachment encryption/tombstones, transfer projection, database migration,
 and all four candidate-import publication/failure cases.
+
+### Debt Terms decision history — 2026-10-09
+
+Debt planning assumptions now retain immutable created/updated/deleted observations with exact
+before/after values and actor attribution. The shared Debt Terms editor reads bounded history pages;
+hosted reads enforce account scope and balance-visibility permission. Complete export and
+server-to-local transfer preserve removed assumptions as history, not as current terms. Alembic
+`0046_debt_terms_history` and Local Device schema 22 add baselines for existing assumptions without
+changing balances, posted transactions, interest observations or payoff calculations.
+
+Local Device terms were already persisted by normal workspace refresh. Commands now persist before
+returning rather than depending on that refresh. Native regression caught and corrected an initial
+implementation error using a demo actor identity in Local Device history: durable records now use
+the actual local owner identity. Repeated identical saves add no duplicate observation.
+
+Verification: 48 focused backend tests pass (terms/history, populated migration, graph, export,
+debt projection and payoff plans); all 55 BudgetStorage tests pass; the focused typed API test
+passes. The production native store reconstruction test passes after the actor correction, covering
+save, no-op save, reopen, removal and a second reopen. Stable Xcode 27.0 (27A266a),
+`/Applications/Xcode.app`, builds the production app and runs that test on preserved simulator
+`3ABD861E-D38D-4AFD-A356-959266051564` (iPhone 17 Pro Max / iOS 27.0). An initial stalled
+runner was stopped; the completed focused run is the verification evidence. `git diff --check`
+passes. No Live or Simulator data was erased and no TestFlight upload was performed.
+
+Human presentation acceptance remains pending: open a credit-card/loan Debt Terms editor, save an
+assumption, reopen it to see history, edit it, then remove the terms and verify the history remains
+available while posted balances are unchanged. Deploying the hosted change requires the normal
+Alembic upgrade through 0046; Local Device migration is automatic at database open.

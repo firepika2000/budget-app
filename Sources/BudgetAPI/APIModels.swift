@@ -858,6 +858,82 @@ public struct APIAccountDebtTerms: Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIAccountDebtTermsRevisionSnapshot: Codable, Equatable, Sendable {
+    public let termsType: String
+    public let annualRateBasisPoints: Int?
+    public let rateType: String?
+    public let paymentFrequency: String?
+    public let scheduledPaymentMinor: Int64?
+    public let minimumPaymentRule: String?
+    public let minimumPaymentMinor: Int64?
+    public let minimumPaymentRateBasisPoints: Int?
+    public let dueDay: Int?
+    public let statementDay: Int?
+    public let originalPrincipalMinor: Int64?
+    public let originalTermMonths: Int?
+    public let remainingTermMonths: Int?
+    public let promotionalRateBasisPoints: Int?
+    public let promotionalEndsOn: String?
+
+    public init(termsType: String, annualRateBasisPoints: Int? = nil, rateType: String? = nil,
+                paymentFrequency: String? = nil, scheduledPaymentMinor: Int64? = nil,
+                minimumPaymentRule: String? = nil, minimumPaymentMinor: Int64? = nil,
+                minimumPaymentRateBasisPoints: Int? = nil, dueDay: Int? = nil,
+                statementDay: Int? = nil, originalPrincipalMinor: Int64? = nil,
+                originalTermMonths: Int? = nil, remainingTermMonths: Int? = nil,
+                promotionalRateBasisPoints: Int? = nil, promotionalEndsOn: String? = nil) {
+        self.termsType = termsType; self.annualRateBasisPoints = annualRateBasisPoints
+        self.rateType = rateType; self.paymentFrequency = paymentFrequency
+        self.scheduledPaymentMinor = scheduledPaymentMinor; self.minimumPaymentRule = minimumPaymentRule
+        self.minimumPaymentMinor = minimumPaymentMinor
+        self.minimumPaymentRateBasisPoints = minimumPaymentRateBasisPoints
+        self.dueDay = dueDay; self.statementDay = statementDay
+        self.originalPrincipalMinor = originalPrincipalMinor; self.originalTermMonths = originalTermMonths
+        self.remainingTermMonths = remainingTermMonths
+        self.promotionalRateBasisPoints = promotionalRateBasisPoints; self.promotionalEndsOn = promotionalEndsOn
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case termsType = "terms_type", annualRateBasisPoints = "annual_rate_basis_points"
+        case rateType = "rate_type", paymentFrequency = "payment_frequency"
+        case scheduledPaymentMinor = "scheduled_payment_minor", minimumPaymentRule = "minimum_payment_rule"
+        case minimumPaymentMinor = "minimum_payment_minor"
+        case minimumPaymentRateBasisPoints = "minimum_payment_rate_basis_points"
+        case dueDay = "due_day", statementDay = "statement_day"
+        case originalPrincipalMinor = "original_principal_minor", originalTermMonths = "original_term_months"
+        case remainingTermMonths = "remaining_term_months"
+        case promotionalRateBasisPoints = "promotional_rate_basis_points"
+        case promotionalEndsOn = "promotional_ends_on"
+    }
+}
+
+public struct APIAccountDebtTermsRevision: Identifiable, Codable, Equatable, Sendable {
+    public let id: String
+    public let accountID: String
+    public let action: String
+    public let actorUserID: String
+    public let actorDisplayName: String?
+    public let beforeSnapshot: APIAccountDebtTermsRevisionSnapshot?
+    public let afterSnapshot: APIAccountDebtTermsRevisionSnapshot?
+    public let createdAt: String
+
+    public init(id: String, accountID: String, action: String, actorUserID: String,
+                actorDisplayName: String?, beforeSnapshot: APIAccountDebtTermsRevisionSnapshot?,
+                afterSnapshot: APIAccountDebtTermsRevisionSnapshot?, createdAt: String) {
+        self.id = id; self.accountID = accountID; self.action = action
+        self.actorUserID = actorUserID; self.actorDisplayName = actorDisplayName
+        self.beforeSnapshot = beforeSnapshot; self.afterSnapshot = afterSnapshot
+        self.createdAt = createdAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, action
+        case accountID = "account_id", actorUserID = "actor_user_id"
+        case actorDisplayName = "actor_display_name", beforeSnapshot = "before_snapshot"
+        case afterSnapshot = "after_snapshot", createdAt = "created_at"
+    }
+}
+
 public struct APIDebtCost: Decodable, Equatable, Sendable {
     public let asOf: String
     public let currencyCode: String

@@ -154,6 +154,7 @@ public enum LocalDeviceCandidateImportService {
             targetRevisions: value.targetRevisions ?? [], schedules: value.schedules,
             scheduleRevisions: value.scheduleRevisions ?? [], attachments: value.attachments,
             attachmentTombstones: value.attachmentTombstones, debtTerms: value.debtTerms,
+            debtTermsRevisions: value.debtTermsRevisions ?? [],
             debtPayoffPlans: value.debtPayoffPlans ?? [],
             cashRolloverPolicies: value.cashRolloverPolicies,
             creditReserveAttributions: value.creditReserveAttributions,

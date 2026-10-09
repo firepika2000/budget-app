@@ -563,6 +563,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     var actorUserID: String? { requestActorID }
     private var attachmentData: [String: Data] = [:]
     private var debtTermsValues: [String: APIAccountDebtTermsUpsert] = [:]
+    private var debtTermsRevisions: [APIAccountDebtTermsRevision] = []
     private var debtPayoffPlanValue: APIDebtPayoffPlanUpsert?
     private var allowancePlanRevisions: [String: [APIAllowancePlanRevision]] = [:]
     private var accessProfiles: [String: APIAccessProfile] = [:]
@@ -1151,6 +1152,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             demoAccountRevisions = try (value.accountRevisions ?? []).map(localAccountRevision)
             demoStructureRevisions = try (value.structureRevisions ?? []).map(localStructureRevision)
             demoPayeeRevisions = try (value.payeeRevisions ?? []).map(localPayeeRevision)
+            debtTermsRevisions = try (value.debtTermsRevisions ?? []).map { item in
+                .init(id: item.id, accountID: item.accountID, action: item.action,
+                      actorUserID: item.actorUserID, actorDisplayName: localIdentity.ownerDisplayName,
+                      beforeSnapshot: try item.beforeJSON.map { try JSONDecoder().decode(APIAccountDebtTermsRevisionSnapshot.self, from: Data($0.utf8)) },
+                      afterSnapshot: try item.afterJSON.map { try JSONDecoder().decode(APIAccountDebtTermsRevisionSnapshot.self, from: Data($0.utf8)) }, createdAt: item.createdAt)
+            }
             debtTermsValues = Dictionary(uniqueKeysWithValues: value.debtTerms.map { item in
                 (item.accountID, APIAccountDebtTermsUpsert(termsType: item.termsType,
                     annualRateBasisPoints: item.annualRateBasisPoints.map(Int.init), rateType: item.rateType,
@@ -1234,6 +1241,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             scheduleRevisions: scheduleRevisions,
             attachments: projected.attachments,
             attachmentTombstones: projected.attachmentTombstones, debtTerms: projected.debtTerms,
+            debtTermsRevisions: try debtTermsRevisions.map { item in
+                .init(id: item.id, budgetID: localIdentity.budgetID, accountID: item.accountID,
+                      action: item.action, actorUserID: item.actorUserID,
+                      beforeJSON: try item.beforeSnapshot.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) },
+                      afterJSON: try item.afterSnapshot.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }, createdAt: item.createdAt)
+            },
             debtPayoffPlans: debtPayoffPlanValue.map { item in [LocalDebtPayoffPlanRecord(
                 id: "local-debt-payoff-plan", budgetID: localIdentity.budgetID,
                 userID: localIdentity.ownerUserID, strategy: item.strategy,
@@ -2879,6 +2892,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             .reversed().dropFirst(offset).prefix(limit))
     }
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? { try requireActiveMembership();
+        guard budget.can("view_account_balances") else { throw APIClientError.server(status: 403, message: "Account balances are unavailable.") }
+        guard actorAccountIDs.contains(accountID) else { throw APIClientError.server(status: 404, message: "Account not found") }
         guard let value = debtTermsValues[accountID] else { return nil }
         return try decode([
             "account_id": accountID, "budget_id": budget.id, "terms_type": value.termsType,
@@ -2893,13 +2908,55 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         ] as [String: Any])
     }
     func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms { try requireActiveMembership();
+        guard budget.can("manage_budget_structure"), actorAccountIDs.contains(accountID) else { throw APIClientError.server(status: 403, message: "You do not have permission to manage debt terms.") }
+        let before = debtTermsValues[accountID].map(debtTermsSnapshot)
         debtTermsValues[accountID] = value
+        let after = debtTermsSnapshot(value)
+        if before != after {
+            debtTermsRevisions.append(.init(
+                id: UUID().uuidString, accountID: accountID,
+                action: before == nil ? "created" : "updated", actorUserID: localIdentity?.ownerUserID ?? requestActorID,
+                actorDisplayName: localIdentity?.ownerDisplayName ?? demo.persona.rawValue, beforeSnapshot: before,
+                afterSnapshot: after, createdAt: ISO8601DateFormatter().string(from: now())
+            ))
+        }
+        try await synchronizeLocalAuthority()
         guard let result = try await accountDebtTerms(accountID: accountID) else {
             throw workspaceRepositoryError("Debt terms were not saved.")
         }
         return result
     }
-    func deleteAccountDebtTerms(accountID: String) async throws { try requireActiveMembership(); debtTermsValues.removeValue(forKey: accountID) }
+    func deleteAccountDebtTerms(accountID: String) async throws { try requireActiveMembership()
+        guard budget.can("manage_budget_structure"), actorAccountIDs.contains(accountID) else { throw APIClientError.server(status: 403, message: "You do not have permission to manage debt terms.") }
+        if let value = debtTermsValues.removeValue(forKey: accountID) {
+            debtTermsRevisions.append(.init(
+                id: UUID().uuidString, accountID: accountID, action: "deleted",
+                actorUserID: localIdentity?.ownerUserID ?? requestActorID,
+                actorDisplayName: localIdentity?.ownerDisplayName ?? demo.persona.rawValue,
+                beforeSnapshot: debtTermsSnapshot(value), afterSnapshot: nil,
+                createdAt: ISO8601DateFormatter().string(from: now())
+            ))
+            try await synchronizeLocalAuthority()
+        }
+    }
+    func accountDebtTermsHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIAccountDebtTermsRevision] {
+        try requireActiveMembership()
+        guard budget.can("view_account_balances") else { throw APIClientError.server(status: 403, message: "Account balances are unavailable.") }
+        guard actorAccountIDs.contains(accountID) else { throw APIClientError.server(status: 404, message: "Account not found") }
+        return Array(debtTermsRevisions.filter { $0.accountID == accountID }.reversed().dropFirst(offset).prefix(limit))
+    }
+    private func debtTermsSnapshot(_ value: APIAccountDebtTermsUpsert) -> APIAccountDebtTermsRevisionSnapshot {
+        .init(termsType: value.termsType, annualRateBasisPoints: value.annualRateBasisPoints,
+              rateType: value.rateType, paymentFrequency: value.paymentFrequency,
+              scheduledPaymentMinor: value.scheduledPaymentMinor,
+              minimumPaymentRule: value.minimumPaymentRule, minimumPaymentMinor: value.minimumPaymentMinor,
+              minimumPaymentRateBasisPoints: value.minimumPaymentRateBasisPoints,
+              dueDay: value.dueDay, statementDay: value.statementDay,
+              originalPrincipalMinor: value.originalPrincipalMinor,
+              originalTermMonths: value.originalTermMonths, remainingTermMonths: value.remainingTermMonths,
+              promotionalRateBasisPoints: value.promotionalRateBasisPoints,
+              promotionalEndsOn: value.promotionalEndsOn)
+    }
     func debtPayoffPlan() async throws -> APIDebtPayoffPlan? { try requireActiveMembership()
         guard let value = debtPayoffPlanValue else { return nil }
         return try decode([
@@ -3537,6 +3594,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? { try await credentials.prepare(); return try await client.accountDebtTerms(budgetID: budget.id, accountID: accountID, token: token) }
     func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms { try await credentials.prepare(); return try await client.updateAccountDebtTerms(budgetID: budget.id, accountID: accountID, terms: value, token: token) }
     func deleteAccountDebtTerms(accountID: String) async throws { try await credentials.prepare(); try await client.deleteAccountDebtTerms(budgetID: budget.id, accountID: accountID, token: token) }
+    func accountDebtTermsHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIAccountDebtTermsRevision] { try await credentials.prepare(); return try await client.accountDebtTermsHistory(budgetID: budget.id, accountID: accountID, limit: limit, offset: offset, token: token) }
     func debtPayoffPlan() async throws -> APIDebtPayoffPlan? { try await credentials.prepare(); return try await client.debtPayoffPlan(budgetID: budget.id, token: token) }
     func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan { try await credentials.prepare(); return try await client.saveDebtPayoffPlan(budgetID: budget.id, request: value, token: token) }
     func deleteDebtPayoffPlan() async throws { try await credentials.prepare(); try await client.deleteDebtPayoffPlan(budgetID: budget.id, token: token) }
@@ -4609,6 +4667,11 @@ final class BudgetWorkspaceStore: ObservableObject {
     func deleteAccountDebtTerms(accountID: String) async throws {
         try await commands().deleteAccountDebtTerms(accountID: accountID)
         await refresh()
+    }
+
+    func accountDebtTermsHistory(accountID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIAccountDebtTermsRevision] {
+        guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Debt terms history request is out of range.") }
+        return try await commands().accountDebtTermsHistory(accountID: accountID, limit: limit, offset: offset)
     }
 
     func debtPayoffPlan() async throws -> APIDebtPayoffPlan? {

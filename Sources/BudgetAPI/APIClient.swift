@@ -244,6 +244,16 @@ public struct APIClient {
         let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/debt-terms", method: "DELETE", token: token)
     }
 
+    public func accountDebtTermsHistory(
+        budgetID: String, accountID: String, limit: Int = 50, offset: Int = 0, token: String
+    ) async throws -> [APIAccountDebtTermsRevision] {
+        try await send(
+            path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/debt-terms/history",
+            queryItems: [.init(name: "limit", value: String(limit)),
+                         .init(name: "offset", value: String(offset))], token: token
+        )
+    }
+
     public func deleteBudget(budgetID: String, confirmationName: String, token: String) async throws {
         let _: EmptyResponse = try await send(
             path: "api/v1/budgets/\(budgetID)", method: "DELETE", token: token,
