@@ -666,12 +666,23 @@ final class APIClientTests: XCTestCase {
             XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems,
                            [.init(name: "through_date", value: "2026-09-15")])
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
-            let data = Data(#"{"account_id":"a1","currency_code":"USD","cleared_balance_minor":9007199254740993,"uncleared_balance_minor":0,"working_balance_minor":9007199254740993,"reconciled_balance_minor":null}"#.utf8)
+            let data = Data(#"{"account_id":"a1","currency_code":"USD","cleared_balance_minor":9007199254740993,"uncleared_balance_minor":0,"working_balance_minor":9007199254740993,"reconciled_balance_minor":null,"through_date":"2026-09-15"}"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
         let balance = try await client.accountBalance(budgetID: "b1", accountID: "a1", throughDate: "2026-09-15", token: "current")
         XCTAssertEqual(balance.clearedBalanceMinor, 9_007_199_254_740_993)
+        XCTAssertEqual(balance.throughDate, "2026-09-15")
+        MockURLProtocol.handler = { request in
+            let data = Data(#"{"account_id":"a1","currency_code":"USD","cleared_balance_minor":100,"uncleared_balance_minor":0,"working_balance_minor":100,"reconciled_balance_minor":null}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+        }
+        do {
+            _ = try await client.accountBalance(budgetID: "b1", accountID: "a1", throughDate: "2026-09-15", token: "current")
+            XCTFail("An old server ignoring the date must not be accepted")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Update the server")) }
+        let legacy = try await client.accountBalance(budgetID: "b1", accountID: "a1", token: "current")
+        XCTAssertEqual(legacy.clearedBalanceMinor, 100)
     }
 
     func testAllocationHistoryUsesBoundedPageContract() async throws {

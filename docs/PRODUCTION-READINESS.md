@@ -23,6 +23,38 @@ observed balance rather than quietly refresh away a stale expectation. No human 
 No migration is needed; server restart/deployment is needed to expose the new optional API behavior.
 TestFlight remains on hold.
 
+### Production reconciliation integration
+
+The shared account application service and Live repository now request the bounded, authoritative
+date-cutoff observation with the current session credential. Local Device/Demo share the same
+provider-side cleared calculation as their reconciliation mutation, including explicit fixture
+openings and checked Int64 arithmetic. The shared reconciliation screen no longer calculates
+its estimate from downloaded workspace transaction rows. Selected-date requests are generation-
+guarded; changing date immediately makes the former value unusable, and workspace revocation
+discards it. Failed reads show a retry action rather than inventing a balance.
+
+Submission forwards the exact displayed observation instead of quietly recomputing it from a
+new workspace snapshot. Existing stale-balance rejection remains authoritative, including when
+the user permits an adjustment. Recheck Cleared Balance is explicit; the screen does not silently
+replace a reviewed value while a user decides. Save is disabled until a current-date observation
+exists and while it is loading/saving. No hydration reduction or reconciliation accounting change.
+
+Eight backend reconciliation/protection cases passed. Native regressions now cover provider reads
+with an empty workspace transaction cache, expected-observation preservation/refusal and production
+UI date/scope wiring. Their execution remains unverified while the Simulator runner is unavailable;
+source assertions are not runtime evidence. Human acceptance remains open: change cutoff date,
+confirm the observed cleared amount, then make a second-device cleared posting before submission;
+the old observation must be rejected, followed by explicit recheck and normal reconciliation.
+Use a disposable test account, not an unintended adjustment to human financial records.
+
+Final integration verification: regular Xcode 27 build-for-testing passed for app/native test targets;
+13 focused backend cutoff/privacy/reconciliation cases passed; the Swift API test proves exact large
+money, cutoff echo, old-server rejection and legacy all-date decoding. Production source-wiring
+assertions and diff checks passed. Native runtime execution and human interaction are not claimed.
+The cutoff response now explicitly echoes `through_date`; the API refuses a dated observation from
+an older server that silently ignores unknown query parameters, with clear upgrade/recheck guidance.
+Rebuild the app and deploy/restart the updated server before this hosted acceptance flow; no migration.
+
 ## Immediate mission override — Beta 1 (2026-09-27)
 
 The user's Beta 1 Production Sample Mission supersedes exhaustive roadmap completion for the

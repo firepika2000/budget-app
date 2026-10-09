@@ -166,8 +166,12 @@ public struct APIClient {
     }
 
     public func accountBalance(budgetID: String, accountID: String, throughDate: String? = nil, token: String) async throws -> APIAccountBalance {
-        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/balance",
+        let observation: APIAccountBalance = try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/balance",
                        queryItems: throughDate.map { [.init(name: "through_date", value: $0)] } ?? [], token: token)
+        if let throughDate, observation.throughDate != throughDate || observation.accountID != accountID {
+            throw APIClientError.server(status: 409, message: "Update the server to support date-specific reconciliation balances, then recheck the balance.")
+        }
+        return observation
     }
 
     public func createAccount(

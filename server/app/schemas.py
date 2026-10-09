@@ -203,6 +203,7 @@ class AccountBalanceResponse(BaseModel):
     uncleared_balance_minor: int
     working_balance_minor: int
     reconciled_balance_minor: Optional[int]
+    through_date: Optional[date] = None
 
 
 class AccountDebtTermsUpsert(BaseModel):

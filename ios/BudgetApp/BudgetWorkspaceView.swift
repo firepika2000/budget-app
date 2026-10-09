@@ -2779,6 +2779,12 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         try authorizeTransfer(id: id, capability: "delete_transaction")
         guard demo.deleteTransfer(id: id) else { throw workspaceRepositoryError(demo.errorMessage) }
     }
+    func reconciliationClearedObservation(accountID: String, throughDate: String) async throws -> Int64 {
+        try requireActiveMembership()
+        try requireTransactionCapability("view_account_balances")
+        guard actorAccountIDs.contains(accountID) else { throw APIClientError.server(status: 404, message: "Account not found") }
+        return try demo.reconciliationClearedObservation(accountID: accountID, throughDate: throughDate)
+    }
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { try requireActiveMembership();
         try requireTransactionCapability("reconcile_account")
         guard !demo.isRestricted else { throw APIClientError.server(status: 403, message: "You do not have permission to reconcile this account") }
@@ -3639,6 +3645,14 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func transferMoney(_ operation: TransferMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.createTransfer(budgetID: budget.id, transfer: operation.apiValue, token: token) }
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: operation.apiValue, token: token) }
     func deleteTransfer(id: String) async throws { try await credentials.prepare(); try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
+    func reconciliationClearedObservation(accountID: String, throughDate: String) async throws -> Int64 {
+        try await credentials.prepare()
+        let observation = try await client.accountBalance(budgetID: budget.id, accountID: accountID, throughDate: throughDate, token: token)
+        guard observation.accountID == accountID, observation.throughDate == throughDate else {
+            throw BudgetApplicationError.invalidOperation("Update the server to support date-specific reconciliation balances, then recheck the balance.")
+        }
+        return observation.clearedBalanceMinor
+    }
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { try await credentials.prepare(); _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID, request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason, expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor), token: token) }
     func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory] { try await credentials.prepare(); return try await client.reconciliationHistory(budgetID: budget.id, accountID: accountID, limit: limit, offset: offset, token: token) }
     func recentReconciliationHistory(limit: Int) async throws -> [APIReconciliationHistory] { try await credentials.prepare(); return try await client.recentReconciliationHistory(budgetID: budget.id, limit: limit, token: token) }
@@ -4614,8 +4628,16 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
 
-    func reconcile(accountID: String, statementBalance: Int64, throughDate: String, createAdjustment: Bool, reason: String) async throws {
-        let cleared = try reconciliationClearedBalance(accountID: accountID, throughDate: throughDate)
+    func reconciliationClearedObservation(accountID: String, throughDate: String) async throws -> Int64 {
+        try requireWorkspaceAccess()
+        let revision = authorityRevision
+        let value = try await services().accounts.reconciliationClearedObservation(accountID: accountID, throughDate: throughDate)
+        guard revision == authorityRevision else { throw CancellationError() }
+        return value
+    }
+
+    func reconcile(accountID: String, statementBalance: Int64, throughDate: String, createAdjustment: Bool, reason: String, expectedClearedBalance: Int64? = nil) async throws {
+        let cleared = try expectedClearedBalance ?? reconciliationClearedBalance(accountID: accountID, throughDate: throughDate)
         try await services().accounts.reconcile(ReconcileAccountOperation(accountID: accountID, statementBalanceMinor: statementBalance, throughDate: throughDate, createAdjustment: createAdjustment, reason: reason, expectedClearedBalanceMinor: cleared))
         await refresh()
     }
@@ -10331,8 +10353,16 @@ private struct LiveReconcileView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var statementBalance = ""; @State private var throughDate = Date(); @State private var createAdjustment = false; @State private var reason = ""; @State private var isSaving = false; @State private var errorMessage: String?
     @State private var choosingStatement = false; @State private var statementFile: StatementImportFile?; @State private var showingImportHistory = false
+    @State private var observedBalance: Int64?
+    @State private var observedDate: String?
+    @State private var observationID = UUID()
+    @State private var loadingObservation = false
+    @State private var observationError: String?
     private var parsed: Int64? { CurrencyText.parseMinorUnits(statementBalance, currencyCode: budget.currencyCode) }
-    private var cutoffBalance: Int64? { try? workspace.reconciliationClearedBalance(accountID: account.id, throughDate: BudgetWorkspaceStore.dateString(throughDate)) }
+    private var cutoffBalance: Int64? {
+        guard !workspace.workspaceAccessDenied, observedDate == BudgetWorkspaceStore.dateString(throughDate) else { return nil }
+        return observedBalance
+    }
     private var difference: Int64? {
         guard let parsed, let cutoffBalance else { return nil }
         let result = parsed.subtractingReportingOverflow(cutoffBalance)
@@ -10340,16 +10370,61 @@ private struct LiveReconcileView: View {
     }
     var body: some View {
         NavigationStack { Form {
-            Section("Statement") { LabeledContent("Cleared through selected date", value: cutoffBalance.map { CurrencyText.editable($0, currencyCode: budget.currencyCode) } ?? "Unavailable — refresh account"); CurrencyAmountField("Statement balance", text: $statementBalance, currencyCode: budget.currencyCode, allowsNegative: true, allowsZero: true); DatePicker("Through", selection: $throughDate, displayedComponents: .date); Button("Import Bank Statement", systemImage: "doc.badge.plus") { choosingStatement = true }.accessibilityIdentifier("import-bank-statement"); Button("Statement Import History", systemImage: "clock.arrow.circlepath") { showingImportHistory = true }.accessibilityIdentifier("statement-import-history") }
+            if loadingObservation { ProgressView("Checking cleared balance…") }
+            if let observationError {
+                Section {
+                    Text(observationError).font(.footnote).foregroundStyle(.secondary)
+                    Button("Retry Balance Check") { Task { await loadObservation() } }.disabled(isSaving || loadingObservation)
+                }
+            }
+            Section("Statement") {
+                LabeledContent("Cleared through selected date", value: cutoffBalance.map(workspace.format) ?? "Not checked yet")
+                CurrencyAmountField("Statement balance", text: $statementBalance, currencyCode: budget.currencyCode, allowsNegative: true, allowsZero: true)
+                DatePicker("Through", selection: $throughDate, displayedComponents: .date).disabled(isSaving)
+                Button("Recheck Cleared Balance", systemImage: "arrow.clockwise") { Task { await loadObservation() } }
+                    .disabled(isSaving || loadingObservation || workspace.workspaceAccessDenied)
+                    .accessibilityIdentifier("recheck-reconciliation-balance")
+                Button("Import Bank Statement", systemImage: "doc.badge.plus") { choosingStatement = true }.accessibilityIdentifier("import-bank-statement")
+                Button("Statement Import History", systemImage: "clock.arrow.circlepath") { showingImportHistory = true }.accessibilityIdentifier("statement-import-history")
+            }
             if let difference, difference != 0 { Section("Difference") { LabeledContent("Adjustment", value: CurrencyText.editable(difference, currencyCode: budget.currencyCode)); Toggle("Create reconciliation adjustment", isOn: $createAdjustment); if createAdjustment { TextField("Adjustment reason", text: $reason) }; Text("The server calculates the authoritative cleared balance and will reject a mismatch unless you approve an adjustment.").font(.footnote).foregroundStyle(.secondary) } }
-        }.navigationTitle("Reconcile \(account.name)").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Reconcile") { Task { await save() } }.disabled(parsed == nil || isSaving) } }.onAppear { statementBalance = CurrencyText.editable(currentBalance, currencyCode: budget.currencyCode) }.alert("Unable to reconcile", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
+        }.navigationTitle("Reconcile \(account.name)").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Reconcile") { Task { await save() } }.disabled(parsed == nil || cutoffBalance == nil || loadingObservation || isSaving) } }.onAppear { statementBalance = CurrencyText.editable(currentBalance, currencyCode: budget.currencyCode) }.alert("Unable to reconcile", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
+        .task(id: BudgetWorkspaceStore.dateString(throughDate)) { await loadObservation() }
+        .onChange(of: workspace.workspaceAccessDenied) { _, denied in
+            if denied { observationID = UUID(); observedBalance = nil; observedDate = nil; loadingObservation = false }
+        }
         .fileImporter(isPresented: $choosingStatement, allowedContentTypes: StatementImportFile.allowedTypes) { result in
             do { let url = try result.get(); let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }; let data = try Data(contentsOf: url, options: .mappedIfSafe); statementFile = StatementImportFile(name: url.lastPathComponent, data: data) } catch { errorMessage = error.localizedDescription }
         }
         .sheet(item: $statementFile) { file in StatementImportFlowView(workspace: workspace, budget: budget, account: account, file: file) }
         .sheet(isPresented: $showingImportHistory) { StatementImportHistoryView(workspace: workspace, budget: budget, account: account) }
     }
-    private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await workspace.reconcile(accountID: account.id, statementBalance: parsed, throughDate: BudgetWorkspaceStore.dateString(throughDate), createAdjustment: createAdjustment, reason: reason); dismiss() } catch { errorMessage = error.localizedDescription } }
+    private func loadObservation() async {
+        guard !isSaving, !workspace.workspaceAccessDenied else { return }
+        let id = UUID(), date = BudgetWorkspaceStore.dateString(throughDate)
+        observationID = id
+        observedBalance = nil; observedDate = nil; observationError = nil; loadingObservation = true
+        defer { if observationID == id { loadingObservation = false } }
+        do {
+            let value = try await workspace.reconciliationClearedObservation(accountID: account.id, throughDate: date)
+            guard observationID == id, !Task.isCancelled, !workspace.workspaceAccessDenied,
+                  date == BudgetWorkspaceStore.dateString(throughDate) else { return }
+            observedBalance = value; observedDate = date
+        } catch {
+            guard observationID == id, !Task.isCancelled, !workspace.workspaceAccessDenied else { return }
+            observationError = error.localizedDescription
+        }
+    }
+    private func save() async {
+        guard !isSaving, !loadingObservation, let parsed, let cutoffBalance else { return }
+        isSaving = true; defer { isSaving = false }
+        do {
+            try await workspace.reconcile(accountID: account.id, statementBalance: parsed,
+                throughDate: BudgetWorkspaceStore.dateString(throughDate), createAdjustment: createAdjustment,
+                reason: reason, expectedClearedBalance: cutoffBalance)
+            dismiss()
+        } catch { errorMessage = error.localizedDescription }
+    }
 }
 
 private struct StatementImportHistoryView: View {

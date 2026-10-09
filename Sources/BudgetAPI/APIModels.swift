@@ -595,7 +595,8 @@ public struct APIAccount: Identifiable, Codable, Equatable, Sendable {
 
 public struct APIAccountBalance: Codable, Equatable, Sendable {
     public let accountID: String; public let currencyCode: String; public let clearedBalanceMinor: Int64; public let unclearedBalanceMinor: Int64; public let workingBalanceMinor: Int64; public let reconciledBalanceMinor: Int64?
-    enum CodingKeys: String, CodingKey { case accountID = "account_id", currencyCode = "currency_code", clearedBalanceMinor = "cleared_balance_minor", unclearedBalanceMinor = "uncleared_balance_minor", workingBalanceMinor = "working_balance_minor", reconciledBalanceMinor = "reconciled_balance_minor" }
+    public let throughDate: String?
+    enum CodingKeys: String, CodingKey { case throughDate = "through_date", accountID = "account_id", currencyCode = "currency_code", clearedBalanceMinor = "cleared_balance_minor", unclearedBalanceMinor = "uncleared_balance_minor", workingBalanceMinor = "working_balance_minor", reconciledBalanceMinor = "reconciled_balance_minor" }
 }
 
 public struct APIAccountRevisionSnapshot: Codable, Equatable, Sendable {

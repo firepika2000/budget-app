@@ -687,6 +687,21 @@ final class DemoStore: ObservableObject {
         return result
     }
 
+    func reconciliationClearedObservation(accountID: String, throughDate: String) throws -> Int64 {
+        guard accounts.contains(where: { $0.id == accountID }),
+              let cutoff = try? PlanningPeriodProjection.Day(throughDate),
+              fixtureOpening.map({ cutoff >= $0.month }) ?? true else {
+            throw BudgetApplicationError.invalidOperation("Invalid account or reconciliation date.")
+        }
+        var cleared = fixtureAccountOpening[accountID] ?? 0
+        for transaction in transactions where transaction.accountID == accountID && transaction.cleared && !transaction.scheduled && BudgetWorkspaceStore.dateString(transaction.date) <= cutoff.iso {
+            let result = cleared.addingReportingOverflow(transaction.amount)
+            guard !result.overflow else { throw BudgetApplicationError.invalidOperation("Cleared balance exceeds the supported amount range.") }
+            cleared = result.partialValue
+        }
+        return cleared
+    }
+
     @discardableResult
     func reconcile(accountID: String, statementBalance: Int64, throughDate requestedDate: String? = nil, createAdjustment: Bool = false, reason: String = "", expectedClearedBalance: Int64? = nil) -> Bool {
         let throughDate = requestedDate ?? BudgetWorkspaceStore.dateString(planningNow())
@@ -695,12 +710,7 @@ final class DemoStore: ObservableObject {
         guard let cutoff = try? PlanningPeriodProjection.Day(throughDate),
               fixtureOpening.map({ cutoff >= $0.month }) ?? true else { return failMessage("Invalid reconciliation date.") }
         let eligible = transactions.filter { $0.accountID == accountID && $0.cleared && !$0.scheduled && BudgetWorkspaceStore.dateString($0.date) <= cutoff.iso }
-        var cleared = fixtureAccountOpening[accountID] ?? 0
-        for transaction in eligible {
-            let result = cleared.addingReportingOverflow(transaction.amount)
-            guard !result.overflow else { return fail(.invalidAmount) }
-            cleared = result.partialValue
-        }
+        guard let cleared = try? reconciliationClearedObservation(accountID: accountID, throughDate: throughDate) else { return fail(.invalidAmount) }
         guard expectedClearedBalance == nil || expectedClearedBalance == cleared else { return failMessage("Account changed since reconciliation started.") }
         let result = statementBalance.subtractingReportingOverflow(cleared)
         guard !result.overflow else { return fail(.invalidAmount) }

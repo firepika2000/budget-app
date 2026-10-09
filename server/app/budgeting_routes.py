@@ -1004,6 +1004,7 @@ def account_balance(
         uncleared_balance_minor=uncleared,
         working_balance_minor=cleared + uncleared,
         reconciled_balance_minor=account.reconciled_balance_minor,
+        through_date=through_date,
     )
 
 

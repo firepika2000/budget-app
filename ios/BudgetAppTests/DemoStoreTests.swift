@@ -1139,7 +1139,21 @@ final class DemoStoreTests: XCTestCase {
         let allCleared = store.clearedBalance(for: account)
         let statement = allCleared - later.reduce(0) { $0 + $1.amountMinor }
         XCTAssertEqual(try store.reconciliationClearedBalance(accountID: account.id, throughDate: cutoff), statement)
-        try await store.reconcile(accountID: account.id, statementBalance: statement, throughDate: cutoff, createAdjustment: false, reason: "")
+        let observed = try await store.reconciliationClearedObservation(accountID: account.id, throughDate: cutoff)
+        XCTAssertEqual(observed, statement)
+        let cachedTransactions = store.transactions
+        store.transactions = []
+        let independentObservation = try await store.reconciliationClearedObservation(accountID: account.id, throughDate: cutoff)
+        XCTAssertEqual(independentObservation, statement, "Provider observation must not depend on downloaded workspace rows")
+        store.transactions = cachedTransactions
+        do {
+            try await store.reconcile(accountID: account.id, statementBalance: statement, throughDate: cutoff,
+                                      createAdjustment: true, reason: "Must not override stale observation", expectedClearedBalance: statement - 1)
+            XCTFail("Submission must preserve and enforce the reviewed observation")
+        } catch { }
+        XCTAssertEqual(store.balance(for: account), working)
+        try await store.reconcile(accountID: account.id, statementBalance: statement, throughDate: cutoff,
+                                  createAdjustment: false, reason: "", expectedClearedBalance: observed)
         XCTAssertEqual(store.balance(for: account), working)
         XCTAssertEqual(store.clearedBalance(for: account), allCleared)
         for original in later {
@@ -1160,6 +1174,8 @@ final class DemoStoreTests: XCTestCase {
             }
             let beforeIDs = demo.transactions.map(\.id)
             let beforeRTA = demo.unassignedMinor
+            let observation = try await source.reconciliationClearedObservation(accountID: accountID, throughDate: "2026-09-05")
+            XCTAssertEqual(observation, 10_000)
             for (expected, consent) in [(Int64(10_000), false), (9_999, true)] {
                 do {
                     try await source.reconcileAccount(.init(accountID: accountID, statementBalanceMinor: 10_100, throughDate: "2026-09-05", createAdjustment: consent, reason: "Correction", expectedClearedBalanceMinor: expected))
@@ -1191,6 +1207,20 @@ final class DemoStoreTests: XCTestCase {
                 XCTAssertTrue(correction.reconciled && correction.cleared)
             }
         }
+    }
+
+    func testReconciliationProductionCompositionUsesReviewedObservation() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct LiveReconcileView"))
+        let end = try XCTUnwrap(source.range(of: "private struct StatementImportHistoryView", range: start.upperBound..<source.endIndex))
+        let view = source[start.upperBound..<end.lowerBound]
+        XCTAssertFalse(view.contains("workspace.reconciliationClearedBalance("))
+        XCTAssertTrue(view.contains("expectedClearedBalance: cutoffBalance"))
+        XCTAssertTrue(view.contains("observationID == id"))
+        XCTAssertTrue(view.contains("observedDate == BudgetWorkspaceStore.dateString(throughDate)"))
+        XCTAssertTrue(view.contains("cutoffBalance == nil || loadingObservation || isSaving"))
+        XCTAssertTrue(view.contains("!workspace.workspaceAccessDenied"))
     }
 
     @MainActor

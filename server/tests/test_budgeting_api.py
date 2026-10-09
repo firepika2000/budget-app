@@ -134,6 +134,7 @@ def test_account_balance_cutoff_is_authoritative_and_preserves_default(client, o
     cutoff = client.get(path, params={"through_date": "2025-01-31"}, headers=auth(owner_token))
     assert cutoff.status_code == 200, cutoff.text
     assert cutoff.json()["cleared_balance_minor"] == 10000
+    assert cutoff.json()["through_date"] == "2025-01-31"
     assert cutoff.json()["uncleared_balance_minor"] == 3000
     assert cutoff.json()["working_balance_minor"] == 13000
     assert cutoff.json()["reconciled_balance_minor"] == original.json()["reconciled_balance_minor"]
