@@ -217,6 +217,7 @@ final class LiveTransactionOutbox {
     private let fileURL: URL
     private(set) var entries: [Entry]
     private(set) var loadErrorMessage: String?
+    private(set) var isReplaying = false
 
     init(budgetID: String, serverURL: URL, token: String, fileManager: FileManager = .default) {
         let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -256,6 +257,25 @@ final class LiveTransactionOutbox {
     }
 
     func remove(id: String) throws {
+        guard !isReplaying else { throw BudgetApplicationError.invalidOperation("Wait for synchronization to finish before discarding pending changes.") }
+        try removePersisted(id: id)
+    }
+
+    func beginReplay() throws -> Bool {
+        try requireReadableQueue()
+        guard !isReplaying else { return false }
+        isReplaying = true
+        return true
+    }
+
+    func finishReplay() { isReplaying = false }
+
+    func acknowledgeReplay(id: String) throws {
+        guard isReplaying else { throw BudgetApplicationError.invalidOperation("No synchronization is in progress.") }
+        try removePersisted(id: id)
+    }
+
+    private func removePersisted(id: String) throws {
         try requireReadableQueue()
         let next = entries.filter { $0.id != id }
         try persist(next)

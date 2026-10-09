@@ -1355,6 +1355,36 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveOutboxReplayClaimBlocksDiscardAndPreservesNewEntries() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-replay-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("queue.json")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let first = RecordTransactionOperation(accountID: "a", categoryID: nil, amountMinor: 100,
+            occurredOn: "2026-10-09", payeeName: "Offline", memo: "", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: [], clientOperationID: UUID().uuidString)
+        try queue.enqueue(first)
+        XCTAssertThrowsError(try queue.acknowledgeReplay(id: first.clientOperationID!))
+        XCTAssertTrue(try queue.beginReplay())
+        XCTAssertFalse(try queue.beginReplay(), "A second refresh cannot claim the same replay")
+        XCTAssertThrowsError(try queue.remove(id: first.clientOperationID!))
+        XCTAssertEqual(queue.count, 1)
+        var second = first; second.clientOperationID = UUID().uuidString
+        try queue.enqueue(second)
+        XCTAssertEqual(queue.count, 2)
+        try queue.acknowledgeReplay(id: first.clientOperationID!)
+        XCTAssertEqual(queue.entries.map(\.id), [second.clientOperationID!])
+        XCTAssertThrowsError(try queue.remove(id: second.clientOperationID!))
+        queue.finishReplay()
+        XCTAssertFalse(queue.isReplaying)
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).entries, queue.entries)
+        try queue.remove(id: second.clientOperationID!)
+        XCTAssertEqual(queue.count, 0)
+        XCTAssertTrue(try queue.beginReplay(), "Completion releases the replay claim")
+        queue.finishReplay()
+    }
+
+    @MainActor
     func testLiveWorkspaceReadCacheSurvivesRelaunchWithoutInventingAuthority() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("live-cache-\(UUID().uuidString)", isDirectory: true)

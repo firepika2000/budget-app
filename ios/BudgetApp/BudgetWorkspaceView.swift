@@ -3581,10 +3581,12 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     /// the next foreground/background refresh.
     func flushTransactionOutbox() async throws {
         if let error = transactionOutbox.loadErrorMessage { outboxFailureMessage = error; return }
+        guard try transactionOutbox.beginReplay() else { return }
+        defer { transactionOutbox.finishReplay() }
         for entry in transactionOutbox.entries {
             do {
                 try await sendTransaction(entry.operation)
-                try transactionOutbox.remove(id: entry.id)
+                try transactionOutbox.acknowledgeReplay(id: entry.id)
                 outboxFailureMessage = nil
             } catch {
                 if isTransientConnectivityFailure(error) { throw error }
@@ -5847,6 +5849,7 @@ private struct PendingLiveTransactionsView: View {
                             Text("Saved \(entry.queuedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption2).foregroundStyle(.secondary)
                             Button("Discard Pending Transaction", role: .destructive) { pendingDiscard = entry }
+                                .disabled(store.isBackgroundSyncing || store.isLoading)
                                 .accessibilityIdentifier("discard-pending-transaction-\(entry.id)")
                         }
                         .accessibilityElement(children: .contain)
@@ -5860,6 +5863,7 @@ private struct PendingLiveTransactionsView: View {
             if !store.pendingLiveTransactions.isEmpty {
                 Section {
                     Button("Retry Synchronization", systemImage: "arrow.clockwise") { Task { await store.refresh() } }
+                        .disabled(store.isBackgroundSyncing || store.isLoading)
                         .accessibilityIdentifier("retry-pending-sync")
                 }
             }

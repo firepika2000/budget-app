@@ -7,6 +7,17 @@ claim that incomplete providers are production-ready.
 
 ### Offline transaction queue durability (2026-10-09)
 
+Replay now claims the shared outbox before copying/sending its batch, and releases the claim on
+every exit. Overlapping refreshes cannot claim the same batch. Discard is refused during replay,
+because an already-sent request cannot safely be recalled. Successful acknowledgements use a
+separate replay-only removal path; entries queued during replay remain durable for the next batch.
+Pending Sync also disables retry/discard during workspace loading or synchronization.
+
+All five extracted production persistence/replay test bodies passed in the serialized host harness,
+including replay exclusion, in-flight discard refusal, acknowledgement and newly queued entry
+preservation across reload. Regular Xcode 27 build-for-testing passed with the native regression
+compiled. This is not Simulator runtime or human acceptance; no native runner retry was attempted.
+
 The Live transaction outbox previously mutated its in-memory entries before attempting persistence.
 Failed enqueue/removal writes now leave the existing entries unchanged: staged contents are written
 atomically with existing file protection and permissions before being published in memory. An
