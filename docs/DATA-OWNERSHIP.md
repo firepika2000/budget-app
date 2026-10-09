@@ -5,6 +5,22 @@ claim that incomplete providers are production-ready.
 
 ## Authority and destination are separate
 
+### Dropbox observation lifecycle hardening (2026-10-09)
+
+The native coordinator now invalidates in-flight connection/list reads before sign-in, upload,
+download, deletion or revocation begins. Only the newest observation revision may publish its
+connected state, generation list or read error. Background refresh does not start during a
+mutation. Thus an older successful list cannot restore a deleted row or repopulate the list after
+disconnect; an older failed read cannot replace a newer operation's status. Authorization's own
+post-connect list refresh shares the same revision guard. Successful current list refresh clears
+its stale read error. Storage, encryption, immutable publication and token refresh are unchanged.
+
+Regular Xcode 27 build-for-testing passed for the production app and native test targets.
+Eight focused Swift Dropbox destination tests passed. Added native source-composition regression
+checks cover operation invalidation and success/error read guards; these are wiring evidence,
+not a simulated suspended-network concurrency test or live Dropbox acceptance. Native test runner
+execution remains unverified. No user Dropbox objects or Live/Simulator data were modified.
+
 - **Budget Server** is currently the production authority for shared households. PostgreSQL and
   the encrypted attachment object store move together.
 - **Local Device** is the default single-user, single-writer SQLite authority in the native app. It

@@ -10,6 +10,24 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testDropboxReadResponsesCannotOverwriteNewerOperations() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/DropboxBackupCoordinator.swift")
+        let source = try String(contentsOf: file)
+        for signature in ["func connect()", "func upload(packageURL:", "func download(_ generation:", "func delete(_ generation:", "func revoke()"] {
+            let start = try XCTUnwrap(source.range(of: signature))
+            let tail = source[start.upperBound...]
+            let invalidation = try XCTUnwrap(tail.range(of: "observationRevision = UUID()"))
+            let busy = try XCTUnwrap(tail.range(of: "isWorking = true"))
+            XCTAssertLessThan(invalidation.lowerBound, busy.lowerBound)
+        }
+        let listStart = try XCTUnwrap(source.range(of: "private func refreshGenerations(revision: UUID)"))
+        let listEnd = try XCTUnwrap(source.range(of: "func recordSuccessfulBackup", range: listStart.upperBound..<source.endIndex))
+        let list = source[listStart.upperBound..<listEnd.lowerBound]
+        XCTAssertEqual(list.components(separatedBy: "guard observationRevision == revision else { return }").count - 1, 2)
+        XCTAssertTrue(list.contains("let refreshed = try await destination.generations()"))
+        XCTAssertTrue(source.contains("guard !isWorking else { return }"))
+        XCTAssertFalse(source.contains("isConnected = await credential.isConnected()"))
+    }
     func testFundingRequestHistoryExplainsRecordedAmountsAndDates() throws {
         for action in ["approved", "partially_approved"] {
             XCTAssertEqual(FundingRequestHistoryPresentation.amountLabel(for: action), "Approved amount")

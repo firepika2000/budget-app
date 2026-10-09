@@ -54,6 +54,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     private let credential: DropboxOAuthCredential?
     private var authenticationSession: ASWebAuthenticationSession?
     private var pendingAuthorization: DropboxPKCEAuthorization?
+    private var observationRevision = UUID()
 
     init(
         appKey: String? = nil,
@@ -93,12 +94,17 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     }
 
     func refresh() async {
+        guard !isWorking else { return }
+        let revision = UUID()
+        observationRevision = revision
         guard let credential else {
             isConnected = false; generations = []
             return
         }
-        isConnected = await credential.isConnected()
-        if isConnected { await refreshGenerations() } else { generations = [] }
+        let connected = await credential.isConnected()
+        guard observationRevision == revision else { return }
+        isConnected = connected
+        if connected { await refreshGenerations(revision: revision) } else { generations = [] }
     }
 
     func connect() {
@@ -107,6 +113,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
             return
         }
         do {
+            observationRevision = UUID()
             let authorization = try credential.beginAuthorization()
             pendingAuthorization = authorization
             errorMessage = nil
@@ -130,6 +137,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     func upload(packageURL: URL) async throws -> DropboxBackupPublication {
         guard !isWorking else { throw DropboxBackupOperationError.alreadyWorking }
         let destination = try destination()
+        observationRevision = UUID()
         isWorking = true; errorMessage = nil; publicationWarning = nil
         defer { isWorking = false }
         do {
@@ -164,6 +172,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     func download(_ generation: DropboxBackupEntry) async throws -> URL {
         guard !isWorking else { throw DropboxBackupOperationError.alreadyWorking }
         let destination = try destination()
+        observationRevision = UUID()
         let output = FileManager.default.temporaryDirectory.appendingPathComponent(
             "Dropbox-\(UUID().uuidString)-\(generation.name)", isDirectory: true
         )
@@ -181,6 +190,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     func delete(_ generation: DropboxBackupEntry) async throws {
         guard !isWorking else { throw DropboxBackupOperationError.alreadyWorking }
         let destination = try destination()
+        observationRevision = UUID()
         isWorking = true; errorMessage = nil
         defer { isWorking = false }
         do {
@@ -197,6 +207,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
 
     func revoke() async {
         guard let credential, !isWorking else { return }
+        observationRevision = UUID()
         isWorking = true; errorMessage = nil
         defer { isWorking = false }
         do {
@@ -205,10 +216,17 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         } catch { errorMessage = error.localizedDescription }
     }
 
-    func refreshGenerations() async {
+    private func refreshGenerations(revision: UUID) async {
         guard let destination = try? destination() else { return }
-        do { generations = try await destination.generations() }
-        catch { errorMessage = error.localizedDescription }
+        do {
+            let refreshed = try await destination.generations()
+            guard observationRevision == revision else { return }
+            generations = refreshed
+            errorMessage = nil
+        } catch {
+            guard observationRevision == revision else { return }
+            errorMessage = error.localizedDescription
+        }
     }
 
     func recordSuccessfulBackup(at completedAt: Date = Date()) {
@@ -299,7 +317,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
             )
             _ = try await credential.installAuthorizationCode(code, verifier: authorization.verifier)
             isConnected = true
-            await refreshGenerations()
+            await refreshGenerations(revision: observationRevision)
         } catch { errorMessage = error.localizedDescription }
     }
 
