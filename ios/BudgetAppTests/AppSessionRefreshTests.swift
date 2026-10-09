@@ -1615,6 +1615,16 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertTrue(reopened.accounts.isEmpty)
         XCTAssertTrue(reopened.transactions.isEmpty)
         XCTAssertLessThan(Date().timeIntervalSince(reopened.savedAt), 5)
+        let revised = LiveWorkspaceReadCache(fileURL: directory.appendingPathComponent("cache.json"), accessRevision: "scope-a")
+        XCTAssertThrowsError(try revised.load(), "Legacy cache cannot establish current revision authority")
+        try revised.save(snapshot)
+        XCTAssertEqual(try revised.load().accessRevision, "scope-a")
+        XCTAssertNoThrow(try LiveWorkspaceReadCache(fileURL: directory.appendingPathComponent("cache.json"), accessRevision: "scope-a").load())
+        XCTAssertThrowsError(try LiveWorkspaceReadCache(fileURL: directory.appendingPathComponent("cache.json"), accessRevision: "scope-b").load())
+        revised.updateAccessRevision("scope-b")
+        XCTAssertThrowsError(try revised.load(), "Even failed disk eviction must not expose earlier-scope data")
+        try revised.save(snapshot)
+        XCTAssertEqual(try revised.load().accessRevision, "scope-b")
     }
 
     @MainActor

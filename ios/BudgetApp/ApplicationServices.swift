@@ -307,6 +307,7 @@ final class LiveTransactionOutbox {
 
 struct LiveWorkspaceCachePayload: Codable {
     let savedAt: Date
+    let accessRevision: String?
     let accounts: [APIAccount]
     let accountBalances: [String: APIAccountBalance]
     let categories: [APICategory]
@@ -323,8 +324,10 @@ struct LiveWorkspaceCachePayload: Codable {
 @MainActor
 final class LiveWorkspaceReadCache {
     private let fileURL: URL
+    private var accessRevision: String?
 
-    init(budgetID: String, serverURL: URL, token: String, fileManager: FileManager = .default) {
+    init(budgetID: String, serverURL: URL, token: String, accessRevision: String? = nil, fileManager: FileManager = .default) {
+        self.accessRevision = accessRevision
         let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("BudgetApp/LiveCache", isDirectory: true)
         try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
@@ -334,11 +337,13 @@ final class LiveWorkspaceReadCache {
         fileURL = root.appendingPathComponent("\(scope).json", isDirectory: false)
     }
 
-    init(fileURL: URL) { self.fileURL = fileURL }
+    init(fileURL: URL, accessRevision: String? = nil) { self.fileURL = fileURL; self.accessRevision = accessRevision }
+
+    func updateAccessRevision(_ value: String?) { accessRevision = value }
 
     func save(_ snapshot: WorkspaceSnapshot) throws {
         let value = LiveWorkspaceCachePayload(
-            savedAt: Date(), accounts: snapshot.accounts,
+            savedAt: Date(), accessRevision: accessRevision, accounts: snapshot.accounts,
             accountBalances: snapshot.accountBalances, categories: snapshot.categories,
             groups: snapshot.groups, transactions: snapshot.transactions, summary: snapshot.summary,
             targets: snapshot.targets, schedules: snapshot.schedules, forecast: snapshot.forecast
@@ -351,7 +356,11 @@ final class LiveWorkspaceReadCache {
     }
 
     func load() throws -> LiveWorkspaceCachePayload {
-        try JSONDecoder().decode(LiveWorkspaceCachePayload.self, from: Data(contentsOf: fileURL))
+        let value = try JSONDecoder().decode(LiveWorkspaceCachePayload.self, from: Data(contentsOf: fileURL))
+        guard value.accessRevision == accessRevision else {
+            throw BudgetApplicationError.invalidOperation("The saved workspace belongs to earlier access settings. Reconnect to load your current budget access.")
+        }
+        return value
     }
 
     func remove() { try? FileManager.default.removeItem(at: fileURL) }

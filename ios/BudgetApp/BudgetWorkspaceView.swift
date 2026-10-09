@@ -3766,11 +3766,12 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let credentials = LiveWorkspaceCredentials(serverURL: serverURL, token: token, clientFactory: clientFactory)
         self.credentials = credentials
         commands = LiveWorkspaceCommandRepository(budget: budget, credentials: credentials)
-        readCache = LiveWorkspaceReadCache(budgetID: budget.id, serverURL: serverURL, token: token)
+        readCache = LiveWorkspaceReadCache(budgetID: budget.id, serverURL: serverURL, token: token, accessRevision: budget.accessRevision)
     }
 
     func updateCredentials(serverURL: URL, token: String) { credentials.update(serverURL: serverURL, token: token) }
     func updateBudget(_ value: APIBudget, authorityChanged: Bool) {
+        readCache.updateAccessRevision(value.accessRevision)
         if authorityChanged { budgetAuthorityRevision = UUID(); readCache.remove() }
         budget = value; commands.budget = value
     }
