@@ -10,6 +10,31 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testAllowanceHistoryExplainsExactSplitsCadenceAndPrivacy() {
+        let before = APIAllowancePlanRevisionSnapshot(delegatedUserID: "child", sourceCategoryID: "source", name: "Weekly",
+            amountMinor: 9007199254740993, nextIssueDate: "2026-10-01", recurrenceUnit: "weeks", intervalCount: 1,
+            rolloverPolicy: "rollover", isActive: true, splits: [.init(destinationCategoryID: "a", amountMinor: 9007199254740993)])
+        let after = APIAllowancePlanRevisionSnapshot(delegatedUserID: "child", sourceCategoryID: "source", name: "Weekly",
+            amountMinor: 9007199254740994, nextIssueDate: "2026-10-08", recurrenceUnit: "weeks", intervalCount: 2,
+            rolloverPolicy: "reclaim", isActive: false, splits: [.init(destinationCategoryID: "b", amountMinor: 9007199254740994)])
+        let revision = APIAllowancePlanRevision(id: "r", planID: "p", action: "updated", actorUserID: "owner",
+            actorDisplayName: "Owner", beforeSnapshot: before, afterSnapshot: after, createdAt: "2026-10-09")
+        let changes = AllowanceHistoryPresentation.changes(revision, formatMoney: { String($0) }, categoryName: { "Group · \($0)" }, memberName: { $0 })
+        XCTAssertEqual(changes.first { $0.label == "Amount" }?.before, "9007199254740993")
+        XCTAssertEqual(changes.first { $0.label == "Interval" }?.after, "2")
+        XCTAssertEqual(changes.first { $0.label == "Next issue" }?.after, "2026-10-08")
+        XCTAssertEqual(changes.first { $0.label == "Status" }?.after, "Paused")
+        XCTAssertNil(changes.first { $0.id == "split-a" }?.after)
+        XCTAssertNil(changes.first { $0.id == "split-b" }?.before)
+        XCTAssertEqual(changes.first { $0.id == "split-b" }?.label, "Destination: Group · b")
+        let hidden = AllowanceHistoryPresentation.changes(revision, formatMoney: { _ in "••••" }, categoryName: { $0 }, memberName: { $0 })
+        XCTAssertEqual(hidden.first { $0.label == "Amount" }?.after, "••••")
+        XCTAssertEqual(hidden.first { $0.id == "split-b" }?.after, "••••")
+        let unchanged = APIAllowancePlanRevision(id: "n", planID: "p", action: "updated", actorUserID: "owner",
+            actorDisplayName: nil, beforeSnapshot: after, afterSnapshot: after, createdAt: "2026-10-09")
+        XCTAssertTrue(AllowanceHistoryPresentation.changes(unchanged, formatMoney: { String($0) }, categoryName: { $0 }, memberName: { $0 }).isEmpty)
+    }
+
     func testReceiptCategorySuggestionsRequireOneWholePhraseIdentity() throws {
         func category(_ id: String, _ name: String, archived: Bool = false) throws -> APICategory {
             let payload: [String: Any] = ["id": id, "budget_id": "budget", "group_id": id,

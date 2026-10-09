@@ -2476,3 +2476,26 @@ Verification: two focused native XCTest cases pass under regular Xcode 27 on the
 ordering, multiple category phrases, archived/empty names, case/diacritic/whitespace normalization,
 an empty authorized scope, repeated identical identities and existing exact-total suggestions.
 The production app compiles; `git diff --check` passes. Human visual acceptance remains pending.
+
+### Allowance plan history closure — 2026-10-09
+
+Production Allowance Detail now offers bounded 25-row earlier-plan loading instead of silently
+stopping at the default first 50 decisions. It guards overlapping requests, ends continuation after
+a short/final page and retains loaded observations when a page fails. Expandable Funding rule details
+explain changed recipient, source, exact amount, date/cadence, rollover, pause state and added/removed
+destination splits. Change detection uses original values before redaction; names use current authorized
+household/category data and qualified group names. Existing Issue Now and pause/reactivation remain
+on the canonical application-service path. No money is synthesized by history presentation.
+
+Human retest after rebuild: Household → allowance → Plan changes; expand a pause/issue decision,
+toggle Hide Amounts, and load older plan changes through the final page. No server restart or migration.
+Issuance history remains an explicitly open unpaged-contract scale gap in `V0.12-CLOSURE-AUDIT.md`;
+this checkpoint does not declare the entire milestone complete or authorize TestFlight publication.
+
+Verification: focused native changed-field coverage passes for exact large amounts, cadence/date,
+pause, rollover, added/removed qualified splits, no-op suppression and Hide Amounts. The existing
+production Demo allowance golden-vector test passes for atomic/versioned issuance, server-equivalent
+rollover and restricted-member policy history denial, using the built app without recompilation.
+All ten backend allowance contract tests pass; the production app compiles under regular Xcode 27
+on the preserved iPhone 17 Pro Max/iOS 27 Simulator and `git diff --check` passes. Pagination is
+source-reviewed/compiled, not claimed as an automated production UI interaction pass.

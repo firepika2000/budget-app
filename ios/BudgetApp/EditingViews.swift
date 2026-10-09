@@ -1204,6 +1204,50 @@ enum DelegatedPolicyHistoryPresentation {
     }
 }
 
+enum AllowanceHistoryPresentation {
+    struct Change: Identifiable, Equatable {
+        let id: String
+        let label: String
+        let before: String?
+        let after: String?
+    }
+    static func changes(_ revision: APIAllowancePlanRevision, formatMoney: (Int64) -> String,
+                        categoryName: (String) -> String, memberName: (String) -> String) -> [Change] {
+        func values(_ snapshot: APIAllowancePlanRevisionSnapshot?) -> [String?] {
+            guard let snapshot else { return Array(repeating: nil, count: 9) }
+            return [snapshot.name, snapshot.delegatedUserID, snapshot.sourceCategoryID,
+                    String(snapshot.amountMinor), snapshot.nextIssueDate, snapshot.recurrenceUnit.capitalized,
+                    String(snapshot.intervalCount), snapshot.rolloverPolicy == "rollover" ? "Carries forward" : "Returns before next issue",
+                    snapshot.isActive ? "Active" : "Paused"]
+        }
+        let old = values(revision.beforeSnapshot), new = values(revision.afterSnapshot)
+        let labels = ["Name", "Recipient", "Source category", "Amount", "Next issue", "Recurrence", "Interval", "Unused money", "Status"]
+        func display(_ value: String, index: Int) -> String {
+            switch index {
+            case 1: memberName(value)
+            case 2: categoryName(value)
+            case 3: Int64(value).map(formatMoney) ?? "Unavailable"
+            default: value
+            }
+        }
+        var result = labels.indices.compactMap { index -> Change? in
+            guard old[index] != new[index] else { return nil }
+            return .init(id: "field-\(index)", label: labels[index], before: old[index].map { display($0, index: index) },
+                         after: new[index].map { display($0, index: index) })
+        }
+        let beforeSplits = revision.beforeSnapshot?.splits ?? [], afterSplits = revision.afterSnapshot.splits
+        for id in Set(beforeSplits.map(\.destinationCategoryID) + afterSplits.map(\.destinationCategoryID)).sorted() {
+            let before = beforeSplits.first { $0.destinationCategoryID == id }?.amountMinor
+            let after = afterSplits.first { $0.destinationCategoryID == id }?.amountMinor
+            if before != after {
+                result.append(.init(id: "split-\(id)", label: "Destination: \(categoryName(id))",
+                                    before: before.map(formatMoney), after: after.map(formatMoney)))
+            }
+        }
+        return result
+    }
+}
+
 enum ScheduleHistoryPresentation {
     struct Change: Identifiable, Equatable {
         var id: String { label }
