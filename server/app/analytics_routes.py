@@ -203,6 +203,14 @@ def report_transactions(
     return budget, transactions
 
 
+def _selected_spending_categories(categories, groups, category_ids, category_groups):
+    """Filter portions, not just parent transactions that contain a matching split."""
+    return {key for key, model in categories.items() if (
+        (not category_ids or key in category_ids)
+        and (not category_groups or groups.get(model.group_id) in category_groups)
+    )}
+
+
 @router.get("/spending", response_model=SpendingReportResponse, response_model_exclude_defaults=True)
 def spending_report(
     budget_id: str,
@@ -229,6 +237,7 @@ def spending_report(
     groups = {
         item.id: item.name for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))
     }
+    selected_categories = _selected_spending_categories(categories, groups, category_id, category_group)
     totals: dict[str, int] = defaultdict(int)
     transaction_ids: dict[str, list[str]] = defaultdict(list)
     for transaction in transactions:
@@ -239,7 +248,7 @@ def spending_report(
             else [(split.category_id, split.amount_minor) for split in transaction.splits]
         )
         for category, amount in portions:
-            if category is None or amount == 0 or (category_id and category not in category_id):
+            if category not in selected_categories or amount == 0:
                 continue
             # Negative categorized amounts are spending; positive categorized amounts are
             # refunds/reversals that reduce spending. A positive amount must never become income.
@@ -347,6 +356,7 @@ def spending_trends_report(
     )
     categories = {item.id: item for item in db.scalars(select(Category).where(Category.budget_id == budget_id))}
     groups = {item.id: item.name for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))}
+    selected_categories = _selected_spending_categories(categories, groups, category_id, category_group)
     periods = list(month_periods(start_date, end_date))
 
     totals: dict[str, int] = defaultdict(int)
@@ -363,7 +373,7 @@ def spending_trends_report(
         )
         for category_key, amount in portions:
             category = categories.get(category_key)
-            if category is None or amount == 0:
+            if category is None or category_key not in selected_categories or amount == 0:
                 continue
             if dimension == "category":
                 key, name, group = category.id, category.name, groups.get(category.group_id, "Uncategorized")

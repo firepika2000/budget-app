@@ -64,6 +64,42 @@ def test_spending_report_is_explainable_and_split_aware(client, owner_token, ses
     assert report.json()["total_spending_minor"] == 15182
 
 
+def test_spending_filters_clip_split_portions_in_breakdown_and_all_trend_dimensions(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, groceries = create_budget_structure(client, owner_token, budget["id"])
+    dining = add_category(client, owner_token, budget["id"], "Dining Group", "Dining")
+    purchase = record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=-12000,
+        payee_name="Mixed market", splits=[
+            {"category_id": groceries["id"], "amount_minor": -8000},
+            {"category_id": dining["id"], "amount_minor": -4000},
+        ])
+    refund = record(client, owner_token, budget["id"], account_id=checking["id"], amount_minor=3000,
+        payee_name="Mixed market", splits=[
+            {"category_id": groceries["id"], "amount_minor": 2000},
+            {"category_id": dining["id"], "amount_minor": 1000},
+        ])
+    base = f"/api/v1/budgets/{budget['id']}/reports"
+    period = "start_date=2026-09-01&end_date=2026-09-30"
+    cases = [({"category_id": groceries["id"]}, 6000, {groceries["id"]}),
+             ({"category_group": "Dining Group"}, 3000, {dining["id"]}),
+             ({"category_id": groceries["id"], "category_group": "Dining Group"}, 0, set())]
+    for filters, expected, category_ids in cases:
+        filters = {"start_date": "2026-09-01", "end_date": "2026-09-30", **filters}
+        response = client.get(f"{base}/spending?{period}", params=filters, headers=auth(owner_token))
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["total_spending_minor"] == expected
+        assert {row["category_id"] for row in body["categories"]} == category_ids
+        for dimension in ["category", "group", "payee"]:
+            response = client.get(f"{base}/spending-trends?{period}", params={**filters, "dimension": dimension}, headers=auth(owner_token))
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["total_spending_minor"] == expected
+            assert sum(row["spending_minor"] for row in body["series"]) == expected
+            if expected:
+                assert set(body["series"][0]["transaction_ids"]) == {purchase["id"], refund["id"]}
+
+
 def test_income_spending_excludes_transfers_and_recalculates_after_edit(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     checking, groceries = create_budget_structure(client, owner_token, budget["id"])

@@ -1,5 +1,31 @@
 # Production readiness mission ledger
 
+## Split spending-filter correction (2026-10-09)
+
+A production HTTP regression proved a category-filtered Spending Trends request counted other
+portions of the same split: expected 6,000 minor units after refund, returned 9,000. Inspection
+also confirmed group-filtered Spending Breakdown and Local Device/Demo report portions lacked
+the corresponding selection guard. Parent-transaction matching alone does not select its portions.
+
+Breakdown and Trends now intersect selected categories and groups at each canonical portion,
+including refunds, for category/group/payee dimensions. Server routes share one selected-category
+definition; Local Device/Demo uses the same intersection for both report projections. Whole-split
+visibility authorization is unchanged, transfers remain excluded, and no transaction, allocation,
+reserve, balance or income-report formula changes. Native regression covers the same mixed purchase,
+refund and disjoint category/group selection fixture through the production Demo data source.
+
+All 61 analytics tests passed; a further 42 delegated-privacy, shared financial-vector and report-scale
+tests passed using disposable test databases. Native runtime acceptance remains unverified while
+the existing runner is unavailable. TestFlight is held. Server update/restart and app rebuild are
+required to use the correction; no migration or customer-data reset is required.
+Regular Xcode 27 build-for-testing passed for the app and test targets after correcting omitted
+memo fields in the new split fixture. The native parity case was compiled, not executed. Diff
+checks passed; no repeated UI runner or broad redundant backend run was performed.
+
+Human spot-check, when acceptance resumes: filter an existing cross-group split purchase/refund to
+one category, then one group, in Spending & Income; Breakdown and Trends must count only the selected
+portions. Do not create or reset customer test data merely for this check.
+
 ## Reconciliation observation foundation (2026-10-09)
 
 Confirmed open scale/scope gap: the production reconciliation screen still derives its cutoff

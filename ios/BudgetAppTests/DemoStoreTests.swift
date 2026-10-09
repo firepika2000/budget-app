@@ -2528,6 +2528,33 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDemoSpendingFiltersClipMixedSplitPurchaseAndRefundPortions() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        XCTAssertTrue(source.demo.createAccount(name: "Checking", type: "checking", isOnBudget: true, startingBalance: 50000))
+        XCTAssertTrue(source.demo.createCategory(name: "Groceries", group: "Food"))
+        XCTAssertTrue(source.demo.createCategory(name: "Dining", group: "Dining Group"))
+        let account = try XCTUnwrap(source.demo.accounts.first?.id)
+        let food = try XCTUnwrap(source.demo.categories.first(where: { $0.name == "Groceries" })?.id)
+        let dining = try XCTUnwrap(source.demo.categories.first(where: { $0.name == "Dining" })?.id)
+        for (total, foodAmount, diningAmount): (Int64, Int64, Int64) in [(-12000, -8000, -4000), (3000, 2000, 1000)] {
+            try await source.recordTransaction(.init(accountID: account, categoryID: nil, amountMinor: total,
+                occurredOn: "2026-09-04", payeeName: "Mixed market", memo: "", isCleared: true,
+                splits: [.init(categoryID: food, amountMinor: foodAmount, memo: ""), .init(categoryID: dining, amountMinor: diningAmount, memo: "")],
+                flag: nil, tags: [], attachmentMetadata: []))
+        }
+        for (category, group, expected): (String, String, Int64) in [(food, "", 6000), ("", "Dining Group", 3000), (food, "Dining Group", 0)] {
+            for dimension in ["category", "group", "payee"] {
+                let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-09-01"), end: BudgetWorkspaceStore.parseDate("2026-09-30"),
+                    accountID: "", categoryID: category, categoryGroup: group, payee: "", memberID: "", transactionType: "",
+                    cleared: "all", flag: "", tag: "", spendingTrendDimension: dimension, includeTracking: true)
+                let snapshot = try await source.snapshot(planMonth: query.start, report: query)
+                XCTAssertEqual(snapshot.spending?.totalSpendingMinor, expected)
+                XCTAssertEqual(snapshot.spendingTrends?.totalSpendingMinor, expected)
+            }
+        }
+    }
+
+    @MainActor
     func testDemoAllocationHistoryMatchesLiveContractShape() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")

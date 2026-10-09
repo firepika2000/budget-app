@@ -766,7 +766,11 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                 || (report.transactionType == "spending" && item.transferID == nil && item.amount < 0 && !item.categoryIDs.isEmpty)
                 || (report.transactionType == "refund" && item.transferID == nil && item.amount > 0 && !item.categoryIDs.isEmpty))
         }
-        let spendingRows: [[String: Any]] = visibleCategories.compactMap { category in
+        let spendingCategories = visibleCategories.filter {
+            (report.categoryID.isEmpty || $0.id == report.categoryID)
+                && (report.categoryGroup.isEmpty || $0.group == report.categoryGroup)
+        }
+        let spendingRows: [[String: Any]] = spendingCategories.compactMap { category in
             let contributing = included.filter { $0.transferID == nil && $0.amount != 0 && $0.categoryIDs.contains(category.id) }
             let total = contributing.reduce(Int64(0)) { $0 - (demo.canonicalCategoryAmounts(for: $1)[category.id] ?? 0) }
             return total <= 0 ? nil : ["category_id": category.id, "category_name": category.name, "category_group": category.group, "spending_minor": total, "transaction_ids": contributing.map(\.id)]
@@ -783,7 +787,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         var trendIDs: [String: [String]] = [:], trendPointTotals: [String: [String: Int64]] = [:], trendPointIDs: [String: [String: [String]]] = [:]
         for item in included where item.transferID == nil && item.amount != 0 {
             for (categoryID, amount) in demo.canonicalCategoryAmounts(for: item) {
-                guard let category = visibleCategories.first(where: { $0.id == categoryID }) else { continue }
+                guard let category = spendingCategories.first(where: { $0.id == categoryID }) else { continue }
                 let key: String, name: String, group: String?
                 switch report.spendingTrendDimension {
                 case "group": key = "group:\(category.group)"; name = category.group; group = nil
