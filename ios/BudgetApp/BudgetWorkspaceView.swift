@@ -7326,13 +7326,19 @@ private struct LiveHomeView: View {
                             .font(.title3.bold()).foregroundStyle(.secondary)
                             .accessibilityIdentifier("home-budget-total-hidden")
                         Text("The household owner has kept the total Ready to Assign private. Your shared categories remain available below.").foregroundStyle(.secondary)
-                    } else {
-                        Text(store.format(store.summary?.readyToAssignMinor ?? 0)).font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
+                    } else if let summary = store.summary {
+                        Text(store.format(summary.readyToAssignMinor)).font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
                         Text("Real money waiting for a purpose").foregroundStyle(.secondary)
+                    } else {
+                        Label("Not available yet", systemImage: "clock")
+                            .font(.title3.bold()).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("home-budget-total-unavailable")
+                        Text("Load the selected month's plan to see its available money. Missing observations are not a zero balance.")
+                            .font(.subheadline).foregroundStyle(.secondary)
                     }
                 }.padding(.vertical, 10)
             }
-            if !store.isLoading && (activeAccounts.isEmpty || needsCategoryStructure) {
+            if store.summary != nil && !store.isLoading && (activeAccounts.isEmpty || needsCategoryStructure) {
                 Section("Get started") {
                     if activeAccounts.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
@@ -7801,6 +7807,26 @@ private struct LivePlanView: View {
     }
     var body: some View {
         List {
+            if store.summary == nil {
+                Section {
+                    if store.isLoading || store.isBackgroundSyncing {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Loading \(store.planMonth.formatted(.dateTime.month(.wide).year()))")
+                                .foregroundStyle(.secondary)
+                        }.accessibilityIdentifier("plan-month-loading")
+                    } else {
+                        ContentUnavailableView {
+                            Label("Plan not available", systemImage: "calendar.badge.exclamationmark")
+                        } description: {
+                            Text("No saved plan is available for \(store.planMonth.formatted(.dateTime.month(.wide).year())). Reconnect and retry, or return to a month you have already loaded. Other saved budget data is unchanged.")
+                        } actions: {
+                            Button("Retry", systemImage: "arrow.clockwise") { Task { await reload() } }
+                                .buttonStyle(.bordered)
+                        }.accessibilityIdentifier("plan-month-unavailable")
+                    }
+                }
+            }
             if let delegated = store.delegatedBudget {
                 Section("Your delegated budget") {
                     LabeledContent("Total authority", value: store.format(delegated.authorityMinor))
@@ -7842,7 +7868,7 @@ private struct LivePlanView: View {
                     Text("Monthly plan cost totals active target recommendations for this month, excluding snoozed targets. It is not a forecast of all expenses and does not assign money.")
                 }
             }
-            if !activation.showsNormalPlan && !store.isLoading {
+            if store.summary != nil && !activation.showsNormalPlan && !store.isLoading {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(store.groups.isEmpty ? "Build your first plan" : "Add your first category").font(.headline)
@@ -7921,7 +7947,10 @@ private struct LivePlanView: View {
                     Button("Manage categories", systemImage: "list.bullet.rectangle") { showCategories = true }
                         .accessibilityIdentifier("manage-categories-action")
                 }
-                if store.budget.can("move_money") { Button("Move money", systemImage: "arrow.left.arrow.right") { movePresentation = .init(sourceCategoryID: nil) } }
+                if store.budget.can("move_money") {
+                    Button("Move money", systemImage: "arrow.left.arrow.right") { movePresentation = .init(sourceCategoryID: nil) }
+                        .disabled(store.summary == nil)
+                }
                 if store.budget.can("view_allocation_history") {
                     NavigationLink {
                         HistoryAuthorityBoundary { AllocationHistoryView() }

@@ -390,6 +390,24 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertTrue(source.contains("HistoryAuthorityBoundary(.account(transaction.accountID), unavailableTitle: \"Attachments unavailable\")"))
     }
 
+    func testMissingMonthlyObservationHasProductionRecoveryInsteadOfZeroOrEmptyMutationSheet() throws {
+        let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: path)
+        let homeStart = try XCTUnwrap(source.range(of: "private struct LiveHomeView:"))
+        let homeEnd = try XCTUnwrap(source.range(of: "private struct LivePlanView:"))
+        let home = String(source[homeStart.lowerBound..<homeEnd.lowerBound])
+        XCTAssertTrue(home.contains("home-budget-total-unavailable"))
+        XCTAssertFalse(home.contains("store.summary?.readyToAssignMinor ?? 0"))
+        let planEnd = try XCTUnwrap(source.range(of: "private struct LivePlanGroupDetailView:", range: homeEnd.lowerBound..<source.endIndex))
+        let plan = String(source[homeEnd.lowerBound..<planEnd.lowerBound])
+        XCTAssertTrue(plan.contains("plan-month-loading"))
+        XCTAssertTrue(plan.contains("plan-month-unavailable"))
+        XCTAssertTrue(plan.contains("Button(\"Retry\", systemImage: \"arrow.clockwise\")"))
+        XCTAssertTrue(plan.contains(".disabled(store.summary == nil)"))
+        XCTAssertTrue(plan.contains("if store.summary != nil && !activation.showsNormalPlan"))
+    }
+
     func testStatementReviewAuthorityChangeClosesWithoutAutomaticMutation() throws {
         let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
