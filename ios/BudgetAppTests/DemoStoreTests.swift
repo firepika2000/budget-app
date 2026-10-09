@@ -2894,9 +2894,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(first.automaticBackupIsDue(at: completedAt))
         XCTAssertTrue(first.claimAutomaticBackupIfDue(at: completedAt))
         XCTAssertFalse(first.claimAutomaticBackupIfDue(at: completedAt), "Overlapping activation must not duplicate capture")
-        first.finishAutomaticBackupAttempt()
-        XCTAssertTrue(first.claimAutomaticBackupIfDue(at: completedAt))
-        first.finishAutomaticBackupAttempt()
+        first.finishAutomaticBackupAttempt(at: completedAt)
+        XCTAssertFalse(first.claimAutomaticBackupIfDue(at: completedAt), "Pre-capture failure must also respect cooldown")
         first.recordSuccessfulBackup(at: completedAt)
         XCTAssertFalse(first.automaticBackupIsDue(at: completedAt.addingTimeInterval(7 * 86_400 - 1)))
         XCTAssertTrue(first.automaticBackupIsDue(at: completedAt.addingTimeInterval(7 * 86_400)))
@@ -2914,15 +2913,17 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(first.automaticBackupIsDue(at: retryAt))
         XCTAssertTrue(first.claimAutomaticBackupIfDue(at: retryAt))
         XCTAssertFalse(first.claimAutomaticBackupIfDue(at: retryAt), "Only one pending upload may be claimed")
-        first.finishAutomaticBackupAttempt()
+        first.finishAutomaticBackupAttempt(at: retryAt)
 
         let reconstructed = DropboxBackupCoordinator(appKey: nil, defaults: defaults)
         XCTAssertTrue(reconstructed.automaticBackupEnabled)
         XCTAssertEqual(reconstructed.automaticBackupIntervalDays, 7)
         XCTAssertEqual(reconstructed.lastSuccessfulBackupAt, completedAt)
-        XCTAssertEqual(reconstructed.nextAutomaticBackupAt(), retryAt)
+        let retryAfterAttempt = retryAt.addingTimeInterval(DropboxBackupCoordinator.pendingRetryInterval)
+        XCTAssertEqual(reconstructed.nextAutomaticBackupAt(), retryAfterAttempt)
         XCTAssertFalse(reconstructed.automaticBackupIsDue(at: retryAt.addingTimeInterval(-1)))
-        XCTAssertTrue(reconstructed.automaticBackupIsDue(at: retryAt))
+        XCTAssertFalse(reconstructed.automaticBackupIsDue(at: retryAt))
+        XCTAssertTrue(reconstructed.automaticBackupIsDue(at: retryAfterAttempt))
         reconstructed.automaticBackupEnabled = false
         XCTAssertFalse(reconstructed.automaticBackupIsDue(at: retryAt))
         reconstructed.automaticBackupEnabled = true
@@ -2937,6 +2938,31 @@ final class DemoStoreTests: XCTestCase {
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
         XCTAssertTrue(source.contains("generation = pending"), "Automatic retry must reuse the immutable package")
         XCTAssertTrue(source.contains("store.deletePendingLocalDeviceBackup(packageURL)"))
+    }
+
+    @MainActor
+    func testDropboxPreCaptureFailureCooldownSurvivesRelaunchAndVerifiedSuccessClearsIt() {
+        let suite = "BudgetAppTests.DropboxPreCapture.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = DropboxBackupCoordinator(appKey: nil, defaults: defaults)
+        first.automaticBackupEnabled = true
+        XCTAssertTrue(first.claimAutomaticBackupIfDue(at: start))
+        first.finishAutomaticBackupAttempt(at: start)
+        XCTAssertNil(first.pendingLocalGenerationURL, "A failed capture must not invent a package")
+        let retry = start.addingTimeInterval(DropboxBackupCoordinator.pendingRetryInterval)
+        XCTAssertEqual(first.nextAutomaticBackupAt(), retry)
+        let restored = DropboxBackupCoordinator(appKey: nil, defaults: defaults)
+        XCTAssertFalse(restored.claimAutomaticBackupIfDue(at: retry.addingTimeInterval(-1)))
+        XCTAssertTrue(restored.claimAutomaticBackupIfDue(at: retry))
+        restored.recordSuccessfulBackup(at: retry.addingTimeInterval(1))
+        restored.finishAutomaticBackupAttempt(at: retry.addingTimeInterval(2))
+        XCTAssertEqual(restored.nextAutomaticBackupAt(), retry.addingTimeInterval(1 + 86_400))
+        XCTAssertNil(restored.errorMessage)
+        let afterSuccess = DropboxBackupCoordinator(appKey: nil, defaults: defaults)
+        XCTAssertEqual(afterSuccess.nextAutomaticBackupAt(), restored.nextAutomaticBackupAt())
+        XCTAssertFalse(afterSuccess.automaticBackupIsDue(at: retry.addingTimeInterval(2)))
     }
 
     @MainActor

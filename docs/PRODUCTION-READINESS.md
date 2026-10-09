@@ -2568,3 +2568,22 @@ Simulator; `git diff --check` passes. These tests are not human visual or VoiceO
 Human retest after rebuilding: inspect an existing rename,
 alias or merge in Payee History and expand Payee decision details. No server restart or migration
 is required. Human visual acceptance remains pending; TestFlight remains on hold.
+
+### Dropbox automatic pre-capture retry safety — 2026-10-09
+
+Audit of the real automatic workspace path found that only failures with an already-created encrypted
+generation received a retry cooldown. A credential/disconnection or capture failure without a package
+could therefore be attempted again on each scene activation. The coordinator now persists a separate
+automatic-attempt cooldown on completion unless verified publication succeeded during that attempt.
+The existing 30-minute retry interval also covers pre-capture failures, survives relaunch, and contributes
+to the displayed Next due time. Retained-package retry still reuses the immutable encrypted generation;
+manual Back Up Now remains available and verified success clears the automatic cooldown. No token,
+encryption, remote retention or restore contract changes; no backup file is removed by this state change.
+
+Focused native coverage checks pre-capture failure without inventing a package, repeated activation,
+relaunch persistence, cooldown expiry, verified-success reset and the existing retained-generation
+schedule/overlap contract. Both native tests and production app compilation pass using regular Xcode
+27.0 (27A266a) on the preserved iPhone 17 Pro Max/iOS 27 Simulator; `git diff --check` passes.
+No live Dropbox authorization or customer backup was changed. One permission-review timeout occurred before the test process started;
+the permitted single retry started the focused native run. External Dropbox connect/backup/restore/revoke
+acceptance remains open. No server restart or migration is needed; TestFlight remains on hold.
