@@ -154,6 +154,43 @@ final class DemoStoreTests: XCTestCase {
         }
     }
 
+    func testTargetHistoryExplainsCadenceMinimumRemovalAndSnoozeExactly() {
+        let before = APICategoryTargetSnapshot(targetType: "recurring", targetAmountMinor: 9_007_199_254_740_993,
+            targetDate: "2028-12-31", recurrenceMonths: 3, minimumContributionMinor: 9_007_199_254_740_993)
+        let after = APICategoryTargetSnapshot(targetType: "recurring", targetAmountMinor: 9_007_199_254_740_994,
+            recurrenceMonths: 1, minimumContributionMinor: 0)
+        func revision(_ old: APICategoryTargetSnapshot?, _ new: APICategoryTargetSnapshot?, action: String = "updated", month: String? = nil) -> APICategoryTargetRevision {
+            .init(id: "target-history", categoryID: "category", action: action, actorUserID: "owner",
+                  beforeSnapshot: old, afterSnapshot: new, affectedMonth: month, createdAt: "2026-10-09T12:00:00Z")
+        }
+        let changes = TargetHistoryPresentation.changes(revision(before, after), currencyCode: "USD", locale: Locale(identifier: "en_US"))
+        XCTAssertEqual(changes.map(\.label), ["Target amount", "Goal date", "Recurrence", "Minimum contribution"])
+        XCTAssertEqual(changes[0].before, "$90,071,992,547,409.93")
+        XCTAssertEqual(changes[0].after, "$90,071,992,547,409.94")
+        XCTAssertNil(changes[1].after)
+        XCTAssertEqual(changes[2].before, "Every 3 months")
+        XCTAssertEqual(changes[2].after, "Every 1 month")
+        XCTAssertEqual(changes[3].after, "$0.00")
+        let hidden = TargetHistoryPresentation.changes(revision(before, after), currencyCode: "USD", hideAmounts: true)
+        XCTAssertEqual(hidden.map(\.label), changes.map(\.label), "Redaction must not conceal that a value changed")
+        XCTAssertEqual(hidden[0].before, "••••")
+        XCTAssertEqual(hidden[0].after, "••••")
+        XCTAssertEqual(hidden[3].before, "••••")
+        XCTAssertEqual(hidden[3].after, "••••")
+        XCTAssertNil(hidden[1].after)
+        let deleted = TargetHistoryPresentation.changes(revision(before, nil), currencyCode: "USD")
+        XCTAssertEqual(deleted.count, 7)
+        XCTAssertTrue(deleted.allSatisfy { $0.before != nil && $0.after == nil })
+        XCTAssertTrue(TargetHistoryPresentation.changes(revision(before, before), currencyCode: "USD").isEmpty)
+        let snooze = TargetHistoryPresentation.changes(revision(before, before, action: "snoozed", month: "2026-10-01"), currencyCode: "USD")
+        XCTAssertEqual(snooze.map(\.label), ["Guidance for 2026-10-01"])
+        XCTAssertEqual(snooze[0].before, "Active")
+        XCTAssertEqual(snooze[0].after, "Snoozed")
+        let resume = TargetHistoryPresentation.changes(revision(before, before, action: "resumed", month: "2026-10-01"), currencyCode: "USD")
+        XCTAssertEqual(resume[0].before, "Snoozed")
+        XCTAssertEqual(resume[0].after, "Active")
+    }
+
     func testDebtTermsHistoryShowsExactChangedValuesAndRemovedAssumptions() {
         let before = APIAccountDebtTermsRevisionSnapshot(termsType: "credit_card", annualRateBasisPoints: 2199,
             rateType: "variable", minimumPaymentMinor: 9_007_199_254_740_993, promotionalRateBasisPoints: 0)
@@ -173,6 +210,11 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(changes[1].after, "$90,071,992,547,409.94")
         XCTAssertEqual(changes[2].before, "0%")
         XCTAssertNil(changes[2].after)
+        let hidden = DebtTermsHistoryPresentation.changes(revision(before, after), currencyCode: "USD", hideAmounts: true)
+        XCTAssertEqual(hidden.map(\.label), changes.map(\.label))
+        XCTAssertEqual(hidden[1].before, "••••")
+        XCTAssertEqual(hidden[1].after, "••••")
+        XCTAssertEqual(hidden[0].before, "21.99%", "Non-money assumptions remain explainable")
         let removed = DebtTermsHistoryPresentation.changes(revision(before, nil), currencyCode: "USD", locale: locale)
         XCTAssertEqual(removed.count, 5)
         XCTAssertTrue(removed.allSatisfy { $0.before != nil && $0.after == nil })

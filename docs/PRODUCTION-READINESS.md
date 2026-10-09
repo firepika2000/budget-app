@@ -2294,3 +2294,29 @@ Human retest after rebuilding: Insights → Debt & Interest → Payoff; change s
 for the save indication; open Saved Plan History and expand the newest observation. Confirm exact
 before/after values, then reset the saved plan and verify reset history survives app relaunch.
 For hosted testing, update/restart the server through its normal migration-enabled startup first.
+
+### Explainable target decisions and history privacy — 2026-10-09
+
+The Target History summary previously omitted changes to recurrence and minimum contribution.
+Authoritative snapshots already preserved them; the shared view now expands all seven target
+settings as changed-field before/after observations. Removed optional settings show Not set,
+creation/removal expose the recorded values, and month-specific snooze/resume shows the guidance
+transition even when the underlying target snapshot is unchanged. This is presentation only.
+
+The audit also found Debt Terms expanded currency text bypassed Hide Amounts. Both target and debt
+history now redact present monetary values before rendering accessible text, while preserving
+non-money assumptions, explicit unset values and the fact a money field changed. Exact Int64 money
+is formatted without binary floating-point conversion. No server, migration or financial engine
+changes are required. Human visual acceptance remains separate; the stalled XCUITest runner was
+not retried for this checkpoint.
+
+Human retest after rebuild: Plan → category → Target History; expand an edited target with changed
+cadence/minimum and a snooze/resume observation. Enable Hide Amounts and inspect expanded Target
+History and Debt Terms history: currency values must be masked; dates/rates/cadence remain readable.
+
+Verification: three focused native XCTest cases pass on regular Xcode 27 and the preserved iPhone
+17 Pro Max/iOS 27 Simulator. Coverage includes exact amounts beyond binary floating-point precision,
+cadence/minimum/date changes, deletion, unchanged suppression, month-specific snooze/resume,
+Hide Amounts redaction without losing changed-field labels, and production-store money neutrality.
+The production iOS app compiles as part of that run; `git diff --check` passes. No unrelated full
+suite or UI-runner retry was performed for this presentation-only checkpoint.

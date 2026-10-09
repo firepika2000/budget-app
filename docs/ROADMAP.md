@@ -159,6 +159,10 @@ exact currency values, selected accounts, priority, rollover and goal date. Curr
 and report/balance permission checks apply at read time. Populated hosted/local migrations establish
 creation baselines; complete export, owner-only server-to-local transfer and encrypted local backup
 preserve the decisions after a saved plan is reset. Human visual acceptance remains pending.
+Target History now expands each decision to expose changed amount, date, recurrence, minimum
+contribution, priority and active state, including explicit month-specific snooze/resume transitions.
+Target and Debt Terms history currency values honor Hide Amounts without concealing which fields
+changed; neither explanatory view alters financial state.
 Remaining v0.12 work should continue auditing other mutable
 planning and administrative observations
 for overwrite-only or export gaps rather than duplicating established histories.

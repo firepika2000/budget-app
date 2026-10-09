@@ -8489,6 +8489,17 @@ private struct TargetHistoryView: View {
                     description: Text("Target decisions for \(categoryName) will remain here."))
             } else {
                 ForEach(rows) { row in
+                    DisclosureGroup {
+                        ForEach(TargetHistoryPresentation.changes(row, currencyCode: store.budget.currencyCode, hideAmounts: store.hideAmounts)) { change in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(change.label).font(.subheadline.weight(.semibold))
+                                LabeledContent("Before", value: change.before ?? "Not set")
+                                LabeledContent("After", value: change.after ?? "Not set")
+                            }
+                            .font(.caption).padding(.vertical, 4)
+                            .accessibilityElement(children: .combine)
+                        }
+                    } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         Label(title(row.action), systemImage: symbol(row.action)).font(.headline)
                         if let month = row.affectedMonth {
@@ -8504,7 +8515,7 @@ private struct TargetHistoryView: View {
                         }
                         .font(.caption).foregroundStyle(.secondary)
                     }
-                    .accessibilityElement(children: .combine)
+                    }
                     .accessibilityIdentifier("target-history-row-\(row.id)")
                 }
                 if canLoadOlder {

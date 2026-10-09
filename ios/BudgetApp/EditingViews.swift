@@ -1102,6 +1102,40 @@ struct AccountHistoryView: View {
 }
 
 /// Presentation of authoritative snapshots, never a projection or accounting calculation.
+enum TargetHistoryPresentation {
+    struct Change: Identifiable, Equatable {
+        var id: String { label }
+        let label: String
+        let before: String?
+        let after: String?
+    }
+    static func changes(_ revision: APICategoryTargetRevision, currencyCode: String,
+                        locale: Locale = .current, hideAmounts: Bool = false) -> [Change] {
+        func values(_ snapshot: APICategoryTargetSnapshot?) -> [String?] {
+            guard let snapshot else { return Array(repeating: nil, count: 7) }
+            return [snapshot.targetType.replacingOccurrences(of: "_", with: " ").capitalized,
+                    CurrencyText.display(snapshot.targetAmountMinor, currencyCode: currencyCode, locale: locale),
+                    snapshot.targetDate, snapshot.recurrenceMonths.map { "Every \($0) month\($0 == 1 ? "" : "s")" },
+                    CurrencyText.display(snapshot.minimumContributionMinor, currencyCode: currencyCode, locale: locale),
+                    String(snapshot.priority), snapshot.isActive ? "Active" : "Inactive"]
+        }
+        let labels = ["Target type", "Target amount", "Goal date", "Recurrence", "Minimum contribution", "Priority", "Status"]
+        let before = values(revision.beforeSnapshot), after = values(revision.afterSnapshot)
+        var changes = labels.indices.compactMap { index -> Change? in
+            guard before[index] != after[index] else { return nil }
+            let hidden = hideAmounts && [1, 4].contains(index)
+            return .init(label: labels[index], before: before[index].map { hidden ? "••••" : $0 },
+                         after: after[index].map { hidden ? "••••" : $0 })
+        }
+        if let month = revision.affectedMonth, ["snoozed", "resumed"].contains(revision.action) {
+            let snoozed = revision.action == "snoozed"
+            changes.append(.init(label: "Guidance for \(month)", before: snoozed ? "Active" : "Snoozed",
+                                 after: snoozed ? "Snoozed" : "Active"))
+        }
+        return changes
+    }
+}
+
 enum DebtTermsHistoryPresentation {
     struct Change: Identifiable, Equatable {
         var id: String { label }
@@ -1111,7 +1145,7 @@ enum DebtTermsHistoryPresentation {
     }
 
     static func changes(_ revision: APIAccountDebtTermsRevision, currencyCode: String,
-                        locale: Locale = .current) -> [Change] {
+                        locale: Locale = .current, hideAmounts: Bool = false) -> [Change] {
         func percent(_ value: Int?) -> String? {
             value.map { NSDecimalNumber(value: $0).dividing(by: 100).stringValue + "%" }
         }
@@ -1141,7 +1175,9 @@ enum DebtTermsHistoryPresentation {
         let before = values(revision.beforeSnapshot), after = values(revision.afterSnapshot)
         return labels.indices.compactMap { index in
             guard before[index] != after[index] else { return nil }
-            return Change(label: labels[index], before: before[index], after: after[index])
+            let hidden = hideAmounts && [4, 6, 10].contains(index)
+            return Change(label: labels[index], before: before[index].map { hidden ? "••••" : $0 },
+                          after: after[index].map { hidden ? "••••" : $0 })
         }
     }
 }
@@ -1196,7 +1232,7 @@ struct DebtTermsEditorView: View {
                 Section("Change history") {
                     ForEach(history) { revision in
                         DisclosureGroup {
-                            ForEach(DebtTermsHistoryPresentation.changes(revision, currencyCode: currencyCode)) { change in
+                            ForEach(DebtTermsHistoryPresentation.changes(revision, currencyCode: currencyCode, hideAmounts: workspace.hideAmounts)) { change in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(change.label).font(.subheadline.weight(.medium))
                                     LabeledContent("Before", value: change.before ?? "Not set")
