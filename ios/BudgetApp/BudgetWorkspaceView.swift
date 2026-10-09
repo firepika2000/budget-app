@@ -5174,6 +5174,11 @@ final class BudgetWorkspaceStore: ObservableObject {
         return CurrencyText.display(minor, currencyCode: budget.currencyCode)
     }
 
+    func formatMagnitude(_ minor: Int64) -> String {
+        guard !hideAmounts else { return "••••" }
+        return CurrencyText.displayMagnitude(minor, currencyCode: budget.currencyCode)
+    }
+
     func monthlyPlanCostDescription(_ summary: APIMonthSummary) -> String {
         guard !hideAmounts else { return "••••" }
         do {
@@ -7346,8 +7351,8 @@ private struct LiveHomeView: View {
             .filter { $0.isOverspent || ($0.underfundedMinor ?? 0) > 0 }
             .sorted {
                 if $0.isOverspent != $1.isOverspent { return $0.isOverspent }
-                let left = $0.isOverspent ? abs($0.availableMinor) : ($0.underfundedMinor ?? 0)
-                let right = $1.isOverspent ? abs($1.availableMinor) : ($1.underfundedMinor ?? 0)
+                let left = $0.isOverspent ? $0.availableMinor.magnitude : ($0.underfundedMinor ?? 0).magnitude
+                let right = $1.isOverspent ? $1.availableMinor.magnitude : ($1.underfundedMinor ?? 0).magnitude
                 if left != right { return left > right }
                 return $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
@@ -7523,7 +7528,7 @@ private struct HomeAttentionRow: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let category: APICategoryMonth
     private var isOverspent: Bool { category.isOverspent }
-    private var amount: Int64 { isOverspent ? abs(category.availableMinor) : (category.underfundedMinor ?? 0) }
+    private var amount: Int64 { isOverspent ? category.availableMinor : (category.underfundedMinor ?? 0) }
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: isOverspent ? ((category.creditOverspentMinor ?? 0) > 0 && (category.cashOverspentMinor ?? 0) == 0 ? "creditcard.trianglebadge.exclamationmark" : "exclamationmark.triangle.fill") : "target")
@@ -7531,12 +7536,12 @@ private struct HomeAttentionRow: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(category.name)
-                Text(isOverspent ? (store.overspendSummary(category) ?? "Overspent") : "Target needs \(store.format(amount))")
+                Text(isOverspent ? (store.overspendSummary(category) ?? "Overspent") : "Target needs \(store.formatMagnitude(amount))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(store.format(amount))
+            Text(store.formatMagnitude(amount))
                 .fontWeight(.semibold)
                 .monospacedDigit()
                 .foregroundStyle(isOverspent ? Theme.danger : Theme.attention)
@@ -9753,9 +9758,9 @@ private struct LiveScheduledTransactionEditor: View {
         self.schedule = schedule; self.currencyCode = currencyCode
         let inferred: ScheduledKind = schedule?.destinationAccountID != nil ? .transfer : (schedule?.amountMinor ?? -1) > 0 ? .income : .expense
         let initialNext = schedule.map { BudgetWorkspaceStore.parseDate($0.nextDate) } ?? Calendar.current.date(byAdding: .day, value: 1, to: Date())!
-        _kind = State(initialValue: inferred); _accountID = State(initialValue: schedule?.accountID ?? ""); _destinationAccountID = State(initialValue: schedule?.destinationAccountID ?? ""); _categoryID = State(initialValue: schedule?.categoryID ?? ""); _payeeID = State(initialValue: schedule?.payeeID); _name = State(initialValue: schedule?.name ?? ""); _amount = State(initialValue: CurrencyText.editable(abs(schedule?.amountMinor ?? 0), currencyCode: currencyCode)); _nextDate = State(initialValue: initialNext); _recurrenceUnit = State(initialValue: schedule?.recurrenceUnit ?? "months"); _intervalCount = State(initialValue: schedule?.intervalCount ?? 1); _usesEndDate = State(initialValue: schedule?.endDate != nil); _endDate = State(initialValue: schedule?.endDate.map(BudgetWorkspaceStore.parseDate) ?? Calendar.current.date(byAdding: .year, value: 1, to: initialNext)!); _usesOccurrenceLimit = State(initialValue: schedule?.remainingOccurrences != nil); _occurrenceLimit = State(initialValue: max(1, schedule?.remainingOccurrences ?? 12)); _memo = State(initialValue: schedule?.memo ?? ""); _active = State(initialValue: schedule?.isActive ?? true)
+        _kind = State(initialValue: inferred); _accountID = State(initialValue: schedule?.accountID ?? ""); _destinationAccountID = State(initialValue: schedule?.destinationAccountID ?? ""); _categoryID = State(initialValue: schedule?.categoryID ?? ""); _payeeID = State(initialValue: schedule?.payeeID); _name = State(initialValue: schedule?.name ?? ""); _amount = State(initialValue: CurrencyText.editableMagnitude(schedule?.amountMinor ?? 0, currencyCode: currencyCode)); _nextDate = State(initialValue: initialNext); _recurrenceUnit = State(initialValue: schedule?.recurrenceUnit ?? "months"); _intervalCount = State(initialValue: schedule?.intervalCount ?? 1); _usesEndDate = State(initialValue: schedule?.endDate != nil); _endDate = State(initialValue: schedule?.endDate.map(BudgetWorkspaceStore.parseDate) ?? Calendar.current.date(byAdding: .year, value: 1, to: initialNext)!); _usesOccurrenceLimit = State(initialValue: schedule?.remainingOccurrences != nil); _occurrenceLimit = State(initialValue: max(1, schedule?.remainingOccurrences ?? 12)); _memo = State(initialValue: schedule?.memo ?? ""); _active = State(initialValue: schedule?.isActive ?? true)
     }
-    private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: store.budget.currencyCode), value > 0 else { return nil }; return value }
+    private var parsed: Int64? { guard let value = CurrencyText.parseMagnitude(amount, currencyCode: store.budget.currencyCode, isInflow: kind != .expense), value != 0 else { return nil }; return value }
     private var due: Bool { schedule?.isActive == true && Calendar.current.startOfDay(for: nextDate) <= Calendar.current.startOfDay(for: Date()) }
     private var valid: Bool { parsed != nil && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !accountID.isEmpty && (kind != .expense || !categoryID.isEmpty) && (kind != .transfer || !destinationAccountID.isEmpty && destinationAccountID != accountID) && (!usesEndDate || recurrenceUnit != "once" && endDate >= nextDate) && (!usesOccurrenceLimit || recurrenceUnit != "once") }
     var body: some View {
@@ -9767,7 +9772,7 @@ private struct LiveScheduledTransactionEditor: View {
                     Picker("Account", selection: $accountID) { Text("Select account").tag(""); ForEach(store.accounts.filter { !$0.isClosed }) { Text($0.name).tag($0.id) } }
                     if kind == .transfer { Picker("Destination", selection: $destinationAccountID) { Text("Select account").tag(""); ForEach(store.accounts.filter { !$0.isClosed && $0.id != accountID }) { Text($0.name).tag($0.id) } } }
                     else if kind == .expense { Picker("Category", selection: $categoryID) { Text("Select category").tag(""); ForEach(store.categories.filter { !$0.isArchived }) { Text(store.categoryDisplayName($0)).tag($0.id) } } }
-                    CurrencyAmountField("Amount", text: $amount, currencyCode: store.budget.currencyCode)
+                    CurrencyAmountField("Amount", text: $amount, currencyCode: store.budget.currencyCode, outflowMagnitude: kind == .expense)
                     TextField("Memo", text: $memo, axis: .vertical)
                 }
                 Section("Schedule") {
@@ -9800,7 +9805,7 @@ private struct LiveScheduledTransactionEditor: View {
             .alert(schedule == nil ? "Unable to create schedule" : "Unable to update schedule", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
         }
     }
-    private func payload(isActive: Bool? = nil) -> ScheduleOperation { .init(accountID: accountID, destinationAccountID: kind == .transfer ? destinationAccountID : nil, categoryID: kind == .expense ? categoryID : nil, payeeID: kind == .transfer ? nil : payeeID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: kind == .expense ? -(parsed ?? 0) : parsed ?? 0, nextDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrenceUnit, intervalCount: recurrenceUnit == "once" ? 1 : intervalCount, endDate: usesEndDate && recurrenceUnit != "once" ? BudgetWorkspaceStore.dateString(endDate) : nil, remainingOccurrences: usesOccurrenceLimit && recurrenceUnit != "once" ? occurrenceLimit : nil, memo: memo, isActive: isActive ?? active) }
+    private func payload(isActive: Bool? = nil) -> ScheduleOperation { .init(accountID: accountID, destinationAccountID: kind == .transfer ? destinationAccountID : nil, categoryID: kind == .expense ? categoryID : nil, payeeID: kind == .transfer ? nil : payeeID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: parsed ?? 0, nextDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrenceUnit, intervalCount: recurrenceUnit == "once" ? 1 : intervalCount, endDate: usesEndDate && recurrenceUnit != "once" ? BudgetWorkspaceStore.dateString(endDate) : nil, remainingOccurrences: usesOccurrenceLimit && recurrenceUnit != "once" ? occurrenceLimit : nil, memo: memo, isActive: isActive ?? active) }
     private func save() async { saving = true; defer { saving = false }; do { if let schedule { try await store.updateSchedule(id: schedule.id, operation: payload()) } else { try await store.createSchedule(payload()) }; dismiss() } catch { self.error = error.localizedDescription } }
     private func remove() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { try await store.deleteSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
     private func realize() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { _ = try await store.realizeSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
@@ -11698,7 +11703,7 @@ private struct DebtOverviewContent: View {
             LabeledContent("Debt as of \(report.endDate)", value: store.format(report.debtMinor))
                 .accessibilityIdentifier("recorded-debt-as-of")
             LabeledContent(report.principalReductionMinor >= 0 ? "Net debt decrease" : "Net debt increase",
-                           value: store.format(abs(report.principalReductionMinor)))
+                           value: store.formatMagnitude(report.principalReductionMinor))
             Text("Recorded balances include borrowing, payments, interest and adjustments. Net debt change is not a measure of principal payments alone.")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -12017,7 +12022,7 @@ private struct DebtPayoffContent: View {
                 if let baseline, baseline.status == "paid_off" {
                     let interestDifference = baseline.projectedInterestMinor - value.projectedInterestMinor
                     let monthDifference = baseline.paymentCount - value.paymentCount
-                    LabeledContent(interestDifference >= 0 ? "Projected interest avoided" : "Additional projected interest", value: store.format(abs(interestDifference)))
+                    LabeledContent(interestDifference >= 0 ? "Projected interest avoided" : "Additional projected interest", value: store.formatMagnitude(interestDifference))
                     LabeledContent(monthDifference >= 0 ? "Projected time saved" : "Additional projected months", value: "\(abs(monthDifference)) month\(abs(monthDifference) == 1 ? "" : "s")")
                 }
             }
@@ -12416,7 +12421,7 @@ private struct BudgetPerformanceInsightsView: View {
                 Text(row.isOverspent ? "Overspent" : "Needs target funding").font(.caption).foregroundStyle(row.isOverspent ? Theme.danger : Theme.attention)
             }
             Spacer()
-            Text(store.format(row.isOverspent ? abs(row.availableMinor) : (row.underfundedMinor ?? 0))).monospacedDigit()
+            Text(store.formatMagnitude(row.isOverspent ? row.availableMinor : (row.underfundedMinor ?? 0))).monospacedDigit()
         }
     }
 }
@@ -12607,13 +12612,13 @@ private struct DebtHistoryContent: View {
                 }))
                 .accessibilityIdentifier("debt-history-chart")
                 .accessibilityLabel("Debt history from \(report.startDate) through \(report.endDate)")
-                .accessibilityValue("Recorded debt as of \(report.endDate): \(store.format(report.debtMinor)), \(report.principalReductionMinor >= 0 ? "net debt decrease" : "net debt increase") \(store.format(abs(report.principalReductionMinor)))")
+                .accessibilityValue("Recorded debt as of \(report.endDate): \(store.format(report.debtMinor)), \(report.principalReductionMinor >= 0 ? "net debt decrease" : "net debt increase") \(store.formatMagnitude(report.principalReductionMinor))")
                 DisclosureGroup("Recorded observations") {
                     ForEach(report.points) { point in
                         VStack(alignment: .leading, spacing: 4) {
                             LabeledContent(point.asOf, value: store.format(point.debtMinor))
                             if let change = point.netDebtChangeMinor {
-                                LabeledContent(change >= 0 ? "Debt decreased" : "Debt increased", value: store.format(abs(change)))
+                                LabeledContent(change >= 0 ? "Debt decreased" : "Debt increased", value: store.formatMagnitude(change))
                                     .font(.caption)
                             }
                             if let interest = point.recordedInterestMinor {
@@ -13944,16 +13949,16 @@ private struct LiveTransactionEditView: View {
     @State private var isSaving = false; @State private var errorMessage: String?
     init(budget: APIBudget, transaction: APITransaction, accounts: [APIAccount], categories: [APICategory], onSaved: @escaping () async -> Void) {
         self.budget=budget; self.transaction=transaction; self.accounts=accounts; self.categories=categories; self.onSaved=onSaved
-        _payee=State(initialValue:transaction.payeeName); _payeeID=State(initialValue:transaction.payeeID); _selectedPayeeName=State(initialValue:transaction.payeeID == nil ? "" : transaction.payeeName); _amount=State(initialValue:CurrencyText.editable(abs(transaction.amountMinor),currencyCode:budget.currencyCode)); _accountID=State(initialValue:transaction.accountID); _categoryID=State(initialValue:transaction.categoryID ?? ""); _memo=State(initialValue:transaction.memo); _financialClassification=State(initialValue:transaction.financialClassification ?? ""); _cleared=State(initialValue:transaction.isCleared); _date=State(initialValue:Self.parseDate(transaction.occurredOn)); _isInflow=State(initialValue:transaction.amountMinor > 0); _isSplit=State(initialValue:!transaction.splits.isEmpty); _splitRows=State(initialValue:transaction.splits.map { WorkspaceSplitDraft(categoryID:$0.categoryID,amount:CurrencyText.editable(abs($0.amountMinor),currencyCode:budget.currencyCode),memo:$0.memo,financialClassification:$0.financialClassification ?? "") }); _flag=State(initialValue:transaction.flag ?? ""); _tags=State(initialValue:(transaction.tags ?? []).joined(separator:", "))
+        _payee=State(initialValue:transaction.payeeName); _payeeID=State(initialValue:transaction.payeeID); _selectedPayeeName=State(initialValue:transaction.payeeID == nil ? "" : transaction.payeeName); _amount=State(initialValue:CurrencyText.editableMagnitude(transaction.amountMinor,currencyCode:budget.currencyCode)); _accountID=State(initialValue:transaction.accountID); _categoryID=State(initialValue:transaction.categoryID ?? ""); _memo=State(initialValue:transaction.memo); _financialClassification=State(initialValue:transaction.financialClassification ?? ""); _cleared=State(initialValue:transaction.isCleared); _date=State(initialValue:Self.parseDate(transaction.occurredOn)); _isInflow=State(initialValue:transaction.amountMinor > 0); _isSplit=State(initialValue:!transaction.splits.isEmpty); _splitRows=State(initialValue:transaction.splits.map { WorkspaceSplitDraft(categoryID:$0.categoryID,amount:CurrencyText.editableMagnitude($0.amountMinor,currencyCode:budget.currencyCode),memo:$0.memo,financialClassification:$0.financialClassification ?? "") }); _flag=State(initialValue:transaction.flag ?? ""); _tags=State(initialValue:(transaction.tags ?? []).joined(separator:", "))
     }
     var body: some View { NavigationStack { Form {
-        TextField("Payee",text:$payee).onChange(of:payee){_,value in if payeeID != nil && selectedPayeeName != value { payeeID=nil;selectedPayeeName="" }}; Button("Choose saved payee",systemImage:"person.text.rectangle"){showPayeeSelector=true}.accessibilityIdentifier("saved-payee-menu"); CurrencyAmountField("Amount", text:$amount, currencyCode:budget.currencyCode); Toggle("Income / inflow",isOn:$isInflow); Picker("Account",selection:$accountID){ForEach(accounts.filter{!$0.isClosed}){Text($0.name).tag($0.id)}}; if selectedAccountIsDebt && !isInflow && !isSplit { Picker("Classification",selection:$financialClassification){Text("Ordinary transaction").tag("");Text("Interest charge").tag("interest_charge")} }; DatePicker("Date",selection:$date,displayedComponents:.date); Toggle("Split across categories",isOn:$isSplit).disabled(isInflow)
-        if isSplit { Section("Splits") { ForEach($splitRows) { $row in Picker("Category",selection:$row.categoryID){Text("Select").tag("");ForEach(categories.filter{!$0.isArchived}){Text(workspace.categoryDisplayName($0)).tag($0.id)}};CurrencyAmountField("Split amount", text:$row.amount, currencyCode:budget.currencyCode, allowsZero:true);TextField("Split memo",text:$row.memo);if selectedAccountIsDebt{Picker("Split classification",selection:$row.financialClassification){Text("Ordinary").tag("");Text("Interest charge").tag("interest_charge")}} }; Button("Add split",systemImage:"plus"){splitRows.append(.init())}; if let remaining { LabeledContent("Remaining",value:CurrencyText.editable(remaining,currencyCode:budget.currencyCode)).foregroundStyle(remaining == 0 ? Color.secondary : Color.red) } } } else if !isInflow { Picker("Category",selection:$categoryID){Text("Uncategorized").tag("");ForEach(categories.filter{!$0.isArchived}){Text(workspace.categoryDisplayName($0)).tag($0.id)}} }
+        TextField("Payee",text:$payee).onChange(of:payee){_,value in if payeeID != nil && selectedPayeeName != value { payeeID=nil;selectedPayeeName="" }}; Button("Choose saved payee",systemImage:"person.text.rectangle"){showPayeeSelector=true}.accessibilityIdentifier("saved-payee-menu"); CurrencyAmountField("Amount", text:$amount, currencyCode:budget.currencyCode, outflowMagnitude: !isInflow); Toggle("Income / inflow",isOn:$isInflow); Picker("Account",selection:$accountID){ForEach(accounts.filter{!$0.isClosed}){Text($0.name).tag($0.id)}}; if selectedAccountIsDebt && !isInflow && !isSplit { Picker("Classification",selection:$financialClassification){Text("Ordinary transaction").tag("");Text("Interest charge").tag("interest_charge")} }; DatePicker("Date",selection:$date,displayedComponents:.date); Toggle("Split across categories",isOn:$isSplit).disabled(isInflow)
+        if isSplit { Section("Splits") { ForEach($splitRows) { $row in Picker("Category",selection:$row.categoryID){Text("Select").tag("");ForEach(categories.filter{!$0.isArchived}){Text(workspace.categoryDisplayName($0)).tag($0.id)}};CurrencyAmountField("Split amount", text:$row.amount, currencyCode:budget.currencyCode, allowsZero:true, outflowMagnitude:true);TextField("Split memo",text:$row.memo);if selectedAccountIsDebt{Picker("Split classification",selection:$row.financialClassification){Text("Ordinary").tag("");Text("Interest charge").tag("interest_charge")}} }; Button("Add split",systemImage:"plus"){splitRows.append(.init())}; if let remaining { LabeledContent("Remaining",value:CurrencyText.editable(remaining,currencyCode:budget.currencyCode)).foregroundStyle(remaining == 0 ? Color.secondary : Color.red) } } } else if !isInflow { Picker("Category",selection:$categoryID){Text("Uncategorized").tag("");ForEach(categories.filter{!$0.isArchived}){Text(workspace.categoryDisplayName($0)).tag($0.id)}} }
         if isSplit && remaining == nil { Text("Enter valid split amounts within the supported money range.").font(.footnote).foregroundStyle(.red) }
         TextField("Memo",text:$memo); Picker("Flag",selection:$flag){Text("None").tag("");Text("Red").tag("red");Text("Orange").tag("orange");Text("Yellow").tag("yellow");Text("Green").tag("green");Text("Blue").tag("blue");Text("Purple").tag("purple")}; TextField("Tags (comma separated)",text:$tags);Text("Manage attachments from transaction detail.").font(.footnote).foregroundStyle(.secondary);Toggle("Cleared",isOn:$cleared)
     }.navigationTitle("Edit Transaction").toolbar { ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(isSaving || parsed == nil || !splitsValid)} }.alert("Unable to save",isPresented:Binding(get:{errorMessage != nil},set:{if !$0{errorMessage=nil}})){Button("OK",role:.cancel){}}message:{Text(errorMessage ?? "Unknown error")}.onChange(of:accountID){_,_ in clearInvalidClassification()}.onChange(of:isInflow){_,_ in clearInvalidClassification()}.sheet(isPresented:$showPayeeSelector){PayeeSearchSelectionView{item in payeeID=item.id;payee=item.displayName;selectedPayeeName=item.displayName;if categoryID.isEmpty,let suggested=item.defaultCategoryID{categoryID=suggested}}} } }
-    private var parsed:Int64?{guard let value=CurrencyText.parseMinorUnits(amount,currencyCode:budget.currencyCode),value>0 else{return nil};return isInflow ? value : -value}
-    private var parsedSplits:[TransactionSplitOperation]?{guard isSplit else{return []};var values:[TransactionSplitOperation]=[];for row in splitRows{guard !row.categoryID.isEmpty,let value=CurrencyText.parseMinorUnits(row.amount,currencyCode:budget.currencyCode),value>=0 else{return nil};values.append(.init(categoryID:row.categoryID,amountMinor:-value,memo:row.memo,financialClassification:row.financialClassification.isEmpty ? nil:row.financialClassification))};return values}
+    private var parsed:Int64?{guard let value=CurrencyText.parseMagnitude(amount,currencyCode:budget.currencyCode,isInflow:isInflow),value != 0 else{return nil};return value}
+    private var parsedSplits:[TransactionSplitOperation]?{guard isSplit else{return []};var values:[TransactionSplitOperation]=[];for row in splitRows{guard !row.categoryID.isEmpty,let value=CurrencyText.parseMagnitude(row.amount,currencyCode:budget.currencyCode,isInflow:false) else{return nil};values.append(.init(categoryID:row.categoryID,amountMinor:value,memo:row.memo,financialClassification:row.financialClassification.isEmpty ? nil:row.financialClassification))};return values}
     private var remaining:Int64?{guard let parsed,let parsedSplits else{return nil};return CurrencyText.remaining(total:parsed,portions:parsedSplits.map(\.amountMinor))}
     private var splitsValid:Bool{!isSplit || (parsedSplits?.count ?? 0)>=2 && remaining==0}
     private func save() async { guard let parsed,let parsedSplits else{return};isSaving=true;defer{isSaving=false};do{try await workspace.updateTransaction(id:transaction.id,operation:RecordTransactionOperation(accountID:accountID,categoryID:isSplit || isInflow || categoryID.isEmpty ? nil:categoryID,amountMinor:parsed,occurredOn:BudgetWorkspaceStore.dateString(date),payeeName:payee,payeeID:payeeID,memo:memo,financialClassification:financialClassification.isEmpty || isSplit ? nil:financialClassification,isCleared:cleared,splits:parsedSplits,flag:flag.isEmpty ? nil:flag,tags:commaValues(tags),attachmentMetadata:transaction.attachmentMetadata ?? []));dismiss()}catch{errorMessage=error.localizedDescription} }

@@ -3009,6 +3009,30 @@ final class DemoStoreTests: XCTestCase {
             portions: [-9_007_199_254_740_000, -993]), 0)
     }
 
+    func testMagnitudeBuffersRoundTripFullSignedMoneyRange() {
+        for currency in ["USD", "JPY", "KWD"] {
+            let minimum = CurrencyText.editableMagnitude(.min, currencyCode: currency)
+            XCTAssertEqual(CurrencyText.parseMagnitude(minimum, currencyCode: currency, isInflow: false), .min)
+            XCTAssertNil(CurrencyText.parseMagnitude(minimum, currencyCode: currency, isInflow: true))
+            let maximum = CurrencyText.editableMagnitude(.max, currencyCode: currency)
+            XCTAssertEqual(CurrencyText.parseMagnitude(maximum, currencyCode: currency, isInflow: true), .max)
+        }
+        XCTAssertNil(CurrencyText.parseMagnitude("-1", currencyCode: "USD", isInflow: false))
+        XCTAssertNil(CurrencyText.parseMagnitude("1.001", currencyCode: "USD", isInflow: false))
+        XCTAssertEqual(CurrencyText.parseMagnitude("0", currencyCode: "USD", isInflow: false), 0)
+        XCTAssertEqual(CurrencyText.parseMagnitude("2 + 3", currencyCode: "USD", isInflow: false), -500)
+        XCTAssertEqual(CurrencyText.displayMagnitude(.min, currencyCode: "USD", locale: Locale(identifier: "en_US")), "$92,233,720,368,547,758.08")
+    }
+
+    @MainActor
+    func testMagnitudePresentationHonorsWorkspacePrivacy() {
+        let store = BudgetWorkspaceStore.demo()
+        XCTAssertEqual(store.formatMagnitude(.min), CurrencyText.displayMagnitude(.min, currencyCode: store.budget.currencyCode))
+        store.hideAmounts = true
+        XCTAssertEqual(store.formatMagnitude(.min), "••••")
+        XCTAssertEqual(store.formatMagnitude(.max), "••••")
+    }
+
     func testCurrencyTextAcceptsNaturalDecimalZeroAndSignedInput() {
         XCTAssertEqual(CurrencyText.parseMinorUnits("12.34", currencyCode: "USD"), 1_234)
         XCTAssertEqual(CurrencyText.parseMinorUnits("0", currencyCode: "USD"), 0)

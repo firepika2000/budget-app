@@ -67,7 +67,7 @@ struct TransactionEntryView: View {
                         if payeeID != nil && selectedPayeeName != value { payeeID = nil; selectedPayeeName = ""; suggestedCategoryID = nil }
                     }
                 Button("Choose saved payee", systemImage: "person.text.rectangle") { showPayeeSelector = true }.accessibilityIdentifier("saved-payee-menu")
-                CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode)
+                CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode, outflowMagnitude: !isInflow)
                     .accessibilityIdentifier("transaction-amount")
                 Toggle("Income / inflow", isOn: $isInflow)
                     .accessibilityIdentifier("transaction-inflow")
@@ -89,7 +89,7 @@ struct TransactionEntryView: View {
                                     Text(categoryLabel(category)).tag(category.id)
                                 }
                             }
-                            CurrencyAmountField("Split amount", text: $row.amount, currencyCode: budget.currencyCode, allowsZero: true)
+                            CurrencyAmountField("Split amount", text: $row.amount, currencyCode: budget.currencyCode, allowsZero: true, outflowMagnitude: true)
                             TextField("Split memo", text: $row.memo)
                             if selectedAccountIsDebt {
                                 Picker("Split classification", selection: $row.financialClassification) {
@@ -235,9 +235,7 @@ struct TransactionEntryView: View {
     }
 
     private var parsedAmount: Int64? {
-        guard let magnitude = CurrencyText.parseMinorUnits(amount, currencyCode: budget.currencyCode),
-              magnitude >= 0 else { return nil }
-        return isInflow ? magnitude : -magnitude
+        CurrencyText.parseMagnitude(amount, currencyCode: budget.currencyCode, isInflow: isInflow)
     }
 
     private var parsedSplits: [TransactionSplitOperation]? {
@@ -245,9 +243,8 @@ struct TransactionEntryView: View {
         var result: [TransactionSplitOperation] = []
         for row in splitRows {
             guard !row.categoryID.isEmpty,
-                  let amount = CurrencyText.parseMinorUnits(row.amount, currencyCode: budget.currencyCode),
-                  amount >= 0 else { return nil }
-            result.append(TransactionSplitOperation(categoryID: row.categoryID, amountMinor: -amount, memo: row.memo, financialClassification: row.financialClassification.isEmpty ? nil : row.financialClassification))
+                  let amount = CurrencyText.parseMagnitude(row.amount, currencyCode: budget.currencyCode, isInflow: false) else { return nil }
+            result.append(TransactionSplitOperation(categoryID: row.categoryID, amountMinor: amount, memo: row.memo, financialClassification: row.financialClassification.isEmpty ? nil : row.financialClassification))
         }
         return result
     }
@@ -688,18 +685,38 @@ enum CurrencyText {
     }
 
     static func display(_ minorUnits: Int64, currencyCode: String, locale: Locale = .current) -> String {
+        display(magnitude: minorUnits.magnitude, negative: minorUnits < 0, currencyCode: currencyCode, locale: locale)
+    }
+
+    static func displayMagnitude(_ minorUnits: Int64, currencyCode: String, locale: Locale = .current) -> String {
+        display(magnitude: minorUnits.magnitude, negative: false, currencyCode: currencyCode, locale: locale)
+    }
+
+    private static func display(magnitude: UInt64, negative: Bool, currencyCode: String, locale: Locale) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
         formatter.locale = locale
         formatter.currencyCode = currencyCode
         let digits = formatter.maximumFractionDigits
-        let amount = NSDecimalNumber(mantissa: minorUnits.magnitude, exponent: -Int16(digits), isNegative: minorUnits < 0).decimalValue
+        let amount = NSDecimalNumber(mantissa: magnitude, exponent: -Int16(digits), isNegative: negative).decimalValue
         return amount.formatted(.currency(code: currencyCode).locale(locale).precision(.fractionLength(digits)))
     }
 
     static func parseMinorUnits(_ text: String, currencyCode: String) -> Int64? {
         var expression = CurrencyExpression(text: text, locale: .current)
         guard let amount = expression.value else { return nil }
+        return minorUnits(amount, currencyCode: currencyCode)
+    }
+
+    /// A non-negative editable buffer acquires its ledger sign before Int64 bounds are checked.
+    /// The largest valid expense magnitude is one minor unit greater than Int64.max.
+    static func parseMagnitude(_ text: String, currencyCode: String, isInflow: Bool) -> Int64? {
+        var expression = CurrencyExpression(text: text, locale: .current)
+        guard let amount = expression.value, amount >= 0 else { return nil }
+        return minorUnits(isInflow ? amount : -amount, currencyCode: currencyCode)
+    }
+
+    private static func minorUnits(_ amount: Decimal, currencyCode: String) -> Int64? {
         let currencyFormatter = NumberFormatter()
         currencyFormatter.numberStyle = .currency
         currencyFormatter.currencyCode = currencyCode
@@ -808,6 +825,14 @@ enum CurrencyText {
     }
 
     static func editable(_ minorUnits: Int64, currencyCode: String) -> String {
+        editable(NSDecimalNumber(value: minorUnits), currencyCode: currencyCode)
+    }
+
+    static func editableMagnitude(_ minorUnits: Int64, currencyCode: String) -> String {
+        editable(NSDecimalNumber(mantissa: minorUnits.magnitude, exponent: 0, isNegative: false), currencyCode: currencyCode)
+    }
+
+    private static func editable(_ amount: NSDecimalNumber, currencyCode: String) -> String {
         let currencyFormatter = NumberFormatter()
         currencyFormatter.numberStyle = .currency
         currencyFormatter.currencyCode = currencyCode
@@ -817,7 +842,7 @@ enum CurrencyText {
         formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = digits
         formatter.maximumFractionDigits = digits
-        return formatter.string(from: NSDecimalNumber(value: minorUnits).dividing(by: divisor)) ?? ""
+        return formatter.string(from: amount.dividing(by: divisor)) ?? ""
     }
 }
 
@@ -827,15 +852,17 @@ struct CurrencyAmountField: View {
     private let currencyCode: String
     private let allowsNegative: Bool
     private let allowsZero: Bool
+    private let outflowMagnitude: Bool
     private let onFocusChange: ((Bool) -> Void)?
     @FocusState private var isFocused: Bool
 
-    init(_ title: String, text: Binding<String>, currencyCode: String, allowsNegative: Bool = false, allowsZero: Bool = false, onFocusChange: ((Bool) -> Void)? = nil) {
+    init(_ title: String, text: Binding<String>, currencyCode: String, allowsNegative: Bool = false, allowsZero: Bool = false, outflowMagnitude: Bool = false, onFocusChange: ((Bool) -> Void)? = nil) {
         self.title = title
         _text = text
         self.currencyCode = currencyCode
         self.allowsNegative = allowsNegative
         self.allowsZero = allowsZero
+        self.outflowMagnitude = outflowMagnitude
         self.onFocusChange = onFocusChange
     }
 
@@ -885,6 +912,10 @@ struct CurrencyAmountField: View {
     }
 
     private var isValid: Bool {
+        if outflowMagnitude {
+            guard let parsed = CurrencyText.parseMagnitude(text, currencyCode: currencyCode, isInflow: false) else { return false }
+            return allowsZero || parsed != 0
+        }
         guard let parsed = CurrencyText.parseMinorUnits(text, currencyCode: currencyCode) else { return false }
         if !allowsNegative && parsed < 0 { return false }
         return allowsZero || parsed != 0

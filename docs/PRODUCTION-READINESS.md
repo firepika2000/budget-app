@@ -1,5 +1,33 @@
 # Production readiness mission ledger
 
+## Full-range signed money editing and presentation (2026-10-09)
+
+The split checkpoint's separate signed-magnitude gap is corrected. Transaction and schedule
+editor buffers used `abs(Int64)`, which traps for a valid Int64.min expense. They now render
+unsigned magnitude through Decimal and apply expense/income direction before checking signed
+minor-unit bounds. Creation, editing and expense splits share that parser; income/transfer values
+still cannot exceed Int64.max, negative magnitude input remains invalid, and the amount field's
+validation follows the same direction-aware range. No financial storage uses Double.
+
+Home attention sorting now compares UInt64 magnitudes, and Home/Plan attention, debt change and
+payoff comparison presentation use an exact magnitude formatter honoring Hide Amounts. Existing
+labels retain increase/decrease or overspent meaning without signed absolute-value traps.
+This is not a claim that every arithmetic operation throughout the product is overflow-safe.
+
+The executable production CurrencyText harness passes minimum/maximum editable round trips in
+USD, JPY and KWD, exact minimum-magnitude display, invalid sign/precision, expression parsing,
+and the prior split-overflow cases. Source wiring checks cover creation/edit/schedule paths and
+reject reintroduced unchecked monetary abs at these sites. Native tests add equivalent cases and
+workspace Hide Amounts coverage. Final regular Xcode 27.0 (27A266a) build-for-testing passed on
+the preserved iPhone 17 Pro Max / iOS 27 destination after an unintended allowance-parser edit
+was removed. Request and allowance rules remain unchanged. Native cases were compiled, not
+executed; the executed host regression does not prove rendered UI/runtime acceptance.
+
+App rebuild required; no server change or migration. Human financial records and Simulator data
+remain untouched, and TestFlight remains on hold. Normal human spot-check can use an existing
+transaction/schedule: open, verify unchanged amount, cancel, then perform an ordinary small edit.
+Do not create extreme-value customer postings merely to exercise an automated boundary case.
+
 ## Split-entry arithmetic validation (2026-10-09)
 
 Production transaction creation and editing summed split amounts with unchecked Int64 arithmetic.
@@ -16,8 +44,8 @@ and native-test targets on the preserved iPhone 17 Pro Max / iOS 27 destination.
 compiled, not executed; host checks are not rendered UI or network acceptance.
 
 App rebuild required; no server restart, migration or customer-data change. TestFlight is held.
-Separate signed-magnitude audit remains open: existing `abs(Int64)` editor/report paths can trap
-at Int64.min and must not be treated as covered by this split-aggregation correction.
+At that checkpoint, signed-magnitude editor/report paths remained open; the full-range signed
+money checkpoint above supersedes that finding without expanding the split-aggregation claim.
 
 ## Net Worth history hydration bound (2026-10-09)
 
