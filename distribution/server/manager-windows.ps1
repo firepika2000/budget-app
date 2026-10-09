@@ -64,6 +64,16 @@ if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
         <TextBlock Text="Stopping preserves your database, attachments, private configuration, and backups." TextWrapping="Wrap" Foreground="#666" FontSize="12" Margin="0,4,0,0"/>
             </StackPanel>
           </TabItem>
+          <TabItem Header="Connection">
+            <StackPanel Margin="12">
+              <TextBlock Text="Connect ClearPocket on iPhone" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Text="Configured secure server address" Margin="0,10,0,4" Foreground="#555"/>
+              <TextBox Name="ConnectionAddressBox" IsReadOnly="True" Padding="8" TextWrapping="Wrap"/>
+              <TextBlock Name="ConnectionHelpText" TextWrapping="Wrap" Margin="0,8,0,0" Foreground="#555"/>
+              <TextBlock Text="In ClearPocket, open Profile &amp; Settings → Data Source → Connect to Existing Server. Enter the secure address above. The first device signs in normally; pair later devices from Profile &amp; Settings → Devices." TextWrapping="Wrap" Margin="0,12,0,0"/>
+              <TextBlock Text="Never forward the raw API port. This address is configuration, not a connectivity test; use Server → Refresh Status to check service health." TextWrapping="Wrap" Foreground="#666" FontSize="12" Margin="0,10,0,0"/>
+            </StackPanel>
+          </TabItem>
           <TabItem Header="Recovery">
             <StackPanel Margin="12">
               <TextBlock Text="Protect your data or move a verified backup into an empty server. Keep recovery keys separate from backups." TextWrapping="Wrap" Foreground="#555"/>
@@ -122,6 +132,8 @@ $storageBox = $window.FindName("StorageBox")
 $hostBox = $window.FindName("HostBox")
 $outputBox = $window.FindName("OutputBox")
 $stateText = $window.FindName("StateText")
+$connectionAddressBox = $window.FindName("ConnectionAddressBox")
+$connectionHelpText = $window.FindName("ConnectionHelpText")
 $actionNames = @("BrowseButton", "ConfigureButton", "OpenButton", "StatusButton", "StopButton", "BackupButton", "RestoreButton", "ImportLocalButton", "ImportPortableButton", "DropboxButton", "DisconnectDropboxButton", "ScheduleBackupButton", "ScheduleStatusButton", "RemoveScheduleButton", "UpdateServerButton", "DiagnosticsButton", "LogsButton", "AdvancedButton")
 $actionButtons = @{}
 foreach ($name in $actionNames) { $actionButtons[$name] = $window.FindName($name) }
@@ -129,10 +141,28 @@ foreach ($name in $actionNames) { $actionButtons[$name] = $window.FindName($name
 $storageBox.Text = Join-Path $env:LOCALAPPDATA "ClearPocket Server\Data"
 
 function Set-ConfiguredView([bool] $Configured) {
+    Update-ConnectionView
     $setupPanel.Visibility = if ($Configured) { [Windows.Visibility]::Collapsed } else { [Windows.Visibility]::Visible }
     $managePanel.Visibility = if ($Configured) { [Windows.Visibility]::Visible } else { [Windows.Visibility]::Collapsed }
     if ($Configured) {
         $actionButtons["DisconnectDropboxButton"].IsEnabled = Test-Path -LiteralPath (Join-Path $PSScriptRoot "dropbox.env") -PathType Leaf
+    }
+}
+
+function Update-ConnectionView {
+    $connectionAddressBox.Text = "No secure address configured"
+    $connectionHelpText.Text = "This-PC-only installation. Configure a valid HTTPS hostname and certificate before connecting an iPhone. A localhost address is not your server address on the phone."
+    if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) { return }
+    try {
+        # Select only the public origin; never display or log the private environment file.
+        $origins = @(Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^BUDGET_APP_PAIRING_PUBLIC_URL=' })
+        if ($origins.Count -ne 1) { return }
+        $origin = $origins[0].Split('=', 2)[1]
+        if ($origin -notmatch '^https://[a-z0-9.-]+$') { return }
+        $connectionAddressBox.Text = $origin
+        $connectionHelpText.Text = "Select the address and copy it to your iPhone. The hostname must resolve to this server and its certificate must be valid on the phone."
+    } catch {
+        $connectionHelpText.Text = "Connection settings could not be read. Use Server status or Diagnostics to inspect setup without sharing private configuration."
     }
 }
 

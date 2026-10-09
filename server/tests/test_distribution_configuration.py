@@ -25,6 +25,7 @@ def test_windows_manager_organizes_existing_actions_into_valid_named_tabs():
     tabs = root.findall(".//w:TabItem", namespace)
     expected = {
         "Server": {"OpenButton", "StatusButton", "StopButton", "LogsButton"},
+        "Connection": set(),
         "Recovery": {"BackupButton", "RestoreButton", "ImportLocalButton", "ImportPortableButton",
                      "ScheduleBackupButton", "ScheduleStatusButton", "RemoveScheduleButton"},
         "Dropbox": {"DropboxButton", "DisconnectDropboxButton"},
@@ -37,6 +38,14 @@ def test_windows_manager_organizes_existing_actions_into_valid_named_tabs():
     assert len(names) == len(set(names)), "WPF names must remain unique"
     actions = source.split("$actionNames = @(", 1)[1].split(")", 1)[0]
     assert set(re.findall(r'"([^"]+)"', actions)) == set().union(*expected.values(), {"BrowseButton", "ConfigureButton"})
+    assert 'Name="ConnectionAddressBox" IsReadOnly="True"' in xaml
+    connection = source.split("function Update-ConnectionView", 1)[1].split("function Set-ActionsEnabled", 1)[0]
+    assert "^BUDGET_APP_PAIRING_PUBLIC_URL=" in connection
+    assert "$origins.Count -ne 1" in connection
+    assert "^https://[a-z0-9.-]+$" in connection
+    assert "$connectionAddressBox.Text = $origin" in connection
+    assert "BUDGET_APP_JWT_SECRET" not in connection
+    assert "BUDGET_APP_DB_PASSWORD" not in connection
 
 
 ROOT = Path(__file__).parents[2]

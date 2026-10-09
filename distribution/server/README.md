@@ -340,11 +340,23 @@ plus backup-before-update activation of the immutable version bundled by the QPK
 
 ## Always-on Windows PC
 
-The Windows manager organizes its existing controls into **Server**, **Recovery**, **Dropbox**,
+The Windows manager organizes its controls into **Server**, **Connection**, **Recovery**, **Dropbox**,
 and **Maintenance** tabs. Server contains start/status/stop/logs; Recovery contains encrypted backup,
 empty-server restore, budget migration and backup scheduling; Dropbox contains destination connection
 controls; Maintenance contains downloaded updates and diagnostics. Operation output remains visible
 below the tabs. This organization does not change commands, confirmations or private credential handling.
+
+Connection shows the configured public HTTPS origin in a read-only, selectable field, plus production
+iPhone Data Source and device-pairing steps. It reads only `BUDGET_APP_PAIRING_PUBLIC_URL`; missing,
+duplicate, unreadable or malformed settings never display private configuration or an insecure fallback.
+This-PC-only setup is explicitly distinguished from phone connectivity. The tab neither configures
+Tailscale nor promises that a configured hostname/certificate is reachable: Windows secure hosting still
+uses its existing DNS/HTTPS setup contract. Server Status remains the operational health check.
+
+All 64 distribution checks passed after this addition, including layout parsing, unique controls and
+the exact public-setting/HTTPS-only guards. Windows runtime acceptance remains pending: reopen the
+manager, compare Connection with the known secure origin, and follow the phone steps without exposing
+raw API ports. No app rebuild, database migration, installer release or server restart was performed.
 
 The 2026-10-09 layout checkpoint passed all 64 distribution contract checks, including XML validity,
 unique WPF control names and preservation of every action in its intended tab. Actual Windows/WPF
