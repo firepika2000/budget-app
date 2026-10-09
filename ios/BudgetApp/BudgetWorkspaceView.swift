@@ -564,7 +564,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var attachmentData: [String: Data] = [:]
     private var debtTermsValues: [String: APIAccountDebtTermsUpsert] = [:]
     private var debtTermsRevisions: [APIAccountDebtTermsRevision] = []
-    private var debtPayoffPlanValue: APIDebtPayoffPlanUpsert?
+    private struct SavedPayoffPlan {
+        let value: APIDebtPayoffPlanUpsert
+        let updatedAt: String
+    }
+    private var debtPayoffPlansByActor: [String: SavedPayoffPlan] = [:]
+    private var payoffPlanActorID: String { localIdentity?.ownerUserID ?? requestActorID }
     private var allowancePlanRevisions: [String: [APIAllowancePlanRevision]] = [:]
     private var accessProfiles: [String: APIAccessProfile] = [:]
     private var demoTargetRevisions: [APICategoryTargetRevision] = []
@@ -1171,11 +1176,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                     promotionalEndsOn: item.promotionalEndsOn))
             })
             if let item = value.debtPayoffPlans?.first(where: { $0.userID == localIdentity.ownerUserID }) {
-                debtPayoffPlanValue = .init(
+                let plan = APIDebtPayoffPlanUpsert(
                     strategy: item.strategy, rollover: item.rollover,
                     extraPaymentMinor: item.extraPaymentMinor, accountIDs: item.accountIDs,
                     customOrder: item.customOrder, targetDate: item.targetDate
                 )
+                debtPayoffPlansByActor[localIdentity.ownerUserID] = SavedPayoffPlan(value: plan, updatedAt: item.updatedAt)
             }
             localAuthorityLoaded = true
             return
@@ -1247,12 +1253,14 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                       beforeJSON: try item.beforeSnapshot.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) },
                       afterJSON: try item.afterSnapshot.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }, createdAt: item.createdAt)
             },
-            debtPayoffPlans: debtPayoffPlanValue.map { item in [LocalDebtPayoffPlanRecord(
+            debtPayoffPlans: debtPayoffPlansByActor[localIdentity.ownerUserID].map { saved in
+                let item = saved.value
+                return [LocalDebtPayoffPlanRecord(
                 id: "local-debt-payoff-plan", budgetID: localIdentity.budgetID,
                 userID: localIdentity.ownerUserID, strategy: item.strategy,
                 rollover: item.rollover, extraPaymentMinor: item.extraPaymentMinor,
                 accountIDs: item.accountIDs, customOrder: item.customOrder,
-                targetDate: item.targetDate, updatedAt: ISO8601DateFormatter().string(from: now())
+                targetDate: item.targetDate, updatedAt: saved.updatedAt
             )] },
             cashRolloverPolicies: projected.cashRolloverPolicies,
             creditReserveAttributions: projected.creditReserveAttributions,
@@ -2958,29 +2966,43 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
               promotionalEndsOn: value.promotionalEndsOn)
     }
     func debtPayoffPlan() async throws -> APIDebtPayoffPlan? { try requireActiveMembership()
-        guard let value = debtPayoffPlanValue else { return nil }
+        guard budget.can("view_reports"), budget.can("view_account_balances"),
+              actorCapabilities.contains("view_reports"), actorCapabilities.contains("view_account_balances") else {
+            throw APIClientError.server(status: 403, message: "You do not have permission to view payoff plans.")
+        }
+        return try currentPayoffPlanResponse()
+    }
+    private func currentPayoffPlanResponse() throws -> APIDebtPayoffPlan? {
+        guard let saved = debtPayoffPlansByActor[payoffPlanActorID] else { return nil }
+        let value = saved.value
+        let visibleDebtIDs = Set(demo.accounts.filter { actorAccountIDs.contains($0.id) && [.credit, .loan, .mortgage].contains($0.kind) }.map(\.id))
+        let accountIDs = value.accountIDs.filter { visibleDebtIDs.contains($0) }
+        var order = value.customOrder.filter { visibleDebtIDs.contains($0) }
+        var strategy = value.strategy
+        if strategy == "custom", Set(order) != Set(accountIDs) { strategy = "avalanche"; order = [] }
         return try decode([
-            "id": "local-debt-payoff-plan", "budget_id": budget.id,
-            "user_id": requestActorID, "strategy": value.strategy, "rollover": value.rollover,
-            "extra_payment_minor": value.extraPaymentMinor, "account_ids": value.accountIDs,
-            "custom_order": value.customOrder, "target_date": value.targetDate ?? NSNull(),
-            "updated_at": "2026-10-08T12:00:00Z",
+            "id": "payoff-plan-\(payoffPlanActorID)", "budget_id": budget.id,
+            "user_id": payoffPlanActorID, "strategy": strategy, "rollover": value.rollover,
+            "extra_payment_minor": value.extraPaymentMinor, "account_ids": accountIDs,
+            "custom_order": order, "target_date": value.targetDate ?? NSNull(),
+            "updated_at": saved.updatedAt,
         ] as [String: Any])
     }
     func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan { try requireActiveMembership()
-        guard budget.can("manage_planning") else { throw APIClientError.server(status: 403, message: "You do not have permission to manage payoff plans.") }
+        guard budget.can("manage_planning"), budget.can("view_account_balances"),
+              actorCapabilities.contains("manage_planning"), actorCapabilities.contains("view_account_balances") else { throw APIClientError.server(status: 403, message: "You do not have permission to manage payoff plans.") }
         let visibleDebtIDs = Set(demo.accounts.filter { actorAccountIDs.contains($0.id) && [.credit, .loan, .mortgage].contains($0.kind) }.map(\.id))
         guard Set(value.accountIDs).isSubset(of: visibleDebtIDs), Set(value.customOrder).isSubset(of: visibleDebtIDs) else {
             throw APIClientError.server(status: 404, message: "Payoff plan resource not found")
         }
-        debtPayoffPlanValue = value
+        debtPayoffPlansByActor[payoffPlanActorID] = SavedPayoffPlan(value: value, updatedAt: ISO8601DateFormatter().string(from: now()))
         try await synchronizeLocalAuthority()
-        guard let saved = try await debtPayoffPlan() else { throw workspaceRepositoryError("Payoff plan was not saved.") }
+        guard let saved = try currentPayoffPlanResponse() else { throw workspaceRepositoryError("Payoff plan was not saved.") }
         return saved
     }
     func deleteDebtPayoffPlan() async throws { try requireActiveMembership()
-        guard budget.can("manage_planning") else { throw APIClientError.server(status: 403, message: "You do not have permission to manage payoff plans.") }
-        debtPayoffPlanValue = nil
+        guard budget.can("manage_planning"), actorCapabilities.contains("manage_planning") else { throw APIClientError.server(status: 403, message: "You do not have permission to manage payoff plans.") }
+        debtPayoffPlansByActor.removeValue(forKey: payoffPlanActorID)
         try await synchronizeLocalAuthority()
     }
     func createRequest(_ value: APIFinancialRequestCreate) async throws { try requireActiveMembership();

@@ -147,7 +147,10 @@ Local Device and Demo providers, complete export and server-to-local transfer. T
 offers bounded history and earlier pages; local repository mutations persist before returning instead
 of depending on a later workspace refresh. History observations expand to show exactly which planning
 fields changed, with before/after values and explicit unset values; large money remains exact during
-display, and unchanged fields are omitted. Remaining v0.12 work should continue auditing other mutable
+display, and unchanged fields are omitted. Saved payoff plans now match Live's actor-owned privacy in
+Demo; current account scope and balance/report capabilities apply at read time, and one member cannot
+read or reset another member's plan. Local Device preserves the actual owner and original save timestamp
+through reopen and refresh. Remaining v0.12 work should continue auditing other mutable
 planning and administrative observations
 for overwrite-only or export gaps rather than duplicating established histories.
 

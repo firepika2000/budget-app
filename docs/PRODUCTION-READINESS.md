@@ -2180,3 +2180,28 @@ test build compiles the production SwiftUI composition. `git diff --check` passe
 storage changes, additional migration, TestFlight publishing or data reset in this checkpoint.
 Human visual acceptance remains pending: expand a Debt Terms history observation and inspect its
 Before/After values at normal and enlarged text size.
+
+### Saved payoff-plan provider privacy parity — 2026-10-09
+
+Audit found that Live's saved plans were user-owned, but Demo held one workspace-wide plan. That
+could reveal another persona's account selection and reset their personal scenario. Demo now keys
+plans by actor identity, reads only the actor's own plan, and filters account IDs/custom ordering
+against current debt-account scope. Read requires both reports and account-balance visibility;
+save requires planning management and balance visibility; delete requires planning management.
+These mirror the existing Live route contracts. The save response does not implicitly grant report
+read access. Plans remain non-spendable scenarios, not ledger/accounting mutations.
+
+Local Device uses its real owner identity, preserves the stored update timestamp across hydration
+and ordinary refresh, and still persists save/removal at the command boundary. Previously its
+response used a demo owner ID and a fixed timestamp while snapshot refresh rewrote the stored time.
+No schema or server change is needed.
+
+Four focused native tests pass on regular Xcode 27 / the preserved iPhone 17 Pro Max iOS 27 simulator:
+actor isolation and current account scope, revoked balance visibility, separate command/read
+capabilities, and Local Device save/reopen/delete with stable owner/timestamp. Three existing Live
+backend payoff-plan contract tests also pass. The final native test build compiles the production
+app; `git diff --check` passes. No user data reset or TestFlight upload.
+
+Human acceptance remains separate: save a Demo owner's payoff scenario, switch to Partner and
+confirm it is not loaded; save/reset Partner's own scenario and return to Owner to confirm theirs
+remains. Existing Local Device saved plans should remain intact after adopting this build.

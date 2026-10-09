@@ -8,6 +8,83 @@ import CryptoKit
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testPayoffPlansAreActorOwnedAndEnforceCurrentAccountScope() async throws {
+        let source = DemoWorkspaceDataSource()
+        let debtIDs = source.demo.accounts.filter { [.credit, .loan, .mortgage].contains($0.kind) }.map(\.id)
+        XCTAssertFalse(debtIDs.isEmpty)
+        let owner = try await source.saveDebtPayoffPlan(.init(strategy: "avalanche", rollover: true,
+            extraPaymentMinor: 9_007_199_254_740_993, accountIDs: debtIDs, customOrder: []))
+        source.demo.persona = .partner
+        let initiallyEmpty = try await source.debtPayoffPlan()
+        XCTAssertNil(initiallyEmpty, "Another household member's saved plan must remain private")
+        let partner = try await source.saveDebtPayoffPlan(.init(strategy: "snowball", rollover: false,
+            extraPaymentMinor: 2345, accountIDs: debtIDs, customOrder: []))
+        XCTAssertNotEqual(partner.userID, owner.userID)
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(
+            capabilities: ["view_budget", "view_reports", "view_account_balances", "manage_planning"],
+            restrictAccounts: true, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: nil))
+        source.demo.persona = .partner
+        let scopedValue = try await source.debtPayoffPlan()
+        let scoped = try XCTUnwrap(scopedValue)
+        XCTAssertTrue(scoped.accountIDs.isEmpty)
+        XCTAssertTrue(scoped.customOrder.isEmpty)
+        XCTAssertEqual(scoped.extraPaymentMinor, 2345)
+        try await source.deleteDebtPayoffPlan()
+        source.demo.persona = .rey
+        let unchangedOwner = try await source.debtPayoffPlan()
+        XCTAssertEqual(unchangedOwner?.extraPaymentMinor, owner.extraPaymentMinor)
+        XCTAssertEqual(unchangedOwner?.accountIDs, owner.accountIDs)
+        XCTAssertEqual(unchangedOwner?.updatedAt, owner.updatedAt)
+        source.demo.persona = .alex
+        let delegatedPlan = try await source.debtPayoffPlan()
+        XCTAssertNil(delegatedPlan)
+        do {
+            _ = try await source.saveDebtPayoffPlan(.init(strategy: "avalanche", rollover: true,
+                extraPaymentMinor: 100, accountIDs: [], customOrder: []))
+            XCTFail("Delegated member without manage_planning must not save a plan")
+        } catch let error as APIClientError {
+            guard case .server(let status, _) = error else { return XCTFail("Unexpected error") }
+            XCTAssertEqual(status, 403)
+        }
+    }
+
+    @MainActor
+    func testPayoffPlanReadRejectsRevokedBalanceVisibility() async throws {
+        let source = DemoWorkspaceDataSource()
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(
+            capabilities: ["view_budget", "view_reports", "manage_planning"], restrictAccounts: false,
+            accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: nil))
+        source.demo.persona = .partner
+        do {
+            _ = try await source.debtPayoffPlan()
+            XCTFail("Reading even an empty plan must require current balance visibility")
+        } catch let error as APIClientError {
+            guard case .server(let status, _) = error else { return XCTFail("Unexpected error") }
+            XCTAssertEqual(status, 403)
+        }
+    }
+
+    @MainActor
+    func testPayoffPlanSaveDoesNotRequireSeparateReportReadCapability() async throws {
+        let source = DemoWorkspaceDataSource()
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(
+            capabilities: ["view_budget", "view_account_balances", "manage_planning"], restrictAccounts: false,
+            accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: nil))
+        source.demo.persona = .partner
+        let saved = try await source.saveDebtPayoffPlan(.init(strategy: "avalanche", rollover: false,
+            extraPaymentMinor: 1500, accountIDs: [], customOrder: []))
+        XCTAssertEqual(saved.extraPaymentMinor, 1500)
+        do {
+            _ = try await source.debtPayoffPlan()
+            XCTFail("Save capability must not implicitly grant report read access")
+        } catch let error as APIClientError {
+            guard case .server(let status, _) = error else { return XCTFail("Unexpected error") }
+            XCTAssertEqual(status, 403)
+        }
+    }
+
     func testDebtTermsHistoryShowsExactChangedValuesAndRemovedAssumptions() {
         let before = APIAccountDebtTermsRevisionSnapshot(termsType: "credit_card", annualRateBasisPoints: 2199,
             rateType: "variable", minimumPaymentMinor: 9_007_199_254_740_993, promotionalRateBasisPoints: 0)
@@ -2648,6 +2725,7 @@ final class DemoStoreTests: XCTestCase {
             accountIDs: [debtID], customOrder: [], targetDate: "2028-12-31"
         ))
         XCTAssertEqual(saved.extraPaymentMinor, 12_345)
+        XCTAssertNotEqual(saved.userID, "demo-owner")
 
         let reopened = BudgetWorkspaceStore.localDevice(
             applicationSupportDirectory: root, keyManager: keyManager
@@ -2659,6 +2737,13 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(restored.accountIDs, [debtID])
         XCTAssertEqual(restored.extraPaymentMinor, 12_345)
         XCTAssertEqual(restored.targetDate, "2028-12-31")
+        XCTAssertEqual(restored.userID, saved.userID)
+        XCTAssertEqual(restored.updatedAt, saved.updatedAt)
+        try await reopened.deleteDebtPayoffPlan()
+        let afterRemoval = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: root, keyManager: keyManager)
+        await afterRemoval.refresh()
+        let deleted = try await afterRemoval.debtPayoffPlan()
+        XCTAssertNil(deleted)
     }
 
     @MainActor
