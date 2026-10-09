@@ -2587,3 +2587,20 @@ schedule/overlap contract. Both native tests and production app compilation pass
 No live Dropbox authorization or customer backup was changed. One permission-review timeout occurred before the test process started;
 the permitted single retry started the focused native run. External Dropbox connect/backup/restore/revoke
 acceptance remains open. No server restart or migration is needed; TestFlight remains on hold.
+
+### History recovery/export verification — 2026-10-09
+
+Expanded the real encrypted backup fixture to populate seven newer history families and compare the
+entire source authority snapshot with its restored copy, not just money and attachment metadata.
+Account/category decisions, payee merge history, deleted target and debt-term observations, schedule
+realization transaction IDs and reset payoff history retain original attribution/timestamps and exact
+large integer money. Authenticated attachment content verification remains in place. Low-level fixture
+inserts do not create application-service history, so explicit records ensure nonempty coverage.
+
+The export contract plus nine populated history migration suites pass together (24 backend tests).
+Older target/schedule fixtures now include the owner membership required by a valid household and
+later backfill migrations; their exact-money vectors use odd values beyond Double precision and both
+focused final migrations pass. No production migration or accounting code changed. Four encrypted
+backup tests exercise restoration, wrong-key/tampered data, path mismatch and no overwrite. This
+checkpoint changes tests/documentation only; no app rebuild, server restart or migration is needed.
+SQLite/native evidence does not claim PostgreSQL/QNAP or real Dropbox human acceptance.

@@ -16,10 +16,11 @@ def test_populated_target_is_backfilled_into_immutable_history(tmp_path, monkeyp
     command.upgrade(config, "0038_debt_payoff_plan")
     engine = create_engine(url)
     stamp = datetime(2026, 10, 8, 17, 0, tzinfo=timezone.utc)
-    exact_amount = 9_007_199_254_740_992
+    exact_amount = 9_007_199_254_740_993  # Cannot round-trip through a Double.
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO users (id,email,display_name,password_hash,created_at) VALUES ('owner','owner@example.com','Owner','hash',:stamp)"), {"stamp": stamp})
         connection.execute(text("INSERT INTO households (id,name,owner_user_id,created_at) VALUES ('home','Home','owner',:stamp)"), {"stamp": stamp})
+        connection.execute(text("INSERT INTO memberships (id,household_id,user_id,role,is_active,authorization_version) VALUES ('membership','home','owner','owner',1,0)"))
         connection.execute(text("INSERT INTO budgets (id,household_id,name,currency_code,allocation_version,created_at) VALUES ('budget','home','Budget','USD',0,:stamp)"), {"stamp": stamp})
         connection.execute(text("INSERT INTO category_groups (id,budget_id,name,sort_order,is_archived) VALUES ('needs','budget','Needs',0,0)"))
         connection.execute(text("INSERT INTO categories (id,budget_id,group_id,name,sort_order,is_archived) VALUES ('groceries','budget','needs','Groceries',0,0)"))
