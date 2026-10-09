@@ -221,6 +221,42 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testLivePermissionHydrationUpdatesExistingWorkspaceAndReportRepository() async throws {
+        let requests = CredentialRequestRecorder()
+        RefreshMockURLProtocol.handler = { request in
+            requests.append(path: request.url!.path, authorization: "test")
+            return Self.workspaceResponse(request.url!.path)
+        }
+        let store = try workspaceForRevocationTest()
+        let identity = ObjectIdentifier(store)
+        await store.refresh(); await store.loadReports([.summary])
+        XCTAssertNotNil(store.insightsSummary)
+        let renamed = APIBudget(id: "b1", householdID: "h1", name: "Renamed household budget", currencyCode: "USD")
+        XCTAssertFalse(store.updateLiveBudgetAuthority(renamed))
+        XCTAssertNotNil(store.summary, "Metadata-only hydration must not interrupt the workspace")
+        let restricted = APIBudget(id: "b1", householdID: "h1", name: renamed.name, currencyCode: "USD",
+                                   capabilities: ["view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions"])
+        XCTAssertTrue(store.updateLiveBudgetAuthority(restricted))
+        XCTAssertEqual(ObjectIdentifier(store), identity)
+        XCTAssertEqual(store.budget.name, renamed.name)
+        XCTAssertFalse(store.budget.can("view_reports"))
+        XCTAssertTrue(store.workspaceAccessDenied)
+        XCTAssertNil(store.insightsSummary)
+        XCTAssertTrue(store.accounts.isEmpty)
+        await store.refresh()
+        XCTAssertFalse(store.workspaceAccessDenied)
+        let reportReads = requests.paths.filter { $0.contains("/reports/") }.count
+        await store.loadReports([.summary], retry: true)
+        XCTAssertEqual(requests.paths.filter { $0.contains("/reports/") }.count, reportReads,
+                       "The retained Live repository must use newly hydrated capabilities")
+        XCTAssertNil(store.insightsSummary)
+        XCTAssertEqual(ObjectIdentifier(store), identity)
+        let different = APIBudget(id: "another-budget", householdID: "h1", name: "Other", currencyCode: "USD")
+        XCTAssertFalse(store.updateLiveBudgetAuthority(different))
+        XCTAssertEqual(store.budget.id, "b1")
+    }
+
+    @MainActor
     func testLateSnapshotAndReportCannotRestoreWorkspaceAfterAccessDenial() async throws {
         let reads = Counter(), snapshotGate = Gate(), reportGate = Gate()
         defer { snapshotGate.releaseNow(); reportGate.releaseNow() }

@@ -3556,7 +3556,7 @@ final class LiveWorkspaceCredentials {
 
 @MainActor
 private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
-    let budget: APIBudget
+    var budget: APIBudget
     private let credentials: LiveWorkspaceCredentials
     private let transactionOutbox: LiveTransactionOutbox
     private(set) var outboxFailureMessage: String?
@@ -3726,7 +3726,8 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
 
 @MainActor
 private final class LiveWorkspaceDataSource: WorkspaceDataSource {
-    let budget: APIBudget
+    private(set) var budget: APIBudget
+    private var budgetAuthorityRevision = UUID()
     private let credentials: LiveWorkspaceCredentials
     var serverURL: URL { credentials.serverURL }
     var token: String { credentials.token }
@@ -3742,11 +3743,16 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
     }
 
     func updateCredentials(serverURL: URL, token: String) { credentials.update(serverURL: serverURL, token: token) }
+    func updateBudget(_ value: APIBudget, authorityChanged: Bool) {
+        if authorityChanged { budgetAuthorityRevision = UUID(); readCache.remove() }
+        budget = value; commands.budget = value
+    }
     func bindCredentialAuthority(_ resolver: @escaping LiveWorkspaceCredentials.Resolver) { credentials.bind(resolver) }
     func evictAuthorizedCache() { readCache.remove() }
 
     func reports(planMonth: Date, query report: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
         guard !kinds.isEmpty, budget.can("view_reports") else { return WorkspaceReports() }
+        let budget = self.budget
         try await credentials.prepare()
         let client = try credentials.client()
         let token = credentials.token
@@ -3771,12 +3777,15 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
     }
 
     func coreSnapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
+        let revision = budgetAuthorityRevision
         do {
             let snapshot = try await loadSnapshot(planMonth: planMonth, report: report, kinds: [])
+            guard revision == budgetAuthorityRevision else { throw CancellationError() }
             try? readCache.save(snapshot)
             lastReadWasCached = false
             return snapshot
         } catch where isTransientConnectivityFailure(error) {
+            guard revision == budgetAuthorityRevision else { throw CancellationError() }
             let cached = try readCache.load()
             lastReadWasCached = true
             return WorkspaceSnapshot(
@@ -3792,6 +3801,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
     }
 
     private func loadSnapshot(planMonth: Date, report: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceSnapshot {
+        let budget = self.budget
         try await credentials.prepare()
         let client = try credentials.client()
         let month = BudgetWorkspaceStore.dateString(planMonth).prefix(7) + "-01"
@@ -3810,8 +3820,8 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
             : nil
         let allocationOperations = allocationPage?.items ?? []
         let schedules = budget.can("view_transactions") ? try await client.scheduledTransactions(budgetID: budget.id, includeInactive: true, token: token) : []
-        let targets = await withTaskGroup(of: APICategoryTarget?.self) { group in for category in categories { group.addTask { try? await client.categoryTarget(budgetID: self.budget.id, categoryID: category.id, token: self.token) } }; var values: [APICategoryTarget] = []; for await target in group { if let target { values.append(target) } }; return values }
-        let balances = await withTaskGroup(of: APIAccountBalance?.self) { group in for account in accounts { group.addTask { try? await client.accountBalance(budgetID: self.budget.id, accountID: account.id, token: self.token) } }; var values: [APIAccountBalance] = []; for await value in group { if let value { values.append(value) } }; return values }
+        let targets = await withTaskGroup(of: APICategoryTarget?.self) { group in for category in categories { group.addTask { try? await client.categoryTarget(budgetID: budget.id, categoryID: category.id, token: self.token) } }; var values: [APICategoryTarget] = []; for await target in group { if let target { values.append(target) } }; return values }
+        let balances = await withTaskGroup(of: APIAccountBalance?.self) { group in for account in accounts { group.addTask { try? await client.accountBalance(budgetID: budget.id, accountID: account.id, token: self.token) } }; var values: [APIAccountBalance] = []; for await value in group { if let value { values.append(value) } }; return values }
         let requests = (budget.can("request_money") || budget.can("approve_request")) ? (try? await client.financialRequests(budgetID: budget.id, token: token)) ?? [] : []
         let allowances = (try? await client.allowancePlans(budgetID: budget.id, includeInactive: budget.can("manage_allowances"), token: token)) ?? []
         let delegated = try? await client.delegatedBudget(budgetID: budget.id, token: token)
@@ -3859,7 +3869,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
 
 @MainActor
 final class BudgetWorkspaceStore: ObservableObject {
-    let budget: APIBudget
+    @Published private(set) var budget: APIBudget
     @Published var summary: APIMonthSummary?
     @Published var accounts: [APIAccount] = []
     @Published var accountBalances: [String: APIAccountBalance] = [:]
@@ -4177,6 +4187,25 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func usesLiveCredential(_ token: String) -> Bool {
         (dataSource as? LiveWorkspaceDataSource)?.token == token
+    }
+
+    /// Session hydration may change permissions without changing workspace identity.
+    /// Keep the canonical repositories alive, but discard observations from old authority.
+    @discardableResult
+    func updateLiveBudgetAuthority(_ value: APIBudget) -> Bool {
+        guard let live = dataSource as? LiveWorkspaceDataSource,
+              value.id == budget.id, value.householdID == budget.householdID else { return false }
+        let changed = value.effectivePermission != budget.effectivePermission
+            || Set(value.capabilities ?? []) != Set(budget.capabilities ?? [])
+            || (value.capabilities == nil) != (budget.capabilities == nil)
+        live.updateBudget(value, authorityChanged: changed)
+        budget = value
+        if changed {
+            snapshotOperationID = UUID()
+            live.evictAuthorizedCache()
+            evictUnauthorizedObservations()
+        }
+        return changed
     }
 
     private func loadSnapshot() async {
@@ -5295,6 +5324,10 @@ struct BudgetWorkspaceView: View {
         }
         .onChange(of: store.workspaceAccessDenied) { _, denied in
             if denied { showingSettings = false; showingOnboarding = false }
+        }
+        .onChange(of: session.activeBudget, initial: true) { _, active in
+            guard let active, store.updateLiveBudgetAuthority(active) else { return }
+            Task { await store.refresh() }
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
