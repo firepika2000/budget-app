@@ -3,6 +3,7 @@ import Foundation
 import UIKit
 import Vision
 import PDFKit
+import ImageIO
 
 struct ReceiptSuggestion: Identifiable, Equatable {
     let id = UUID()
@@ -20,16 +21,31 @@ struct ReceiptSuggestion: Identifiable, Equatable {
 
 enum ReceiptOCR {
     static func recognize(_ data: Data, currencyCode: String, categories: [APICategory]) async throws -> ReceiptSuggestion {
-        guard let image = UIImage(data: data)?.cgImage else { throw ReceiptOCRError.invalidImage }
+        guard let source = UIImage(data: data), let image = source.cgImage else { throw ReceiptOCRError.invalidImage }
+        let orientation = visionOrientation(source.imageOrientation)
         let lines = try await Task.detached(priority: .userInitiated) {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
-            try VNImageRequestHandler(cgImage: image).perform([request])
+            try VNImageRequestHandler(cgImage: image, orientation: orientation).perform([request])
             return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         }.value
         guard !lines.isEmpty else { throw ReceiptOCRError.noText }
         return parse(lines: lines, currencyCode: currencyCode, categories: categories)
+    }
+
+    static func visionOrientation(_ orientation: UIImage.Orientation) -> CGImagePropertyOrientation {
+        switch orientation {
+        case .up: .up
+        case .down: .down
+        case .left: .left
+        case .right: .right
+        case .upMirrored: .upMirrored
+        case .downMirrored: .downMirrored
+        case .leftMirrored: .leftMirrored
+        case .rightMirrored: .rightMirrored
+        @unknown default: .up
+        }
     }
 
     static func parse(lines: [String], currencyCode: String, categories: [APICategory], now: Date = Date()) -> ReceiptSuggestion {

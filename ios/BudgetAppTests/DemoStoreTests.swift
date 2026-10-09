@@ -5,9 +5,46 @@ import BudgetAPI
 import BudgetCore
 import BudgetStorage
 import CryptoKit
+import ImageIO
+import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testReceiptVisionOrientationPreservesEveryRotationAndMirror() {
+        let pairs: [(UIImage.Orientation, CGImagePropertyOrientation)] = [
+            (.up, .up), (.down, .down), (.left, .left), (.right, .right),
+            (.upMirrored, .upMirrored), (.downMirrored, .downMirrored),
+            (.leftMirrored, .leftMirrored), (.rightMirrored, .rightMirrored)]
+        for (source, expected) in pairs { XCTAssertEqual(ReceiptOCR.visionOrientation(source), expected) }
+    }
+
+    @MainActor
+    func testReceiptVisionRecognizesRotatedCameraShapedJPEG() async throws {
+        let size = CGSize(width: 900, height: 500)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let upright = renderer.image { context in
+            UIColor.white.setFill(); context.fill(CGRect(origin: .zero, size: size))
+            let attributes: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 48), .foregroundColor: UIColor.black]
+            ("FRESH MARKET" as NSString).draw(at: CGPoint(x: 60, y: 60), withAttributes: attributes)
+            ("Subtotal $18.00" as NSString).draw(at: CGPoint(x: 60, y: 150), withAttributes: attributes)
+            ("TOTAL $19.50" as NSString).draw(at: CGPoint(x: 60, y: 250), withAttributes: attributes)
+        }
+        let rotated = renderer.image { context in
+            context.cgContext.translateBy(x: size.width, y: size.height)
+            context.cgContext.rotate(by: .pi)
+            upright.draw(at: .zero)
+        }
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try XCTUnwrap(rotated.cgImage),
+            [kCGImagePropertyOrientation: CGImagePropertyOrientation.down.rawValue] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        XCTAssertEqual(try XCTUnwrap(UIImage(data: data as Data)).imageOrientation, .down)
+        let suggestion = try await ReceiptOCR.recognize(data as Data, currencyCode: "USD", categories: [])
+        XCTAssertEqual(suggestion.amountMinor, 1950)
+        XCTAssertEqual(suggestion.payee, "FRESH MARKET")
+    }
+
     func testProductionReceiptCameraUsesSharedCaptureAndReviewOnlyPath() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("BudgetApp/EditingViews.swift"), encoding: .utf8)

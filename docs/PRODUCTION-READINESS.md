@@ -2436,3 +2436,23 @@ future-date rejection, and production source-composition assertions for shared c
 permission handling, dismissal-driven review, qualified categories and absence of implicit posting,
 upload or Photos writes. Source assertions are not end-to-end camera/modal runtime proof. No backend
 changes or repetitive full-suite reruns; `git diff --check` passes.
+
+### Receipt image-orientation correctness — 2026-10-09
+
+Receipt OCR decoded a UIImage but discarded its rotation/mirroring metadata when passing raw
+CGImage pixels into Vision. It now maps all eight UIImage orientations explicitly to Vision's
+image orientation. This applies to both selected Photos images and newly captured receipt JPEGs;
+the PDF statement page renderer remains separate and unchanged. Recognition still runs on-device
+and only proposes unsaved fields through the existing review path. No financial parsing, posting,
+attachment storage or authorization semantics change.
+
+Human retest after rebuild: scan receipts captured in portrait and landscape and an existing rotated
+Photos image; confirm recognizable payee/total suggestions appear and nothing posts before Save.
+No server restart or migration is required. TestFlight remains on hold.
+
+Verification: three focused native XCTest cases pass under regular Xcode 27 on the preserved iPhone
+17 Pro Max/iOS 27 Simulator. All eight orientation mappings are asserted. An actual generated JPEG
+with 180-degree rotated pixel data and matching EXIF orientation passes through production Vision
+recognition and yields FRESH MARKET and exact 1,950 minor units; existing total/subtotal suggestion
+parsing remains green. The production app compiles and `git diff --check` passes. Real-device camera
+acceptance remains separate; no backend/full-suite rerun was needed.
