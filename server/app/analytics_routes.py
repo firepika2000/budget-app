@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 import csv
 from datetime import date, timedelta
 import io
@@ -118,7 +119,8 @@ def report_transactions(
     flags: list[str],
     tags: list[str],
     include_tracking: bool,
-) -> tuple[object, list[Transaction]]:
+    stream: bool = False,
+) -> tuple[object, Iterable[Transaction]]:
     _validate_report_range(start_date, end_date)
     budget = require_budget_capability(db, user, budget_id, "view_reports")
     visible_accounts = visible_resource_ids(db, user, budget, "account")
@@ -154,9 +156,6 @@ def report_transactions(
         query = query.where(Transaction.is_cleared.is_(cleared))
     if reconciled is not None:
         query = query.where(Transaction.is_reconciled.is_(reconciled))
-    transactions = list(db.scalars(query.order_by(
-        Transaction.occurred_on.desc(), Transaction.created_at.desc(), Transaction.id.desc()
-    )))
     group_category_ids = set(db.scalars(select(Category.id).join(CategoryGroup, CategoryGroup.id == Category.group_id).where(
         Category.budget_id == budget_id, CategoryGroup.name.in_(category_groups)
     ))) if category_groups else set()
@@ -171,7 +170,10 @@ def report_transactions(
     normalized_payees = {value.casefold() for value in payees}
     normalized_flags = {value.strip().casefold() for value in flags if value.strip()}
     normalized_tags = {value.strip().casefold() for value in tags if value.strip()}
-    transactions = [item for item in transactions if (
+    transactions = db.scalars(query.order_by(
+        Transaction.occurred_on.desc(), Transaction.created_at.desc(), Transaction.id.desc()
+    ).execution_options(yield_per=500))
+    transactions = (item for item in transactions if (
         (visible_accounts is None or item.account_id in visible_accounts)
         and (
             visible_categories is None
@@ -199,8 +201,8 @@ def report_transactions(
                 or any(split.financial_classification == "interest_charge" for split in item.splits)
             ))
         )
-    )]
-    return budget, transactions
+    ))
+    return budget, transactions if stream else list(transactions)
 
 
 def _selected_spending_categories(categories, groups, category_ids, category_groups):
@@ -230,7 +232,7 @@ def spending_report(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    budget, transactions = report_transactions(db, user, budget_id, start_date, end_date, account_id, category_id, category_group, member_id, payee, transaction_type, cleared, reconciled, flag, tag, include_tracking)
+    budget, transactions = report_transactions(db, user, budget_id, start_date, end_date, account_id, category_id, category_group, member_id, payee, transaction_type, cleared, reconciled, flag, tag, include_tracking, stream=True)
     categories = {
         item.id: item for item in db.scalars(select(Category).where(Category.budget_id == budget_id))
     }
@@ -353,6 +355,7 @@ def spending_trends_report(
     budget, transactions = report_transactions(
         db, user, budget_id, start_date, end_date, account_id, category_id, category_group,
         member_id, payee, transaction_type, cleared, reconciled, flag, tag, include_tracking,
+        stream=True,
     )
     categories = {item.id: item for item in db.scalars(select(Category).where(Category.budget_id == budget_id))}
     groups = {item.id: item.name for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))}

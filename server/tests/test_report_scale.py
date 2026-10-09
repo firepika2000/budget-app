@@ -125,3 +125,35 @@ def test_summary_payload_stays_bounded_across_ten_thousand_transactions(client, 
     assert large_queries < small_queries + 200
     print(f"summary_scale rows=10 bytes={len(small.content)} sql={small_queries} seconds={small_seconds:.4f}")
     print(f"summary_scale rows=10000 bytes={len(large.content)} sql={large_queries} seconds={large_seconds:.4f}")
+
+
+@pytest.mark.parametrize("report", ["spending", "spending-trends"])
+def test_spending_reports_bound_split_orm_hydration(client, owner_token, session_factory, report):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    other = add_category(client, owner_token, budget["id"], "Other", "Other portion")
+    with session_factory() as session:
+        owner_id = session.scalar(select(User.id))
+        session.execute(insert(Transaction), [{
+            "id": f"spending-scale-{index}", "budget_id": budget["id"], "account_id": account["id"],
+            "amount_minor": -3, "occurred_on": date(2026, 9, 4), "payee_name": "Scale receipt",
+            "created_by_user_id": owner_id,
+        } for index in range(10000)])
+        session.execute(insert(TransactionSplit), [{
+            "transaction_id": f"spending-scale-{index}", "category_id": item["id"], "amount_minor": amount,
+        } for index in range(10000) for item, amount in [(category, -1), (other, -2)]])
+        session.commit()
+    peak = 0
+    def loaded(session, _instance):
+        nonlocal peak
+        peak = max(peak, len(session.identity_map))
+    event.listen(session_factory.class_, "loaded_as_persistent", loaded)
+    try:
+        response = client.get(f"/api/v1/budgets/{budget['id']}/reports/{report}", headers=auth(owner_token),
+            params={"start_date": "2026-09-01", "end_date": "2026-09-30", "category_id": category["id"]})
+    finally:
+        event.remove(session_factory.class_, "loaded_as_persistent", loaded)
+    assert response.status_code == 200, response.text
+    assert response.json()["total_spending_minor"] == 10000
+    print(f"{report} transactions=10000 splits=20000 peak_orm={peak}")
+    assert peak < 3000

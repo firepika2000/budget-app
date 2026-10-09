@@ -1,5 +1,22 @@
 # Production readiness mission ledger
 
+## Spending-report object hydration bound (2026-10-09)
+
+Disposable HTTP scale fixtures with 10,000 transactions and 20,000 split rows measured 30,006
+resident ORM objects in both Spending Breakdown and Spending Trends. These single-pass consumers
+now request a filtered iterator backed by 500-row transaction batches with select-in split loading.
+The same fixtures peak at 2,004 objects, retain the exact selected-category total of 10,000 minor
+units, and enforce a machine-independent object-count regression below 3,000.
+
+Capability/resource validation completes before iteration; the existing whole-split visibility and
+report filters remain unchanged. Income's repeated-pass consumer still receives a materialized list.
+This is an ORM hydration improvement, not a claim of constant total memory: report dimensions and
+contributing-ID collections remain accumulated, and PostgreSQL production scale remains unverified.
+No native, schema, financial mutation or customer-data change; server update/restart only.
+TestFlight remains on hold.
+The focused analytics, delegated privacy and report-scale suite passed 82 cases, zero failures;
+diff checks passed. No redundant native build was run for this server-only change.
+
 ## Split spending-filter correction (2026-10-09)
 
 A production HTTP regression proved a category-filtered Spending Trends request counted other
