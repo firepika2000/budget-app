@@ -42,6 +42,7 @@ from .models import (
     DelegatedBudgetPolicyRevision,
     DelegatedCategoryRule,
     DebtPayoffPlan,
+    DebtPayoffPlanRevision,
     FinancialRequest,
     Household,
     HouseholdAccessEvent,
@@ -373,6 +374,7 @@ def export_budget_json(
             AccountDebtTermsRevision.budget_id == budget_id
         ))],
         "debt_payoff_plans": [row_data(item) for item in db.scalars(select(DebtPayoffPlan).where(DebtPayoffPlan.budget_id == budget_id))],
+        "debt_payoff_plan_revisions": [row_data(item) for item in db.scalars(select(DebtPayoffPlanRevision).where(DebtPayoffPlanRevision.budget_id == budget_id))],
         "cash_rollover_policy_changes": [row_data(item) for item in db.scalars(select(CashRolloverPolicyChange).where(CashRolloverPolicyChange.budget_id == budget_id))],
         "category_groups": [row_data(item) for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))],
         "categories": [row_data(item) for item in db.scalars(select(Category).where(Category.budget_id == budget_id))],

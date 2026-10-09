@@ -422,6 +422,18 @@ class DebtPayoffPlan(Base):
     )
 
 
+class DebtPayoffPlanRevision(Base):
+    __tablename__ = "debt_payoff_plan_revisions"
+    __table_args__ = (CheckConstraint("action IN ('created', 'updated', 'deleted')", name="ck_payoff_plan_revision_action"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    action: Mapped[str] = mapped_column(String(20))
+    before_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    after_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+
+
 class CategoryGroup(Base):
     __tablename__ = "category_groups"
 

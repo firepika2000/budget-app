@@ -366,6 +366,15 @@ class DebtPayoffPlanResponse(DebtPayoffPlanUpsert):
     updated_at: datetime
 
 
+class DebtPayoffPlanRevisionResponse(BaseModel):
+    id: str
+    user_id: str
+    action: Literal["created", "updated", "deleted"]
+    before_snapshot: Optional[DebtPayoffPlanUpsert]
+    after_snapshot: Optional[DebtPayoffPlanUpsert]
+    created_at: datetime
+
+
 class CategoryGroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     sort_order: int = 0

@@ -854,6 +854,16 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/debt-payoff-plan", token: token)
     }
 
+    public func debtPayoffPlanHistory(budgetID: String, limit: Int = 50, offset: Int = 0,
+                                     token: String) async throws -> [APIDebtPayoffPlanRevision] {
+        guard (1...100).contains(limit), offset >= 0 else {
+            throw APIClientError.server(status: 422, message: "Choose a history page size from 1 to 100 and a nonnegative offset.")
+        }
+        return try await send(path: "api/v1/budgets/\(budgetID)/debt-payoff-plan/history", queryItems: [
+            URLQueryItem(name: "limit", value: String(limit)), URLQueryItem(name: "offset", value: String(offset)),
+        ], token: token)
+    }
+
     public func saveDebtPayoffPlan(
         budgetID: String, request: APIDebtPayoffPlanUpsert, token: String
     ) async throws -> APIDebtPayoffPlan {

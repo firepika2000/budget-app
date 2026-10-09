@@ -1218,6 +1218,37 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(methods, ["PUT", "GET", "DELETE"])
     }
 
+    func testDebtPayoffHistoryUsesBoundedAuthenticatedContractAndExactMoney() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        var requests = 0
+        MockURLProtocol.handler = { request in
+            requests += 1
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/debt-payoff-plan/history")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated-token")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+            XCTAssertEqual(query?.first(where: { $0.name == "limit" })?.value, "10")
+            XCTAssertEqual(query?.first(where: { $0.name == "offset" })?.value, "20")
+            let data = Data(#"[{"id":"history1","user_id":"u1","action":"deleted","before_snapshot":{"strategy":"custom","rollover":true,"extra_payment_minor":9007199254740993,"account_ids":["card"],"custom_order":["card"],"target_date":null},"after_snapshot":null,"created_at":"2026-10-09T12:00:00Z"}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!,
+                                   session: URLSession(configuration: configuration))
+        let rows = try await client.debtPayoffPlanHistory(budgetID: "b1", limit: 10, offset: 20, token: "rotated-token")
+        XCTAssertEqual(rows.first?.beforeSnapshot?.extraPaymentMinor, 9_007_199_254_740_993)
+        XCTAssertNil(rows.first?.afterSnapshot)
+        XCTAssertEqual(rows.first?.action, "deleted")
+        XCTAssertEqual(try JSONDecoder().decode(APIDebtPayoffPlanRevision.self,
+                       from: JSONEncoder().encode(rows[0])), rows[0])
+        for (limit, offset) in [(0, 0), (101, 0), (10, -1)] {
+            do {
+                _ = try await client.debtPayoffPlanHistory(budgetID: "b1", limit: limit, offset: offset, token: "rotated-token")
+                XCTFail("Invalid pagination must not send a request")
+            } catch APIClientError.server(let status, _) { XCTAssertEqual(status, 422) }
+        }
+        XCTAssertEqual(requests, 1)
+    }
+
     func testDebtPayoffPlanValidationBoundsDatesAndCustomOrder() throws {
         let invalid: [APIDebtPayoffPlanUpsert] = [
             .init(strategy: "unknown", rollover: true),

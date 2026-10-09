@@ -54,6 +54,7 @@ from .models import (
     AccountDebtTerms,
     AccountDebtTermsRevision,
     DebtPayoffPlan,
+    DebtPayoffPlanRevision,
     AllowancePlan,
     AllowanceSplit,
     AllocationOperation,
@@ -96,6 +97,7 @@ from .schemas import (
     DebtStrategyProjectionResponse,
     DebtPayoffPlanUpsert,
     DebtPayoffPlanResponse,
+    DebtPayoffPlanRevisionResponse,
     AccountResponse,
     AccountRevisionResponse,
     AllocationOperationResponse,
@@ -905,6 +907,7 @@ def upsert_debt_payoff_plan(
         DebtPayoffPlan.budget_id == budget_id, DebtPayoffPlan.user_id == user.id
     ))
     values = body.model_dump()
+    before = _payoff_plan_snapshot(plan) if plan is not None else None
     if plan is None:
         plan = DebtPayoffPlan(budget_id=budget_id, user_id=user.id, **values)
         db.add(plan)
@@ -912,6 +915,10 @@ def upsert_debt_payoff_plan(
         for name, value in values.items():
             setattr(plan, name, value)
         plan.updated_at = datetime.now(timezone.utc)
+    after = _payoff_plan_snapshot(plan)
+    if before != after:
+        db.add(DebtPayoffPlanRevision(budget_id=budget_id, user_id=user.id,
+            action="created" if before is None else "updated", before_snapshot=before, after_snapshot=after))
     db.commit()
     db.refresh(plan)
     return plan
@@ -928,9 +935,43 @@ def delete_debt_payoff_plan(
         DebtPayoffPlan.budget_id == budget_id, DebtPayoffPlan.user_id == user.id
     ))
     if plan is not None:
+        db.add(DebtPayoffPlanRevision(budget_id=budget_id, user_id=user.id, action="deleted",
+            before_snapshot=_payoff_plan_snapshot(plan), after_snapshot=None))
         db.delete(plan)
         db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _payoff_plan_snapshot(plan: DebtPayoffPlan) -> dict:
+    return {"strategy": plan.strategy, "rollover": plan.rollover, "extra_payment_minor": plan.extra_payment_minor,
+            "account_ids": list(plan.account_ids), "custom_order": list(plan.custom_order),
+            "target_date": plan.target_date.isoformat() if plan.target_date else None}
+
+
+@router.get("/debt-payoff-plan/history", response_model=list[DebtPayoffPlanRevisionResponse])
+def debt_payoff_plan_history(budget_id: str, limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
+                            user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[dict]:
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
+    require_budget_capability(db, user, budget_id, "view_account_balances")
+    scope = visible_resource_ids(db, user, budget, "account")
+    debt_ids = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id,
+        Account.account_type.in_(("credit", "loan", "mortgage")))))
+    allowed = debt_ids if scope is None else debt_ids & scope
+    def visible(snapshot):
+        if snapshot is None:
+            return None
+        result = dict(snapshot)
+        result["account_ids"] = [key for key in result["account_ids"] if key in allowed]
+        result["custom_order"] = [key for key in result["custom_order"] if key in allowed]
+        if result["strategy"] == "custom" and set(result["custom_order"]) != set(result["account_ids"]):
+            result["strategy"], result["custom_order"] = "avalanche", []
+        return result
+    rows = db.scalars(select(DebtPayoffPlanRevision).where(DebtPayoffPlanRevision.budget_id == budget_id,
+        DebtPayoffPlanRevision.user_id == user.id).order_by(DebtPayoffPlanRevision.created_at.desc(),
+        DebtPayoffPlanRevision.id.desc()).offset(offset).limit(limit))
+    return [{"id": row.id, "user_id": row.user_id, "action": row.action,
+        "before_snapshot": visible(row.before_snapshot), "after_snapshot": visible(row.after_snapshot),
+        "created_at": row.created_at} for row in rows]
 
 
 @router.get("/accounts/{account_id}/balance", response_model=AccountBalanceResponse)

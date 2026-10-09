@@ -981,7 +981,7 @@ public struct APIDebtStrategyProjectionRequest: Encodable, Sendable {
     }
 }
 
-public struct APIDebtPayoffPlanUpsert: Encodable, Equatable, Sendable {
+public struct APIDebtPayoffPlanUpsert: Codable, Equatable, Sendable {
     public let strategy: String
     public let rollover: Bool
     public let extraPaymentMinor: Int64
@@ -1031,6 +1031,26 @@ public struct APIDebtPayoffPlanUpsert: Encodable, Equatable, Sendable {
         case strategy, rollover
         case extraPaymentMinor = "extra_payment_minor", accountIDs = "account_ids"
         case customOrder = "custom_order", targetDate = "target_date"
+    }
+}
+
+public struct APIDebtPayoffPlanRevision: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let userID: String
+    public let action: String
+    public let beforeSnapshot: APIDebtPayoffPlanUpsert?
+    public let afterSnapshot: APIDebtPayoffPlanUpsert?
+    public let createdAt: String
+
+    public init(id: String, userID: String, action: String,
+                beforeSnapshot: APIDebtPayoffPlanUpsert?, afterSnapshot: APIDebtPayoffPlanUpsert?, createdAt: String) {
+        self.id = id; self.userID = userID; self.action = action
+        self.beforeSnapshot = beforeSnapshot; self.afterSnapshot = afterSnapshot; self.createdAt = createdAt
+    }
+    enum CodingKeys: String, CodingKey {
+        case id, action
+        case userID = "user_id", beforeSnapshot = "before_snapshot", afterSnapshot = "after_snapshot"
+        case createdAt = "created_at"
     }
 }
 

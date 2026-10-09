@@ -138,3 +138,63 @@ def test_malformed_payoff_plan_preserves_existing_scenario(client, owner_token, 
     for changes in malformed:
         assert client.put(path, headers=auth(owner_token), json=valid | changes).status_code == 422
         assert client.get(path, headers=auth(owner_token)).json() == before
+
+
+def test_payoff_history_retains_decisions_after_reset_without_duplicate_noops(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    card = create_strategy_card(client, owner_token, budget["id"], "Card", 5_000, 1_200, 500)
+    base = f"/api/v1/budgets/{budget['id']}"
+    path = f"{base}/debt-payoff-plan"
+    balance_path = f"{base}/accounts/{card['id']}/balance"
+    balance = client.get(balance_path, headers=auth(owner_token)).json()
+    first = {"strategy": "avalanche", "rollover": True, "extra_payment_minor": 9007199254740993,
+             "account_ids": [card["id"]], "custom_order": [], "target_date": None}
+    second = first | {"strategy": "snowball", "extra_payment_minor": 100}
+    for payload in (first, first, second):
+        response = client.put(path, headers=auth(owner_token), json=payload)
+        assert response.status_code == 200, response.text
+    for _ in range(2):
+        assert client.delete(path, headers=auth(owner_token)).status_code == 204
+    response = client.get(f"{path}/history", headers=auth(owner_token))
+    assert response.status_code == 200, response.text
+    rows = response.json()
+    assert [row["action"] for row in rows] == ["deleted", "updated", "created"]
+    assert rows[0]["before_snapshot"] == second and rows[0]["after_snapshot"] is None
+    assert rows[1]["before_snapshot"] == first and rows[1]["after_snapshot"] == second
+    assert rows[2]["before_snapshot"] is None and rows[2]["after_snapshot"] == first
+    assert len({row["user_id"] for row in rows}) == 1
+    assert client.get(f"{path}/history?limit=1&offset=1", headers=auth(owner_token)).json() == rows[1:2]
+    for query in ("limit=0", "limit=101", "offset=-1"):
+        assert client.get(f"{path}/history?{query}", headers=auth(owner_token)).status_code == 422
+    assert client.get(balance_path, headers=auth(owner_token)).json() == balance
+
+
+def test_payoff_history_is_private_and_respects_current_account_scope(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    visible = create_strategy_card(client, owner_token, budget["id"], "Visible", 5_000, 1_200, 500)
+    hidden = create_strategy_card(client, owner_token, budget["id"], "Hidden", 8_000, 2_000, 700)
+    base = f"/api/v1/budgets/{budget['id']}"
+    path = f"{base}/debt-payoff-plan"
+    payload = {"strategy": "custom", "rollover": True, "extra_payment_minor": 100,
+               "account_ids": [visible["id"], hidden["id"]],
+               "custom_order": [hidden["id"], visible["id"]], "target_date": None}
+    assert client.put(path, headers=auth(owner_token), json=payload).status_code == 200
+    child_id, child_token = add_child(session_factory, client)
+    assert client.put(f"{base}/grants", headers=auth(owner_token), json={
+        "user_id": child_id, "permission": "manage"}).status_code == 200
+    assert client.get(f"{path}/history", headers=auth(child_token)).json() == []
+    assert client.put(path, headers=auth(child_token), json=payload).status_code == 200
+    policy = {"capabilities": ["view_budget", "view_accounts", "view_account_balances", "view_reports", "manage_planning"],
+              "restrict_accounts": True, "account_ids": [visible["id"]],
+              "restrict_categories": False, "category_ids": []}
+    assert client.put(f"{base}/access/{child_id}", headers=auth(owner_token), json=policy).status_code == 200
+    response = client.get(f"{path}/history", headers=auth(child_token))
+    assert response.status_code == 200, response.text
+    assert len(response.json()) == 1
+    snapshot = response.json()[0]["after_snapshot"]
+    assert snapshot["account_ids"] == snapshot["custom_order"] == [visible["id"]]
+    assert hidden["id"] not in response.text
+    assert response.json()[0]["user_id"] == child_id
+    policy["capabilities"].remove("view_account_balances")
+    assert client.put(f"{base}/access/{child_id}", headers=auth(owner_token), json=policy).status_code == 200
+    assert client.get(f"{path}/history", headers=auth(child_token)).status_code == 403
