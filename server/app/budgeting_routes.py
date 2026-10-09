@@ -978,6 +978,7 @@ def debt_payoff_plan_history(budget_id: str, limit: int = Query(50, ge=1, le=100
 def account_balance(
     budget_id: str,
     account_id: str,
+    through_date: Optional[date] = Query(default=None),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AccountBalanceResponse:
@@ -987,12 +988,15 @@ def account_balance(
         db, user, budget, "account", account_id
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    conditions = [Transaction.account_id == account_id]
+    if through_date is not None:
+        conditions.append(Transaction.occurred_on <= through_date)
     cleared = int(db.scalar(select(
         func.coalesce(func.sum(Transaction.amount_minor), 0)
-    ).where(Transaction.account_id == account_id, Transaction.is_cleared.is_(True))) or 0)
+    ).where(*conditions, Transaction.is_cleared.is_(True))) or 0)
     uncleared = int(db.scalar(select(
         func.coalesce(func.sum(Transaction.amount_minor), 0)
-    ).where(Transaction.account_id == account_id, Transaction.is_cleared.is_(False))) or 0)
+    ).where(*conditions, Transaction.is_cleared.is_(False))) or 0)
     return AccountBalanceResponse(
         account_id=account.id,
         currency_code=budget.currency_code,

@@ -165,8 +165,9 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/accounts", token: token)
     }
 
-    public func accountBalance(budgetID: String, accountID: String, token: String) async throws -> APIAccountBalance {
-        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/balance", token: token)
+    public func accountBalance(budgetID: String, accountID: String, throughDate: String? = nil, token: String) async throws -> APIAccountBalance {
+        try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/balance",
+                       queryItems: throughDate.map { [.init(name: "through_date", value: $0)] } ?? [], token: token)
     }
 
     public func createAccount(

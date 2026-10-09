@@ -115,6 +115,39 @@ def create_budget_structure(client, owner_token, budget_id):
     return account.json(), category.json()
 
 
+def test_account_balance_cutoff_is_authoritative_and_preserves_default(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    base = f"/api/v1/budgets/{budget['id']}"
+    for occurred_on, amount, cleared in [("2025-01-01", 10000, True),
+                                         ("2025-01-02", 3000, False),
+                                         ("2025-02-01", 2000, True)]:
+        response = client.post(f"{base}/transactions", headers=auth(owner_token), json={
+            "account_id": account["id"], "occurred_on": occurred_on,
+            "amount_minor": amount, "is_cleared": cleared, "payee": "Cutoff test",
+        })
+        assert response.status_code == 201, response.text
+    path = f"{base}/accounts/{account['id']}/balance"
+    original = client.get(path, headers=auth(owner_token))
+    assert original.status_code == 200
+    assert original.json()["cleared_balance_minor"] == 12000
+    cutoff = client.get(path, params={"through_date": "2025-01-31"}, headers=auth(owner_token))
+    assert cutoff.status_code == 200, cutoff.text
+    assert cutoff.json()["cleared_balance_minor"] == 10000
+    assert cutoff.json()["uncleared_balance_minor"] == 3000
+    assert cutoff.json()["working_balance_minor"] == 13000
+    assert cutoff.json()["reconciled_balance_minor"] == original.json()["reconciled_balance_minor"]
+    assert client.get(path, params={"through_date": "2025-02-30"}, headers=auth(owner_token)).status_code == 422
+    assert client.get(path, params={"through_date": "2025-01-31"}).status_code == 401
+    other = create_budget(client, owner_token, session_factory, name="Other budget")
+    assert client.get(f"/api/v1/budgets/{other['id']}/accounts/{account['id']}/balance",
+                      params={"through_date": "2025-01-31"}, headers=auth(owner_token)).status_code == 404
+    empty = client.get(path, params={"through_date": "2024-12-31"}, headers=auth(owner_token))
+    assert empty.status_code == 200
+    assert empty.json()["working_balance_minor"] == 0
+    assert client.get(path, headers=auth(owner_token)).json() == original.json()
+
+
 def test_category_customization_round_trips_through_list_update_and_favorite(
     client, owner_token, session_factory
 ):

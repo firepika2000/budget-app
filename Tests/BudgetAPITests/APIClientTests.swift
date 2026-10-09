@@ -657,6 +657,23 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(history.map(\.accountID), ["a2"])
     }
 
+    func testAccountBalanceCutoffUsesOptionalAuthoritativeQuery() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/balance")
+            XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems,
+                           [.init(name: "through_date", value: "2026-09-15")])
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            let data = Data(#"{"account_id":"a1","currency_code":"USD","cleared_balance_minor":9007199254740993,"uncleared_balance_minor":0,"working_balance_minor":9007199254740993,"reconciled_balance_minor":null}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let balance = try await client.accountBalance(budgetID: "b1", accountID: "a1", throughDate: "2026-09-15", token: "current")
+        XCTAssertEqual(balance.clearedBalanceMinor, 9_007_199_254_740_993)
+    }
+
     func testAllocationHistoryUsesBoundedPageContract() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

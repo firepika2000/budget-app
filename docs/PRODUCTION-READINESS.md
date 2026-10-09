@@ -1,5 +1,28 @@
 # Production readiness mission ledger
 
+## Reconciliation observation foundation (2026-10-09)
+
+Confirmed open scale/scope gap: the production reconciliation screen still derives its cutoff
+estimate by subtracting later transactions from a downloaded workspace snapshot. The server
+account-balance endpoint now accepts optional `through_date=YYYY-MM-DD`, aggregating cleared and
+uncleared ledger postings through that date in SQL without downloading transaction history.
+Absent date retains the original all-date contract. Existing account-balance capability, budget
+visibility and resource authorization are unchanged. Last reconciled balance remains its stored
+observation, not recalculated at the cutoff. No reconciliation mutation semantics changed.
+
+The Swift API exposes the same optional date query and preserves exact Int64 decoding. Twenty-one
+backend budgeting/privacy cases and the focused Swift contract case passed; new coverage proves
+default compatibility, inclusive cutoff, empty period, invalid dates, unauthenticated and cross-budget
+denial, unchanged account observations after reads, and a value beyond Double's exact integer range.
+
+**Incomplete integration:** the shared account application service/repository and reconciliation UI
+must next consume the server observation with date/scope generation guards and explicit stale-read
+handling. This checkpoint is not user-capability completion or permission to reduce hydration.
+Local Device/Demo must retain equivalent exact provider observations; submission must preserve the
+observed balance rather than quietly refresh away a stale expectation. No human data was touched.
+No migration is needed; server restart/deployment is needed to expose the new optional API behavior.
+TestFlight remains on hold.
+
 ## Immediate mission override — Beta 1 (2026-09-27)
 
 The user's Beta 1 Production Sample Mission supersedes exhaustive roadmap completion for the
