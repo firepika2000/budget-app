@@ -10,6 +10,19 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testLedgerImportAndHouseholdHistoryApplyDefinitiveDenialPolicy() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        XCTAssertTrue(source.contains("allocationOperations = []; allocationHistoryNextCursor = nil"))
+        XCTAssertTrue(source.contains("guard authorityRevision == revision, !workspaceAccessDenied else { return }"))
+        for name in ["ReconciliationHistoryView", "StatementImportHistoryView", "HouseholdMemberLifecycleView"] {
+            let start = try XCTUnwrap(source.range(of: "private struct \(name): View"))
+            let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
+            XCTAssertTrue(source[start.lowerBound..<end].contains("HistoryObservationPolicy.mustDiscard(after: error)"), name)
+        }
+        XCTAssertTrue(source.contains("items = []; nextOffset = nil; selected = nil"))
+        XCTAssertTrue(source.contains("invitations = []; events = []; hasMoreEvents = false"))
+    }
     func testHistoryDiscardsDefinitiveDenialsButRetainsTemporaryFailures() {
         for status in [401, 403, 404] {
             // Classification follows the HTTP contract, not English wording.

@@ -4252,13 +4252,19 @@ final class BudgetWorkspaceStore: ObservableObject {
               let cursor = allocationHistoryNextCursor,
               let source = dataSource as? LiveWorkspaceDataSource else { return }
         isLoadingOlderAllocationHistory = true
+        let revision = authorityRevision
         defer { isLoadingOlderAllocationHistory = false }
         do {
             let page = try await source.allocationOperationsPage(limit: 50, cursor: cursor)
+            guard authorityRevision == revision, !workspaceAccessDenied else { return }
             let existing = Set(allocationOperations.map(\.id))
             allocationOperations.append(contentsOf: page.items.filter { !existing.contains($0.id) })
             allocationHistoryNextCursor = page.nextCursor
         } catch {
+            guard authorityRevision == revision else { return }
+            if HistoryObservationPolicy.mustDiscard(after: error) {
+                allocationOperations = []; allocationHistoryNextCursor = nil
+            }
             if !isTransientConnectivityFailure(error) { errorMessage = error.localizedDescription }
         }
     }
@@ -10137,13 +10143,18 @@ private struct ReconciliationHistoryView: View {
     }
 
     private func load(append: Bool) async {
+        guard !loading, !loadingOlder else { return }
         if append { loadingOlder = true } else { loading = true }
         defer { loading = false; loadingOlder = false }
         do {
             let next = try await store.reconciliationHistory(accountID: account.id, offset: append ? rows.count : 0)
             rows = append ? rows + next : next
             hasMore = next.count == 50
-        } catch { errorMessage = error.localizedDescription }
+            errorMessage = nil
+        } catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
@@ -10309,8 +10320,12 @@ private struct StatementImportHistoryView: View {
         if items.isEmpty && !isLoading { ContentUnavailableView("No Statement Imports", systemImage: "doc.text.magnifyingglass", description: Text("Imported statements and unfinished reviews will appear here.")) }
         else { List { ForEach(items) { item in Button { Task { await open(item) } } label: { HStack { VStack(alignment: .leading, spacing: 4) { Text(formatTitle(item.sourceFormat)); Text("\(item.candidateCount) recognized transactions").font(.caption).foregroundStyle(.secondary) }; Spacer(); VStack(alignment: .trailing, spacing: 4) { Label(statusTitle(item.status), systemImage: statusSymbol(item.status)).foregroundStyle(statusColor(item.status)); Text(Self.displayDate(item.createdAt)).font(.caption).foregroundStyle(.secondary) } } }.buttonStyle(.plain).accessibilityLabel("\(formatTitle(item.sourceFormat)) statement, \(item.candidateCount) transactions, \(statusTitle(item.status))") }; if nextOffset != nil { Button("Load More") { Task { await load(reset: false) } }.disabled(isLoading) } } }
     }.navigationTitle("Statement Imports").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }.overlay { if isLoading && items.isEmpty { ProgressView("Loading imports…") } }.task { await load(reset: true) }.refreshable { await load(reset: true) }.alert("Unable to load imports", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }.sheet(item: $selected, onDismiss: { Task { await load(reset: true) } }) { batch in StatementImportFlowView(workspace: workspace, budget: budget, account: account, existingBatch: batch) } } }
-    private func load(reset: Bool) async { guard !isLoading else { return }; isLoading = true; defer { isLoading = false }; do { let offset = reset ? 0 : (nextOffset ?? items.count); let page = try await workspace.statementImports(accountID: account.id, limit: 25, offset: offset); items = reset ? page.items : items + page.items; nextOffset = page.nextOffset } catch { errorMessage = error.localizedDescription } }
-    private func open(_ item: APIStatementImportSummary) async { do { selected = try await workspace.statementImport(accountID: account.id, batchID: item.id) } catch { errorMessage = error.localizedDescription } }
+    private func load(reset: Bool) async { guard !isLoading else { return }; isLoading = true; defer { isLoading = false }; do { let offset = reset ? 0 : (nextOffset ?? items.count); let page = try await workspace.statementImports(accountID: account.id, limit: 25, offset: offset); items = reset ? page.items : items + page.items; nextOffset = page.nextOffset; errorMessage = nil } catch { handleReadError(error) } }
+    private func open(_ item: APIStatementImportSummary) async { do { selected = try await workspace.statementImport(accountID: account.id, batchID: item.id) } catch { handleReadError(error) } }
+    private func handleReadError(_ error: Error) {
+        if HistoryObservationPolicy.mustDiscard(after: error) { items = []; nextOffset = nil; selected = nil }
+        errorMessage = error.localizedDescription
+    }
     private func statusTitle(_ status: String) -> String { status == "review" ? "Needs Review" : status.capitalized }
     private func formatTitle(_ sourceFormat: String) -> String { sourceFormat == "pdf_ocr" ? "PDF (Scanned)" : sourceFormat.uppercased() }
     private func statusSymbol(_ status: String) -> String { status == "review" ? "pencil.circle" : status == "approved" ? "checkmark.circle.fill" : "xmark.circle" }
@@ -12997,7 +13012,10 @@ private struct HouseholdMemberLifecycleView: View {
             hasMoreEvents = events.count == eventPageSize
             eventPageError = nil
             errorMessage = nil
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            discardDeniedHouseholdHistory(error)
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func loadMoreEvents() async {
@@ -13010,7 +13028,17 @@ private struct HouseholdMemberLifecycleView: View {
             events.append(contentsOf: older.filter { !knownIDs.contains($0.id) })
             hasMoreEvents = older.count == eventPageSize
             eventPageError = nil
-        } catch { eventPageError = error.localizedDescription }
+        } catch {
+            discardDeniedHouseholdHistory(error)
+            eventPageError = error.localizedDescription
+            if events.isEmpty { errorMessage = error.localizedDescription }
+        }
+    }
+    private func discardDeniedHouseholdHistory(_ error: Error) {
+        if HistoryObservationPolicy.mustDiscard(after: error) {
+            invitations = []; events = []; hasMoreEvents = false
+            secret = nil; pendingInvitationSecret = nil
+        }
     }
     private func resend(_ invitation: APIInvitationSummary) async { do { secret = try await store.resendHouseholdInvitation(id: invitation.id); await load() } catch { errorMessage = error.localizedDescription } }
     private func cancel(_ invitation: APIInvitationSummary) async { do { try await store.cancelHouseholdInvitation(id: invitation.id); await load() } catch { errorMessage = error.localizedDescription } }
