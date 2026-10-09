@@ -10190,14 +10190,14 @@ private struct LiveAccountsView: View {
     var body: some View {
         List {
             Section("Open") { ForEach(store.accounts.filter { !$0.isClosed }) { account in
-                NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: {
+                NavigationLink { HistoryAuthorityBoundary(.account(account.id), unavailableTitle: "Account unavailable") { LiveAccountRegisterView(initialAccount: account) } } label: {
                     HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: accountIcon(account.accountType)) }; Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } }
                 }
                 .accessibilityIdentifier("account-row-\(account.id)")
             } }
             if store.accounts.contains(where: \.isClosed) {
                 Section("Closed") { ForEach(store.accounts.filter { $0.isClosed }) { account in
-                    NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: {
+                    NavigationLink { HistoryAuthorityBoundary(.account(account.id), unavailableTitle: "Account unavailable") { LiveAccountRegisterView(initialAccount: account) } } label: {
                         Label { VStack(alignment: .leading) { Text(account.name); Text("Closed · \(account.accountType.capitalized)").font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: "archivebox.fill") }
                     }.accessibilityIdentifier("closed-account-row-\(account.id)")
                 } }
@@ -10305,7 +10305,7 @@ struct LiveAccountRegisterView: View {
         .sheet(isPresented: $showAdd) { entry }
         .sheet(item: $transferPresentation) { presentation in transfer(presentation) }
         .sheet(isPresented: $showReconcile) { reconcile }
-        .sheet(isPresented: $showSettings) { AccountSettingsView(account: account) }
+        .sheet(isPresented: $showSettings) { HistoryAuthorityBoundary(.account(account.id), unavailableTitle: "Account unavailable") { AccountSettingsView(account: account) } }
         .sheet(isPresented: $showReconciliationHistory) { HistoryAuthorityBoundary(.account(account.id)) { ReconciliationHistoryView(account: account) } }
         .refreshable { await store.refresh() }
     }
@@ -10568,7 +10568,11 @@ private struct LiveReconcileView: View {
             do { let url = try result.get(); let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }; let data = try Data(contentsOf: url, options: .mappedIfSafe); statementFile = StatementImportFile(name: url.lastPathComponent, data: data) } catch { errorMessage = error.localizedDescription }
         }
         .sheet(item: $statementFile) { file in StatementImportFlowView(workspace: workspace, budget: budget, account: account, file: file) }
-        .sheet(isPresented: $showingImportHistory) { StatementImportHistoryView(workspace: workspace, budget: budget, account: account) }
+        .sheet(isPresented: $showingImportHistory) {
+            HistoryAuthorityBoundary(.account(account.id), unavailableTitle: "Statement imports unavailable") {
+                StatementImportHistoryView(workspace: workspace, budget: budget, account: account)
+            }.environmentObject(workspace)
+        }
     }
     private func loadObservation() async {
         guard !isSaving, !workspace.workspaceAccessDenied else { return }
@@ -11196,6 +11200,11 @@ private struct StatementImportFlowView: View {
     @State private var isWorking = false; @State private var errorMessage: String?
     @State private var confirmingCancel = false
     @State private var confirmingUndo = false
+    @State private var accessChanged = false
+    private var canUseCurrentAccess: Bool {
+        !accessChanged && workspace.historyResourceVisible(.account(account.id))
+            && workspace.budget.can("reconcile_account")
+    }
     init(workspace: BudgetWorkspaceStore, budget: APIBudget, account: APIAccount, file: StatementImportFile) {
         self.workspace = workspace; self.budget = budget; self.account = account; self.file = file
         _staged = State(initialValue: nil)
@@ -11213,7 +11222,22 @@ private struct StatementImportFlowView: View {
     }
     private var headers: [String] { guard let file, file.sourceFormat == "csv" else { return [] }; return Self.csvHeaders(file.data, delimiter: delimiter) }
     private var reviewable: Bool { staged?.status == "review" }
-    var body: some View { NavigationStack { Form {
+    var body: some View {
+        Group {
+            if !canUseCurrentAccess {
+                NavigationStack {
+                    ContentUnavailableView("Budget access changed", systemImage: "lock",
+                        description: Text("Close this review and reopen Statement Imports to load the current authorized data. Nothing is approved automatically."))
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+                }
+            } else { editorContent }
+        }
+        .onChange(of: workspace.authorityRevision) { _, _ in
+            accessChanged = true; staged = nil; postRows = []; categoryByRow = [:]
+            confirmingCancel = false; confirmingUndo = false; errorMessage = nil
+        }
+    }
+    private var editorContent: some View { NavigationStack { Form {
         if let staged { review(staged) } else { setup }
     }.navigationTitle(staged == nil ? "Import Statement" : "Review Import").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button(staged == nil || !reviewable ? "Close" : "Cancel Import") { if staged == nil || !reviewable { dismiss() } else { confirmingCancel = true } }.disabled(isWorking) }; ToolbarItem(placement: .confirmationAction) { if let staged, reviewable { Button("Post Selected") { Task { await approve(staged) } }.disabled(isWorking) } else if staged == nil { Button("Preview") { Task { await stage() } }.disabled(!mappingReady || isWorking) } } }
@@ -11314,7 +11338,7 @@ private struct StatementImportFlowView: View {
         memoColumn = Self.preferred(headers, ["memo", "notes", "details"])
         if amountColumn.isEmpty, !debitColumn.isEmpty, !creditColumn.isEmpty { csvAmountLayout = "debit-credit" }
     }
-    private func stage() async { guard let file else { return }; isWorking = true; defer { isWorking = false }; do { let csv = file.sourceFormat == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; var mapping = APIStatementImportMapping(sourceFormat: file.sourceFormat, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder, delimiter: delimiter, numberFormat: numberFormat); var upload = file.data; if file.sourceFormat == "pdf", !LocalPDFStatementParser.hasExtractableText(file.data) { let lines = try await StatementPDFOCR.recognizeLines(file.data); let candidates = try LocalPDFStatementParser.parse(lines: lines, mapping: mapping); upload = StatementOCRStaging.delimitedData(candidates, currencyCode: budget.currencyCode); mapping = StatementOCRStaging.mapping(currencyCode: budget.currencyCode) }; let result = try await workspace.stageStatementImport(accountID: account.id, data: upload, mapping: mapping); staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)); categoryByRow = Dictionary(uniqueKeysWithValues: result.candidates.compactMap { row in row.suggestedCategoryID.map { categoryID in (row.sourceRow, categoryID) } }) } catch { errorMessage = error.localizedDescription } }
+    private func stage() async { guard canUseCurrentAccess, let file else { return }; let revision = workspace.authorityRevision; isWorking = true; defer { isWorking = false }; do { let csv = file.sourceFormat == "csv"; let splitMoney = csv && csvAmountLayout == "debit-credit"; var mapping = APIStatementImportMapping(sourceFormat: file.sourceFormat, currencyCode: budget.currencyCode, dateColumn: csv ? dateColumn : nil, amountColumn: csv && !splitMoney ? amountColumn : nil, payeeColumn: csv ? payeeColumn : nil, memoColumn: csv && !memoColumn.isEmpty ? memoColumn : nil, debitColumn: splitMoney ? debitColumn : nil, creditColumn: splitMoney ? creditColumn : nil, dateOrder: dateOrder, delimiter: delimiter, numberFormat: numberFormat); var upload = file.data; if file.sourceFormat == "pdf", !LocalPDFStatementParser.hasExtractableText(file.data) { let lines = try await StatementPDFOCR.recognizeLines(file.data); let candidates = try LocalPDFStatementParser.parse(lines: lines, mapping: mapping); upload = StatementOCRStaging.delimitedData(candidates, currencyCode: budget.currencyCode); mapping = StatementOCRStaging.mapping(currencyCode: budget.currencyCode) }; guard canUseCurrentAccess, revision == workspace.authorityRevision else { return }; let result = try await workspace.stageStatementImport(accountID: account.id, data: upload, mapping: mapping); guard canUseCurrentAccess, revision == workspace.authorityRevision else { return }; staged = result; postRows = Set(result.candidates.filter { $0.exactTransactionIDs.isEmpty && $0.possibleTransactionIDs.isEmpty && $0.duplicateSourceRow == nil }.map(\.sourceRow)); categoryByRow = Dictionary(uniqueKeysWithValues: result.candidates.compactMap { row in row.suggestedCategoryID.map { categoryID in (row.sourceRow, categoryID) } }) } catch { errorMessage = error.localizedDescription } }
     private func approve(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { let items = batch.candidates.map { row in APIStatementImportApprovalItem(sourceRow: row.sourceRow, action: postRows.contains(row.sourceRow) ? "post" : "skip", categoryID: postRows.contains(row.sourceRow) ? categoryByRow[row.sourceRow].flatMap { $0.isEmpty ? nil : $0 } : nil) }; _ = try await workspace.approveStatementImport(accountID: account.id, batchID: batch.id, approval: .init(expectedVersion: batch.version, items: items)); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func cancel(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { _ = try await workspace.cancelStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func undo(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { staged = try await workspace.undoStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version) } catch { errorMessage = error.localizedDescription } }
@@ -11494,7 +11518,9 @@ private struct DebtInterestDestinationView: View {
         else { ContentUnavailableView("No debt",systemImage:"checkmark.circle",description:Text("Credit cards and loans will appear here when visible.")) }
     }.modifier(ReportLoadModifier(kinds: choice == .cost ? [] : [.debt])).navigationTitle("Debt & Interest")
         .sheet(item: $editingTermsAccount, onDismiss: { termsRevision += 1 }) { account in
-            DebtTermsEditorView(account: account).environmentObject(store)
+            HistoryAuthorityBoundary(.account(account.id), unavailableTitle: "Debt terms unavailable") {
+                DebtTermsEditorView(account: account)
+            }.environmentObject(store)
         }
     }
 }
@@ -11548,7 +11574,7 @@ private struct DebtCurrentCostContent: View {
                             Button("Edit Debt Terms") { editingTermsAccount = account }
                                 .accessibilityIdentifier("cost-debt-terms-\(row.accountID)")
                         }
-                        NavigationLink("View account") { LiveAccountRegisterView(initialAccount: account) }
+                        NavigationLink("View account") { HistoryAuthorityBoundary(.account(account.id), unavailableTitle: "Account unavailable") { LiveAccountRegisterView(initialAccount: account) } }
                     }
                 }
             }
@@ -11592,7 +11618,7 @@ private struct DebtOverviewContent: View {
         Section("Debt accounts as of \(report.endDate)") {
             ForEach(report.accounts) { row in
                 if let account = store.accounts.first(where: { $0.id == row.accountID }) {
-                    NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: {
+                    NavigationLink { HistoryAuthorityBoundary(.account(account.id), unavailableTitle: "Account unavailable") { LiveAccountRegisterView(initialAccount: account) } } label: {
                         LabeledContent(row.accountName, value: store.format(row.debtMinor))
                     }
                     .accessibilityIdentifier("debt-account-\(account.id)")
@@ -12362,7 +12388,7 @@ private struct NetWorthReportView: View {
             }
             ForEach(report.accounts) { row in
                 if let account = store.accounts.first(where: { $0.id == row.accountID }) {
-                    NavigationLink { LiveAccountRegisterView(initialAccount: account) } label: { LabeledContent(row.accountName, value: store.format(row.balanceMinor)) }
+                    NavigationLink { HistoryAuthorityBoundary(.account(account.id), unavailableTitle: "Account unavailable") { LiveAccountRegisterView(initialAccount: account) } } label: { LabeledContent(row.accountName, value: store.format(row.balanceMinor)) }
                         .accessibilityIdentifier("net-worth-account-\(account.id)")
                 }
             }
@@ -13008,12 +13034,12 @@ private struct AllowanceManagementView: View {
     var body: some View {
         List {
             Section("Active") {
-                ForEach(active) { plan in NavigationLink { AllowanceDetailView(store: store, planID: plan.id) } label: { row(plan) } }
+                ForEach(active) { plan in NavigationLink { HistoryAuthorityBoundary { AllowanceDetailView(store: store, planID: plan.id) }.environmentObject(store) } label: { row(plan) } }
                 if active.isEmpty { Text("No active allowances").foregroundStyle(.secondary) }
             }
             if !paused.isEmpty {
                 Section("Paused") {
-                    ForEach(paused) { plan in NavigationLink { AllowanceDetailView(store: store, planID: plan.id) } label: { row(plan) } }
+                    ForEach(paused) { plan in NavigationLink { HistoryAuthorityBoundary { AllowanceDetailView(store: store, planID: plan.id) }.environmentObject(store) } label: { row(plan) } }
                     Text("Paused allowances do not move money and have no upcoming issuance.").font(.footnote).foregroundStyle(.secondary)
                 }
             }

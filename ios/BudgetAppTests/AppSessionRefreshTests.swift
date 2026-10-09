@@ -366,6 +366,22 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertTrue(source.contains("HistoryAuthorityBoundary(.account(transaction.accountID), unavailableTitle: \"Attachments unavailable\")"))
     }
 
+    func testStatementReviewAuthorityChangeClosesWithoutAutomaticMutation() throws {
+        let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: path)
+        let start = try XCTUnwrap(source.range(of: "private struct StatementImportFlowView:"))
+        let content = try XCTUnwrap(source.range(of: "    private var editorContent:", range: start.lowerBound..<source.endIndex))
+        let boundary = String(source[start.lowerBound..<content.lowerBound])
+        XCTAssertTrue(boundary.contains("workspace.budget.can(\"reconcile_account\")"))
+        XCTAssertTrue(boundary.contains(".onChange(of: workspace.authorityRevision)"))
+        XCTAssertTrue(boundary.contains("accessChanged = true; staged = nil; postRows = []; categoryByRow = [:]"))
+        XCTAssertFalse(boundary.contains("Task {"), "Scope change must not automatically stage or approve an import")
+        XCTAssertTrue(source.contains("guard canUseCurrentAccess, revision == workspace.authorityRevision else { return }; staged = result"))
+        XCTAssertTrue(source.contains("HistoryAuthorityBoundary(.account(account.id), unavailableTitle: \"Statement imports unavailable\")"))
+        XCTAssertTrue(source.contains("HistoryAuthorityBoundary(.account(account.id), unavailableTitle: \"Debt terms unavailable\")"))
+    }
+
     @MainActor
     func testLateSnapshotAndReportCannotRestoreWorkspaceAfterAccessDenial() async throws {
         let reads = Counter(), snapshotGate = Gate(), reportGate = Gate()
