@@ -47,6 +47,27 @@ file-persistence change.
 
 ### Dropbox observation lifecycle hardening (2026-10-09)
 
+Dropbox OAuth now versions credential ownership across authorization and disconnect. Previously,
+an authorization exchange awaiting its response could persist a refresh token after disconnect;
+an old refresh completion could also return its stale token even when it no longer owned the
+credential state. A new authorization invalidates the prior refresh task, and both authorization
+installation and refresh completion check the captured credential revision before publishing or
+returning a token. Disconnect invalidates that revision before deleting Dropbox-only custody.
+Concurrent callers within one revision still share the same refresh, and unrelated local recovery
+keys, encrypted generations and financial authority are untouched.
+While a new authorization exchange is pending, ordinary credential requests refuse with an explicit
+sign-in-in-progress error instead of refreshing the prior account's stored grant. Completion,
+failure and disconnect release that guard only for the owning authorization revision.
+
+Two controlled URLSession regressions hold a response across disconnect and prove late
+authorization/refresh cannot restore credentials. All eight OAuth tests passed, including shared
+refresh rotation, PKCE/callback validation and remote-confirmed revoke. These are mock transport
+tests, not real Dropbox account acceptance; no customer OAuth grant or remote data was changed.
+The focused combined Dropbox suite passed 20 cases with zero failures. Native compilation remains
+separate from live account/UI acceptance, which is still required before claiming Dropbox closure.
+Regular Xcode 27 build-for-testing passed after the final pending-authorization guard; diff checks
+passed. No native UI runner was retried, no server changes/migration are needed, and TestFlight is held.
+
 The native coordinator now invalidates in-flight connection/list reads before sign-in, upload,
 download, deletion or revocation begins. Only the newest observation revision may publish its
 connected state, generation list or read error. Background refresh does not start during a

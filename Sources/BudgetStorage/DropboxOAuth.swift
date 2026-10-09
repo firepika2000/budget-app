@@ -46,6 +46,7 @@ public enum DropboxOAuthError: LocalizedError, Equatable {
     case authorizationDenied(String)
     case missingAuthorizationCode
     case missingRefreshToken
+    case authorizationInProgress
     case invalidResponse
     case httpStatus(Int, String)
 
@@ -57,6 +58,7 @@ public enum DropboxOAuthError: LocalizedError, Equatable {
         case let .authorizationDenied(message): "Dropbox authorization was not completed: \(message)"
         case .missingAuthorizationCode: "Dropbox did not return an authorization code."
         case .missingRefreshToken: "Reconnect Dropbox to permit future encrypted backups."
+        case .authorizationInProgress: "Dropbox sign-in is still in progress. Wait for it to finish."
         case .invalidResponse: "Dropbox returned an invalid OAuth response."
         case let .httpStatus(status, message): "Dropbox authorization failed (\(status)): \(message)"
         }
@@ -64,6 +66,8 @@ public enum DropboxOAuthError: LocalizedError, Equatable {
 }
 
 public actor DropboxOAuthCredential: DropboxAccessTokenProviding {
+    private var credentialRevision = UUID()
+    private var authorizationInProgress = false
     private struct AccessToken: Sendable {
         let value: String
         let expiresAt: Date
@@ -151,6 +155,12 @@ public actor DropboxOAuthCredential: DropboxAccessTokenProviding {
 
     @discardableResult
     public func installAuthorizationCode(_ code: String, verifier: String) async throws -> String {
+        let revision = UUID()
+        credentialRevision = revision
+        authorizationInProgress = true
+        defer { if credentialRevision == revision { authorizationInProgress = false } }
+        refreshTask?.cancel()
+        refreshTask = nil; refreshID = nil; accessToken = nil
         let response = try await exchange([
             "code": code,
             "grant_type": "authorization_code",
@@ -158,6 +168,7 @@ public actor DropboxOAuthCredential: DropboxAccessTokenProviding {
             "redirect_uri": configuration.redirectURI,
             "code_verifier": verifier,
         ])
+        guard credentialRevision == revision else { throw CancellationError() }
         guard let refresh = response.refreshToken, !refresh.isEmpty else {
             throw DropboxOAuthError.missingRefreshToken
         }
@@ -167,8 +178,9 @@ public actor DropboxOAuthCredential: DropboxAccessTokenProviding {
     }
 
     public func validAccessToken() async throws -> String {
+        guard !authorizationInProgress else { throw DropboxOAuthError.authorizationInProgress }
         if let accessToken, accessToken.expiresAt.timeIntervalSince(now()) > 60 { return accessToken.value }
-        if let refreshTask { return try await finish(refreshTask, id: refreshID).accessToken }
+        if let refreshTask { return try await finish(refreshTask, id: refreshID, revision: credentialRevision).accessToken }
         guard let refresh = try store.loadRefreshToken(), !refresh.isEmpty else {
             throw DropboxOAuthError.missingRefreshToken
         }
@@ -182,7 +194,7 @@ public actor DropboxOAuthCredential: DropboxAccessTokenProviding {
             )
         }
         refreshTask = task; refreshID = id
-        return try await finish(task, id: id).accessToken
+        return try await finish(task, id: id, revision: credentialRevision).accessToken
     }
 
     public func rejectAccessToken(_ token: String) {
@@ -190,6 +202,8 @@ public actor DropboxOAuthCredential: DropboxAccessTokenProviding {
     }
 
     public func disconnect() {
+        credentialRevision = UUID()
+        authorizationInProgress = false
         refreshTask?.cancel()
         refreshTask = nil; refreshID = nil; accessToken = nil
         store.deleteRefreshToken()
@@ -214,9 +228,10 @@ public actor DropboxOAuthCredential: DropboxAccessTokenProviding {
 
     public func isConnected() -> Bool { (try? store.loadRefreshToken())?.isEmpty == false }
 
-    private func finish(_ task: Task<TokenResponse, Error>, id: UUID?) async throws -> TokenResponse {
+    private func finish(_ task: Task<TokenResponse, Error>, id: UUID?, revision: UUID) async throws -> TokenResponse {
         do {
             let response = try await task.value
+            guard credentialRevision == revision else { throw CancellationError() }
             if refreshID == id {
                 if let rotated = response.refreshToken, !rotated.isEmpty { try store.saveRefreshToken(rotated) }
                 accessToken = token(response)

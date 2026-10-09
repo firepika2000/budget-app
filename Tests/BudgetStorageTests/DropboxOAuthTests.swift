@@ -136,6 +136,54 @@ final class DropboxOAuthTests: XCTestCase {
         XCTAssertEqual(recorder.count(), 2)
     }
 
+    func testLateAuthorizationCannotReconnectAfterDisconnect() async throws {
+        let store = MemoryDropboxRefreshStore("prior-account-refresh")
+        let started = expectation(description: "Authorization exchange started")
+        let release = DispatchSemaphore(value: 0)
+        DropboxOAuthMockURLProtocol.handler = { request in
+            started.fulfill()
+            guard release.wait(timeout: .now() + 5) == .success else { throw URLError(.timedOut) }
+            return Self.response(request, body:
+                #"{"access_token":"late-access","expires_in":14400,"refresh_token":"late-refresh"}"#)
+        }
+        let credential = try makeCredential(store: store)
+        let pending = Task { try await credential.installAuthorizationCode("old-code", verifier: String(repeating: "v", count: 43)) }
+        await fulfillment(of: [started], timeout: 3)
+        do { _ = try await credential.validAccessToken(); XCTFail("Pending sign-in must not refresh the prior account") }
+        catch { XCTAssertEqual(error as? DropboxOAuthError, .authorizationInProgress) }
+        await credential.disconnect()
+        release.signal()
+        do { _ = try await pending.value; XCTFail("A disconnected authorization must not publish credentials") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertNil(store.value())
+        let connected = await credential.isConnected()
+        XCTAssertFalse(connected)
+        do { _ = try await credential.validAccessToken(); XCTFail("Disconnected credential must remain unavailable") }
+        catch { XCTAssertEqual(error as? DropboxOAuthError, .missingRefreshToken) }
+    }
+
+    func testLateRefreshCannotRestoreCredentialAfterDisconnect() async throws {
+        let store = MemoryDropboxRefreshStore("existing-refresh")
+        let started = expectation(description: "Refresh exchange started")
+        let release = DispatchSemaphore(value: 0)
+        DropboxOAuthMockURLProtocol.handler = { request in
+            started.fulfill()
+            guard release.wait(timeout: .now() + 5) == .success else { throw URLError(.timedOut) }
+            return Self.response(request, body:
+                #"{"access_token":"late-access","expires_in":14400,"refresh_token":"late-refresh"}"#)
+        }
+        let credential = try makeCredential(store: store)
+        let pending = Task { try await credential.validAccessToken() }
+        await fulfillment(of: [started], timeout: 3)
+        await credential.disconnect()
+        release.signal()
+        do { _ = try await pending.value; XCTFail("A disconnected refresh must not return credentials") }
+        catch { /* Cancellation may be delivered by URLSession or by the revision guard. */ }
+        XCTAssertNil(store.value())
+        let connected = await credential.isConnected()
+        XCTAssertFalse(connected)
+    }
+
     private func makeCredential(store: MemoryDropboxRefreshStore) throws -> DropboxOAuthCredential {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [DropboxOAuthMockURLProtocol.self]
