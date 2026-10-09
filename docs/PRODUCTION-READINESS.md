@@ -2244,3 +2244,22 @@ later successful completion. The native test build compiles the app; `git diff -
 Tests use deterministic transports, not the user's live Dropbox. No backend/schema changes,
 migration, data reset or TestFlight upload. External Dropbox console confirmation and live-provider
 acceptance remain open and are not inferred from this checkpoint.
+
+### Dropbox interrupted-publication retry recovery — 2026-10-09
+
+An ambiguous move response previously turned a committed backup into a permanent already-exists
+failure on Retry. The destination now resolves the ambiguity only by comparing the complete remote
+file set with the retained immutable package: every manifest/ciphertext path, exact size and Dropbox
+content hash must match. A same-name generation with different, missing or extra files remains a
+conflict and is never overwritten. Successful recovery removes only its temporary upload, returns
+the original generation and defers retention cleanup with the established non-fatal warning. It
+does not evict a newer generation to protect an older retried package.
+
+All eight Dropbox destination tests pass. The new deterministic paginated-transport case commits a
+move then loses its response, retries the identical package successfully, proves no duplicate final
+generation or temporary upload remains, preserves a newer backup under retention one, and rejects
+changed ciphertext while preserving the original remote bytes. Existing integrity, normal retention,
+download, deletion and large-upload checks remain green. A regular Xcode 27 production Simulator
+build verifies integration; this storage-only checkpoint does not rerun unrelated native/UI suites.
+`git diff --check` passes. No live Dropbox account was changed; external provider acceptance remains
+pending. No migration, server restart, user-data reset or TestFlight upload.

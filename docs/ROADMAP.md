@@ -178,6 +178,9 @@ Verified Dropbox publication now remains successful when subsequent retention cl
 refresh fails. A non-fatal maintenance warning distinguishes that state from an actual upload/integrity
 failure, and the successful-backup timestamp and known generation remain available without prompting
 a duplicate upload.
+Interrupted final-move responses and explicit retries now recover an already-published generation
+only after its entire file set, sizes and content hashes match the immutable local package. A same-name
+conflict still fails without overwrite, and recovery never prunes newer backups for an older retry.
 
 The privacy-safe v0.11 launcher widget is implemented for small and medium Home Screen families and
 uses the authenticated production shell for navigation. It deliberately shares no financial data or

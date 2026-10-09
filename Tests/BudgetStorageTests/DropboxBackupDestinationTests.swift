@@ -2,6 +2,42 @@ import XCTest
 @testable import BudgetStorage
 
 final class DropboxBackupDestinationTests: XCTestCase {
+    func testLostMoveResponseAndExplicitRetryRecoverOnlyIdenticalGeneration() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-retry-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let original = Data("original-ciphertext".utf8)
+        let package = try makePackage(root: root, name: "Same.clearpocketbackup", payloads: [original])
+        let transport = FakeDropboxBackupTransport(pageSize: 1, loseMoveResponse: true)
+        let destination = try DropboxBackupDestination(transport: transport)
+        let first = try await destination.publish(packageURL: package)
+        let retry = try await destination.publish(packageURL: package)
+        XCTAssertEqual(first, retry)
+        XCTAssertTrue(first.retentionCleanupPending)
+        let generations = try await destination.generations()
+        XCTAssertEqual(generations.map(\.path), [first.remotePath])
+        let paths = await transport.paths()
+        XCTAssertFalse(paths.contains { $0.contains(".upload-") })
+        await transport.seedFolder("/Backups/ZNewer.clearpocketbackup")
+        let strictRetention = try DropboxBackupDestination(transport: transport, retention: 1)
+        _ = try await strictRetention.publish(packageURL: package)
+        let afterOldRetry = await transport.paths()
+        XCTAssertTrue(afterOldRetry.contains("/Backups/ZNewer.clearpocketbackup"), "Retry must not evict a newer backup")
+
+        // A matching name is not evidence of a matching immutable generation.
+        _ = try makePackage(root: root, name: "Same.clearpocketbackup", payloads: [Data("changed-ciphertext".utf8)])
+        do {
+            _ = try await destination.publish(packageURL: package)
+            XCTFail("Different bytes under an existing name must never be accepted or overwrite it")
+        } catch let error as DropboxBackupDestinationError {
+            XCTAssertEqual(error, .destinationExists)
+        }
+        let (_, preserved) = try await transport.download(path: first.remotePath + "/payload/000000.cpenc")
+        XCTAssertEqual(preserved, original)
+        let finalPaths = await transport.paths()
+        XCTAssertFalse(finalPaths.contains { $0.contains(".upload-") })
+    }
+
     func testCommittedPublicationSurvivesRetentionListingFailure() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-maintenance-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -193,11 +229,13 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     private let pageSize: Int
     private let corruptUploadMetadata: Bool
     private let failListing: Bool
+    private let loseMoveResponse: Bool
     private var corruptDownloads: Set<String> = []
 
-    init(pageSize: Int = 100, corruptUploadMetadata: Bool = false, failListing: Bool = false) {
+    init(pageSize: Int = 100, corruptUploadMetadata: Bool = false, failListing: Bool = false, loseMoveResponse: Bool = false) {
         self.pageSize = pageSize; self.corruptUploadMetadata = corruptUploadMetadata
         self.failListing = failListing
+        self.loseMoveResponse = loseMoveResponse
     }
 
     func seedFolder(_ path: String) { folders.insert(path) }
@@ -239,6 +277,7 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
         let childFiles = files.filter { $0.key.hasPrefix(from + "/") }
         for path in childFolders { folders.remove(path); folders.insert(to + path.dropFirst(from.count)) }
         for (path, data) in childFiles { files.removeValue(forKey: path); files[to + path.dropFirst(from.count)] = data }
+        if loseMoveResponse { throw URLError(.networkConnectionLost) }
     }
 
     func delete(path: String) {

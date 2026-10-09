@@ -130,9 +130,19 @@ public actor DropboxBackupDestination {
             catch {
                 let existing = try await allEntries(path: folder, recursive: false)
                 if existing.contains(where: { $0.path.caseInsensitiveCompare(finalPath) == .orderedSame }) {
-                    throw DropboxBackupDestinationError.destinationExists
+                    guard try await committedGenerationMatches(finalPath, package: package, files: files) else {
+                        throw DropboxBackupDestinationError.destinationExists
+                    }
+                    // The move may have committed before its response was lost, or this is an
+                    // explicit retry of the same immutable generation. Never replace it.
+                    try? await transport.delete(path: temporaryPath)
+                    // Recovery is not a new publication. Do not prune newer generations merely
+                    // to protect an older retried package; defer maintenance to the next backup.
+                    return .init(remotePath: finalPath, encryptedBytes: total, fileCount: files.count,
+                                 retentionCleanupPending: true)
+                } else {
+                    throw error
                 }
-                throw error
             }
             // The verified move is the publication commit point. A later maintenance failure
             // must not encourage another upload of this immutable generation.
@@ -151,6 +161,22 @@ public actor DropboxBackupDestination {
         try await allEntries(path: folder, recursive: false)
             .filter { $0.isFolder && $0.name.hasSuffix(".clearpocketbackup") }
             .sorted { $0.name > $1.name }
+    }
+
+    private func committedGenerationMatches(_ remotePath: String, package: URL, files: [URL]) async throws -> Bool {
+        let entries = try await allEntries(path: remotePath, recursive: true).filter { !$0.isFolder }
+        guard entries.count == files.count else { return false }
+        var matchedPaths: Set<String> = []
+        for file in files {
+            let relative = String(file.path.dropFirst(package.path.count + 1))
+            let expectedPath = "\(remotePath)/\(relative)"
+            guard matchedPaths.insert(expectedPath.lowercased()).inserted else { return false }
+            let matches = entries.filter { $0.path.caseInsensitiveCompare(expectedPath) == .orderedSame }
+            guard matches.count == 1, let entry = matches.first,
+                  entry.size == Int64(try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0),
+                  entry.contentHash?.lowercased() == (try Self.contentHash(file)) else { return false }
+        }
+        return true
     }
 
     /// Removes one complete immutable generation. The same direct-child validation used by restore
