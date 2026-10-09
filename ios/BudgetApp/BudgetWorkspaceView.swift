@@ -4285,6 +4285,7 @@ final class BudgetWorkspaceStore: ObservableObject {
         transactionBrowseTask?.cancel()
         transactionBrowseTask = nil; transactionBrowseQuery = nil; transactionBrowseOperationID = nil
         forecastOperationID = nil; isForecastLoading = false
+        planningGuidanceOperationID = nil; planningSpendingReport = nil
         summary = nil; accounts = []; accountBalances = [:]; payees = []; categories = []; groups = []
         transactions = []; requests = []; allowances = []; householdMembers = []; delegatedBudgets = []
         allocationOperations = []; allocationHistoryNextCursor = nil; targets = [:]; scheduledTransactions = []; delegatedBudget = nil; forecast = nil

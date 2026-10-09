@@ -235,6 +235,7 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertFalse(store.updateLiveBudgetAuthority(renamed))
         XCTAssertNotNil(store.summary, "Metadata-only hydration must not interrupt the workspace")
         let restricted = APIBudget(id: "b1", householdID: "h1", name: renamed.name, currencyCode: "USD",
+                                   effectivePermission: .view,
                                    capabilities: ["view_budget", "view_accounts", "view_account_balances", "view_categories", "view_transactions"])
         XCTAssertTrue(store.updateLiveBudgetAuthority(restricted))
         XCTAssertEqual(ObjectIdentifier(store), identity)
@@ -254,6 +255,38 @@ final class AppSessionRefreshTests: XCTestCase {
         let different = APIBudget(id: "another-budget", householdID: "h1", name: "Other", currencyCode: "USD")
         XCTAssertFalse(store.updateLiveBudgetAuthority(different))
         XCTAssertEqual(store.budget.id, "b1")
+    }
+
+    @MainActor
+    func testPlanningGuidanceEvictsLoadedAndLateSpendingAfterWorkspaceDenial() async throws {
+        for deniedStatus in [403, 404] {
+            let gate = Gate(), denied = Counter(), spendingReads = Counter()
+            defer { gate.releaseNow() }
+            RefreshMockURLProtocol.handler = { request in
+                let path = request.url!.path
+                if path.hasSuffix("/reports/spending") {
+                    if spendingReads.increment() == 2 { gate.signalArrived(); gate.waitForRelease() }
+                    return Self.json(200, #"{"start_date":"2026-07-01","end_date":"2026-09-30","currency_code":"USD","total_spending_minor":12345,"categories":[]}"#)
+                }
+                if denied.value > 0 && path.contains("/months/") {
+                    return Self.json(deniedStatus, #"{"detail":"Access removed"}"#)
+                }
+                return Self.workspaceResponse(path)
+            }
+            let store = try workspaceForRevocationTest()
+            await store.refresh(); await store.loadPlanningGuidance()
+            XCTAssertEqual(store.planningSpendingReport?.totalSpendingMinor, 12345)
+            let pending = Task { await store.loadPlanningGuidance() }
+            await gate.awaitArrival()
+            _ = denied.increment(); await store.refresh()
+            XCTAssertTrue(store.workspaceAccessDenied)
+            XCTAssertNil(store.planningSpendingReport, "Revocation must discard already-loaded planning aggregates")
+            gate.releaseNow(); await pending.value
+            XCTAssertNil(store.planningSpendingReport, "Late success must not restore private averages")
+            await store.loadPlanningGuidance()
+            XCTAssertEqual(spendingReads.value, 2, "Known denial must not trigger another report request")
+            XCTAssertTrue(store.usesLiveCredential("current-token"))
+        }
     }
 
     @MainActor
