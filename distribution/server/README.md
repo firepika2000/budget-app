@@ -340,6 +340,18 @@ plus backup-before-update activation of the immutable version bundled by the QPK
 
 ## Always-on Windows PC
 
+The Windows manager organizes its existing controls into **Server**, **Recovery**, **Dropbox**,
+and **Maintenance** tabs. Server contains start/status/stop/logs; Recovery contains encrypted backup,
+empty-server restore, budget migration and backup scheduling; Dropbox contains destination connection
+controls; Maintenance contains downloaded updates and diagnostics. Operation output remains visible
+below the tabs. This organization does not change commands, confirmations or private credential handling.
+
+The 2026-10-09 layout checkpoint passed all 64 distribution contract checks, including XML validity,
+unique WPF control names and preservation of every action in its intended tab. Actual Windows/WPF
+visual acceptance remains required: open each tab at the minimum window size, verify controls and
+output are reachable, and confirm the existing global operation lock disables controls during work.
+No iPhone rebuild, database migration or running-server restart is needed for this manager-only change.
+
 On Windows, extract the versioned ZIP and double-click `install-windows.cmd`. The per-user installer
 validates the complete immutable bundle, atomically publishes only allowlisted replaceable program
 files under `%LOCALAPPDATA%\Programs\ClearPocket Server`, creates Desktop and Start Menu shortcuts,

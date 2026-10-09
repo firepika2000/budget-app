@@ -50,26 +50,54 @@ if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
 
     <Border Name="ManagePanel" Grid.Row="1" Padding="20" CornerRadius="12" Background="White" Margin="0,0,0,18" Visibility="Collapsed">
       <StackPanel>
-        <TextBlock Text="Server controls" FontSize="20" FontWeight="SemiBold"/>
+        <TextBlock Text="Manage your server" FontSize="20" FontWeight="SemiBold"/>
+        <TabControl Margin="0,14,0,0" BorderThickness="0" Background="White">
+          <TabItem Header="Server">
+            <StackPanel Margin="12">
+              <TextBlock Text="Start, inspect, or safely stop your household server." TextWrapping="Wrap" Foreground="#555"/>
         <WrapPanel Margin="0,14,0,0">
           <Button Name="OpenButton" Content="Start &amp; Open" Padding="18,9" Margin="0,0,10,10" Background="#2563EB" Foreground="White" FontWeight="SemiBold"/>
           <Button Name="StatusButton" Content="Refresh Status" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="StopButton" Content="Stop Safely" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="LogsButton" Content="Recent Logs" Padding="18,9" Margin="0,0,10,10"/>
+        </WrapPanel>
+        <TextBlock Text="Stopping preserves your database, attachments, private configuration, and backups." TextWrapping="Wrap" Foreground="#666" FontSize="12" Margin="0,4,0,0"/>
+            </StackPanel>
+          </TabItem>
+          <TabItem Header="Recovery">
+            <StackPanel Margin="12">
+              <TextBlock Text="Protect your data or move a verified backup into an empty server. Keep recovery keys separate from backups." TextWrapping="Wrap" Foreground="#555"/>
+        <WrapPanel Margin="0,14,0,0">
           <Button Name="BackupButton" Content="Create Encrypted Backup" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="RestoreButton" Content="Restore Empty Server" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="ImportLocalButton" Content="Move iPhone Budget" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="ImportPortableButton" Content="Move Server Backup" Padding="18,9" Margin="0,0,10,10"/>
-          <Button Name="DropboxButton" Content="Configure Dropbox Backup" Padding="18,9" Margin="0,0,10,10"/>
-          <Button Name="DisconnectDropboxButton" Content="Disconnect Dropbox" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="ScheduleBackupButton" Content="Schedule Daily Backups" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="ScheduleStatusButton" Content="Backup Schedule Status" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="RemoveScheduleButton" Content="Disable Backup Schedule" Padding="18,9" Margin="0,0,10,10"/>
+        </WrapPanel>
+            </StackPanel>
+          </TabItem>
+          <TabItem Header="Dropbox">
+            <StackPanel Margin="12">
+              <TextBlock Text="Use Dropbox as a destination for encrypted backup generations, not as a live database. Disconnecting does not erase your household data." TextWrapping="Wrap" Foreground="#555"/>
+        <WrapPanel Margin="0,14,0,0">
+          <Button Name="DropboxButton" Content="Configure Dropbox Backup" Padding="18,9" Margin="0,0,10,10"/>
+          <Button Name="DisconnectDropboxButton" Content="Disconnect Dropbox" Padding="18,9" Margin="0,0,10,10"/>
+        </WrapPanel>
+            </StackPanel>
+          </TabItem>
+          <TabItem Header="Maintenance">
+            <StackPanel Margin="12">
+              <TextBlock Text="Apply a downloaded update or collect diagnostics. Updates preserve the selected data folder." TextWrapping="Wrap" Foreground="#555"/>
+        <WrapPanel Margin="0,14,0,0">
           <Button Name="UpdateServerButton" Content="Apply Downloaded Update" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="DiagnosticsButton" Content="Create Diagnostics" Padding="18,9" Margin="0,0,10,10"/>
-          <Button Name="LogsButton" Content="Recent Logs" Padding="18,9" Margin="0,0,10,10"/>
           <Button Name="AdvancedButton" Content="Backup, Restore &amp; Advanced…" Padding="18,9" Margin="0,0,10,10"/>
         </WrapPanel>
-        <TextBlock Text="Stopping preserves the database, attachments, private configuration, and backups." TextWrapping="Wrap" Foreground="#666" FontSize="12" Margin="0,4,0,0"/>
+            </StackPanel>
+          </TabItem>
+        </TabControl>
       </StackPanel>
     </Border>
 

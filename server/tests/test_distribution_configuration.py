@@ -14,6 +14,30 @@ import pytest
 
 from app.attachment_storage import AttachmentStorage
 
+def test_windows_manager_organizes_existing_actions_into_valid_named_tabs():
+    import re
+    import xml.etree.ElementTree as ET
+
+    source = (ROOT / "distribution" / "server" / "manager-windows.ps1").read_text()
+    xaml = source.split("[xml] $xaml = @'", 1)[1].split("'@", 1)[0]
+    root = ET.fromstring(xaml)
+    namespace = {"w": "http://schemas.microsoft.com/winfx/2006/xaml/presentation"}
+    tabs = root.findall(".//w:TabItem", namespace)
+    expected = {
+        "Server": {"OpenButton", "StatusButton", "StopButton", "LogsButton"},
+        "Recovery": {"BackupButton", "RestoreButton", "ImportLocalButton", "ImportPortableButton",
+                     "ScheduleBackupButton", "ScheduleStatusButton", "RemoveScheduleButton"},
+        "Dropbox": {"DropboxButton", "DisconnectDropboxButton"},
+        "Maintenance": {"UpdateServerButton", "DiagnosticsButton", "AdvancedButton"},
+    }
+    assert [tab.attrib["Header"] for tab in tabs] == list(expected)
+    for tab in tabs:
+        assert {button.attrib["Name"] for button in tab.findall(".//w:Button", namespace)} == expected[tab.attrib["Header"]]
+    names = [element.attrib["Name"] for element in root.iter() if "Name" in element.attrib]
+    assert len(names) == len(set(names)), "WPF names must remain unique"
+    actions = source.split("$actionNames = @(", 1)[1].split(")", 1)[0]
+    assert set(re.findall(r'"([^"]+)"', actions)) == set().union(*expected.values(), {"BrowseButton", "ConfigureButton"})
+
 
 ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "distribution" / "server" / "configure.py"
