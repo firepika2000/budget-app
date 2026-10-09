@@ -13358,6 +13358,8 @@ private struct DelegatedPolicyHistoryView: View {
     let member: APIHouseholdMember
     @State private var rows: [APIDelegatedPolicyRevision] = []
     @State private var loading = true
+    @State private var loadingMore = false
+    @State private var hasMore = false
     @State private var error: String?
     private let pageSize = 50
     var body: some View {
@@ -13372,9 +13374,17 @@ private struct DelegatedPolicyHistoryView: View {
                     } else { Text(store.format(row.afterSnapshot.authorityMinor)).monospacedDigit() }
                     Text("\(row.afterSnapshot.rules.count) category rule\(row.afterSnapshot.rules.count == 1 ? "" : "s") · \(row.afterSnapshot.allowCategoryCreation ? "Can create categories" : "Cannot create categories") · \(row.afterSnapshot.allowReallocation ? "Can move money" : "Cannot move money")").font(.caption).foregroundStyle(.secondary)
                     Text("By \(row.actorDisplayName ?? "household owner")").font(.caption2).foregroundStyle(.secondary)
-                }.accessibilityElement(children: .combine)
+                    DisclosureGroup("Authority decision details") {
+                        ForEach(changes(row)) { change in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(change.label).font(.caption).foregroundStyle(.secondary)
+                                Text("\(change.before ?? "Not set") → \(change.after ?? "Not set")").font(.subheadline)
+                            }.accessibilityElement(children: .combine)
+                        }
+                    }
+                }.accessibilityElement(children: .contain)
             }
-            if rows.count >= pageSize { Section { Button("Load More") { Task { await loadMore() } } } }
+            if hasMore { Section { Button("Load More") { Task { await loadMore() } }.disabled(loading || loadingMore) } }
         }
         .navigationTitle("Authority History")
         .overlay { if loading && rows.isEmpty { ProgressView() } }
@@ -13382,8 +13392,22 @@ private struct DelegatedPolicyHistoryView: View {
         .refreshable { await load() }
         .accessibilityIdentifier("delegated-authority-history")
     }
-    @MainActor private func load() async { loading = true; error = nil; defer { loading = false }; do { rows = try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: 0) } catch { self.error = error.localizedDescription } }
-    @MainActor private func loadMore() async { do { rows += try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: rows.count) } catch { self.error = error.localizedDescription } }
+    private func changes(_ row: APIDelegatedPolicyRevision) -> [DelegatedPolicyHistoryPresentation.Change] {
+        DelegatedPolicyHistoryPresentation.changes(row, formatMoney: store.format,
+            categoryName: { id in store.categories.first(where: { $0.id == id }).map { store.categoryDisplayName($0) } ?? "Category no longer available" })
+    }
+    @MainActor private func load() async {
+        guard !loadingMore else { return }
+        loading = true; error = nil; defer { loading = false }
+        do { let page = try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: 0); rows = page; hasMore = page.count == pageSize }
+        catch { self.error = error.localizedDescription }
+    }
+    @MainActor private func loadMore() async {
+        guard !loading, !loadingMore, hasMore else { return }
+        loadingMore = true; error = nil; defer { loadingMore = false }
+        do { let page = try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: rows.count); rows += page; hasMore = page.count == pageSize }
+        catch { self.error = error.localizedDescription }
+    }
 }
 
 private struct LiveTransactionEditView: View {

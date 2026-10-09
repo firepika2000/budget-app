@@ -8,6 +8,33 @@ import CryptoKit
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testAuthorityHistoryExplainsRuleChangesAndPreservesAmountPrivacy() {
+        let before = APIDelegatedPolicySnapshot(userID: "u", poolCategoryID: "pool", authorityMinor: 9007199254740993,
+            allowCategoryCreation: false, allowReallocation: true,
+            rules: [.init(categoryID: "a", ruleKind: "flexible", minimumMinor: 100, maximumMinor: 500),
+                    .init(categoryID: "b", ruleKind: "fixed", minimumMinor: 200)])
+        let after = APIDelegatedPolicySnapshot(userID: "u", poolCategoryID: "pool2", authorityMinor: 9007199254740994,
+            allowCategoryCreation: true, allowReallocation: false,
+            rules: [.init(categoryID: "a", ruleKind: "flexible", minimumMinor: 100, maximumMinor: 600),
+                    .init(categoryID: "c", ruleKind: "fixed", maximumMinor: 400)])
+        let revision = APIDelegatedPolicyRevision(id: "r", policyID: "p", memberUserID: "u", action: "updated",
+            actorUserID: "owner", beforeSnapshot: before, afterSnapshot: after, createdAt: "2026-10-09")
+        let changes = DelegatedPolicyHistoryPresentation.changes(revision, formatMoney: { String($0) }, categoryName: { "Group / \($0)" })
+        XCTAssertEqual(changes.first { $0.id == "authority" }?.before, "9007199254740993")
+        XCTAssertEqual(changes.first { $0.id == "create" }?.after, "Allowed")
+        XCTAssertEqual(changes.first { $0.id == "move" }?.after, "Not allowed")
+        XCTAssertEqual(changes.first { $0.id == "rule-a" }?.after, "Flexible · Minimum 100 · Maximum 600")
+        XCTAssertNil(changes.first { $0.id == "rule-b" }?.after)
+        XCTAssertNil(changes.first { $0.id == "rule-c" }?.before)
+        XCTAssertEqual(changes.first { $0.id == "rule-c" }?.label, "Group / c")
+        let hidden = DelegatedPolicyHistoryPresentation.changes(revision, formatMoney: { _ in "••••" }, categoryName: { _ in "Category" })
+        XCTAssertEqual(hidden.first { $0.id == "authority" }?.before, "••••")
+        XCTAssertTrue(hidden.contains { $0.id == "rule-a" }, "Changed limits must remain detectable after redaction")
+        let same = APIDelegatedPolicyRevision(id: "n", policyID: "p", memberUserID: "u", action: "updated",
+            actorUserID: "owner", beforeSnapshot: after, afterSnapshot: after, createdAt: "2026-10-09")
+        XCTAssertTrue(DelegatedPolicyHistoryPresentation.changes(same, formatMoney: { String($0) }, categoryName: { $0 }).isEmpty)
+    }
+
     func testScheduleHistoryExplainsExactChangesRemovalRealizationAndPrivacy() {
         let before = APIScheduledTransactionSnapshot(accountID: "a", categoryID: "c", payeeID: "p",
             name: "Rent", amountMinor: -9_007_199_254_740_993, nextDate: "2026-10-01",

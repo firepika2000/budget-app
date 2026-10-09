@@ -1033,8 +1033,9 @@ struct AccountHistoryView: View {
     @Environment(\.dismiss) private var dismiss
     let account: APIAccount
     @State private var items: [APIAccountRevision] = []
-    @State private var isLoading = true
+    @State private var isLoading = false
     @State private var isLoadingMore = false
+    @State private var hasMore = false
     @State private var errorMessage: String?
     private let pageSize = 25
 
@@ -1042,7 +1043,7 @@ struct AccountHistoryView: View {
         NavigationStack {
             Group {
                 if isLoading { ProgressView("Loading history…") }
-                else if let errorMessage {
+                else if let errorMessage, items.isEmpty {
                     ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle",
                                            description: Text(errorMessage))
                         .overlay(alignment: .bottom) { Button("Try Again") { Task { await load(reset: true) } }.buttonStyle(.borderedProminent).padding() }
@@ -1051,6 +1052,13 @@ struct AccountHistoryView: View {
                                            description: Text("Changes to this account will appear here."))
                 } else {
                     List {
+                        if let errorMessage {
+                            Section {
+                                Text(errorMessage).foregroundStyle(.secondary)
+                                Button("Retry Earlier Changes") { Task { await load(reset: false) } }
+                                    .disabled(isLoadingMore)
+                            }
+                        }
                         ForEach(items) { revision in
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(title(revision)).font(.headline)
@@ -1060,7 +1068,7 @@ struct AccountHistoryView: View {
                             }
                             .accessibilityElement(children: .combine)
                         }
-                        if items.count.isMultiple(of: pageSize) {
+                        if hasMore {
                             Button(isLoadingMore ? "Loading…" : "Load Earlier Changes") {
                                 Task { await load(reset: false) }
                             }.disabled(isLoadingMore)
@@ -1076,12 +1084,15 @@ struct AccountHistoryView: View {
     }
 
     private func load(reset: Bool) async {
+        guard !isLoading, !isLoadingMore, reset || hasMore else { return }
+        errorMessage = nil
         if reset { isLoading = true; errorMessage = nil } else { isLoadingMore = true }
         defer { isLoading = false; isLoadingMore = false }
         do {
             let next = try await workspace.accountHistory(accountID: account.id, limit: pageSize,
                                                           offset: reset ? 0 : items.count)
             if reset { items = next } else { items.append(contentsOf: next) }
+            hasMore = next.count == pageSize
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -1102,6 +1113,44 @@ struct AccountHistoryView: View {
 }
 
 /// Presentation of authoritative snapshots, never a projection or accounting calculation.
+enum DelegatedPolicyHistoryPresentation {
+    struct Change: Identifiable, Equatable {
+        let id: String
+        let label: String
+        let before: String?
+        let after: String?
+    }
+    static func changes(_ revision: APIDelegatedPolicyRevision, formatMoney: (Int64) -> String,
+                        categoryName: (String) -> String) -> [Change] {
+        let before = revision.beforeSnapshot, after = revision.afterSnapshot
+        var result: [Change] = []
+        func append(_ id: String, _ label: String, _ old: String?, _ new: String?, changed: Bool) {
+            if changed { result.append(.init(id: id, label: label, before: old, after: new)) }
+        }
+        append("pool", "Authority pool", before.map { categoryName($0.poolCategoryID) }, categoryName(after.poolCategoryID),
+               changed: before?.poolCategoryID != after.poolCategoryID)
+        append("authority", "Authority limit", before.map { formatMoney($0.authorityMinor) }, formatMoney(after.authorityMinor),
+               changed: before?.authorityMinor != after.authorityMinor)
+        append("create", "Create categories", before.map { $0.allowCategoryCreation ? "Allowed" : "Not allowed" },
+               after.allowCategoryCreation ? "Allowed" : "Not allowed", changed: before?.allowCategoryCreation != after.allowCategoryCreation)
+        append("move", "Move money", before.map { $0.allowReallocation ? "Allowed" : "Not allowed" },
+               after.allowReallocation ? "Allowed" : "Not allowed", changed: before?.allowReallocation != after.allowReallocation)
+        func describe(_ rule: APIDelegatedPolicyRuleSnapshot?) -> String? {
+            guard let rule else { return nil }
+            var parts = [rule.ruleKind.replacingOccurrences(of: "_", with: " ").capitalized]
+            if let minimum = rule.minimumMinor { parts.append("Minimum \(formatMoney(minimum))") }
+            if let maximum = rule.maximumMinor { parts.append("Maximum \(formatMoney(maximum))") }
+            return parts.joined(separator: " · ")
+        }
+        let ids = Set((before?.rules ?? []).map(\.categoryID) + after.rules.map(\.categoryID)).sorted()
+        for id in ids {
+            let old = before?.rules.first { $0.categoryID == id }, new = after.rules.first { $0.categoryID == id }
+            append("rule-\(id)", categoryName(id), describe(old), describe(new), changed: old != new)
+        }
+        return result
+    }
+}
+
 enum ScheduleHistoryPresentation {
     struct Change: Identifiable, Equatable {
         var id: String { label }

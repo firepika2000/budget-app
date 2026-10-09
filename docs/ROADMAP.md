@@ -167,6 +167,10 @@ Schedule History now expands recorded before/after decisions for names, resource
 next/end dates, occurrence limits, memo, classification, pause state and realization advancement.
 Exact currency values honor Hide Amounts, resource names use current authorized workspace data,
 and bounded older-history loading stops after the final page and rejects overlapping page requests.
+Authority History likewise expands exact pool, permission and per-category rule/limit changes,
+including added/removed rules. Monetary limits follow Hide Amounts without suppressing changed
+observations. Authority and Account History now terminate older-page loading correctly; Account
+History keeps loaded observations visible if an older-page request fails.
 Remaining v0.12 work should continue auditing other mutable
 planning and administrative observations
 for overwrite-only or export gaps rather than duplicating established histories.

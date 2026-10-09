@@ -2385,3 +2385,29 @@ composition/store contract remains green. The production app compiles. All 20 ba
 contract tests pass; `git diff --check` passes. Two initial compile attempts exposed a SwiftUI
 type-checking limit and an incorrect payee display-property reference; both are corrected in the
 final green build. No claim of human visual acceptance or a passing UI automation run is made.
+
+### Explainable household authority and bounded account history — 2026-10-09
+
+Authority History's previous rule-count summary could not explain which category rule, limit or
+permission changed. Expandable native details now show immutable before/after pool identity,
+authority amount, category-creation/reallocation permissions and added/changed/removed category
+rules with minimum/maximum limits. Names come from current authorized workspace resources;
+unavailable categories receive neutral labels. Change detection precedes amount formatting so
+Hide Amounts masks limits without concealing that they changed. No permission or money mutation
+is performed by this presentation; the owner-only canonical history authorization remains intact.
+
+Authority and Account History now determine continuation from the most recent page size, not the
+total number of rows accumulated. Empty final pages stop continuation; overlapping older-page
+requests are guarded. Account History also preserves loaded observations after an older-page error
+and retries that page rather than discarding context. Human retest after rebuild: Household → member
+authority → history; expand rule and permission changes with Hide Amounts on/off. For an account
+with more than 25 metadata decisions, load to the end and confirm continuation disappears. No
+server restart, migration, merge, tag or TestFlight upload is needed/authorized for this checkpoint.
+
+Verification: three focused native XCTest cases pass using regular Xcode 27 and the preserved
+iPhone 17 Pro Max/iOS 27 Simulator. They cover exact authority/rule explanations, added/removed
+rules, permission changes, no-op suppression, amount redaction, existing canonical funding and
+atomic rejection of stale/unauthorized edits. The production application compiles; the focused
+backend exact/attributed/private/no-op-safe authority-history contract test passes. `git diff --check`
+passes. Account-history pagination is source-reviewed and compiled; final-page and failure-retry
+human interaction is not claimed as automated UI verification. Human visual acceptance is pending.
