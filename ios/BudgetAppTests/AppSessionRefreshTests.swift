@@ -268,6 +268,20 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testChangingPlanMonthImmediatelyDropsPreviousMonthObservation() async throws {
+        RefreshMockURLProtocol.handler = { request in Self.workspaceResponse(request.url!.path) }
+        let store = try workspaceForRevocationTest()
+        await store.refresh()
+        XCTAssertNotNil(store.summary)
+        let previous = store.planMonth
+        store.planMonth = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: 1, to: previous))
+        XCTAssertNotNil(store.summary, "A same-month date change must not interrupt observations")
+        store.planMonth = try XCTUnwrap(Calendar.current.date(byAdding: .month, value: 1, to: previous))
+        XCTAssertNil(store.summary, "A new month must not render the old month's amounts while awaiting refresh")
+        XCTAssertNil(store.delegatedBudget)
+    }
+
+    @MainActor
     func testPlanningGuidanceEvictsLoadedAndLateSpendingAfterWorkspaceDenial() async throws {
         for deniedStatus in [403, 404] {
             let gate = Gate(), denied = Counter(), spendingReads = Counter()
@@ -1625,6 +1639,18 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertThrowsError(try revised.load(), "Even failed disk eviction must not expose earlier-scope data")
         try revised.save(snapshot)
         XCTAssertEqual(try revised.load().accessRevision, "scope-b")
+        try revised.save(snapshot, planMonth: "2026-09-01")
+        try revised.save(snapshot, planMonth: "2026-10-01")
+        XCTAssertEqual(try revised.load(planMonth: "2026-09-01").planMonth, "2026-09-01")
+        XCTAssertEqual(try revised.load(planMonth: "2026-10-01").planMonth, "2026-10-01")
+        XCTAssertThrowsError(try revised.load(planMonth: "2026-11-01"), "Never substitute another month's plan")
+        XCTAssertThrowsError(try revised.load(planMonth: "../../private"))
+        XCTAssertThrowsError(try revised.save(snapshot, planMonth: "2026-13-01"))
+        revised.updateAccessRevision("scope-c")
+        XCTAssertThrowsError(try revised.load(planMonth: "2026-09-01"))
+        revised.remove()
+        XCTAssertThrowsError(try revised.load())
+        XCTAssertThrowsError(try revised.load(planMonth: "2026-10-01"))
     }
 
     @MainActor

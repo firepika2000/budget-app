@@ -308,6 +308,7 @@ final class LiveTransactionOutbox {
 struct LiveWorkspaceCachePayload: Codable {
     let savedAt: Date
     let accessRevision: String?
+    let planMonth: String?
     let accounts: [APIAccount]
     let accountBalances: [String: APIAccountBalance]
     let categories: [APICategory]
@@ -341,9 +342,10 @@ final class LiveWorkspaceReadCache {
 
     func updateAccessRevision(_ value: String?) { accessRevision = value }
 
-    func save(_ snapshot: WorkspaceSnapshot) throws {
+    func save(_ snapshot: WorkspaceSnapshot, planMonth: String? = nil) throws {
+        let destination = try cacheURL(planMonth: planMonth)
         let value = LiveWorkspaceCachePayload(
-            savedAt: Date(), accessRevision: accessRevision, accounts: snapshot.accounts,
+            savedAt: Date(), accessRevision: accessRevision, planMonth: planMonth, accounts: snapshot.accounts,
             accountBalances: snapshot.accountBalances, categories: snapshot.categories,
             groups: snapshot.groups, transactions: snapshot.transactions, summary: snapshot.summary,
             targets: snapshot.targets, schedules: snapshot.schedules, forecast: snapshot.forecast
@@ -351,19 +353,48 @@ final class LiveWorkspaceReadCache {
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        try JSONEncoder().encode(value).write(to: fileURL, options: [.atomic, .completeFileProtection])
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        try JSONEncoder().encode(value).write(to: destination, options: [.atomic, .completeFileProtection])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
     }
 
-    func load() throws -> LiveWorkspaceCachePayload {
-        let value = try JSONDecoder().decode(LiveWorkspaceCachePayload.self, from: Data(contentsOf: fileURL))
+    func load(planMonth: String? = nil) throws -> LiveWorkspaceCachePayload {
+        let value = try JSONDecoder().decode(LiveWorkspaceCachePayload.self, from: Data(contentsOf: cacheURL(planMonth: planMonth)))
         guard value.accessRevision == accessRevision else {
             throw BudgetApplicationError.invalidOperation("The saved workspace belongs to earlier access settings. Reconnect to load your current budget access.")
+        }
+        guard value.planMonth == planMonth else {
+            throw BudgetApplicationError.invalidOperation("The saved plan belongs to another month. Reconnect to load this month.")
         }
         return value
     }
 
-    func remove() { try? FileManager.default.removeItem(at: fileURL) }
+    private func cacheURL(planMonth: String?) throws -> URL {
+        guard let planMonth else { return fileURL }
+        // Month identity is server-shaped, never a caller-controlled path component.
+        let parts = planMonth.split(separator: "-", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0].count == 4, parts[1].count == 2,
+              parts[2] == "01", planMonth.utf8.allSatisfy({ (48...57).contains($0) || $0 == 45 }),
+              let year = Int(parts[0]), year > 0,
+              let month = Int(parts[1]), (1...12).contains(month) else {
+            throw BudgetApplicationError.invalidOperation("The saved plan month is invalid.")
+        }
+        return fileURL.deletingLastPathComponent().appendingPathComponent(
+            "\(fileURL.deletingPathExtension().lastPathComponent)-plan-\(planMonth).json"
+        )
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: fileURL)
+        let parent = fileURL.deletingLastPathComponent()
+        let prefix = fileURL.deletingPathExtension().lastPathComponent + "-plan-"
+        for candidate in (try? FileManager.default.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)) ?? [] {
+            guard candidate.lastPathComponent.hasPrefix(prefix), candidate.pathExtension == "json" else { continue }
+            let month = String(candidate.deletingPathExtension().lastPathComponent.dropFirst(prefix.count))
+            guard let expected = try? cacheURL(planMonth: month),
+                  expected.standardizedFileURL.path == candidate.standardizedFileURL.path else { continue }
+            try? FileManager.default.removeItem(at: candidate)
+        }
+    }
 }
 
 private func liveCredentialSubject(_ token: String) -> String {

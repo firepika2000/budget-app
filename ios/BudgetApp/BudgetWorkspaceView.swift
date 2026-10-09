@@ -3806,15 +3806,16 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
 
     func coreSnapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot {
         let revision = budgetAuthorityRevision
+        let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"
         do {
             let snapshot = try await loadSnapshot(planMonth: planMonth, report: report, kinds: [])
             guard revision == budgetAuthorityRevision else { throw CancellationError() }
-            try? readCache.save(snapshot)
+            try? readCache.save(snapshot, planMonth: month)
             lastReadWasCached = false
             return snapshot
         } catch where isTransientConnectivityFailure(error) {
             guard revision == budgetAuthorityRevision else { throw CancellationError() }
-            let cached = try readCache.load()
+            let cached = try readCache.load(planMonth: month)
             lastReadWasCached = true
             return WorkspaceSnapshot(
                 accounts: cached.accounts, accountBalances: cached.accountBalances,
@@ -3947,7 +3948,16 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var reportTag = ""
     @Published var spendingTrendDimension = "category"
     @Published var includeTrackingAccounts = false
-    @Published var planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date()))!
+    @Published var planMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date()))! {
+        didSet {
+            guard Self.dateString(oldValue).prefix(7) != Self.dateString(planMonth).prefix(7) else { return }
+            // Never retain a previous month's monetary rows beneath the new month's heading,
+            // even before refresh begins or when its cache/network read fails.
+            snapshotOperationID = UUID()
+            summary = nil
+            delegatedBudget = nil
+        }
+    }
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published private(set) var pendingSyncCount = 0
