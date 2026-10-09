@@ -2358,3 +2358,30 @@ Dropbox destination tests pass, covering encrypted exact download, bounded uploa
 publication recovery/conflicts, retention failure and selected deletion. Source-composition assertions
 check pending-package reuse and guarded cleanup; these are not a live-provider end-to-end acceptance
 claim. `git diff --check` passes. No backend changes or unrelated full-suite reruns.
+
+### Explainable schedule decisions — 2026-10-09
+
+Immutable schedule snapshots were already durable across providers, but the shared history screen
+displayed only the latest name, amount and cadence. Native expandable Decision details now expose
+changed names, authorized resources, exact amount, next date, recurrence/interval, end date,
+remaining entries, memo, classification, active/paused state and last realization date. Creation
+and deletion retain explicit Not set boundaries. Changed resource identities are detected even
+when display names match; unavailable resources receive neutral labels rather than raw identifiers.
+Money changes remain visible as changes when Hide Amounts masks both values. No accounting is
+recomputed and no schedule or posted transaction is mutated by this view.
+
+Older-history requests remain bounded and guarded against overlapping loads; the Load More action
+disappears after a short/final page. Failed requests preserve already loaded observations.
+Human retest after rebuild: Scheduled Transactions → Schedule History; expand an edit, pause,
+deletion and Enter Now decision. Confirm dates/limits/status advancement, toggle Hide Amounts,
+and load older history through the final page. No server restart or migration is required.
+Human visual acceptance remains pending; no TestFlight publication is authorized.
+
+Verification: two focused native tests pass on regular Xcode 27 and the preserved iPhone 17 Pro
+Max/iOS 27 Simulator: changed-field presentation covers exact negative values beyond binary
+floating-point precision, identical resource display names, removed end dates, occurrence limits,
+realization, pause, deletion, no-op suppression and amount privacy; the existing production schedule
+composition/store contract remains green. The production app compiles. All 20 backend schedule
+contract tests pass; `git diff --check` passes. Two initial compile attempts exposed a SwiftUI
+type-checking limit and an incorrect payee display-property reference; both are corrected in the
+final green build. No claim of human visual acceptance or a passing UI automation run is made.

@@ -163,6 +163,10 @@ Target History now expands each decision to expose changed amount, date, recurre
 contribution, priority and active state, including explicit month-specific snooze/resume transitions.
 Target and Debt Terms history currency values honor Hide Amounts without concealing which fields
 changed; neither explanatory view alters financial state.
+Schedule History now expands recorded before/after decisions for names, resources, amount, cadence,
+next/end dates, occurrence limits, memo, classification, pause state and realization advancement.
+Exact currency values honor Hide Amounts, resource names use current authorized workspace data,
+and bounded older-history loading stops after the final page and rejects overlapping page requests.
 Remaining v0.12 work should continue auditing other mutable
 planning and administrative observations
 for overwrite-only or export gaps rather than duplicating established histories.

@@ -1102,6 +1102,49 @@ struct AccountHistoryView: View {
 }
 
 /// Presentation of authoritative snapshots, never a projection or accounting calculation.
+enum ScheduleHistoryPresentation {
+    struct Change: Identifiable, Equatable {
+        var id: String { label }
+        let label: String
+        let before: String?
+        let after: String?
+    }
+    static func changes(_ revision: APIScheduledTransactionRevision, currencyCode: String,
+                        locale: Locale = .current, hideAmounts: Bool = false,
+                        accountName: (String) -> String = { _ in "Account" },
+                        categoryName: (String) -> String = { _ in "Category" },
+                        payeeName: (String) -> String = { _ in "Payee" }) -> [Change] {
+        func values(_ snapshot: APIScheduledTransactionSnapshot?) -> [String?] {
+            guard let snapshot else { return Array(repeating: nil, count: 15) }
+            return [snapshot.name, snapshot.accountID, snapshot.destinationAccountID,
+                    snapshot.categoryID, snapshot.payeeID,
+                    CurrencyText.display(snapshot.amountMinor, currencyCode: currencyCode, locale: locale),
+                    snapshot.nextDate, snapshot.recurrenceUnit.capitalized, String(snapshot.intervalCount),
+                    snapshot.endDate, snapshot.remainingOccurrences.map(String.init), snapshot.memo,
+                    snapshot.financialClassification?.replacingOccurrences(of: "_", with: " ").capitalized,
+                    snapshot.isActive ? "Active" : "Paused", snapshot.lastRealizedOn]
+        }
+        let labels = ["Name", "Account", "Transfer destination", "Category", "Payee", "Amount",
+                      "Next date", "Recurrence", "Interval", "End date", "Remaining entries", "Memo",
+                      "Classification", "Status", "Last entered"]
+        let before = values(revision.beforeSnapshot), after = values(revision.afterSnapshot)
+        return labels.indices.compactMap { index in
+            guard before[index] != after[index] else { return nil }
+            let hidden = hideAmounts && index == 5
+            func display(_ value: String) -> String {
+                if hidden { return "••••" }
+                switch index {
+                case 1, 2: return accountName(value)
+                case 3: return categoryName(value)
+                case 4: return payeeName(value)
+                default: return value
+                }
+            }
+            return .init(label: labels[index], before: before[index].map(display), after: after[index].map(display))
+        }
+    }
+}
+
 enum TargetHistoryPresentation {
     struct Change: Identifiable, Equatable {
         var id: String { label }

@@ -9271,6 +9271,8 @@ private struct ScheduledTransactionHistoryView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var rows: [APIScheduledTransactionRevision] = []
     @State private var loading = true
+    @State private var loadingMore = false
+    @State private var hasMore = false
     @State private var error: String?
     private let pageSize = 50
     var body: some View {
@@ -9281,12 +9283,23 @@ private struct ScheduledTransactionHistoryView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack { Label(title(row.action), systemImage: symbol(row.action)).fontWeight(.semibold); Spacer(); Text(BudgetWorkspaceStore.compactDate(String(row.createdAt.prefix(10)))).font(.caption).foregroundStyle(.secondary) }
                     Text(row.afterSnapshot?.name ?? row.beforeSnapshot?.name ?? "Scheduled transaction")
-                    if let snapshot = row.afterSnapshot ?? row.beforeSnapshot { Text("\(store.format(snapshot.amountMinor)) · \(snapshot.recurrenceUnit == "once" ? "Once" : "Every \(snapshot.intervalCount) \(snapshot.recurrenceUnit)")").font(.caption).foregroundStyle(.secondary) }
+                    if let snapshot = row.afterSnapshot ?? row.beforeSnapshot {
+                        Text(summary(snapshot)).font(.caption).foregroundStyle(.secondary)
+                    }
                     Text("By \(row.actorDisplayName ?? "household member")").font(.caption2).foregroundStyle(.secondary)
                     if row.action == "realized", let count = row.transactionIDs?.count { Text("\(count) posted transaction\(count == 1 ? "" : "s")").font(.caption2).foregroundStyle(.secondary) }
-                }.accessibilityElement(children: .combine)
+                    DisclosureGroup("Decision details") {
+                        ForEach(changes(row)) { change in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(change.label).font(.caption).foregroundStyle(.secondary)
+                                Text("\(change.before ?? "Not set") → \(change.after ?? "Not set")")
+                                    .font(.subheadline)
+                            }.accessibilityElement(children: .combine)
+                        }
+                    }
+                }.accessibilityElement(children: .contain)
             }
-            if rows.count >= pageSize { Section { Button("Load More") { Task { await loadMore() } } } }
+            if hasMore { Section { Button("Load More") { Task { await loadMore() } }.disabled(loading || loadingMore) } }
         }
         .navigationTitle("Schedule History")
         .overlay { if loading && rows.isEmpty { ProgressView() } }
@@ -9294,9 +9307,30 @@ private struct ScheduledTransactionHistoryView: View {
         .refreshable { await load() }
     }
     private func title(_ action: String) -> String { switch action { case "created": "Created"; case "updated": "Updated"; case "paused": "Paused"; case "resumed": "Resumed"; case "deleted": "Deleted"; case "realized": "Entered"; default: action.capitalized } }
+    private func summary(_ snapshot: APIScheduledTransactionSnapshot) -> String {
+        let cadence = snapshot.recurrenceUnit == "once" ? "Once" : "Every \(snapshot.intervalCount) \(snapshot.recurrenceUnit)"
+        return "\(store.format(snapshot.amountMinor)) · \(cadence)"
+    }
+    private func changes(_ row: APIScheduledTransactionRevision) -> [ScheduleHistoryPresentation.Change] {
+        ScheduleHistoryPresentation.changes(row, currencyCode: store.budget.currencyCode,
+            hideAmounts: store.hideAmounts,
+            accountName: { id in store.accounts.first(where: { $0.id == id })?.name ?? "Account no longer available" },
+            categoryName: { id in store.categories.first(where: { $0.id == id }).map { store.categoryDisplayName($0) } ?? "Category no longer available" },
+            payeeName: { id in store.payees.first(where: { $0.id == id })?.displayName ?? "Payee no longer available" })
+    }
     private func symbol(_ action: String) -> String { switch action { case "created": "plus.circle"; case "paused": "pause.circle"; case "resumed": "play.circle"; case "deleted": "trash"; case "realized": "checkmark.circle"; default: "pencil.circle" } }
-    @MainActor private func load() async { loading = true; error = nil; defer { loading = false }; do { rows = try await store.scheduleHistory(limit: pageSize, offset: 0) } catch { self.error = error.localizedDescription } }
-    @MainActor private func loadMore() async { do { rows += try await store.scheduleHistory(limit: pageSize, offset: rows.count) } catch { self.error = error.localizedDescription } }
+    @MainActor private func load() async {
+        guard !loadingMore else { return }
+        loading = true; error = nil; defer { loading = false }
+        do { let page = try await store.scheduleHistory(limit: pageSize, offset: 0); rows = page; hasMore = page.count == pageSize }
+        catch { self.error = error.localizedDescription }
+    }
+    @MainActor private func loadMore() async {
+        guard !loading, !loadingMore, hasMore else { return }
+        loadingMore = true; error = nil; defer { loadingMore = false }
+        do { let page = try await store.scheduleHistory(limit: pageSize, offset: rows.count); rows += page; hasMore = page.count == pageSize }
+        catch { self.error = error.localizedDescription }
+    }
 }
 
 private struct ScheduledTransactionRow: View {

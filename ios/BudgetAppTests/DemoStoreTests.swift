@@ -8,6 +8,37 @@ import CryptoKit
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testScheduleHistoryExplainsExactChangesRemovalRealizationAndPrivacy() {
+        let before = APIScheduledTransactionSnapshot(accountID: "a", categoryID: "c", payeeID: "p",
+            name: "Rent", amountMinor: -9_007_199_254_740_993, nextDate: "2026-10-01",
+            recurrenceUnit: "months", intervalCount: 1, endDate: "2027-10-01", remainingOccurrences: 12, memo: "Old")
+        let after = APIScheduledTransactionSnapshot(accountID: "b", categoryID: "d", payeeID: "q",
+            name: "New rent", amountMinor: -9_007_199_254_740_992, nextDate: "2026-11-01",
+            recurrenceUnit: "months", intervalCount: 2, remainingOccurrences: 11, memo: "New",
+            isActive: false, lastRealizedOn: "2026-10-01")
+        let revision = APIScheduledTransactionRevision(id: "r", scheduleID: "s", action: "realized",
+            actorUserID: "u", beforeSnapshot: before, afterSnapshot: after, transactionIDs: ["t"], createdAt: "2026-10-01")
+        let changes = ScheduleHistoryPresentation.changes(revision, currencyCode: "USD", locale: Locale(identifier: "en_US"),
+            accountName: { _ in "Same account name" }, categoryName: { "Group / \($0)" }, payeeName: { "Payee \($0)" })
+        XCTAssertEqual(changes.first { $0.label == "Amount" }?.before, "-$90,071,992,547,409.93")
+        XCTAssertTrue(changes.contains { $0.label == "Account" }, "Changed identity must survive identical display names")
+        XCTAssertEqual(changes.first { $0.label == "Category" }?.after, "Group / d")
+        XCTAssertEqual(changes.first { $0.label == "Payee" }?.after, "Payee q")
+        XCTAssertNil(changes.first { $0.label == "End date" }?.after)
+        XCTAssertEqual(changes.first { $0.label == "Remaining entries" }?.after, "11")
+        XCTAssertEqual(changes.first { $0.label == "Last entered" }?.after, "2026-10-01")
+        XCTAssertEqual(changes.first { $0.label == "Status" }?.after, "Paused")
+        let hidden = ScheduleHistoryPresentation.changes(revision, currencyCode: "USD", hideAmounts: true)
+        XCTAssertEqual(hidden.first { $0.label == "Amount" }?.before, "••••")
+        XCTAssertEqual(hidden.first { $0.label == "Amount" }?.after, "••••")
+        let deleted = APIScheduledTransactionRevision(id: "d", scheduleID: "s", action: "deleted",
+            actorUserID: "u", beforeSnapshot: after, createdAt: "2026-10-02")
+        XCTAssertTrue(ScheduleHistoryPresentation.changes(deleted, currencyCode: "USD").allSatisfy { $0.after == nil })
+        let unchanged = APIScheduledTransactionRevision(id: "n", scheduleID: "s", action: "updated",
+            actorUserID: "u", beforeSnapshot: after, afterSnapshot: after, createdAt: "2026-10-02")
+        XCTAssertTrue(ScheduleHistoryPresentation.changes(unchanged, currencyCode: "USD").isEmpty)
+    }
+
     @MainActor
     func testDropboxCommittedPublicationRemainsSuccessfulWhenListRefreshFails() async throws {
         let name = "dropbox-publication-\(UUID().uuidString)"
