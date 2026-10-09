@@ -2,6 +2,7 @@ from typing import Optional
 from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 import ipaddress
+import json
 import secrets
 from urllib.parse import urlsplit
 
@@ -16,6 +17,7 @@ from .access import (
     find_visible_budget,
     is_household_owner,
     visible_budgets_query,
+    visible_resource_ids,
 )
 from .config import Settings
 from .database import get_db
@@ -380,6 +382,17 @@ def budget_response(db: Session, user: User, budget: Budget) -> dict:
     permission = effective_budget_permission(db, user, budget)
     if permission is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
+    capabilities = sorted(effective_capabilities(db, user, budget))
+    # A resource restriction can change while the currently populated resources remain
+    # identical. Publish an opaque, user-specific observation identity, never grant IDs.
+    scope = {}
+    for kind in ("account", "category"):
+        allowed = visible_resource_ids(db, user, budget, kind)
+        scope[kind] = None if allowed is None else sorted(allowed)
+    access_revision = sha256(json.dumps({
+        "user": user.id, "budget": budget.id, "permission": permission,
+        "capabilities": capabilities, "scope": scope,
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return {
         "id": budget.id,
         "household_id": budget.household_id,
@@ -387,7 +400,8 @@ def budget_response(db: Session, user: User, budget: Budget) -> dict:
         "currency_code": budget.currency_code,
         "effective_permission": permission,
         "allocation_version": budget.allocation_version,
-        "capabilities": sorted(effective_capabilities(db, user, budget)),
+        "capabilities": capabilities,
+        "access_revision": access_revision,
     }
 
 

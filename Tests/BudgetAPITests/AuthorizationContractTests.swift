@@ -2,6 +2,19 @@ import XCTest
 @testable import BudgetAPI
 
 final class AuthorizationContractTests: XCTestCase {
+    func testOpaqueAccessRevisionDecodesWithoutBreakingOlderServers() throws {
+        let old = #"{"id":"b","household_id":"h","name":"Budget","currency_code":"USD","effective_permission":"view","allocation_version":0,"capabilities":["view_budget"]}"#
+        let decoder = JSONDecoder()
+        let legacy = try decoder.decode(APIBudget.self, from: Data(old.utf8))
+        XCTAssertNil(legacy.accessRevision)
+        let currentJSON = String(old.dropLast()) + #", "access_revision":"scope-one"}"#
+        let current = try decoder.decode(APIBudget.self, from: Data(currentJSON.utf8))
+        XCTAssertEqual(current.accessRevision, "scope-one")
+        XCTAssertNotEqual(legacy, current, "Session route observers must notice scope-only hydration")
+        XCTAssertEqual(current.can("view_budget"), legacy.can("view_budget"))
+        let encoded = try JSONEncoder().encode(current)
+        XCTAssertEqual(try decoder.decode(APIBudget.self, from: encoded), current)
+    }
     private func vectors() throws -> [String: [String]] {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         return try JSONDecoder().decode([String: [String]].self, from: Data(contentsOf: root.appendingPathComponent("server/tests/authorization_vectors/v1.json")))

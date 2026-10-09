@@ -4223,6 +4223,7 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard let live = dataSource as? LiveWorkspaceDataSource,
               value.id == budget.id, value.householdID == budget.householdID else { return false }
         let changed = value.effectivePermission != budget.effectivePermission
+            || value.accessRevision != budget.accessRevision
             || Set(value.capabilities ?? []) != Set(budget.capabilities ?? [])
             || (value.capabilities == nil) != (budget.capabilities == nil)
         live.updateBudget(value, authorityChanged: changed)

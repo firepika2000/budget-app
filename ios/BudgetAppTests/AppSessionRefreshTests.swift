@@ -255,6 +255,16 @@ final class AppSessionRefreshTests: XCTestCase {
         let different = APIBudget(id: "another-budget", householdID: "h1", name: "Other", currencyCode: "USD")
         XCTAssertFalse(store.updateLiveBudgetAuthority(different))
         XCTAssertEqual(store.budget.id, "b1")
+        let scopeOnly = APIBudget(id: "b1", householdID: "h1", name: renamed.name,
+                                  currencyCode: "USD", effectivePermission: restricted.effectivePermission,
+                                  capabilities: restricted.capabilities, accessRevision: "narrowed-resource-scope")
+        let previousAuthority = store.authorityRevision
+        XCTAssertTrue(store.updateLiveBudgetAuthority(scopeOnly), "Identical capabilities/resources do not imply unchanged access")
+        XCTAssertGreaterThan(store.authorityRevision, previousAuthority)
+        XCTAssertTrue(store.workspaceAccessDenied)
+        XCTAssertTrue(store.accounts.isEmpty)
+        XCTAssertEqual(ObjectIdentifier(store), identity)
+        XCTAssertFalse(store.updateLiveBudgetAuthority(scopeOnly), "An unchanged revision must not repeatedly evict state")
     }
 
     @MainActor

@@ -51,6 +51,7 @@ public struct APIBudget: Identifiable, Codable, Equatable, Sendable {
     public let effectivePermission: APIBudgetPermission
     public let allocationVersion: Int
     public let capabilities: [String]?
+    public let accessRevision: String?
 
     public init(
         id: String,
@@ -59,7 +60,8 @@ public struct APIBudget: Identifiable, Codable, Equatable, Sendable {
         currencyCode: String,
         effectivePermission: APIBudgetPermission = .owner,
         allocationVersion: Int = 0,
-        capabilities: [String]? = nil
+        capabilities: [String]? = nil,
+        accessRevision: String? = nil
     ) {
         self.id = id
         self.householdID = householdID
@@ -68,6 +70,7 @@ public struct APIBudget: Identifiable, Codable, Equatable, Sendable {
         self.effectivePermission = effectivePermission
         self.allocationVersion = allocationVersion
         self.capabilities = capabilities
+        self.accessRevision = accessRevision
     }
 
     enum CodingKeys: String, CodingKey {
@@ -77,6 +80,7 @@ public struct APIBudget: Identifiable, Codable, Equatable, Sendable {
         case effectivePermission = "effective_permission"
         case allocationVersion = "allocation_version"
         case capabilities
+        case accessRevision = "access_revision"
     }
 
     public func can(_ capability: String) -> Bool {

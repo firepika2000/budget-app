@@ -20,6 +20,46 @@ def test_local_device_source_revision_excludes_response_time_but_covers_authorit
     assert source_revision(first) != source_revision(second)
 
 
+def test_budget_access_revision_detects_scope_only_changes_and_ignores_unrelated_members(
+    client, owner_token, session_factory
+):
+    from .test_budgeting_api import create_budget, create_budget_structure
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    child_id, child_token = add_child(session_factory, client)
+    path = f"/api/v1/budgets/{budget['id']}"
+    assert client.put(f"{path}/grants", headers=auth(owner_token), json={
+        "user_id": child_id, "permission": "view",
+    }).status_code == 200
+
+    def observation(token):
+        result = client.get(path, headers=auth(token))
+        assert result.status_code == 200, result.text
+        return result.json()
+
+    original = observation(child_token)
+    owner_revision = observation(owner_token)["access_revision"]
+    body = {"capabilities": original["capabilities"], "restrict_accounts": True,
+            "account_ids": [account["id"]], "restrict_categories": True,
+            "category_ids": [category["id"]]}
+    assert client.put(f"{path}/access/{child_id}", headers=auth(owner_token), json=body).status_code == 200
+    restricted = observation(child_token)
+    assert restricted["capabilities"] == original["capabilities"]
+    assert restricted["effective_permission"] == original["effective_permission"]
+    assert restricted["access_revision"] != original["access_revision"]
+    assert len(restricted["access_revision"]) == 64
+    assert observation(owner_token)["access_revision"] == owner_revision
+    assert observation(child_token)["access_revision"] == restricted["access_revision"]
+    assert client.put(f"{path}/access/{child_id}", headers=auth(owner_token), json=body).status_code == 200
+    assert observation(child_token)["access_revision"] == restricted["access_revision"], "No-op policy saves must not evict caches"
+    body["account_ids"] = []
+    assert client.put(f"{path}/access/{child_id}", headers=auth(owner_token), json=body).status_code == 200
+    narrowed = observation(child_token)
+    assert narrowed["access_revision"] != restricted["access_revision"]
+    listed = client.get("/api/v1/budgets", headers=auth(child_token)).json()
+    assert next(item for item in listed if item["id"] == budget["id"])["access_revision"] == narrowed["access_revision"]
+
+
 @pytest.mark.parametrize("restrict_accounts,restrict_categories", [(False, False), (True, False), (False, True), (True, True)])
 def test_household_structured_export_cannot_override_resource_restrictions(
     client, owner_token, session_factory, restrict_accounts, restrict_categories

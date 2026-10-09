@@ -110,6 +110,7 @@ class BudgetResponse(BaseModel):
     effective_permission: Literal["view", "contribute", "manage", "owner"]
     allocation_version: int
     capabilities: list[CapabilityName]
+    access_revision: Optional[str] = None
 
 
 class GrantUpsert(BaseModel):
