@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 ruby - <<'RUBY' | xcrun swift -
 source = File.read("ios/BudgetApp/ApplicationServices.swift")
-puts "import Foundation"
+puts "import Foundation\nimport CryptoKit"
 %w[APIAccount APIAccountBalance APICategory APICategoryGroup APITransaction APIMonthSummary APICategoryTarget APIScheduledTransaction APIForecast].each { |name| puts "typealias #{name} = String" }
 puts <<'SWIFT'
 enum BudgetApplicationError: Error { case invalidOperation(String) }
@@ -28,6 +28,21 @@ puts workspace[month_first...month_last].sub("@Published ", "")
 puts 'static func dateString(_ date: Date) -> String { let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"; return formatter.string(from: date) } }'
 puts <<'SWIFT'
 try await MainActor.run {
+ func token(_ subject: String, _ signature: String) throws -> String {
+  let payload = try JSONSerialization.data(withJSONObject: ["sub": subject]).base64EncodedString()
+   .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+  return "header.\(payload).\(signature)"
+ }
+ let firstToken = try token("member", "old"), rotatedToken = try token("member", "new")
+ let baseURL = URL(string: "https://server.example/family")!
+ let baseScope = liveServerStorageScope(budgetID: "budget", serverURL: baseURL, token: firstToken)
+ precondition(baseScope == liveServerStorageScope(budgetID: "budget", serverURL: URL(string: "https://SERVER.example:443/family/")!, token: rotatedToken))
+ for address in ["https://server.example/friends", "http://server.example/family", "https://server.example:8443/family"] {
+  precondition(baseScope != liveServerStorageScope(budgetID: "budget", serverURL: URL(string: address)!, token: firstToken))
+ }
+ precondition(baseScope != liveServerStorageScope(budgetID: "another", serverURL: baseURL, token: firstToken))
+ let anotherUser = try token("another-member", "new")
+ precondition(baseScope != liveServerStorageScope(budgetID: "budget", serverURL: baseURL, token: anotherUser))
  let probe = MonthProbe(), originalMonth = probe.planMonth, originalOperation = probe.snapshotOperationID
  probe.planMonth = Calendar.current.date(byAdding: .day, value: 1, to: originalMonth)!
  precondition(probe.summary != nil && probe.snapshotOperationID == originalOperation)

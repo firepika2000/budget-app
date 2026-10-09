@@ -1,6 +1,7 @@
 import BudgetAPI
 import BudgetCore
 import Foundation
+import CryptoKit
 
 func normalizedCategoryName(_ value: String) -> String {
     value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -333,8 +334,7 @@ final class LiveWorkspaceReadCache {
             .appendingPathComponent("BudgetApp/LiveCache", isDirectory: true)
         try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
-        let scope = "\(serverURL.host ?? "server")-\(serverURL.port ?? 0)-\(liveCredentialSubject(token))-\(budgetID)"
-            .replacingOccurrences(of: "/", with: "-")
+        let scope = "read-v2-" + liveServerStorageScope(budgetID: budgetID, serverURL: serverURL, token: token)
         fileURL = root.appendingPathComponent("\(scope).json", isDirectory: false)
     }
 
@@ -407,6 +407,22 @@ private func liveCredentialSubject(_ token: String) -> String {
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let subject = object["sub"] as? String else { return "unknown-user" }
     return subject.replacingOccurrences(of: "/", with: "-")
+}
+
+/// Storage namespace only, never authentication. Preserve server path/scheme separation while
+/// allowing credential rotation and equivalent root/default-port spellings to reuse observations.
+func liveServerStorageScope(budgetID: String, serverURL: URL, token: String) -> String {
+    let components = URLComponents(url: serverURL, resolvingAgainstBaseURL: true)
+    let scheme = components?.scheme?.lowercased() ?? ""
+    let host = components?.host?.lowercased() ?? ""
+    let port = components?.port ?? (scheme == "https" ? 443 : 80)
+    var path = components?.percentEncodedPath ?? ""
+    while path.hasSuffix("/") { path.removeLast() }
+    let identity = [scheme, host, String(port), path, liveCredentialSubject(token), budgetID]
+    // All components are strings, so JSON serialization cannot fail. Length framing through JSON
+    // avoids the delimiter collisions of concatenated user/budget/host identifiers.
+    let data = try! JSONSerialization.data(withJSONObject: identity)
+    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
 func isTransientConnectivityFailure(_ error: Error) -> Bool {

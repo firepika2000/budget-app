@@ -1671,6 +1671,28 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertThrowsError(try revised.load(planMonth: "2026-10-01"))
     }
 
+    func testLiveReadNamespaceSeparatesServersButSurvivesCredentialRotation() throws {
+        func token(_ subject: String, signature: String) throws -> String {
+            let payload = try JSONSerialization.data(withJSONObject: ["sub": subject]).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
+            return "header.\(payload).\(signature)"
+        }
+        let first = try token("member", signature: "old")
+        let rotated = try token("member", signature: "new")
+        let other = try token("another-member", signature: "new")
+        let url = try XCTUnwrap(URL(string: "https://server.example/family"))
+        let expected = liveServerStorageScope(budgetID: "budget", serverURL: url, token: first)
+        XCTAssertEqual(expected.count, 64)
+        XCTAssertEqual(expected, liveServerStorageScope(budgetID: "budget", serverURL: url, token: rotated))
+        XCTAssertEqual(expected, liveServerStorageScope(budgetID: "budget", serverURL: try XCTUnwrap(URL(string: "https://SERVER.example:443/family/")), token: rotated))
+        for address in ["https://server.example/friends", "http://server.example/family", "https://server.example:8443/family"] {
+            XCTAssertNotEqual(expected, liveServerStorageScope(budgetID: "budget", serverURL: try XCTUnwrap(URL(string: address)), token: first))
+        }
+        XCTAssertNotEqual(expected, liveServerStorageScope(budgetID: "budget", serverURL: url, token: other))
+        XCTAssertNotEqual(expected, liveServerStorageScope(budgetID: "another-budget", serverURL: url, token: first))
+    }
+
     @MainActor
     func testCachedAuthorizedBudgetKeepsWorkspaceRouteDuringColdOfflineLaunch() async {
         let suite = "CachedLiveRoute.\(UUID().uuidString)"
