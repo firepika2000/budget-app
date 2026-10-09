@@ -10,6 +10,18 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testDebtTermsEditorDiscardsDeniedDraftAndGuardsCommands() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/EditingViews.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "struct DebtTermsEditorView: View"))
+        let end = try XCTUnwrap(source.range(of: "struct CategoryCreationView: View", range: start.upperBound..<source.endIndex))
+        let editor = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(editor.contains("ContentUnavailableView(\"Debt terms unavailable\""))
+        XCTAssertTrue(editor.contains("accessDenied = true; history = []; hasMoreHistory = false; hasStoredTerms = false"))
+        XCTAssertTrue(editor.contains("originalPrincipal = \"\"; originalTerm = \"\"; remainingTerm = \"\"; promoRate = \"\"; promoEnd = \"\""))
+        XCTAssertTrue(editor.contains("guard !accessDenied, !isLoading, !isLoadingHistory, !isSaving, inputsValid else { return }"))
+        XCTAssertEqual(editor.components(separatedBy: "catch { handleDebtTermsError(error) }").count - 1, 4)
+    }
     func testLedgerImportAndHouseholdHistoryApplyDefinitiveDenialPolicy() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: file)

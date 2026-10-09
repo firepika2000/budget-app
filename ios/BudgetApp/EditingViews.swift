@@ -1484,6 +1484,7 @@ struct DebtTermsEditorView: View {
     @State private var promoRate = ""
     @State private var promoEnd = ""
     @State private var hasStoredTerms = false
+    @State private var accessDenied = false
     @State private var history: [APIAccountDebtTermsRevision] = []
     @State private var hasMoreHistory = false
     @State private var isLoadingHistory = false
@@ -1496,6 +1497,11 @@ struct DebtTermsEditorView: View {
 
     var body: some View {
         NavigationStack {
+            Group {
+                if accessDenied {
+                    ContentUnavailableView("Debt terms unavailable", systemImage: "lock",
+                        description: Text("Your current access no longer permits this account's debt terms. Close this screen and refresh your workspace."))
+                } else {
             Form {
                 Section("Rate") {
                     TextField("APR (%)", text: $apr)
@@ -1549,7 +1555,10 @@ struct DebtTermsEditorView: View {
                 if hasStoredTerms {
                     Section {
                         Button("Remove Debt Terms", role: .destructive) { Task { await remove() } }
+                            .disabled(isLoading || isLoadingHistory || isSaving)
                     }
+                }
+            }
                 }
             }
             .navigationTitle("Debt Terms")
@@ -1558,7 +1567,7 @@ struct DebtTermsEditorView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { Task { await save() } }
-                        .disabled(isLoading || isSaving || !inputsValid)
+                        .disabled(accessDenied || isLoading || isLoadingHistory || isSaving || !inputsValid)
                         .accessibilityIdentifier("save-debt-terms")
                 }
             }
@@ -1666,6 +1675,7 @@ struct DebtTermsEditorView: View {
     }
 
     private func load() async {
+        guard !accessDenied else { return }
         defer { isLoading = false }
         do {
             async let stored = workspace.accountDebtTerms(accountID: account.id)
@@ -1683,7 +1693,7 @@ struct DebtTermsEditorView: View {
             originalPrincipal = value.originalPrincipalMinor.map { CurrencyText.editable($0, currencyCode: currencyCode) } ?? ""
             originalTerm = value.originalTermMonths.map(String.init) ?? ""; remainingTerm = value.remainingTermMonths.map(String.init) ?? ""
             promoRate = Self.percentText(value.promotionalRateBasisPoints); promoEnd = value.promotionalEndsOn ?? ""
-        } catch { errorMessage = error.localizedDescription }
+        } catch { handleDebtTermsError(error) }
     }
 
     private func formattedTimestamp(_ value: String) -> String {
@@ -1692,16 +1702,18 @@ struct DebtTermsEditorView: View {
     }
 
     private func loadEarlierHistory() async {
+        guard !accessDenied, !isLoading, !isLoadingHistory, !isSaving else { return }
         isLoadingHistory = true
         defer { isLoadingHistory = false }
         do {
             let next = try await workspace.accountDebtTermsHistory(accountID: account.id, limit: 10, offset: history.count)
             history.append(contentsOf: next)
             hasMoreHistory = next.count == 10
-        } catch { errorMessage = error.localizedDescription }
+        } catch { handleDebtTermsError(error) }
     }
 
     private func save() async {
+        guard !accessDenied, !isLoading, !isLoadingHistory, !isSaving, inputsValid else { return }
         isSaving = true; defer { isSaving = false }
         let value = APIAccountDebtTermsUpsert(
             termsType: isCard ? "credit_card" : "installment_loan", annualRateBasisPoints: aprBasisPoints,
@@ -1715,13 +1727,24 @@ struct DebtTermsEditorView: View {
             promotionalEndsOn: isCard && !promoEnd.isEmpty ? promoEnd : nil
         )
         do { _ = try await workspace.updateAccountDebtTerms(accountID: account.id, value: value); dismiss() }
-        catch { errorMessage = error.localizedDescription }
+        catch { handleDebtTermsError(error) }
     }
 
     private func remove() async {
+        guard !accessDenied, !isLoading, !isLoadingHistory, !isSaving else { return }
         isSaving = true; defer { isSaving = false }
         do { try await workspace.deleteAccountDebtTerms(accountID: account.id); dismiss() }
-        catch { errorMessage = error.localizedDescription }
+        catch { handleDebtTermsError(error) }
+    }
+
+    private func handleDebtTermsError(_ error: Error) {
+        if HistoryObservationPolicy.mustDiscard(after: error) {
+            accessDenied = true; history = []; hasMoreHistory = false; hasStoredTerms = false
+            apr = ""; payment = ""; minimumRate = ""; dueDay = ""; statementDay = ""
+            originalPrincipal = ""; originalTerm = ""; remainingTerm = ""; promoRate = ""; promoEnd = ""
+            rateType = "fixed"; frequency = "monthly"; minimumRule = "fixed"
+        }
+        errorMessage = error.localizedDescription
     }
 }
 
