@@ -7499,6 +7499,23 @@ private struct LiveRequestsView: View {
     }
 }
 
+enum FundingRequestHistoryPresentation {
+    static func amountLabel(for action: String) -> String {
+        switch action {
+        case "approved", "partially_approved": return "Approved amount"
+        case "submitted", "revised": return "Requested amount"
+        default: return "Recorded amount"
+        }
+    }
+
+    static func timestamp(_ value: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        return date?.formatted(date: .abbreviated, time: .shortened) ?? value
+    }
+}
+
 private struct LiveRequestDetailView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
@@ -7543,8 +7560,15 @@ private struct LiveRequestDetailView: View {
                         VStack(alignment: .leading) {
                             Text(action.action.replacingOccurrences(of: "_", with: " ").capitalized)
                             Text(action.actorUserID.flatMap(requesterName) ?? "System").font(.caption).foregroundStyle(.secondary)
+                            Text(FundingRequestHistoryPresentation.timestamp(action.createdAt))
+                                .font(.caption).foregroundStyle(.secondary)
+                            if let amount = action.amountMinor {
+                                LabeledContent(FundingRequestHistoryPresentation.amountLabel(for: action.action), value: store.format(amount))
+                            }
                             if !action.note.isEmpty { Text(action.note).font(.caption).foregroundStyle(.secondary) }
                         }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("funding-request-history-\(action.id)")
                     }
                 }
             }

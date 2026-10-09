@@ -10,6 +10,25 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testFundingRequestHistoryExplainsRecordedAmountsAndDates() throws {
+        for action in ["approved", "partially_approved"] {
+            XCTAssertEqual(FundingRequestHistoryPresentation.amountLabel(for: action), "Approved amount")
+        }
+        for action in ["submitted", "revised"] {
+            XCTAssertEqual(FundingRequestHistoryPresentation.amountLabel(for: action), "Requested amount")
+        }
+        XCTAssertEqual(FundingRequestHistoryPresentation.amountLabel(for: "future_action"), "Recorded amount")
+        XCTAssertEqual(FundingRequestHistoryPresentation.timestamp("legacy timestamp"), "legacy timestamp")
+        XCTAssertEqual(FundingRequestHistoryPresentation.timestamp("2026-10-09T12:00:00Z"),
+                       FundingRequestHistoryPresentation.timestamp("2026-10-09T12:00:00.000000Z"))
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct LiveRequestDetailView"))
+        let detail = source[start.upperBound...].prefix(10000)
+        XCTAssertTrue(detail.contains("if let amount = action.amountMinor"))
+        XCTAssertTrue(detail.contains("value: store.format(amount)"))
+        XCTAssertTrue(detail.contains("timestamp(action.createdAt)"))
+    }
     func testDropboxTransfersGuardBeforeDestinationAndBusyStateMutation() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/DropboxBackupCoordinator.swift")
         let source = try String(contentsOf: file)
