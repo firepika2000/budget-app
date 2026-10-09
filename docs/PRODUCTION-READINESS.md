@@ -106,8 +106,10 @@ configured destination remains alongside Local Files recovery. ClearPocket's
 registered public app identifier is now included in ordinary Debug and Release build settings; it is
 not a client secret. The release helper still requires and verifies the same identifier explicitly,
 so an archive cannot silently ship a dead Connect button or an unintended Dropbox application.
-The remaining Dropbox gate is external-console/live acceptance: confirm App-folder access and exact
-redirect URI `clearpocket://dropbox-oauth`, then complete one real connect, backup, relaunch, restore
+Developer-console configuration was directly verified on 2026-10-09: ClearPocket Backup uses the
+registered public key in both Debug/Release, Scoped App (App Folder) access, exact redirect URI
+`clearpocket://dropbox-oauth`, public clients/PKCE allowed and the required file scopes enabled.
+The remaining Dropbox gate is live acceptance: complete one real connect, backup, relaunch, restore
 and revoke walkthrough. No client secret belongs in the app or repository. This external gate does
 not block unrelated roadmap engineering.
 
@@ -2623,3 +2625,29 @@ a concurrently changed authority, with production app compilation on regular Xco
 and the preserved iPhone 17 Pro Max/iOS 27 Simulator. `git diff --check` passes. Server behavior and deployed
 database schema are unchanged. Rebuild is required for the strengthened native decoder; no server
 restart, migration or customer transfer/reset is required. TestFlight remains on hold.
+
+### Dropbox developer-console gate verified — 2026-10-09
+
+Direct authenticated read-only inspection of ClearPocket Backup in Dropbox's developer console
+verified app key `961plkfyok8kf8z`, Scoped App (App Folder) access, folder name ClearPocket Backup,
+exact registered redirect `clearpocket://dropbox-oauth`, and public clients (PKCE) allowed. Permissions
+show files.content.read/write and files.metadata.read/write enabled, matching the four scopes explicitly
+requested by the native OAuth configuration. The console also has mandatory account_info.read enabled;
+the native request does not ask for it. Account-info write, sharing, file-request, contact and OpenID
+scopes were unchecked. No settings, permissions or credentials were changed; app secret stayed hidden
+and no generated access token was requested.
+
+The app remains in Development with 0/500 linked development users at inspection time. Production
+approval remains a separate distribution gate; do not infer it from correct native configuration.
+The console setup gate is now VERIFIED rather than asking the owner to register it again. No native
+test run is needed for this documentation-only evidence checkpoint.
+
+Minimized remaining live acceptance: on an explicitly disposable local test authority, use Backup &
+Recovery to connect with normal Dropbox consent; retain the recovery key separately, publish one
+encrypted generation, relaunch and confirm the generation/key remain usable. Download/verify it and
+restore only into a new empty test destination, never over the human's current budget. Finally revoke
+the connection and verify later provider access requires reconnection while Local Files recovery stays
+available. Scope consent and any real-data upload require the owner's informed action/approval. Do not
+use a development-console generated token as a shortcut. This walkthrough has NOT been performed or
+human accepted. No software rebuild, migration or server restart is needed for the console evidence;
+use a current development build when conducting the remaining live workflow. TestFlight remains on hold.

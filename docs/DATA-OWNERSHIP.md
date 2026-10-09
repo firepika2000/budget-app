@@ -137,8 +137,11 @@ Native Dropbox setup is implemented behind a registered public app identity. Con
 destination, retention, verified upload/list/download, and recovery handoff are connected to Backup &
 Recovery. A build without the public Dropbox app key fails closed while keeping local backup usable.
 No Dropbox credential belongs in SQLite, the encrypted generation, logs, or source control. Live
-Dropbox acceptance still requires registering the production app key/callback and exercising that
-external account flow.
+Dropbox developer-console configuration was directly verified on 2026-10-09 for ClearPocket Backup:
+the registered key matches Debug/Release, access is Scoped App (App Folder), the callback is exactly
+`clearpocket://dropbox-oauth`, public clients/PKCE are allowed, and the four required file scopes are
+enabled. No app secret or generated access token was revealed or created. Configuration verification
+does not prove live OAuth/backup/restore acceptance; that external account flow remains required.
 
 Dropbox generations now use a dedicated 256-bit recovery key retained as device-only Keychain data,
 separate from both the live attachment key and Dropbox OAuth credentials. The owner can re-copy the
