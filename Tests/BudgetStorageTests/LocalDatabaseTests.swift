@@ -69,6 +69,7 @@ final class LocalDatabaseTests: XCTestCase {
             .init("DROP TABLE credit_reserve_attributions"),
             .init("DROP TABLE payee_revisions"),
             .init("DROP TABLE account_debt_terms_revisions"),
+            .init("DROP TABLE debt_payoff_plan_revisions"),
             .init("DROP TABLE budget_structure_revisions"),
             .init("DROP TABLE account_revisions"),
             .init("DROP TABLE credit_reserve_events"),
@@ -363,7 +364,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.scheduledTransactionID, "deleted-schedule")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 22)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 23)
     }
 
     func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {
@@ -590,6 +591,35 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(secondPage.map(\.action), ["created"])
         XCTAssertEqual(snapshot.payeeRevisions, history)
         XCTAssertEqual(snapshot.accounts.first?.openingBalanceMinor, 12_345)
+        try await reopened.integrityCheck()
+    }
+
+    func testPayoffHistoryMigrationBackfillsExactScenarioWithoutChangingPlan() async throws {
+        let url = try temporaryDirectory().appendingPathComponent("payoff-history.sqlite")
+        var store: LocalAuthorityStore? = try LocalAuthorityStore(fileURL: url)
+        try await store?.bootstrap(.init(householdID: "h", householdName: "Home", ownerUserID: "u",
+            ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD"), createdAt: "2026-10-09T12:00:00Z")
+        store = nil
+        var database: LocalDatabase? = try LocalDatabase(fileURL: url)
+        try await database?.transaction([
+            .init("INSERT INTO debt_payoff_plans(id,budget_id,user_id,strategy,rollover,extra_payment_minor,account_ids_json,custom_order_json,updated_at) VALUES ('p','b','u','custom',1,9007199254740993,'[]','[]','2026-10-09T12:00:00Z')"),
+            .init("DROP TABLE debt_payoff_plan_revisions"),
+            .init("DELETE FROM local_schema_migrations WHERE version=23"),
+            .init("PRAGMA user_version=22"),
+        ])
+        database = nil
+        let reopened = try LocalAuthorityStore(fileURL: url)
+        let snapshot = try await reopened.snapshot(budgetID: "b")
+        XCTAssertEqual(snapshot.debtPayoffPlans?.first?.extraPaymentMinor, 9_007_199_254_740_993)
+        let history = try XCTUnwrap(snapshot.debtPayoffPlanRevisions)
+        XCTAssertEqual(history.count, 1)
+        XCTAssertEqual(history[0].action, "created")
+        XCTAssertEqual(history[0].userID, "u")
+        XCTAssertNil(history[0].beforeJSON)
+        XCTAssertTrue(history[0].afterJSON?.contains("9007199254740993") == true)
+        try await reopened.replaceWorkspaceState(snapshot)
+        let afterReplace = try await reopened.snapshot(budgetID: "b")
+        XCTAssertEqual(afterReplace.debtPayoffPlanRevisions, history)
         try await reopened.integrityCheck()
     }
 

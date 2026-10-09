@@ -113,6 +113,7 @@ public enum LocalDeviceTransferProjectionDecoder {
                 customOrder: $0.customOrder, targetDate: $0.targetDate,
                 updatedAt: $0.updatedAt
             ) },
+            debtPayoffPlanRevisions: (value.debtPayoffPlanRevisions ?? []).map { .init(id: $0.id, budgetID: $0.budgetId, userID: $0.userId, action: $0.action, beforeJSON: $0.beforeJson, afterJSON: $0.afterJson, createdAt: $0.createdAt) },
             cashRolloverPolicies: value.cashRolloverPolicies.map { .init(id: $0.id, budgetID: $0.budgetId, effectiveMonth: $0.effectiveMonth, policy: $0.policy, version: $0.version, source: $0.source, actorUserID: $0.actorUserId, createdAt: $0.createdAt) },
             creditReserveAttributions: value.creditReserveAttributions.map { .init(transactionID: $0.transactionId, categoryID: $0.categoryId, amountMinor: $0.amountMinor) },
             transactionChanges: value.transactionChanges.map { .init(id: $0.id, budgetID: $0.budgetId, transactionID: $0.transactionId, actorUserID: $0.actorUserId, action: $0.action, beforeJSON: $0.beforeJson, afterJSON: $0.afterJson, createdAt: $0.createdAt) },
@@ -141,11 +142,16 @@ public enum LocalDeviceTransferProjectionDecoder {
             + snapshot.transactions.map(\.budgetID) + snapshot.allocations.map(\.budgetID)
             + snapshot.schedules.map(\.budgetID) + snapshot.cashRolloverPolicies.map(\.budgetID)
             + (snapshot.debtPayoffPlans ?? []).map(\.budgetID)
+            + (snapshot.debtPayoffPlanRevisions ?? []).map(\.budgetID)
             + snapshot.statementImports.map(\.budgetID)
             + snapshot.attachmentTombstones.map(\.budgetID)
             + snapshot.transactionChanges.map(\.budgetID) + snapshot.creditReserveEvents.map(\.budgetID)
         guard budgetRows.allSatisfy({ $0 == budgetID }) else {
             throw LocalStorageError.invalidSnapshot("Server transfer projection mixes budget identities")
+        }
+        guard (snapshot.debtPayoffPlans ?? []).allSatisfy({ $0.userID == snapshot.identity.ownerUserID }),
+              (snapshot.debtPayoffPlanRevisions ?? []).allSatisfy({ $0.userID == snapshot.identity.ownerUserID }) else {
+            throw LocalStorageError.invalidSnapshot("Server transfer projection includes another member's personal payoff scenario")
         }
         guard Set(snapshot.accounts.map(\.id)).count == snapshot.accounts.count,
               Set(snapshot.transactions.map(\.id)).count == snapshot.transactions.count,
@@ -234,6 +240,7 @@ private struct Envelope: Decodable {
     let attachmentTombstones: [AttachmentTombstoneDTO]?
     let debtTerms: [DebtTermsDTO]; let debtPayoffPlans: [DebtPayoffPlanDTO]?
     let debtTermsRevisions: [DebtTermsRevisionDTO]?
+    let debtPayoffPlanRevisions: [PayoffPlanRevisionDTO]?
     let cashRolloverPolicies: [RolloverDTO]
     let statementImports: [StatementImportDTO]?
     let creditReserveAttributions: [AttributionDTO]; let transactionChanges: [ChangeDTO]
@@ -244,6 +251,7 @@ private struct IdentityDTO: Decodable { let householdId: String; let householdNa
 private struct AccountDTO: Decodable { let id: String; let budgetId: String; let name: String; let kind: String; let isOnBudget: Bool; let isClosed: Bool; let openingBalanceMinor: Int64; let createdAt: String }
 private struct AccountRevisionDTO: Decodable { let id: String; let budgetId: String; let accountId: String; let action: String; let actorUserId: String; let beforeJson: String?; let afterJson: String; let createdAt: String }
 private struct DebtTermsRevisionDTO: Decodable { let id: String; let budgetId: String; let accountId: String; let action: String; let actorUserId: String; let beforeJson: String?; let afterJson: String?; let createdAt: String }
+private struct PayoffPlanRevisionDTO: Decodable { let id: String; let budgetId: String; let userId: String; let action: String; let beforeJson: String?; let afterJson: String?; let createdAt: String }
 private struct StructureRevisionDTO: Decodable { let id: String; let budgetId: String; let resourceType: String; let resourceId: String; let action: String; let actorUserId: String; let beforeJson: String?; let afterJson: String; let createdAt: String }
 private struct GroupDTO: Decodable { let id: String; let budgetId: String; let name: String; let sortOrder: Int64; let isArchived: Bool }
 private struct CategoryDTO: Decodable {

@@ -28,6 +28,27 @@ final class LocalDeviceTransferProjectionTests: XCTestCase {
         XCTAssertEqual(result.observations.allocationPostingCount, 2)
     }
 
+    func testProjectionPreservesPrivatePayoffHistoryAndLegacyAbsence() throws {
+        var value = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture()) as? [String: Any])
+        let snapshot = #"{"strategy":"avalanche","rollover":true,"extra_payment_minor":9007199254740993,"account_ids":[],"custom_order":[],"target_date":null}"#
+        value["debt_payoff_plan_revisions"] = [[
+            "id": "payoff-history", "budget_id": "budget", "user_id": "owner", "action": "deleted",
+            "before_json": snapshot, "after_json": NSNull(), "created_at": "2026-10-09T12:00:00Z",
+        ]] as [[String: Any]]
+        let result = try LocalDeviceTransferProjectionDecoder.decode(JSONSerialization.data(withJSONObject: value))
+        XCTAssertEqual(result.snapshot.debtPayoffPlanRevisions?.first?.beforeJSON, snapshot)
+        XCTAssertEqual(result.snapshot.debtPayoffPlanRevisions?.first?.userID, "owner")
+        XCTAssertNil(result.snapshot.debtPayoffPlanRevisions?.first?.afterJSON)
+        value["debt_payoff_plan_revisions"] = [[
+            "id": "private-other-member", "budget_id": "budget", "user_id": "other-member", "action": "deleted",
+            "before_json": snapshot, "after_json": NSNull(), "created_at": "2026-10-09T12:00:00Z",
+        ]] as [[String: Any]]
+        XCTAssertThrowsError(try LocalDeviceTransferProjectionDecoder.decode(JSONSerialization.data(withJSONObject: value)))
+        value.removeValue(forKey: "debt_payoff_plan_revisions")
+        let legacy = try LocalDeviceTransferProjectionDecoder.decode(JSONSerialization.data(withJSONObject: value))
+        XCTAssertTrue(legacy.snapshot.debtPayoffPlanRevisions?.isEmpty == true)
+    }
+
     func testLegacyProjectionDefaultsAbsentCategoryPresentationAndResilienceFields() throws {
         var value = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture()) as? [String: Any])
         var categories = try XCTUnwrap(value["categories"] as? [[String: Any]])

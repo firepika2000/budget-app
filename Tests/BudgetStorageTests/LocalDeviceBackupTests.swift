@@ -31,6 +31,14 @@ final class LocalDeviceBackupTests: XCTestCase {
         try await authority.insertAttachment(.init(id: "receipt", transactionID: "purchase",
             filename: "receipt.jpg", contentType: "image/jpeg", sizeBytes: object.plaintextSize,
             sha256: object.plaintextSHA256, objectName: object.objectName, createdAt: created))
+        let base = try await authority.snapshot(budgetID: "budget")
+        try await authority.replaceWorkspaceState(.init(identity: base.identity, accounts: base.accounts,
+            groups: base.groups, categories: base.categories, payees: base.payees, payeeAliases: base.payeeAliases,
+            transactions: base.transactions, allocations: base.allocations, reconciliations: base.reconciliations,
+            targets: base.targets, schedules: base.schedules, attachments: base.attachments,
+            debtPayoffPlanRevisions: [.init(id: "reset-plan", budgetID: "budget", userID: "owner", action: "deleted",
+                beforeJSON: #"{"strategy":"avalanche","rollover":true,"extra_payment_minor":9007199254740993,"account_ids":[],"custom_order":[]}"#,
+                afterJSON: nil, createdAt: created)]))
         return (authority, attachments, attachmentKey, attachmentData)
     }
 
@@ -58,6 +66,8 @@ final class LocalDeviceBackupTests: XCTestCase {
         let snapshot = try await restoredAuthority.snapshot(budgetID: "budget")
         XCTAssertEqual(snapshot.accounts.map(\.openingBalanceMinor), [123_45])
         XCTAssertEqual(snapshot.transactions.map(\.amountMinor), [-12_34])
+        XCTAssertEqual(snapshot.debtPayoffPlanRevisions?.first?.action, "deleted")
+        XCTAssertTrue(snapshot.debtPayoffPlanRevisions?.first?.beforeJSON?.contains("9007199254740993") == true)
         let restoredVault = try LocalAttachmentVault(directoryURL: restoredRoot.appendingPathComponent("Attachments"), keyData: result.attachmentKey)
         let metadata = try XCTUnwrap(snapshot.attachments.first)
         let restoredAttachment = try await restoredVault.data(objectName: metadata.objectName, expectedSHA256: metadata.sha256)

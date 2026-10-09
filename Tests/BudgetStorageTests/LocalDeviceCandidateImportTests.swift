@@ -38,7 +38,10 @@ final class LocalDeviceCandidateImportTests: XCTestCase {
                 sha256: String(repeating: "c", count: 64), createdAt: timestamp,
                 detachedAt: "2026-10-02T12:00:00Z", detachedByUserID: "owner",
                 purgeAfter: "2026-11-01T12:00:00Z"
-            )]
+            )],
+            debtPayoffPlanRevisions: [.init(id: "payoff-reset", budgetID: "budget", userID: "owner", action: "deleted",
+                beforeJSON: #"{"strategy":"snowball","rollover":true,"extra_payment_minor":9007199254740993,"account_ids":[],"custom_order":[]}"#,
+                afterJSON: nil, createdAt: timestamp)]
         )
         return (snapshot, record)
     }

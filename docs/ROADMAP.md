@@ -153,6 +153,12 @@ read or reset another member's plan. Local Device preserves the actual owner and
 through reopen and refresh.
 Saved scenario requests now share bounded strategy/order/date validation before local persistence
 or hosted transport; malformed edits preserve the previous scenario and cannot mutate ledger money.
+Saved payoff-plan creation, changes and reset now retain private, immutable before/after history across
+Budget Server, Local Device and Demo. The shared Payoff screen exposes ten-row history pages with
+exact currency values, selected accounts, priority, rollover and goal date. Current account scope
+and report/balance permission checks apply at read time. Populated hosted/local migrations establish
+creation baselines; complete export, owner-only server-to-local transfer and encrypted local backup
+preserve the decisions after a saved plan is reset. Human visual acceptance remains pending.
 Remaining v0.12 work should continue auditing other mutable
 planning and administrative observations
 for overwrite-only or export gaps rather than duplicating established histories.

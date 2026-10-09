@@ -78,6 +78,8 @@ final class DemoStoreTests: XCTestCase {
         source.demo.persona = .partner
         let initiallyEmpty = try await source.debtPayoffPlan()
         XCTAssertNil(initiallyEmpty, "Another household member's saved plan must remain private")
+        let initiallyEmptyHistory = try await source.debtPayoffPlanHistory(limit: 10, offset: 0)
+        XCTAssertTrue(initiallyEmptyHistory.isEmpty)
         let partner = try await source.saveDebtPayoffPlan(.init(strategy: "snowball", rollover: false,
             extraPaymentMinor: 2345, accountIDs: debtIDs, customOrder: []))
         XCTAssertNotEqual(partner.userID, owner.userID)
@@ -91,12 +93,19 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(scoped.accountIDs.isEmpty)
         XCTAssertTrue(scoped.customOrder.isEmpty)
         XCTAssertEqual(scoped.extraPaymentMinor, 2345)
+        let scopedHistory = try await source.debtPayoffPlanHistory(limit: 10, offset: 0)
+        XCTAssertEqual(scopedHistory.count, 1)
+        XCTAssertTrue(scopedHistory[0].afterSnapshot?.accountIDs.isEmpty == true)
+        XCTAssertEqual(scopedHistory[0].userID, partner.userID)
         try await source.deleteDebtPayoffPlan()
         source.demo.persona = .rey
         let unchangedOwner = try await source.debtPayoffPlan()
         XCTAssertEqual(unchangedOwner?.extraPaymentMinor, owner.extraPaymentMinor)
         XCTAssertEqual(unchangedOwner?.accountIDs, owner.accountIDs)
         XCTAssertEqual(unchangedOwner?.updatedAt, owner.updatedAt)
+        let ownerHistory = try await source.debtPayoffPlanHistory(limit: 10, offset: 0)
+        XCTAssertEqual(ownerHistory.count, 1)
+        XCTAssertEqual(ownerHistory[0].afterSnapshot?.extraPaymentMinor, 9_007_199_254_740_993)
         source.demo.persona = .alex
         let delegatedPlan = try await source.debtPayoffPlan()
         XCTAssertNil(delegatedPlan)
@@ -2799,11 +2808,23 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(restored.targetDate, "2028-12-31")
         XCTAssertEqual(restored.userID, saved.userID)
         XCTAssertEqual(restored.updatedAt, saved.updatedAt)
+        let savedHistory = try await reopened.debtPayoffPlanHistory(limit: 10, offset: 0)
+        XCTAssertEqual(savedHistory.count, 1)
+        XCTAssertEqual(savedHistory[0].afterSnapshot?.extraPaymentMinor, 12_345)
+        XCTAssertEqual(savedHistory[0].userID, saved.userID)
+        _ = try await reopened.saveDebtPayoffPlan(.init(strategy: "snowball", rollover: true,
+            extraPaymentMinor: 12_345, accountIDs: [debtID], customOrder: [], targetDate: "2028-12-31"))
+        let unchangedHistory = try await reopened.debtPayoffPlanHistory(limit: 10, offset: 0)
+        XCTAssertEqual(unchangedHistory, savedHistory, "Identical saves must not create duplicate decisions")
         try await reopened.deleteDebtPayoffPlan()
         let afterRemoval = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: root, keyManager: keyManager)
         await afterRemoval.refresh()
         let deleted = try await afterRemoval.debtPayoffPlan()
         XCTAssertNil(deleted)
+        let retainedHistory = try await afterRemoval.debtPayoffPlanHistory(limit: 10, offset: 0)
+        XCTAssertEqual(retainedHistory.map(\.action), ["deleted", "created"])
+        XCTAssertEqual(retainedHistory[0].beforeSnapshot, retainedHistory[1].afterSnapshot)
+        XCTAssertNil(retainedHistory[0].afterSnapshot)
     }
 
     @MainActor

@@ -510,6 +510,7 @@ extension WorkspaceDataSource {
 @MainActor
 protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRepository, TransactionCommandRepository, TransactionBrowserRepository, ScheduleCommandRepository, PayeeCommandRepository {
     func debtPayoffPlan() async throws -> APIDebtPayoffPlan?
+    func debtPayoffPlanHistory(limit: Int, offset: Int) async throws -> [APIDebtPayoffPlanRevision]
     func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan
     func deleteDebtPayoffPlan() async throws
     func statementImports(accountID: String, limit: Int, offset: Int) async throws -> APIStatementImportList
@@ -569,6 +570,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let updatedAt: String
     }
     private var debtPayoffPlansByActor: [String: SavedPayoffPlan] = [:]
+    private var debtPayoffPlanRevisions: [APIDebtPayoffPlanRevision] = []
     private var payoffPlanActorID: String { localIdentity?.ownerUserID ?? requestActorID }
     private var allowancePlanRevisions: [String: [APIAllowancePlanRevision]] = [:]
     private var accessProfiles: [String: APIAccessProfile] = [:]
@@ -1183,6 +1185,11 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                 )
                 debtPayoffPlansByActor[localIdentity.ownerUserID] = SavedPayoffPlan(value: plan, updatedAt: item.updatedAt)
             }
+            debtPayoffPlanRevisions = try (value.debtPayoffPlanRevisions ?? []).map { item in
+                .init(id: item.id, userID: item.userID, action: item.action,
+                      beforeSnapshot: try item.beforeJSON.map { try JSONDecoder().decode(APIDebtPayoffPlanUpsert.self, from: Data($0.utf8)) },
+                      afterSnapshot: try item.afterJSON.map { try JSONDecoder().decode(APIDebtPayoffPlanUpsert.self, from: Data($0.utf8)) }, createdAt: item.createdAt)
+            }
             localAuthorityLoaded = true
             return
         }
@@ -1262,6 +1269,11 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                 accountIDs: item.accountIDs, customOrder: item.customOrder,
                 targetDate: item.targetDate, updatedAt: saved.updatedAt
             )] },
+            debtPayoffPlanRevisions: try debtPayoffPlanRevisions.filter { $0.userID == localIdentity.ownerUserID }.map { item in
+                .init(id: item.id, budgetID: localIdentity.budgetID, userID: item.userID, action: item.action,
+                      beforeJSON: try item.beforeSnapshot.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) },
+                      afterJSON: try item.afterSnapshot.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }, createdAt: item.createdAt)
+            },
             cashRolloverPolicies: projected.cashRolloverPolicies,
             creditReserveAttributions: projected.creditReserveAttributions,
             transactionChanges: transactionChanges,
@@ -2988,6 +3000,24 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             "updated_at": saved.updatedAt,
         ] as [String: Any])
     }
+    func debtPayoffPlanHistory(limit: Int, offset: Int) async throws -> [APIDebtPayoffPlanRevision] {
+        _ = try await debtPayoffPlan()
+        guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Invalid history page.") }
+        let visibleIDs = Set(demo.accounts.filter { actorAccountIDs.contains($0.id) && [.credit, .loan, .mortgage].contains($0.kind) }.map(\.id))
+        func visible(_ value: APIDebtPayoffPlanUpsert?) -> APIDebtPayoffPlanUpsert? {
+            guard let value else { return nil }
+            let ids = value.accountIDs.filter { visibleIDs.contains($0) }
+            let order = value.customOrder.filter { visibleIDs.contains($0) }
+            let validOrder = value.strategy != "custom" || Set(order) == Set(ids)
+            return .init(strategy: validOrder ? value.strategy : "avalanche", rollover: value.rollover,
+                         extraPaymentMinor: value.extraPaymentMinor, accountIDs: ids,
+                         customOrder: validOrder ? order : [], targetDate: value.targetDate)
+        }
+        return debtPayoffPlanRevisions.reversed().filter { $0.userID == payoffPlanActorID }.dropFirst(offset).prefix(limit).map {
+            .init(id: $0.id, userID: $0.userID, action: $0.action,
+                  beforeSnapshot: visible($0.beforeSnapshot), afterSnapshot: visible($0.afterSnapshot), createdAt: $0.createdAt)
+        }
+    }
     func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan { try requireActiveMembership()
         guard budget.can("manage_planning"), budget.can("view_account_balances"),
               actorCapabilities.contains("manage_planning"), actorCapabilities.contains("view_account_balances") else { throw APIClientError.server(status: 403, message: "You do not have permission to manage payoff plans.") }
@@ -2996,14 +3026,23 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard Set(value.accountIDs).isSubset(of: visibleDebtIDs), Set(value.customOrder).isSubset(of: visibleDebtIDs) else {
             throw APIClientError.server(status: 404, message: "Payoff plan resource not found")
         }
-        debtPayoffPlansByActor[payoffPlanActorID] = SavedPayoffPlan(value: value, updatedAt: ISO8601DateFormatter().string(from: now()))
+        let before = debtPayoffPlansByActor[payoffPlanActorID]?.value
+        let timestamp = ISO8601DateFormatter().string(from: now())
+        if before != value {
+            debtPayoffPlanRevisions.append(.init(id: UUID().uuidString, userID: payoffPlanActorID,
+                action: before == nil ? "created" : "updated", beforeSnapshot: before, afterSnapshot: value, createdAt: timestamp))
+        }
+        debtPayoffPlansByActor[payoffPlanActorID] = SavedPayoffPlan(value: value, updatedAt: timestamp)
         try await synchronizeLocalAuthority()
         guard let saved = try currentPayoffPlanResponse() else { throw workspaceRepositoryError("Payoff plan was not saved.") }
         return saved
     }
     func deleteDebtPayoffPlan() async throws { try requireActiveMembership()
         guard budget.can("manage_planning"), actorCapabilities.contains("manage_planning") else { throw APIClientError.server(status: 403, message: "You do not have permission to manage payoff plans.") }
-        debtPayoffPlansByActor.removeValue(forKey: payoffPlanActorID)
+        if let saved = debtPayoffPlansByActor.removeValue(forKey: payoffPlanActorID) {
+            debtPayoffPlanRevisions.append(.init(id: UUID().uuidString, userID: payoffPlanActorID, action: "deleted",
+                beforeSnapshot: saved.value, afterSnapshot: nil, createdAt: ISO8601DateFormatter().string(from: now())))
+        }
         try await synchronizeLocalAuthority()
     }
     func createRequest(_ value: APIFinancialRequestCreate) async throws { try requireActiveMembership();
@@ -3619,6 +3658,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func deleteAccountDebtTerms(accountID: String) async throws { try await credentials.prepare(); try await client.deleteAccountDebtTerms(budgetID: budget.id, accountID: accountID, token: token) }
     func accountDebtTermsHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIAccountDebtTermsRevision] { try await credentials.prepare(); return try await client.accountDebtTermsHistory(budgetID: budget.id, accountID: accountID, limit: limit, offset: offset, token: token) }
     func debtPayoffPlan() async throws -> APIDebtPayoffPlan? { try await credentials.prepare(); return try await client.debtPayoffPlan(budgetID: budget.id, token: token) }
+    func debtPayoffPlanHistory(limit: Int, offset: Int) async throws -> [APIDebtPayoffPlanRevision] { try await credentials.prepare(); return try await client.debtPayoffPlanHistory(budgetID: budget.id, limit: limit, offset: offset, token: token) }
     func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan { try await credentials.prepare(); return try await client.saveDebtPayoffPlan(budgetID: budget.id, request: value, token: token) }
     func deleteDebtPayoffPlan() async throws { try await credentials.prepare(); try await client.deleteDebtPayoffPlan(budgetID: budget.id, token: token) }
     func createRequest(_ value: APIFinancialRequestCreate) async throws { try await credentials.prepare(); _ = try await client.createFinancialRequest(budgetID: budget.id, request: value, token: token) }
@@ -4700,6 +4740,12 @@ final class BudgetWorkspaceStore: ObservableObject {
     func debtPayoffPlan() async throws -> APIDebtPayoffPlan? {
         try requireWorkspaceAccess()
         return try await commands().debtPayoffPlan()
+    }
+
+    func debtPayoffPlanHistory(limit: Int = 50, offset: Int = 0) async throws -> [APIDebtPayoffPlanRevision] {
+        try requireWorkspaceAccess()
+        guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Invalid history page.") }
+        return try await commands().debtPayoffPlanHistory(limit: limit, offset: offset)
     }
 
     func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan {
@@ -11168,6 +11214,89 @@ private struct DebtInterestContent: View {
     }
 }
 
+private struct DebtPayoffPlanHistoryView: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    @State private var rows: [APIDebtPayoffPlanRevision] = []
+    @State private var isLoading = false
+    @State private var hasMore = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            Section {
+                Text("Your saved scenario decisions—not actual payments. Other household members’ personal plans are not shown.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(rows) { row in
+                DisclosureGroup {
+                    if let before = row.beforeSnapshot { snapshot(before, title: "Before") }
+                    if let after = row.afterSnapshot { snapshot(after, title: "After") }
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(row.action == "deleted" ? "Plan reset" : row.action == "created" ? "Plan saved" : "Plan updated")
+                        Text("You · \(historyDate(row.createdAt))").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("payoff-history-\(row.id)")
+            }
+            if let errorMessage {
+                Section {
+                    Text(errorMessage).foregroundStyle(.secondary)
+                    Button("Retry") { Task { await loadMore() } }
+                }
+            } else if rows.isEmpty && !isLoading {
+                ContentUnavailableView("No saved plan history", systemImage: "clock.arrow.circlepath",
+                    description: Text("Saving or resetting a payoff scenario will record the decision here."))
+            }
+            if isLoading { ProgressView("Loading history…") }
+            else if hasMore && !rows.isEmpty { Button("Load more") { Task { await loadMore() } } }
+        }
+        .navigationTitle("Saved Plan History")
+        .accessibilityIdentifier("payoff-history-screen")
+        .task { if rows.isEmpty { await loadMore() } }
+    }
+
+    @ViewBuilder private func snapshot(_ value: APIDebtPayoffPlanUpsert, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.headline)
+            LabeledContent("Strategy", value: value.strategy.capitalized)
+            LabeledContent("Extra monthly", value: store.format(value.extraPaymentMinor))
+            LabeledContent("Roll payments forward", value: value.rollover ? "Yes" : "No")
+            LabeledContent("Goal date", value: value.targetDate ?? "None")
+            Text("Selected accounts").font(.caption).foregroundStyle(.secondary)
+            if value.accountIDs.isEmpty { Text("No currently accessible debt accounts") }
+            ForEach(value.accountIDs, id: \.self) { id in Text(accountName(id)) }
+            if value.strategy == "custom" {
+                Text("Priority").font(.caption).foregroundStyle(.secondary)
+                ForEach(Array(value.customOrder.enumerated()), id: \.element) { index, id in
+                    Text("\(index + 1). \(accountName(id))")
+                }
+            }
+        }
+        .padding(.vertical, 6)
+    }
+    private func accountName(_ id: String) -> String { store.accounts.first { $0.id == id }?.name ?? "Previously selected debt account" }
+    private func historyDate(_ value: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var date = formatter.date(from: value)
+        if date == nil {
+            formatter.formatOptions = [.withInternetDateTime]
+            date = formatter.date(from: value)
+        }
+        return date?.formatted(date: .abbreviated, time: .shortened) ?? value
+    }
+    @MainActor private func loadMore() async {
+        guard !isLoading else { return }
+        isLoading = true; errorMessage = nil
+        defer { isLoading = false }
+        do {
+            let page = try await store.debtPayoffPlanHistory(limit: 10, offset: rows.count)
+            rows.append(contentsOf: page); hasMore = page.count == 10
+        } catch { errorMessage = error.localizedDescription }
+    }
+}
+
 private struct DebtPayoffContent: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let report: APIDebtReport
@@ -11234,6 +11363,14 @@ private struct DebtPayoffContent: View {
                 .accessibilityIdentifier("debt-payoff-reset-scenario")
         }
         .disabled(!store.budget.can("manage_planning"))
+        Section {
+            NavigationLink {
+                DebtPayoffPlanHistoryView(store: store)
+            } label: {
+                Label("Saved Plan History", systemImage: "clock.arrow.circlepath")
+            }
+            .accessibilityIdentifier("debt-payoff-plan-history")
+        }
         if strategy == "custom" { customOrderSection }
         if isLoading { Section { HStack { Spacer(); ProgressView("Calculating projected payoff…"); Spacer() } } }
         if let result { resultSections(result) }

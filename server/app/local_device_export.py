@@ -22,7 +22,7 @@ from .models import (
     Account, AccountRevision, AccountDebtTerms, AccountDebtTermsRevision, AllocationOperation, AllocationPosting, Budget,
     BudgetStructureRevision, CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget, CategoryTargetRevision,
     CategoryTargetSnooze, CreditCardReserveEvent, Household, Payee, PayeeAlias,
-    DebtPayoffPlan, ImportBatch, PayeeBudgetPreference, PayeeRevision, ScheduledTransaction, ScheduledTransactionRevision, Transaction, TransactionAttachment,
+    DebtPayoffPlan, DebtPayoffPlanRevision, ImportBatch, PayeeBudgetPreference, PayeeRevision, ScheduledTransaction, ScheduledTransactionRevision, Transaction, TransactionAttachment,
     Reconciliation, TransactionChange, TransactionSplit, User,
 )
 
@@ -428,6 +428,14 @@ def build_local_device_projection(
             DebtPayoffPlan.budget_id == budget.id,
             DebtPayoffPlan.user_id == owner.id,
         ))],
+        "debt_payoff_plan_revisions": [{
+            "id": item.id, "budget_id": item.budget_id, "user_id": item.user_id, "action": item.action,
+            "before_json": json.dumps(item.before_snapshot, sort_keys=True, separators=(",", ":")) if item.before_snapshot is not None else None,
+            "after_json": json.dumps(item.after_snapshot, sort_keys=True, separators=(",", ":")) if item.after_snapshot is not None else None,
+            "created_at": _iso(item.created_at),
+        } for item in db.scalars(select(DebtPayoffPlanRevision).where(
+            DebtPayoffPlanRevision.budget_id == budget.id, DebtPayoffPlanRevision.user_id == owner.id
+        ).order_by(DebtPayoffPlanRevision.created_at, DebtPayoffPlanRevision.id))],
         "cash_rollover_policies": [{
             "id": item.id, "budget_id": budget.id,
             "effective_month": _iso(item.effective_month), "policy": item.policy,

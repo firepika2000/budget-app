@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 22
+    public static let schemaVersion = 23
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -475,6 +475,18 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 23 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV23 { try execute(sql, on: database) }
+                try execute("INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)", values: [.integer(23), .text(Self.timestamp())], on: database)
+                try execute("PRAGMA user_version = 23", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -560,6 +572,12 @@ public actor LocalDatabase {
         "CREATE TABLE account_debt_terms_revisions (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, account_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('created','updated','deleted')), actor_user_id TEXT NOT NULL REFERENCES users(id), before_json TEXT, after_json TEXT, created_at TEXT NOT NULL) STRICT",
         "CREATE INDEX idx_debt_terms_revisions_account_created ON account_debt_terms_revisions(account_id,created_at,id)",
         "INSERT INTO account_debt_terms_revisions(id,budget_id,account_id,action,actor_user_id,before_json,after_json,created_at) SELECT 'debt-terms-created-' || d.account_id,a.budget_id,d.account_id,'created',m.user_id,NULL,json_object('terms_type',d.terms_type,'annual_rate_basis_points',d.annual_rate_basis_points,'rate_type',d.rate_type,'payment_frequency',d.payment_frequency,'scheduled_payment_minor',d.scheduled_payment_minor,'minimum_payment_rule',d.minimum_payment_rule,'minimum_payment_minor',d.minimum_payment_minor,'minimum_payment_rate_basis_points',d.minimum_payment_rate_basis_points,'due_day',d.due_day,'statement_day',d.statement_day,'original_principal_minor',d.original_principal_minor,'original_term_months',d.original_term_months,'remaining_term_months',d.remaining_term_months,'promotional_rate_basis_points',d.promotional_rate_basis_points,'promotional_ends_on',d.promotional_ends_on),d.updated_at FROM account_debt_terms d JOIN accounts a ON a.id=d.account_id JOIN budgets b ON b.id=a.budget_id JOIN memberships m ON m.household_id=b.household_id AND m.role='owner' AND m.is_active=1"
+    ]
+
+    private static let schemaV23 = [
+        "CREATE TABLE debt_payoff_plan_revisions (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL CHECK(action IN ('created','updated','deleted')), before_json TEXT, after_json TEXT, created_at TEXT NOT NULL) STRICT",
+        "CREATE INDEX idx_payoff_plan_revisions_user_created ON debt_payoff_plan_revisions(budget_id,user_id,created_at,id)",
+        "INSERT INTO debt_payoff_plan_revisions(id,budget_id,user_id,action,before_json,after_json,created_at) SELECT 'payoff-plan-created-' || id,budget_id,user_id,'created',NULL,json_object('strategy',strategy,'rollover',json(iif(rollover=1,'true','false')),'extra_payment_minor',extra_payment_minor,'account_ids',json(account_ids_json),'custom_order',json(custom_order_json),'target_date',target_date),updated_at FROM debt_payoff_plans"
     ]
 
     private static let schemaV2 = [

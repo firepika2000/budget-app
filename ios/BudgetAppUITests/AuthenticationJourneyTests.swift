@@ -669,6 +669,34 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(readOnly.waitForExistence(timeout: 5))
     }
 
+    func testProductionPayoffHistoryOpensSharedHierarchyAndExplainsSavedScenario() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights", "--skip-guided-onboarding"]
+        app.launch()
+        let debt = app.buttons["insights-debt-interest"]
+        for _ in 0..<8 where !debt.exists { app.swipeUp() }
+        XCTAssertTrue(debt.waitForExistence(timeout: 5))
+        debt.tap()
+        app.segmentedControls.buttons["Payoff"].tap()
+        let strategy = app.segmentedControls["debt-payoff-strategy"]
+        XCTAssertTrue(strategy.waitForExistence(timeout: 5))
+        strategy.buttons["Snowball"].tap()
+        XCTAssertTrue(app.staticTexts["Saved across your devices"].waitForExistence(timeout: 8))
+        let history = app.buttons["debt-payoff-plan-history"]
+        for _ in 0..<5 where !history.isHittable { app.swipeUp() }
+        XCTAssertTrue(history.waitForExistence(timeout: 5))
+        history.tap()
+        XCTAssertTrue(app.navigationBars["Saved Plan History"].waitForExistence(timeout: 5))
+        let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "payoff-history-")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        saved.tap()
+        XCTAssertTrue(app.staticTexts["After"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Extra monthly"].exists)
+        XCTAssertTrue(app.staticTexts["Snowball"].exists)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
     func testPayoffHorizonShowsPartialResultsInsteadOfCompleteCost() {
         continueAfterFailure = false
         let app = XCUIApplication()

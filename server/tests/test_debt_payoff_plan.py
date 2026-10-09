@@ -167,6 +167,13 @@ def test_payoff_history_retains_decisions_after_reset_without_duplicate_noops(cl
     for query in ("limit=0", "limit=101", "offset=-1"):
         assert client.get(f"{path}/history?{query}", headers=auth(owner_token)).status_code == 422
     assert client.get(balance_path, headers=auth(owner_token)).json() == balance
+    export = client.get(f"{base}/local-device-transfer", headers=auth(owner_token))
+    assert export.status_code == 200, export.text
+    exported = export.json()["debt_payoff_plan_revisions"]
+    assert len(exported) == 3
+    import json
+    assert json.loads(next(row for row in exported if row["action"] == "created")["after_json"]) == first
+    assert {row["user_id"] for row in exported} == {rows[0]["user_id"]}
 
 
 def test_payoff_history_is_private_and_respects_current_account_scope(client, owner_token, session_factory):

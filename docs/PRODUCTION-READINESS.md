@@ -2263,3 +2263,34 @@ download, deletion and large-upload checks remain green. A regular Xcode 27 prod
 build verifies integration; this storage-only checkpoint does not rerun unrelated native/UI suites.
 `git diff --check` passes. No live Dropbox account was changed; external provider acceptance remains
 pending. No migration, server restart, user-data reset or TestFlight upload.
+
+### Private saved payoff-plan history — 2026-10-09
+
+Saved scenario creation, changes and reset retain immutable author-owned before/after observations.
+Identical saves and repeated reset do not manufacture duplicate decisions. History reads enforce
+current report/balance capabilities and account scope before returning bounded pages. Money remains
+Int64 minor units; these planning observations never create transactions or change balances.
+Hosted revision `0047_payoff_plan_history` and Local Device schema 23 backfill existing plans without
+rewriting them. Complete export retains history; server-to-local transfer carries only the owner's
+personal observations and rejects foreign-member scenarios. Local reconstruction, candidate staging
+and encrypted backup/restore retain reset history. Demo uses the same author-scoped contract.
+
+The shared Payoff screen links to Saved Plan History outside the edit-permission-disabled section.
+Ten-row pages have readable dates, author attribution, expandable before/after settings, exact money,
+selected account names, custom priority, rollover and goal date, plus empty/loading/retry states.
+
+Verification: 22 backend migration/export/payoff tests, 20 local database tests, seven transfer
+projection tests, eight strengthened backup/candidate tests, and two native provider/reconstruction
+tests pass. The prior API checkpoint passed three focused Swift tests. Native verification used
+regular `/Applications/Xcode.app` Xcode 27.0 (27A266a), preserved iPhone 17 Pro Max simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (24A5423a).
+A production-composition UI regression was added, but its single execution stalled before launching
+the app: process inspection found no UI runner and a screenshot showed the Simulator home screen.
+That attempt was cancelled rather than repeatedly retried; it is NOT recorded as a passing UI test.
+The final production Simulator build and `git diff --check` pass.
+Human visual acceptance remains pending. No Simulator/Live reset, merge, tag or TestFlight upload.
+
+Human retest after rebuilding: Insights → Debt & Interest → Payoff; change strategy/extra and wait
+for the save indication; open Saved Plan History and expand the newest observation. Confirm exact
+before/after values, then reset the saved plan and verify reset history survives app relaunch.
+For hosted testing, update/restart the server through its normal migration-enabled startup first.
