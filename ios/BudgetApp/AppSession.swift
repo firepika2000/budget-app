@@ -26,7 +26,8 @@ enum WorkspaceRouteContext: Equatable {
         switch self {
         case let .localDevice(revision): "local-device-workspace-\(revision)"
         case .deterministic: "deterministic-workspace"
-        case let .live(budget, _, _): budget.id
+        case let .live(budget, serverURL, token):
+            "live-workspace-\(liveServerStorageScope(budgetID: budget.id, serverURL: serverURL, token: token))"
         }
     }
 }

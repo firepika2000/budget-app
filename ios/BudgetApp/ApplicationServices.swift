@@ -216,20 +216,24 @@ final class LiveTransactionOutbox {
     }
 
     private let fileURL: URL
-    private(set) var entries: [Entry]
+    private(set) var entries: [Entry] = []
     private(set) var loadErrorMessage: String?
     private(set) var isReplaying = false
+    private(set) var requiresLegacyReview = false
+    private var legacyFileURL: URL?
+    private var bindingFileURL: URL?
+    private var boundScope: String?
 
     init(budgetID: String, serverURL: URL, token: String, fileManager: FileManager = .default) {
         let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("BudgetApp/LiveOutbox", isDirectory: true)
         try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
-        let scope = "\(serverURL.host ?? "server")-\(serverURL.port ?? 0)-\(liveCredentialSubject(token))-\(budgetID)"
+        let legacyScope = "\(serverURL.host ?? "server")-\(serverURL.port ?? 0)-\(liveCredentialSubject(token))-\(budgetID)"
             .replacingOccurrences(of: "/", with: "-")
-        fileURL = root.appendingPathComponent("\(scope).json", isDirectory: false)
-        do { entries = try Self.readEntries(from: fileURL) }
-        catch { entries = []; loadErrorMessage = "Pending changes could not be read. The saved queue has been preserved; do not delete app data. \(error.localizedDescription)" }
+        let scope = liveServerStorageScope(budgetID: budgetID, serverURL: serverURL, token: token)
+        fileURL = root.appendingPathComponent("outbox-v2-\(scope).json", isDirectory: false)
+        configureLegacyReview(root.appendingPathComponent("\(legacyScope).json"), scope: scope)
     }
 
     init(fileURL: URL) {
@@ -239,6 +243,57 @@ final class LiveTransactionOutbox {
         )
         do { entries = try Self.readEntries(from: fileURL) }
         catch { entries = []; loadErrorMessage = "Pending changes could not be read. The saved queue has been preserved; do not delete app data. \(error.localizedDescription)" }
+    }
+
+    init(fileURL: URL, legacyFileURL: URL, scope: String) {
+        self.fileURL = fileURL
+        configureLegacyReview(legacyFileURL, scope: scope)
+    }
+
+    private func configureLegacyReview(_ legacy: URL, scope: String) {
+        boundScope = scope
+        legacyFileURL = legacy
+        bindingFileURL = legacy.appendingPathExtension("server-binding")
+        do {
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                entries = try Self.readEntries(from: fileURL)
+                return
+            }
+            if let bindingFileURL, FileManager.default.fileExists(atPath: bindingFileURL.path) {
+                let claimed = try JSONDecoder().decode(String.self, from: Data(contentsOf: bindingFileURL))
+                guard claimed == scope else { return } // Another endpoint owns this preserved legacy queue.
+            }
+            entries = try Self.readEntries(from: legacy)
+            requiresLegacyReview = !entries.isEmpty
+        } catch {
+            entries = []; loadErrorMessage = "Pending changes could not be read. The saved queue has been preserved; do not delete app data. \(error.localizedDescription)"
+        }
+    }
+
+    func requireServer(budgetID: String, serverURL: URL, token: String) throws {
+        guard let boundScope else { return } // Explicit file initializer is for isolated tests.
+        guard boundScope == liveServerStorageScope(budgetID: budgetID, serverURL: serverURL, token: token) else {
+            throw BudgetApplicationError.invalidOperation("Pending changes belong to another server connection. Reopen the budget using its original server.")
+        }
+    }
+
+    /// Explicit local adoption only; never sends a request, changes operation IDs or deletes originals.
+    func confirmLegacyServer() throws {
+        guard requiresLegacyReview, !isReplaying, let legacyFileURL, let bindingFileURL, let boundScope else { return }
+        guard !FileManager.default.fileExists(atPath: fileURL.path),
+              try Self.readEntries(from: legacyFileURL) == entries else {
+            throw BudgetApplicationError.invalidOperation("Pending changes changed during review. Reopen this budget before confirming.")
+        }
+        if FileManager.default.fileExists(atPath: bindingFileURL.path) {
+            guard try JSONDecoder().decode(String.self, from: Data(contentsOf: bindingFileURL)) == boundScope else {
+                throw BudgetApplicationError.invalidOperation("These pending changes were already assigned to another server.")
+            }
+        } else {
+            try JSONEncoder().encode(boundScope).write(to: bindingFileURL, options: [.atomic, .completeFileProtection])
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: bindingFileURL.path)
+        }
+        try persist(entries)
+        requiresLegacyReview = false
     }
 
     var count: Int { entries.count }
@@ -285,6 +340,7 @@ final class LiveTransactionOutbox {
 
     private func requireReadableQueue() throws {
         if let loadErrorMessage { throw BudgetApplicationError.invalidOperation(loadErrorMessage) }
+        if requiresLegacyReview { throw BudgetApplicationError.invalidOperation("Review the destination server in Profile & Settings → Pending Sync before sending older pending changes.") }
     }
 
     private static func readEntries(from url: URL) throws -> [Entry] {

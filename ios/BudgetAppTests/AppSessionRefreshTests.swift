@@ -1535,6 +1535,43 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testLegacyOutboxRequiresExplicitServerReviewAndPreservesOriginals() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("legacy-outbox-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let legacy = root.appendingPathComponent("legacy.json"), destination = root.appendingPathComponent("scoped.json")
+        let operation = RecordTransactionOperation(accountID: "checking", categoryID: "groceries", amountMinor: -9007199254740993,
+            occurredOn: "2026-10-09", payeeName: "Preserved", memo: "Legacy", isCleared: false, splits: [],
+            flag: "orange", tags: ["qa"], attachmentMetadata: [], clientOperationID: UUID().uuidString)
+        let original = LiveTransactionOutbox(fileURL: legacy)
+        try original.enqueue(operation)
+        let bytes = try Data(contentsOf: legacy)
+        let queue = LiveTransactionOutbox(fileURL: destination, legacyFileURL: legacy, scope: "server-a")
+        XCTAssertTrue(queue.requiresLegacyReview)
+        XCTAssertThrowsError(try queue.beginReplay())
+        XCTAssertThrowsError(try queue.remove(id: operation.clientOperationID!))
+        XCTAssertThrowsError(try queue.enqueue(operation))
+        try queue.confirmLegacyServer()
+        XCTAssertFalse(queue.requiresLegacyReview)
+        XCTAssertEqual(queue.entries, original.entries)
+        XCTAssertEqual(try Data(contentsOf: legacy), bytes)
+        let reopened = LiveTransactionOutbox(fileURL: destination, legacyFileURL: legacy, scope: "server-a")
+        XCTAssertFalse(reopened.requiresLegacyReview)
+        XCTAssertEqual(reopened.entries, queue.entries)
+        let other = LiveTransactionOutbox(fileURL: root.appendingPathComponent("other.json"), legacyFileURL: legacy, scope: "server-b")
+        XCTAssertEqual(other.count, 0)
+        XCTAssertFalse(other.requiresLegacyReview)
+    }
+
+    func testLiveRouteIdentitySeparatesEndpointsWithoutResettingForTokenRotation() throws {
+        let budget = APIBudget(id: "same-budget", householdID: "h", name: "Budget", currencyCode: "USD")
+        let first = WorkspaceRouteContext.live(budget: budget, serverURL: try XCTUnwrap(URL(string: "https://server.example/family")), token: "old")
+        let rotated = WorkspaceRouteContext.live(budget: budget, serverURL: try XCTUnwrap(URL(string: "https://server.example/family")), token: "new")
+        let other = WorkspaceRouteContext.live(budget: budget, serverURL: try XCTUnwrap(URL(string: "https://server.example/friends")), token: "new")
+        XCTAssertEqual(first.identity, rotated.identity)
+        XCTAssertNotEqual(first.identity, other.identity)
+    }
+
+    @MainActor
     func testLiveOutboxFailedWritesPreserveInMemoryAndDurableEntries() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-write-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

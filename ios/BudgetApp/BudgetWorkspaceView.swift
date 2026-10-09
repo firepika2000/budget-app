@@ -3596,11 +3596,20 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token
         )
         outboxFailureMessage = transactionOutbox.loadErrorMessage
+            ?? (transactionOutbox.requiresLegacyReview ? "Older pending changes need destination review in Profile & Settings → Pending Sync." : nil)
     }
 
     var pendingTransactionCount: Int { transactionOutbox.count }
     var pendingTransactions: [LiveTransactionOutbox.Entry] { transactionOutbox.entries }
     var pendingQueueError: String? { transactionOutbox.loadErrorMessage }
+    var pendingLegacyServerReview: Bool { transactionOutbox.requiresLegacyReview }
+    var pendingServerAddress: String { credentials.serverURL.absoluteString }
+
+    func confirmLegacyPendingServer() throws {
+        try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+        try transactionOutbox.confirmLegacyServer()
+        outboxFailureMessage = nil
+    }
 
     func discardPendingTransaction(id: String) throws {
         try transactionOutbox.remove(id: id)
@@ -3612,6 +3621,10 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     /// the next foreground/background refresh.
     func flushTransactionOutbox() async throws {
         if let error = transactionOutbox.loadErrorMessage { outboxFailureMessage = error; return }
+        if transactionOutbox.requiresLegacyReview {
+            outboxFailureMessage = "Older pending changes need destination review in Profile & Settings → Pending Sync."
+            return
+        }
         guard try transactionOutbox.beginReplay() else { return }
         defer { transactionOutbox.finishReplay() }
         for entry in transactionOutbox.entries {
@@ -3629,6 +3642,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
 
     private func sendTransaction(_ operation: RecordTransactionOperation) async throws {
         try await credentials.prepare()
+        try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
         _ = try await client.createTransaction(budgetID: budget.id, transaction: operation.apiValue, token: token)
     }
 
@@ -4615,6 +4629,16 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     var pendingLiveQueueError: String? { (commandRepository as? LiveWorkspaceCommandRepository)?.pendingQueueError }
+    var pendingLegacyServerReview: Bool { (commandRepository as? LiveWorkspaceCommandRepository)?.pendingLegacyServerReview ?? false }
+    var pendingServerAddress: String { (commandRepository as? LiveWorkspaceCommandRepository)?.pendingServerAddress ?? "" }
+
+    func confirmLegacyPendingServer() throws {
+        try requireWorkspaceAccess()
+        guard let live = commandRepository as? LiveWorkspaceCommandRepository else { return }
+        try live.confirmLegacyPendingServer()
+        pendingSyncCount = live.pendingTransactionCount
+        syncStatusMessage = "Pending changes assigned to this server. Retry synchronization when ready."
+    }
 
     func discardPendingLiveTransaction(id: String) throws {
         guard let live = commandRepository as? LiveWorkspaceCommandRepository else { return }
@@ -5947,9 +5971,22 @@ private struct PendingLiveTransactionsView: View {
     @ObservedObject var store: BudgetWorkspaceStore
     @State private var pendingDiscard: LiveTransactionOutbox.Entry?
     @State private var errorMessage: String?
+    @State private var confirmServer = false
 
     var body: some View {
         List {
+            if store.pendingLegacyServerReview {
+                Section("Review destination") {
+                    Text("These pending transactions were saved by an older app version that did not record the full server address. They will not be sent until you confirm their destination.")
+                        .font(.subheadline)
+                    LabeledContent("Budget", value: store.budget.name)
+                    Text(store.pendingServerAddress).font(.footnote).textSelection(.enabled)
+                    Button("Assign Pending Changes to This Server") { confirmServer = true }
+                        .accessibilityIdentifier("review-legacy-pending-server")
+                    Text("If this is not their original server, cancel and reconnect to the correct server. Original saved files are preserved.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
             Section {
                 if let error = store.pendingLiveQueueError {
                     ContentUnavailableView("Pending Changes Unavailable", systemImage: "exclamationmark.icloud", description: Text(error))
@@ -5970,7 +6007,7 @@ private struct PendingLiveTransactionsView: View {
                             Text("Saved \(entry.queuedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption2).foregroundStyle(.secondary)
                             Button("Discard Pending Transaction", role: .destructive) { pendingDiscard = entry }
-                                .disabled(store.isBackgroundSyncing || store.isLoading)
+                                .disabled(store.isBackgroundSyncing || store.isLoading || store.pendingLegacyServerReview)
                                 .accessibilityIdentifier("discard-pending-transaction-\(entry.id)")
                         }
                         .accessibilityElement(children: .contain)
@@ -5984,13 +6021,22 @@ private struct PendingLiveTransactionsView: View {
             if !store.pendingLiveTransactions.isEmpty {
                 Section {
                     Button("Retry Synchronization", systemImage: "arrow.clockwise") { Task { await store.refresh() } }
-                        .disabled(store.isBackgroundSyncing || store.isLoading)
+                        .disabled(store.isBackgroundSyncing || store.isLoading || store.pendingLegacyServerReview)
                         .accessibilityIdentifier("retry-pending-sync")
                 }
             }
         }
         .navigationTitle("Pending Sync")
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("Use This Server for Older Pending Changes?", isPresented: $confirmServer) {
+            Button("Confirm Destination") {
+                do { try store.confirmLegacyPendingServer() }
+                catch { errorMessage = error.localizedDescription }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Assign these transactions to \(store.budget.name) at \(store.pendingServerAddress). This preserves the originals and does not send them immediately.")
+        }
         .confirmationDialog("Discard Pending Transaction?", isPresented: Binding(
             get: { pendingDiscard != nil },
             set: { if !$0 { pendingDiscard = nil } }
