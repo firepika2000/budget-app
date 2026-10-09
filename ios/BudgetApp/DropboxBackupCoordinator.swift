@@ -38,6 +38,9 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     private let automaticBackupEnabledKey = "backup.dropbox.automatic-enabled"
     private let automaticBackupIntervalKey = "backup.dropbox.automatic-interval-days"
     private let pendingLocalGenerationKey = "backup.dropbox.pending-local-generation"
+    private let pendingRetryAtKey = "backup.dropbox.pending-retry-at"
+    private var pendingRetryAt: Date?
+    static let pendingRetryInterval: TimeInterval = 30 * 60
     static let supportedAutomaticIntervals = [1, 7]
     private var automaticBackupClaimed = false
     private let credential: DropboxOAuthCredential?
@@ -53,6 +56,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         let savedRetention = defaults.integer(forKey: retentionKey)
         retention = [3, 5, 10, 20].contains(savedRetention) ? savedRetention : 10
         lastSuccessfulBackupAt = defaults.object(forKey: lastSuccessfulBackupKey) as? Date
+        pendingRetryAt = defaults.object(forKey: pendingRetryAtKey) as? Date
         if let path = defaults.string(forKey: pendingLocalGenerationKey) {
             let candidate = URL(fileURLWithPath: path, isDirectory: true)
             if Self.isValidPendingGeneration(candidate) { pendingLocalGenerationURL = candidate }
@@ -201,13 +205,16 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     }
 
     func automaticBackupIsDue(at date: Date = Date()) -> Bool {
-        guard automaticBackupEnabled, pendingLocalGenerationURL == nil else { return false }
+        guard automaticBackupEnabled else { return false }
+        if pendingLocalGenerationURL != nil { return date >= (pendingRetryAt ?? .distantPast) }
         guard let lastSuccessfulBackupAt else { return true }
         return date >= lastSuccessfulBackupAt.addingTimeInterval(TimeInterval(automaticBackupIntervalDays * 86_400))
     }
 
     func nextAutomaticBackupAt() -> Date? {
-        guard automaticBackupEnabled, let lastSuccessfulBackupAt else { return nil }
+        guard automaticBackupEnabled else { return nil }
+        if pendingLocalGenerationURL != nil { return pendingRetryAt ?? .distantPast }
+        guard let lastSuccessfulBackupAt else { return nil }
         return lastSuccessfulBackupAt.addingTimeInterval(TimeInterval(automaticBackupIntervalDays * 86_400))
     }
 
@@ -223,15 +230,19 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         automaticBackupClaimed = false
     }
 
-    func retainPendingLocalGeneration(_ url: URL) {
+    func retainPendingLocalGeneration(_ url: URL, at date: Date = Date()) {
         guard Self.isValidPendingGeneration(url) else { return }
         pendingLocalGenerationURL = url
         defaults.set(url.path, forKey: pendingLocalGenerationKey)
+        pendingRetryAt = date.addingTimeInterval(Self.pendingRetryInterval)
+        defaults.set(pendingRetryAt, forKey: pendingRetryAtKey)
     }
 
     func clearPendingLocalGeneration() {
         pendingLocalGenerationURL = nil
         defaults.removeObject(forKey: pendingLocalGenerationKey)
+        pendingRetryAt = nil
+        defaults.removeObject(forKey: pendingRetryAtKey)
     }
 
     private static func isValidPendingGeneration(_ url: URL) -> Bool {

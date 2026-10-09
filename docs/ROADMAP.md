@@ -191,6 +191,10 @@ a duplicate upload.
 Interrupted final-move responses and explicit retries now recover an already-published generation
 only after its entire file set, sizes and content hashes match the immutable local package. A same-name
 conflict still fails without overwrite, and recovery never prunes newer backups for an older retry.
+Automatic Dropbox backup recovery now reuses a retained encrypted generation after a persisted
+30-minute cooldown when the app is active, instead of indefinitely requiring manual intervention.
+The same single-run claim and verified immutable upload path apply; no additional snapshot is made
+until the pending generation is resolved. Explicit retry and saving elsewhere remain available.
 
 The privacy-safe v0.11 launcher widget is implemented for small and medium Home Screen families and
 uses the authenticated production shell for navigation. It deliberately shares no financial data or

@@ -2334,3 +2334,27 @@ production app compiled in this run; `git diff --check` passed. No backend or mi
 Human visual acceptance remains pending: enable Hide Amounts, open statement-import review and
 confirm candidate amounts are masked; disable it and confirm amounts return. Rebuild required;
 no server restart required. TestFlight remains on hold.
+
+### Automatic Dropbox interrupted-upload recovery — 2026-10-09
+
+Previously, retaining a failed upload disabled all later automatic runs until the owner intervened.
+When automatic backups are enabled, active-app delivery now retries that same encrypted generation
+after a persisted 30-minute cooldown. It does not capture another snapshot while one is pending.
+Explicit retry remains available, failures restart the cooldown, disabling automatic backup prevents
+automatic retry, and overlapping activation is still protected by the single-run claim. No guarantee
+of execution while iOS suspends the app is made. Successful cleanup uses the application service's
+designated pending-directory check, not deletion of an arbitrary preferences-recovered path.
+
+The existing immutable verified publication path, content-hash conflict protection, recovery key,
+authorization and retention contract are unchanged. Live Dropbox acceptance is still outstanding.
+Human retest: enable automatic backups; interrupt an upload; restore connectivity; reopen
+the app after the cooldown and confirm the retained generation publishes without another snapshot.
+Manual Retry Pending Upload remains the immediate alternative. Rebuild required; no server restart
+or migration required. TestFlight remains on hold.
+
+Verification: the strengthened native scheduling/reconstruction test passes with regular Xcode 27
+on the preserved iPhone 17 Pro Max/iOS 27 Simulator, and the production app compiles. Eight shared
+Dropbox destination tests pass, covering encrypted exact download, bounded upload, failed integrity,
+publication recovery/conflicts, retention failure and selected deletion. Source-composition assertions
+check pending-package reuse and guarded cleanup; these are not a live-provider end-to-end acceptance
+claim. `git diff --check` passes. No backend changes or unrelated full-suite reruns.

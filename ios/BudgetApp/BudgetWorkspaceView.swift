@@ -5384,18 +5384,23 @@ struct BudgetWorkspaceView: View {
         guard dropboxBackup.isConnected, dropboxBackup.automaticBackupIsDue() else { return }
         var packageURL: URL?
         do {
-            let recoveryKey = try store.localDeviceDropboxRecoveryKey()
-            let directory = try store.localDevicePendingBackupDirectory()
-            let backup = try await store.createLocalDeviceBackup(in: directory, recoveryKey: recoveryKey)
-            packageURL = backup.packageURL
-            _ = try await dropboxBackup.upload(packageURL: backup.packageURL)
+            let generation: URL
+            if let pending = dropboxBackup.pendingLocalGenerationURL {
+                generation = pending
+            } else {
+                let recoveryKey = try store.localDeviceDropboxRecoveryKey()
+                let directory = try store.localDevicePendingBackupDirectory()
+                generation = try await store.createLocalDeviceBackup(in: directory, recoveryKey: recoveryKey).packageURL
+            }
+            packageURL = generation
+            _ = try await dropboxBackup.upload(packageURL: generation)
             dropboxBackup.clearPendingLocalGeneration()
         } catch {
             if let packageURL { dropboxBackup.retainPendingLocalGeneration(packageURL) }
             dropboxBackup.errorMessage = error.localizedDescription
             return
         }
-        if let packageURL { try? FileManager.default.removeItem(at: packageURL) }
+        if let packageURL { try? store.deletePendingLocalDeviceBackup(packageURL) }
     }
 }
 
@@ -6166,7 +6171,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                         .accessibilityIdentifier("disconnect-dropbox-backup")
                 }
                 if let pending = dropbox.pendingLocalGenerationURL {
-                    Label("A complete encrypted generation is waiting on this iPhone after an unsuccessful upload.", systemImage: "exclamationmark.icloud")
+                    Label("A complete encrypted generation is waiting on this iPhone after an unsuccessful upload. Automatic backups retry it when the app is active after a 30-minute cooldown; you can also retry now.", systemImage: "exclamationmark.icloud")
                         .foregroundStyle(.orange)
                         .accessibilityIdentifier("pending-dropbox-generation")
                     if dropbox.isConnected {
@@ -6543,7 +6548,10 @@ private struct LocalDeviceBackupRecoveryView: View {
             dropbox.clearPendingLocalGeneration()
             if backup?.packageURL == packageURL { backup = nil }
             dropboxMessage = "Backup verified in Dropbox (\(publication.fileCount) encrypted files)."
-        } catch { dropboxMessage = nil }
+        } catch {
+            dropbox.retainPendingLocalGeneration(packageURL)
+            dropboxMessage = nil
+        }
     }
 
     private func copyRecoveryKey(_ key: String) {

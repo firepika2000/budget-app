@@ -2694,20 +2694,37 @@ final class DemoStoreTests: XCTestCase {
         let pending = root.appendingPathComponent("Failed.clearpocketbackup", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: pending, withIntermediateDirectories: true)
-        first.retainPendingLocalGeneration(pending)
+        let failedAt = completedAt.addingTimeInterval(8 * 86_400)
+        first.retainPendingLocalGeneration(pending, at: failedAt)
         XCTAssertEqual(first.pendingLocalGenerationURL, pending)
-        XCTAssertFalse(first.automaticBackupIsDue(at: completedAt.addingTimeInterval(8 * 86_400)),
-                       "A retained generation must be resolved instead of creating an invisible pile")
+        XCTAssertFalse(first.automaticBackupIsDue(at: failedAt), "Failed uploads must not spin on activation")
+        let retryAt = failedAt.addingTimeInterval(DropboxBackupCoordinator.pendingRetryInterval)
+        XCTAssertTrue(first.automaticBackupIsDue(at: retryAt))
+        XCTAssertTrue(first.claimAutomaticBackupIfDue(at: retryAt))
+        XCTAssertFalse(first.claimAutomaticBackupIfDue(at: retryAt), "Only one pending upload may be claimed")
+        first.finishAutomaticBackupAttempt()
 
         let reconstructed = DropboxBackupCoordinator(appKey: nil, defaults: defaults)
         XCTAssertTrue(reconstructed.automaticBackupEnabled)
         XCTAssertEqual(reconstructed.automaticBackupIntervalDays, 7)
         XCTAssertEqual(reconstructed.lastSuccessfulBackupAt, completedAt)
-        XCTAssertEqual(reconstructed.nextAutomaticBackupAt(), completedAt.addingTimeInterval(7 * 86_400))
+        XCTAssertEqual(reconstructed.nextAutomaticBackupAt(), retryAt)
+        XCTAssertFalse(reconstructed.automaticBackupIsDue(at: retryAt.addingTimeInterval(-1)))
+        XCTAssertTrue(reconstructed.automaticBackupIsDue(at: retryAt))
+        reconstructed.automaticBackupEnabled = false
+        XCTAssertFalse(reconstructed.automaticBackupIsDue(at: retryAt))
+        reconstructed.automaticBackupEnabled = true
         XCTAssertEqual(reconstructed.pendingLocalGenerationURL, pending)
+        reconstructed.retainPendingLocalGeneration(pending, at: retryAt)
+        XCTAssertFalse(reconstructed.automaticBackupIsDue(at: retryAt), "Another failure restarts the cooldown")
         reconstructed.clearPendingLocalGeneration()
         XCTAssertTrue(FileManager.default.fileExists(atPath: pending.path),
                       "The coordinator must never delete a path recovered from preferences")
+        let sourceURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        XCTAssertTrue(source.contains("generation = pending"), "Automatic retry must reuse the immutable package")
+        XCTAssertTrue(source.contains("store.deletePendingLocalDeviceBackup(packageURL)"))
     }
 
     @MainActor
