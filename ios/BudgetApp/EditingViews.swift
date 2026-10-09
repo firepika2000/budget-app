@@ -1101,6 +1101,51 @@ struct AccountHistoryView: View {
     }
 }
 
+/// Presentation of authoritative snapshots, never a projection or accounting calculation.
+enum DebtTermsHistoryPresentation {
+    struct Change: Identifiable, Equatable {
+        var id: String { label }
+        let label: String
+        let before: String?
+        let after: String?
+    }
+
+    static func changes(_ revision: APIAccountDebtTermsRevision, currencyCode: String,
+                        locale: Locale = .current) -> [Change] {
+        func percent(_ value: Int?) -> String? {
+            value.map { NSDecimalNumber(value: $0).dividing(by: 100).stringValue + "%" }
+        }
+        func money(_ value: Int64?) -> String? {
+            value.map { CurrencyText.display($0, currencyCode: currencyCode, locale: locale) }
+        }
+        func title(_ value: String?) -> String? {
+            value?.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+        func values(_ snapshot: APIAccountDebtTermsRevisionSnapshot?) -> [String?] {
+            guard let snapshot else { return Array(repeating: nil, count: 15) }
+            return [
+                title(snapshot.termsType), percent(snapshot.annualRateBasisPoints), title(snapshot.rateType),
+                title(snapshot.paymentFrequency), money(snapshot.scheduledPaymentMinor),
+                title(snapshot.minimumPaymentRule), money(snapshot.minimumPaymentMinor),
+                percent(snapshot.minimumPaymentRateBasisPoints), snapshot.dueDay.map(String.init),
+                snapshot.statementDay.map(String.init), money(snapshot.originalPrincipalMinor),
+                snapshot.originalTermMonths.map { "\($0) months" },
+                snapshot.remainingTermMonths.map { "\($0) months" },
+                percent(snapshot.promotionalRateBasisPoints), snapshot.promotionalEndsOn,
+            ]
+        }
+        let labels = ["Terms type", "APR", "Rate type", "Payment frequency", "Scheduled payment",
+                      "Minimum payment rule", "Minimum payment", "Minimum balance percentage",
+                      "Payment due day", "Statement closing day", "Original principal", "Original term",
+                      "Remaining term", "Promotional APR", "Promotional end date"]
+        let before = values(revision.beforeSnapshot), after = values(revision.afterSnapshot)
+        return labels.indices.compactMap { index in
+            guard before[index] != after[index] else { return nil }
+            return Change(label: labels[index], before: before[index], after: after[index])
+        }
+    }
+}
+
 struct DebtTermsEditorView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
     @Environment(\.dismiss) private var dismiss
@@ -1150,13 +1195,27 @@ struct DebtTermsEditorView: View {
                 }
                 Section("Change history") {
                     ForEach(history) { revision in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(revision.action == "created" ? "Terms added" : revision.action == "deleted" ? "Terms removed" : "Terms updated")
-                                .font(.subheadline.weight(.semibold))
-                            Text("\(revision.actorDisplayName ?? "Household member") · \(formattedTimestamp(revision.createdAt))")
-                                .font(.caption).foregroundStyle(.secondary)
+                        DisclosureGroup {
+                            ForEach(DebtTermsHistoryPresentation.changes(revision, currencyCode: currencyCode)) { change in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(change.label).font(.subheadline.weight(.medium))
+                                    LabeledContent("Before", value: change.before ?? "Not set")
+                                    LabeledContent("After", value: change.after ?? "Not set")
+                                }
+                                .font(.caption)
+                                .accessibilityElement(children: .combine)
+                            }
+                            Text("Planning assumptions only. No posted balance was changed.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(revision.action == "created" ? "Terms added" : revision.action == "deleted" ? "Terms removed" : "Terms updated")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("\(revision.actorDisplayName ?? "Household member") · \(formattedTimestamp(revision.createdAt))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                         }
-                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("debt-history-\(revision.id)")
                     }
                     if history.isEmpty {
                         Text("Changes to these planning assumptions will appear here.")

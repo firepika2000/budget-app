@@ -8,6 +8,34 @@ import CryptoKit
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testDebtTermsHistoryShowsExactChangedValuesAndRemovedAssumptions() {
+        let before = APIAccountDebtTermsRevisionSnapshot(termsType: "credit_card", annualRateBasisPoints: 2199,
+            rateType: "variable", minimumPaymentMinor: 9_007_199_254_740_993, promotionalRateBasisPoints: 0)
+        let after = APIAccountDebtTermsRevisionSnapshot(termsType: "credit_card", annualRateBasisPoints: 2299,
+            rateType: "variable", minimumPaymentMinor: 9_007_199_254_740_994)
+        func revision(_ old: APIAccountDebtTermsRevisionSnapshot?, _ new: APIAccountDebtTermsRevisionSnapshot?) -> APIAccountDebtTermsRevision {
+            .init(id: "history", accountID: "card", action: new == nil ? "deleted" : "updated",
+                  actorUserID: "owner", actorDisplayName: "Owner", beforeSnapshot: old,
+                  afterSnapshot: new, createdAt: "2026-10-09T12:00:00Z")
+        }
+        let locale = Locale(identifier: "en_US")
+        let changes = DebtTermsHistoryPresentation.changes(revision(before, after), currencyCode: "USD", locale: locale)
+        XCTAssertEqual(changes.map(\.label), ["APR", "Minimum payment", "Promotional APR"])
+        XCTAssertEqual(changes[0].before, "21.99%")
+        XCTAssertEqual(changes[0].after, "22.99%")
+        XCTAssertEqual(changes[1].before, "$90,071,992,547,409.93")
+        XCTAssertEqual(changes[1].after, "$90,071,992,547,409.94")
+        XCTAssertEqual(changes[2].before, "0%")
+        XCTAssertNil(changes[2].after)
+        let removed = DebtTermsHistoryPresentation.changes(revision(before, nil), currencyCode: "USD", locale: locale)
+        XCTAssertEqual(removed.count, 5)
+        XCTAssertTrue(removed.allSatisfy { $0.before != nil && $0.after == nil })
+        let added = DebtTermsHistoryPresentation.changes(revision(nil, before), currencyCode: "USD", locale: locale)
+        XCTAssertEqual(added.count, 5)
+        XCTAssertTrue(added.allSatisfy { $0.before == nil && $0.after != nil })
+        XCTAssertTrue(DebtTermsHistoryPresentation.changes(revision(before, before), currencyCode: "USD").isEmpty)
+    }
+
     func testSpendingTrendChangesRankExactServerDerivedIncreases() throws {
         let report = try JSONDecoder().decode(APISpendingTrendsReport.self, from: Data(#"""
         {

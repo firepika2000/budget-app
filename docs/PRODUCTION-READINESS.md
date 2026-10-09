@@ -2162,3 +2162,21 @@ Human presentation acceptance remains pending: open a credit-card/loan Debt Term
 assumption, reopen it to see history, edit it, then remove the terms and verify the history remains
 available while posted balances are unchanged. Deploying the hosted change requires the normal
 Alembic upgrade through 0046; Local Device migration is automatic at database open.
+
+### Explainable Debt Terms history — 2026-10-09
+
+The production history row now expands using native DisclosureGroup to show changed planning fields
+with explicit Before/After values. Creation and removal show set/unset assumptions; an update shows
+only changed fields. Currency values use the existing exact minor-unit formatter, and percentage
+values derive from integer basis points through decimal arithmetic, never binary floating point.
+All fifteen authoritative snapshot fields are represented; no terms, balance or projection is
+recalculated by this presentation. Native accessibility combines each field and its values without
+combining away the disclosure control.
+
+Two focused native tests pass on stable Xcode 27 / the preserved iPhone 17 Pro Max simulator:
+presentation of exact money above 2^53, rate changes, zero-to-unset promotion, creation/removal and
+unchanged suppression; plus production Local Device save/reopen/removal persistence. The native
+test build compiles the production SwiftUI composition. `git diff --check` passes. No backend or
+storage changes, additional migration, TestFlight publishing or data reset in this checkpoint.
+Human visual acceptance remains pending: expand a Debt Terms history observation and inspect its
+Before/After values at normal and enlarged text size.

@@ -145,7 +145,9 @@ existing allowance ledger and restricted members cannot use policy history to di
 details. Debt Terms now retain exact, attributed creation, update and removal history across hosted,
 Local Device and Demo providers, complete export and server-to-local transfer. The shared terms editor
 offers bounded history and earlier pages; local repository mutations persist before returning instead
-of depending on a later workspace refresh. Remaining v0.12 work should continue auditing other mutable
+of depending on a later workspace refresh. History observations expand to show exactly which planning
+fields changed, with before/after values and explicit unset values; large money remains exact during
+display, and unchanged fields are omitted. Remaining v0.12 work should continue auditing other mutable
 planning and administrative observations
 for overwrite-only or export gaps rather than duplicating established histories.
 
