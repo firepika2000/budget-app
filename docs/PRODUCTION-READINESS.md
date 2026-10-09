@@ -2456,3 +2456,23 @@ with 180-degree rotated pixel data and matching EXIF orientation passes through 
 recognition and yields FRESH MARKET and exact 1,950 minor units; existing total/subtotal suggestion
 parsing remains green. The production app compiles and `git diff --check` passes. Real-device camera
 acceptance remains separate; no backend/full-suite rerun was needed.
+
+### Conservative receipt category suggestions — 2026-10-09
+
+Receipt suggestions previously chose the first category whose name occurred anywhere as a substring.
+That could choose an arbitrary same-named category from another group or match Gas inside Vegas.
+Suggestions now require one distinct active category identity matched as a whole phrase, with
+case/diacritic and whitespace normalization. Multiple matching identities produce no category
+suggestion and leave the owner's manual selection intact. Duplicate entries of the same identity
+are harmless, archived categories are excluded, and only the already-authorized supplied category
+list is considered. This affects unsaved guidance only, not posting or classification semantics.
+
+Human retest after rebuild: scan a receipt mentioning a duplicate category name and confirm no group
+is guessed; choose the group-qualified category manually. A receipt containing only one unambiguous
+category phrase should still offer it. No server restart/migration is required; TestFlight stays on hold.
+
+Verification: two focused native XCTest cases pass under regular Xcode 27 on the preserved iPhone
+17 Pro Max/iOS 27 Simulator. Coverage includes substring false positives, duplicate names in either
+ordering, multiple category phrases, archived/empty names, case/diacritic/whitespace normalization,
+an empty authorized scope, repeated identical identities and existing exact-total suggestions.
+The production app compiles; `git diff --check` passes. Human visual acceptance remains pending.

@@ -51,8 +51,7 @@ enum ReceiptOCR {
     static func parse(lines: [String], currencyCode: String, categories: [APICategory], now: Date = Date()) -> ReceiptSuggestion {
         let cleaned = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         let text = cleaned.joined(separator: "\n")
-        let lowered = text.lowercased()
-        let categoryID = categories.first { lowered.contains($0.name.lowercased()) }?.id
+        let categoryID = suggestedCategoryID(in: text, categories: categories)
         return .init(
             payee: cleaned.first(where: plausiblePayee),
             amountMinor: bestAmount(in: cleaned, currencyCode: currencyCode),
@@ -60,6 +59,24 @@ enum ReceiptOCR {
             categoryID: categoryID,
             recognizedText: text
         )
+    }
+
+    /// Receipt text is not authority to choose between same-named groups or multiple matches.
+    /// Return only one distinct visible, active identity, using whole phrases rather than substrings.
+    static func suggestedCategoryID(in text: String, categories: [APICategory]) -> String? {
+        func normalize(_ value: String) -> String {
+            value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+                .components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        let normalizedText = normalize(text)
+        let matches = Set(categories.filter { category in
+            guard !category.isArchived else { return false }
+            let name = normalize(category.name)
+            guard !name.isEmpty, name.rangeOfCharacter(from: .alphanumerics) != nil else { return false }
+            let pattern = #"(?<![\p{L}\p{N}])"# + NSRegularExpression.escapedPattern(for: name) + #"(?![\p{L}\p{N}])"#
+            return normalizedText.range(of: pattern, options: .regularExpression) != nil
+        }.map(\.id))
+        return matches.count == 1 ? matches.first : nil
     }
 
     private static func plausiblePayee(_ line: String) -> Bool {

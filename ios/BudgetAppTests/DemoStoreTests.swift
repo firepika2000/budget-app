@@ -10,6 +10,28 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testReceiptCategorySuggestionsRequireOneWholePhraseIdentity() throws {
+        func category(_ id: String, _ name: String, archived: Bool = false) throws -> APICategory {
+            let payload: [String: Any] = ["id": id, "budget_id": "budget", "group_id": id,
+                "name": name, "note": "", "sort_order": 0, "is_archived": archived,
+                "is_favorite": false, "favorite_sort_order": NSNull()]
+            return try JSONDecoder().decode(APICategory.self, from: JSONSerialization.data(withJSONObject: payload))
+        }
+        let gas = try category("gas", "Gas")
+        let grocery = try category("grocery", "Groceries")
+        let duplicate = try category("other-grocery", "groceries")
+        XCTAssertNil(ReceiptOCR.suggestedCategoryID(in: "VEGAS MARKET", categories: [gas]))
+        XCTAssertEqual(ReceiptOCR.suggestedCategoryID(in: "GAS: TOTAL $20.00", categories: [gas]), "gas")
+        XCTAssertNil(ReceiptOCR.suggestedCategoryID(in: "Groceries", categories: [grocery, duplicate]))
+        XCTAssertNil(ReceiptOCR.suggestedCategoryID(in: "Groceries", categories: [duplicate, grocery]), "Order must not choose a group")
+        XCTAssertNil(ReceiptOCR.suggestedCategoryID(in: "Groceries and gas", categories: [gas, grocery]))
+        XCTAssertEqual(ReceiptOCR.suggestedCategoryID(in: "Groceries", categories: [grocery, try category("old", "Groceries", archived: true)]), "grocery")
+        XCTAssertNil(ReceiptOCR.suggestedCategoryID(in: "anything", categories: [try category("empty", " ")]))
+        XCTAssertEqual(ReceiptOCR.suggestedCategoryID(in: "CAFÉ\nDINING", categories: [try category("dining", "Cafe Dining")]), "dining")
+        XCTAssertNil(ReceiptOCR.suggestedCategoryID(in: "hidden groceries", categories: []))
+        XCTAssertEqual(ReceiptOCR.suggestedCategoryID(in: "Groceries", categories: [grocery, grocery]), "grocery")
+    }
+
     func testReceiptVisionOrientationPreservesEveryRotationAndMirror() {
         let pairs: [(UIImage.Orientation, CGImagePropertyOrientation)] = [
             (.up, .up), (.down, .down), (.left, .left), (.right, .right),
