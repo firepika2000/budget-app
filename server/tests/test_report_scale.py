@@ -155,5 +155,24 @@ def test_spending_reports_bound_split_orm_hydration(client, owner_token, session
         event.remove(session_factory.class_, "loaded_as_persistent", loaded)
     assert response.status_code == 200, response.text
     assert response.json()["total_spending_minor"] == 10000
+    rows = response.json()["categories"] if report == "spending" else response.json()["series"]
+    assert len(rows[0]["transaction_ids"]) == 500
+    assert rows[0]["transaction_ids_truncated"] is True
+    if report == "spending-trends":
+        assert len(rows[0]["points"][0]["transaction_ids"]) == 500
+        assert rows[0]["points"][0]["transaction_ids_truncated"] is True
     print(f"{report} transactions=10000 splits=20000 peak_orm={peak}")
     assert peak < 3000
+
+
+def test_report_id_accumulator_preserves_prefix_duplicates_and_truncation_without_unbounded_storage():
+    from app.analytics_routes import _ReportTransactionIDs, _bounded_ids
+    values = _ReportTransactionIDs()
+    for index in range(500):
+        values.append(str(index))
+        values.append(str(index))
+    assert _bounded_ids(values) == ([str(index) for index in range(500)], False)
+    for index in range(500, 10000):
+        values.append(str(index))
+    assert len(values) == 501
+    assert _bounded_ids(values) == ([str(index) for index in range(500)], True)

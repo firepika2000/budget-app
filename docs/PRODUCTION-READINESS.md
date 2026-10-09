@@ -2,6 +2,17 @@
 
 ## Spending-report object hydration bound (2026-10-09)
 
+Follow-up: Breakdown category IDs and Trends series/month IDs now accumulate an ordered unique
+prefix of at most 501 identities: 500 returned plus one sentinel proving truncation. Duplicate
+split portions retain first-seen ordering and cannot falsely mark a page truncated. Aggregation
+continues across the entire authorized history; only explainability identifiers are bounded.
+The 10,000-transaction HTTP fixtures assert the existing 500-ID/truncated contract in both reports
+and trend points. A separate accumulator regression proves exact-prefix/deduplication behavior and
+the internal bound after 10,000 inputs. This closes ID-list growth, not category/period cardinality
+or every remaining report's memory use. No schema/native/customer-data changes.
+The combined analytics and scale suite passed 67 cases, zero failures, with diff checks green.
+This server-only follow-up requires an update/restart but no migration or app rebuild.
+
 Disposable HTTP scale fixtures with 10,000 transactions and 20,000 split rows measured 30,006
 resident ORM objects in both Spending Breakdown and Spending Trends. These single-pass consumers
 now request a filtered iterator backed by 500-row transaction batches with select-in split loading.

@@ -70,7 +70,14 @@ def debt_cost_report(
     return {"as_of": as_of, "currency_code": budget.currency_code, "accounts": rows}
 
 
-def _bounded_ids(values: list[str]) -> tuple[list[str], bool]:
+class _ReportTransactionIDs(dict):
+    """Ordered unique prefix plus one sentinel proving response truncation."""
+    def append(self, identifier: str) -> None:
+        if len(self) <= MAX_REPORT_TRANSACTION_IDS:
+            self.setdefault(identifier, None)
+
+
+def _bounded_ids(values: Iterable[str]) -> tuple[list[str], bool]:
     unique = list(dict.fromkeys(values))
     return unique[:MAX_REPORT_TRANSACTION_IDS], len(unique) > MAX_REPORT_TRANSACTION_IDS
 
@@ -241,7 +248,7 @@ def spending_report(
     }
     selected_categories = _selected_spending_categories(categories, groups, category_id, category_group)
     totals: dict[str, int] = defaultdict(int)
-    transaction_ids: dict[str, list[str]] = defaultdict(list)
+    transaction_ids: dict[str, _ReportTransactionIDs] = defaultdict(_ReportTransactionIDs)
     for transaction in transactions:
         if transaction.transfer_id is not None or transaction.amount_minor == 0:
             continue
@@ -365,8 +372,8 @@ def spending_trends_report(
     totals: dict[str, int] = defaultdict(int)
     names: dict[str, tuple[str, Optional[str]]] = {}
     point_totals: dict[tuple[str, date], int] = defaultdict(int)
-    series_ids: dict[str, list[str]] = defaultdict(list)
-    point_ids: dict[tuple[str, date], list[str]] = defaultdict(list)
+    series_ids: dict[str, _ReportTransactionIDs] = defaultdict(_ReportTransactionIDs)
+    point_ids: dict[tuple[str, date], _ReportTransactionIDs] = defaultdict(_ReportTransactionIDs)
     for transaction in transactions:
         if transaction.transfer_id is not None or transaction.amount_minor == 0:
             continue
