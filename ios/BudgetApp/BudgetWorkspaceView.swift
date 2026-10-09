@@ -9160,7 +9160,10 @@ private struct LiveActivityView: View {
             recentTransactionChanges = try await store.recentTransactionChanges()
             transactionChangesError = nil
         } catch where Task.isCancelled { return }
-        catch { transactionChangesError = error.localizedDescription }
+        catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { recentTransactionChanges = [] }
+            transactionChangesError = error.localizedDescription
+        }
     }
     private func loadRecentReconciliations() async {
         guard !reconciliationLoading else { return }
@@ -9170,7 +9173,10 @@ private struct LiveActivityView: View {
             recentReconciliations = try await store.recentReconciliationHistory()
             reconciliationError = nil
         } catch where Task.isCancelled { return }
-        catch { reconciliationError = error.localizedDescription }
+        catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { recentReconciliations = []; reconciliationAccount = nil }
+            reconciliationError = error.localizedDescription
+        }
     }
     @ViewBuilder private func transfer(_ presentation: TransferPresentation) -> some View {
         LiveTransferView(presentation: presentation, budget: store.budget, accounts: store.accounts, onSaved: reload)
@@ -9225,7 +9231,13 @@ private struct LiveActivityView: View {
     private func load(reset: Bool) async {
         if loading && !reset { return }; loading = true; defer { loading = false }
         do { let page = try await store.browseTransactions(filter.query(search: search, currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor)); rows = reset ? page.items : rows + page.items; nextCursor = page.nextCursor; totalCount = page.totalCount; errorMessage = nil }
-        catch { if !Task.isCancelled { errorMessage = error.localizedDescription } }
+        catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) {
+                rows = []; nextCursor = nil; totalCount = 0
+                selectedIDs.removeAll(); selecting = false; showTagPrompt = false
+            }
+            if !Task.isCancelled { errorMessage = error.localizedDescription }
+        }
     }
 }
 
@@ -9316,6 +9328,7 @@ private struct ScopedTransactionHistoryView: View {
             errorMessage = nil
         } catch where Task.isCancelled {
         } catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; totalCount = 0 }
             errorMessage = error.localizedDescription
         }
     }

@@ -107,6 +107,23 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(source.contains("items = []; nextOffset = nil; selected = nil"))
         XCTAssertTrue(source.contains("invitations = []; events = []; hasMoreEvents = false"))
     }
+    func testProductionTransactionBrowsersDiscardDeniedIndependentObservations() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let activityStart = try XCTUnwrap(source.range(of: "private struct LiveActivityView: View"))
+        let activityEnd = try XCTUnwrap(source.range(of: "private struct TransactionBrowserFilter:"))
+        let activity = String(source[activityStart.lowerBound..<activityEnd.lowerBound])
+        XCTAssertEqual(activity.components(separatedBy: "HistoryObservationPolicy.mustDiscard(after: error)").count - 1, 3)
+        XCTAssertTrue(activity.contains("rows = []; nextCursor = nil; totalCount = 0"))
+        XCTAssertTrue(activity.contains("selectedIDs.removeAll(); selecting = false; showTagPrompt = false"))
+        XCTAssertTrue(activity.contains("recentTransactionChanges = []"))
+        XCTAssertTrue(activity.contains("recentReconciliations = []; reconciliationAccount = nil"))
+        let scopedStart = try XCTUnwrap(source.range(of: "private struct ScopedTransactionHistoryView: View"))
+        let scopedEnd = try XCTUnwrap(source.range(of: "private struct TransactionFilterView: View"))
+        let scoped = String(source[scopedStart.lowerBound..<scopedEnd.lowerBound])
+        XCTAssertTrue(scoped.contains("if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; totalCount = 0 }"))
+        XCTAssertTrue(scoped.contains("guard !loading else { return }"))
+    }
     func testHistoryDiscardsDefinitiveDenialsButRetainsTemporaryFailures() {
         for status in [401, 403, 404] {
             // Classification follows the HTTP contract, not English wording.
