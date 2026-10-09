@@ -4,6 +4,11 @@ import Combine
 import Foundation
 import UIKit
 
+enum DropboxBackupOperationError: LocalizedError {
+    case alreadyWorking
+    var errorDescription: String? { "A Dropbox operation is already in progress. Wait for it to finish before trying again." }
+}
+
 @MainActor
 final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
     static let appKeyInfoKey = "ClearPocketDropboxAppKey"
@@ -123,6 +128,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     }
 
     func upload(packageURL: URL) async throws -> DropboxBackupPublication {
+        guard !isWorking else { throw DropboxBackupOperationError.alreadyWorking }
         let destination = try destination()
         isWorking = true; errorMessage = nil; publicationWarning = nil
         defer { isWorking = false }
@@ -156,6 +162,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     }
 
     func download(_ generation: DropboxBackupEntry) async throws -> URL {
+        guard !isWorking else { throw DropboxBackupOperationError.alreadyWorking }
         let destination = try destination()
         let output = FileManager.default.temporaryDirectory.appendingPathComponent(
             "Dropbox-\(UUID().uuidString)-\(generation.name)", isDirectory: true
@@ -172,6 +179,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     }
 
     func delete(_ generation: DropboxBackupEntry) async throws {
+        guard !isWorking else { throw DropboxBackupOperationError.alreadyWorking }
         let destination = try destination()
         isWorking = true; errorMessage = nil
         defer { isWorking = false }

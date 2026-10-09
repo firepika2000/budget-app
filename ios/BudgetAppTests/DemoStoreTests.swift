@@ -10,6 +10,17 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testDropboxTransfersGuardBeforeDestinationAndBusyStateMutation() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/DropboxBackupCoordinator.swift")
+        let source = try String(contentsOf: file)
+        for signature in ["func upload(packageURL:", "func download(_ generation:", "func delete(_ generation:"] {
+            let start = try XCTUnwrap(source.range(of: signature))
+            let tail = source[start.upperBound...]
+            let guardRange = try XCTUnwrap(tail.range(of: "guard !isWorking else { throw DropboxBackupOperationError.alreadyWorking }"))
+            let destinationRange = try XCTUnwrap(tail.range(of: "let destination = try destination()"))
+            XCTAssertLessThan(guardRange.lowerBound, destinationRange.lowerBound, signature)
+        }
+    }
     func testCashRolloverClearsDeniedScopeAndKeepsPostSaveReloadInsideLock() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: file)

@@ -143,6 +143,15 @@ the registered key matches Debug/Release, access is Scoped App (App Folder), the
 enabled. No app secret or generated access token was revealed or created. Configuration verification
 does not prove live OAuth/backup/restore acceptance; that external account flow remains required.
 
+The native coordinator now rejects a second upload, download or delete before creating its destination
+or changing operation state. This closes service-level overlap rather than relying only on disabled
+buttons; a rejected second operation cannot release the first operation's busy state. Regular Xcode 27
+compiled app/test targets, production guard-wiring assertions passed, and all eight immutable Dropbox
+destination tests passed (atomic publication, integrity failures, bounded uploads, explicit deletion,
+retention-list failure and interrupted-move recovery). The new native wiring XCTest is compiled but
+not claimed executed because the Simulator runner remains unavailable; live-provider acceptance is
+still required. No Dropbox/customer data was uploaded, downloaded or deleted during verification.
+
 Dropbox generations now use a dedicated 256-bit recovery key retained as device-only Keychain data,
 separate from both the live attachment key and Dropbox OAuth credentials. The owner can re-copy the
 same key after relaunch, and every newly retained Dropbox generation remains recoverable with that
@@ -150,14 +159,15 @@ one separately stored secret. The key is never uploaded to Dropbox or embedded i
 Manual Files/share-sheet generations continue to receive independent per-generation keys. A malformed
 stored key fails closed rather than silently rotating and making earlier Dropbox generations unusable.
 
-The reusable native OAuth credential layer is now implemented beneath that pending UI. It generates
+The reusable native OAuth credential layer is implemented beneath the production UI. It generates
 RFC 7636 S256 PKCE authorization requests for offline access with only Dropbox file-content and
 metadata scopes, validates the exact callback and unpredictable state, exchanges authorization codes,
 and single-flights concurrent refreshes. Refresh-token rotation is committed to a dedicated
 device-only Keychain account; access tokens remain memory-only. A 401 invalidates only the rejected
 access-token value, and disconnect removes the Dropbox credential without touching the Local Device
-authority, attachment key, server login, or encrypted generations. The release build still needs a
-registered public Dropbox app key/callback before the connection UI can be enabled.
+authority, attachment key, server login, or encrypted generations. The registered public key and
+callback are included in ordinary builds and were verified in the developer console; real-provider
+end-to-end acceptance remains required before Dropbox release completion is claimed.
 
 The Local Device **Backup & Recovery** production screen now hosts the destination controls. A
 configured build can connect through the system authentication session, choose bounded retention,
