@@ -8335,10 +8335,19 @@ private struct BudgetStructureHistoryView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Label(changeTitle(row), systemImage: row.action == "created" ? "plus.circle" : "pencil.circle")
                             .font(.headline)
-                        if let detail = changeDetail(row) { Text(detail).font(.subheadline) }
+                        DisclosureGroup("Change details") {
+                            ForEach(BudgetStructureHistoryPresentation.changes(row,
+                                groupName: { id in store.groups.first(where: { $0.id == id })?.name ?? "Group no longer available" },
+                                memberName: { id in store.householdMembers.first(where: { $0.userID == id })?.displayName ?? "Member no longer available" })) { change in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(change.label).font(.caption).foregroundStyle(.secondary)
+                                    Text("\(change.before ?? "Not set") → \(change.after ?? "Not set")").font(.subheadline)
+                                }.accessibilityElement(children: .combine)
+                            }
+                        }
                         Text("\(row.actorDisplayName ?? "Unknown member") · \(row.createdAt)")
                             .font(.caption).foregroundStyle(.secondary)
-                    }.accessibilityElement(children: .combine)
+                    }.accessibilityElement(children: .contain)
                 }
                 if canLoadOlder {
                     Button(loadingOlder ? "Loading…" : "Load Earlier Changes") { Task { await load(reset: false) } }
@@ -8356,6 +8365,7 @@ private struct BudgetStructureHistoryView: View {
     }
 
     private func load(reset: Bool) async {
+        guard !loading, !loadingOlder else { return }
         if reset { loading = true; errorMessage = nil } else { loadingOlder = true }
         defer { loading = false; loadingOlder = false }
         do {
@@ -8380,13 +8390,6 @@ private struct BudgetStructureHistoryView: View {
         return "Details updated"
     }
 
-    private func changeDetail(_ row: APIBudgetStructureRevision) -> String? {
-        guard let before = row.beforeSnapshot else { return row.afterSnapshot.name }
-        if before.name != row.afterSnapshot.name { return "\(before.name) → \(row.afterSnapshot.name)" }
-        if before.note != row.afterSnapshot.note { return "Note updated" }
-        if before.iconName != row.afterSnapshot.iconName { return "Icon updated" }
-        return nil
-    }
 }
 
 private struct PayeeHistoryView: View {

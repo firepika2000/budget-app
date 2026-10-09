@@ -1166,6 +1166,34 @@ struct AccountHistoryView: View {
 }
 
 /// Presentation of authoritative snapshots, never a projection or accounting calculation.
+enum BudgetStructureHistoryPresentation {
+    struct Change: Identifiable, Equatable {
+        let id: String
+        let label: String
+        let before: String?
+        let after: String?
+    }
+    static func changes(_ revision: APIBudgetStructureRevision,
+                        groupName: (String) -> String, memberName: (String) -> String) -> [Change] {
+        let old = revision.beforeSnapshot, new = revision.afterSnapshot
+        var result: [Change] = []
+        func add(_ id: String, _ label: String, _ before: String?, _ after: String?, _ changed: Bool) {
+            if changed { result.append(.init(id: id, label: label, before: before, after: after)) }
+        }
+        func yesNo(_ value: Bool?) -> String? { value.map { $0 ? "Yes" : "No" } }
+        add("name", "Name", old?.name, new.name, old?.name != new.name)
+        add("group", "Group", old?.groupID.map(groupName), new.groupID.map(groupName), old?.groupID != new.groupID)
+        add("icon", "Symbol", old?.iconName, new.iconName, old?.iconName != new.iconName)
+        add("note", "Note", old?.note, new.note, old?.note != new.note)
+        add("order", "Sort order", old.map { String($0.sortOrder) }, String(new.sortOrder), old?.sortOrder != new.sortOrder)
+        add("archived", "Archived", yesNo(old?.isArchived), yesNo(new.isArchived), old?.isArchived != new.isArchived)
+        add("essential", "Essential expense", yesNo(old?.isEssential), yesNo(new.isEssential), old?.isEssential != new.isEssential)
+        add("emergency", "Emergency fund", yesNo(old?.isEmergencyFund), yesNo(new.isEmergencyFund), old?.isEmergencyFund != new.isEmergencyFund)
+        add("delegate", "Delegated member", old?.delegatedUserID.map(memberName), new.delegatedUserID.map(memberName), old?.delegatedUserID != new.delegatedUserID)
+        return result
+    }
+}
+
 enum DelegatedPolicyHistoryPresentation {
     struct Change: Identifiable, Equatable {
         let id: String

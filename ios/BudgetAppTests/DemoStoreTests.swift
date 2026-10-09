@@ -10,6 +10,32 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testStructureHistoryExplainsEveryChangedFieldWithoutLeakingResourceIDs() {
+        let old = APIBudgetStructureSnapshot(groupID: "private-old", name: "Food", iconName: "fork.knife",
+            note: "Weekly", sortOrder: 0, isArchived: false, isEssential: true,
+            isEmergencyFund: false, delegatedUserID: "private-member")
+        let new = APIBudgetStructureSnapshot(groupID: "private-new", name: "Groceries", iconName: nil,
+            note: nil, sortOrder: 2, isArchived: true, isEssential: false,
+            isEmergencyFund: true, delegatedUserID: nil)
+        func revision(_ before: APIBudgetStructureSnapshot?, _ after: APIBudgetStructureSnapshot) -> APIBudgetStructureRevision {
+            .init(id: "r", resourceType: "category", resourceID: "c", action: "updated",
+                actorUserID: "owner", actorDisplayName: "Owner", beforeSnapshot: before,
+                afterSnapshot: after, createdAt: "2026-10-09")
+        }
+        let changes = BudgetStructureHistoryPresentation.changes(revision(old, new),
+            groupName: { _ in "Unavailable group" }, memberName: { _ in "Unavailable member" })
+        XCTAssertEqual(changes.count, 9)
+        XCTAssertEqual(changes.first(where: { $0.id == "note" })?.before, "Weekly")
+        XCTAssertNil(changes.first(where: { $0.id == "note" })?.after)
+        XCTAssertEqual(changes.first(where: { $0.id == "group" })?.before, "Unavailable group")
+        XCTAssertEqual(changes.first(where: { $0.id == "group" })?.after, "Unavailable group")
+        XCTAssertFalse(changes.contains { ($0.before ?? "").contains("private-") || ($0.after ?? "").contains("private-") })
+        XCTAssertTrue(BudgetStructureHistoryPresentation.changes(revision(new, new), groupName: { $0 }, memberName: { $0 }).isEmpty)
+        let created = BudgetStructureHistoryPresentation.changes(revision(nil, new), groupName: { _ in "Daily" }, memberName: { _ in "Child" })
+        XCTAssertTrue(created.allSatisfy { $0.before == nil })
+        XCTAssertEqual(created.first(where: { $0.id == "name" })?.after, "Groceries")
+    }
+
     func testAllowanceHistoryExplainsExactSplitsCadenceAndPrivacy() {
         let before = APIAllowancePlanRevisionSnapshot(delegatedUserID: "child", sourceCategoryID: "source", name: "Weekly",
             amountMinor: 9007199254740993, nextIssueDate: "2026-10-01", recurrenceUnit: "weeks", intervalCount: 1,

@@ -2525,3 +2525,24 @@ to the end; confirm pages retain chronology and money does not move merely by vi
 Server restart is required to use the new bounds; no migration or data reset is required. An older server
 may ignore unknown query parameters, so deploy the matching server before scale acceptance.
 Human visual acceptance remains pending; TestFlight remains on hold.
+
+### Complete category/group change explanation — 2026-10-09
+
+The shared Category/Group History previously summarized only the first detected field, making
+simultaneous decisions and moves/classification/delegation changes difficult to inspect. Expandable
+Change details now show every changed authoritative metadata field with before/after values, including
+removed notes/symbols/delegation. Group/member names resolve only from current authorized workspace
+data; missing identities receive neutral labels, never raw IDs. Comparison precedes label resolution,
+so two unavailable identities cannot silently conceal a move. The disclosure remains independently
+accessible and history reads reject overlapping requests. No endpoint, migration, ledger or financial
+semantics change.
+
+Focused native regression checks all nine simultaneous fields, creation, unset values, no-op snapshots
+and unavailable-identity redaction passes, including the final accessibility correction. Production
+app compilation passes using regular Xcode 27.0 (27A266a) on the preserved iPhone 17 Pro Max/iOS 27
+Simulator. The existing backend category/group attributed/bounded/no-op-safe history contract passes.
+`git diff --check` passes. These tests do not substitute for human VoiceOver or visual acceptance.
+Human retest after rebuilding: open Category or Group History, expand Change details for an existing
+multi-field decision and inspect the before/after observations, including VoiceOver disclosure access.
+No server restart or migration is required. Human visual/accessibility acceptance remains pending;
+TestFlight remains on hold.
