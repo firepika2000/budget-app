@@ -204,6 +204,11 @@ Automatic Dropbox backup recovery now reuses a retained encrypted generation aft
 The same single-run claim and verified immutable upload path apply; no additional snapshot is made
 until the pending generation is resolved. Explicit retry and saving elsewhere remain available.
 
+Receipt assistance now supports direct native camera capture as well as choosing an existing photo.
+The shared camera bridge feeds the same on-device OCR/review workflow after camera dismissal;
+permission denial and Simulator camera unavailability offer the photo alternative. Nothing posts,
+uploads, attaches or saves to Photos automatically. Category suggestions show qualified group names.
+
 The privacy-safe v0.11 launcher widget is implemented for small and medium Home Screen families and
 uses the authenticated production shell for navigation. It deliberately shares no financial data or
 credentials with the extension. Rich financial widgets require a future explicit disclosure,

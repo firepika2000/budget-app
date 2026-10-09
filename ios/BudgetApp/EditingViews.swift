@@ -1,4 +1,5 @@
 import BudgetAPI
+import AVFoundation
 import PhotosUI
 import SwiftUI
 
@@ -31,6 +32,9 @@ struct TransactionEntryView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var receiptPhoto: PhotosPickerItem?
+    @State private var choosingReceiptPhoto = false
+    @State private var showingReceiptCamera = false
+    @State private var capturedReceiptData: Data?
     @State private var receiptSuggestion: ReceiptSuggestion?
     @State private var isScanningReceipt = false
 
@@ -138,13 +142,18 @@ struct TransactionEntryView: View {
                 Picker("Flag", selection: $flag) { Text("None").tag(""); Text("Red").tag("red"); Text("Orange").tag("orange"); Text("Yellow").tag("yellow"); Text("Green").tag("green"); Text("Blue").tag("blue"); Text("Purple").tag("purple") }
                 TextField("Tags (comma separated)", text: $tags)
                 Section("Receipt assistance") {
-                    PhotosPicker(selection: $receiptPhoto, matching: .images) {
+                    Button { requestReceiptCamera() } label: {
+                        Label("Take Receipt Photo", systemImage: "camera")
+                    }
+                    .disabled(isScanningReceipt)
+                    .accessibilityIdentifier("take-receipt-photo")
+                    Button { choosingReceiptPhoto = true } label: {
                         Label("Scan Receipt Photo", systemImage: "doc.text.viewfinder")
                     }
                     .disabled(isScanningReceipt)
                     .accessibilityIdentifier("scan-receipt-photo")
                     if isScanningReceipt { ProgressView("Reading on this iPhone…") }
-                    Text("ClearPocket reads the selected image on this device and proposes fields for your review. Nothing is saved automatically, and the image remains in Photos until you attach it after saving.")
+                    Text("ClearPocket reads the image on this device and proposes fields for your review. Nothing is saved automatically. Camera captures are used only for suggestions and are not saved to Photos or attached; add an attachment from transaction detail after saving if you want to retain a receipt.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Text("Save the transaction, then add PDF or image attachments from its detail screen.").font(.footnote).foregroundStyle(.secondary)
@@ -180,9 +189,26 @@ struct TransactionEntryView: View {
                 }
             }
             .onChange(of: accountID) { _, _ in if !selectedAccountIsDebt { financialClassification = "" } }
-            .onChange(of: receiptPhoto) { _, item in if let item { Task { await scanReceipt(item) } } }
+            .photosPicker(isPresented: $choosingReceiptPhoto, selection: $receiptPhoto, matching: .images)
+            .onChange(of: receiptPhoto) { _, item in
+                if let item, !choosingReceiptPhoto { Task { await scanReceipt(item) } }
+            }
+            .onChange(of: choosingReceiptPhoto) { _, presented in
+                if !presented, let item = receiptPhoto { Task { await scanReceipt(item) } }
+            }
+            .sheet(isPresented: $showingReceiptCamera, onDismiss: {
+                if let data = capturedReceiptData {
+                    capturedReceiptData = nil
+                    Task { await scanReceiptData(data) }
+                }
+            }) {
+                AttachmentCameraPicker { image in
+                    capturedReceiptData = image.jpegData(compressionQuality: 0.9)
+                    if capturedReceiptData == nil { errorMessage = "The camera image could not be read. Please try again." }
+                }
+            }
             .sheet(item: $receiptSuggestion) { suggestion in
-                ReceiptSuggestionReview(suggestion: suggestion, currencyCode: budget.currencyCode, categoryName: categories.first(where: { $0.id == suggestion.categoryID })?.name) {
+                ReceiptSuggestionReview(suggestion: suggestion, currencyCode: budget.currencyCode, categoryName: categories.first(where: { $0.id == suggestion.categoryID }).map { workspace.categoryDisplayName($0) }) {
                     Task { await apply(suggestion) }
                 }
             }
@@ -277,11 +303,38 @@ struct TransactionEntryView: View {
     }
 
     private func scanReceipt(_ item: PhotosPickerItem) async {
+        guard !isScanningReceipt, receiptSuggestion == nil else { return }
         isScanningReceipt = true; defer { isScanningReceipt = false; receiptPhoto = nil }
         do {
             guard let data = try await item.loadTransferable(type: Data.self) else { throw ReceiptOCRError.invalidImage }
             receiptSuggestion = try await ReceiptOCR.recognize(data, currencyCode: budget.currencyCode, categories: categories.filter { !$0.isArchived })
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func scanReceiptData(_ data: Data) async {
+        guard !isScanningReceipt, receiptSuggestion == nil else { return }
+        isScanningReceipt = true; defer { isScanningReceipt = false }
+        do {
+            receiptSuggestion = try await ReceiptOCR.recognize(data, currencyCode: budget.currencyCode,
+                categories: categories.filter { !$0.isArchived })
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func requestReceiptCamera() {
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            errorMessage = "Camera is not available on this device. Choose a receipt photo instead."; return
+        }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: showingReceiptCamera = true
+        case .notDetermined:
+            Task {
+                if await AVCaptureDevice.requestAccess(for: .video) { showingReceiptCamera = true }
+                else { errorMessage = "Camera access was denied. Enable it in Settings or choose a receipt photo." }
+            }
+        case .denied, .restricted:
+            errorMessage = "Camera access is unavailable. Enable it in Settings or choose a receipt photo."
+        @unknown default: errorMessage = "Camera access is unavailable. Choose a receipt photo."
+        }
     }
 
     private func apply(_ suggestion: ReceiptSuggestion) async {

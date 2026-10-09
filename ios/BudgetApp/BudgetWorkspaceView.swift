@@ -9888,7 +9888,7 @@ private struct AttachmentPreviewController: UIViewControllerRepresentable {
     }
 }
 
-private struct AttachmentCameraPicker: UIViewControllerRepresentable {
+struct AttachmentCameraPicker: UIViewControllerRepresentable {
     let onCapture: (UIImage) -> Void
     @Environment(\.dismiss) private var dismiss
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }

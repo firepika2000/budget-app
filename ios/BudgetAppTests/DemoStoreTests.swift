@@ -8,6 +8,25 @@ import CryptoKit
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testProductionReceiptCameraUsesSharedCaptureAndReviewOnlyPath() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("BudgetApp/EditingViews.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("take-receipt-photo"))
+        XCTAssertTrue(source.contains("AttachmentCameraPicker { image in"))
+        XCTAssertTrue(source.contains("onDismiss:"))
+        XCTAssertTrue(source.contains("await scanReceiptData(data)"))
+        XCTAssertTrue(source.contains("AVCaptureDevice.requestAccess(for: .video)"))
+        XCTAssertTrue(source.contains("Camera is not available on this device. Choose a receipt photo instead."))
+        XCTAssertTrue(source.contains("workspace.categoryDisplayName($0)"))
+        let start = try XCTUnwrap(source.range(of: "private func scanReceiptData"))
+        let end = try XCTUnwrap(source.range(of: "private func apply(_ suggestion", range: start.upperBound..<source.endIndex))
+        let capturePath = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(capturePath.contains("ReceiptOCR.recognize"))
+        XCTAssertFalse(capturePath.contains("createTransaction"))
+        XCTAssertFalse(capturePath.contains("uploadTransactionAttachment"))
+        XCTAssertFalse(capturePath.contains("UIImageWriteToSavedPhotosAlbum"))
+    }
+
     func testAuthorityHistoryExplainsRuleChangesAndPreservesAmountPrivacy() {
         let before = APIDelegatedPolicySnapshot(userID: "u", poolCategoryID: "pool", authorityMinor: 9007199254740993,
             allowCategoryCreation: false, allowReallocation: true,

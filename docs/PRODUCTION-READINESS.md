@@ -2411,3 +2411,28 @@ atomic rejection of stale/unauthorized edits. The production application compile
 backend exact/attributed/private/no-op-safe authority-history contract test passes. `git diff --check`
 passes. Account-history pagination is source-reviewed and compiled; final-page and failure-retry
 human interaction is not claimed as automated UI verification. Human visual acceptance is pending.
+
+### Direct receipt camera assistance — 2026-10-09
+
+New Transaction now offers Take Receipt Photo alongside Scan Receipt Photo. It reuses the native
+camera bridge used by attachments, asks for camera permission only on request, and explains denied,
+restricted or unavailable access with an existing-photo alternative. Captured JPEG data feeds the
+same on-device Vision OCR and explicit suggestion review only after the camera sheet dismisses.
+No image is written to Photos or uploaded/attached implicitly, and no transaction is posted until
+the owner reviews the draft and presses canonical Save. Photo-library OCR waits until picker state
+is closed and guards duplicate processing. Suggested categories now show their group-qualified
+names rather than ambiguous category names alone.
+
+Human retest after rebuild on iPhone: New Transaction → Take Receipt Photo, allow camera, capture
+a receipt, review and apply suggestions, then Cancel once to confirm nothing posts. Repeat and Save
+explicitly. Camera cancellation and permission denial must leave the draft intact and photo selection
+available. Confirm same-named categories display their group in review. Actual camera capture cannot
+be proven on the Simulator; real-device visual/lifecycle acceptance remains pending. No server restart
+or migration is required. TestFlight stays on hold.
+
+Verification: three focused native XCTest cases pass with regular Xcode 27 on the preserved iPhone
+17 Pro Max/iOS 27 Simulator; the production app compiles. Tests cover existing exact OCR suggestions,
+future-date rejection, and production source-composition assertions for shared camera capture,
+permission handling, dismissal-driven review, qualified categories and absence of implicit posting,
+upload or Photos writes. Source assertions are not end-to-end camera/modal runtime proof. No backend
+changes or repetitive full-suite reruns; `git diff --check` passes.
