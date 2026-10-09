@@ -14,6 +14,30 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import PDFKit
 
+enum WorkspaceHistoryResource {
+    case budget, account(String), category(String), group(String)
+}
+
+/// A changed authority creates a fresh history screen, discarding its old @State
+/// rows. Removed resources never render the retained title or history at all.
+private struct HistoryAuthorityBoundary<Content: View>: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let resource: WorkspaceHistoryResource
+    let content: Content
+    init(_ resource: WorkspaceHistoryResource = .budget, @ViewBuilder content: () -> Content) {
+        self.resource = resource; self.content = content()
+    }
+    var body: some View {
+        if store.historyResourceVisible(resource) {
+            content.id(store.authorityRevision)
+        } else {
+            ContentUnavailableView("History unavailable", systemImage: "lock",
+                                   description: Text("This resource is no longer available in your current budget access."))
+                .accessibilityIdentifier("history-authority-unavailable")
+        }
+    }
+}
+
 enum Theme {
     static let accent = Color.teal
     static let healthy = Color.green
@@ -173,7 +197,7 @@ private struct PayeeEditorView: View {
                         LabeledContent("Transactions", value: "\(payee.transactionCount)")
                         LabeledContent("Net amount", value: store.format(payee.netAmountMinor))
                         NavigationLink {
-                            PayeeHistoryView(payeeID: payee.id, payeeName: payee.displayName)
+                            HistoryAuthorityBoundary { PayeeHistoryView(payeeID: payee.id, payeeName: payee.displayName) }
                         } label: {
                             Label("Payee history", systemImage: "clock.arrow.circlepath")
                         }
@@ -184,20 +208,22 @@ private struct PayeeEditorView: View {
                         Section("Recent transactions") {
                             ForEach(history.prefix(10)) { transaction in LiveTransactionLink(transaction: transaction) }
                             NavigationLink("View All Transactions") {
-                                ScopedTransactionHistoryView(
-                                    title: payee.displayName,
-                                    filter: TransactionBrowserFilter(payeeID: payee.id, payeeName: payee.displayName)
-                                )
+                                HistoryAuthorityBoundary {
+                                    ScopedTransactionHistoryView(
+                                        title: payee.displayName,
+                                        filter: TransactionBrowserFilter(payeeID: payee.id, payeeName: payee.displayName))
+                                }
                             }
                             .accessibilityIdentifier("payee-view-all-transactions")
                         }
                     } else if payee.transactionCount > 0 {
                         Section("Transactions") {
                             NavigationLink("View All Transactions") {
-                                ScopedTransactionHistoryView(
-                                    title: payee.displayName,
-                                    filter: TransactionBrowserFilter(payeeID: payee.id, payeeName: payee.displayName)
-                                )
+                                HistoryAuthorityBoundary {
+                                    ScopedTransactionHistoryView(
+                                        title: payee.displayName,
+                                        filter: TransactionBrowserFilter(payeeID: payee.id, payeeName: payee.displayName))
+                                }
                             }
                             .accessibilityIdentifier("payee-view-all-transactions")
                         }
@@ -3946,7 +3972,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     private var transactionBrowseOperationID: UUID?
     private var snapshotOperationID: UUID?
     private var forecastOperationID: UUID?
-    private var authorityRevision = 0
+    @Published private(set) var authorityRevision = 0
     @Published private(set) var workspaceAccessDenied = false
     private var privacyPreferenceKey: String?
     private var onboardingPreferencePrefix: String?
@@ -4289,6 +4315,16 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     static func scopeShrank(previous: [String], current: [String]) -> Bool {
         !Set(previous).isSubset(of: Set(current))
+    }
+
+    func historyResourceVisible(_ resource: WorkspaceHistoryResource) -> Bool {
+        guard !workspaceAccessDenied else { return false }
+        switch resource {
+        case .budget: return true
+        case let .account(id): return accounts.contains { $0.id == id }
+        case let .category(id): return categories.contains { $0.id == id }
+        case let .group(id): return groups.contains { $0.id == id }
+        }
     }
 
     private func invalidateIndependentObservations() {
@@ -7875,7 +7911,7 @@ private struct LivePlanView: View {
                 if store.budget.can("move_money") { Button("Move money", systemImage: "arrow.left.arrow.right") { movePresentation = .init(sourceCategoryID: nil) } }
                 if store.budget.can("view_allocation_history") {
                     NavigationLink {
-                        AllocationHistoryView()
+                        HistoryAuthorityBoundary { AllocationHistoryView() }
                     } label: {
                         Label("Allocation history", systemImage: "clock.arrow.circlepath")
                     }
@@ -8310,7 +8346,7 @@ private struct LiveGroupEditor: View {
     let group: APICategoryGroup
     @State private var name: String; @State private var archived: Bool; @State private var saving=false; @State private var error:String?; @State private var confirmDelete=false
     init(group: APICategoryGroup){self.group=group;_name=State(initialValue:group.name);_archived=State(initialValue:group.isArchived)}
-    var body: some View { NavigationStack { Form { TextField("Name",text:$name);Toggle("Hidden",isOn:$archived);Section{Text("Hiding a group preserves every category and its financial history.").font(.footnote).foregroundStyle(.secondary);NavigationLink("Group History"){BudgetStructureHistoryView(resourceType:"category_group",resourceID:group.id,title:group.name)}};Section{Button("Delete Empty Group",role:.destructive){confirmDelete=true}} }.navigationTitle("Manage Group").toolbar{ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || saving)}}.confirmationDialog("Delete this group?",isPresented:$confirmDelete){Button("Delete Empty Group",role:.destructive){Task{await remove()}}} .alert("Unable to update group",isPresented:Binding(get:{error != nil},set:{if !$0{error=nil}})){Button("OK",role:.cancel){}}message:{Text(error ?? "Unknown error")} } }
+    var body: some View { NavigationStack { Form { TextField("Name",text:$name);Toggle("Hidden",isOn:$archived);Section{Text("Hiding a group preserves every category and its financial history.").font(.footnote).foregroundStyle(.secondary);NavigationLink("Group History"){HistoryAuthorityBoundary(.group(group.id)){BudgetStructureHistoryView(resourceType:"category_group",resourceID:group.id,title:group.name)}}};Section{Button("Delete Empty Group",role:.destructive){confirmDelete=true}} }.navigationTitle("Manage Group").toolbar{ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{await save()}}.disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || saving)}}.confirmationDialog("Delete this group?",isPresented:$confirmDelete){Button("Delete Empty Group",role:.destructive){Task{await remove()}}} .alert("Unable to update group",isPresented:Binding(get:{error != nil},set:{if !$0{error=nil}})){Button("OK",role:.cancel){}}message:{Text(error ?? "Unknown error")} } }
     private func save()async{saving=true;defer{saving=false};do{try await store.updateGroup(id:group.id,value:APICategoryGroupUpdate(name:name,sortOrder:group.sortOrder,isArchived:archived));dismiss()}catch{self.error=error.localizedDescription}}
     private func remove()async{saving=true;defer{saving=false};do{try await store.deleteGroup(id:group.id);dismiss()}catch{self.error=error.localizedDescription}}
 }
@@ -8368,10 +8404,11 @@ private struct LivePlanCategoryDetailView: View {
                 if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }
                 ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) }
                 NavigationLink("View All Transactions") {
-                    ScopedTransactionHistoryView(
-                        title: row?.name ?? "Category",
-                        filter: TransactionBrowserFilter(categoryID: categoryID)
-                    )
+                    HistoryAuthorityBoundary(.category(categoryID)) {
+                        ScopedTransactionHistoryView(
+                            title: row?.name ?? "Category",
+                            filter: TransactionBrowserFilter(categoryID: categoryID))
+                    }
                 }
                 .accessibilityIdentifier("category-view-all-transactions")
             }
@@ -8389,7 +8426,7 @@ private struct LivePlanCategoryDetailView: View {
                     }
                 }
                 if store.budget.can("view_allocation_history") {
-                    NavigationLink("View Complete Plan History") { AllocationHistoryView() }
+                    NavigationLink("View Complete Plan History") { HistoryAuthorityBoundary { AllocationHistoryView() } }
                         .accessibilityIdentifier("category-view-all-allocation-history")
                 }
             }
@@ -8442,14 +8479,16 @@ private struct LivePlanCategoryDetailView: View {
                 Button(store.targets[categoryID] == nil ? "Create target" : "Manage target") { showTarget = true }
             }
             NavigationLink {
-                TargetHistoryView(categoryID: categoryID, categoryName: row?.name ?? "Category")
+                HistoryAuthorityBoundary(.category(categoryID)) { TargetHistoryView(categoryID: categoryID, categoryName: row?.name ?? "Category") }
             } label: {
                 Label("Target history", systemImage: "clock.arrow.circlepath")
             }
             .accessibilityIdentifier("category-target-history")
             NavigationLink {
-                BudgetStructureHistoryView(resourceType: "category", resourceID: categoryID,
-                                           title: row?.name ?? "Category")
+                HistoryAuthorityBoundary(.category(categoryID)) {
+                    BudgetStructureHistoryView(resourceType: "category", resourceID: categoryID,
+                                               title: row?.name ?? "Category")
+                }
             } label: {
                 Label("Category history", systemImage: "clock.arrow.circlepath")
             }
@@ -8992,7 +9031,7 @@ private struct LiveActivityView: View {
                             .accessibilityElement(children: .combine)
                             .accessibilityIdentifier("activity-plan-change-\(operation.id)")
                         }
-                        NavigationLink("View all plan history") { AllocationHistoryView() }
+                        NavigationLink("View all plan history") { HistoryAuthorityBoundary { AllocationHistoryView() } }
                             .accessibilityIdentifier("activity-plan-history-action")
                     }
                 }
@@ -9089,7 +9128,7 @@ private struct LiveActivityView: View {
             .sheet(isPresented: $showSchedule) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode) }
             .sheet(item: $transferPresentation) { presentation in transfer(presentation) }
             .sheet(isPresented: $showFilters) { TransactionFilterView(current: filter) { filter = $0 } }
-            .sheet(item: $reconciliationAccount) { account in ReconciliationHistoryView(account: account) }
+            .sheet(item: $reconciliationAccount) { account in HistoryAuthorityBoundary(.account(account.id)) { ReconciliationHistoryView(account: account) } }
             .onAppear { openQuickEntryIfRequested() }
             .onChange(of: quickEntryRequest) { _, _ in openQuickEntryIfRequested() }
             .task(id: queryKey) { if !search.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }; guard !Task.isCancelled else { return }; await load(reset: true) }
@@ -9438,7 +9477,7 @@ private struct LiveScheduledTransactionsView: View {
     var body: some View {
         List {
             Section { Text("Scheduled money is a forecast only. It changes no balance, category, or Available amount until you explicitly enter it.").font(.footnote).foregroundStyle(.secondary) }
-            Section { NavigationLink { ScheduledTransactionHistoryView() } label: { Label("Schedule history", systemImage: "clock.arrow.circlepath") } }
+            Section { NavigationLink { HistoryAuthorityBoundary { ScheduledTransactionHistoryView() } } label: { Label("Schedule history", systemImage: "clock.arrow.circlepath") } }
             if store.scheduledTransactions.isEmpty && !store.isLoading { ContentUnavailableView("No scheduled transactions", systemImage: "calendar.badge.plus", description: Text("Add recurring bills, income, or transfers without posting them early.")) }
             scheduleSection("Due", values: due)
             scheduleSection("Upcoming", values: upcoming)
@@ -9721,7 +9760,7 @@ private struct LiveTransactionDetailView: View {
                     if let edited = transaction.lastModifiedAt {
                         LabeledContent("Last edited", value: edited)
                     }
-                    NavigationLink("View Change History") { TransactionChangeHistoryView(transactionID: transaction.id) }
+                    NavigationLink("View Change History") { HistoryAuthorityBoundary(.account(transaction.accountID)) { TransactionChangeHistoryView(transactionID: transaction.id) } }
                         .accessibilityIdentifier("transaction-change-history")
                 }
                 if transaction.status == "voided" { Section("Void audit") { LabeledContent("Reason", value: transaction.voidReason ?? "No reason supplied"); if let reversal = transaction.reversalTransactionID { NavigationLink("Open reversal") { LiveTransactionDetailView(transactionID: reversal) } } } }
@@ -10234,7 +10273,7 @@ struct LiveAccountRegisterView: View {
         .sheet(item: $transferPresentation) { presentation in transfer(presentation) }
         .sheet(isPresented: $showReconcile) { reconcile }
         .sheet(isPresented: $showSettings) { AccountSettingsView(account: account) }
-        .sheet(isPresented: $showReconciliationHistory) { ReconciliationHistoryView(account: account) }
+        .sheet(isPresented: $showReconciliationHistory) { HistoryAuthorityBoundary(.account(account.id)) { ReconciliationHistoryView(account: account) } }
         .refreshable { await store.refresh() }
     }
 
@@ -11707,7 +11746,7 @@ private struct DebtPayoffContent: View {
         .disabled(!store.budget.can("manage_planning"))
         Section {
             NavigationLink {
-                DebtPayoffPlanHistoryView(store: store)
+                HistoryAuthorityBoundary { DebtPayoffPlanHistoryView(store: store) }.environmentObject(store)
             } label: {
                 Label("Saved Plan History", systemImage: "clock.arrow.circlepath")
             }
@@ -13679,7 +13718,7 @@ struct LiveDelegatedPolicyView: View {
     var body: some View { Form {
         Section("Authority") { Picker("To assign category", selection: $poolCategoryID) { ForEach(categories) { Text($0.name).tag($0.id) } }; CurrencyAmountField("Total authority", text: $authority, currencyCode: store.budget.currencyCode, allowsZero: true); Toggle("Can create categories", isOn: $allowCreation); Toggle("Can move money", isOn: $allowReallocation) }
         if store.delegatedBudgets.contains(where: { $0.userID == member.userID }) {
-            Section { NavigationLink { DelegatedPolicyHistoryView(member: member) } label: { Label("Authority history", systemImage: "clock.arrow.circlepath") } }
+            Section { NavigationLink { HistoryAuthorityBoundary { DelegatedPolicyHistoryView(member: member) } } label: { Label("Authority history", systemImage: "clock.arrow.circlepath") } }
         }
         Section { Text("Authority is a hard household boundary. The member can organize only categories delegated to them, and cannot expose or move money into private family categories.").font(.footnote).foregroundStyle(.secondary) }
     }.navigationTitle(member.displayName).toolbar { Button("Save") { Task { await save() } }.disabled(poolCategoryID.isEmpty || parsed == nil || isSaving) }.onAppear { let existing = store.delegatedBudgets.first(where: { $0.userID == member.userID }); poolCategoryID = existing?.poolCategoryID ?? categories.first?.id ?? ""; authority = CurrencyText.editable(existing?.authorityMinor ?? 0, currencyCode: store.budget.currencyCode); allowCreation = existing?.allowCategoryCreation ?? true; allowReallocation = existing?.allowReallocation ?? true }.alert("Unable to save delegated budget", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }

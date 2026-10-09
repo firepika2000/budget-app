@@ -305,6 +305,11 @@ final class AppSessionRefreshTests: XCTestCase {
         await store.refresh(); await store.loadReports([.summary])
         XCTAssertNotNil(store.insightsSummary)
         store.reportPeriod = "custom"
+        XCTAssertTrue(store.historyResourceVisible(.budget))
+        XCTAssertTrue(store.historyResourceVisible(.account("private-account")))
+        XCTAssertFalse(store.historyResourceVisible(.account("missing-account")))
+        XCTAssertFalse(store.historyResourceVisible(.category("missing-category")))
+        XCTAssertFalse(store.historyResourceVisible(.group("missing-group")))
         let start = Date(timeIntervalSince1970: 1_700_000_000), end = start.addingTimeInterval(86400)
         store.customReportStart = start; store.customReportEnd = end
         store.reportAccountID = "private-account"
@@ -316,6 +321,8 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertTrue(store.accounts.isEmpty)
         XCTAssertNil(store.insightsSummary)
         XCTAssertEqual(store.reportAccountID, "")
+        XCTAssertTrue(store.historyResourceVisible(.budget))
+        XCTAssertFalse(store.historyResourceVisible(.account("private-account")))
         XCTAssertEqual(store.reportPeriod, "custom")
         XCTAssertEqual(store.customReportStart, start); XCTAssertEqual(store.customReportEnd, end)
         XCTAssertEqual(store.reportTag, "keep-this-filter")
@@ -331,6 +338,16 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertFalse(BudgetWorkspaceStore.scopeShrank(previous: [], current: ["a"]))
         XCTAssertTrue(BudgetWorkspaceStore.scopeShrank(previous: ["a", "b"], current: ["a"]))
         XCTAssertTrue(BudgetWorkspaceStore.scopeShrank(previous: ["a"], current: []))
+    }
+
+    @MainActor
+    func testKnownWorkspaceDenialHidesEveryHistoryResource() async throws {
+        RefreshMockURLProtocol.handler = { _ in Self.json(403, #"{"detail":"Access removed"}"#) }
+        let store = try workspaceForRevocationTest()
+        await store.refresh()
+        for resource: WorkspaceHistoryResource in [.budget, .account("a"), .category("c"), .group("g")] {
+            XCTAssertFalse(store.historyResourceVisible(resource))
+        }
     }
 
     @MainActor
