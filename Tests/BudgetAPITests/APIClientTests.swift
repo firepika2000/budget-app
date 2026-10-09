@@ -2,6 +2,26 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testAllowanceIssuancePagingPreservesLegacyRequestAndCurrentCredential() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        var requests: [URLRequest] = []
+        MockURLProtocol.handler = { request in
+            requests.append(request)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b/allowances/p/issuances")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("[]".utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        _ = try await client.allowanceIssuances(budgetID: "b", planID: "p", token: "rotated")
+        _ = try await client.allowanceIssuances(budgetID: "b", planID: "p", token: "rotated", limit: 25, offset: 50)
+        XCTAssertTrue(requests[0].url?.query?.isEmpty ?? true)
+        let query = URLComponents(url: requests[1].url!, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(query?.first { $0.name == "limit" }?.value, "25")
+        XCTAssertEqual(query?.first { $0.name == "offset" }?.value, "50")
+        XCTAssertEqual(requests.count, 2)
+    }
+
     func testDevicePairingAndSessionManagementUseCanonicalContracts() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

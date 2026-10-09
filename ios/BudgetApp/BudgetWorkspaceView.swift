@@ -549,7 +549,7 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
     func createAllowance(_ value: APIAllowancePlanCreate) async throws
     func setAllowanceActive(id: String, active: Bool) async throws
     func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws
-    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance]
+    func allowanceIssuances(id: String, limit: Int?, offset: Int) async throws -> [APIAllowanceIssuance]
     func allowancePlanHistory(id: String, limit: Int, offset: Int) async throws -> [APIAllowancePlanRevision]
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws
@@ -2163,9 +2163,14 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard let updated = demo.allowances.first(where: { $0.id == id }) else { return }
         appendAllowanceRevision(planID: id, action: "issued", before: before, after: allowanceSnapshot(updated))
     }
-    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] { try requireActiveMembership();
+    func allowanceIssuances(id: String, limit: Int? = nil, offset: Int = 0) async throws -> [APIAllowanceIssuance] { try requireActiveMembership();
+        guard limit.map({ (1...100).contains($0) }) ?? true, offset >= 0 else { throw workspaceRepositoryError("Invalid allowance history page.") }
         guard let plan = demo.allowances.first(where: { $0.id == id }), allowanceVisible(plan, history: true) else { throw workspaceRepositoryError("Allowance not found.") }
-        return try decode(demo.allowanceHistory.filter { $0.planID == id }.sorted { $0.issuedOn > $1.issuedOn }.map { item in
+        return try decode(demo.allowanceHistory.filter { $0.planID == id }.sorted {
+            if $0.issuedOn != $1.issuedOn { return $0.issuedOn > $1.issuedOn }
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.id > $1.id
+        }.dropFirst(offset).prefix(limit ?? Int.max).map { item in
             ["id": item.id, "plan_id": id, "issued_on": item.issuedOn, "amount_minor": item.amount, "reclaimed_minor": item.reclaimed,
              "actor_user_id": item.actorID, "created_at": item.createdAt, "next_issue_date": plan.nextDate] as [String: Any]
         })
@@ -3597,7 +3602,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func createAllowance(_ value: APIAllowancePlanCreate) async throws { try await credentials.prepare(); _ = try await client.createAllowancePlan(budgetID: budget.id, value: value, token: token) }
     func setAllowanceActive(id: String, active: Bool) async throws { try await credentials.prepare(); _ = try await client.setAllowancePlanActive(budgetID: budget.id, planID: id, isActive: active, token: token) }
     func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws { try await credentials.prepare(); _ = try await client.issueAllowance(budgetID: budget.id, planID: id, issueDate: issueDate, expectedAllocationVersion: expectedVersion, token: token) }
-    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] { try await credentials.prepare(); return try await client.allowanceIssuances(budgetID: budget.id, planID: id, token: token) }
+    func allowanceIssuances(id: String, limit: Int? = nil, offset: Int = 0) async throws -> [APIAllowanceIssuance] { try await credentials.prepare(); return try await client.allowanceIssuances(budgetID: budget.id, planID: id, token: token, limit: limit, offset: offset) }
     func allowancePlanHistory(id: String, limit: Int, offset: Int) async throws -> [APIAllowancePlanRevision] { try await credentials.prepare(); return try await client.allowancePlanHistory(budgetID: budget.id, planID: id, limit: limit, offset: offset, token: token) }
 
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try await credentials.prepare(); return try await client.searchTransactions(budgetID: budget.id, query: query, token: token) }
@@ -4960,7 +4965,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     func createAllowance(_ value: APIAllowancePlanCreate) async throws { try await commands().createAllowance(value); await refresh() }
     func setAllowanceActive(id: String, active: Bool) async throws { try await commands().setAllowanceActive(id: id, active: active); await refresh() }
     func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws { try await commands().issueAllowance(id: id, issueDate: issueDate, expectedVersion: expectedVersion); await refresh() }
-    func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] { try await commands().allowanceIssuances(id: id) }
+    func allowanceIssuances(id: String, limit: Int? = nil, offset: Int = 0) async throws -> [APIAllowanceIssuance] { try await commands().allowanceIssuances(id: id, limit: limit, offset: offset) }
     func allowancePlanHistory(id: String, limit: Int = 50, offset: Int = 0) async throws -> [APIAllowancePlanRevision] { try await commands().allowancePlanHistory(id: id, limit: limit, offset: offset) }
 
     func householdInvitations() async throws -> [APIInvitationSummary] { try await commands().householdInvitations() }
@@ -12699,6 +12704,8 @@ private struct AllowanceDetailView: View {
     @State private var policyHistory: [APIAllowancePlanRevision] = []
     @State private var loadingHistory = false
     @State private var loadingOlderPolicy = false
+    @State private var loadingOlderIssuances = false
+    @State private var hasOlderIssuances = false
     @State private var hasOlderPolicy = false
     private let historyPageSize = 25
     @State private var errorMessage: String?
@@ -12724,6 +12731,11 @@ private struct AllowanceDetailView: View {
                 Section("History") {
                     ForEach(history) { item in VStack(alignment: .leading) { Text(item.issuedOn); Text("Issued \(store.format(item.amountMinor))" + (item.reclaimedMinor > 0 ? " · returned \(store.format(item.reclaimedMinor))" : "")).font(.caption).foregroundStyle(.secondary) } }
                     if history.isEmpty { Text("No allowance has been issued yet").foregroundStyle(.secondary) }
+                    if hasOlderIssuances {
+                        Button("Load Earlier Issuances") { Task { await loadOlderIssuances() } }
+                            .disabled(loadingHistory || loadingOlderIssuances)
+                            .accessibilityIdentifier("allowance-issuances-load-older")
+                    }
                 }
                 Section("Plan changes") {
                     ForEach(policyHistory) { item in
@@ -12770,13 +12782,22 @@ private struct AllowanceDetailView: View {
             policyHistory += page; hasOlderPolicy = page.count == historyPageSize
         } catch { errorMessage = error.localizedDescription }
     }
+    private func loadOlderIssuances() async {
+        guard !loadingHistory, !loadingOlderIssuances, hasOlderIssuances else { return }
+        loadingOlderIssuances = true; defer { loadingOlderIssuances = false }
+        do {
+            let page = try await store.allowanceIssuances(id: planID, limit: historyPageSize, offset: history.count)
+            history += page; hasOlderIssuances = page.count == historyPageSize
+        } catch { errorMessage = error.localizedDescription }
+    }
     private func loadHistory() async {
-        guard !loadingHistory, !loadingOlderPolicy else { return }
+        guard !loadingHistory, !loadingOlderPolicy, !loadingOlderIssuances else { return }
         loadingHistory = true; defer { loadingHistory = false }
         do {
-        async let issuances = store.allowanceIssuances(id: planID)
+        async let issuances = store.allowanceIssuances(id: planID, limit: historyPageSize, offset: 0)
         async let changes = store.allowancePlanHistory(id: planID, limit: historyPageSize, offset: 0)
         history = try await issuances
+        hasOlderIssuances = history.count == historyPageSize
         policyHistory = try await changes
         hasOlderPolicy = policyHistory.count == historyPageSize
     } catch { errorMessage = error.localizedDescription } }

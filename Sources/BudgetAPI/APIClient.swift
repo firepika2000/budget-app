@@ -669,7 +669,12 @@ public struct APIClient {
     public func createAllowancePlan(budgetID: String, value: APIAllowancePlanCreate, token: String) async throws -> APIAllowancePlan { try await send(path: "api/v1/budgets/\(budgetID)/allowances", method: "POST", token: token, body: value) }
     public func setAllowancePlanActive(budgetID: String, planID: String, isActive: Bool, token: String) async throws -> APIAllowancePlan { try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/status", method: "PATCH", token: token, body: APIAllowanceStatusUpdate(isActive: isActive)) }
     public func issueAllowance(budgetID: String, planID: String, issueDate: String, expectedAllocationVersion: Int, token: String) async throws -> APIAllowanceIssuance { try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/issue", method: "POST", token: token, body: APIAllowanceIssueRequest(issueDate: issueDate, expectedAllocationVersion: expectedAllocationVersion)) }
-    public func allowanceIssuances(budgetID: String, planID: String, token: String) async throws -> [APIAllowanceIssuance] { try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/issuances", token: token) }
+    public func allowanceIssuances(budgetID: String, planID: String, token: String, limit: Int? = nil, offset: Int = 0) async throws -> [APIAllowanceIssuance] {
+        var query: [URLQueryItem] = []
+        if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
+        if offset != 0 { query.append(URLQueryItem(name: "offset", value: String(offset))) }
+        return try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/issuances", queryItems: query, token: token)
+    }
     public func allowancePlanHistory(budgetID: String, planID: String, limit: Int = 50, offset: Int = 0, token: String) async throws -> [APIAllowancePlanRevision] {
         try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/history", queryItems: [URLQueryItem(name: "limit", value: String(limit)), URLQueryItem(name: "offset", value: String(offset))], token: token)
     }

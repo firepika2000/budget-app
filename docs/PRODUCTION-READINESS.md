@@ -2499,3 +2499,29 @@ rollover and restricted-member policy history denial, using the built app withou
 All ten backend allowance contract tests pass; the production app compiles under regular Xcode 27
 on the preserved iPhone 17 Pro Max/iOS 27 Simulator and `git diff --check` passes. Pagination is
 source-reviewed/compiled, not claimed as an automated production UI interaction pass.
+
+### Bounded allowance issuance history — 2026-10-09
+
+The existing issuance endpoint now accepts optional `limit` (1–100) and nonnegative `offset`.
+Omitting the limit preserves older clients' unpaged read contract. Budget/member/capability and
+whole-plan resource authorization are checked before the SQL page is read. Ordering is deterministically
+newest issued date, created timestamp and ID. The current iPhone loads 25-row pages, offers Load Earlier
+Issuances, guards overlapping reads and stops at a short/final page; failures retain prior rows.
+Demo follows the same ordering/paging after its existing authorization checks. Live still prepares
+the canonical current credential on every request. Local Device personal budgets do not gain artificial
+household issuances or a new allowance accounting engine.
+
+Verification: all 11 backend allowance tests pass, including legacy/read-page equivalence for owner and
+recipient, final empty page, invalid bounds, restricted-resource denial and unchanged financial summaries.
+The strengthened native allowance golden vector passes for both rollover policies, exact issuance-page
+equivalence, money neutrality of reads and restricted history access. Production app compilation passes
+using regular Xcode 27 on the preserved iPhone 17 Pro Max/iOS 27 Simulator. Swift request coverage verifies
+explicit bounds, unchanged legacy query behavior, current bearer credential and exactly one request per
+read. An initial assertion expecting nil rather than the client's existing empty query string was corrected.
+`git diff --check` passes. No full-suite loop or stalled UI-runner retry was performed.
+
+Human retest after rebuild: open an allowance with older issuance/plan decisions and load both sections
+to the end; confirm pages retain chronology and money does not move merely by viewing history.
+Server restart is required to use the new bounds; no migration or data reset is required. An older server
+may ignore unknown query parameters, so deploy the matching server before scale acceptance.
+Human visual acceptance remains pending; TestFlight remains on hold.

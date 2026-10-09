@@ -1,5 +1,6 @@
 import calendar
 from datetime import date, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -369,6 +370,8 @@ def issue_allowance(
 def list_allowance_issuances(
     budget_id: str,
     plan_id: str,
+    limit: Optional[int] = Query(default=None, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict]:
@@ -381,9 +384,12 @@ def list_allowance_issuances(
     ):
         raise HTTPException(status_code=404, detail="Allowance plan not found")
     require_plan_scope(db, user, budget, plan, include_source=has_capability(db, user, budget, "manage_allowances"))
-    issuances = list(db.scalars(select(AllowanceIssuance).where(
+    query = select(AllowanceIssuance).where(
         AllowanceIssuance.plan_id == plan_id
-    ).order_by(AllowanceIssuance.issued_on.desc())))
+    ).order_by(AllowanceIssuance.issued_on.desc(), AllowanceIssuance.created_at.desc(), AllowanceIssuance.id.desc()).offset(offset)
+    if limit is not None:
+        query = query.limit(limit)
+    issuances = list(db.scalars(query))
     return [{
         "id": item.id,
         "plan_id": item.plan_id,

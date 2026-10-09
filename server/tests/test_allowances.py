@@ -27,6 +27,7 @@ def test_scoped_allowance_manager_cannot_read_or_mutate_hidden_resources(client,
     create_body = {key: plan[key] for key in ("delegated_user_id", "source_category_id", "name", "amount_minor", "next_issue_date", "recurrence_unit", "interval_count", "rollover_policy", "splits")}
     assert client.post(root, headers=auth(token), json=create_body).status_code == 404
     assert client.get(root + f"/{plan['id']}/issuances", headers=auth(token)).status_code == 404
+    assert client.get(root + f"/{plan['id']}/issuances?limit=1&offset=0", headers=auth(token)).status_code == 404
     assert client.patch(root + f"/{plan['id']}/status", headers=auth(token), json={"is_active": False}).status_code == 404
     assert client.delete(root + f"/{plan['id']}", headers=auth(token)).status_code == 404
     denied = client.post(root + f"/{plan['id']}/issue", headers=auth(token), json={"issue_date": plan["next_issue_date"], "expected_allocation_version": version})
@@ -177,6 +178,26 @@ def test_rollover_allowance_accumulates_and_splits_without_creating_money(
     ).json()
     assert [item["id"] for item in child_plans] == [plan["id"]]
     assert child_plans[0]["source_category_id"] is None
+
+
+def test_allowance_issuance_pages_preserve_legacy_reads_scope_and_money(client, owner_token, session_factory):
+    budget, _, child_token, _, _, _, plan, version = setup_allowance(client, owner_token, session_factory, "rollover")
+    issue(client, owner_token, budget["id"], plan["id"], "2026-08-28", version)
+    issue(client, owner_token, budget["id"], plan["id"], "2026-09-04", version + 1)
+    url = f"/api/v1/budgets/{budget['id']}/allowances/{plan['id']}/issuances"
+    before = summary_by_id(client, owner_token, budget["id"])
+    for token in (owner_token, child_token):
+        legacy = client.get(url, headers=auth(token))
+        assert legacy.status_code == 200
+        rows = legacy.json()
+        assert len(rows) == 2
+        for offset in range(3):
+            page = client.get(url, params={"limit": 1, "offset": offset}, headers=auth(token))
+            assert page.status_code == 200, page.text
+            assert page.json() == rows[offset:offset + 1]
+        for params in ({"limit": 0}, {"limit": 101}, {"offset": -1}):
+            assert client.get(url, params=params, headers=auth(token)).status_code == 422
+    assert summary_by_id(client, owner_token, budget["id"]) == before
 
 
 def test_use_it_or_lose_it_reclaims_unspent_authority_before_next_issue(
