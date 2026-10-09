@@ -10,6 +10,26 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testHistoryDiscardsDefinitiveDenialsButRetainsTemporaryFailures() {
+        for status in [401, 403, 404] {
+            // Classification follows the HTTP contract, not English wording.
+            XCTAssertTrue(HistoryObservationPolicy.mustDiscard(after: APIClientError.server(status: status, message: "Scope changed")))
+        }
+        for status in [409, 422, 429, 500, 503] {
+            XCTAssertFalse(HistoryObservationPolicy.mustDiscard(after: APIClientError.server(status: status, message: "Request failed")))
+        }
+        XCTAssertTrue(HistoryObservationPolicy.mustDiscard(after: BudgetApplicationError.permissionDenied("Denied")))
+        XCTAssertTrue(HistoryObservationPolicy.mustDiscard(after: BudgetApplicationError.notFound("Unavailable")))
+        XCTAssertFalse(HistoryObservationPolicy.mustDiscard(after: URLError(.notConnectedToInternet)))
+        XCTAssertEqual(BudgetApplicationError.map(APIClientError.server(status: 403, message: "Scope changed")), .permissionDenied("Scope changed"))
+    }
+    func testProductionAccountAndTransactionHistoriesApplyDenialEviction() throws {
+        let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp")
+        let account = try String(contentsOf: directory.appendingPathComponent("EditingViews.swift"))
+        let transaction = try String(contentsOf: directory.appendingPathComponent("BudgetWorkspaceView.swift"))
+        XCTAssertTrue(account.contains("if HistoryObservationPolicy.mustDiscard(after: error) { items = []; hasMore = false }"))
+        XCTAssertTrue(transaction.contains("if HistoryObservationPolicy.mustDiscard(after: error) { changes = []; hasMore = false }"))
+    }
     func testAccountHistoryExplainsAllFieldsAndResolvesOnlyAuthorizedNames() {
         let before = APIAccountRevisionSnapshot(name: "Old", accountType: "checking", isOnBudget: true, isClosed: false, paymentCategoryID: "hidden-old")
         let after = APIAccountRevisionSnapshot(name: "New", accountType: "tracking", isOnBudget: false, isClosed: true, paymentCategoryID: "hidden-new")

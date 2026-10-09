@@ -165,6 +165,13 @@ enum BudgetApplicationError: LocalizedError, Equatable, Sendable {
     static func map(_ error: Error) -> BudgetApplicationError {
         if let application = error as? BudgetApplicationError { return application }
         let message = error.localizedDescription
+        if case let APIClientError.server(status, _) = error {
+            switch status {
+            case 401, 403: return .permissionDenied(message)
+            case 404: return .notFound(message)
+            default: break
+            }
+        }
         let lowered = message.lowercased()
         if lowered.contains("not enough") || lowered.contains("insufficient") || lowered.contains("available to move") {
             return .insufficientFunds(message)
@@ -180,6 +187,16 @@ enum BudgetApplicationError: LocalizedError, Equatable, Sendable {
         }
         if error is URLError { return .temporarilyUnavailable(message) }
         return .invalidOperation(message)
+    }
+}
+
+/// Historical observations must not survive an authoritative denial of their current scope.
+enum HistoryObservationPolicy {
+    static func mustDiscard(after error: Error) -> Bool {
+        switch BudgetApplicationError.map(error) {
+        case .permissionDenied, .notFound: return true
+        default: return false
+        }
     }
 }
 

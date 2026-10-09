@@ -9671,7 +9671,10 @@ private struct TransactionChangeHistoryView: View {
             hasMore = next.count == 50
             errorMessage = nil
         }
-        catch { errorMessage = error.localizedDescription }
+        catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { changes = []; hasMore = false }
+            errorMessage = error.localizedDescription
+        }
     }
     private func actionTitle(_ action: String) -> String {
         switch action {

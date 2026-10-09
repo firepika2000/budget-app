@@ -1155,7 +1155,10 @@ struct AccountHistoryView: View {
                                                           offset: reset ? 0 : items.count)
             if reset { items = next } else { items.append(contentsOf: next) }
             hasMore = next.count == pageSize
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { items = []; hasMore = false }
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func title(_ revision: APIAccountRevision) -> String {
