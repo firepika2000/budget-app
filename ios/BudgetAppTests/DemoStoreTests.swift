@@ -10,6 +10,31 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testPayeeHistoryExplainsAllAliasesMergeAndQualifiedSuggestionWithoutDirectoryLoading() {
+        let old = APIPayeeRevisionSnapshot(displayName: "Market", isArchived: false,
+            aliases: ["Old B", "Keep", "Old A"], defaultCategoryID: "old-private")
+        let new = APIPayeeRevisionSnapshot(displayName: "New Market", isArchived: true,
+            mergedIntoPayeeID: "target-private", aliases: ["New B", "Keep", "New A"], defaultCategoryID: "new-private")
+        func revision(_ before: APIPayeeRevisionSnapshot?, _ after: APIPayeeRevisionSnapshot) -> APIPayeeRevision {
+            .init(id: "r", payeeID: "p", budgetID: "b", action: "merged", actorUserID: "owner",
+                actorDisplayName: "Owner", beforeSnapshot: before, afterSnapshot: after, createdAt: "2026-10-09")
+        }
+        let changes = PayeeHistoryPresentation.changes(revision(old, new),
+            payeeName: { _ in "Payee not available here" }, categoryName: { _ in "Daily / Groceries" })
+        XCTAssertEqual(changes.count, 8)
+        XCTAssertEqual(changes.filter { $0.label == "Alias added" }.map(\.after), ["New A", "New B"])
+        XCTAssertEqual(changes.filter { $0.label == "Alias removed" }.map(\.before), ["Old A", "Old B"])
+        XCTAssertEqual(changes.first(where: { $0.id == "category" })?.after, "Daily / Groceries")
+        XCTAssertEqual(changes.first(where: { $0.id == "merge" })?.after, "Payee not available here")
+        XCTAssertFalse(changes.contains { ($0.before ?? "").contains("private") || ($0.after ?? "").contains("private") })
+        XCTAssertTrue(PayeeHistoryPresentation.changes(revision(new, new), payeeName: { $0 }, categoryName: { $0 }).isEmpty)
+        let redacted = APIPayeeRevisionSnapshot(displayName: "Market")
+        XCTAssertTrue(PayeeHistoryPresentation.changes(revision(redacted, redacted), payeeName: { $0 }, categoryName: { $0 }).isEmpty)
+        let created = PayeeHistoryPresentation.changes(revision(nil, redacted), payeeName: { $0 }, categoryName: { $0 })
+        XCTAssertEqual(created.count, 1)
+        XCTAssertNil(created.first?.before)
+    }
+
     func testStructureHistoryExplainsEveryChangedFieldWithoutLeakingResourceIDs() {
         let old = APIBudgetStructureSnapshot(groupID: "private-old", name: "Food", iconName: "fork.knife",
             note: "Weekly", sortOrder: 0, isArchived: false, isEssential: true,

@@ -1166,6 +1166,39 @@ struct AccountHistoryView: View {
 }
 
 /// Presentation of authoritative snapshots, never a projection or accounting calculation.
+enum PayeeHistoryPresentation {
+    struct Change: Identifiable, Equatable {
+        let id: String
+        let label: String
+        let before: String?
+        let after: String?
+    }
+    static func changes(_ revision: APIPayeeRevision, payeeName: (String) -> String,
+                        categoryName: (String) -> String) -> [Change] {
+        let old = revision.beforeSnapshot, new = revision.afterSnapshot
+        var result: [Change] = []
+        func add(_ id: String, _ label: String, _ before: String?, _ after: String?, _ changed: Bool) {
+            if changed { result.append(.init(id: id, label: label, before: before, after: after)) }
+        }
+        add("name", "Name", old?.displayName, new.displayName, old?.displayName != new.displayName)
+        add("archived", "Archived", old?.isArchived.map { $0 ? "Yes" : "No" },
+            new.isArchived.map { $0 ? "Yes" : "No" }, old?.isArchived != new.isArchived)
+        add("merge", "Merged into", old?.mergedIntoPayeeID.map(payeeName), new.mergedIntoPayeeID.map(payeeName),
+            old?.mergedIntoPayeeID != new.mergedIntoPayeeID)
+        add("category", "Suggested category", old?.defaultCategoryID.map(categoryName), new.defaultCategoryID.map(categoryName),
+            old?.defaultCategoryID != new.defaultCategoryID)
+        // Missing aliases may be privacy-redacted. Compare only the returned authorized values.
+        let beforeAliases = Set(old?.aliases ?? []), afterAliases = Set(new.aliases ?? [])
+        for alias in afterAliases.subtracting(beforeAliases).sorted() {
+            result.append(.init(id: "added-\(alias)", label: "Alias added", before: nil, after: alias))
+        }
+        for alias in beforeAliases.subtracting(afterAliases).sorted() {
+            result.append(.init(id: "removed-\(alias)", label: "Alias removed", before: alias, after: nil))
+        }
+        return result
+    }
+}
+
 enum BudgetStructureHistoryPresentation {
     struct Change: Identifiable, Equatable {
         let id: String

@@ -8410,10 +8410,17 @@ private struct PayeeHistoryView: View {
                 ForEach(rows) { row in
                     VStack(alignment: .leading, spacing: 6) {
                         Label(title(row), systemImage: symbol(row.action)).font(.headline)
-                        if let detail = detail(row) { Text(detail).font(.subheadline) }
+                        DisclosureGroup("Payee decision details") {
+                            ForEach(changes(row)) { change in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(change.label).font(.caption).foregroundStyle(.secondary)
+                                    Text("\(change.before ?? "Not set") → \(change.after ?? "Not set")").font(.subheadline)
+                                }.accessibilityElement(children: .combine)
+                            }
+                        }
                         Text("\(row.actorDisplayName ?? "Unknown member") · \(row.createdAt)")
                             .font(.caption).foregroundStyle(.secondary)
-                    }.accessibilityElement(children: .combine)
+                    }.accessibilityElement(children: .contain)
                 }
                 if canLoadOlder {
                     Button(loadingOlder ? "Loading…" : "Load Earlier Changes") { Task { await load(reset: false) } }
@@ -8431,6 +8438,7 @@ private struct PayeeHistoryView: View {
     }
 
     private func load(reset: Bool) async {
+        guard !loading, !loadingOlder else { return }
         if reset { loading = true; errorMessage = nil } else { loadingOlder = true }
         defer { loading = false; loadingOlder = false }
         do {
@@ -8467,21 +8475,10 @@ private struct PayeeHistoryView: View {
         }
     }
 
-    private func detail(_ row: APIPayeeRevision) -> String? {
-        let before = row.beforeSnapshot, after = row.afterSnapshot
-        if before?.displayName != after.displayName, let name = after.displayName {
-            return before?.displayName.map { "\($0) → \(name)" } ?? name
-        }
-        if before?.aliases != after.aliases {
-            let old = Set(before?.aliases ?? []), new = Set(after.aliases ?? [])
-            if let added = new.subtracting(old).sorted().first { return added }
-            if let removed = old.subtracting(new).sorted().first { return removed }
-        }
-        if before?.defaultCategoryID != after.defaultCategoryID {
-            return after.defaultCategoryID.flatMap { id in store.categories.first(where: { $0.id == id })?.name }
-                ?? "No category suggestion"
-        }
-        return nil
+    private func changes(_ row: APIPayeeRevision) -> [PayeeHistoryPresentation.Change] {
+        PayeeHistoryPresentation.changes(row,
+            payeeName: { id in store.payees.first(where: { $0.id == id })?.displayName ?? "Payee not available here" },
+            categoryName: { id in store.categories.first(where: { $0.id == id }).map { store.categoryDisplayName($0) } ?? "Category not available here" })
     }
 }
 

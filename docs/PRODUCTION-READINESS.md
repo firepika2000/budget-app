@@ -2546,3 +2546,25 @@ Human retest after rebuilding: open Category or Group History, expand Change det
 multi-field decision and inspect the before/after observations, including VoiceOver disclosure access.
 No server restart or migration is required. Human visual/accessibility acceptance remains pending;
 TestFlight remains on hold.
+
+### Complete payee decision explanation — 2026-10-09
+
+Payee History previously explained only the first name/category/alias observation, omitted archive
+and merge-target detail and displayed only one changed alias. The shared production history now
+expands all returned changes: name, archive state, merge destination, qualified category suggestion,
+and all added/removed aliases with stable ordering. Resource identity comparisons precede authorized
+label resolution, so same-label/unavailable resources cannot conceal an identity change. Missing
+payees/categories receive neutral labels, not raw IDs or an unbounded directory request. Redacted
+snapshots do not invent aliases or private fields. VoiceOver retains access to the disclosure and
+overlapping history reads are guarded. No payee mutation, normalization, merge, accounting or server
+contract changes.
+
+All 12 backend payee tests pass, including immutable/bounded attributed history, no-op suppression,
+free-text identity creation, restricted history alias redaction and scoped search privacy. A focused
+native regression covers multi-field edits, all four alias differences, qualified suggestions,
+unavailable merge targets, creation, unchanged and privacy-redacted snapshots and passes. Production
+app compilation passes using regular Xcode 27.0 (27A266a) on the preserved iPhone 17 Pro Max/iOS 27
+Simulator; `git diff --check` passes. These tests are not human visual or VoiceOver acceptance.
+Human retest after rebuilding: inspect an existing rename,
+alias or merge in Payee History and expand Payee decision details. No server restart or migration
+is required. Human visual acceptance remains pending; TestFlight remains on hold.
