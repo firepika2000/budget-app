@@ -13,6 +13,45 @@ from .test_advanced_ledger import add_category
 from .test_allocation_ledger import fund
 
 
+@pytest.mark.parametrize("include_ids", [False, True])
+def test_net_worth_streams_history_with_bounded_contribution_ids(client, owner_token, session_factory, include_ids):
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    with session_factory() as session:
+        owner_id = session.scalar(select(User.id))
+        session.execute(insert(Transaction), [{
+            "id": f"worth-scale-{index:05d}", "budget_id": budget["id"], "account_id": account["id"],
+            "amount_minor": 1, "occurred_on": date(2026, 8, 1) if index < 4000 else date(2026, 9, 1),
+            "payee_name": "Disposable net worth observation", "created_by_user_id": owner_id,
+        } for index in range(10000)])
+        session.commit()
+    peak = 0
+
+    def loaded(session, _instance):
+        nonlocal peak
+        peak = max(peak, len(session.identity_map))
+
+    event.listen(session_factory.class_, "loaded_as_persistent", loaded)
+    try:
+        response = client.get(f"/api/v1/budgets/{budget['id']}/reports/net-worth", headers=auth(owner_token),
+                              params={"start_date": "2026-08-01", "end_date": "2026-09-30",
+                                      "include_transaction_ids": str(include_ids).lower()})
+    finally:
+        event.remove(session_factory.class_, "loaded_as_persistent", loaded)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["net_worth_minor"] == 10000
+    assert [point["net_worth_minor"] for point in body["points"]] == [4000, 10000]
+    assert body["accounts"][0]["balance_minor"] == 10000
+    for row in [*body["points"], body["accounts"][0]]:
+        assert len(row["transaction_ids"]) == (500 if include_ids else 0)
+        assert row.get("transaction_ids_truncated", False) is include_ids
+        if include_ids:
+            assert set(row["transaction_ids"]) <= {f"worth-scale-{index:05d}" for index in range(4000)}
+    print(f"net_worth_scale include_ids={include_ids} peak_orm={peak}")
+    assert peak < 100  # scalar batches must not hydrate the historical transaction entities
+
+
 @pytest.mark.parametrize("large_allocations", [False, True])
 def test_month_summary_bounds_orm_hydration_with_ten_thousand_split_and_direct_rows(client, owner_token, session_factory, large_allocations):
     budget = create_budget(client, owner_token, session_factory)

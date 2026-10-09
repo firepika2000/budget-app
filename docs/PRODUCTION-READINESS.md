@@ -1,5 +1,24 @@
 # Production readiness mission ledger
 
+## Net Worth history hydration bound (2026-10-09)
+
+Net Worth retained every historical transaction entity and rescanned that list for each account.
+The production route now consumes ordered scalar postings in 500-row batches, accumulating exact
+per-account balances once. Monthly snapshots preserve the existing cumulative cutoff semantics;
+optional account/series drill-through retains an ordered unique prefix of 500 IDs plus one
+truncation sentinel rather than all historical IDs. Account authorization, tracking inclusion,
+transfer/liability/reversal observations and the response contract remain unchanged.
+
+Two disposable HTTP fixtures cover 10,000 postings with and without drill-through: exact monthly
+totals are 4,000 then 10,000 minor units, final account balance is 10,000, and peak resident ORM
+objects is three. The bound is an entity-hydration regression, not proof of production PostgreSQL
+performance or constant total memory across arbitrary account/month cardinality. All 70 analytics
+and report-scale cases passed, including existing privacy, reconciliation, void/reversal, transfer,
+tracking, empty-state and calendar-boundary coverage. Diff checks passed.
+
+Server deployment/restart is required to use this improvement; no migration or app rebuild.
+No customer database, Simulator or attachment data was touched. TestFlight remains on hold.
+
 ## Spending-report object hydration bound (2026-10-09)
 
 Income vs Spending follow-up: the repeated-pass path measured 30,002 resident ORM objects for

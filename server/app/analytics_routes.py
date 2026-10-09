@@ -485,28 +485,30 @@ def net_worth_report(
         accounts_query = accounts_query.where(Account.is_on_budget.is_(True))
     accounts = list(db.scalars(accounts_query.order_by(Account.name, Account.id)))
     account_ids = [item.id for item in accounts]
-    transactions = list(db.scalars(
-        select(Transaction).where(
+    transactions = iter(db.execute(
+        select(Transaction.id, Transaction.account_id, Transaction.amount_minor, Transaction.occurred_on).where(
             Transaction.account_id.in_(account_ids),
             Transaction.occurred_on <= end_date,
         ).order_by(Transaction.occurred_on, Transaction.created_at, Transaction.id)
-    )) if account_ids else []
+        .execution_options(yield_per=500)
+    )) if account_ids else iter(())
 
-    # Walk the ordered ledger once. The previous implementation rescanned the complete history for
-    # every monthly point (O(months × transactions)), which becomes pathological for long-lived
-    # budgets. Snapshots retain identical exact/cumulative semantics while aggregation is O(months +
-    # transactions); response serialization remains intentionally explicit for drill-through.
+    # Consume bounded scalar batches once; do not hydrate ledger entities or retain history for
+    # per-account rescans. Exact cumulative snapshots use the same ordered postings. Drill-through
+    # keeps only the ordered unique response prefix and one truncation sentinel per account/series.
     points = []
     observation_dates = [through for _, through in month_periods(start_date, end_date)]
     balances = {value: 0 for value in account_ids}
-    contributing_ids: list[str] = []
-    transaction_index = 0
+    contributing_ids = _ReportTransactionIDs()
+    account_contributions = {value: _ReportTransactionIDs() for value in account_ids}
+    transaction = next(transactions, None)
     for as_of in observation_dates:
-        while transaction_index < len(transactions) and transactions[transaction_index].occurred_on <= as_of:
-            transaction = transactions[transaction_index]
+        while transaction is not None and transaction.occurred_on <= as_of:
             balances[transaction.account_id] += transaction.amount_minor
-            contributing_ids.append(transaction.id)
-            transaction_index += 1
+            if include_transaction_ids:
+                contributing_ids.append(transaction.id)
+                account_contributions[transaction.account_id].append(transaction.id)
+            transaction = next(transactions, None)
         assets = sum(max(value, 0) for value in balances.values())
         liabilities = sum(min(value, 0) for value in balances.values())
         total = assets + liabilities
@@ -521,13 +523,12 @@ def net_worth_report(
     total = assets + liabilities
     account_rows = []
     for account in accounts:
-        account_transactions = [item for item in transactions if item.account_id == account.id]
         account_rows.append({
             "account_id": account.id, "account_name": account.name, "account_type": account.account_type,
             "is_on_budget": account.is_on_budget,
-            "balance_minor": sum(item.amount_minor for item in account_transactions),
-            "transaction_ids": _bounded_ids([item.id for item in account_transactions])[0] if include_transaction_ids else [],
-            "transaction_ids_truncated": _bounded_ids([item.id for item in account_transactions])[1] if include_transaction_ids else False,
+            "balance_minor": balances[account.id],
+            "transaction_ids": _bounded_ids(account_contributions[account.id])[0] if include_transaction_ids else [],
+            "transaction_ids_truncated": _bounded_ids(account_contributions[account.id])[1] if include_transaction_ids else False,
         })
     return {
         "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,
