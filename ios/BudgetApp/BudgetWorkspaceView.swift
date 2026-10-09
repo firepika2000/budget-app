@@ -23,15 +23,16 @@ enum WorkspaceHistoryResource {
 private struct HistoryAuthorityBoundary<Content: View>: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let resource: WorkspaceHistoryResource
+    let unavailableTitle: String
     let content: Content
-    init(_ resource: WorkspaceHistoryResource = .budget, @ViewBuilder content: () -> Content) {
-        self.resource = resource; self.content = content()
+    init(_ resource: WorkspaceHistoryResource = .budget, unavailableTitle: String = "History unavailable", @ViewBuilder content: () -> Content) {
+        self.resource = resource; self.unavailableTitle = unavailableTitle; self.content = content()
     }
     var body: some View {
         if store.historyResourceVisible(resource) {
             content.id(store.authorityRevision)
         } else {
-            ContentUnavailableView("History unavailable", systemImage: "lock",
+            ContentUnavailableView(unavailableTitle, systemImage: "lock",
                                    description: Text("This resource is no longer available in your current budget access."))
                 .accessibilityIdentifier("history-authority-unavailable")
         }
@@ -8987,7 +8988,9 @@ private struct LiveActivityView: View {
     @State private var recentTransactionChanges: [APITransactionChange] = []
     @State private var transactionChangesLoading = false
     @State private var transactionChangesError: String?
-    private var queryKey: String { "\(search)|\(filter)" }
+    @State private var transactionChangesAuthority: Int?
+    @State private var reconciliationAuthority: Int?
+    private var queryKey: String { "\(store.authorityRevision)|\(search)|\(filter)" }
     private var recentPlanChanges: [APIAllocationOperation] {
         Array(store.allocationOperations.sorted {
             if $0.occurredOn != $1.occurredOn { return $0.occurredOn > $1.occurredOn }
@@ -9132,7 +9135,17 @@ private struct LiveActivityView: View {
             .onAppear { openQuickEntryIfRequested() }
             .onChange(of: quickEntryRequest) { _, _ in openQuickEntryIfRequested() }
             .task(id: queryKey) { if !search.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }; guard !Task.isCancelled else { return }; await load(reset: true) }
-            .task { async let changes: Void = loadRecentTransactionChanges(); async let reconciliations: Void = loadRecentReconciliations(); _ = await (changes, reconciliations) }
+            .task(id: store.authorityRevision) { async let changes: Void = loadRecentTransactionChanges(); async let reconciliations: Void = loadRecentReconciliations(); _ = await (changes, reconciliations) }
+            .onChange(of: store.authorityRevision) { _, _ in
+                rows = []; nextCursor = nil; totalCount = 0; errorMessage = nil
+                selectedIDs.removeAll(); selecting = false; showTagPrompt = false
+                recentTransactionChanges = []; recentReconciliations = []; reconciliationAccount = nil
+                transactionChangesError = nil; reconciliationError = nil
+                showFilters = false
+                if !store.accounts.contains(where: { $0.id == filter.accountID }) { filter.accountID = "" }
+                if !store.categories.contains(where: { $0.id == filter.categoryID }) { filter.categoryID = "" }
+                filter.payeeID = ""; filter.payeeName = ""
+            }
             .refreshable { await store.refresh(); await load(reset: true); async let changes: Void = loadRecentTransactionChanges(); async let reconciliations: Void = loadRecentReconciliations(); _ = await (changes, reconciliations) }
     }
     private func openQuickEntryIfRequested() {
@@ -9264,27 +9277,39 @@ private struct LiveActivityView: View {
         return " · " + names.joined(separator: ", ")
     }
     private func loadRecentTransactionChanges() async {
-        guard !transactionChangesLoading else { return }
+        let revision = store.authorityRevision
+        guard !transactionChangesLoading || transactionChangesAuthority != revision else { return }
+        transactionChangesAuthority = revision
         transactionChangesLoading = true
-        defer { transactionChangesLoading = false }
+        defer { if transactionChangesAuthority == revision { transactionChangesLoading = false } }
         do {
-            recentTransactionChanges = try await store.recentTransactionChanges()
+            let values = try await store.recentTransactionChanges()
+            guard revision == store.authorityRevision, !Task.isCancelled else { return }
+            recentTransactionChanges = values
             transactionChangesError = nil
+        } catch is CancellationError { return
         } catch where Task.isCancelled { return }
         catch {
+            guard revision == store.authorityRevision else { return }
             if HistoryObservationPolicy.mustDiscard(after: error) { recentTransactionChanges = [] }
             transactionChangesError = error.localizedDescription
         }
     }
     private func loadRecentReconciliations() async {
-        guard !reconciliationLoading else { return }
+        let revision = store.authorityRevision
+        guard !reconciliationLoading || reconciliationAuthority != revision else { return }
+        reconciliationAuthority = revision
         reconciliationLoading = true
-        defer { reconciliationLoading = false }
+        defer { if reconciliationAuthority == revision { reconciliationLoading = false } }
         do {
-            recentReconciliations = try await store.recentReconciliationHistory()
+            let values = try await store.recentReconciliationHistory()
+            guard revision == store.authorityRevision, !Task.isCancelled else { return }
+            recentReconciliations = values
             reconciliationError = nil
+        } catch is CancellationError { return
         } catch where Task.isCancelled { return }
         catch {
+            guard revision == store.authorityRevision else { return }
             if HistoryObservationPolicy.mustDiscard(after: error) { recentReconciliations = []; reconciliationAccount = nil }
             reconciliationError = error.localizedDescription
         }
@@ -9340,9 +9365,15 @@ private struct LiveActivityView: View {
     }
     private func bulkUpdate(action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String]? = nil) async { loading = true; defer { loading = false }; do { try await store.bulkUpdateTransactions(.init(transactionIDs: selectedIDs.sorted(), action: action, cleared: cleared, flag: flag, tags: tags)); selectedIDs.removeAll(); selecting = false; await load(reset: true); errorMessage = nil } catch { errorMessage = error.localizedDescription } }
     private func load(reset: Bool) async {
-        if loading && !reset { return }; loading = true; defer { loading = false }
-        do { let page = try await store.browseTransactions(filter.query(search: search, currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor)); rows = reset ? page.items : rows + page.items; nextCursor = page.nextCursor; totalCount = page.totalCount; errorMessage = nil }
+        let requestedKey = queryKey
+        if loading && !reset { return }; loading = true; defer { if requestedKey == queryKey { loading = false } }
+        do {
+            let page = try await store.browseTransactions(filter.query(search: search, currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor))
+            guard requestedKey == queryKey, !Task.isCancelled else { return }
+            rows = reset ? page.items : rows + page.items; nextCursor = page.nextCursor; totalCount = page.totalCount; errorMessage = nil
+        } catch is CancellationError { return }
         catch {
+            guard requestedKey == queryKey else { return }
             if HistoryObservationPolicy.mustDiscard(after: error) {
                 rows = []; nextCursor = nil; totalCount = 0
                 selectedIDs.removeAll(); selecting = false; showTagPrompt = false
@@ -9765,7 +9796,9 @@ private struct LiveTransactionDetailView: View {
                 }
                 if transaction.status == "voided" { Section("Void audit") { LabeledContent("Reason", value: transaction.voidReason ?? "No reason supplied"); if let reversal = transaction.reversalTransactionID { NavigationLink("Open reversal") { LiveTransactionDetailView(transactionID: reversal) } } } }
                 if transaction.status == "reversal", let original = transaction.reversalOfTransactionID { Section("Reversal audit") { NavigationLink("Open voided original") { LiveTransactionDetailView(transactionID: original) } } }
-                TransactionAttachmentsView(transaction: transaction)
+                HistoryAuthorityBoundary(.account(transaction.accountID), unavailableTitle: "Attachments unavailable") {
+                    TransactionAttachmentsView(transaction: transaction)
+                }
                 if transaction.transferID != nil && transaction.isReconciled { Section { Label("This transfer includes reconciled history and cannot be edited or deleted.", systemImage: "lock.fill").font(.footnote).foregroundStyle(.secondary) } }
             }
         }.navigationTitle(transaction?.transferID == nil ? "Transaction" : "Transfer Detail").toolbar {

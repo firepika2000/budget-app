@@ -350,6 +350,22 @@ final class AppSessionRefreshTests: XCTestCase {
         }
     }
 
+    func testActivityAndAttachmentAuthorityGuardsAreWiredIntoProductionViews() throws {
+        let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: path)
+        let start = try XCTUnwrap(source.range(of: "private struct LiveActivityView:"))
+        let end = try XCTUnwrap(source.range(of: "private struct TransactionBrowserFilter:"))
+        let activity = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(activity.contains(".onChange(of: store.authorityRevision)"))
+        XCTAssertTrue(activity.contains("recentTransactionChanges = []; recentReconciliations = []; reconciliationAccount = nil"))
+        XCTAssertTrue(activity.contains("selectedIDs.removeAll(); selecting = false; showTagPrompt = false"))
+        XCTAssertTrue(activity.contains("transactionChangesAuthority != revision"))
+        XCTAssertTrue(activity.contains("reconciliationAuthority != revision"))
+        XCTAssertTrue(activity.contains("guard requestedKey == queryKey, !Task.isCancelled"))
+        XCTAssertTrue(source.contains("HistoryAuthorityBoundary(.account(transaction.accountID), unavailableTitle: \"Attachments unavailable\")"))
+    }
+
     @MainActor
     func testLateSnapshotAndReportCannotRestoreWorkspaceAfterAccessDenial() async throws {
         let reads = Counter(), snapshotGate = Gate(), reportGate = Gate()
