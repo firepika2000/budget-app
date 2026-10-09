@@ -540,6 +540,13 @@ destination aliases. Search and entry continue to expose only canonical active P
 provenance remains available in the private authority snapshot. An owner cleaning up duplicate Payees
 therefore no longer turns a personal budget into a permanently server-only budget.
 
+Local schema v21 adds immutable Payee decision history for creation, rename, archive, aliases, merge,
+and budget-specific default-category preferences. Existing Payees receive a migration snapshot, and
+later revisions retain actor attribution and exact before/after metadata while deliberately excluding
+transaction totals and other derived aggregates. The history travels in encrypted Local Device backups
+and server-to-local transfer projections, survives reopen, and remains separate from ledger balances,
+allocations, and activity.
+
 ## Remaining implementation sequence
 
 The production on-device authority and persistence/reopen coverage are implemented. The iOS app can

@@ -984,6 +984,18 @@ class PayeeMerge(BaseModel):
     destination_payee_id: str
 
 
+class PayeeRevisionResponse(BaseModel):
+    id: str
+    payee_id: str
+    budget_id: Optional[str] = None
+    action: Literal["created", "updated", "alias_added", "alias_removed", "merged", "preference_updated"]
+    actor_user_id: str
+    actor_display_name: Optional[str] = None
+    before_snapshot: Optional[dict] = None
+    after_snapshot: dict
+    created_at: datetime
+
+
 class SpendingCategoryReport(BaseModel):
     category_id: str
     category_name: str

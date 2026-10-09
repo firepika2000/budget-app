@@ -172,6 +172,12 @@ private struct PayeeEditorView: View {
                     Section("History") {
                         LabeledContent("Transactions", value: "\(payee.transactionCount)")
                         LabeledContent("Net amount", value: store.format(payee.netAmountMinor))
+                        NavigationLink {
+                            PayeeHistoryView(payeeID: payee.id, payeeName: payee.displayName)
+                        } label: {
+                            Label("Payee history", systemImage: "clock.arrow.circlepath")
+                        }
+                        .accessibilityIdentifier("payee-history")
                     }
                     let history = store.transactions.filter { $0.payeeID == payee.id }
                     if !history.isEmpty {
@@ -563,6 +569,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var demoDelegatedPolicyRevisions: [APIDelegatedPolicyRevision] = []
     private var demoAccountRevisions: [APIAccountRevision] = []
     private var demoStructureRevisions: [APIBudgetStructureRevision] = []
+    private var demoPayeeRevisions: [APIPayeeRevision] = []
     private let now: () -> Date
     private struct InvitationRecord {
         let id: String; let email: String; let role: String
@@ -661,6 +668,20 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         } + store.categories.enumerated().map { index, category in
             demoStructureRevision(resourceType: "category", resourceID: category.id,
                                   action: "created", before: nil, after: demoCategorySnapshot(category, sortOrder: index), createdAt: createdAt)
+        }
+        demoPayeeRevisions = store.payees.flatMap { payee -> [APIPayeeRevision] in
+            var rows = [APIPayeeRevision(
+                id: "demo-payee-created-\(payee.id)", payeeID: payee.id, budgetID: nil,
+                action: "created", actorUserID: requestActorID, actorDisplayName: store.persona.rawValue,
+                beforeSnapshot: nil, afterSnapshot: demoPayeeSnapshot(payee), createdAt: createdAt
+            )]
+            if let categoryID = payee.defaultCategoryID {
+                rows.append(.init(id: "demo-payee-preference-\(payee.id)", payeeID: payee.id,
+                    budgetID: budget.id, action: "preference_updated", actorUserID: requestActorID,
+                    actorDisplayName: store.persona.rawValue, beforeSnapshot: .init(defaultCategoryID: nil),
+                    afterSnapshot: .init(defaultCategoryID: categoryID), createdAt: createdAt))
+            }
+            return rows
         }
     }
 
@@ -1127,6 +1148,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             try demo.loadLocalAuthority(value)
             demoAccountRevisions = try (value.accountRevisions ?? []).map(localAccountRevision)
             demoStructureRevisions = try (value.structureRevisions ?? []).map(localStructureRevision)
+            demoPayeeRevisions = try (value.payeeRevisions ?? []).map(localPayeeRevision)
             debtTermsValues = Dictionary(uniqueKeysWithValues: value.debtTerms.map { item in
                 (item.accountID, APIAccountDebtTermsUpsert(termsType: item.termsType,
                     annualRateBasisPoints: item.annualRateBasisPoints.map(Int.init), rateType: item.rateType,
@@ -1194,12 +1216,17 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             previous: previous, current: projected, to: previous.structureRevisions ?? [],
             budgetID: localIdentity.budgetID, actorUserID: localIdentity.ownerUserID, createdAt: stamp
         )
+        let payeeRevisions = try appendingPayeeRevisions(
+            previous: previous, current: projected, to: previous.payeeRevisions ?? [],
+            budgetID: localIdentity.budgetID, actorUserID: localIdentity.ownerUserID, createdAt: stamp
+        )
         let value = LocalAuthoritySnapshot(
             identity: projected.identity, accounts: projected.accounts,
             accountRevisions: accountRevisions, structureRevisions: structureRevisions,
             groups: projected.groups,
             categories: projected.categories, payees: projected.payees,
-            payeeAliases: projected.payeeAliases, transactions: projected.transactions,
+            payeeAliases: projected.payeeAliases, payeeRevisions: payeeRevisions,
+            transactions: projected.transactions,
             allocations: projected.allocations, reconciliations: projected.reconciliations,
             targets: projected.targets, targetRevisions: targetRevisions, schedules: projected.schedules,
             scheduleRevisions: scheduleRevisions,
@@ -1305,6 +1332,64 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             actorDisplayName: value.actorUserID == localIdentity?.ownerUserID ? localIdentity?.ownerDisplayName : nil,
             beforeSnapshot: try value.beforeJSON.map { try decoder.decode(APIBudgetStructureSnapshot.self, from: Data($0.utf8)) },
             afterSnapshot: try decoder.decode(APIBudgetStructureSnapshot.self, from: Data(value.afterJSON.utf8)),
+            createdAt: value.createdAt)
+    }
+
+    private func appendingPayeeRevisions(
+        previous: LocalAuthoritySnapshot, current: LocalAuthoritySnapshot,
+        to existing: [LocalPayeeRevisionRecord], budgetID: String,
+        actorUserID: String, createdAt: String
+    ) throws -> [LocalPayeeRevisionRecord] {
+        let old = Dictionary(uniqueKeysWithValues: previous.payees.map { ($0.id, $0) })
+        let oldAliases = Dictionary(grouping: previous.payeeAliases, by: \.payeeID)
+        let newAliases = Dictionary(grouping: current.payeeAliases, by: \.payeeID)
+        var result = existing
+        for item in current.payees.sorted(by: { $0.id < $1.id }) {
+            let before = old[item.id]
+            let beforeSnapshot = before.map { localPayeeSnapshot($0, aliases: oldAliases[$0.id] ?? []) }
+            let afterSnapshot = localPayeeSnapshot(item, aliases: newAliases[item.id] ?? [])
+            if before == nil || beforeSnapshot != afterSnapshot {
+                let action: String
+                if before == nil { action = "created" }
+                else if before?.mergedIntoPayeeID != item.mergedIntoPayeeID { action = "merged" }
+                else if beforeSnapshot?.aliases != afterSnapshot.aliases {
+                    action = (afterSnapshot.aliases?.count ?? 0) > (beforeSnapshot?.aliases?.count ?? 0)
+                        ? "alias_added" : "alias_removed"
+                } else { action = "updated" }
+                result.append(.init(id: UUID().uuidString, budgetID: budgetID, payeeID: item.id,
+                    action: action, actorUserID: actorUserID,
+                    beforeJSON: try beforeSnapshot.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) },
+                    afterJSON: String(decoding: try JSONEncoder().encode(afterSnapshot), as: UTF8.self),
+                    createdAt: createdAt))
+            }
+            if before?.defaultCategoryID != item.defaultCategoryID {
+                let beforePreference = APIPayeeRevisionSnapshot(defaultCategoryID: before?.defaultCategoryID)
+                let afterPreference = APIPayeeRevisionSnapshot(defaultCategoryID: item.defaultCategoryID)
+                result.append(.init(id: UUID().uuidString, budgetID: budgetID, payeeID: item.id,
+                    action: "preference_updated", actorUserID: actorUserID,
+                    beforeJSON: String(decoding: try JSONEncoder().encode(beforePreference), as: UTF8.self),
+                    afterJSON: String(decoding: try JSONEncoder().encode(afterPreference), as: UTF8.self),
+                    createdAt: createdAt))
+            }
+        }
+        return result
+    }
+
+    private func localPayeeSnapshot(
+        _ value: LocalPayeeRecord, aliases: [LocalPayeeAliasRecord]
+    ) -> APIPayeeRevisionSnapshot {
+        .init(displayName: value.name, isArchived: value.isArchived,
+              mergedIntoPayeeID: value.mergedIntoPayeeID,
+              aliases: aliases.map(\.displayName).sorted())
+    }
+
+    private func localPayeeRevision(_ value: LocalPayeeRevisionRecord) throws -> APIPayeeRevision {
+        let decoder = JSONDecoder()
+        return .init(id: value.id, payeeID: value.payeeID, budgetID: value.budgetID,
+            action: value.action, actorUserID: value.actorUserID,
+            actorDisplayName: value.actorUserID == localIdentity?.ownerUserID ? localIdentity?.ownerDisplayName : nil,
+            beforeSnapshot: try value.beforeJSON.map { try decoder.decode(APIPayeeRevisionSnapshot.self, from: Data($0.utf8)) },
+            afterSnapshot: try decoder.decode(APIPayeeRevisionSnapshot.self, from: Data(value.afterJSON.utf8)),
             createdAt: value.createdAt)
     }
 
@@ -2192,12 +2277,15 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let name = operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !demo.payees.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { throw workspaceRepositoryError("A payee with this name already exists.") }
         demo.payees.append(.init(id: DemoStore.payeeID(name), name: name, defaultCategoryID: operation.defaultCategoryID))
+        if let after = demo.payees.last { appendDemoPayeeChange(before: nil, after: after, action: "created") }
     }
     func updatePayee(_ operation: UpdatePayeeOperation) async throws { try requireActiveMembership();
         guard let index = demo.payees.firstIndex(where: { $0.id == operation.payeeID }) else { throw workspaceRepositoryError("Payee not found.") }
+        let before = demo.payees[index]
         let old = demo.payees[index].name; demo.payees[index].name = operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         demo.payees[index].isArchived = operation.isArchived; demo.payees[index].defaultCategoryID = operation.defaultCategoryID
         for transactionIndex in demo.transactions.indices where demo.transactions[transactionIndex].payee == old { demo.transactions[transactionIndex].payee = demo.payees[index].name }
+        appendDemoPayeeChange(before: before, after: demo.payees[index], action: "updated")
     }
     func mergePayee(sourceID: String, destinationID: String) async throws { try requireActiveMembership();
         guard let sourceIndex = demo.payees.firstIndex(where: { $0.id == sourceID }),
@@ -2216,17 +2304,66 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         }
         demo.payees[sourceIndex].isArchived = true
         demo.payees[sourceIndex].mergedIntoPayeeID = destinationID
+        appendDemoPayeeChange(before: source, after: demo.payees[sourceIndex], action: "merged")
+        appendDemoPayeeChange(before: destination, after: demo.payees[destinationIndex], action: "merged")
     }
     func createPayeeAlias(payeeID: String, displayName: String) async throws { try requireActiveMembership();
         guard let index = demo.payees.firstIndex(where: { $0.id == payeeID }) else { throw workspaceRepositoryError("Payee not found.") }
+        let before = demo.payees[index]
         let alias = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !demo.payees.flatMap(\.aliases).contains(where: { $0.caseInsensitiveCompare(alias) == .orderedSame }) else { throw workspaceRepositoryError("This alias is already in use.") }
         demo.payees[index].aliases.append(alias)
+        appendDemoPayeeChange(before: before, after: demo.payees[index], action: "alias_added")
     }
     func deletePayeeAlias(payeeID: String, aliasID: String) async throws { try requireActiveMembership();
         guard let index = demo.payees.firstIndex(where: { $0.id == payeeID }), let offset = Int(aliasID.split(separator: "-").last ?? "") else { throw workspaceRepositoryError("Alias not found.") }
         guard demo.payees[index].aliases.indices.contains(offset) else { throw workspaceRepositoryError("Alias not found.") }
+        let before = demo.payees[index]
         demo.payees[index].aliases.remove(at: offset)
+        appendDemoPayeeChange(before: before, after: demo.payees[index], action: "alias_removed")
+    }
+    func payeeHistory(payeeID: String, limit: Int, offset: Int) async throws -> [APIPayeeRevision] {
+        try requireActiveMembership()
+        guard (1...100).contains(limit), offset >= 0,
+              try payeeObservations(includeArchived: true).contains(where: { $0.id == payeeID }) else {
+            throw APIClientError.server(status: 404, message: "Payee not found")
+        }
+        if let localAuthority, let localIdentity {
+            return try await localAuthority.payeeRevisions(payeeID: payeeID, budgetID: localIdentity.budgetID,
+                limit: limit, offset: offset).map(localPayeeRevision)
+        }
+        let rows = Array(demoPayeeRevisions.filter { $0.payeeID == payeeID }
+            .reversed().dropFirst(offset).prefix(limit))
+        return actorHasResourceScope ? rows.map(redactedPayeeRevision) : rows
+    }
+
+    private func appendDemoPayeeChange(before: DemoPayee?, after: DemoPayee, action: String) {
+        let stamp = ISO8601DateFormatter().string(from: now())
+        let beforeIdentity = before.map(demoPayeeSnapshot)
+        let afterIdentity = demoPayeeSnapshot(after)
+        if beforeIdentity != afterIdentity {
+            demoPayeeRevisions.append(.init(id: UUID().uuidString, payeeID: after.id, budgetID: nil,
+                action: action, actorUserID: requestActorID, actorDisplayName: demo.persona.rawValue,
+                beforeSnapshot: beforeIdentity, afterSnapshot: afterIdentity, createdAt: stamp))
+        }
+        let oldDefault = before.flatMap(\.defaultCategoryID)
+        if oldDefault != after.defaultCategoryID {
+            demoPayeeRevisions.append(.init(id: UUID().uuidString, payeeID: after.id, budgetID: budget.id,
+                action: "preference_updated", actorUserID: requestActorID, actorDisplayName: demo.persona.rawValue,
+                beforeSnapshot: .init(defaultCategoryID: oldDefault),
+                afterSnapshot: .init(defaultCategoryID: after.defaultCategoryID), createdAt: stamp))
+        }
+    }
+
+    private func redactedPayeeRevision(_ value: APIPayeeRevision) -> APIPayeeRevision {
+        func redact(_ snapshot: APIPayeeRevisionSnapshot?) -> APIPayeeRevisionSnapshot? {
+            snapshot.map { .init(displayName: $0.displayName, isArchived: $0.isArchived,
+                defaultCategoryID: $0.defaultCategoryID.flatMap { actorCategoryIDs.contains($0) ? $0 : nil }) }
+        }
+        return .init(id: value.id, payeeID: value.payeeID, budgetID: value.budgetID,
+            action: value.action, actorUserID: value.actorUserID, actorDisplayName: value.actorDisplayName,
+            beforeSnapshot: redact(value.beforeSnapshot), afterSnapshot: redact(value.afterSnapshot) ?? .init(),
+            createdAt: value.createdAt)
     }
     func recordTransaction(_ operation: RecordTransactionOperation) async throws { try requireActiveMembership();
         try requireTransactionCapability("create_transaction")
@@ -3186,6 +3323,11 @@ private func accountRevisionSnapshot(_ account: DemoAccount) -> APIAccountRevisi
           isClosed: account.isClosed, paymentCategoryID: nil)
 }
 
+private func demoPayeeSnapshot(_ payee: DemoPayee) -> APIPayeeRevisionSnapshot {
+    .init(displayName: payee.name, isArchived: payee.isArchived,
+          mergedIntoPayeeID: payee.mergedIntoPayeeID, aliases: payee.aliases.sorted())
+}
+
 private func demoGroupID(_ name: String) -> String {
     "demo-group-\(name.lowercased().replacingOccurrences(of: " ", with: "-"))"
 }
@@ -3310,6 +3452,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func mergePayee(sourceID: String, destinationID: String) async throws { try await credentials.prepare(); _ = try await client.mergePayee(budgetID: budget.id, payeeID: sourceID, destinationPayeeID: destinationID, token: token) }
     func createPayeeAlias(payeeID: String, displayName: String) async throws { try await credentials.prepare(); _ = try await client.createPayeeAlias(budgetID: budget.id, payeeID: payeeID, displayName: displayName, token: token) }
     func deletePayeeAlias(payeeID: String, aliasID: String) async throws { try await credentials.prepare(); try await client.deletePayeeAlias(budgetID: budget.id, payeeID: payeeID, aliasID: aliasID, token: token) }
+    func payeeHistory(payeeID: String, limit: Int, offset: Int) async throws -> [APIPayeeRevision] { try await credentials.prepare(); return try await client.payeeHistory(budgetID: budget.id, payeeID: payeeID, limit: limit, offset: offset, token: token) }
 
     func recordTransaction(_ operation: RecordTransactionOperation) async throws {
         var identified = operation
@@ -4218,6 +4361,10 @@ final class BudgetWorkspaceStore: ObservableObject {
     func mergePayee(sourceID: String, destinationID: String) async throws { try await services().payees.merge(sourceID: sourceID, destinationID: destinationID); await refresh() }
     func createPayeeAlias(payeeID: String, displayName: String) async throws { try await services().payees.createAlias(payeeID: payeeID, displayName: displayName); await refresh() }
     func deletePayeeAlias(payeeID: String, aliasID: String) async throws { try await services().payees.deleteAlias(payeeID: payeeID, aliasID: aliasID); await refresh() }
+    func payeeHistory(payeeID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIPayeeRevision] {
+        guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Payee history request is out of range.") }
+        return try await commands().payeeHistory(payeeID: payeeID, limit: limit, offset: offset)
+    }
 
     func deleteTransaction(id: String) async throws {
         try await services().transactions.delete(id: id)
@@ -8050,6 +8197,99 @@ private struct BudgetStructureHistoryView: View {
         if before.name != row.afterSnapshot.name { return "\(before.name) → \(row.afterSnapshot.name)" }
         if before.note != row.afterSnapshot.note { return "Note updated" }
         if before.iconName != row.afterSnapshot.iconName { return "Icon updated" }
+        return nil
+    }
+}
+
+private struct PayeeHistoryView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let payeeID: String; let payeeName: String
+    @State private var rows: [APIPayeeRevision] = []
+    @State private var loading = false; @State private var loadingOlder = false
+    @State private var canLoadOlder = false; @State private var errorMessage: String?
+    private let pageSize = 50
+
+    var body: some View {
+        List {
+            if loading && rows.isEmpty { ProgressView("Loading history…") }
+            else if rows.isEmpty && errorMessage == nil {
+                ContentUnavailableView("No Payee history", systemImage: "clock",
+                    description: Text("Identity, alias, merge, and category-suggestion decisions for \(payeeName) will remain here."))
+            } else {
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(title(row), systemImage: symbol(row.action)).font(.headline)
+                        if let detail = detail(row) { Text(detail).font(.subheadline) }
+                        Text("\(row.actorDisplayName ?? "Unknown member") · \(row.createdAt)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.accessibilityElement(children: .combine)
+                }
+                if canLoadOlder {
+                    Button(loadingOlder ? "Loading…" : "Load Earlier Changes") { Task { await load(reset: false) } }
+                        .disabled(loadingOlder)
+                }
+            }
+        }
+        .navigationTitle("Payee History")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load(reset: true) }
+        .refreshable { await load(reset: true) }
+        .alert("History unavailable", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("Try Again") { Task { await load(reset: true) } }; Button("Cancel", role: .cancel) {}
+        } message: { Text(errorMessage ?? "Unknown error") }
+    }
+
+    private func load(reset: Bool) async {
+        if reset { loading = true; errorMessage = nil } else { loadingOlder = true }
+        defer { loading = false; loadingOlder = false }
+        do {
+            let next = try await store.payeeHistory(payeeID: payeeID, limit: pageSize,
+                offset: reset ? 0 : rows.count)
+            if reset { rows = next } else { rows.append(contentsOf: next) }
+            canLoadOlder = next.count == pageSize
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func title(_ row: APIPayeeRevision) -> String {
+        switch row.action {
+        case "created": return "Payee created"
+        case "alias_added": return "Alias added"
+        case "alias_removed": return "Alias removed"
+        case "merged": return row.afterSnapshot.mergedIntoPayeeID == nil ? "Payees merged here" : "Merged into another Payee"
+        case "preference_updated": return "Category suggestion changed"
+        default:
+            if row.beforeSnapshot?.isArchived != row.afterSnapshot.isArchived {
+                return row.afterSnapshot.isArchived == true ? "Payee archived" : "Payee restored"
+            }
+            return row.beforeSnapshot?.displayName != row.afterSnapshot.displayName ? "Payee renamed" : "Payee updated"
+        }
+    }
+
+    private func symbol(_ action: String) -> String {
+        switch action {
+        case "created": "plus.circle"
+        case "alias_added": "link.badge.plus"
+        case "alias_removed": "link.badge.minus"
+        case "merged": "arrow.triangle.merge"
+        case "preference_updated": "folder.badge.gearshape"
+        default: "pencil.circle"
+        }
+    }
+
+    private func detail(_ row: APIPayeeRevision) -> String? {
+        let before = row.beforeSnapshot, after = row.afterSnapshot
+        if before?.displayName != after.displayName, let name = after.displayName {
+            return before?.displayName.map { "\($0) → \(name)" } ?? name
+        }
+        if before?.aliases != after.aliases {
+            let old = Set(before?.aliases ?? []), new = Set(after.aliases ?? [])
+            if let added = new.subtracting(old).sorted().first { return added }
+            if let removed = old.subtracting(new).sorted().first { return removed }
+        }
+        if before?.defaultCategoryID != after.defaultCategoryID {
+            return after.defaultCategoryID.flatMap { id in store.categories.first(where: { $0.id == id })?.name }
+                ?? "No category suggestion"
+        }
         return nil
     }
 }

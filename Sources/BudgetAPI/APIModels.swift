@@ -698,6 +698,52 @@ public struct APIBudgetStructureRevision: Identifiable, Codable, Equatable, Send
     }
 }
 
+public struct APIPayeeRevisionSnapshot: Codable, Equatable, Sendable {
+    public let displayName: String?
+    public let isArchived: Bool?
+    public let mergedIntoPayeeID: String?
+    public let aliases: [String]?
+    public let defaultCategoryID: String?
+
+    public init(displayName: String? = nil, isArchived: Bool? = nil,
+                mergedIntoPayeeID: String? = nil, aliases: [String]? = nil,
+                defaultCategoryID: String? = nil) {
+        self.displayName = displayName; self.isArchived = isArchived
+        self.mergedIntoPayeeID = mergedIntoPayeeID; self.aliases = aliases
+        self.defaultCategoryID = defaultCategoryID
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case aliases
+        case displayName = "display_name", isArchived = "is_archived"
+        case mergedIntoPayeeID = "merged_into_payee_id"
+        case defaultCategoryID = "default_category_id"
+    }
+}
+
+public struct APIPayeeRevision: Identifiable, Codable, Equatable, Sendable {
+    public let id: String; public let payeeID: String; public let budgetID: String?
+    public let action: String; public let actorUserID: String; public let actorDisplayName: String?
+    public let beforeSnapshot: APIPayeeRevisionSnapshot?; public let afterSnapshot: APIPayeeRevisionSnapshot
+    public let createdAt: String
+
+    public init(id: String, payeeID: String, budgetID: String?, action: String,
+                actorUserID: String, actorDisplayName: String?, beforeSnapshot: APIPayeeRevisionSnapshot?,
+                afterSnapshot: APIPayeeRevisionSnapshot, createdAt: String) {
+        self.id = id; self.payeeID = payeeID; self.budgetID = budgetID; self.action = action
+        self.actorUserID = actorUserID; self.actorDisplayName = actorDisplayName
+        self.beforeSnapshot = beforeSnapshot; self.afterSnapshot = afterSnapshot; self.createdAt = createdAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, action
+        case payeeID = "payee_id", budgetID = "budget_id"
+        case actorUserID = "actor_user_id", actorDisplayName = "actor_display_name"
+        case beforeSnapshot = "before_snapshot", afterSnapshot = "after_snapshot"
+        case createdAt = "created_at"
+    }
+}
+
 public struct APIAccountCreate: Encodable, Sendable {
     public let name: String
     public let accountType: String

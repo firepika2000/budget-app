@@ -129,6 +129,66 @@ def test_payee_alias_rename_archive_and_merge_preserve_transaction_audit(client,
     assert via_merged_name.json()["payee_id"] == destination["id"]
 
 
+def test_payee_history_is_immutable_attributed_bounded_and_suppresses_noops(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    _, category = create_budget_structure(client, owner_token, budget["id"])
+    root = f"/api/v1/budgets/{budget['id']}"
+    payee = client.post(f"{root}/payees", headers=auth(owner_token), json={
+        "display_name": "Corner Market", "default_category_id": category["id"],
+    }).json()
+    alias = client.post(f"{root}/payees/{payee['id']}/aliases", headers=auth(owner_token), json={
+        "display_name": "CM #42",
+    }).json()
+    assert client.put(f"{root}/payees/{payee['id']}", headers=auth(owner_token), json={
+        "display_name": "Corner Grocery", "is_archived": False,
+        "default_category_id": category["id"],
+    }).status_code == 200
+    history_url = f"{root}/payees/{payee['id']}/history"
+    history = client.get(history_url, headers=auth(owner_token))
+    assert history.status_code == 200, history.text
+    rows = history.json()
+    assert {row["action"] for row in rows} == {"created", "preference_updated", "alias_added", "updated"}
+    assert all(row["actor_user_id"] and row["actor_display_name"] for row in rows)
+    alias_row = next(row for row in rows if row["action"] == "alias_added")
+    assert alias_row["before_snapshot"]["aliases"] == []
+    assert alias_row["after_snapshot"]["aliases"] == ["CM #42"]
+    preference = next(row for row in rows if row["action"] == "preference_updated")
+    assert preference["budget_id"] == budget["id"]
+    assert preference["after_snapshot"] == {"default_category_id": category["id"]}
+
+    # Saving the same state creates no replacement decision.
+    count = len(rows)
+    assert client.put(f"{root}/payees/{payee['id']}", headers=auth(owner_token), json={
+        "display_name": "Corner Grocery", "is_archived": False,
+        "default_category_id": category["id"],
+    }).status_code == 200
+    assert len(client.get(history_url, headers=auth(owner_token)).json()) == count
+    assert len(client.get(f"{history_url}?limit=1&offset=1", headers=auth(owner_token)).json()) == 1
+    assert client.get(f"{history_url}?limit=0", headers=auth(owner_token)).status_code == 422
+
+    assert client.delete(f"{root}/payees/{payee['id']}/aliases/{alias['id']}", headers=auth(owner_token)).status_code == 204
+    after_delete = client.get(history_url, headers=auth(owner_token)).json()
+    assert after_delete[0]["action"] == "alias_removed"
+    assert after_delete[0]["after_snapshot"]["aliases"] == []
+
+
+def test_free_text_payee_creation_records_identity_history(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    created = client.post(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token), json={
+        "account_id": account["id"], "category_id": category["id"],
+        "payee_name": "New Merchant", "amount_minor": -100, "occurred_on": "2026-10-08",
+    })
+    assert created.status_code == 201, created.text
+    payee_id = created.json()["payee_id"]
+    rows = client.get(
+        f"/api/v1/budgets/{budget['id']}/payees/{payee_id}/history", headers=auth(owner_token)
+    ).json()
+    assert len(rows) == 1
+    assert rows[0]["action"] == "created"
+    assert rows[0]["after_snapshot"]["display_name"] == "New Merchant"
+
+
 def test_payee_and_alias_names_share_one_deterministic_namespace(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     first = client.post(f"/api/v1/budgets/{budget['id']}/payees", headers=auth(owner_token), json={
@@ -229,6 +289,11 @@ def test_scoped_payee_search_does_not_disclose_alias_metadata(client, owner_toke
     by_alias = client.get(f"/api/v1/budgets/{budget['id']}/payees/search?q=private", headers=auth(token))
     assert by_alias.status_code == 200
     assert by_alias.json() == {"items": [], "next_cursor": None}
+    history = client.get(
+        f"/api/v1/budgets/{budget['id']}/payees/{payee['id']}/history", headers=auth(token)
+    )
+    assert history.status_code == 200
+    assert all("aliases" not in row["after_snapshot"] for row in history.json())
 
 
 def test_category_scoped_payees_exclude_uncategorized_income_and_private_defaults(client, owner_token, session_factory):

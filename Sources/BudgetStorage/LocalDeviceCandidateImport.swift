@@ -148,6 +148,7 @@ public enum LocalDeviceCandidateImportService {
             accountRevisions: value.accountRevisions ?? [], structureRevisions: value.structureRevisions ?? [],
             groups: value.groups,
             categories: value.categories, payees: value.payees, payeeAliases: value.payeeAliases,
+            payeeRevisions: value.payeeRevisions ?? [],
             transactions: value.transactions, allocations: value.allocations,
             reconciliations: value.reconciliations, targets: value.targets,
             targetRevisions: value.targetRevisions ?? [], schedules: value.schedules,

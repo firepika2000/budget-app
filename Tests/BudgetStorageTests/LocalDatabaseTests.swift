@@ -67,6 +67,7 @@ final class LocalDatabaseTests: XCTestCase {
         try await database?.transaction(fixtureStatements)
         try await database?.transaction([
             .init("DROP TABLE credit_reserve_attributions"),
+            .init("DROP TABLE payee_revisions"),
             .init("DROP TABLE budget_structure_revisions"),
             .init("DROP TABLE account_revisions"),
             .init("DROP TABLE credit_reserve_events"),
@@ -361,7 +362,7 @@ final class LocalDatabaseTests: XCTestCase {
         XCTAssertEqual(value?.financialClassification, "income")
         XCTAssertEqual(value?.scheduledTransactionID, "deleted-schedule")
         XCTAssertEqual(value?.amountMinor, 123_45)
-        XCTAssertEqual(LocalDatabase.schemaVersion, 20)
+        XCTAssertEqual(LocalDatabase.schemaVersion, 21)
     }
 
     func testStatementImportHistoryPersistsPrivatelyAcrossReopenAndPaginates() async throws {
@@ -536,6 +537,58 @@ final class LocalDatabaseTests: XCTestCase {
         let reopened = try LocalAuthorityStore(fileURL: databaseURL)
         snapshot = try await reopened.snapshot(budgetID: "budget")
         XCTAssertTrue(snapshot.transactions.isEmpty)
+        try await reopened.integrityCheck()
+    }
+
+    func testPayeeHistoryPersistsAcrossReopenAndDoesNotChangeLedgerMoney() async throws {
+        let databaseURL = try temporaryDirectory().appendingPathComponent("payee-history.sqlite")
+        var store: LocalAuthorityStore? = try LocalAuthorityStore(fileURL: databaseURL)
+        let timestamp = "2026-10-08T12:00:00Z"
+        try await store?.bootstrap(.init(
+            householdID: "household", householdName: "Local Household", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "budget", budgetName: "Local Budget", currencyCode: "USD"
+        ), createdAt: timestamp)
+        try await store?.insertAccount(.init(
+            id: "checking", budgetID: "budget", name: "Checking", kind: "checking",
+            isOnBudget: true, openingBalanceMinor: 12_345, createdAt: timestamp
+        ))
+        try await store?.insertPayee(.init(id: "market", budgetID: "budget", name: "Market", normalizedName: "market"))
+        let base = try await store!.snapshot(budgetID: "budget")
+        let history = [
+            LocalPayeeRevisionRecord(
+                id: "created", budgetID: "budget", payeeID: "market", action: "created",
+                actorUserID: "owner", beforeJSON: nil,
+                afterJSON: #"{"display_name":"Market","is_archived":false,"aliases":[]}"#,
+                createdAt: timestamp
+            ),
+            LocalPayeeRevisionRecord(
+                id: "renamed", budgetID: "budget", payeeID: "market", action: "updated",
+                actorUserID: "owner", beforeJSON: #"{"display_name":"Market"}"#,
+                afterJSON: #"{"display_name":"Neighborhood Market"}"#,
+                createdAt: "2026-10-08T13:00:00Z"
+            ),
+        ]
+        try await store?.replaceWorkspaceState(.init(
+            identity: base.identity, accounts: base.accounts, groups: base.groups,
+            categories: base.categories, payees: base.payees, payeeAliases: base.payeeAliases,
+            payeeRevisions: history, transactions: base.transactions, allocations: base.allocations,
+            reconciliations: base.reconciliations, targets: base.targets, schedules: base.schedules,
+            attachments: base.attachments
+        ))
+        store = nil
+
+        let reopened = try LocalAuthorityStore(fileURL: databaseURL)
+        let firstPage = try await reopened.payeeRevisions(
+            payeeID: "market", budgetID: "budget", limit: 1, offset: 0
+        )
+        let secondPage = try await reopened.payeeRevisions(
+            payeeID: "market", budgetID: "budget", limit: 1, offset: 1
+        )
+        let snapshot = try await reopened.snapshot(budgetID: "budget")
+        XCTAssertEqual(firstPage.map(\.action), ["updated"])
+        XCTAssertEqual(secondPage.map(\.action), ["created"])
+        XCTAssertEqual(snapshot.payeeRevisions, history)
+        XCTAssertEqual(snapshot.accounts.first?.openingBalanceMinor, 12_345)
         try await reopened.integrityCheck()
     }
 

@@ -224,6 +224,14 @@ public struct APIClient {
                                     .init(name: "offset", value: String(offset))], token: token)
     }
 
+    public func payeeHistory(
+        budgetID: String, payeeID: String, limit: Int = 50, offset: Int = 0, token: String
+    ) async throws -> [APIPayeeRevision] {
+        try await send(path: "api/v1/budgets/\(budgetID)/payees/\(payeeID)/history",
+                       queryItems: [.init(name: "limit", value: String(limit)),
+                                    .init(name: "offset", value: String(offset))], token: token)
+    }
+
     public func accountDebtTerms(budgetID: String, accountID: String, token: String) async throws -> APIAccountDebtTerms? {
         try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/debt-terms", token: token)
     }

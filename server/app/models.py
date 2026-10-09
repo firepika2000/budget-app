@@ -217,6 +217,29 @@ class PayeeBudgetPreference(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
 
+class PayeeRevision(Base):
+    """Append-only Payee identity and per-budget preference decisions."""
+    __tablename__ = "payee_revisions"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('created', 'updated', 'alias_added', 'alias_removed', 'merged', 'preference_updated')",
+            name="ck_payee_revision_action",
+        ),
+        Index("ix_payee_revision_payee_created", "payee_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
+    # Null denotes household-wide identity metadata. A value scopes a budget-specific preference.
+    budget_id: Mapped[Optional[str]] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), index=True, nullable=True)
+    payee_id: Mapped[str] = mapped_column(String(36), index=True)
+    action: Mapped[str] = mapped_column(String(30))
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    before_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    after_snapshot: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+
+
 class BudgetGrant(Base):
     __tablename__ = "budget_grants"
     __table_args__ = (UniqueConstraint("budget_id", "user_id"),)

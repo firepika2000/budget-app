@@ -77,6 +77,7 @@ public enum LocalDeviceTransferProjectionDecoder {
             ) },
             payees: value.payees.map { .init(id: $0.id, budgetID: $0.budgetId, name: $0.name, normalizedName: $0.normalizedName, defaultCategoryID: $0.defaultCategoryId, isArchived: $0.isArchived, mergedIntoPayeeID: $0.mergedIntoPayeeId) },
             payeeAliases: value.payeeAliases.map { .init(id: $0.id, payeeID: $0.payeeId, displayName: $0.displayName, normalizedName: $0.normalizedName) },
+            payeeRevisions: (value.payeeRevisions ?? []).map { .init(id: $0.id, budgetID: $0.budgetId, payeeID: $0.payeeId, action: $0.action, actorUserID: $0.actorUserId, beforeJSON: $0.beforeJson, afterJSON: $0.afterJson, createdAt: $0.createdAt) },
             transactions: value.transactions.map { item in .init(
                 id: item.id, budgetID: item.budgetId, accountID: item.accountId,
                 payeeID: item.payeeId, payeeName: item.payeeName, amountMinor: item.amountMinor,
@@ -135,6 +136,7 @@ public enum LocalDeviceTransferProjectionDecoder {
         let budgetID = snapshot.identity.budgetID
         let budgetRows = snapshot.accounts.map(\.budgetID) + snapshot.groups.map(\.budgetID)
             + snapshot.categories.map(\.budgetID) + snapshot.payees.map(\.budgetID)
+            + (snapshot.payeeRevisions ?? []).map(\.budgetID)
             + snapshot.transactions.map(\.budgetID) + snapshot.allocations.map(\.budgetID)
             + snapshot.schedules.map(\.budgetID) + snapshot.cashRolloverPolicies.map(\.budgetID)
             + (snapshot.debtPayoffPlans ?? []).map(\.budgetID)
@@ -147,6 +149,7 @@ public enum LocalDeviceTransferProjectionDecoder {
         guard Set(snapshot.accounts.map(\.id)).count == snapshot.accounts.count,
               Set(snapshot.transactions.map(\.id)).count == snapshot.transactions.count,
               Set(snapshot.attachments.map(\.id)).count == snapshot.attachments.count,
+              Set((snapshot.payeeRevisions ?? []).map(\.id)).count == (snapshot.payeeRevisions ?? []).count,
               Set(snapshot.attachmentTombstones.map(\.id)).count == snapshot.attachmentTombstones.count,
               Set(snapshot.attachments.map(\.id)).isDisjoint(with: snapshot.attachmentTombstones.map(\.id)) else {
             throw LocalStorageError.invalidSnapshot("Server transfer projection contains duplicate identities")
@@ -222,7 +225,8 @@ private struct Envelope: Decodable {
     let accounts: [AccountDTO]; let accountRevisions: [AccountRevisionDTO]?
     let structureRevisions: [StructureRevisionDTO]?
     let groups: [GroupDTO]; let categories: [CategoryDTO]
-    let payees: [PayeeDTO]; let payeeAliases: [AliasDTO]; let transactions: [TransactionDTO]
+    let payees: [PayeeDTO]; let payeeAliases: [AliasDTO]; let payeeRevisions: [PayeeRevisionDTO]?
+    let transactions: [TransactionDTO]
     let allocations: [AllocationDTO]; let reconciliations: [ReconciliationDTO]
     let targets: [TargetDTO]; let targetRevisions: [TargetRevisionDTO]?; let schedules: [ScheduleDTO]
     let scheduleRevisions: [ScheduleRevisionDTO]?; let attachments: [AttachmentDTO]
@@ -248,6 +252,7 @@ private struct CategoryDTO: Decodable {
 }
 private struct PayeeDTO: Decodable { let id: String; let budgetId: String; let name: String; let normalizedName: String; let defaultCategoryId: String?; let isArchived: Bool; let mergedIntoPayeeId: String? }
 private struct AliasDTO: Decodable { let id: String; let payeeId: String; let displayName: String; let normalizedName: String }
+private struct PayeeRevisionDTO: Decodable { let id: String; let budgetId: String; let payeeId: String; let action: String; let actorUserId: String; let beforeJson: String?; let afterJson: String; let createdAt: String }
 private struct SplitDTO: Decodable { let id: String; let categoryId: String; let amountMinor: Int64; let memo: String; let financialClassification: String? }
 private struct TransactionDTO: Decodable { let id: String; let budgetId: String; let accountId: String; let payeeId: String?; let payeeName: String; let amountMinor: Int64; let occurredOn: String; let memo: String; let isCleared: Bool; let isReconciled: Bool; let status: String; let transferId: String?; let scheduledTransactionId: String?; let flag: String?; let tags: [String]; let financialClassification: String?; let voidReason: String?; let reversalOfTransactionId: String?; let reversalTransactionId: String?; let createdByUserId: String; let createdAt: String; let splits: [SplitDTO] }
 private struct AllocationDTO: Decodable { let id: String; let operationId: String; let budgetId: String; let sourceCategoryId: String?; let categoryId: String?; let amountMinor: Int64; let occurredOn: String; let kind: String; let actorUserId: String; let note: String; let createdAt: String }

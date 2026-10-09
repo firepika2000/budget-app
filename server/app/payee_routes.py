@@ -14,9 +14,10 @@ from .access import can_access_resource, visible_resource_ids
 from .budgeting_routes import require_budget_capability
 from .database import get_db
 from .dependencies import get_current_user
-from .models import Budget, Category, Payee, PayeeAlias, PayeeBudgetPreference, ScheduledTransaction, Transaction, TransactionChange, TransactionSplit, User
+from .models import Budget, Category, Payee, PayeeAlias, PayeeBudgetPreference, PayeeRevision, ScheduledTransaction, Transaction, TransactionChange, TransactionSplit, User
+from .payee_history import append_payee_revision, payee_snapshot, preference_snapshot
 from .payee_names import display_payee_name, normalized_payee_name
-from .schemas import PayeeAliasCreate, PayeeAliasResponse, PayeeCreate, PayeeMerge, PayeePageResponse, PayeeResponse, PayeeUpdate
+from .schemas import PayeeAliasCreate, PayeeAliasResponse, PayeeCreate, PayeeMerge, PayeePageResponse, PayeeResponse, PayeeRevisionResponse, PayeeUpdate
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
@@ -174,8 +175,9 @@ def list_payees(budget_id: str, include_archived: bool = False, user: User = Dep
     return [_response(db, budget, item, visible, visible_category_ids=category_scope, include_aliases=not scoped) for item in payees]
 
 
-def _set_preference(db: Session, budget: Budget, payee: Payee, category_id: str | None, user: User) -> None:
+def _set_preference(db: Session, budget: Budget, payee: Payee, category_id: str | None, user: User) -> tuple[dict, dict]:
     preference = _preference(db, budget.id, payee.id)
+    before = preference_snapshot(preference.default_category_id if preference else None)
     if category_id is not None:
         category = db.get(Category, category_id)
         if category is None or category.budget_id != budget.id or category.is_archived or not can_access_resource(db, user, budget, "category", category.id):
@@ -188,6 +190,7 @@ def _set_preference(db: Session, budget: Budget, payee: Payee, category_id: str 
         else:
             preference.default_category_id = category_id
             preference.updated_by_user_id = user.id
+    return before, preference_snapshot(category_id)
 
 
 @router.post("/payees", response_model=PayeeResponse, status_code=status.HTTP_201_CREATED)
@@ -203,7 +206,11 @@ def create_payee(budget_id: str, body: PayeeCreate, user: User = Depends(get_cur
     db.add(payee)
     try:
         db.flush()
-        _set_preference(db, budget, payee, body.default_category_id, user)
+        append_payee_revision(db, payee=payee, actor_user_id=user.id, action="created",
+                              before=None, after=payee_snapshot(db, payee))
+        preference_before, preference_after = _set_preference(db, budget, payee, body.default_category_id, user)
+        append_payee_revision(db, payee=payee, budget_id=budget.id, actor_user_id=user.id,
+                              action="preference_updated", before=preference_before, after=preference_after)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -224,6 +231,7 @@ def update_payee(budget_id: str, payee_id: str, body: PayeeUpdate, user: User = 
     key = normalized_payee_name(name)
     if _name_collision(db, budget.household_id, key, excluding_payee_id=payee.id):
         raise HTTPException(status_code=409, detail="A payee or alias with this name already exists")
+    before = payee_snapshot(db, payee)
     old_name = payee.display_name
     payee.display_name, payee.name_key, payee.is_archived = name, key, body.is_archived
     if name != old_name:
@@ -239,7 +247,11 @@ def update_payee(budget_id: str, payee_id: str, body: PayeeUpdate, user: User = 
             ))
         for schedule in db.scalars(select(ScheduledTransaction).where(ScheduledTransaction.payee_id == payee.id)):
             schedule.name = name
-    _set_preference(db, budget, payee, body.default_category_id, user)
+    preference_before, preference_after = _set_preference(db, budget, payee, body.default_category_id, user)
+    append_payee_revision(db, payee=payee, actor_user_id=user.id, action="updated",
+                          before=before, after=payee_snapshot(db, payee))
+    append_payee_revision(db, payee=payee, budget_id=budget.id, actor_user_id=user.id,
+                          action="preference_updated", before=preference_before, after=preference_after)
     try:
         db.commit()
     except IntegrityError:
@@ -260,8 +272,12 @@ def create_alias(budget_id: str, payee_id: str, body: PayeeAliasCreate, user: Us
     key = normalized_payee_name(name)
     if _name_collision(db, budget.household_id, key):
         raise HTTPException(status_code=409, detail="This payee name or alias is already in use")
+    before = payee_snapshot(db, payee)
     alias = PayeeAlias(payee_id=payee.id, display_name=name, name_key=key, created_by_user_id=user.id)
-    db.add(alias); db.commit(); db.refresh(alias)
+    db.add(alias); db.flush()
+    append_payee_revision(db, payee=payee, actor_user_id=user.id, action="alias_added",
+                          before=before, after=payee_snapshot(db, payee))
+    db.commit(); db.refresh(alias)
     return alias
 
 
@@ -272,7 +288,12 @@ def delete_alias(budget_id: str, payee_id: str, alias_id: str, user: User = Depe
     alias = db.scalar(select(PayeeAlias).where(PayeeAlias.id == alias_id, PayeeAlias.payee_id == payee_id))
     if alias is None:
         raise HTTPException(status_code=404, detail="Alias not found")
-    db.delete(alias); db.commit()
+    before = payee_snapshot(db, _payee(db, budget, payee_id))
+    db.delete(alias); db.flush()
+    payee = _payee(db, budget, payee_id)
+    append_payee_revision(db, payee=payee, actor_user_id=user.id, action="alias_removed",
+                          before=before, after=payee_snapshot(db, payee))
+    db.commit()
 
 
 @router.post("/payees/{payee_id}/merge", response_model=PayeeResponse)
@@ -282,6 +303,8 @@ def merge_payee(budget_id: str, payee_id: str, body: PayeeMerge, user: User = De
     if (source.id == destination.id or source.is_archived or destination.is_archived or
             source.merged_into_payee_id is not None or destination.merged_into_payee_id is not None):
         raise HTTPException(status_code=409, detail="Choose two active payees")
+    source_before = payee_snapshot(db, source)
+    destination_before = payee_snapshot(db, destination)
     for transaction in db.scalars(select(Transaction).where(Transaction.payee_id == source.id)):
         before = transaction.payee_id
         transaction.payee_id = destination.id
@@ -310,5 +333,60 @@ def merge_payee(budget_id: str, payee_id: str, body: PayeeMerge, user: User = De
     source.merged_into_payee_id = destination.id
     source.is_archived = True
     source.name_key = None
+    db.flush()
+    append_payee_revision(db, payee=source, actor_user_id=user.id, action="merged",
+                          before=source_before, after=payee_snapshot(db, source))
+    append_payee_revision(db, payee=destination, actor_user_id=user.id, action="merged",
+                          before=destination_before, after=payee_snapshot(db, destination))
     db.commit()
     return _response(db, budget, destination, _visible_transactions(db, user, budget), visible_category_ids=visible_resource_ids(db, user, budget, "category"))
+
+
+@router.get("/payees/{payee_id}/history", response_model=list[PayeeRevisionResponse])
+def payee_history(
+    budget_id: str,
+    payee_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    payee = _payee(db, budget, payee_id)
+    accounts = visible_resource_ids(db, user, budget, "account")
+    categories = visible_resource_ids(db, user, budget, "category")
+    scoped = accounts is not None or categories is not None
+    if scoped:
+        visible = db.scalar(select(Transaction.id).where(
+            *_visible_transaction_conditions(user, budget, db),
+            Transaction.payee_id == payee.id,
+        ).limit(1))
+        if visible is None:
+            raise HTTPException(status_code=404, detail="Payee not found")
+    revisions = list(db.scalars(select(PayeeRevision).where(
+        PayeeRevision.household_id == budget.household_id,
+        PayeeRevision.payee_id == payee.id,
+        or_(PayeeRevision.budget_id.is_(None), PayeeRevision.budget_id == budget.id),
+    ).order_by(PayeeRevision.created_at.desc(), PayeeRevision.id.desc()).offset(offset).limit(limit)))
+    actor_ids = {item.actor_user_id for item in revisions}
+    actors = {item.id: item.display_name for item in db.scalars(
+        select(User).where(User.id.in_(actor_ids))
+    )} if actor_ids else {}
+    def visible_snapshot(snapshot: dict | None) -> dict | None:
+        if snapshot is None or not scoped:
+            return snapshot
+        result = dict(snapshot)
+        result.pop("aliases", None)
+        result.pop("merged_into_payee_id", None)
+        if categories is not None and result.get("default_category_id") not in categories:
+            result["default_category_id"] = None
+        return result
+
+    return [{
+        "id": item.id, "payee_id": item.payee_id, "budget_id": item.budget_id,
+        "action": item.action, "actor_user_id": item.actor_user_id,
+        "actor_display_name": actors.get(item.actor_user_id),
+        "before_snapshot": visible_snapshot(item.before_snapshot),
+        "after_snapshot": visible_snapshot(item.after_snapshot) or {},
+        "created_at": item.created_at,
+    } for item in revisions]

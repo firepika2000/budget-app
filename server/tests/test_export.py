@@ -471,7 +471,7 @@ def test_structured_export_contract_covers_every_persistent_domain_model():
     exported_tables = {
         "households", "memberships", "invitations", "household_access_events", "users",
         "budgets", "budget_structure_revisions", "cash_rollover_policy_changes", "payees", "payee_aliases",
-        "payee_budget_preferences", "budget_grants", "budget_access_profiles",
+        "payee_budget_preferences", "payee_revisions", "budget_grants", "budget_access_profiles",
         "capability_grants", "resource_grants", "accounts", "account_revisions", "account_debt_terms",
         "category_groups", "categories", "category_favorites", "delegated_budget_policies",
             "delegated_category_rules", "delegated_budget_policy_revisions", "category_targets", "category_target_snoozes",

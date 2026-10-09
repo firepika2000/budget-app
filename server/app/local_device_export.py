@@ -22,7 +22,7 @@ from .models import (
     Account, AccountRevision, AccountDebtTerms, AllocationOperation, AllocationPosting, Budget,
     BudgetStructureRevision, CashRolloverPolicyChange, Category, CategoryFavorite, CategoryGroup, CategoryTarget, CategoryTargetRevision,
     CategoryTargetSnooze, CreditCardReserveEvent, Household, Payee, PayeeAlias,
-    DebtPayoffPlan, ImportBatch, PayeeBudgetPreference, ScheduledTransaction, ScheduledTransactionRevision, Transaction, TransactionAttachment,
+    DebtPayoffPlan, ImportBatch, PayeeBudgetPreference, PayeeRevision, ScheduledTransaction, ScheduledTransactionRevision, Transaction, TransactionAttachment,
     Reconciliation, TransactionChange, TransactionSplit, User,
 )
 
@@ -183,6 +183,10 @@ def build_local_device_projection(
     payees = list(db.scalars(select(Payee).where(Payee.household_id == household.id).order_by(Payee.id)))
     payee_ids = [item.id for item in payees]
     aliases = list(db.scalars(select(PayeeAlias).where(PayeeAlias.payee_id.in_(payee_ids)).order_by(PayeeAlias.id))) if payee_ids else []
+    payee_revisions = list(db.scalars(select(PayeeRevision).where(
+        PayeeRevision.household_id == household.id,
+        (PayeeRevision.budget_id.is_(None) | (PayeeRevision.budget_id == budget.id)),
+    ).order_by(PayeeRevision.created_at, PayeeRevision.id)))
     targets = list(db.scalars(select(CategoryTarget).where(CategoryTarget.budget_id == budget.id).order_by(CategoryTarget.category_id)))
     target_revisions = list(db.scalars(select(CategoryTargetRevision).where(
         CategoryTargetRevision.budget_id == budget.id
@@ -277,6 +281,13 @@ def build_local_device_projection(
             "id": item.id, "payee_id": item.payee_id, "display_name": item.display_name,
             "normalized_name": item.name_key,
         } for item in aliases],
+        "payee_revisions": [{
+            "id": item.id, "budget_id": budget.id, "payee_id": item.payee_id,
+            "action": item.action, "actor_user_id": item.actor_user_id,
+            "before_json": json.dumps(item.before_snapshot, sort_keys=True, separators=(",", ":")) if item.before_snapshot is not None else None,
+            "after_json": json.dumps(item.after_snapshot, sort_keys=True, separators=(",", ":")),
+            "created_at": _iso(item.created_at),
+        } for item in payee_revisions],
         "transactions": [{
             "id": item.id, "budget_id": budget.id, "account_id": item.account_id,
             "payee_id": item.payee_id, "payee_name": item.payee_name,

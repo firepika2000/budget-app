@@ -891,6 +891,30 @@ final class APIClientTests: XCTestCase {
         XCTAssertNil(page.nextCursor)
     }
 
+    func testPayeeHistoryUsesBoundedBudgetScopedContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/payees/p1/history")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(items.first(where: { $0.name == "limit" })?.value, "25")
+            XCTAssertEqual(items.first(where: { $0.name == "offset" })?.value, "50")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
+            let response = Data(#"[{"id":"r1","payee_id":"p1","budget_id":"b1","action":"updated","actor_user_id":"u1","actor_display_name":"Owner","before_snapshot":{"display_name":"Market"},"after_snapshot":{"display_name":"Neighborhood Market"},"created_at":"2026-10-08T12:00:00Z"}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let history = try await client.payeeHistory(
+            budgetID: "b1", payeeID: "p1", limit: 25, offset: 50, token: "secret"
+        )
+        XCTAssertEqual(history.map(\.action), ["updated"])
+        XCTAssertEqual(history.first?.beforeSnapshot?.displayName, "Market")
+        XCTAssertEqual(history.first?.afterSnapshot.displayName, "Neighborhood Market")
+        XCTAssertEqual(history.first?.actorDisplayName, "Owner")
+    }
+
     func testCreateTransactionEncodesBalancedSplits() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

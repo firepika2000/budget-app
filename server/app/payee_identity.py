@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import Budget, Payee, PayeeAlias, User
+from .payee_history import append_payee_revision, payee_snapshot
 from .payee_names import display_payee_name, normalized_payee_name
 
 
@@ -82,6 +83,10 @@ def resolve_payee(
             )
             db.add(payee)
             db.flush()
+            append_payee_revision(
+                db, payee=payee, actor_user_id=user.id, action="created",
+                before=None, after=payee_snapshot(db, payee),
+            )
     except IntegrityError:
         payee = db.scalar(select(Payee).where(
             Payee.household_id == budget.household_id,

@@ -131,7 +131,12 @@ server-to-local transfer; balances, transactions and reconciliation observations
 metadata snapshots. Category-group and category creation, rename, organization, archival, presentation,
 resilience classification and delegation decisions now also retain immutable actor-attributed history across
 hosted, Local Device and Demo providers, complete export and server-to-local transfer. Detail and group settings
-expose bounded history without changing allocations, activity or balances. Remaining v0.12 work should continue
+expose bounded history without changing allocations, activity or balances. Payee creation, rename, archive,
+alias, merge and budget-specific default-category decisions now retain the same immutable attributed history.
+The production Payee editor exposes a bounded history view; scoped members can read history only for Payees
+already visible through their authorized transactions, and hidden aliases, merge targets and category preferences
+are redacted. Populated migrations, complete export, server-to-local transfer, Local Device reopen and Demo all
+preserve the observations without recording transaction aggregates or changing ledger money. Remaining v0.12 work should continue
 auditing other mutable planning and administrative
 observations for overwrite-only or export gaps rather than duplicating established histories.
 

@@ -372,6 +372,7 @@ protocol PayeeCommandRepository: AnyObject {
     func mergePayee(sourceID: String, destinationID: String) async throws
     func createPayeeAlias(payeeID: String, displayName: String) async throws
     func deletePayeeAlias(payeeID: String, aliasID: String) async throws
+    func payeeHistory(payeeID: String, limit: Int, offset: Int) async throws -> [APIPayeeRevision]
 }
 
 @MainActor

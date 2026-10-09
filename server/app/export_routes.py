@@ -50,6 +50,7 @@ from .models import (
     Payee,
     PayeeAlias,
     PayeeBudgetPreference,
+    PayeeRevision,
     RequestAction,
     Reconciliation,
     ResourceGrant,
@@ -392,6 +393,10 @@ def export_budget_json(
             PayeeAlias.payee_id.in_(payee_ids)
         ))] if payee_ids else [],
         "payee_budget_preferences": [row_data(item) for item in payee_preferences],
+        "payee_revisions": [row_data(item) for item in db.scalars(select(PayeeRevision).where(
+            PayeeRevision.household_id == budget.household_id,
+            (PayeeRevision.budget_id.is_(None) | (PayeeRevision.budget_id == budget_id)),
+        ))],
         "transactions": [row_data(item) for item in transactions],
         "transaction_splits": [row_data(item) for item in db.scalars(select(TransactionSplit).where(
             TransactionSplit.transaction_id.in_(transaction_ids)

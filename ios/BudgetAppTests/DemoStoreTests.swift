@@ -2346,6 +2346,29 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testPayeeHistoryRecordsLifecycleAndSuppressesNoOpSave() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        try await store.createPayee(.init(displayName: "History Market", defaultCategoryID: "groceries"))
+        let created = try XCTUnwrap(store.payees.first(where: { $0.displayName == "History Market" }))
+        let initial = try await store.payeeHistory(payeeID: created.id, limit: 50, offset: 0)
+        XCTAssertEqual(initial.map(\.action), ["preference_updated", "created"])
+
+        try await store.updatePayee(.init(
+            payeeID: created.id, displayName: "History Market", isArchived: false,
+            defaultCategoryID: "groceries"
+        ))
+        let afterNoOp = try await store.payeeHistory(payeeID: created.id, limit: 50, offset: 0)
+        XCTAssertEqual(afterNoOp, initial, "Saving unchanged Payee metadata is not a new decision")
+
+        try await store.createPayeeAlias(payeeID: created.id, displayName: "HMKT")
+        let revised = try await store.payeeHistory(payeeID: created.id, limit: 2, offset: 0)
+        XCTAssertEqual(revised.first?.action, "alias_added")
+        XCTAssertEqual(revised.first?.actorDisplayName, "Rey")
+        XCTAssertEqual(revised.first?.afterSnapshot.aliases, ["HMKT"])
+    }
+
+    @MainActor
     func testLocalDeviceAttachmentKeyIsGeneratedOnceAndReloadedExactly() throws {
         let secrets = InMemorySecretDataStore()
         let first = try LocalDeviceKeyManager(store: secrets).loadOrCreateAttachmentKey()

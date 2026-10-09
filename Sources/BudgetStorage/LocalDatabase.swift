@@ -46,7 +46,7 @@ public struct LocalSQLiteRow: Equatable, Sendable {
 /// transactions, migrations, and consistent snapshots only; financial consequences belong to the
 /// shared application-service/accounting command layer that will sit above it.
 public actor LocalDatabase {
-    public static let schemaVersion = 20
+    public static let schemaVersion = 21
     public static let applicationID: Int32 = 0x42554447 // "BUDG"
 
     public let fileURL: URL
@@ -451,6 +451,18 @@ public actor LocalDatabase {
                 throw error
             }
         }
+        if current < 21 {
+            try execute("BEGIN IMMEDIATE", on: database)
+            do {
+                for sql in schemaV21 { try execute(sql, on: database) }
+                try execute("INSERT INTO local_schema_migrations(version, applied_at) VALUES (?, ?)", values: [.integer(21), .text(Self.timestamp())], on: database)
+                try execute("PRAGMA user_version = 21", on: database)
+                try execute("COMMIT", on: database)
+            } catch {
+                try? execute("ROLLBACK", on: database)
+                throw error
+            }
+        }
         let application = try rows("PRAGMA application_id", on: database)
         guard application.first?.values.values.first == .integer(Int64(applicationID)) else {
             throw LocalStorageError.openFailed("File is not a Budget App local database")
@@ -524,6 +536,12 @@ public actor LocalDatabase {
         "CREATE INDEX idx_structure_revisions_resource_created ON budget_structure_revisions(resource_type,resource_id,created_at,id)",
         "INSERT INTO budget_structure_revisions(id,budget_id,resource_type,resource_id,action,actor_user_id,before_json,after_json,created_at) SELECT 'group-created-' || g.id,g.budget_id,'category_group',g.id,'created',m.user_id,NULL,json_object('name',g.name,'sort_order',g.sort_order,'is_archived',json(iif(g.is_archived=1,'true','false'))),b.created_at FROM category_groups g JOIN budgets b ON b.id=g.budget_id JOIN memberships m ON m.household_id=b.household_id AND m.role='owner' AND m.is_active=1",
         "INSERT INTO budget_structure_revisions(id,budget_id,resource_type,resource_id,action,actor_user_id,before_json,after_json,created_at) SELECT 'category-created-' || c.id,c.budget_id,'category',c.id,'created',m.user_id,NULL,json_object('group_id',c.group_id,'name',c.name,'icon_name',c.icon_name,'note',c.note,'sort_order',c.sort_order,'is_archived',json(iif(c.is_archived=1,'true','false')),'is_essential',json(iif(c.is_essential=1,'true','false')),'is_emergency_fund',json(iif(c.is_emergency_fund=1,'true','false')),'delegated_user_id',c.delegated_user_id),b.created_at FROM categories c JOIN budgets b ON b.id=c.budget_id JOIN memberships m ON m.household_id=b.household_id AND m.role='owner' AND m.is_active=1"
+    ]
+
+    private static let schemaV21 = [
+        "CREATE TABLE payee_revisions (id TEXT PRIMARY KEY, budget_id TEXT NOT NULL REFERENCES budgets(id) ON DELETE CASCADE, payee_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('created','updated','alias_added','alias_removed','merged','preference_updated')), actor_user_id TEXT NOT NULL REFERENCES users(id), before_json TEXT, after_json TEXT NOT NULL, created_at TEXT NOT NULL) STRICT",
+        "CREATE INDEX idx_payee_revisions_payee_created ON payee_revisions(payee_id,created_at,id)",
+        "INSERT INTO payee_revisions(id,budget_id,payee_id,action,actor_user_id,before_json,after_json,created_at) SELECT 'payee-created-' || p.id,p.budget_id,p.id,'created',m.user_id,NULL,json_object('display_name',p.name,'is_archived',json(iif(p.is_archived=1,'true','false')),'merged_into_payee_id',p.merged_into_payee_id,'aliases',json(COALESCE((SELECT json_group_array(a.display_name) FROM payee_aliases a WHERE a.payee_id=p.id),'[]')),'default_category_id',p.default_category_id),b.created_at FROM payees p JOIN budgets b ON b.id=p.budget_id JOIN memberships m ON m.household_id=b.household_id AND m.role='owner' AND m.is_active=1"
     ]
 
     private static let schemaV2 = [
