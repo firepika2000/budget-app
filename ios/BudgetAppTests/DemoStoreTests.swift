@@ -1965,6 +1965,23 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(source.contains("debitColumn: splitMoney ? debitColumn : nil"))
         XCTAssertTrue(source.contains("creditColumn: splitMoney ? creditColumn : nil"))
         XCTAssertTrue(source.contains("delimiter: delimiter"))
+        XCTAssertTrue(source.contains("workspace.format(row.amountMinor)"), "Statement review must use the production privacy-aware formatter")
+        XCTAssertFalse(source.contains("CurrencyText.display(row.amountMinor"), "Import review must not bypass Hide Amounts")
+    }
+
+    @MainActor
+    func testProductionImportAmountFormatterHonorsPrivacyWithoutChangingRows() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        let previous = store.hideAmounts
+        defer { store.hideAmounts = previous }
+        let amounts = store.transactions.map(\.amountMinor)
+        store.hideAmounts = false
+        let exact: Int64 = 9_007_199_254_740_993
+        XCTAssertEqual(store.format(exact), CurrencyText.display(exact, currencyCode: store.budget.currencyCode))
+        store.hideAmounts = true
+        for amount in [exact, -exact, Int64(0)] { XCTAssertEqual(store.format(amount), "••••") }
+        XCTAssertEqual(store.transactions.map(\.amountMinor), amounts)
     }
 
     @MainActor

@@ -2320,3 +2320,17 @@ cadence/minimum/date changes, deletion, unchanged suppression, month-specific sn
 Hide Amounts redaction without losing changed-field labels, and production-store money neutrality.
 The production iOS app compiles as part of that run; `git diff --check` passes. No unrelated full
 suite or UI-runner retry was performed for this presentation-only checkpoint.
+
+### Statement-import review privacy — 2026-10-09
+
+Staged and completed statement-import review rows bypassed Hide Amounts by directly formatting
+their monetary values. They now use the same workspace formatter as other production screens.
+Selection, duplicate detection, category approval, posting and accounting are unchanged.
+
+Two focused native XCTest cases passed using regular `/Applications/Xcode.app` Xcode 27 and the
+preserved iPhone 17 Pro Max/iOS 27 Simulator: production review composition references the canonical
+formatter, and positive/negative/zero values redact without changing transaction amounts. The
+production app compiled in this run; `git diff --check` passed. No backend or migration changes.
+Human visual acceptance remains pending: enable Hide Amounts, open statement-import review and
+confirm candidate amounts are masked; disable it and confirm amounts return. Rebuild required;
+no server restart required. TestFlight remains on hold.

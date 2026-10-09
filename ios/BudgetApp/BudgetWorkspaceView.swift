@@ -10895,7 +10895,35 @@ private struct StatementImportFlowView: View {
                 Text("Undo uses normal void-and-reversal accounting. It is all-or-nothing and cannot alter reconciled history.").font(.footnote).foregroundStyle(.secondary)
             }
         }
-        ForEach(batch.candidates) { row in Section { Toggle(isOn: Binding(get: { postRows.contains(row.sourceRow) || row.approvalAction == "post" }, set: { enabled in if enabled { postRows.insert(row.sourceRow) } else { postRows.remove(row.sourceRow) } })) { VStack(alignment: .leading) { Text(row.payee.isEmpty ? "No payee" : row.payee); Text("\(row.occurredOn) · \(CurrencyText.display(row.amountMinor, currencyCode: budget.currencyCode))").font(.caption).foregroundStyle(.secondary) } }.disabled(!reviewable); if reviewable && postRows.contains(row.sourceRow) && row.amountMinor < 0 { Picker("Category", selection: Binding(get: { categoryByRow[row.sourceRow] ?? "" }, set: { categoryByRow[row.sourceRow] = $0 })) { Text("Uncategorized").tag(""); ForEach(workspace.categories.filter { !$0.isArchived }) { Text(workspace.categoryDisplayName($0)).tag($0.id) } } }; if !row.exactTransactionIDs.isEmpty || !row.possibleTransactionIDs.isEmpty || row.duplicateSourceRow != nil { Label("Possible duplicate — skipped by default", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange) }; if !row.memo.isEmpty { Text(row.memo).font(.footnote).foregroundStyle(.secondary) }; if row.reversalTransactionID != nil { Label("Reversed", systemImage: "arrow.uturn.backward.circle").font(.footnote).foregroundStyle(.orange) } else if let action = row.approvalAction { Label(action == "post" ? "Posted" : "Skipped", systemImage: action == "post" ? "checkmark.circle" : "forward.end.circle").font(.footnote).foregroundStyle(.secondary) } } }
+        ForEach(batch.candidates) { row in
+            Section {
+                Toggle(isOn: Binding(get: { postRows.contains(row.sourceRow) || row.approvalAction == "post" }, set: { enabled in
+                    if enabled { postRows.insert(row.sourceRow) } else { postRows.remove(row.sourceRow) }
+                })) {
+                    VStack(alignment: .leading) {
+                        Text(row.payee.isEmpty ? "No payee" : row.payee)
+                        Text("\(row.occurredOn) · \(workspace.format(row.amountMinor))")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(!reviewable)
+                if reviewable && postRows.contains(row.sourceRow) && row.amountMinor < 0 {
+                    Picker("Category", selection: Binding(get: { categoryByRow[row.sourceRow] ?? "" }, set: { categoryByRow[row.sourceRow] = $0 })) {
+                        Text("Uncategorized").tag("")
+                        ForEach(workspace.categories.filter { !$0.isArchived }) { Text(workspace.categoryDisplayName($0)).tag($0.id) }
+                    }
+                }
+                if !row.exactTransactionIDs.isEmpty || !row.possibleTransactionIDs.isEmpty || row.duplicateSourceRow != nil {
+                    Label("Possible duplicate — skipped by default", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange)
+                }
+                if !row.memo.isEmpty { Text(row.memo).font(.footnote).foregroundStyle(.secondary) }
+                if row.reversalTransactionID != nil {
+                    Label("Reversed", systemImage: "arrow.uturn.backward.circle").font(.footnote).foregroundStyle(.orange)
+                } else if let action = row.approvalAction {
+                    Label(action == "post" ? "Posted" : "Skipped", systemImage: action == "post" ? "checkmark.circle" : "forward.end.circle").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        }
     }
     private var mappingReady: Bool {
         guard let file, file.sourceFormat == "csv" else { return file != nil }
