@@ -30,6 +30,22 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(account.contains("if HistoryObservationPolicy.mustDiscard(after: error) { items = []; hasMore = false }"))
         XCTAssertTrue(transaction.contains("if HistoryObservationPolicy.mustDiscard(after: error) { changes = []; hasMore = false }"))
     }
+    func testIndependentDecisionHistoriesDiscardDeniedObservations() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let names = ["BudgetStructureHistoryView", "PayeeHistoryView", "TargetHistoryView", "ScheduledTransactionHistoryView", "DebtPayoffPlanHistoryView", "AllowanceDetailView", "DelegatedPolicyHistoryView"]
+        for name in names {
+            let start = try XCTUnwrap(source.range(of: "private struct \(name): View"))
+            let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
+            let view = String(source[start.lowerBound..<end])
+            XCTAssertTrue(view.contains("HistoryObservationPolicy.mustDiscard(after: error)"), name)
+            if name == "AllowanceDetailView" {
+                XCTAssertTrue(view.contains("history = []; policyHistory = []; hasOlderIssuances = false; hasOlderPolicy = false"), name)
+            } else {
+                XCTAssertTrue(view.contains("rows = [];"), name)
+            }
+        }
+    }
     func testAccountHistoryExplainsAllFieldsAndResolvesOnlyAuthorizedNames() {
         let before = APIAccountRevisionSnapshot(name: "Old", accountType: "checking", isOnBudget: true, isClosed: false, paymentCategoryID: "hidden-old")
         let after = APIAccountRevisionSnapshot(name: "New", accountType: "tracking", isOnBudget: false, isClosed: true, paymentCategoryID: "hidden-new")

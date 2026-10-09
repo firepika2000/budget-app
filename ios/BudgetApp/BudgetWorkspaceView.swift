@@ -8375,7 +8375,10 @@ private struct BudgetStructureHistoryView: View {
                 : store.categoryGroupHistory(groupID: resourceID, limit: pageSize, offset: offset))
             if reset { rows = next } else { rows.append(contentsOf: next) }
             canLoadOlder = next.count == pageSize
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func changeTitle(_ row: APIBudgetStructureRevision) -> String {
@@ -8446,7 +8449,10 @@ private struct PayeeHistoryView: View {
                 offset: reset ? 0 : rows.count)
             if reset { rows = next } else { rows.append(contentsOf: next) }
             canLoadOlder = next.count == pageSize
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func title(_ row: APIPayeeRevision) -> String {
@@ -8563,7 +8569,10 @@ private struct TargetHistoryView: View {
         do {
             let page = try await store.targetHistory(categoryID: categoryID, limit: pageSize, offset: 0)
             rows = page; canLoadOlder = page.count == pageSize; errorMessage = nil
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func loadOlder() async {
@@ -8573,7 +8582,10 @@ private struct TargetHistoryView: View {
             let page = try await store.targetHistory(categoryID: categoryID, limit: pageSize, offset: rows.count)
             rows += page.filter { item in !rows.contains(where: { $0.id == item.id }) }
             canLoadOlder = page.count == pageSize; errorMessage = nil
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func title(_ action: String) -> String {
@@ -9328,13 +9340,19 @@ private struct ScheduledTransactionHistoryView: View {
         guard !loadingMore else { return }
         loading = true; error = nil; defer { loading = false }
         do { let page = try await store.scheduleHistory(limit: pageSize, offset: 0); rows = page; hasMore = page.count == pageSize }
-        catch { self.error = error.localizedDescription }
+        catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
+            self.error = error.localizedDescription
+        }
     }
     @MainActor private func loadMore() async {
         guard !loading, !loadingMore, hasMore else { return }
         loadingMore = true; error = nil; defer { loadingMore = false }
         do { let page = try await store.scheduleHistory(limit: pageSize, offset: rows.count); rows += page; hasMore = page.count == pageSize }
-        catch { self.error = error.localizedDescription }
+        catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
+            self.error = error.localizedDescription
+        }
     }
 }
 
@@ -11382,7 +11400,10 @@ private struct DebtPayoffPlanHistoryView: View {
         do {
             let page = try await store.debtPayoffPlanHistory(limit: 10, offset: rows.count)
             rows.append(contentsOf: page); hasMore = page.count == 10
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
@@ -12784,7 +12805,7 @@ private struct AllowanceDetailView: View {
         do {
             let page = try await store.allowancePlanHistory(id: planID, limit: historyPageSize, offset: policyHistory.count)
             policyHistory += page; hasOlderPolicy = page.count == historyPageSize
-        } catch { errorMessage = error.localizedDescription }
+        } catch { handleHistoryError(error) }
     }
     private func loadOlderIssuances() async {
         guard !isSaving, !historyBusy, hasOlderIssuances else { return }
@@ -12792,7 +12813,7 @@ private struct AllowanceDetailView: View {
         do {
             let page = try await store.allowanceIssuances(id: planID, limit: historyPageSize, offset: history.count)
             history += page; hasOlderIssuances = page.count == historyPageSize
-        } catch { errorMessage = error.localizedDescription }
+        } catch { handleHistoryError(error) }
     }
     private func loadHistory() async {
         guard !loadingHistory, !loadingOlderPolicy, !loadingOlderIssuances else { return }
@@ -12804,7 +12825,13 @@ private struct AllowanceDetailView: View {
         hasOlderIssuances = history.count == historyPageSize
         policyHistory = try await changes
         hasOlderPolicy = policyHistory.count == historyPageSize
-    } catch { errorMessage = error.localizedDescription } }
+    } catch { handleHistoryError(error) } }
+    private func handleHistoryError(_ error: Error) {
+        if HistoryObservationPolicy.mustDiscard(after: error) {
+            history = []; policyHistory = []; hasOlderIssuances = false; hasOlderPolicy = false
+        }
+        errorMessage = error.localizedDescription
+    }
     private func issue(_ plan: APIAllowancePlan) async { guard !isSaving, !historyBusy, let version = store.summary?.allocationVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.issueAllowance(id: plan.id, issueDate: plan.nextIssueDate, expectedVersion: version); await loadHistory() } catch { errorMessage = error.localizedDescription } }
     private func setActive(_ plan: APIAllowancePlan, _ active: Bool) async { guard !isSaving, !historyBusy else { return }; isSaving = true; defer { isSaving = false }; do { try await store.setAllowanceActive(id: plan.id, active: active); await loadHistory() } catch { errorMessage = error.localizedDescription } }
     private func policyAction(_ action: String) -> String {
@@ -13462,13 +13489,19 @@ private struct DelegatedPolicyHistoryView: View {
         guard !loadingMore else { return }
         loading = true; error = nil; defer { loading = false }
         do { let page = try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: 0); rows = page; hasMore = page.count == pageSize }
-        catch { self.error = error.localizedDescription }
+        catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
+            self.error = error.localizedDescription
+        }
     }
     @MainActor private func loadMore() async {
         guard !loading, !loadingMore, hasMore else { return }
         loadingMore = true; error = nil; defer { loadingMore = false }
         do { let page = try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: rows.count); rows += page; hasMore = page.count == pageSize }
-        catch { self.error = error.localizedDescription }
+        catch {
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
+            self.error = error.localizedDescription
+        }
     }
 }
 
