@@ -479,7 +479,7 @@ def test_structured_export_contract_covers_every_persistent_domain_model():
             "monthly_assignments", "allocation_operations",
             "allocation_postings", "transactions", "transaction_splits", "transaction_changes",
             "transaction_attachments", "reconciliations", "credit_card_reserve_events", "allowance_plans",
-        "allowance_splits", "allowance_issuances", "financial_requests", "request_actions",
+        "allowance_splits", "allowance_issuances", "allowance_plan_revisions", "financial_requests", "request_actions",
         "import_batches", "debt_payoff_plans",
     }
     deliberately_deployment_local = {"setup_state", "refresh_sessions", "pairing_codes"}

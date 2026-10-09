@@ -137,8 +137,13 @@ The production Payee editor exposes a bounded history view; scoped members can r
 already visible through their authorized transactions, and hidden aliases, merge targets and category preferences
 are redacted. Populated migrations, complete export, server-to-local transfer, Local Device reopen and Demo all
 preserve the observations without recording transaction aggregates or changing ledger money. Remaining v0.12 work should continue
-auditing other mutable planning and administrative
-observations for overwrite-only or export gaps rather than duplicating established histories.
+Allowance-plan creation, pause, reactivation and issuance-driven schedule advancement now likewise retain
+immutable actor-attributed before/after snapshots with exact minor-unit amounts and split policy. The bounded
+manager-only history is available in the shared Demo/Live plan detail, populated hosted databases receive a
+creation baseline during migration, and complete export includes the decisions. Issuance money remains in the
+existing allowance ledger and restricted members cannot use policy history to discover hidden source or scope
+details. Remaining v0.12 work should continue auditing other mutable planning and administrative observations
+for overwrite-only or export gaps rather than duplicating established histories.
 
 **Consumer Budget Server distribution remains required.** The earlier v0.9 graphical installer,
 manager, secure pairing and no-Terminal household operating experience below are retained as a

@@ -660,6 +660,9 @@ public struct APIClient {
     public func setAllowancePlanActive(budgetID: String, planID: String, isActive: Bool, token: String) async throws -> APIAllowancePlan { try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/status", method: "PATCH", token: token, body: APIAllowanceStatusUpdate(isActive: isActive)) }
     public func issueAllowance(budgetID: String, planID: String, issueDate: String, expectedAllocationVersion: Int, token: String) async throws -> APIAllowanceIssuance { try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/issue", method: "POST", token: token, body: APIAllowanceIssueRequest(issueDate: issueDate, expectedAllocationVersion: expectedAllocationVersion)) }
     public func allowanceIssuances(budgetID: String, planID: String, token: String) async throws -> [APIAllowanceIssuance] { try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/issuances", token: token) }
+    public func allowancePlanHistory(budgetID: String, planID: String, limit: Int = 50, offset: Int = 0, token: String) async throws -> [APIAllowancePlanRevision] {
+        try await send(path: "api/v1/budgets/\(budgetID)/allowances/\(planID)/history", queryItems: [URLQueryItem(name: "limit", value: String(limit)), URLQueryItem(name: "offset", value: String(offset))], token: token)
+    }
 
     public func forecast(budgetID: String, through: String, token: String) async throws -> APIForecast {
         try await send(path: "api/v1/budgets/\(budgetID)/forecast", queryItems: [URLQueryItem(name: "through", value: through)], token: token)

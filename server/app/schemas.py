@@ -1454,6 +1454,17 @@ class AllowanceIssuanceResponse(BaseModel):
     next_issue_date: date
 
 
+class AllowancePlanRevisionResponse(BaseModel):
+    id: str
+    plan_id: str
+    action: Literal["created", "paused", "reactivated", "issued"]
+    actor_user_id: str
+    actor_display_name: Optional[str] = None
+    before_snapshot: Optional[dict] = None
+    after_snapshot: dict
+    created_at: datetime
+
+
 class CategoryMonthSummary(BaseModel):
     category_id: str
     name: str

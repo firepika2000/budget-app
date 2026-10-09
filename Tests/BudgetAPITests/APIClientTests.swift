@@ -1721,6 +1721,26 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(detail.candidates.first?.payee, "Private")
         XCTAssertEqual(requests, 2)
     }
+
+    func testAllowancePlanHistoryUsesBoundedAttributedExactMoneyContract() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/allowances/p1/history")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(query.first(where: { $0.name == "limit" })?.value, "25")
+            XCTAssertEqual(query.first(where: { $0.name == "offset" })?.value, "50")
+            let body = Data(#"[{"id":"r1","plan_id":"p1","action":"paused","actor_user_id":"owner","actor_display_name":"Rey","before_snapshot":{"delegated_user_id":"child","source_category_id":"pool","name":"Weekly","amount_minor":9007199254740992,"next_issue_date":"2026-10-09","recurrence_unit":"week","interval_count":1,"rollover_policy":"rollover","is_active":true,"splits":[{"destination_category_id":"spending","amount_minor":9007199254740992}]},"after_snapshot":{"delegated_user_id":"child","source_category_id":"pool","name":"Weekly","amount_minor":9007199254740992,"next_issue_date":"2026-10-09","recurrence_unit":"week","interval_count":1,"rollover_policy":"rollover","is_active":false,"splits":[{"destination_category_id":"spending","amount_minor":9007199254740992}]},"created_at":"2026-10-08T18:00:00Z"}]"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let rows = try await client.allowancePlanHistory(budgetID: "b1", planID: "p1", limit: 25, offset: 50, token: "rotated")
+        XCTAssertEqual(rows.first?.action, "paused")
+        XCTAssertEqual(rows.first?.actorDisplayName, "Rey")
+        XCTAssertEqual(rows.first?.afterSnapshot.amountMinor, 9_007_199_254_740_992)
+        XCTAssertEqual(rows.first?.afterSnapshot.isActive, false)
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

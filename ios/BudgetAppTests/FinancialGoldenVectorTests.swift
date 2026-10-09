@@ -718,6 +718,11 @@ final class FinancialGoldenVectorTests: XCTestCase {
             XCTAssertEqual(history.first?.reclaimedMinor, policy == "rollover" ? 0 : 2_000)
             let reread = try await source.allowanceIssuances(id: id)
             XCTAssertEqual(reread, history)
+            let policyHistory = try await source.allowancePlanHistory(id: id, limit: 50, offset: 0)
+            XCTAssertEqual(policyHistory.map(\.action), ["issued", "issued", "reactivated", "paused", "created"])
+            XCTAssertEqual(policyHistory.first?.beforeSnapshot?.nextIssueDate, "2026-09-04")
+            XCTAssertEqual(policyHistory.first?.afterSnapshot.nextIssueDate, "2026-09-11")
+            XCTAssertTrue(policyHistory.allSatisfy { $0.afterSnapshot.amountMinor == 2_000 })
             let query = WorkspaceReportQuery(start: BudgetWorkspaceStore.parseDate("2026-08-01"), end: BudgetWorkspaceStore.parseDate("2026-09-30"), accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
             let snapshot = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
             let operations = snapshot.allocationOperations.filter { $0.kind == "allowance_issuance" }
@@ -729,6 +734,7 @@ final class FinancialGoldenVectorTests: XCTestCase {
             XCTAssertEqual(child.allowances.count, 1); XCTAssertNil(child.allowances.first?.sourceCategoryID)
             XCTAssertTrue(child.allocationOperations.isEmpty)
             do { try await source.issueAllowance(id: id, issueDate: "2026-09-11", expectedVersion: 3); XCTFail("Child cannot issue") } catch {}
+            do { _ = try await source.allowancePlanHistory(id: id, limit: 50, offset: 0); XCTFail("Child cannot read policy history") } catch {}
             source.demo.persona = .mia
             do { _ = try await source.allowanceIssuances(id: id); XCTFail("Sibling history leak") } catch {}
             source.demo.persona = .rey

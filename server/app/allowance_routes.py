@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from .access import find_visible_budget, has_capability, visible_resource_ids
+from .allowance_history import allowance_plan_snapshot, append_allowance_plan_revision
 from .allocation import PostingInput, append_operation, category_available_balance, lock_budget, require_version
 from .clock import today
 from .database import get_db
@@ -13,6 +14,7 @@ from .dependencies import get_current_user
 from .models import (
     AllowanceIssuance,
     AllowancePlan,
+    AllowancePlanRevision,
     AllowanceSplit,
     BudgetAccessProfile,
     Category,
@@ -25,6 +27,7 @@ from .schemas import (
     AllowanceIssuanceResponse,
     AllowancePlanCreate,
     AllowancePlanResponse,
+    AllowancePlanRevisionResponse,
     AllowanceStatusUpdate,
 )
 
@@ -159,6 +162,11 @@ def create_allowance_plan(
     plan = AllowancePlan(budget_id=budget_id, created_by_user_id=user.id, **values)
     plan.splits = [AllowanceSplit(**split.model_dump()) for split in body.splits]
     db.add(plan)
+    db.flush()
+    append_allowance_plan_revision(
+        db, plan=plan, actor_user_id=user.id, action="created",
+        before=None, after=allowance_plan_snapshot(plan),
+    )
     db.commit()
     db.refresh(plan)
     return serialize_plan(plan)
@@ -180,7 +188,12 @@ def deactivate_allowance_plan(
     if plan is None or plan.budget_id != budget_id or not plan.is_active:
         raise HTTPException(status_code=404, detail="Allowance plan not found")
     require_plan_scope(db, user, budget, plan)
+    before = allowance_plan_snapshot(plan)
     plan.is_active = False
+    append_allowance_plan_revision(
+        db, plan=plan, actor_user_id=user.id, action="paused",
+        before=before, after=allowance_plan_snapshot(plan),
+    )
     db.commit()
 
 
@@ -212,7 +225,13 @@ def update_allowance_status(
         ))
         if conflicting is not None:
             raise HTTPException(status_code=409, detail="A destination already belongs to an active allowance plan")
+    before = allowance_plan_snapshot(plan)
     plan.is_active = body.is_active
+    append_allowance_plan_revision(
+        db, plan=plan, actor_user_id=user.id,
+        action="reactivated" if body.is_active else "paused",
+        before=before, after=allowance_plan_snapshot(plan),
+    )
     db.commit()
     db.refresh(plan)
     return serialize_plan(plan)
@@ -322,8 +341,13 @@ def issue_allowance(
         actor_user_id=user.id,
     )
     db.add(issuance)
+    before = allowance_plan_snapshot(plan)
     plan.next_issue_date = advance_issue_date(
         plan.next_issue_date, plan.recurrence_unit, plan.interval_count
+    )
+    append_allowance_plan_revision(
+        db, plan=plan, actor_user_id=user.id, action="issued",
+        before=before, after=allowance_plan_snapshot(plan),
     )
     db.commit()
     db.refresh(issuance)
@@ -372,3 +396,45 @@ def list_allowance_issuances(
         "created_at": item.created_at,
         "next_issue_date": plan.next_issue_date,
     } for item in issuances]
+
+
+@router.get("/{plan_id}/history", response_model=list[AllowancePlanRevisionResponse])
+def allowance_plan_history(
+    budget_id: str,
+    plan_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    budget = find_visible_budget(db, user, budget_id)
+    if budget is None:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    if not has_capability(db, user, budget, "manage_allowances"):
+        raise HTTPException(status_code=403, detail="Insufficient capability")
+    plan = db.scalar(select(AllowancePlan).options(selectinload(AllowancePlan.splits)).where(
+        AllowancePlan.id == plan_id, AllowancePlan.budget_id == budget_id
+    ))
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Allowance plan not found")
+    require_plan_scope(db, user, budget, plan)
+    revisions = list(db.scalars(select(AllowancePlanRevision).where(
+        AllowancePlanRevision.budget_id == budget_id,
+        AllowancePlanRevision.plan_id == plan_id,
+    ).order_by(
+        AllowancePlanRevision.created_at.desc(), AllowancePlanRevision.id.desc()
+    ).offset(offset).limit(limit)))
+    actor_ids = {item.actor_user_id for item in revisions}
+    actors = {item.id: item.display_name for item in db.scalars(
+        select(User).where(User.id.in_(actor_ids))
+    )} if actor_ids else {}
+    return [{
+        "id": item.id,
+        "plan_id": item.plan_id,
+        "action": item.action,
+        "actor_user_id": item.actor_user_id,
+        "actor_display_name": actors.get(item.actor_user_id),
+        "before_snapshot": item.before_snapshot,
+        "after_snapshot": item.after_snapshot,
+        "created_at": item.created_at,
+    } for item in revisions]

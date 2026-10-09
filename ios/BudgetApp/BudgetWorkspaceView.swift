@@ -549,6 +549,7 @@ protocol WorkspaceCommandRepository: AccountCommandRepository, PlanningCommandRe
     func setAllowanceActive(id: String, active: Bool) async throws
     func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws
     func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance]
+    func allowancePlanHistory(id: String, limit: Int, offset: Int) async throws -> [APIAllowancePlanRevision]
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws
@@ -563,6 +564,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var attachmentData: [String: Data] = [:]
     private var debtTermsValues: [String: APIAccountDebtTermsUpsert] = [:]
     private var debtPayoffPlanValue: APIDebtPayoffPlanUpsert?
+    private var allowancePlanRevisions: [String: [APIAllowancePlanRevision]] = [:]
     private var accessProfiles: [String: APIAccessProfile] = [:]
     private var demoTargetRevisions: [APICategoryTargetRevision] = []
     private var demoScheduleRevisions: [APIScheduledTransactionRevision] = []
@@ -2108,18 +2110,25 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             source: value.sourceCategoryID, splits: value.splits.map { ($0.destinationCategoryID, $0.amountMinor) }, rollover: value.rolloverPolicy == "rollover")
         guard allowanceVisible(plan) else { throw workspaceRepositoryError("Allowance categories not found.") }
         try requireAllowanceRecipient(plan); try demo.createAllowance(plan)
+        appendAllowanceRevision(planID: plan.id, action: "created", before: nil, after: allowanceSnapshot(plan))
     }
     func setAllowanceActive(id: String, active: Bool) async throws { try requireActiveMembership();
         try requireAllowanceManager()
         guard let plan = demo.allowances.first(where: { $0.id == id }), allowanceVisible(plan, history: true) else { throw workspaceRepositoryError("Allowance not found.") }
         if active { try requireAllowanceRecipient(plan) }
+        let before = allowanceSnapshot(plan)
         try demo.setAllowanceActive(id: id, active: active)
+        guard let updated = demo.allowances.first(where: { $0.id == id }) else { return }
+        appendAllowanceRevision(planID: id, action: active ? "reactivated" : "paused", before: before, after: allowanceSnapshot(updated))
     }
     func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws { try requireActiveMembership();
         try requireAllowanceManager()
         guard let plan = demo.allowances.first(where: { $0.id == id }), allowanceVisible(plan) else { throw workspaceRepositoryError("Allowance not found.") }
         try requireAllowanceRecipient(plan)
+        let before = allowanceSnapshot(plan)
         try demo.issueAllowance(id: id, issueDate: issueDate, expectedVersion: expectedVersion)
+        guard let updated = demo.allowances.first(where: { $0.id == id }) else { return }
+        appendAllowanceRevision(planID: id, action: "issued", before: before, after: allowanceSnapshot(updated))
     }
     func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] { try requireActiveMembership();
         guard let plan = demo.allowances.first(where: { $0.id == id }), allowanceVisible(plan, history: true) else { throw workspaceRepositoryError("Allowance not found.") }
@@ -2127,6 +2136,33 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             ["id": item.id, "plan_id": id, "issued_on": item.issuedOn, "amount_minor": item.amount, "reclaimed_minor": item.reclaimed,
              "actor_user_id": item.actorID, "created_at": item.createdAt, "next_issue_date": plan.nextDate] as [String: Any]
         })
+    }
+    func allowancePlanHistory(id: String, limit: Int, offset: Int) async throws -> [APIAllowancePlanRevision] { try requireActiveMembership();
+        try requireAllowanceManager()
+        guard let plan = demo.allowances.first(where: { $0.id == id }), allowanceVisible(plan, history: true) else { throw workspaceRepositoryError("Allowance not found.") }
+        let recorded = allowancePlanRevisions[id] ?? [APIAllowancePlanRevision(
+            id: "\(id)-created", planID: id, action: "created", actorUserID: "demo-owner",
+            actorDisplayName: "Rey Rivera", beforeSnapshot: nil, afterSnapshot: allowanceSnapshot(plan),
+            createdAt: "2026-01-01T12:00:00Z")]
+        return Array(recorded.reversed().dropFirst(offset).prefix(limit))
+    }
+    private func allowanceSnapshot(_ plan: DemoAllowance) -> APIAllowancePlanRevisionSnapshot {
+        .init(delegatedUserID: plan.member.rawValue.lowercased(), sourceCategoryID: plan.source,
+              name: plan.name, amountMinor: plan.amount, nextIssueDate: plan.nextDate,
+              recurrenceUnit: plan.recurrenceUnit, intervalCount: plan.intervalCount,
+              rolloverPolicy: plan.rollover ? "rollover" : "use_it_or_lose_it", isActive: !plan.isPaused,
+              splits: plan.splits.map { .init(destinationCategoryID: $0.0, amountMinor: $0.1) })
+    }
+    private func appendAllowanceRevision(planID: String, action: String,
+                                         before: APIAllowancePlanRevisionSnapshot?,
+                                         after: APIAllowancePlanRevisionSnapshot) {
+        if before == after { return }
+        let actorID = demo.persona == .rey ? "demo-owner" : demo.persona.rawValue.lowercased()
+        let revision = APIAllowancePlanRevision(
+            id: UUID().uuidString, planID: planID, action: action, actorUserID: actorID,
+            actorDisplayName: "\(demo.persona.rawValue) Rivera", beforeSnapshot: before,
+            afterSnapshot: after, createdAt: ISO8601DateFormatter().string(from: Date()))
+        allowancePlanRevisions[planID, default: []].append(revision)
     }
     func accessProfile(userID: String) async throws -> APIAccessProfile { try requireActiveMembership();
         try requireHouseholdOwner()
@@ -3443,6 +3479,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func setAllowanceActive(id: String, active: Bool) async throws { try await credentials.prepare(); _ = try await client.setAllowancePlanActive(budgetID: budget.id, planID: id, isActive: active, token: token) }
     func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws { try await credentials.prepare(); _ = try await client.issueAllowance(budgetID: budget.id, planID: id, issueDate: issueDate, expectedAllocationVersion: expectedVersion, token: token) }
     func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] { try await credentials.prepare(); return try await client.allowanceIssuances(budgetID: budget.id, planID: id, token: token) }
+    func allowancePlanHistory(id: String, limit: Int, offset: Int) async throws -> [APIAllowancePlanRevision] { try await credentials.prepare(); return try await client.allowancePlanHistory(budgetID: budget.id, planID: id, limit: limit, offset: offset, token: token) }
 
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try await credentials.prepare(); return try await client.searchTransactions(budgetID: budget.id, query: query, token: token) }
     func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage { try await credentials.prepare(); return try await client.searchPayees(budgetID: budget.id, query: query, includeArchived: includeArchived, limit: limit, cursor: cursor, token: token) }
@@ -4792,6 +4829,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     func setAllowanceActive(id: String, active: Bool) async throws { try await commands().setAllowanceActive(id: id, active: active); await refresh() }
     func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws { try await commands().issueAllowance(id: id, issueDate: issueDate, expectedVersion: expectedVersion); await refresh() }
     func allowanceIssuances(id: String) async throws -> [APIAllowanceIssuance] { try await commands().allowanceIssuances(id: id) }
+    func allowancePlanHistory(id: String, limit: Int = 50, offset: Int = 0) async throws -> [APIAllowancePlanRevision] { try await commands().allowancePlanHistory(id: id, limit: limit, offset: offset) }
 
     func householdInvitations() async throws -> [APIInvitationSummary] { try await commands().householdInvitations() }
     func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret { try await commands().createHouseholdInvitation(value) }
@@ -12349,6 +12387,7 @@ private struct AllowanceDetailView: View {
     @ObservedObject var store: BudgetWorkspaceStore
     let planID: String
     @State private var history: [APIAllowanceIssuance] = []
+    @State private var policyHistory: [APIAllowancePlanRevision] = []
     @State private var errorMessage: String?
     @State private var isSaving = false
     private var plan: APIAllowancePlan? { store.allowances.first { $0.id == planID } }
@@ -12373,15 +12412,37 @@ private struct AllowanceDetailView: View {
                     ForEach(history) { item in VStack(alignment: .leading) { Text(item.issuedOn); Text("Issued \(store.format(item.amountMinor))" + (item.reclaimedMinor > 0 ? " · returned \(store.format(item.reclaimedMinor))" : "")).font(.caption).foregroundStyle(.secondary) } }
                     if history.isEmpty { Text("No allowance has been issued yet").foregroundStyle(.secondary) }
                 }
+                Section("Plan changes") {
+                    ForEach(policyHistory) { item in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(policyAction(item.action))
+                            Text("\(item.actorDisplayName ?? "Household member") · \(formattedTimestamp(item.createdAt))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if policyHistory.isEmpty { Text("No plan changes recorded").foregroundStyle(.secondary) }
+                }
             }
         }
         .navigationTitle(plan?.name ?? "Allowance")
         .task { await loadHistory() }
         .alert("Unable to update allowance", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
     }
-    private func loadHistory() async { do { history = try await store.allowanceIssuances(id: planID) } catch { errorMessage = error.localizedDescription } }
+    private func loadHistory() async { do {
+        async let issuances = store.allowanceIssuances(id: planID)
+        async let changes = store.allowancePlanHistory(id: planID)
+        history = try await issuances
+        policyHistory = try await changes
+    } catch { errorMessage = error.localizedDescription } }
     private func issue(_ plan: APIAllowancePlan) async { guard let version = store.summary?.allocationVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.issueAllowance(id: plan.id, issueDate: plan.nextIssueDate, expectedVersion: version); await loadHistory() } catch { errorMessage = error.localizedDescription } }
-    private func setActive(_ plan: APIAllowancePlan, _ active: Bool) async { isSaving = true; defer { isSaving = false }; do { try await store.setAllowanceActive(id: plan.id, active: active) } catch { errorMessage = error.localizedDescription } }
+    private func setActive(_ plan: APIAllowancePlan, _ active: Bool) async { isSaving = true; defer { isSaving = false }; do { try await store.setAllowanceActive(id: plan.id, active: active); await loadHistory() } catch { errorMessage = error.localizedDescription } }
+    private func policyAction(_ action: String) -> String {
+        switch action { case "created": "Plan created"; case "paused": "Plan paused"; case "reactivated": "Plan reactivated"; case "issued": "Issue date advanced"; default: "Plan updated" }
+    }
+    private func formattedTimestamp(_ value: String) -> String {
+        guard let date = ISO8601DateFormatter().date(from: value) else { return value }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
 }
 
 private struct AllowanceCreateView: View {

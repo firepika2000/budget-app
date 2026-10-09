@@ -22,6 +22,7 @@ from .models import (
     AllocationPosting,
     AllowanceIssuance,
     AllowancePlan,
+    AllowancePlanRevision,
     AllowanceSplit,
     Budget,
     BudgetGrant,
@@ -432,6 +433,9 @@ def export_budget_json(
         ))] if plan_ids else [],
         "allowance_issuances": [row_data(item) for item in db.scalars(select(AllowanceIssuance).where(
             AllowanceIssuance.budget_id == budget_id
+        ))],
+        "allowance_plan_revisions": [row_data(item) for item in db.scalars(select(AllowancePlanRevision).where(
+            AllowancePlanRevision.budget_id == budget_id
         ))],
         "legacy_monthly_assignments": [row_data(item) for item in db.scalars(select(MonthlyAssignment).where(
             MonthlyAssignment.budget_id == budget_id

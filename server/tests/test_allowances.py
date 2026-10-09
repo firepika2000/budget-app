@@ -232,6 +232,13 @@ def test_owner_can_manage_paused_allowance_without_forecast_or_money_mutation(
     before = client.get(
         f"/api/v1/budgets/{budget['id']}/months/2026-09-01", headers=auth(owner_token)
     ).json()
+    history_url = f"/api/v1/budgets/{budget['id']}/allowances/{plan['id']}/history"
+    created_history = client.get(history_url, headers=auth(owner_token))
+    assert created_history.status_code == 200
+    assert [row["action"] for row in created_history.json()] == ["created"]
+    assert created_history.json()[0]["actor_display_name"]
+    assert created_history.json()[0]["after_snapshot"]["amount_minor"] == 2000
+    assert client.get(history_url, headers=auth(child_token)).status_code == 403
     paused = client.delete(
         f"/api/v1/budgets/{budget['id']}/allowances/{plan['id']}", headers=auth(owner_token)
     )
@@ -244,6 +251,16 @@ def test_owner_can_manage_paused_allowance_without_forecast_or_money_mutation(
     )
     assert management.status_code == 200
     assert management.json()[0]["is_active"] is False
+    paused_history = client.get(history_url, headers=auth(owner_token)).json()
+    assert [row["action"] for row in paused_history] == ["paused", "created"]
+    assert paused_history[0]["before_snapshot"]["is_active"] is True
+    assert paused_history[0]["after_snapshot"]["is_active"] is False
+    # Repeating the same state is a no-op, not a replacement policy decision.
+    assert client.patch(
+        f"/api/v1/budgets/{budget['id']}/allowances/{plan['id']}/status",
+        headers=auth(owner_token), json={"is_active": False},
+    ).status_code == 200
+    assert len(client.get(history_url, headers=auth(owner_token)).json()) == 2
     assert client.get(
         f"/api/v1/budgets/{budget['id']}/allowances?include_inactive=true", headers=auth(child_token)
     ).status_code == 403
@@ -264,3 +281,25 @@ def test_owner_can_manage_paused_allowance_without_forecast_or_money_mutation(
     )
     assert restored.status_code == 200
     assert restored.json()["is_active"] is True
+    final_history = client.get(history_url, headers=auth(owner_token)).json()
+    assert [row["action"] for row in final_history] == ["reactivated", "paused", "created"]
+    assert len(client.get(f"{history_url}?limit=1&offset=1", headers=auth(owner_token)).json()) == 1
+    assert client.get(f"{history_url}?limit=0", headers=auth(owner_token)).status_code == 422
+
+
+def test_allowance_issuance_records_policy_advance_without_changing_issuance_audit(
+    client, owner_token, session_factory
+):
+    budget, _, _, _, _, _, plan, version = setup_allowance(
+        client, owner_token, session_factory, "rollover"
+    )
+    issued = issue(client, owner_token, budget["id"], plan["id"], plan["next_issue_date"], version)
+    assert issued["actor_user_id"]
+    history = client.get(
+        f"/api/v1/budgets/{budget['id']}/allowances/{plan['id']}/history",
+        headers=auth(owner_token),
+    ).json()
+    assert history[0]["action"] == "issued"
+    assert history[0]["before_snapshot"]["next_issue_date"] == plan["next_issue_date"]
+    assert history[0]["after_snapshot"]["next_issue_date"] == issued["next_issue_date"]
+    assert history[0]["before_snapshot"]["amount_minor"] == history[0]["after_snapshot"]["amount_minor"]

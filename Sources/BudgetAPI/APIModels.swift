@@ -2356,6 +2356,60 @@ public struct APIAllowancePlan: Identifiable, Decodable, Equatable, Sendable {
     }
 }
 
+public struct APIAllowancePlanRevisionSplit: Codable, Equatable, Sendable {
+    public let destinationCategoryID: String
+    public let amountMinor: Int64
+    public init(destinationCategoryID: String, amountMinor: Int64) {
+        self.destinationCategoryID = destinationCategoryID; self.amountMinor = amountMinor
+    }
+    enum CodingKeys: String, CodingKey {
+        case destinationCategoryID = "destination_category_id", amountMinor = "amount_minor"
+    }
+}
+
+public struct APIAllowancePlanRevisionSnapshot: Codable, Equatable, Sendable {
+    public let delegatedUserID: String; public let sourceCategoryID: String; public let name: String
+    public let amountMinor: Int64; public let nextIssueDate: String; public let recurrenceUnit: String
+    public let intervalCount: Int; public let rolloverPolicy: String; public let isActive: Bool
+    public let splits: [APIAllowancePlanRevisionSplit]
+    public init(delegatedUserID: String, sourceCategoryID: String, name: String, amountMinor: Int64,
+                nextIssueDate: String, recurrenceUnit: String, intervalCount: Int,
+                rolloverPolicy: String, isActive: Bool, splits: [APIAllowancePlanRevisionSplit]) {
+        self.delegatedUserID = delegatedUserID; self.sourceCategoryID = sourceCategoryID; self.name = name
+        self.amountMinor = amountMinor; self.nextIssueDate = nextIssueDate; self.recurrenceUnit = recurrenceUnit
+        self.intervalCount = intervalCount; self.rolloverPolicy = rolloverPolicy; self.isActive = isActive
+        self.splits = splits
+    }
+    enum CodingKeys: String, CodingKey {
+        case name, splits
+        case delegatedUserID = "delegated_user_id", sourceCategoryID = "source_category_id"
+        case amountMinor = "amount_minor", nextIssueDate = "next_issue_date"
+        case recurrenceUnit = "recurrence_unit", intervalCount = "interval_count"
+        case rolloverPolicy = "rollover_policy", isActive = "is_active"
+    }
+}
+
+public struct APIAllowancePlanRevision: Identifiable, Codable, Equatable, Sendable {
+    public let id: String; public let planID: String; public let action: String
+    public let actorUserID: String; public let actorDisplayName: String?
+    public let beforeSnapshot: APIAllowancePlanRevisionSnapshot?
+    public let afterSnapshot: APIAllowancePlanRevisionSnapshot
+    public let createdAt: String
+    public init(id: String, planID: String, action: String, actorUserID: String,
+                actorDisplayName: String?, beforeSnapshot: APIAllowancePlanRevisionSnapshot?,
+                afterSnapshot: APIAllowancePlanRevisionSnapshot, createdAt: String) {
+        self.id = id; self.planID = planID; self.action = action; self.actorUserID = actorUserID
+        self.actorDisplayName = actorDisplayName; self.beforeSnapshot = beforeSnapshot
+        self.afterSnapshot = afterSnapshot; self.createdAt = createdAt
+    }
+    enum CodingKeys: String, CodingKey {
+        case id, action
+        case planID = "plan_id", actorUserID = "actor_user_id"
+        case actorDisplayName = "actor_display_name", beforeSnapshot = "before_snapshot"
+        case afterSnapshot = "after_snapshot", createdAt = "created_at"
+    }
+}
+
 public struct APITransactionCreate: Encodable, Equatable, Sendable {
     public let accountID: String
     public let categoryID: String?
