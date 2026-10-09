@@ -5,6 +5,35 @@ claim that incomplete providers are production-ready.
 
 ## Authority and destination are separate
 
+### Offline transaction queue durability (2026-10-09)
+
+The Live transaction outbox previously mutated its in-memory entries before attempting persistence.
+Failed enqueue/removal writes now leave the existing entries unchanged: staged contents are written
+atomically with existing file protection and permissions before being published in memory. An
+identical replay identity remains idempotent, but reuse with different transaction details fails.
+Unreadable or invalid saved queues are preserved and cannot be overwritten by later enqueue/discard
+operations. Loading validates unique UUID identities against each operation's client identity.
+Only a genuinely absent file initializes an empty queue; decoding/read failures are not success.
+
+Live hydration reports the queue error without attempting replay. Profile's Review Pending Changes
+remains available even when an unreadable queue has no decoded count, and Pending Sync explains the
+failure instead of claiming Everything synchronized. No automatic queue deletion/reset or repair is
+performed. This does not extend offline support to allocation, transfer, reconciliation or authority
+mutations; those retain their current server validation boundaries.
+
+Four actual persistence test bodies passed in a Foundation-only host harness against the extracted
+production outbox and operation declarations, using plain assertions and disposable temporary files.
+They cover relaunch/idempotence, failed enqueue and discard writes, preserved corrupt bytes, conflicting
+payload identity and duplicate saved identities, including exact money beyond Double's integer range.
+This is host file-behavior evidence, not native UI, MainActor scheduling, token scoping or iOS Data
+Protection acceptance. Native test cases remain compiled but runtime execution is not claimed while
+the Simulator runner is unavailable. No server code/data or customer queue was modified; app rebuild
+only, no migration or server restart. TestFlight remains on hold.
+
+Regular Xcode 27 build-for-testing passed after the final settings warning/navigation changes;
+production wiring assertions and diff checks passed. No backend suite was rerun for this native-only
+file-persistence change.
+
 ### Dropbox observation lifecycle hardening (2026-10-09)
 
 The native coordinator now invalidates in-flight connection/list reads before sign-in, upload,

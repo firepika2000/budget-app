@@ -3564,10 +3564,12 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         transactionOutbox = LiveTransactionOutbox(
             budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token
         )
+        outboxFailureMessage = transactionOutbox.loadErrorMessage
     }
 
     var pendingTransactionCount: Int { transactionOutbox.count }
     var pendingTransactions: [LiveTransactionOutbox.Entry] { transactionOutbox.entries }
+    var pendingQueueError: String? { transactionOutbox.loadErrorMessage }
 
     func discardPendingTransaction(id: String) throws {
         try transactionOutbox.remove(id: id)
@@ -3578,6 +3580,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     /// visible as pending for explicit user attention; a connectivity failure quietly retries on
     /// the next foreground/background refresh.
     func flushTransactionOutbox() async throws {
+        if let error = transactionOutbox.loadErrorMessage { outboxFailureMessage = error; return }
         for entry in transactionOutbox.entries {
             do {
                 try await sendTransaction(entry.operation)
@@ -4491,6 +4494,8 @@ final class BudgetWorkspaceStore: ObservableObject {
     var pendingLiveTransactions: [LiveTransactionOutbox.Entry] {
         (commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []
     }
+
+    var pendingLiveQueueError: String? { (commandRepository as? LiveWorkspaceCommandRepository)?.pendingQueueError }
 
     func discardPendingLiveTransaction(id: String) throws {
         guard let live = commandRepository as? LiveWorkspaceCommandRepository else { return }
@@ -5694,13 +5699,13 @@ private struct WorkspaceProfileView: View {
                     }
                 }
                 if session.sourceMode == .liveServer {
-                    if store.pendingSyncCount > 0 {
+                    if store.pendingSyncCount > 0 || store.pendingLiveQueueError != nil {
                         Section("Synchronization") {
                             Button("Review Pending Changes", systemImage: "arrow.triangle.2.circlepath") {
                                 showPendingSync = true
                             }
                             .accessibilityIdentifier("review-pending-sync")
-                            Text("\(store.pendingSyncCount) transaction\(store.pendingSyncCount == 1 ? "" : "s") saved on this iPhone will retry automatically. Review a rejected item here without exposing other financial data.")
+                            Text(store.pendingLiveQueueError ?? "\(store.pendingSyncCount) transaction\(store.pendingSyncCount == 1 ? "" : "s") saved on this iPhone will retry automatically. Review a rejected item here without exposing other financial data.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                     }
@@ -5823,7 +5828,10 @@ private struct PendingLiveTransactionsView: View {
     var body: some View {
         List {
             Section {
-                if store.pendingLiveTransactions.isEmpty {
+                if let error = store.pendingLiveQueueError {
+                    ContentUnavailableView("Pending Changes Unavailable", systemImage: "exclamationmark.icloud", description: Text(error))
+                        .accessibilityIdentifier("pending-sync-unreadable")
+                } else if store.pendingLiveTransactions.isEmpty {
                     ContentUnavailableView("No Pending Changes", systemImage: "checkmark.icloud", description: Text("Everything saved on this iPhone has synchronized."))
                 } else {
                     ForEach(store.pendingLiveTransactions) { entry in

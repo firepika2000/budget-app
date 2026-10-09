@@ -216,6 +216,7 @@ final class LiveTransactionOutbox {
 
     private let fileURL: URL
     private(set) var entries: [Entry]
+    private(set) var loadErrorMessage: String?
 
     init(budgetID: String, serverURL: URL, token: String, fileManager: FileManager = .default) {
         let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -225,7 +226,8 @@ final class LiveTransactionOutbox {
         let scope = "\(serverURL.host ?? "server")-\(serverURL.port ?? 0)-\(liveCredentialSubject(token))-\(budgetID)"
             .replacingOccurrences(of: "/", with: "-")
         fileURL = root.appendingPathComponent("\(scope).json", isDirectory: false)
-        entries = (try? Data(contentsOf: fileURL)).flatMap { try? JSONDecoder().decode([Entry].self, from: $0) } ?? []
+        do { entries = try Self.readEntries(from: fileURL) }
+        catch { entries = []; loadErrorMessage = "Pending changes could not be read. The saved queue has been preserved; do not delete app data. \(error.localizedDescription)" }
     }
 
     init(fileURL: URL) {
@@ -233,27 +235,51 @@ final class LiveTransactionOutbox {
         try? FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        entries = (try? Data(contentsOf: fileURL)).flatMap { try? JSONDecoder().decode([Entry].self, from: $0) } ?? []
+        do { entries = try Self.readEntries(from: fileURL) }
+        catch { entries = []; loadErrorMessage = "Pending changes could not be read. The saved queue has been preserved; do not delete app data. \(error.localizedDescription)" }
     }
 
     var count: Int { entries.count }
 
     func enqueue(_ operation: RecordTransactionOperation) throws {
+        try requireReadableQueue()
         guard let id = operation.clientOperationID, UUID(uuidString: id) != nil else {
             throw BudgetApplicationError.invalidOperation("Queued transactions require a stable operation identity.")
         }
-        if entries.contains(where: { $0.id == id }) { return }
-        entries.append(Entry(id: id, queuedAt: Date(), operation: operation))
-        try persist()
+        if let existing = entries.first(where: { $0.id == id }) {
+            guard existing.operation == operation else { throw BudgetApplicationError.invalidOperation("A pending operation identity cannot be reused for different transaction details.") }
+            return
+        }
+        let next = entries + [Entry(id: id, queuedAt: Date(), operation: operation)]
+        try persist(next)
+        entries = next
     }
 
     func remove(id: String) throws {
-        entries.removeAll { $0.id == id }
-        try persist()
+        try requireReadableQueue()
+        let next = entries.filter { $0.id != id }
+        try persist(next)
+        entries = next
     }
 
-    private func persist() throws {
-        let data = try JSONEncoder().encode(entries)
+    private func requireReadableQueue() throws {
+        if let loadErrorMessage { throw BudgetApplicationError.invalidOperation(loadErrorMessage) }
+    }
+
+    private static func readEntries(from url: URL) throws -> [Entry] {
+        let data: Data
+        do { data = try Data(contentsOf: url) }
+        catch let error as CocoaError where error.code == .fileReadNoSuchFile { return [] }
+        let values = try JSONDecoder().decode([Entry].self, from: data)
+        guard Set(values.map(\.id)).count == values.count,
+              values.allSatisfy({ UUID(uuidString: $0.id) != nil && $0.operation.clientOperationID == $0.id }) else {
+            throw BudgetApplicationError.invalidOperation("The saved queue has invalid operation identities.")
+        }
+        return values
+    }
+
+    private func persist(_ next: [Entry]) throws {
+        let data = try JSONEncoder().encode(next)
         try data.write(to: fileURL, options: [.atomic, .completeFileProtection])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     }

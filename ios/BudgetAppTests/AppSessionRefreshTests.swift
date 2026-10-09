@@ -1289,6 +1289,72 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveOutboxFailedWritesPreserveInMemoryAndDurableEntries() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-write-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storage = root.appendingPathComponent("storage")
+        let retained = root.appendingPathComponent("retained")
+        let file = storage.appendingPathComponent("queue.json")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let operation = RecordTransactionOperation(accountID: "a", categoryID: nil, amountMinor: 9_007_199_254_740_993,
+            occurredOn: "2026-10-09", payeeName: "Offline", memo: "", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: [], clientOperationID: UUID().uuidString)
+        try queue.enqueue(operation)
+        let original = queue.entries
+        try FileManager.default.moveItem(at: storage, to: retained)
+        try Data("blocks writes".utf8).write(to: storage)
+        var other = operation; other.clientOperationID = UUID().uuidString
+        XCTAssertThrowsError(try queue.enqueue(other))
+        XCTAssertEqual(queue.entries, original)
+        XCTAssertThrowsError(try queue.remove(id: original[0].id))
+        XCTAssertEqual(queue.entries, original)
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: retained.appendingPathComponent("queue.json")).entries, original)
+    }
+
+    @MainActor
+    func testLiveOutboxUnreadableQueueIsPreservedAndCannotBeOverwritten() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-corrupt-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("queue.json")
+        let original = Data("unreadable saved queue".utf8)
+        try original.write(to: file)
+        let queue = LiveTransactionOutbox(fileURL: file)
+        XCTAssertNotNil(queue.loadErrorMessage)
+        let operation = RecordTransactionOperation(accountID: "a", categoryID: nil, amountMinor: 100,
+            occurredOn: "2026-10-09", payeeName: "Offline", memo: "", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: [], clientOperationID: UUID().uuidString)
+        XCTAssertThrowsError(try queue.enqueue(operation))
+        XCTAssertThrowsError(try queue.remove(id: operation.clientOperationID!))
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        XCTAssertTrue(queue.entries.isEmpty)
+    }
+
+    @MainActor
+    func testLiveOutboxRejectsChangedPayloadForExistingIdentity() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-identity-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("queue.json")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let first = RecordTransactionOperation(accountID: "a", categoryID: nil, amountMinor: 100,
+            occurredOn: "2026-10-09", payeeName: "Offline", memo: "", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: [], clientOperationID: UUID().uuidString)
+        try queue.enqueue(first)
+        let changed = RecordTransactionOperation(accountID: "a", categoryID: nil, amountMinor: 100,
+            occurredOn: "2026-10-09", payeeName: "Offline", memo: "Different intent", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: [], clientOperationID: first.clientOperationID)
+        XCTAssertThrowsError(try queue.enqueue(changed))
+        XCTAssertEqual(queue.entries.first?.operation, first)
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).entries, queue.entries)
+        let duplicate = try JSONEncoder().encode(queue.entries + queue.entries)
+        try duplicate.write(to: file)
+        let invalid = LiveTransactionOutbox(fileURL: file)
+        XCTAssertNotNil(invalid.loadErrorMessage)
+        XCTAssertThrowsError(try invalid.enqueue(first))
+        XCTAssertEqual(try Data(contentsOf: file), duplicate)
+    }
+
+    @MainActor
     func testLiveWorkspaceReadCacheSurvivesRelaunchWithoutInventingAuthority() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("live-cache-\(UUID().uuidString)", isDirectory: true)
