@@ -9,6 +9,39 @@ import CryptoKit
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testInvalidPayoffPlanPreservesPreviouslySavedScenarioAndLedger() async throws {
+        let source = DemoWorkspaceDataSource()
+        let id = try XCTUnwrap(source.demo.accounts.first(where: { $0.kind == .credit })?.id)
+        let valid = try await source.saveDebtPayoffPlan(.init(strategy: "snowball", rollover: true,
+            extraPaymentMinor: 2500, accountIDs: [id], customOrder: [], targetDate: "2028-02-29"))
+        let accounts = source.demo.accounts
+        let transactions = source.demo.transactions
+        let categories = source.demo.categories
+        let invalid: [APIDebtPayoffPlanUpsert] = [
+            .init(strategy: "unknown", rollover: true),
+            .init(strategy: "snowball", rollover: true, extraPaymentMinor: -1),
+            .init(strategy: "avalanche", rollover: true, accountIDs: [id, id]),
+            .init(strategy: "custom", rollover: true, accountIDs: [id], customOrder: []),
+            .init(strategy: "snowball", rollover: true, accountIDs: [id], customOrder: [id]),
+            .init(strategy: "avalanche", rollover: true, targetDate: "2026-02-30"),
+        ]
+        for request in invalid {
+            do {
+                _ = try await source.saveDebtPayoffPlan(request)
+                XCTFail("Malformed scenario must not replace the stored plan")
+            } catch let error as APIClientError {
+                guard case .server(let status, _) = error else { return XCTFail("Unexpected error") }
+                XCTAssertEqual(status, 422)
+            }
+            let unchanged = try await source.debtPayoffPlan()
+            XCTAssertEqual(unchanged, valid)
+            XCTAssertEqual(source.demo.accounts, accounts)
+            XCTAssertEqual(source.demo.transactions, transactions)
+            XCTAssertEqual(source.demo.categories, categories)
+        }
+    }
+
+    @MainActor
     func testPayoffPlansAreActorOwnedAndEnforceCurrentAccountScope() async throws {
         let source = DemoWorkspaceDataSource()
         let debtIDs = source.demo.accounts.filter { [.credit, .loan, .mortgage].contains($0.kind) }.map(\.id)

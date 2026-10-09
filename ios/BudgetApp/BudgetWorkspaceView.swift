@@ -2991,6 +2991,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan { try requireActiveMembership()
         guard budget.can("manage_planning"), budget.can("view_account_balances"),
               actorCapabilities.contains("manage_planning"), actorCapabilities.contains("view_account_balances") else { throw APIClientError.server(status: 403, message: "You do not have permission to manage payoff plans.") }
+        try value.validate()
         let visibleDebtIDs = Set(demo.accounts.filter { actorAccountIDs.contains($0.id) && [.credit, .loan, .mortgage].contains($0.kind) }.map(\.id))
         guard Set(value.accountIDs).isSubset(of: visibleDebtIDs), Set(value.customOrder).isSubset(of: visibleDebtIDs) else {
             throw APIClientError.server(status: 404, message: "Payoff plan resource not found")

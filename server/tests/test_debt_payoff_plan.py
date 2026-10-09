@@ -113,3 +113,28 @@ def test_payoff_plan_rejects_invalid_orders_and_requires_capabilities(client, ow
     })
     assert denied.status_code == 403
     assert client.delete(f"{base}/debt-payoff-plan", headers=auth(child_token)).status_code == 403
+
+
+def test_malformed_payoff_plan_preserves_existing_scenario(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    card = create_strategy_card(client, owner_token, budget["id"], "Card", 5_000, 1_200, 500)
+    path = f"/api/v1/budgets/{budget['id']}/debt-payoff-plan"
+    valid = {
+        "strategy": "snowball", "rollover": True, "extra_payment_minor": 2500,
+        "account_ids": [card["id"]], "custom_order": [], "target_date": "2028-02-29",
+    }
+    saved = client.put(path, headers=auth(owner_token), json=valid)
+    assert saved.status_code == 200
+    before = saved.json()
+    malformed = [
+        {"strategy": "unknown"},
+        {"extra_payment_minor": -1},
+        {"account_ids": [card["id"], card["id"]]},
+        {"strategy": "custom", "custom_order": []},
+        {"custom_order": [card["id"]]},
+        {"target_date": "2026-02-30"},
+        {"account_ids": [str(index) for index in range(101)]},
+    ]
+    for changes in malformed:
+        assert client.put(path, headers=auth(owner_token), json=valid | changes).status_code == 422
+        assert client.get(path, headers=auth(owner_token)).json() == before

@@ -1218,6 +1218,54 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(methods, ["PUT", "GET", "DELETE"])
     }
 
+    func testDebtPayoffPlanValidationBoundsDatesAndCustomOrder() throws {
+        let invalid: [APIDebtPayoffPlanUpsert] = [
+            .init(strategy: "unknown", rollover: true),
+            .init(strategy: "snowball", rollover: true, extraPaymentMinor: -1),
+            .init(strategy: "avalanche", rollover: true, accountIDs: ["a", "a"]),
+            .init(strategy: "custom", rollover: true, accountIDs: ["a"], customOrder: ["a", "a"]),
+            .init(strategy: "custom", rollover: true, accountIDs: ["a", "b"], customOrder: ["a"]),
+            .init(strategy: "custom", rollover: true, accountIDs: ["a"], customOrder: ["b"]),
+            .init(strategy: "snowball", rollover: true, accountIDs: ["a"], customOrder: ["a"]),
+            .init(strategy: "avalanche", rollover: true, accountIDs: (0...100).map(String.init)),
+            .init(strategy: "custom", rollover: true, customOrder: (0...100).map(String.init)),
+            .init(strategy: "avalanche", rollover: true, targetDate: "2026-02-30"),
+            .init(strategy: "avalanche", rollover: true, targetDate: "2026-2-01"),
+            .init(strategy: "avalanche", rollover: true, targetDate: "2026-10-09T00:00:00Z"),
+        ]
+        for request in invalid {
+            XCTAssertThrowsError(try request.validate()) { error in
+                guard case APIClientError.server(let status, _) = error else { return XCTFail("Unexpected error") }
+                XCTAssertEqual(status, 422)
+            }
+        }
+        let ids = (0..<100).map(String.init)
+        XCTAssertNoThrow(try APIDebtPayoffPlanUpsert(strategy: "custom", rollover: true,
+            extraPaymentMinor: .max, accountIDs: ids, customOrder: Array(ids.reversed()), targetDate: "2028-02-29").validate())
+        XCTAssertNoThrow(try APIDebtPayoffPlanUpsert(strategy: "avalanche", rollover: false,
+            extraPaymentMinor: 0, targetDate: nil).validate())
+    }
+
+    func testInvalidPayoffPlanNeverSendsNetworkMutation() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        var calls = 0
+        MockURLProtocol.handler = { request in
+            calls += 1
+            return (HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        do {
+            _ = try await client.saveDebtPayoffPlan(budgetID: "b1", request: .init(strategy: "custom",
+                rollover: true, accountIDs: ["card"], customOrder: []), token: "current-token")
+            XCTFail("Invalid plan should fail before sending")
+        } catch let error as APIClientError {
+            guard case .server(let status, _) = error else { return XCTFail("Unexpected error") }
+            XCTAssertEqual(status, 422)
+        }
+        XCTAssertEqual(calls, 0)
+    }
+
     func testPlanPerformanceReportDecodesExactHistoricalObservations() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

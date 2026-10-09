@@ -150,7 +150,10 @@ fields changed, with before/after values and explicit unset values; large money 
 display, and unchanged fields are omitted. Saved payoff plans now match Live's actor-owned privacy in
 Demo; current account scope and balance/report capabilities apply at read time, and one member cannot
 read or reset another member's plan. Local Device preserves the actual owner and original save timestamp
-through reopen and refresh. Remaining v0.12 work should continue auditing other mutable
+through reopen and refresh.
+Saved scenario requests now share bounded strategy/order/date validation before local persistence
+or hosted transport; malformed edits preserve the previous scenario and cannot mutate ledger money.
+Remaining v0.12 work should continue auditing other mutable
 planning and administrative observations
 for overwrite-only or export gaps rather than duplicating established histories.
 

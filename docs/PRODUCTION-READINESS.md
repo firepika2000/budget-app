@@ -2205,3 +2205,21 @@ app; `git diff --check` passes. No user data reset or TestFlight upload.
 Human acceptance remains separate: save a Demo owner's payoff scenario, switch to Partner and
 confirm it is not loaded; save/reset Partner's own scenario and return to Owner to confirm theirs
 remains. Existing Local Device saved plans should remain intact after adopting this build.
+
+### Saved payoff-plan request validation parity — 2026-10-09
+
+Local Device/Demo previously accepted malformed saved scenarios that the hosted Pydantic model
+rejected. The shared typed request now validates supported strategies, nonnegative exact extra
+payment, bounded/unique debt selections (at most 100), complete custom ordering, and valid ISO
+target dates before local persistence or Live transport. Scope and authorization remain in the
+existing application services/server. Invalid input neither replaces the saved plan nor normalizes
+it into a different strategy; no network mutation is sent for a locally invalid request.
+
+Verification: three focused Swift API tests pass, including valid leap day, zero/Int64 maximum,
+duplicate/over-limit selections, incorrect strategy/order/date, and zero transport calls. Five
+focused native tests pass on regular Xcode 27 / the preserved iPhone 17 Pro Max iOS 27 simulator,
+covering rejection without changes to the previously saved scenario, accounts, transactions or
+categories, alongside actor privacy, current capabilities and Local Device reopen/removal.
+Four hosted payoff-plan tests pass; the new malformed-input matrix proves the Live saved scenario
+also stays unchanged. The production app compiles in the native test build; `git diff --check`
+passes. No server behavior/schema change, migration, user data reset or TestFlight upload.

@@ -993,6 +993,40 @@ public struct APIDebtPayoffPlanUpsert: Encodable, Equatable, Sendable {
         self.strategy = strategy; self.rollover = rollover; self.extraPaymentMinor = extraPaymentMinor
         self.accountIDs = accountIDs; self.customOrder = customOrder; self.targetDate = targetDate
     }
+    /// The same bounded planning contract enforced by the hosted request model.
+    /// Resource visibility is still checked by the application service/server.
+    public func validate() throws {
+        func reject(_ message: String) throws { throw APIClientError.server(status: 422, message: message) }
+        guard ["avalanche", "snowball", "custom"].contains(strategy) else {
+            return try reject("Choose a supported payoff strategy.")
+        }
+        guard extraPaymentMinor >= 0 else { return try reject("Extra payment cannot be negative.") }
+        guard accountIDs.count <= 100, customOrder.count <= 100 else {
+            return try reject("Choose no more than 100 debt accounts.")
+        }
+        guard Set(accountIDs).count == accountIDs.count, Set(customOrder).count == customOrder.count else {
+            return try reject("Debt accounts and custom ordering must not contain duplicates.")
+        }
+        if strategy == "custom" {
+            guard Set(customOrder) == Set(accountIDs) else {
+                return try reject("Custom ordering must include every selected debt account exactly once.")
+            }
+        } else if !customOrder.isEmpty {
+            return try reject("Custom ordering is available only for the custom strategy.")
+        }
+        if let targetDate {
+            let formatter = DateFormatter()
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = "yyyy-MM-dd"
+            formatter.isLenient = false
+            guard targetDate.count == 10, let date = formatter.date(from: targetDate),
+                  formatter.string(from: date) == targetDate else {
+                return try reject("Enter a valid target date in YYYY-MM-DD format.")
+            }
+        }
+    }
     enum CodingKeys: String, CodingKey {
         case strategy, rollover
         case extraPaymentMinor = "extra_payment_minor", accountIDs = "account_ids"

@@ -857,7 +857,8 @@ public struct APIClient {
     public func saveDebtPayoffPlan(
         budgetID: String, request: APIDebtPayoffPlanUpsert, token: String
     ) async throws -> APIDebtPayoffPlan {
-        try await send(
+        try request.validate()
+        return try await send(
             path: "api/v1/budgets/\(budgetID)/debt-payoff-plan",
             method: "PUT", token: token, body: request
         )
