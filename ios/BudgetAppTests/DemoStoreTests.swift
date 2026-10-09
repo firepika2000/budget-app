@@ -10,6 +10,21 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testAllowanceHistoryAndMutationsCannotOverlapInProductionComposition() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: sourceURL)
+        let start = try XCTUnwrap(source.range(of: "private struct AllowanceDetailView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct AllowanceCreateView: View", range: start.upperBound..<source.endIndex))
+        let detail = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(detail.contains("private var historyBusy: Bool { loadingHistory || loadingOlderPolicy || loadingOlderIssuances }"))
+        XCTAssertTrue(detail.contains("guard !isSaving, !historyBusy, hasOlderPolicy"))
+        XCTAssertTrue(detail.contains("guard !isSaving, !historyBusy, hasOlderIssuances"))
+        XCTAssertTrue(detail.contains("guard !isSaving, !historyBusy, let version"))
+        XCTAssertTrue(detail.contains("guard !isSaving, !historyBusy else { return }; isSaving = true"))
+        XCTAssertEqual(detail.components(separatedBy: "await loadHistory() } catch").count - 1, 2)
+        // Post-save reload remains permitted while isSaving holds the interaction lock.
+        XCTAssertTrue(detail.contains("guard !loadingHistory, !loadingOlderPolicy, !loadingOlderIssuances else { return }"))
+    }
     func testPayeeHistoryExplainsAllAliasesMergeAndQualifiedSuggestionWithoutDirectoryLoading() {
         let old = APIPayeeRevisionSnapshot(displayName: "Market", isArchived: false,
             aliases: ["Old B", "Keep", "Old A"], defaultCategoryID: "old-private")

@@ -12711,6 +12711,7 @@ private struct AllowanceDetailView: View {
     @State private var errorMessage: String?
     @State private var isSaving = false
     private var plan: APIAllowancePlan? { store.allowances.first { $0.id == planID } }
+    private var historyBusy: Bool { loadingHistory || loadingOlderPolicy || loadingOlderIssuances }
     var body: some View {
         List {
             if let plan {
@@ -12724,8 +12725,8 @@ private struct AllowanceDetailView: View {
                 }
                 Section("Destinations") { ForEach(Array(plan.splits.enumerated()), id: \.offset) { _, split in LabeledContent(categoryName(split.destinationCategoryID), value: store.format(split.amountMinor)) } }
                 Section {
-                    if plan.isActive && plan.nextIssueDate <= BudgetWorkspaceStore.dateString(Date()) { Button("Issue Now") { Task { await issue(plan) } }.disabled(isSaving || store.summary == nil) }
-                    Button(plan.isActive ? "Pause Allowance" : "Reactivate Allowance", role: plan.isActive ? .destructive : nil) { Task { await setActive(plan, !plan.isActive) } }.disabled(isSaving)
+                    if plan.isActive && plan.nextIssueDate <= BudgetWorkspaceStore.dateString(Date()) { Button("Issue Now") { Task { await issue(plan) } }.disabled(isSaving || historyBusy || store.summary == nil) }
+                    Button(plan.isActive ? "Pause Allowance" : "Reactivate Allowance", role: plan.isActive ? .destructive : nil) { Task { await setActive(plan, !plan.isActive) } }.disabled(isSaving || historyBusy)
                     Text("Creating or pausing a plan is money-neutral. Issue Now transfers existing category funds atomically through the allocation service.").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("History") {
@@ -12733,7 +12734,7 @@ private struct AllowanceDetailView: View {
                     if history.isEmpty { Text("No allowance has been issued yet").foregroundStyle(.secondary) }
                     if hasOlderIssuances {
                         Button("Load Earlier Issuances") { Task { await loadOlderIssuances() } }
-                            .disabled(loadingHistory || loadingOlderIssuances)
+                            .disabled(isSaving || historyBusy)
                             .accessibilityIdentifier("allowance-issuances-load-older")
                     }
                 }
@@ -12756,7 +12757,7 @@ private struct AllowanceDetailView: View {
                     if policyHistory.isEmpty { Text("No plan changes recorded").foregroundStyle(.secondary) }
                     if hasOlderPolicy {
                         Button("Load Earlier Plan Changes") { Task { await loadOlderPolicy() } }
-                            .disabled(loadingHistory || loadingOlderPolicy)
+                            .disabled(isSaving || historyBusy)
                             .accessibilityIdentifier("allowance-history-load-older")
                     }
                     if loadingHistory || loadingOlderPolicy { ProgressView("Loading history…") }
@@ -12775,7 +12776,7 @@ private struct AllowanceDetailView: View {
             memberName: { id in store.householdMembers.first(where: { $0.userID == id })?.displayName ?? "Household member" })
     }
     private func loadOlderPolicy() async {
-        guard !loadingHistory, !loadingOlderPolicy, hasOlderPolicy else { return }
+        guard !isSaving, !historyBusy, hasOlderPolicy else { return }
         loadingOlderPolicy = true; defer { loadingOlderPolicy = false }
         do {
             let page = try await store.allowancePlanHistory(id: planID, limit: historyPageSize, offset: policyHistory.count)
@@ -12783,7 +12784,7 @@ private struct AllowanceDetailView: View {
         } catch { errorMessage = error.localizedDescription }
     }
     private func loadOlderIssuances() async {
-        guard !loadingHistory, !loadingOlderIssuances, hasOlderIssuances else { return }
+        guard !isSaving, !historyBusy, hasOlderIssuances else { return }
         loadingOlderIssuances = true; defer { loadingOlderIssuances = false }
         do {
             let page = try await store.allowanceIssuances(id: planID, limit: historyPageSize, offset: history.count)
@@ -12801,8 +12802,8 @@ private struct AllowanceDetailView: View {
         policyHistory = try await changes
         hasOlderPolicy = policyHistory.count == historyPageSize
     } catch { errorMessage = error.localizedDescription } }
-    private func issue(_ plan: APIAllowancePlan) async { guard let version = store.summary?.allocationVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.issueAllowance(id: plan.id, issueDate: plan.nextIssueDate, expectedVersion: version); await loadHistory() } catch { errorMessage = error.localizedDescription } }
-    private func setActive(_ plan: APIAllowancePlan, _ active: Bool) async { isSaving = true; defer { isSaving = false }; do { try await store.setAllowanceActive(id: plan.id, active: active); await loadHistory() } catch { errorMessage = error.localizedDescription } }
+    private func issue(_ plan: APIAllowancePlan) async { guard !isSaving, !historyBusy, let version = store.summary?.allocationVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.issueAllowance(id: plan.id, issueDate: plan.nextIssueDate, expectedVersion: version); await loadHistory() } catch { errorMessage = error.localizedDescription } }
+    private func setActive(_ plan: APIAllowancePlan, _ active: Bool) async { guard !isSaving, !historyBusy else { return }; isSaving = true; defer { isSaving = false }; do { try await store.setAllowanceActive(id: plan.id, active: active); await loadHistory() } catch { errorMessage = error.localizedDescription } }
     private func policyAction(_ action: String) -> String {
         switch action { case "created": "Plan created"; case "paused": "Plan paused"; case "reactivated": "Plan reactivated"; case "issued": "Issue date advanced"; default: "Plan updated" }
     }
