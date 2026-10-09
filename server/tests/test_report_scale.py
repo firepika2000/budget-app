@@ -127,7 +127,7 @@ def test_summary_payload_stays_bounded_across_ten_thousand_transactions(client, 
     print(f"summary_scale rows=10000 bytes={len(large.content)} sql={large_queries} seconds={large_seconds:.4f}")
 
 
-@pytest.mark.parametrize("report", ["spending", "spending-trends"])
+@pytest.mark.parametrize("report", ["spending", "spending-trends", "income-spending"])
 def test_spending_reports_bound_split_orm_hydration(client, owner_token, session_factory, report):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])
@@ -149,18 +149,31 @@ def test_spending_reports_bound_split_orm_hydration(client, owner_token, session
         peak = max(peak, len(session.identity_map))
     event.listen(session_factory.class_, "loaded_as_persistent", loaded)
     try:
-        response = client.get(f"/api/v1/budgets/{budget['id']}/reports/{report}", headers=auth(owner_token),
-            params={"start_date": "2026-09-01", "end_date": "2026-09-30", "category_id": category["id"]})
+        params = {"start_date": "2026-09-01", "end_date": "2026-09-30"}
+        if report != "income-spending":
+            params["category_id"] = category["id"]
+        response = client.get(f"/api/v1/budgets/{budget['id']}/reports/{report}", headers=auth(owner_token), params=params)
     finally:
         event.remove(session_factory.class_, "loaded_as_persistent", loaded)
     assert response.status_code == 200, response.text
-    assert response.json()["total_spending_minor"] == 10000
-    rows = response.json()["categories"] if report == "spending" else response.json()["series"]
-    assert len(rows[0]["transaction_ids"]) == 500
-    assert rows[0]["transaction_ids_truncated"] is True
-    if report == "spending-trends":
-        assert len(rows[0]["points"][0]["transaction_ids"]) == 500
-        assert rows[0]["points"][0]["transaction_ids_truncated"] is True
+    body = response.json()
+    if report == "income-spending":
+        assert body["income_minor"] == 0
+        assert body["spending_minor"] == 30000
+        assert body["difference_minor"] == -30000
+        assert body["periods"][0]["spending_minor"] == 30000
+        assert len(body["spending_transaction_ids"]) == 500
+        assert body["spending_transaction_ids_truncated"] is True
+        assert len(body["periods"][0]["spending_transaction_ids"]) == 500
+        assert body["periods"][0]["spending_transaction_ids_truncated"] is True
+    else:
+        assert body["total_spending_minor"] == 10000
+        rows = body["categories"] if report == "spending" else body["series"]
+        assert len(rows[0]["transaction_ids"]) == 500
+        assert rows[0]["transaction_ids_truncated"] is True
+        if report == "spending-trends":
+            assert len(rows[0]["points"][0]["transaction_ids"]) == 500
+            assert rows[0]["points"][0]["transaction_ids_truncated"] is True
     print(f"{report} transactions=10000 splits=20000 peak_orm={peak}")
     assert peak < 3000
 

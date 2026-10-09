@@ -2,6 +2,17 @@
 
 ## Spending-report object hydration bound (2026-10-09)
 
+Income vs Spending follow-up: the repeated-pass path measured 30,002 resident ORM objects for
+10,000 transactions/20,000 splits. It now consumes the same bounded iterator once and feeds the
+existing canonical classification into exact total/month accumulators. The fixture peaks at 2,002
+objects with unchanged 30,000 minor-unit spending and -30,000 net cash flow; total/month ID prefixes
+and truncation stay bounded. Calendar partial periods, refunds, income, transfers and tracking
+semantics remain covered by the existing HTTP analytics regressions. No separate financial formula,
+API shape, Swift change or migration was introduced. Older notes below describing Income as
+materialized are historical and superseded by this checkpoint.
+The focused analytics, delegated privacy and scale run passed 84 cases, zero failures; diff checks
+passed. Server update/restart only; no redundant native build, data reset or TestFlight publication.
+
 Follow-up: Breakdown category IDs and Trends series/month IDs now accumulate an ordered unique
 prefix of at most 501 identities: 500 returned plus one sentinel proving truncation. Duplicate
 split portions retain first-seen ordering and cannot falsely mark a page truncated. Aggregation

@@ -109,6 +109,23 @@ def _income_spending_values(transactions: list[Transaction]) -> tuple[int, int, 
     return income_minor, spending_minor, [item.id for item in income], [item.id for item in categorized]
 
 
+class _IncomeSpendingAccumulator:
+    def __init__(self):
+        self.income_minor = 0
+        self.spending_minor = 0
+        self.income_ids = _ReportTransactionIDs()
+        self.spending_ids = _ReportTransactionIDs()
+
+    def add(self, values):
+        income, spending, income_ids, spending_ids = values
+        self.income_minor += income
+        self.spending_minor += spending
+        for identifier in income_ids:
+            self.income_ids.append(identifier)
+        for identifier in spending_ids:
+            self.spending_ids.append(identifier)
+
+
 def report_transactions(
     db: Session,
     user: User,
@@ -301,19 +318,29 @@ def income_spending_report(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    budget, transactions = report_transactions(db, user, budget_id, start_date, end_date, account_id, [], [], member_id, payee, None, cleared, reconciled, flag, tag, include_tracking)
+    budget, transactions = report_transactions(db, user, budget_id, start_date, end_date, account_id, [], [], member_id, payee, None, cleared, reconciled, flag, tag, include_tracking, stream=True)
     on_budget_accounts = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id, Account.is_on_budget.is_(True))))
-    included = [item for item in transactions if item.transfer_id is None and item.account_id in on_budget_accounts]
     # Categorized/split transactions participate in spending; positive categorized amounts are
     # refunds that reduce spending rather than income. Uncategorized inflow alone is income.
-    income_minor, spending_minor, income_ids, spending_ids = _income_spending_values(included)
+    total = _IncomeSpendingAccumulator()
+    ranges = list(month_periods(start_date, end_date))
+    monthly = {(start.year, start.month): _IncomeSpendingAccumulator() for start, _ in ranges}
+    for item in transactions:
+        if item.transfer_id is not None or item.account_id not in on_budget_accounts:
+            continue
+        # Reuse the canonical classification on one transaction; do not retain the history or
+        # scan it again for every month. Ordered bounded IDs preserve the existing response prefix.
+        values = _income_spending_values([item])
+        total.add(values)
+        monthly[(item.occurred_on.year, item.occurred_on.month)].add(values)
+    income_minor, spending_minor = total.income_minor, total.spending_minor
     difference = income_minor - spending_minor
     periods = []
-    for period_start, period_end in month_periods(start_date, end_date):
-        period_transactions = [item for item in included if period_start <= item.occurred_on <= period_end]
-        period_income, period_spending, period_income_ids, period_spending_ids = _income_spending_values(period_transactions)
-        bounded_income_ids, income_truncated = _bounded_ids(period_income_ids)
-        bounded_spending_ids, spending_truncated = _bounded_ids(period_spending_ids)
+    for period_start, period_end in ranges:
+        period = monthly[(period_start.year, period_start.month)]
+        period_income, period_spending = period.income_minor, period.spending_minor
+        bounded_income_ids, income_truncated = _bounded_ids(period.income_ids)
+        bounded_spending_ids, spending_truncated = _bounded_ids(period.spending_ids)
         periods.append({
             "period_start": period_start, "period_end": period_end,
             "income_minor": period_income, "spending_minor": period_spending,
@@ -323,8 +350,8 @@ def income_spending_report(
             "income_transaction_ids_truncated": income_truncated,
             "spending_transaction_ids_truncated": spending_truncated,
         })
-    bounded_income_ids, income_truncated = _bounded_ids(income_ids)
-    bounded_spending_ids, spending_truncated = _bounded_ids(spending_ids)
+    bounded_income_ids, income_truncated = _bounded_ids(total.income_ids)
+    bounded_spending_ids, spending_truncated = _bounded_ids(total.spending_ids)
     return {
         "start_date": start_date, "end_date": end_date, "currency_code": budget.currency_code,
         "income_minor": income_minor, "spending_minor": spending_minor, "difference_minor": difference,
