@@ -290,6 +290,50 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testSuccessfulScopeReductionInvalidatesLateHistoryAndPreservesReportDates() async throws {
+        let gate = Gate(), reduced = Counter()
+        defer { gate.releaseNow() }
+        RefreshMockURLProtocol.handler = { request in
+            let path = request.url!.path
+            if path.hasSuffix("/private-account/history") {
+                gate.signalArrived(); gate.waitForRelease(); return Self.json(200, "[]")
+            }
+            if reduced.value > 0 && path.hasSuffix("/accounts") { return Self.json(200, "[]") }
+            return Self.workspaceResponse(path)
+        }
+        let store = try workspaceForRevocationTest()
+        await store.refresh(); await store.loadReports([.summary])
+        XCTAssertNotNil(store.insightsSummary)
+        store.reportPeriod = "custom"
+        let start = Date(timeIntervalSince1970: 1_700_000_000), end = start.addingTimeInterval(86400)
+        store.customReportStart = start; store.customReportEnd = end
+        store.reportAccountID = "private-account"
+        store.reportTag = "keep-this-filter"
+        let pending = Task { try await store.accountHistory(accountID: "private-account") }
+        await gate.awaitArrival()
+        _ = reduced.increment(); await store.refresh()
+        XCTAssertFalse(store.workspaceAccessDenied, "A narrower successful scope is not whole-budget denial")
+        XCTAssertTrue(store.accounts.isEmpty)
+        XCTAssertNil(store.insightsSummary)
+        XCTAssertEqual(store.reportAccountID, "")
+        XCTAssertEqual(store.reportPeriod, "custom")
+        XCTAssertEqual(store.customReportStart, start); XCTAssertEqual(store.customReportEnd, end)
+        XCTAssertEqual(store.reportTag, "keep-this-filter")
+        gate.releaseNow()
+        do { _ = try await pending.value; XCTFail("Old-scope history must cancel") }
+        catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+    }
+
+    @MainActor
+    func testScopeReductionDistinguishesOrderingAndExpansionFromRemoval() {
+        XCTAssertFalse(BudgetWorkspaceStore.scopeShrank(previous: ["a", "b"], current: ["b", "a"]))
+        XCTAssertFalse(BudgetWorkspaceStore.scopeShrank(previous: ["a"], current: ["a", "b"]))
+        XCTAssertFalse(BudgetWorkspaceStore.scopeShrank(previous: [], current: ["a"]))
+        XCTAssertTrue(BudgetWorkspaceStore.scopeShrank(previous: ["a", "b"], current: ["a"]))
+        XCTAssertTrue(BudgetWorkspaceStore.scopeShrank(previous: ["a"], current: []))
+    }
+
+    @MainActor
     func testLateSnapshotAndReportCannotRestoreWorkspaceAfterAccessDenial() async throws {
         let reads = Counter(), snapshotGate = Gate(), reportGate = Gate()
         defer { snapshotGate.releaseNow(); reportGate.releaseNow() }

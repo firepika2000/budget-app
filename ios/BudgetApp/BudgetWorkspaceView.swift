@@ -4234,6 +4234,18 @@ final class BudgetWorkspaceStore: ObservableObject {
                 let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, flag: reportFlag, tag: reportTag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTrackingAccounts)
                 let value = try await dataSource.coreSnapshot(planMonth: planMonth, report: query)
                 guard snapshotOperationID == operationID else { return }
+                let cachedRead = (dataSource as? LiveWorkspaceDataSource)?.lastReadWasCached == true
+                if !cachedRead {
+                    if Self.scopeShrank(previous: accounts.map(\.id), current: value.accounts.map(\.id))
+                        || Self.scopeShrank(previous: categories.map(\.id), current: value.categories.map(\.id))
+                        || Self.scopeShrank(previous: groups.map(\.id), current: value.groups.map(\.id)) {
+                        invalidateIndependentObservations()
+                    }
+                    // Keep dates and unrelated filters while dropping inaccessible resources.
+                    if !reportAccountID.isEmpty, !value.accounts.contains(where: { $0.id == reportAccountID }) { reportAccountID = "" }
+                    if !reportCategoryID.isEmpty, !value.categories.contains(where: { $0.id == reportCategoryID }) { reportCategoryID = "" }
+                    if !reportCategoryGroup.isEmpty, !value.groups.contains(where: { $0.name == reportCategoryGroup }) { reportCategoryGroup = "" }
+                }
                 workspaceAccessDenied = false
                 accounts = value.accounts; accountBalances = value.accountBalances; categories = value.categories; groups = value.groups; transactions = value.transactions; payees = value.payees
                 summary = value.summary; requests = value.requests; allowances = value.allowances
@@ -4243,7 +4255,6 @@ final class BudgetWorkspaceStore: ObservableObject {
                 householdMembers = value.members; delegatedBudgets = value.delegatedBudgets; allocationOperations = value.allocationOperations; allocationHistoryNextCursor = value.allocationNextCursor; errorMessage = nil
                 targets = Dictionary(uniqueKeysWithValues: value.targets.map { ($0.categoryID, $0) })
                 scheduledTransactions = value.schedules
-                let cachedRead = (dataSource as? LiveWorkspaceDataSource)?.lastReadWasCached == true
                 isWorkingOffline = cachedRead
                 if cachedRead {
                     syncStatusMessage = pendingSyncCount > 0
@@ -4276,8 +4287,11 @@ final class BudgetWorkspaceStore: ObservableObject {
         }
     }
 
-    private func evictUnauthorizedObservations() {
-        workspaceAccessDenied = true
+    static func scopeShrank(previous: [String], current: [String]) -> Bool {
+        !Set(previous).isSubset(of: Set(current))
+    }
+
+    private func invalidateIndependentObservations() {
         authorityRevision += 1
         reportRevision += 1
         for task in pendingReports.values { task.cancel() }
@@ -4286,11 +4300,16 @@ final class BudgetWorkspaceStore: ObservableObject {
         transactionBrowseTask = nil; transactionBrowseQuery = nil; transactionBrowseOperationID = nil
         forecastOperationID = nil; isForecastLoading = false
         planningGuidanceOperationID = nil; planningSpendingReport = nil
+        spendingReport = nil; spendingTrendsReport = nil; incomeReport = nil; netWorthReport = nil
+        debtReport = nil; planPerformanceReport = nil; resilienceReport = nil; insightsSummary = nil
+    }
+
+    private func evictUnauthorizedObservations() {
+        workspaceAccessDenied = true
+        invalidateIndependentObservations()
         summary = nil; accounts = []; accountBalances = [:]; payees = []; categories = []; groups = []
         transactions = []; requests = []; allowances = []; householdMembers = []; delegatedBudgets = []
         allocationOperations = []; allocationHistoryNextCursor = nil; targets = [:]; scheduledTransactions = []; delegatedBudget = nil; forecast = nil
-        spendingReport = nil; spendingTrendsReport = nil; incomeReport = nil; netWorthReport = nil
-        debtReport = nil; planPerformanceReport = nil; resilienceReport = nil; insightsSummary = nil
         resetReportSelection()
     }
 
