@@ -464,7 +464,9 @@ def test_structured_export_contains_reconstructable_audit_data_and_requires_capa
     assert client.get(f"{path}/export.json", headers=auth(child_token)).status_code == 403
 
 
-def test_structured_export_contract_covers_every_persistent_domain_model():
+def test_structured_export_contract_covers_every_persistent_domain_model(
+    client, owner_token, session_factory
+):
     """A new persistence model must be deliberately exported or deliberately excluded."""
     from app.database import Base
 
@@ -486,6 +488,64 @@ def test_structured_export_contract_covers_every_persistent_domain_model():
     deliberately_deployment_local = {"setup_state", "refresh_sessions", "pairing_codes"}
 
     assert set(Base.metadata.tables) == exported_tables | deliberately_deployment_local
+
+    # Exercise the real route, including empty sections: maintaining the allowlist alone
+    # must not make a newly added model look exported when its query was never wired in.
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+    from .test_budgeting_api import create_budget, create_budget_structure
+    from app.models import AllocationOperation, AllowancePlan, CategoryTarget, DelegatedBudgetPolicy, FinancialRequest
+
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    path = f"/api/v1/budgets/{budget['id']}"
+    transaction = client.post(f"{path}/transactions", headers=auth(owner_token), json={
+        "account_id": account["id"], "amount_minor": 100,
+        "occurred_on": "2026-09-04", "payee_name": "Export coverage",
+    })
+    assert transaction.status_code == 201, transaction.text
+    # Populate parent identities to exercise conditional child queries. These fixture-only
+    # records test export wiring, not canonical mutation/accounting behavior.
+    with session_factory() as db:
+        household = db.get(Household, budget["household_id"])
+        actor = household.owner_user_id
+        db.add_all([
+            AllocationOperation(budget_id=budget["id"], occurred_on=date(2026, 9, 4),
+                                kind="assignment", actor_user_id=actor),
+            CategoryTarget(budget_id=budget["id"], category_id=category["id"],
+                           target_type="monthly", target_amount_minor=100, created_by_user_id=actor),
+            DelegatedBudgetPolicy(budget_id=budget["id"], user_id=actor,
+                                 pool_category_id=category["id"], authority_minor=0,
+                                 created_by_user_id=actor),
+            AllowancePlan(budget_id=budget["id"], delegated_user_id=actor,
+                          source_category_id=category["id"], name="Export fixture", amount_minor=100,
+                          next_issue_date=date(2026, 9, 4), recurrence_unit="month", created_by_user_id=actor),
+            FinancialRequest(household_id=household.id, budget_id=budget["id"],
+                             requester_user_id=actor, destination_category_id=category["id"],
+                             requested_amount_minor=100),
+        ])
+        db.commit()
+    queried_tables = set()
+
+    def record_models(execution):
+        for description in getattr(execution.statement, "column_descriptions", []):
+            entity = description.get("entity")
+            table = getattr(entity, "__table__", None)
+            if table is not None:
+                queried_tables.add(table.name)
+
+    event.listen(Session, "do_orm_execute", record_models)
+    try:
+        response = client.get(
+            f"/api/v1/budgets/{budget['id']}/export.json", headers=auth(owner_token)
+        )
+    finally:
+        event.remove(Session, "do_orm_execute", record_models)
+    assert response.status_code == 200, response.text
+    assert exported_tables <= queried_tables, (
+        "Persistent models absent from production export queries: "
+        f"{sorted(exported_tables - queried_tables)}"
+    )
 
 
 def test_portable_data_manifest_rejects_tampering():
