@@ -102,6 +102,9 @@ struct TransactionEntryView: View {
                         if let remainingSplitAmount {
                             LabeledContent("Remaining", value: CurrencyText.editable(remainingSplitAmount, currencyCode: budget.currencyCode))
                                 .foregroundStyle(remainingSplitAmount == 0 ? Color.secondary : Color.red)
+                        } else {
+                            Text("Enter valid split amounts within the supported money range.")
+                                .font(.footnote).foregroundStyle(.red)
                         }
                     }
                 } else {
@@ -252,12 +255,12 @@ struct TransactionEntryView: View {
     private var splitsAreValid: Bool {
         guard isSplit else { return true }
         guard let parsedAmount, let parsedSplits else { return false }
-        return parsedSplits.count >= 2 && parsedSplits.reduce(Int64(0)) { $0 + $1.amountMinor } == parsedAmount
+        return parsedSplits.count >= 2 && CurrencyText.checkedSum(parsedSplits.map(\.amountMinor)) == parsedAmount
     }
 
     private var remainingSplitAmount: Int64? {
         guard let parsedAmount, let parsedSplits else { return nil }
-        return parsedAmount - parsedSplits.reduce(Int64(0)) { $0 + $1.amountMinor }
+        return CurrencyText.remaining(total: parsedAmount, portions: parsedSplits.map(\.amountMinor))
     }
 
     private func save() async {
@@ -668,6 +671,22 @@ struct FundingRequestView: View {
 }
 
 enum CurrencyText {
+    static func checkedSum(_ amounts: [Int64]) -> Int64? {
+        var total: Int64 = 0
+        for amount in amounts {
+            let result = total.addingReportingOverflow(amount)
+            guard !result.overflow else { return nil }
+            total = result.partialValue
+        }
+        return total
+    }
+
+    static func remaining(total: Int64, portions: [Int64]) -> Int64? {
+        guard let sum = checkedSum(portions) else { return nil }
+        let result = total.subtractingReportingOverflow(sum)
+        return result.overflow ? nil : result.partialValue
+    }
+
     static func display(_ minorUnits: Int64, currencyCode: String, locale: Locale = .current) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency

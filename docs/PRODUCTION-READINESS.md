@@ -1,5 +1,24 @@
 # Production readiness mission ledger
 
+## Split-entry arithmetic validation (2026-10-09)
+
+Production transaction creation and editing summed split amounts with unchecked Int64 arithmetic.
+Individually valid large portions could overflow their sum, and subtracting the sum from an inflow
+could overflow the remaining amount. Both paths now share checked sum/remainder helpers; unsupported
+results return validation failure, disable Save, and show a correction message rather than trapping.
+Valid totals and minor-unit precision are unchanged; no operation is sent for invalid splits.
+
+`scripts/verify-split-input-arithmetic.sh` executes the actual CurrencyText implementation and checks
+production creation/edit wiring. Valid balanced/unbalanced amounts, Int64 endpoint sums, positive
+and negative overflow, subtraction overflow and exact money beyond Double precision pass. Added
+native XCTest covers the same boundary cases. Regular Xcode 27 build-for-testing passed for app
+and native-test targets on the preserved iPhone 17 Pro Max / iOS 27 destination. Native cases were
+compiled, not executed; host checks are not rendered UI or network acceptance.
+
+App rebuild required; no server restart, migration or customer-data change. TestFlight is held.
+Separate signed-magnitude audit remains open: existing `abs(Int64)` editor/report paths can trap
+at Int64.min and must not be treated as covered by this split-aggregation correction.
+
 ## Net Worth history hydration bound (2026-10-09)
 
 Net Worth retained every historical transaction entity and rescanned that list for each account.

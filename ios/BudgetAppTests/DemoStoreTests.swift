@@ -2996,6 +2996,19 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(store.summary?.categories.map(\.availableMinor), before.2)
     }
 
+    func testSplitAmountArithmeticRejectsOverflowWithoutTrapping() {
+        XCTAssertEqual(CurrencyText.checkedSum([-600, -400]), -1000)
+        XCTAssertEqual(CurrencyText.remaining(total: -1000, portions: [-600, -400]), 0)
+        XCTAssertEqual(CurrencyText.remaining(total: -1000, portions: [-600]), -400)
+        XCTAssertEqual(CurrencyText.checkedSum([.min]), .min)
+        XCTAssertNil(CurrencyText.checkedSum([.max, 1]))
+        XCTAssertNil(CurrencyText.checkedSum([-.max, -.max]))
+        XCTAssertNil(CurrencyText.remaining(total: .max, portions: [-1]))
+        XCTAssertNil(CurrencyText.remaining(total: -.max, portions: [-.max, -.max]))
+        XCTAssertEqual(CurrencyText.remaining(total: -9_007_199_254_740_993,
+            portions: [-9_007_199_254_740_000, -993]), 0)
+    }
+
     func testCurrencyTextAcceptsNaturalDecimalZeroAndSignedInput() {
         XCTAssertEqual(CurrencyText.parseMinorUnits("12.34", currencyCode: "USD"), 1_234)
         XCTAssertEqual(CurrencyText.parseMinorUnits("0", currencyCode: "USD"), 0)
