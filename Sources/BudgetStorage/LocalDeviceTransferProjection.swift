@@ -137,6 +137,11 @@ public enum LocalDeviceTransferProjectionDecoder {
     private static func validate(snapshot: LocalAuthoritySnapshot, observations: LocalDeviceTransferObservation) throws {
         let budgetID = snapshot.identity.budgetID
         let budgetRows = snapshot.accounts.map(\.budgetID) + snapshot.groups.map(\.budgetID)
+            + (snapshot.accountRevisions ?? []).map(\.budgetID)
+            + (snapshot.structureRevisions ?? []).map(\.budgetID)
+            + (snapshot.targetRevisions ?? []).map(\.budgetID)
+            + (snapshot.scheduleRevisions ?? []).map(\.budgetID)
+            + (snapshot.debtTermsRevisions ?? []).map(\.budgetID)
             + snapshot.categories.map(\.budgetID) + snapshot.payees.map(\.budgetID)
             + (snapshot.payeeRevisions ?? []).map(\.budgetID)
             + snapshot.transactions.map(\.budgetID) + snapshot.allocations.map(\.budgetID)
@@ -153,6 +158,24 @@ public enum LocalDeviceTransferProjectionDecoder {
               (snapshot.debtPayoffPlanRevisions ?? []).allSatisfy({ $0.userID == snapshot.identity.ownerUserID }) else {
             throw LocalStorageError.invalidSnapshot("Server transfer projection includes another member's personal payoff scenario")
         }
+        let historyActors = (snapshot.accountRevisions ?? []).map(\.actorUserID)
+            + (snapshot.structureRevisions ?? []).map(\.actorUserID)
+            + (snapshot.payeeRevisions ?? []).map(\.actorUserID)
+            + (snapshot.targetRevisions ?? []).map(\.actorUserID)
+            + (snapshot.scheduleRevisions ?? []).map(\.actorUserID)
+            + (snapshot.debtTermsRevisions ?? []).map(\.actorUserID)
+        guard historyActors.allSatisfy({ $0 == snapshot.identity.ownerUserID }) else {
+            throw LocalStorageError.invalidSnapshot("Server transfer projection includes another member's decision history")
+        }
+        let historyIDs = [
+            (snapshot.accountRevisions ?? []).map(\.id), (snapshot.structureRevisions ?? []).map(\.id),
+            (snapshot.payeeRevisions ?? []).map(\.id), (snapshot.targetRevisions ?? []).map(\.id),
+            (snapshot.scheduleRevisions ?? []).map(\.id), (snapshot.debtTermsRevisions ?? []).map(\.id),
+            (snapshot.debtPayoffPlanRevisions ?? []).map(\.id),
+        ]
+        guard historyIDs.allSatisfy({ Set($0).count == $0.count }) else {
+            throw LocalStorageError.invalidSnapshot("Server transfer projection contains duplicate history identities")
+        }
         guard Set(snapshot.accounts.map(\.id)).count == snapshot.accounts.count,
               Set(snapshot.transactions.map(\.id)).count == snapshot.transactions.count,
               Set(snapshot.attachments.map(\.id)).count == snapshot.attachments.count,
@@ -164,7 +187,8 @@ public enum LocalDeviceTransferProjectionDecoder {
 
         var transactionTotals: [String: Int64] = [:]
         for item in snapshot.transactions {
-            transactionTotals["\(item.accountID)\u{1f}\(item.status)", default: 0] += item.amountMinor
+            let key = "\(item.accountID)\u{1f}\(item.status)"
+            transactionTotals[key] = try checkedTotal(transactionTotals[key, default: 0], item.amountMinor)
         }
         let expectedTransactions = try uniqueObservationMap(
             observations.transactions.map { ("\($0.accountID)\u{1f}\($0.status)", $0.amountMinor) },
@@ -180,11 +204,14 @@ public enum LocalDeviceTransferProjectionDecoder {
             guard let categoryID = item.categoryID else {
                 throw LocalStorageError.invalidSnapshot("Server allocation projection is missing a category")
             }
-            allocationTotals["category\u{1f}\(categoryID)", default: 0] += item.amountMinor
+            let destination = "category\u{1f}\(categoryID)"
+            allocationTotals[destination] = try checkedTotal(allocationTotals[destination, default: 0], item.amountMinor)
             if let source = item.sourceCategoryID {
-                allocationTotals["category\u{1f}\(source)", default: 0] -= item.amountMinor
+                let key = "category\u{1f}\(source)"
+                allocationTotals[key] = try checkedTotal(allocationTotals[key, default: 0], item.amountMinor, subtract: true)
             } else {
-                allocationTotals["ready_to_assign\u{1f}", default: 0] -= item.amountMinor
+                let key = "ready_to_assign\u{1f}"
+                allocationTotals[key] = try checkedTotal(allocationTotals[key, default: 0], item.amountMinor, subtract: true)
             }
         }
         allocationTotals = allocationTotals.filter { $0.value != 0 }
@@ -198,7 +225,7 @@ public enum LocalDeviceTransferProjectionDecoder {
 
         var reserveTotals: [String: Int64] = [:]
         for item in snapshot.creditReserveEvents {
-            reserveTotals[item.paymentCategoryID, default: 0] += item.amountMinor
+            reserveTotals[item.paymentCategoryID] = try checkedTotal(reserveTotals[item.paymentCategoryID, default: 0], item.amountMinor)
         }
         reserveTotals = reserveTotals.filter { $0.value != 0 }
         let expectedReserves = try uniqueObservationMap(
@@ -223,6 +250,14 @@ public enum LocalDeviceTransferProjectionDecoder {
             }
         }
         return result
+    }
+
+    private static func checkedTotal(_ total: Int64, _ amount: Int64, subtract: Bool = false) throws -> Int64 {
+        let result = subtract ? total.subtractingReportingOverflow(amount) : total.addingReportingOverflow(amount)
+        guard !result.overflow else {
+            throw LocalStorageError.invalidSnapshot("Server transfer financial observations exceed exact minor-unit limits")
+        }
+        return result.partialValue
     }
 }
 

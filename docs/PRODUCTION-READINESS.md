@@ -2604,3 +2604,22 @@ focused final migrations pass. No production migration or accounting code change
 backup tests exercise restoration, wrong-key/tampered data, path mismatch and no overwrite. This
 checkpoint changes tests/documentation only; no app rebuild, server restart or migration is needed.
 SQLite/native evidence does not claim PostgreSQL/QNAP or real Dropbox human acceptance.
+
+### Fail-closed history transfer and overflow validation — 2026-10-09
+
+The typed server-to-phone transfer decoder previously omitted account/structure/target/schedule/debt
+history from its mixed-budget guard and validated duplicate IDs for only a subset of histories.
+It now checks every decision-history family, rejects duplicate history IDs and refuses another
+member's decision attribution instead of attempting to flatten it into the single-owner authority.
+Existing private payoff ownership validation remains. All financial observation accumulation uses
+checked Int64 addition/subtraction and throws a clear snapshot error on overflow, including
+Int64.min subtraction; malformed input cannot trap before staging validation. No money is normalized,
+rounded or changed to Double, and older projections with absent history sections remain valid.
+
+All nine Swift transfer-projection tests pass, covering valid/legacy reads, each of seven history
+families with wrong-budget/duplicate/foreign-actor mutations, and transaction/allocation/reserve
+overflow. Both native production transfer regressions pass for current credentials and rejection of
+a concurrently changed authority, with production app compilation on regular Xcode 27.0 (27A266a)
+and the preserved iPhone 17 Pro Max/iOS 27 Simulator. `git diff --check` passes. Server behavior and deployed
+database schema are unchanged. Rebuild is required for the strengthened native decoder; no server
+restart, migration or customer transfer/reset is required. TestFlight remains on hold.

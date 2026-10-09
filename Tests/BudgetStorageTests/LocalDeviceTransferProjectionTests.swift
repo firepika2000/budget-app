@@ -3,6 +3,74 @@ import XCTest
 @testable import BudgetStorage
 
 final class LocalDeviceTransferProjectionTests: XCTestCase {
+    func testEveryDecisionHistoryRejectsMixedBudgetDuplicateIdentityAndForeignActor() throws {
+        let base = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture()) as? [String: Any])
+        let common: [String: Any] = ["id": "revision", "budget_id": "budget", "action": "updated",
+            "actor_user_id": "owner", "before_json": NSNull(), "after_json": "{}", "created_at": "2026-10-09T12:00:00Z"]
+        let families: [(String, [String: Any])] = [
+            ("account_revisions", ["account_id": "checking"]),
+            ("structure_revisions", ["resource_type": "category", "resource_id": "groceries"]),
+            ("payee_revisions", ["payee_id": "canonical-payee"]),
+            ("target_revisions", ["category_id": "groceries"]),
+            ("schedule_revisions", ["schedule_id": "schedule-1"]),
+            ("debt_terms_revisions", ["account_id": "checking"]),
+            ("debt_payoff_plan_revisions", ["user_id": "owner"]),
+        ]
+        for (section, extra) in families {
+            var row = common.merging(extra) { _, new in new }
+            var value = base
+            value[section] = [row]
+            XCTAssertNoThrow(try LocalDeviceTransferProjectionDecoder.decode(JSONSerialization.data(withJSONObject: value)), section)
+            for defect in ["budget", "duplicate", "actor"] {
+                var broken = value
+                switch defect {
+                case "budget": row["budget_id"] = "other-budget"; broken[section] = [row]
+                case "duplicate": broken[section] = [common.merging(extra) { _, new in new }, common.merging(extra) { _, new in new }]
+                default:
+                    row = common.merging(extra) { _, new in new }
+                    row[section == "debt_payoff_plan_revisions" ? "user_id" : "actor_user_id"] = "another-member"
+                    broken[section] = [row]
+                }
+                XCTAssertThrowsError(try LocalDeviceTransferProjectionDecoder.decode(JSONSerialization.data(withJSONObject: broken)), "\(section): \(defect)") { error in
+                    guard case LocalStorageError.invalidSnapshot = error else {
+                        return XCTFail("Expected explicit snapshot rejection, got \(error)")
+                    }
+                }
+            }
+        }
+    }
+
+    func testProjectionRejectsOverflowingTransactionAndAllocationObservationsWithoutTrapping() throws {
+        let base = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture()) as? [String: Any])
+        var value = base
+        let first = try XCTUnwrap((base["transactions"] as? [[String: Any]])?.first)
+        var second = first
+        second["id"] = "overflowing-transaction"
+        second["amount_minor"] = Int64.max
+        value["transactions"] = [first, second]
+        XCTAssertThrowsError(try LocalDeviceTransferProjectionDecoder.decode(JSONSerialization.data(withJSONObject: value))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("minor-unit limits"))
+        }
+        value = base
+        var allocation = try XCTUnwrap((base["allocations"] as? [[String: Any]])?.first)
+        allocation["amount_minor"] = Int64.min
+        value["allocations"] = [allocation]
+        XCTAssertThrowsError(try LocalDeviceTransferProjectionDecoder.decode(JSONSerialization.data(withJSONObject: value))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("minor-unit limits"), "Negating Int64.min must fail safely")
+        }
+        value = base
+        let reserve: [String: Any] = ["id": "reserve-1", "budget_id": "budget", "credit_account_id": "checking",
+            "payment_category_id": "groceries", "occurred_on": "2026-09-01", "amount_minor": Int64.max,
+            "kind": "funded_purchase", "actor_user_id": "owner", "created_at": "2026-09-01T12:00:00Z"]
+        var anotherReserve = reserve
+        anotherReserve["id"] = "reserve-2"
+        anotherReserve["amount_minor"] = 1
+        value["credit_reserve_events"] = [reserve, anotherReserve]
+        XCTAssertThrowsError(try LocalDeviceTransferProjectionDecoder.decode(JSONSerialization.data(withJSONObject: value))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("minor-unit limits"))
+        }
+    }
+
     func testStrictProjectionDecodesTypedSnapshotAndExactObservations() throws {
         let result = try LocalDeviceTransferProjectionDecoder.decode(fixture())
 
