@@ -1090,6 +1090,22 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(request.actions.map(\.action), ["submitted"])
     }
 
+    func testFundingRequestAttributionDecodesCurrentAndLegacyContracts() throws {
+        let data = Data(#"{"id":"r1","requester_user_id":"former-member","requester_display_name":"Taylor","request_type":"additional_allocation","destination_category_id":"c1","requested_amount_minor":3500,"reason":"New game","status":"cancelled","version":1,"approved_amount_minor":null,"source_category_id":null,"allocation_operation_id":null,"actions":[{"id":"a1","actor_user_id":"former-member","actor_display_name":"Taylor","action":"submitted","amount_minor":3500,"note":"New game","created_at":"2026-09-04T12:00:00Z"}]}"#.utf8)
+        let request = try JSONDecoder().decode(APIFinancialRequest.self, from: data)
+        XCTAssertEqual(request.requesterDisplayName, "Taylor")
+        XCTAssertEqual(request.actions.first?.actorDisplayName, "Taylor")
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy.removeValue(forKey: "requester_display_name")
+        var actions = try XCTUnwrap(legacy["actions"] as? [[String: Any]])
+        actions[0].removeValue(forKey: "actor_display_name")
+        legacy["actions"] = actions
+        let old = try JSONDecoder().decode(APIFinancialRequest.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(old.requesterDisplayName)
+        XCTAssertNil(old.actions.first?.actorDisplayName)
+        XCTAssertEqual(old.actions.first?.actorUserID, "former-member")
+    }
+
     func testSpendingReportUsesExplicitInclusiveDateRangeAndKeepsDrillDownIDs() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

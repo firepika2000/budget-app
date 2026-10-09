@@ -1351,6 +1351,7 @@ class RequestActionResponse(BaseModel):
 
     id: str
     actor_user_id: Optional[str]
+    actor_display_name: Optional[str] = None
     action: str
     amount_minor: Optional[int]
     note: str
@@ -1362,6 +1363,7 @@ class FinancialRequestResponse(BaseModel):
     household_id: str
     budget_id: str
     requester_user_id: str
+    requester_display_name: Optional[str] = None
     request_type: str
     destination_category_id: str
     requested_amount_minor: int

@@ -299,6 +299,17 @@ def test_rejected_and_cancelled_requests_survive_member_deactivation(
         headers=auth(owner_token),
     )
     assert removed.status_code == 204
+    history = client.get(f"/api/v1/budgets/{budget['id']}/requests", headers=auth(owner_token))
+    assert history.status_code == 200, history.text
+    retained = [item for item in history.json() if item["id"] in {cancelled["id"], rejected["id"]}]
+    assert len(retained) == 2
+    for item in retained:
+        assert item["requester_display_name"] == "Child"
+        for action in item["actions"]:
+            if action["actor_user_id"] == child_id:
+                assert action["actor_display_name"] == "Child"
+            elif action["actor_user_id"] is not None:
+                assert action["actor_display_name"]
     with session_factory() as db:
         stored = db.query(FinancialRequest).filter_by(requester_user_id=child_id).all()
         assert {item.status for item in stored} == {"cancelled", "rejected"}

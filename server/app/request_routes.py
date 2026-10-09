@@ -38,11 +38,17 @@ def serialize_request(db: Session, item: FinancialRequest, *, reveal_source: boo
     actions = list(db.scalars(select(RequestAction).where(
         RequestAction.request_id == item.id
     ).order_by(RequestAction.created_at, RequestAction.id)))
+    actor_ids = {action.actor_user_id for action in actions if action.actor_user_id}
+    actor_ids.add(item.requester_user_id)
+    names = {person.id: person.display_name for person in db.scalars(
+        select(User).where(User.id.in_(actor_ids))
+    )}
     return {
         "id": item.id,
         "household_id": item.household_id,
         "budget_id": item.budget_id,
         "requester_user_id": item.requester_user_id,
+        "requester_display_name": names.get(item.requester_user_id),
         "request_type": item.request_type,
         "destination_category_id": item.destination_category_id,
         "requested_amount_minor": item.requested_amount_minor,
@@ -55,7 +61,8 @@ def serialize_request(db: Session, item: FinancialRequest, *, reveal_source: boo
         "created_at": item.created_at,
         "expires_at": item.expires_at,
         "resolved_at": item.resolved_at,
-        "actions": actions,
+        "actions": [{column.key: getattr(action, column.key) for column in RequestAction.__table__.columns}
+                    | {"actor_display_name": names.get(action.actor_user_id)} for action in actions],
     }
 
 

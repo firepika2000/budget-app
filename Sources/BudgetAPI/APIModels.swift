@@ -2389,6 +2389,7 @@ struct APIFinancialRequestRevision: Encodable {
 public struct APIRequestAction: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let actorUserID: String?
+    public let actorDisplayName: String?
     public let action: String
     public let amountMinor: Int64?
     public let note: String
@@ -2397,6 +2398,7 @@ public struct APIRequestAction: Identifiable, Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, action, note
         case actorUserID = "actor_user_id"
+        case actorDisplayName = "actor_display_name"
         case amountMinor = "amount_minor"
         case createdAt = "created_at"
     }
@@ -2405,6 +2407,7 @@ public struct APIRequestAction: Identifiable, Decodable, Equatable, Sendable {
 public struct APIFinancialRequest: Identifiable, Decodable, Equatable, Sendable {
     public let id: String
     public let requesterUserID: String
+    public let requesterDisplayName: String?
     public let requestType: String
     public let destinationCategoryID: String
     public let requestedAmountMinor: Int64
@@ -2420,6 +2423,7 @@ public struct APIFinancialRequest: Identifiable, Decodable, Equatable, Sendable 
     enum CodingKeys: String, CodingKey {
         case id, reason, status, version, actions
         case requesterUserID = "requester_user_id"
+        case requesterDisplayName = "requester_display_name"
         case requestType = "request_type"
         case destinationCategoryID = "destination_category_id"
         case requestedAmountMinor = "requested_amount_minor"

@@ -10,6 +10,18 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testFundingRequestDetailUsesAuthorizedNamesWithoutRawIdentityFallback() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct LiveRequestDetailView"))
+        let end = try XCTUnwrap(source.range(of: "private struct MoveMoneyPresentation", range: start.upperBound..<source.endIndex))
+        let detail = source[start.upperBound..<end.lowerBound]
+        XCTAssertTrue(detail.contains("request.requesterDisplayName ?? requesterName"))
+        XCTAssertTrue(detail.contains("action.actorDisplayName ?? action.actorUserID.flatMap(requesterName)"))
+        XCTAssertTrue(detail.contains("map(store.categoryDisplayName)"))
+        XCTAssertFalse(detail.contains("id.capitalized"))
+        XCTAssertTrue(source.contains("item.action.actorDisplayName ?? requestActorName"))
+    }
     func testDropboxReadResponsesCannotOverwriteNewerOperations() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/DropboxBackupCoordinator.swift")
         let source = try String(contentsOf: file)

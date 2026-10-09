@@ -2070,6 +2070,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return try decode(demo.requests.filter { requestVisible($0) }.map { item -> [String: Any] in
             let revealSource = requestCapability("approve_request") && (item.sourceCategoryID.map(requestCategoryVisible) ?? false)
             return ["id": item.id, "requester_user_id": item.member == .rey ? "demo-owner" : item.member.rawValue.lowercased(),
+                "requester_display_name": item.member == .rey ? demo.authorityOwnerDisplayName ?? item.member.rawValue : item.member.rawValue,
                 "request_type": item.requestType, "destination_category_id": item.categoryID, "requested_amount_minor": item.amount,
                 "reason": item.reason, "status": item.status.lowercased().replacingOccurrences(of: " ", with: "_"), "version": item.version,
                 "approved_amount_minor": item.approvedAmount as Any? ?? NSNull(),
@@ -2077,6 +2078,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                 "allocation_operation_id": item.allocationOperationID as Any? ?? NSNull(),
                 "expires_at": item.expiresAt.map(formatter.string) as Any? ?? NSNull(),
                 "actions": item.actions.map { action in ["id": action.id, "actor_user_id": action.actorID as Any? ?? NSNull(),
+                    "actor_display_name": action.actorID.map { id in id == "demo-owner" ? demo.authorityOwnerDisplayName ?? "Rey" : DemoPersona.allCases.first(where: { $0.rawValue.lowercased() == id })?.rawValue ?? "Household member" } as Any? ?? NSNull(),
                     "action": action.action, "amount_minor": action.amount as Any? ?? NSNull(), "note": action.note,
                     "created_at": formatter.string(from: action.date)] as [String: Any] }]
         })
@@ -7550,9 +7552,9 @@ private struct LiveRequestDetailView: View {
         Form {
             if let request {
                 Section("Request") {
-                    LabeledContent("Requester", value: requesterName(request.requesterUserID))
+                    LabeledContent("Requester", value: request.requesterDisplayName ?? requesterName(request.requesterUserID))
                     LabeledContent("Amount", value: store.format(request.requestedAmountMinor))
-                    LabeledContent("Category", value: store.categories.first(where: { $0.id == request.destinationCategoryID })?.name ?? "Category")
+                    LabeledContent("Category", value: store.categories.first(where: { $0.id == request.destinationCategoryID }).map(store.categoryDisplayName) ?? "Authorized category")
                     LabeledContent("Reason", value: request.reason.isEmpty ? "—" : request.reason)
                     LabeledContent("Status", value: request.status.replacingOccurrences(of: "_", with: " ").capitalized)
                     if let expiresAt = request.expiresAt, ["pending", "changes_requested"].contains(request.status) { LabeledContent("Expires", value: expiresAt) }
@@ -7581,7 +7583,7 @@ private struct LiveRequestDetailView: View {
                     ForEach(request.actions) { action in
                         VStack(alignment: .leading) {
                             Text(action.action.replacingOccurrences(of: "_", with: " ").capitalized)
-                            Text(action.actorUserID.flatMap(requesterName) ?? "System").font(.caption).foregroundStyle(.secondary)
+                            Text(action.actorDisplayName ?? action.actorUserID.flatMap(requesterName) ?? "System").font(.caption).foregroundStyle(.secondary)
                             Text(FundingRequestHistoryPresentation.timestamp(action.createdAt))
                                 .font(.caption).foregroundStyle(.secondary)
                             if let amount = action.amountMinor {
@@ -7612,7 +7614,7 @@ private struct LiveRequestDetailView: View {
         } message: { Text("The request and its decision history remain visible, but it can no longer be approved.") }
     }
     private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: store.budget.currencyCode), value > 0, value <= (request?.requestedAmountMinor ?? 0) else { return nil }; return value }
-    private func requesterName(_ id: String) -> String { store.householdMembers.first(where: { $0.userID == id })?.displayName ?? id.capitalized }
+    private func requesterName(_ id: String) -> String { store.householdMembers.first(where: { $0.userID == id })?.displayName ?? "Household member" }
     private func cancel() async { guard let request else { return }; isSaving = true; defer { isSaving = false }; do { try await store.cancelRequest(id: request.id, version: request.version, note: note) } catch { errorMessage = error.localizedDescription } }
     private func decide(_ decision: String) async { guard let request else { return }; isSaving = true; defer { isSaving = false }; do { try await store.decideRequest(id: request.id, decision: decision, version: request.version, amount: decision == "approve" ? parsed : nil, sourceCategoryID: decision == "approve" ? sourceCategoryID : nil, note: note) } catch { errorMessage = error.localizedDescription } }
 }
@@ -9047,7 +9049,7 @@ private struct LiveActivityView: View {
             }
             Text(requestCategoryName(item.request.destinationCategoryID))
                 .font(.subheadline)
-            Text("By \(requestActorName(item.action.actorUserID)) · \(BudgetWorkspaceStore.compactDate(item.action.createdAt))")
+            Text("By \(item.action.actorDisplayName ?? requestActorName(item.action.actorUserID)) · \(BudgetWorkspaceStore.compactDate(item.action.createdAt))")
                 .font(.caption).foregroundStyle(.secondary)
             if !item.action.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(item.action.note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
@@ -9058,7 +9060,7 @@ private struct LiveActivityView: View {
     }
     private func requestActionTitle(_ action: String) -> String {
         switch action {
-        case "created", "revised": "Funding requested"
+        case "created", "submitted", "revised": "Funding requested"
         case "approved": "Request approved"
         case "partially_approved": "Request partly approved"
         case "rejected": "Request rejected"
