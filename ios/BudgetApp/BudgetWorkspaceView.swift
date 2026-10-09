@@ -4270,6 +4270,21 @@ final class BudgetWorkspaceStore: ObservableObject {
         }
     }
 
+    // Read results belong to the authority under which they were requested. A
+    // late success (or error) must not repopulate detail views after revocation.
+    private func authorizedObservation<Value>(_ read: () async throws -> Value) async throws -> Value {
+        try requireWorkspaceAccess()
+        let revision = authorityRevision
+        do {
+            let value = try await read()
+            guard revision == authorityRevision, !workspaceAccessDenied else { throw CancellationError() }
+            return value
+        } catch {
+            guard revision == authorityRevision, !workspaceAccessDenied else { throw CancellationError() }
+            throw error
+        }
+    }
+
     func refresh() async { await loadSnapshot() }
 
     func loadOlderAllocationHistory() async {
@@ -4533,7 +4548,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func createPayee(_ operation: CreatePayeeOperation) async throws { try await services().payees.create(operation); await refresh() }
-    func searchPayees(query: String = "", includeArchived: Bool = false, limit: Int = 20, cursor: String? = nil) async throws -> APIPayeePage { try await services().payees.search(query: query, includeArchived: includeArchived, limit: limit, cursor: cursor) }
+    func searchPayees(query: String = "", includeArchived: Bool = false, limit: Int = 20, cursor: String? = nil) async throws -> APIPayeePage { try await authorizedObservation { try await services().payees.search(query: query, includeArchived: includeArchived, limit: limit, cursor: cursor) } }
     func suggestedCategoryID(forPayeeID payeeID: String) -> String? {
         let eligibleCategories = Set(categories.filter { !$0.isArchived }.map(\.id))
         let recent = transactions.filter { transaction in
@@ -4559,7 +4574,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     func deletePayeeAlias(payeeID: String, aliasID: String) async throws { try await services().payees.deleteAlias(payeeID: payeeID, aliasID: aliasID); await refresh() }
     func payeeHistory(payeeID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIPayeeRevision] {
         guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Payee history request is out of range.") }
-        return try await commands().payeeHistory(payeeID: payeeID, limit: limit, offset: offset)
+        return try await authorizedObservation { try await commands().payeeHistory(payeeID: payeeID, limit: limit, offset: offset) }
     }
 
     func deleteTransaction(id: String) async throws {
@@ -4582,17 +4597,17 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
 
-    func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await services().transactions.attachments(id: id) }
-    func transactionHistory(id: String, limit: Int = 50, offset: Int = 0) async throws -> [APITransactionChange] { try await services().transactions.history(id: id, limit: limit, offset: offset) }
-    func recentTransactionChanges(limit: Int = 5) async throws -> [APITransactionChange] { try await services().transactions.recentChanges(limit: limit) }
+    func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await authorizedObservation { try await services().transactions.attachments(id: id) } }
+    func transactionHistory(id: String, limit: Int = 50, offset: Int = 0) async throws -> [APITransactionChange] { try await authorizedObservation { try await services().transactions.history(id: id, limit: limit, offset: offset) } }
+    func recentTransactionChanges(limit: Int = 5) async throws -> [APITransactionChange] { try await authorizedObservation { try await services().transactions.recentChanges(limit: limit) } }
     func reconciliationHistory(accountID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIReconciliationHistory] {
-        try await services().accounts.reconciliationHistory(accountID: accountID, limit: limit, offset: offset)
+        try await authorizedObservation { try await services().accounts.reconciliationHistory(accountID: accountID, limit: limit, offset: offset) }
     }
     func recentReconciliationHistory(limit: Int = 5) async throws -> [APIReconciliationHistory] {
-        try await services().accounts.recentReconciliationHistory(limit: limit)
+        try await authorizedObservation { try await services().accounts.recentReconciliationHistory(limit: limit) }
     }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await services().transactions.uploadAttachment(id: id, filename: filename, contentType: contentType, data: data); await refresh() }
-    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await services().transactions.downloadAttachment(transactionID: transactionID, attachmentID: attachmentID) }
+    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await authorizedObservation { try await services().transactions.downloadAttachment(transactionID: transactionID, attachmentID: attachmentID) } }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await services().transactions.detachAttachment(transactionID: transactionID, attachmentID: attachmentID); await refresh() }
 
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
@@ -4668,7 +4683,7 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard budget.can("reconcile_account"), let commandRepository else {
             throw workspaceRepositoryError("You do not have permission to view statement imports for this account.")
         }
-        return try await commandRepository.statementImports(accountID: accountID, limit: limit, offset: offset)
+        return try await authorizedObservation { try await commandRepository.statementImports(accountID: accountID, limit: limit, offset: offset) }
     }
 
     func statementImport(accountID: String, batchID: String) async throws -> APIStatementImport {
@@ -4676,7 +4691,7 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard budget.can("reconcile_account"), let commandRepository else {
             throw workspaceRepositoryError("You do not have permission to view this statement import.")
         }
-        return try await commandRepository.statementImport(accountID: accountID, batchID: batchID)
+        return try await authorizedObservation { try await commandRepository.statementImport(accountID: accountID, batchID: batchID) }
     }
 
     func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport {
@@ -4760,11 +4775,11 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func accountHistory(accountID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIAccountRevision] {
-        try await services().accounts.history(accountID: accountID, limit: limit, offset: offset)
+        try await authorizedObservation { try await services().accounts.history(accountID: accountID, limit: limit, offset: offset) }
     }
 
     func accountDebtTerms(accountID: String) async throws -> APIAccountDebtTerms? {
-        try await commands().accountDebtTerms(accountID: accountID)
+        try await authorizedObservation { try await commands().accountDebtTerms(accountID: accountID) }
     }
 
     func updateAccountDebtTerms(accountID: String, value: APIAccountDebtTermsUpsert) async throws -> APIAccountDebtTerms {
@@ -4780,18 +4795,18 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func accountDebtTermsHistory(accountID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIAccountDebtTermsRevision] {
         guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Debt terms history request is out of range.") }
-        return try await commands().accountDebtTermsHistory(accountID: accountID, limit: limit, offset: offset)
+        return try await authorizedObservation { try await commands().accountDebtTermsHistory(accountID: accountID, limit: limit, offset: offset) }
     }
 
     func debtPayoffPlan() async throws -> APIDebtPayoffPlan? {
         try requireWorkspaceAccess()
-        return try await commands().debtPayoffPlan()
+        return try await authorizedObservation { try await commands().debtPayoffPlan() }
     }
 
     func debtPayoffPlanHistory(limit: Int = 50, offset: Int = 0) async throws -> [APIDebtPayoffPlanRevision] {
         try requireWorkspaceAccess()
         guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Invalid history page.") }
-        return try await commands().debtPayoffPlanHistory(limit: limit, offset: offset)
+        return try await authorizedObservation { try await commands().debtPayoffPlanHistory(limit: limit, offset: offset) }
     }
 
     func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan {
@@ -4819,11 +4834,11 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
     func categoryHistory(categoryID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIBudgetStructureRevision] {
         guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Category history request is out of range.") }
-        return try await commands().categoryHistory(categoryID: categoryID, limit: limit, offset: offset)
+        return try await authorizedObservation { try await commands().categoryHistory(categoryID: categoryID, limit: limit, offset: offset) }
     }
     func categoryGroupHistory(groupID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIBudgetStructureRevision] {
         guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Group history request is out of range.") }
-        return try await commands().categoryGroupHistory(groupID: groupID, limit: limit, offset: offset)
+        return try await authorizedObservation { try await commands().categoryGroupHistory(groupID: groupID, limit: limit, offset: offset) }
     }
     func updateGroup(id: String, value: APICategoryGroupUpdate) async throws {
         try await commands().updateGroup(id: id, currentName: groups.first(where: { $0.id == id })?.name, value: value)
@@ -4891,7 +4906,7 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
     func targetHistory(categoryID: String, limit: Int = 50, offset: Int = 0) async throws -> [APICategoryTargetRevision] {
-        try await commands().targetHistory(categoryID: categoryID, limit: limit, offset: offset)
+        try await authorizedObservation { try await commands().targetHistory(categoryID: categoryID, limit: limit, offset: offset) }
     }
     func setTargetSnoozed(categoryID: String, month: String, isSnoozed: Bool) async throws {
         try await commands().setTargetSnoozed(categoryID: categoryID, month: month, isSnoozed: isSnoozed)
@@ -4908,7 +4923,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func scheduleHistory(limit: Int = 50, offset: Int = 0) async throws -> [APIScheduledTransactionRevision] {
-        try await commands().scheduleHistory(limit: limit, offset: offset)
+        try await authorizedObservation { try await commands().scheduleHistory(limit: limit, offset: offset) }
     }
 
     func updateSchedule(id: String, operation: ScheduleOperation) async throws {
@@ -4966,7 +4981,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview {
-        try await commands().smartFundingPreview(month: month)
+        try await authorizedObservation { try await commands().smartFundingPreview(month: month) }
     }
 
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws {
@@ -4975,7 +4990,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func cashRolloverPolicy() async throws -> APICashRolloverPolicyObservation {
-        try await services().planning.cashRolloverPolicy()
+        try await authorizedObservation { try await services().planning.cashRolloverPolicy() }
     }
 
     func selectCashRolloverPolicy(_ selection: APICashRolloverPolicySelection) async throws -> APICashRolloverPolicyObservation {
@@ -4985,7 +5000,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func cashRolloverPolicyHistory(beforeVersion: Int? = nil) async throws -> APICashRolloverPolicyHistory {
-        try await services().planning.cashRolloverPolicyHistory(beforeVersion: beforeVersion)
+        try await authorizedObservation { try await services().planning.cashRolloverPolicyHistory(beforeVersion: beforeVersion) }
     }
 
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws {
@@ -4993,10 +5008,10 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
     func delegatedPolicyHistory(userID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIDelegatedPolicyRevision] {
-        try await commands().delegatedPolicyHistory(userID: userID, limit: limit, offset: offset)
+        try await authorizedObservation { try await commands().delegatedPolicyHistory(userID: userID, limit: limit, offset: offset) }
     }
 
-    func accessProfile(userID: String) async throws -> APIAccessProfile { try await commands().accessProfile(userID: userID) }
+    func accessProfile(userID: String) async throws -> APIAccessProfile { try await authorizedObservation { try await commands().accessProfile(userID: userID) } }
 
     func cancelRequest(id: String, version: Int, note: String) async throws { try await commands().cancelRequest(id: id, version: version, note: note); await refresh() }
     func isRequestOwner(_ requesterID: String, authenticatedUserID: String?) -> Bool {
@@ -5006,15 +5021,15 @@ final class BudgetWorkspaceStore: ObservableObject {
     func createAllowance(_ value: APIAllowancePlanCreate) async throws { try await commands().createAllowance(value); await refresh() }
     func setAllowanceActive(id: String, active: Bool) async throws { try await commands().setAllowanceActive(id: id, active: active); await refresh() }
     func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws { try await commands().issueAllowance(id: id, issueDate: issueDate, expectedVersion: expectedVersion); await refresh() }
-    func allowanceIssuances(id: String, limit: Int? = nil, offset: Int = 0) async throws -> [APIAllowanceIssuance] { try await commands().allowanceIssuances(id: id, limit: limit, offset: offset) }
-    func allowancePlanHistory(id: String, limit: Int = 50, offset: Int = 0) async throws -> [APIAllowancePlanRevision] { try await commands().allowancePlanHistory(id: id, limit: limit, offset: offset) }
+    func allowanceIssuances(id: String, limit: Int? = nil, offset: Int = 0) async throws -> [APIAllowanceIssuance] { try await authorizedObservation { try await commands().allowanceIssuances(id: id, limit: limit, offset: offset) } }
+    func allowancePlanHistory(id: String, limit: Int = 50, offset: Int = 0) async throws -> [APIAllowancePlanRevision] { try await authorizedObservation { try await commands().allowancePlanHistory(id: id, limit: limit, offset: offset) } }
 
-    func householdInvitations() async throws -> [APIInvitationSummary] { try await commands().householdInvitations() }
+    func householdInvitations() async throws -> [APIInvitationSummary] { try await authorizedObservation { try await commands().householdInvitations() } }
     func createHouseholdInvitation(_ value: APIInvitationCreate) async throws -> APIInvitationSecret { try await commands().createHouseholdInvitation(value) }
     func resendHouseholdInvitation(id: String) async throws -> APIInvitationSecret { try await commands().resendHouseholdInvitation(id: id) }
     func cancelHouseholdInvitation(id: String) async throws { try await commands().cancelHouseholdInvitation(id: id) }
     func removeHouseholdMember(userID: String) async throws { try await commands().removeHouseholdMember(userID: userID); await refresh() }
-    func householdAccessEvents(limit: Int = 50, offset: Int = 0) async throws -> [APIHouseholdAccessEvent] { try await commands().householdAccessEvents(limit: limit, offset: offset) }
+    func householdAccessEvents(limit: Int = 50, offset: Int = 0) async throws -> [APIHouseholdAccessEvent] { try await authorizedObservation { try await commands().householdAccessEvents(limit: limit, offset: offset) } }
 
     func updateAccessProfile(userID: String, value: APIAccessProfileUpsert) async throws -> APIAccessProfile {
         try await commands().updateAccessProfile(userID: userID, value: value)

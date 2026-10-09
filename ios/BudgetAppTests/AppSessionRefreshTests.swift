@@ -179,6 +179,48 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testLateDetailObservationsCannotReturnAfterLiveWorkspaceRevocation() async throws {
+        for kind in ["category", "account", "attachments"] {
+            for responseStatus in [200, 503] {
+                let gate = Gate(), denied = Counter()
+                defer { gate.releaseNow() }
+                RefreshMockURLProtocol.handler = { request in
+                    let path = request.url!.path
+                    if path.contains("/private/") {
+                        gate.signalArrived(); gate.waitForRelease()
+                        return Self.json(responseStatus, responseStatus == 200 ? "[]" : #"{"detail":"Old request failed"}"#)
+                    }
+                    if denied.value > 0 && path.contains("/months/") {
+                        return Self.json(403, #"{"detail":"Access removed"}"#)
+                    }
+                    return Self.workspaceResponse(path)
+                }
+                let store = try workspaceForRevocationTest()
+                await store.refresh()
+                let pending = Task { () throws -> Int in
+                    switch kind {
+                    case "category": return try await store.categoryHistory(categoryID: "private").count
+                    case "account": return try await store.accountHistory(accountID: "private").count
+                    default: return try await store.transactionAttachments(id: "private").count
+                    }
+                }
+                await gate.awaitArrival()
+                _ = denied.increment()
+                await store.refresh()
+                XCTAssertTrue(store.workspaceAccessDenied)
+                gate.releaseNow()
+                do {
+                    _ = try await pending.value
+                    XCTFail("Revoked detail response must not reach its view: \(kind)")
+                } catch is CancellationError {} catch {
+                    XCTFail("Obsolete responses must cancel, not surface stale errors: \(error)")
+                }
+                XCTAssertTrue(store.accounts.isEmpty)
+            }
+        }
+    }
+
+    @MainActor
     func testLateSnapshotAndReportCannotRestoreWorkspaceAfterAccessDenial() async throws {
         let reads = Counter(), snapshotGate = Gate(), reportGate = Gate()
         defer { snapshotGate.releaseNow(); reportGate.releaseNow() }
