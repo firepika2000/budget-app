@@ -6141,6 +6141,11 @@ private struct LocalDeviceBackupRecoveryView: View {
                     Label(dropboxMessage, systemImage: "checkmark.circle")
                         .font(.footnote).foregroundStyle(.green)
                 }
+                if let warning = dropbox.publicationWarning {
+                    Label(warning, systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(.orange)
+                        .accessibilityIdentifier("dropbox-backup-maintenance-warning")
+                }
                 if let error = dropbox.errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.footnote).foregroundStyle(.red)

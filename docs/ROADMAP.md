@@ -174,6 +174,10 @@ Dropbox app identifier is included in ordinary app builds and independently veri
 release script. The remaining gate is external-console confirmation (App-folder permission and redirect
 URI `clearpocket://dropbox-oauth`) plus one live-provider acceptance pass. Do not treat that external gate as unfinished storage code,
 and do not embed a client secret or replace immutable encrypted backup with live SQLite sync.
+Verified Dropbox publication now remains successful when subsequent retention cleanup or backup-list
+refresh fails. A non-fatal maintenance warning distinguishes that state from an actual upload/integrity
+failure, and the successful-backup timestamp and known generation remain available without prompting
+a duplicate upload.
 
 The privacy-safe v0.11 launcher widget is implemented for small and medium Home Screen families and
 uses the authenticated production shell for navigation. It deliberately shares no financial data or

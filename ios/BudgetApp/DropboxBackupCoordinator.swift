@@ -17,6 +17,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     @Published private(set) var lastSuccessfulBackupAt: Date?
     @Published private(set) var pendingLocalGenerationURL: URL?
     @Published var errorMessage: String?
+    @Published private(set) var publicationWarning: String?
     @Published var retention: Int {
         didSet { defaults.set(retention, forKey: retentionKey) }
     }
@@ -115,17 +116,35 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
 
     func upload(packageURL: URL) async throws -> DropboxBackupPublication {
         let destination = try destination()
-        isWorking = true; errorMessage = nil
+        isWorking = true; errorMessage = nil; publicationWarning = nil
         defer { isWorking = false }
         do {
             let result = try await destination.publish(packageURL: packageURL)
-            generations = try await destination.generations()
-            recordSuccessfulBackup()
-            return result
+            return await finalizePublication(result) { try await destination.generations() }
         } catch {
             errorMessage = error.localizedDescription
             throw error
         }
+    }
+
+    /// Called only after the destination has committed a verified immutable generation.
+    func finalizePublication(_ result: DropboxBackupPublication,
+                             listGenerations: () async throws -> [DropboxBackupEntry]) async -> DropboxBackupPublication {
+        recordSuccessfulBackup()
+        var warnings: [String] = []
+        if result.retentionCleanupPending {
+            warnings.append("Backup saved. Older-backup cleanup is pending; it will be attempted with the next backup.")
+        }
+        do { generations = try await listGenerations() }
+        catch {
+            let entry = DropboxBackupEntry(path: result.remotePath,
+                name: (result.remotePath as NSString).lastPathComponent, isFolder: true)
+            if !generations.contains(where: { $0.path == result.remotePath }) { generations.append(entry) }
+            generations.sort { $0.name > $1.name }
+            warnings.append("Backup saved. The backup list could not refresh; refresh it later. Do not upload this generation again.")
+        }
+        publicationWarning = warnings.isEmpty ? nil : warnings.joined(separator: " ")
+        return result
     }
 
     func download(_ generation: DropboxBackupEntry) async throws -> URL {

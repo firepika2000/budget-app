@@ -2223,3 +2223,24 @@ categories, alongside actor privacy, current capabilities and Local Device reope
 Four hosted payoff-plan tests pass; the new malformed-input matrix proves the Live saved scenario
 also stays unchanged. The production app compiles in the native test build; `git diff --check`
 passes. No server behavior/schema change, migration, user data reset or TestFlight upload.
+
+### Dropbox publication commit-point correction — 2026-10-09
+
+Audit found two post-commit failures could falsely report a verified encrypted upload as failed:
+retention pruning in the destination, and listing the generations in the production coordinator.
+The verified remote move is now an explicit commit point. Cleanup failure returns a successful
+publication marked retention-cleanup-pending; the coordinator records success before listing and
+preserves the known committed generation if listing fails. The backup screen shows a non-fatal
+maintenance warning, not an upload error/retry prompt. Older-generation cleanup is attempted again
+by the next backup. Genuine pre-publication upload/integrity errors still throw, retain the local
+encrypted generation under the existing recovery workflow, and never mark a successful backup.
+
+Verification: all seven Dropbox destination tests pass, including post-commit list failure with
+verified ciphertext still available, exact download, normal pruning, bounded upload sessions,
+integrity rejection and scoped deletion. The focused production coordinator native test passes on
+regular Xcode 27 / the preserved iPhone 17 Pro Max iOS 27 simulator: success timestamp persistence,
+non-fatal warning, exactly one list attempt, no duplicate known generation and warning reset on a
+later successful completion. The native test build compiles the app; `git diff --check` passes.
+Tests use deterministic transports, not the user's live Dropbox. No backend/schema changes,
+migration, data reset or TestFlight upload. External Dropbox console confirmation and live-provider
+acceptance remain open and are not inferred from this checkpoint.

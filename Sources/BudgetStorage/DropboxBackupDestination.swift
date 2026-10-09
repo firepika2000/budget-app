@@ -51,6 +51,11 @@ public struct DropboxBackupPublication: Equatable, Sendable {
     public let remotePath: String
     public let encryptedBytes: Int64
     public let fileCount: Int
+    public let retentionCleanupPending: Bool
+    public init(remotePath: String, encryptedBytes: Int64, fileCount: Int, retentionCleanupPending: Bool = false) {
+        self.remotePath = remotePath; self.encryptedBytes = encryptedBytes
+        self.fileCount = fileCount; self.retentionCleanupPending = retentionCleanupPending
+    }
 }
 
 public enum DropboxBackupDestinationError: LocalizedError, Equatable {
@@ -129,8 +134,13 @@ public actor DropboxBackupDestination {
                 }
                 throw error
             }
-            try await prune(excluding: finalPath)
-            return .init(remotePath: finalPath, encryptedBytes: total, fileCount: files.count)
+            // The verified move is the publication commit point. A later maintenance failure
+            // must not encourage another upload of this immutable generation.
+            var retentionCleanupPending = false
+            do { try await prune(excluding: finalPath) }
+            catch { retentionCleanupPending = true }
+            return .init(remotePath: finalPath, encryptedBytes: total, fileCount: files.count,
+                         retentionCleanupPending: retentionCleanupPending)
         } catch {
             try? await transport.delete(path: temporaryPath)
             throw error

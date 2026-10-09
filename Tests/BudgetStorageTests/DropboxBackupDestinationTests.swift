@@ -2,6 +2,24 @@ import XCTest
 @testable import BudgetStorage
 
 final class DropboxBackupDestinationTests: XCTestCase {
+    func testCommittedPublicationSurvivesRetentionListingFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-maintenance-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let package = try makePackage(root: root, name: "Verified.clearpocketbackup", payloads: [Data("ciphertext".utf8)])
+        let transport = FakeDropboxBackupTransport(failListing: true)
+        let destination = try DropboxBackupDestination(transport: transport)
+        let publication = try await destination.publish(packageURL: package)
+        XCTAssertTrue(publication.retentionCleanupPending)
+        XCTAssertEqual(publication.remotePath, "/Backups/Verified.clearpocketbackup")
+        let paths = await transport.paths()
+        XCTAssertTrue(paths.contains(publication.remotePath))
+        XCTAssertTrue(paths.contains(publication.remotePath + "/manifest.json"))
+        XCTAssertFalse(paths.contains { $0.contains(".upload-") })
+        let (_, downloaded) = try await transport.download(path: publication.remotePath + "/payload/000000.cpenc")
+        XCTAssertEqual(downloaded, Data("ciphertext".utf8))
+    }
+
     func testDropboxHashMatchesPublishedReferenceVector() {
         XCTAssertEqual(
             DropboxBackupDestination.contentHash(Data()),
@@ -174,10 +192,12 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     private var maximumChunk = 0
     private let pageSize: Int
     private let corruptUploadMetadata: Bool
+    private let failListing: Bool
     private var corruptDownloads: Set<String> = []
 
-    init(pageSize: Int = 100, corruptUploadMetadata: Bool = false) {
+    init(pageSize: Int = 100, corruptUploadMetadata: Bool = false, failListing: Bool = false) {
         self.pageSize = pageSize; self.corruptUploadMetadata = corruptUploadMetadata
+        self.failListing = failListing
     }
 
     func seedFolder(_ path: String) { folders.insert(path) }
@@ -226,8 +246,9 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
         files = files.filter { $0.key != path && !$0.key.hasPrefix(path + "/") }
     }
 
-    func list(path: String, recursive: Bool, cursor: String?) -> DropboxBackupPage {
+    func list(path: String, recursive: Bool, cursor: String?) throws -> DropboxBackupPage {
         calls += 1
+        if failListing { throw TestError.missing }
         let all: [DropboxBackupEntry] = (folders.map { value in
             .init(path: value, name: (value as NSString).lastPathComponent, isFolder: true)
         } + files.map { value, data in

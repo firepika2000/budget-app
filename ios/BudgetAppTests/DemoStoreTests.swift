@@ -9,6 +9,33 @@ import CryptoKit
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testDropboxCommittedPublicationRemainsSuccessfulWhenListRefreshFails() async throws {
+        let name = "dropbox-publication-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let coordinator = DropboxBackupCoordinator(appKey: "", defaults: defaults)
+        let publication = DropboxBackupPublication(remotePath: "/Backups/Verified.clearpocketbackup",
+            encryptedBytes: 123, fileCount: 3, retentionCleanupPending: true)
+        var calls = 0
+        let result = await coordinator.finalizePublication(publication) {
+            calls += 1
+            throw URLError(.notConnectedToInternet)
+        }
+        XCTAssertEqual(result, publication)
+        XCTAssertEqual(calls, 1)
+        XCTAssertNotNil(coordinator.lastSuccessfulBackupAt)
+        XCTAssertNotNil(defaults.object(forKey: "backup.dropbox.last-success"))
+        XCTAssertNil(coordinator.errorMessage)
+        XCTAssertTrue(coordinator.publicationWarning?.contains("Do not upload") == true)
+        XCTAssertEqual(coordinator.generations.map(\.path), [publication.remotePath])
+        _ = await coordinator.finalizePublication(publication) { throw URLError(.timedOut) }
+        XCTAssertEqual(coordinator.generations.count, 1, "Refresh failure must not duplicate the known generation")
+        let recovered = DropboxBackupPublication(remotePath: publication.remotePath, encryptedBytes: 123, fileCount: 3)
+        _ = await coordinator.finalizePublication(recovered) { coordinator.generations }
+        XCTAssertNil(coordinator.publicationWarning)
+    }
+
+    @MainActor
     func testInvalidPayoffPlanPreservesPreviouslySavedScenarioAndLedger() async throws {
         let source = DemoWorkspaceDataSource()
         let id = try XCTUnwrap(source.demo.accounts.first(where: { $0.kind == .credit })?.id)
