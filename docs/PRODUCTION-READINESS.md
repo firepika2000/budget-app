@@ -1,5 +1,41 @@
 # Production readiness mission ledger
 
+## Native durable reviewed schedule editing (2026-10-09)
+
+Live schedule editing now persists complete edited metadata, schedule ID, captured server
+revision and stable UUID before transport. Ordered replay resolves current credentials and
+checks the destination before calling the existing canonical update endpoint. Interrupted
+responses retain the exact intent; stale or revoked edits pause for explicit review without
+rebasing onto a newer schedule. A second pending edit for the same schedule is refused until
+the first is accepted/discarded. Inactive exhausted occurrence limits remain valid edit shapes.
+
+Scheduled and Pending Sync show edits separately from accepted Upcoming/Due items. Accepted
+forecast, actual activity and balances remain unchanged until server approval. Pending details
+require current planning/account scope, a visible original schedule and visible edited
+resources. The editor captures its initial revision rather than adopting background refreshes.
+Skip uses the same reviewed update path and refuses a changed displayed revision. The audit
+also found that the editor omitted existing interest-charge classification from its payload;
+it now preserves that metadata instead of silently dropping it during unrelated edits.
+
+Executed evidence: the production Foundation regression passes interrupted edit/relaunch,
+exact payload/revision/identity retention, duplicate and second-edit refusal, stale rejection
+pause, explicit unchanged retry, acknowledgement cleanup and exhausted paused shape. Three
+focused Swift API tests pass for identified edit/exact large money/current credentials,
+legacy schedule response decoding and creation compatibility. Native persistence coverage was
+added; native runtime execution is not claimed. Source-wiring checks are not UI interaction
+proof. No backend code changed in this checkpoint.
+Regular Xcode 27.0 (27A266a), `/Applications/Xcode.app/Contents/Developer`, passed
+`build-for-testing` for the production app and native tests using preserved iPhone 17 Pro Max
+simulator `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27. `git diff --check` passed.
+
+Human retest after rebuilding and updating the server through the reviewed-edit contract:
+disconnect, edit an existing schedule amount or pause it, then save. Its accepted row/forecast
+must remain unchanged with a separate pending edit. Relaunch offline, reconnect, and verify
+one accepted edit replaces the pending item. If another device changes/realizes the schedule
+first, the stale pending edit must require review rather than undoing that change. Server
+update/restart and app rebuild required; no new migration beyond 0049. Deletion and realization
+offline durability remain unfinished. TestFlight remains on hold; no merge/tag/release.
+
 ## Reviewed schedule edit server boundary (2026-10-09)
 
 Authorized schedule responses now expose an opaque content revision covering the complete

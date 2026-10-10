@@ -360,9 +360,10 @@ public struct APIScheduledTransaction: Identifiable, Codable, Equatable, Sendabl
     public let financialClassification: String?
     public let isActive: Bool
     public let lastRealizedOn: String?
+    public let revision: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, memo
+        case id, name, memo, revision
         case financialClassification = "financial_classification"
         case budgetID = "budget_id"
         case accountID = "account_id"
@@ -395,12 +396,15 @@ public struct APIScheduledTransactionCreate: Encodable, Sendable {
     public let memo: String
     public let financialClassification: String?
     public let isActive: Bool
+    public let expectedRevision: String?
+    public let mutationOperationID: String?
 
-    public init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, payeeID: String? = nil, name: String, amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1, endDate: String? = nil, remainingOccurrences: Int? = nil, memo: String = "", financialClassification: String? = nil, isActive: Bool = true) {
+    public init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, payeeID: String? = nil, name: String, amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1, endDate: String? = nil, remainingOccurrences: Int? = nil, memo: String = "", financialClassification: String? = nil, isActive: Bool = true, expectedRevision: String? = nil, mutationOperationID: String? = nil) {
         self.accountID = accountID; self.destinationAccountID = destinationAccountID; self.categoryID = categoryID
         self.payeeID = payeeID
         self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate
         self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.endDate = endDate; self.remainingOccurrences = remainingOccurrences; self.memo = memo; self.financialClassification = financialClassification; self.isActive = isActive
+        self.expectedRevision = expectedRevision; self.mutationOperationID = mutationOperationID
     }
 
     enum CodingKeys: String, CodingKey {
@@ -417,6 +421,8 @@ public struct APIScheduledTransactionCreate: Encodable, Sendable {
         case endDate = "end_date"
         case remainingOccurrences = "remaining_occurrences"
         case isActive = "is_active"
+        case expectedRevision = "expected_revision"
+        case mutationOperationID = "mutation_operation_id"
     }
 }
 

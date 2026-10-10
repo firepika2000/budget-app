@@ -130,6 +130,8 @@ enum AttachmentStagingError: LocalizedError {
 }
 
 struct ScheduleOperation: Codable, Equatable, Sendable {
+    var expectedRevision: String? = nil
+    var mutationOperationID: String? = nil
     let accountID: String
     let destinationAccountID: String?
     let categoryID: String?
@@ -147,13 +149,25 @@ struct ScheduleOperation: Codable, Equatable, Sendable {
 
     init(accountID: String, destinationAccountID: String? = nil, categoryID: String? = nil, payeeID: String? = nil, name: String,
          amountMinor: Int64, nextDate: String, recurrenceUnit: String, intervalCount: Int = 1,
-         endDate: String? = nil, remainingOccurrences: Int? = nil, memo: String = "", financialClassification: String? = nil, isActive: Bool = true) {
+         endDate: String? = nil, remainingOccurrences: Int? = nil, memo: String = "", financialClassification: String? = nil, isActive: Bool = true, expectedRevision: String? = nil, mutationOperationID: String? = nil) {
+        self.expectedRevision = expectedRevision; self.mutationOperationID = mutationOperationID
         self.accountID = accountID; self.destinationAccountID = destinationAccountID; self.categoryID = categoryID; self.payeeID = payeeID
         self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate; self.recurrenceUnit = recurrenceUnit
         self.intervalCount = intervalCount; self.endDate = endDate; self.remainingOccurrences = remainingOccurrences; self.memo = memo; self.financialClassification = financialClassification; self.isActive = isActive
     }
 
     var isValidPendingCreation: Bool {
+        expectedRevision == nil && mutationOperationID == nil && isValidPendingShape(allowExhausted: false)
+    }
+
+    var isValidPendingEdit: Bool {
+        guard let revision = expectedRevision, revision.hasPrefix("v1:"), revision.count == 67,
+              revision.dropFirst(3).allSatisfy({ "0123456789abcdef".contains($0) }),
+              let identity = mutationOperationID, UUID(uuidString: identity) != nil else { return false }
+        return isValidPendingShape(allowExhausted: true)
+    }
+
+    private func isValidPendingShape(allowExhausted: Bool) -> Bool {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -175,7 +189,7 @@ struct ScheduleOperation: Codable, Equatable, Sendable {
                   formatter.string(from: end) == endDate, end >= date, remainingOccurrences == nil else { return false }
         }
         if let remainingOccurrences {
-            guard recurrenceUnit != "once", (1...10_000).contains(remainingOccurrences) else { return false }
+            guard recurrenceUnit != "once", ((allowExhausted && !isActive ? 0 : 1)...10_000).contains(remainingOccurrences) else { return false }
         }
         return true
     }
@@ -295,6 +309,8 @@ final class LiveTransactionOutbox {
         var attachmentUpload: AttachmentUpload? = nil
         var scheduleCreation: ScheduleOperation? = nil
         var makeRecurring: MakeRecurringOperation? = nil
+        var scheduleEdit: ScheduleOperation? = nil
+        var scheduleID: String? = nil
     }
 
     private let fileURL: URL
@@ -491,6 +507,7 @@ final class LiveTransactionOutbox {
                   existing.attachmentUpload == entry.attachmentUpload,
                   existing.scheduleCreation == entry.scheduleCreation,
                   existing.makeRecurring == entry.makeRecurring && existing.transactionID == entry.transactionID,
+                  existing.scheduleEdit == entry.scheduleEdit && existing.scheduleID == entry.scheduleID,
                   existing.operation == nil && existing.bulkUpdate == nil else {
                 throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
             }
@@ -526,6 +543,16 @@ final class LiveTransactionOutbox {
             throw BudgetApplicationError.invalidOperation("Reopen this transaction to review its template, date and recurrence before saving.")
         }
         try enqueuePlanning(Entry(id: identity, queuedAt: Date(), operation: nil, transactionID: transactionID, makeRecurring: operation))
+    }
+
+    func enqueueScheduleEdit(scheduleID: String, operation: ScheduleOperation) throws {
+        guard !scheduleID.isEmpty, operation.isValidPendingEdit, let identity = operation.mutationOperationID else {
+            throw BudgetApplicationError.invalidOperation("Reopen this schedule to review its current version before saving.")
+        }
+        guard !entries.contains(where: { $0.id != identity && $0.scheduleID == scheduleID }) else {
+            throw BudgetApplicationError.invalidOperation("This schedule already has a saved edit. Review it in Pending Sync before editing again.")
+        }
+        try enqueuePlanning(Entry(id: identity, queuedAt: Date(), operation: nil, scheduleEdit: operation, scheduleID: scheduleID))
     }
 
     func enqueueVoid(_ operation: VoidTransactionOperation) throws {
@@ -674,8 +701,13 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
+                  if let edit = entry.scheduleEdit {
+                      return entry.scheduleID?.isEmpty == false && entry.transactionID == nil && entry.transferID == nil
+                          && edit.mutationOperationID == entry.id && edit.isValidPendingEdit
+                  }
+                  guard entry.scheduleID == nil else { return false }
                   if let recurring = entry.makeRecurring {
                       return entry.transactionID?.isEmpty == false && entry.transferID == nil
                           && recurring.mutationOperationID == entry.id && recurring.isValidPending
@@ -1335,6 +1367,6 @@ extension TransferMoneyOperation {
 
 extension ScheduleOperation {
     var apiValue: APIScheduledTransactionCreate {
-        APIScheduledTransactionCreate(accountID: accountID, destinationAccountID: destinationAccountID, categoryID: categoryID, payeeID: payeeID, name: name, amountMinor: amountMinor, nextDate: nextDate, recurrenceUnit: recurrenceUnit, intervalCount: intervalCount, endDate: endDate, remainingOccurrences: remainingOccurrences, memo: memo, financialClassification: financialClassification, isActive: isActive)
+        APIScheduledTransactionCreate(accountID: accountID, destinationAccountID: destinationAccountID, categoryID: categoryID, payeeID: payeeID, name: name, amountMinor: amountMinor, nextDate: nextDate, recurrenceUnit: recurrenceUnit, intervalCount: intervalCount, endDate: endDate, remainingOccurrences: remainingOccurrences, memo: memo, financialClassification: financialClassification, isActive: isActive, expectedRevision: expectedRevision, mutationOperationID: mutationOperationID)
     }
 }

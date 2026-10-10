@@ -43,6 +43,8 @@ abort "Edit must persist before replay" unless edit_body.index("enqueueEdit(") &
 abort "Edit sender must use current endpoint binding" unless send_body.include?("client.updateTransaction(") && send_body.include?("operation.apiValue")
 abort "Bulk sender missing from canonical command path" unless send_body.include?("client.bulkUpdateTransactions(") && workspace.include?("try transactionOutbox.enqueueBulk(identified)")
 abort "Schedules must persist before canonical identified replay" unless workspace.include?("try transactionOutbox.enqueueSchedule(id:") && send_body.include?("entry.scheduleCreation") && send_body.include?("schedule: schedule.apiValue, operationID: entry.id, token: token")
+abort "Schedule edits lose review or bypass durable replay" unless workspace.include?("transactionOutbox.enqueueScheduleEdit(scheduleID: id, operation: identified)") && send_body.include?("entry.scheduleEdit") && send_body.include?("schedule: edit.apiValue, token: token") && workspace.include?("_observedRevision = State(initialValue: schedule?.revision)") && workspace.include?("reviewed.expectedRevision = observedRevision")
+abort "Schedule editor loses existing interest classification" unless workspace.include?("financialClassification: schedule?.financialClassification, isActive: isActive ?? active")
 abort "Make Recurring loses captured intent or bypasses durable replay" unless workspace.include?("transactionOutbox.enqueueMakeRecurring(transactionID: id, operation: identified)") && send_body.include?("entry.makeRecurring") && send_body.include?("expectedRevision: recurring.expectedRevision") && workspace.include?("expectedRevision: transaction.revision")
 abort "Pending schedules must remain separate from accepted forecast" unless workspace.include?('Section("Awaiting Server Confirmation")') && workspace.include?('not yet included in forecast')
 abort "Planning commands bypass durable canonical sender" unless send_body.include?("client.updateAssignment(") && send_body.include?("client.transferAllocation(") && workspace.include?("try transactionOutbox.enqueueAssignment(identified)") && workspace.include?("try transactionOutbox.enqueueMoneyMove(identified)")
@@ -405,6 +407,30 @@ try await Task { @MainActor in
  var invalidRecurring = recurring; invalidRecurring.expectedRevision = nil
  do { try pausedRecurring.enqueueMakeRecurring(transactionID: "original", operation: invalidRecurring); fatalError("Unobserved template persisted") } catch {}
  print("PASS: Make Recurring preserves source/revision/date/identity across interruption and relaunch; rejected template pauses, explicit retry never rebases, acknowledgement removes intent")
+ do {
+ let editFile = root.appendingPathComponent("schedule-edit.json")
+ let editQueue = LiveTransactionOutbox(fileURL: editFile)
+ var edit = schedule; edit.expectedRevision = "v1:" + String(repeating: "a", count: 64); edit.mutationOperationID = UUID().uuidString
+ try editQueue.enqueueScheduleEdit(scheduleID: "existing", operation: edit)
+ try editQueue.enqueueScheduleEdit(scheduleID: "existing", operation: edit)
+ do { try editQueue.enqueueScheduleEdit(scheduleID: "different", operation: edit); fatalError("Edit identity rebound") } catch {}
+ var secondEdit = edit; secondEdit.mutationOperationID = UUID().uuidString
+ do { try editQueue.enqueueScheduleEdit(scheduleID: "existing", operation: secondEdit); fatalError("Second edit queued without pending review") } catch {}
+ do { try await editQueue.replayCommands { _ in throw URLError(.networkConnectionLost) }; fatalError("Expected lost edit acknowledgement") } catch {}
+ let reopenedEdit = LiveTransactionOutbox(fileURL: editFile)
+ precondition(reopenedEdit.entries[0].scheduleEdit == edit && reopenedEdit.entries[0].scheduleID == "existing")
+ do { try await reopenedEdit.replayCommands(shouldPause: { _ in true }) { _ in throw BudgetApplicationError.invalidOperation("Stale revision") }; fatalError("Expected edit rejection") } catch {}
+ let pausedEdit = LiveTransactionOutbox(fileURL: editFile)
+ precondition(pausedEdit.entries[0].requiresReview == true)
+ do { try await pausedEdit.replayCommands { _ in fatalError("Stale edit auto replayed") } } catch {}
+ try pausedEdit.retryReviewed(id: edit.mutationOperationID!)
+ try await pausedEdit.replayCommands { entry in precondition(entry.scheduleEdit == edit) }
+ precondition(LiveTransactionOutbox(fileURL: editFile).count == 0)
+ let exhausted = ScheduleOperation(accountID: "checking", name: "Finished", amountMinor: -1, nextDate: "2099-01-01", recurrenceUnit: "months", remainingOccurrences: 0, isActive: false, expectedRevision: edit.expectedRevision, mutationOperationID: UUID().uuidString)
+ try pausedEdit.enqueueScheduleEdit(scheduleID: "exhausted", operation: exhausted)
+ precondition(LiveTransactionOutbox(fileURL: editFile).entries[0].scheduleEdit == exhausted)
+ print("PASS: reviewed schedule edits retain exact payload/revision/identity through loss and relaunch; stale edits pause, retry never rebases; inactive exhausted limits remain valid")
+ }
 }.value
 SWIFT
 RUBY

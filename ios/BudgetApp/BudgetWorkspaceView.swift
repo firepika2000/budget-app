@@ -3679,6 +3679,13 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let edit = entry.scheduleEdit, let scheduleID = entry.scheduleID {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            _ = try await client.updateScheduledTransaction(budgetID: budget.id, scheduleID: scheduleID,
+                schedule: edit.apiValue, token: token)
+            return
+        }
         if let recurring = entry.makeRecurring, let transactionID = entry.transactionID {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3981,7 +3988,15 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         }
     }
     func scheduleHistory(limit: Int, offset: Int) async throws -> [APIScheduledTransactionRevision] { try await credentials.prepare(); return try await client.scheduledTransactionHistory(budgetID: budget.id, limit: limit, offset: offset, token: token) }
-    func updateSchedule(id: String, operation: ScheduleOperation) async throws { try await credentials.prepare(); _ = try await client.updateScheduledTransaction(budgetID: budget.id, scheduleID: id, schedule: operation.apiValue, token: token) }
+    func updateSchedule(id: String, operation: ScheduleOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueScheduleEdit(scheduleID: id, operation: identified)
+        do { try await replaySavedPlanning() }
+        catch {
+            guard transactionOutbox.entries.contains(where: { $0.id == identified.mutationOperationID }) else { throw error }
+        }
+    }
     func deleteSchedule(id: String) async throws { try await credentials.prepare(); try await client.deleteScheduledTransaction(budgetID: budget.id, scheduleID: id, token: token) }
     func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation {
         try await credentials.prepare()
@@ -4858,6 +4873,13 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if let edit = entry.scheduleEdit {
+                return budget.can("manage_planning") && budget.can("view_accounts")
+                    && scheduledTransactions.contains(where: { $0.id == entry.scheduleID })
+                    && accountIDs.contains(edit.accountID)
+                    && (edit.destinationAccountID.map { accountIDs.contains($0) } ?? true)
+                    && (edit.categoryID.map { budget.can("view_categories") && categoryIDs.contains($0) } ?? true)
+            }
             if entry.makeRecurring != nil {
                 return budget.can("manage_planning") && budget.can("view_transactions")
                     && transactions.contains(where: { $0.id == entry.transactionID })
@@ -5385,13 +5407,17 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func updateSchedule(id: String, operation: ScheduleOperation) async throws {
+        defer { publishPendingPlanningStatus() }
         try await services().schedules.update(id: id, operation: operation)
         await refresh()
     }
 
-    func skipNextScheduleOccurrence(id: String) async throws {
+    func skipNextScheduleOccurrence(id: String, expectedRevision: String? = nil) async throws {
         guard let schedule = scheduledTransactions.first(where: { $0.id == id }), schedule.isActive else {
             throw workspaceRepositoryError("Scheduled transaction is unavailable.")
+        }
+        if let expectedRevision, expectedRevision != schedule.revision {
+            throw workspaceRepositoryError("This schedule changed. Reopen it before skipping an occurrence.")
         }
         let currentDate = Self.parseDate(schedule.nextDate)
         let candidateDate = Self.nextScheduledDate(
@@ -5417,7 +5443,8 @@ final class BudgetWorkspaceStore: ObservableObject {
             remainingOccurrences: schedule.remainingOccurrences.map { max(0, $0 - 1) },
             memo: schedule.memo,
             financialClassification: schedule.financialClassification,
-            isActive: followingDate != nil
+            isActive: followingDate != nil,
+            expectedRevision: expectedRevision ?? schedule.revision
         )
         try await updateSchedule(id: id, operation: operation)
     }
@@ -6370,6 +6397,12 @@ private struct PendingLiveTransactionsView: View {
                                 Text("\(accountName(reconciliation.accountID)) · through \(reconciliation.throughDate) · \(store.format(reconciliation.statementBalanceMinor))")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text("Saved for server approval · reconciliation history and balances remain unchanged until accepted")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let edit = entry.scheduleEdit {
+                                Text("Edit Schedule").font(.headline)
+                                Text(edit.name).font(.subheadline)
+                                Text("\(edit.nextDate) · \(store.format(edit.amountMinor))").font(.caption)
+                                Text("Reviewed edit awaiting approval · accepted forecast remains unchanged")
                                     .font(.caption).foregroundStyle(.secondary)
                             } else if let recurring = entry.makeRecurring {
                                 Text("Make Recurring").font(.headline)
@@ -10019,7 +10052,7 @@ private struct LiveScheduledTransactionsView: View {
     private var due: [APIScheduledTransaction] { store.scheduledTransactions.filter { $0.isActive && BudgetWorkspaceStore.parseDate($0.nextDate) <= Date() }.sorted { $0.nextDate < $1.nextDate } }
     private var upcoming: [APIScheduledTransaction] { store.scheduledTransactions.filter { $0.isActive && BudgetWorkspaceStore.parseDate($0.nextDate) > Date() }.sorted { $0.nextDate < $1.nextDate } }
     private var paused: [APIScheduledTransaction] { store.scheduledTransactions.filter { !$0.isActive }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } }
-    private var pendingSchedules: [LiveTransactionOutbox.Entry] { store.pendingLiveTransactions.filter { $0.scheduleCreation != nil || $0.makeRecurring != nil } }
+    private var pendingSchedules: [LiveTransactionOutbox.Entry] { store.pendingLiveTransactions.filter { $0.scheduleCreation != nil || $0.makeRecurring != nil || $0.scheduleEdit != nil } }
     var body: some View {
         List {
             Section { Text("Scheduled money is a forecast only. It changes no balance, category, or Available amount until you explicitly enter it.").font(.footnote).foregroundStyle(.secondary) }
@@ -10038,6 +10071,17 @@ private struct LiveScheduledTransactionsView: View {
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                             }.accessibilityIdentifier("pending-schedule-\(entry.id)")
+                        } else if let edit = entry.scheduleEdit {
+                            NavigationLink {
+                                PendingLiveTransactionsView(store: store)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Label("Edit \(edit.name)", systemImage: "icloud.and.arrow.up")
+                                    Text("\(edit.nextDate) · \(store.format(edit.amountMinor))").font(.caption)
+                                    Text(entry.requiresReview == true ? "Needs review · automatic retry paused" : "Saved edit · accepted forecast remains unchanged")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.accessibilityIdentifier("pending-schedule-edit-\(entry.id)")
                         } else if let recurring = entry.makeRecurring {
                             NavigationLink {
                                 PendingLiveTransactionsView(store: store)
@@ -10205,9 +10249,11 @@ private struct LiveScheduledTransactionEditor: View {
     @State private var confirmDelete = false
     @State private var confirmRealize = false
     @State private var confirmSkip = false
+    @State private var observedRevision: String?
 
     init(schedule: APIScheduledTransaction?, currencyCode: String) {
         self.schedule = schedule; self.currencyCode = currencyCode
+        _observedRevision = State(initialValue: schedule?.revision)
         let inferred: ScheduledKind = schedule?.destinationAccountID != nil ? .transfer : (schedule?.amountMinor ?? -1) > 0 ? .income : .expense
         let initialNext = schedule.map { BudgetWorkspaceStore.parseDate($0.nextDate) } ?? Calendar.current.date(byAdding: .day, value: 1, to: Date())!
         _kind = State(initialValue: inferred); _accountID = State(initialValue: schedule?.accountID ?? ""); _destinationAccountID = State(initialValue: schedule?.destinationAccountID ?? ""); _categoryID = State(initialValue: schedule?.categoryID ?? ""); _payeeID = State(initialValue: schedule?.payeeID); _name = State(initialValue: schedule?.name ?? ""); _amount = State(initialValue: CurrencyText.editableMagnitude(schedule?.amountMinor ?? 0, currencyCode: currencyCode)); _nextDate = State(initialValue: initialNext); _recurrenceUnit = State(initialValue: schedule?.recurrenceUnit ?? "months"); _intervalCount = State(initialValue: schedule?.intervalCount ?? 1); _usesEndDate = State(initialValue: schedule?.endDate != nil); _endDate = State(initialValue: schedule?.endDate.map(BudgetWorkspaceStore.parseDate) ?? Calendar.current.date(byAdding: .year, value: 1, to: initialNext)!); _usesOccurrenceLimit = State(initialValue: schedule?.remainingOccurrences != nil); _occurrenceLimit = State(initialValue: max(1, schedule?.remainingOccurrences ?? 12)); _memo = State(initialValue: schedule?.memo ?? ""); _active = State(initialValue: schedule?.isActive ?? true)
@@ -10257,11 +10303,11 @@ private struct LiveScheduledTransactionEditor: View {
             .alert(schedule == nil ? "Unable to create schedule" : "Unable to update schedule", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
         }
     }
-    private func payload(isActive: Bool? = nil) -> ScheduleOperation { .init(accountID: accountID, destinationAccountID: kind == .transfer ? destinationAccountID : nil, categoryID: kind == .expense ? categoryID : nil, payeeID: kind == .transfer ? nil : payeeID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: parsed ?? 0, nextDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrenceUnit, intervalCount: recurrenceUnit == "once" ? 1 : intervalCount, endDate: usesEndDate && recurrenceUnit != "once" ? BudgetWorkspaceStore.dateString(endDate) : nil, remainingOccurrences: usesOccurrenceLimit && recurrenceUnit != "once" ? occurrenceLimit : nil, memo: memo, isActive: isActive ?? active) }
-    private func save() async { guard !saving else { return }; saving = true; defer { saving = false }; do { if let schedule { try await store.updateSchedule(id: schedule.id, operation: payload()) } else { try await store.createSchedule(payload()) }; dismiss() } catch { self.error = error.localizedDescription } }
+    private func payload(isActive: Bool? = nil) -> ScheduleOperation { .init(accountID: accountID, destinationAccountID: kind == .transfer ? destinationAccountID : nil, categoryID: kind == .expense ? categoryID : nil, payeeID: kind == .transfer ? nil : payeeID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: parsed ?? 0, nextDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrenceUnit, intervalCount: recurrenceUnit == "once" ? 1 : intervalCount, endDate: usesEndDate && recurrenceUnit != "once" ? BudgetWorkspaceStore.dateString(endDate) : nil, remainingOccurrences: usesOccurrenceLimit && recurrenceUnit != "once" ? occurrenceLimit : nil, memo: memo, financialClassification: schedule?.financialClassification, isActive: isActive ?? active) }
+    private func save() async { guard !saving else { return }; saving = true; defer { saving = false }; do { if let schedule { var reviewed = payload(); reviewed.expectedRevision = observedRevision; try await store.updateSchedule(id: schedule.id, operation: reviewed) } else { try await store.createSchedule(payload()) }; dismiss() } catch { self.error = error.localizedDescription } }
     private func remove() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { try await store.deleteSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
     private func realize() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { _ = try await store.realizeSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
-    private func skip() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { try await store.skipNextScheduleOccurrence(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
+    private func skip() async { guard !saving, let schedule else { return }; saving = true; defer { saving = false }; do { try await store.skipNextScheduleOccurrence(id: schedule.id, expectedRevision: observedRevision); dismiss() } catch { self.error = error.localizedDescription } }
 }
 
 private struct LiveTransactionLink: View {

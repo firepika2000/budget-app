@@ -2,6 +2,44 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testReviewedScheduleEditPreservesIdentityObservationAndExactAmount() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        let revision = "v1:" + String(repeating: "a", count: 64)
+        let identity = UUID().uuidString.lowercased()
+        let payload = APIScheduledTransactionCreate(accountID: "checking", categoryID: "food", name: "Reviewed bill",
+            amountMinor: -9_007_199_254_740_993, nextDate: "2099-01-01", recurrenceUnit: "months",
+            remainingOccurrences: 0, memo: "Original reviewed memo", isActive: false,
+            expectedRevision: revision, mutationOperationID: identity)
+        var calls = 0
+        MockURLProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.httpMethod, "PUT")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/scheduled-transactions/existing")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+            XCTAssertEqual(json["expected_revision"] as? String, revision)
+            XCTAssertEqual(json["mutation_operation_id"] as? String, identity)
+            XCTAssertEqual(json["amount_minor"] as? Int64, -9_007_199_254_740_993)
+            XCTAssertEqual(json["remaining_occurrences"] as? Int, 0)
+            XCTAssertEqual(json["is_active"] as? Bool, false)
+            XCTAssertEqual(json["memo"] as? String, "Original reviewed memo")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("""
+                {"id":"existing","budget_id":"b1","account_id":"checking","category_id":"food","name":"Reviewed bill","amount_minor":-9007199254740993,"next_date":"2099-01-01","recurrence_unit":"months","interval_count":1,"remaining_occurrences":0,"memo":"Original reviewed memo","is_active":false,"revision":"\(revision)"}
+                """.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        for _ in 0..<2 {
+            let response = try await client.updateScheduledTransaction(budgetID: "b1", scheduleID: "existing", schedule: payload, token: "rotated")
+            XCTAssertEqual(response.revision, revision)
+            XCTAssertEqual(response.amountMinor, -9_007_199_254_740_993)
+        }
+        XCTAssertEqual(calls, 2)
+        let legacy = APIScheduledTransactionCreate(accountID: "checking", name: "Legacy", amountMinor: -1, nextDate: "2099-01-01", recurrenceUnit: "once")
+        let legacyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        XCTAssertNil(legacyJSON["expected_revision"])
+        XCTAssertNil(legacyJSON["mutation_operation_id"])
+    }
+
     func testAllowanceIssuancePagingPreservesLegacyRequestAndCurrentCredential() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
