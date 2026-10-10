@@ -3679,6 +3679,12 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let schedule = entry.scheduleCreation {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            _ = try await client.createScheduledTransaction(budgetID: budget.id, schedule: schedule.apiValue, operationID: entry.id, token: token)
+            return
+        }
         if let upload = entry.attachmentUpload {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3947,7 +3953,16 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         try await credentials.prepare()
         try await client.setCategoryTargetSnoozed(budgetID: budget.id, categoryID: categoryID, month: month, isSnoozed: isSnoozed, token: token)
     }
-    func createSchedule(_ operation: ScheduleOperation) async throws { try await credentials.prepare(); _ = try await client.createScheduledTransaction(budgetID: budget.id, schedule: operation.apiValue, token: token) }
+    func createSchedule(_ operation: ScheduleOperation) async throws {
+        let identity = UUID().uuidString.lowercased()
+        try transactionOutbox.enqueueSchedule(id: identity, operation: operation)
+        do { try await replaySavedPlanning() }
+        catch {
+            // The intent was saved, not accepted by the server. Leave the editor once and
+            // direct review to Pending Sync instead of offering a second creation identity.
+            guard transactionOutbox.entries.contains(where: { $0.id == identity }) else { throw error }
+        }
+    }
     func scheduleHistory(limit: Int, offset: Int) async throws -> [APIScheduledTransactionRevision] { try await credentials.prepare(); return try await client.scheduledTransactionHistory(budgetID: budget.id, limit: limit, offset: offset, token: token) }
     func updateSchedule(id: String, operation: ScheduleOperation) async throws { try await credentials.prepare(); _ = try await client.updateScheduledTransaction(budgetID: budget.id, scheduleID: id, schedule: operation.apiValue, token: token) }
     func deleteSchedule(id: String) async throws { try await credentials.prepare(); try await client.deleteScheduledTransaction(budgetID: budget.id, scheduleID: id, token: token) }
@@ -4826,6 +4841,12 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if let schedule = entry.scheduleCreation {
+                return budget.can("manage_planning") && budget.can("view_accounts")
+                    && accountIDs.contains(schedule.accountID)
+                    && (schedule.destinationAccountID.map { accountIDs.contains($0) } ?? true)
+                    && (schedule.categoryID.map { budget.can("view_categories") && categoryIDs.contains($0) } ?? true)
+            }
             if let upload = entry.attachmentUpload {
                 return budget.can("edit_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == upload.transactionID })
             }
@@ -5332,6 +5353,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func createSchedule(_ operation: ScheduleOperation) async throws {
+        defer { publishPendingPlanningStatus() }
         try await services().schedules.create(operation)
         await refresh()
     }
@@ -6326,6 +6348,12 @@ private struct PendingLiveTransactionsView: View {
                                 Text("\(accountName(reconciliation.accountID)) · through \(reconciliation.throughDate) · \(store.format(reconciliation.statementBalanceMinor))")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text("Saved for server approval · reconciliation history and balances remain unchanged until accepted")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let schedule = entry.scheduleCreation {
+                                Text("Create Schedule").font(.headline)
+                                Text(schedule.name).font(.subheadline)
+                                Text("\(schedule.nextDate) · \(store.format(schedule.amountMinor))").font(.caption)
+                                Text("Saved for server approval · not included in accepted forecast or actual activity")
                                     .font(.caption).foregroundStyle(.secondary)
                             } else if let upload = entry.attachmentUpload {
                                 Text("Upload Attachment").font(.headline)
@@ -9962,18 +9990,37 @@ private struct LiveScheduledTransactionsView: View {
     private var due: [APIScheduledTransaction] { store.scheduledTransactions.filter { $0.isActive && BudgetWorkspaceStore.parseDate($0.nextDate) <= Date() }.sorted { $0.nextDate < $1.nextDate } }
     private var upcoming: [APIScheduledTransaction] { store.scheduledTransactions.filter { $0.isActive && BudgetWorkspaceStore.parseDate($0.nextDate) > Date() }.sorted { $0.nextDate < $1.nextDate } }
     private var paused: [APIScheduledTransaction] { store.scheduledTransactions.filter { !$0.isActive }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } }
+    private var pendingSchedules: [LiveTransactionOutbox.Entry] { store.pendingLiveTransactions.filter { $0.scheduleCreation != nil } }
     var body: some View {
         List {
             Section { Text("Scheduled money is a forecast only. It changes no balance, category, or Available amount until you explicitly enter it.").font(.footnote).foregroundStyle(.secondary) }
             Section { NavigationLink { HistoryAuthorityBoundary { ScheduledTransactionHistoryView() } } label: { Label("Schedule history", systemImage: "clock.arrow.circlepath") } }
-            if store.scheduledTransactions.isEmpty && !store.isLoading { ContentUnavailableView("No scheduled transactions", systemImage: "calendar.badge.plus", description: Text("Add recurring bills, income, or transfers without posting them early.")) }
+            if !pendingSchedules.isEmpty {
+                Section("Awaiting Server Confirmation") {
+                    ForEach(pendingSchedules) { entry in
+                        if let schedule = entry.scheduleCreation {
+                            NavigationLink {
+                                PendingLiveTransactionsView(store: store)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Label(schedule.name, systemImage: "icloud.and.arrow.up")
+                                    Text("\(schedule.nextDate) · \(store.format(schedule.amountMinor))").font(.caption)
+                                    Text(entry.requiresReview == true ? "Needs review · automatic retry paused" : "Saved on this iPhone · not yet included in forecast")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.accessibilityIdentifier("pending-schedule-\(entry.id)")
+                        }
+                    }
+                }
+            }
+            if store.scheduledTransactions.isEmpty && pendingSchedules.isEmpty && !store.isLoading { ContentUnavailableView("No scheduled transactions", systemImage: "calendar.badge.plus", description: Text("Add recurring bills, income, or transfers without posting them early.")) }
             scheduleSection("Due", values: due)
             scheduleSection("Upcoming", values: upcoming)
             scheduleSection("Paused", values: paused)
         }
         .navigationTitle("Scheduled")
         .toolbar { if store.budget.can("manage_planning") { Button { showCreate = true } label: { Image(systemName: "plus") }.accessibilityLabel("Add scheduled transaction") } }
-        .sheet(isPresented: $showCreate) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode) }
+        .sheet(isPresented: $showCreate) { LiveScheduledTransactionEditor(schedule: nil, currencyCode: store.budget.currencyCode).environmentObject(store) }
         .refreshable { await store.refresh() }
     }
     @ViewBuilder private func scheduleSection(_ title: String, values: [APIScheduledTransaction]) -> some View {
@@ -10171,7 +10218,7 @@ private struct LiveScheduledTransactionEditor: View {
         }
     }
     private func payload(isActive: Bool? = nil) -> ScheduleOperation { .init(accountID: accountID, destinationAccountID: kind == .transfer ? destinationAccountID : nil, categoryID: kind == .expense ? categoryID : nil, payeeID: kind == .transfer ? nil : payeeID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: parsed ?? 0, nextDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrenceUnit, intervalCount: recurrenceUnit == "once" ? 1 : intervalCount, endDate: usesEndDate && recurrenceUnit != "once" ? BudgetWorkspaceStore.dateString(endDate) : nil, remainingOccurrences: usesOccurrenceLimit && recurrenceUnit != "once" ? occurrenceLimit : nil, memo: memo, isActive: isActive ?? active) }
-    private func save() async { saving = true; defer { saving = false }; do { if let schedule { try await store.updateSchedule(id: schedule.id, operation: payload()) } else { try await store.createSchedule(payload()) }; dismiss() } catch { self.error = error.localizedDescription } }
+    private func save() async { guard !saving else { return }; saving = true; defer { saving = false }; do { if let schedule { try await store.updateSchedule(id: schedule.id, operation: payload()) } else { try await store.createSchedule(payload()) }; dismiss() } catch { self.error = error.localizedDescription } }
     private func remove() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { try await store.deleteSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
     private func realize() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { _ = try await store.realizeSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
     private func skip() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { try await store.skipNextScheduleOccurrence(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }

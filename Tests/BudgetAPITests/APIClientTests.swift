@@ -1804,6 +1804,7 @@ final class APIClientTests: XCTestCase {
                 return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
             }
             if request.httpMethod == "POST" {
+                XCTAssertNil(request.value(forHTTPHeaderField: "X-Planning-Operation-ID"))
                 let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
                 XCTAssertEqual(json["amount_minor"] as? Int, -1599)
                 XCTAssertEqual(json["recurrence_unit"] as? String, "months")
@@ -1831,6 +1832,34 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(seen[0].1, "/api/v1/budgets/b1/scheduled-transactions")
         XCTAssertEqual(seen[1].1, "/api/v1/budgets/b1/scheduled-transactions/s1/realize")
         XCTAssertEqual(seen[2].1, "/api/v1/budgets/b1/scheduled-transactions/s1")
+    }
+
+    func testIdentifiedScheduleCreationKeepsExactPayloadAndRotatesCredential() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let identity = UUID().uuidString.lowercased()
+        let schedule = APIScheduledTransactionCreate(accountID: "a1", categoryID: "c1", payeeID: "p1", name: "Reviewed bill", amountMinor: -9_007_199_254_740_993, nextDate: "2099-01-01", recurrenceUnit: "months", intervalCount: 2, remainingOccurrences: 4, memo: "Original", isActive: false)
+        let expectedBody = try JSONEncoder().encode(schedule)
+        var requests = 0
+        MockURLProtocol.handler = { request in
+            requests += 1
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/scheduled-transactions")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Planning-Operation-ID"), identity)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), requests == 1 ? "Bearer old" : "Bearer current")
+            let actual = try JSONSerialization.jsonObject(with: requestBody(request)) as? NSDictionary
+            let expected = try JSONSerialization.jsonObject(with: expectedBody) as? NSDictionary
+            XCTAssertEqual(actual, expected)
+            XCTAssertEqual((actual?["amount_minor"] as? NSNumber)?.int64Value, -9_007_199_254_740_993)
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data(#"{"id":"s1","budget_id":"b1","account_id":"a1","destination_account_id":null,"category_id":"c1","payee_id":"p1","name":"Reviewed bill","amount_minor":-9007199254740993,"next_date":"2099-01-01","recurrence_unit":"months","interval_count":2,"remaining_occurrences":4,"memo":"Original","is_active":false,"last_realized_on":null}"#.utf8))
+        }
+        for token in ["old", "current"] {
+            let result = try await client.createScheduledTransaction(budgetID: "b1", schedule: schedule, operationID: identity, token: token)
+            XCTAssertEqual(result.amountMinor, -9_007_199_254_740_993)
+            XCTAssertFalse(result.isActive)
+        }
+        XCTAssertEqual(requests, 2)
     }
 
     func testScheduledManagementListRequestsInactiveRecords() async throws {

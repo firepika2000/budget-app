@@ -304,8 +304,13 @@ def create_scheduled_transaction(
 ) -> ScheduledTransaction:
     budget = require_budget_capability(db, user, budget_id, "manage_planning")
     identity = str(operation_id) if operation_id is not None else None
+    request_values = body.model_dump(mode="json")
+    # Active was implicit in the original receipt contract. Keep accepted identities
+    # retryable across this additive field; paused intent remains distinct.
+    if request_values["is_active"]:
+        request_values.pop("is_active")
     digest = "v1:" + hashlib.sha256(json.dumps(
-        body.model_dump(mode="json"), sort_keys=True, separators=(",", ":"),
+        request_values, sort_keys=True, separators=(",", ":"),
     ).encode()).hexdigest()
     # Serialize publication and receipt checks before allocating a second schedule/history row.
     lock_budget(db, budget_id)

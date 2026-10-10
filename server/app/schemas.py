@@ -579,6 +579,7 @@ class CategoryTargetRevisionResponse(BaseModel):
 
 
 class ScheduledTransactionCreate(BaseModel):
+    is_active: bool = True
     account_id: str
     destination_account_id: Optional[str] = None
     category_id: Optional[str] = None

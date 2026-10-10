@@ -10,6 +10,7 @@ puts 'enum BudgetApplicationError: Error { case invalidOperation(String) }'
 puts s[s.index("struct AssignMoneyOperation:")...s.index("struct TransactionSplitOperation:")]
 puts s[s.index("struct TransactionSplitOperation:")...s.index("struct MakeRecurringOperation:")]
 puts s[s.index("struct TransferMoneyOperation:")...s.index("struct ScheduleOperation:")]
+puts s[s.index("struct ScheduleOperation:")...s.index("struct AccountBalanceObservation:")]
 api = File.read("Sources/BudgetAPI/APIModels.swift")
 puts api[api.index("public struct APITransactionBulkUpdate:")...api.index("/// Captures observations at selection time")]
 puts s[s.index("@MainActor\nfinal class LiveTransactionOutbox")...s.index("struct LiveWorkspaceCachePayload:")]
@@ -40,6 +41,8 @@ edit_body = workspace[record_last...edit_last]
 abort "Edit must persist before replay" unless edit_body.index("enqueueEdit(") && edit_body.index("replayCommands(") && edit_body.index("enqueueEdit(") < edit_body.index("replayCommands(")
 abort "Edit sender must use current endpoint binding" unless send_body.include?("client.updateTransaction(") && send_body.include?("operation.apiValue")
 abort "Bulk sender missing from canonical command path" unless send_body.include?("client.bulkUpdateTransactions(") && workspace.include?("try transactionOutbox.enqueueBulk(identified)")
+abort "Schedules must persist before canonical identified replay" unless workspace.include?("try transactionOutbox.enqueueSchedule(id:") && send_body.include?("entry.scheduleCreation") && send_body.include?("schedule: schedule.apiValue, operationID: entry.id, token: token")
+abort "Pending schedules must remain separate from accepted forecast" unless workspace.include?('Section("Awaiting Server Confirmation")') && workspace.include?('not yet included in forecast')
 abort "Planning commands bypass durable canonical sender" unless send_body.include?("client.updateAssignment(") && send_body.include?("client.transferAllocation(") && workspace.include?("try transactionOutbox.enqueueAssignment(identified)") && workspace.include?("try transactionOutbox.enqueueMoneyMove(identified)")
 abort "Transfers bypass durable canonical sender" unless send_body.include?("client.createTransfer(") && send_body.include?("client.updateTransfer(") && workspace.include?("try transactionOutbox.enqueueTransfer(identified)") && workspace.include?("try transactionOutbox.enqueueTransfer(identified, id: id)")
 abort "Transfer editor loses observed versions" unless workspace.include?("_expectedRevisions = State(initialValue: presentation.expectedRevisions)") && workspace.include?("TransferMoneyOperation(expectedRevisions: expectedRevisions")
@@ -354,6 +357,29 @@ try await Task { @MainActor in
  do { try boundedQueue.enqueueAttachment(id: UUID().uuidString, transactionID: "original", filename: "receipt.pdf", contentType: "application/pdf", data: bytes); fatalError("Twenty-first pending upload accepted") } catch {}
  precondition(boundedQueue.count == 20)
  print("PASS: protected upload bytes and identity survive interrupted transport/relaunch; verified acknowledgement removes bytes; corrupt bytes pause without transport or deletion; invalid signature rejected")
+ let scheduleFile = root.appendingPathComponent("schedule.json")
+ let scheduleQueue = LiveTransactionOutbox(fileURL: scheduleFile)
+ let scheduleID = UUID().uuidString.lowercased()
+ let schedule = ScheduleOperation(accountID: "checking", categoryID: "food", payeeID: "payee", name: "Reviewed bill", amountMinor: -9007199254740993, nextDate: "2099-01-01", recurrenceUnit: "months", intervalCount: 2, remainingOccurrences: 4, memo: "Original", isActive: false)
+ try scheduleQueue.enqueueSchedule(id: scheduleID, operation: schedule)
+ try scheduleQueue.enqueueSchedule(id: scheduleID, operation: schedule)
+ precondition(scheduleQueue.count == 1)
+ let reopenedSchedule = LiveTransactionOutbox(fileURL: scheduleFile)
+ do { try await reopenedSchedule.replayCommands { entry in
+     precondition(entry.id == scheduleID && entry.scheduleCreation == schedule)
+     throw URLError(.networkConnectionLost)
+ }; fatalError("Expected interrupted schedule") } catch {}
+ let retainedSchedule = LiveTransactionOutbox(fileURL: scheduleFile)
+ do { try await retainedSchedule.replayCommands(shouldPause: { _ in true }) { _ in throw BudgetApplicationError.invalidOperation("Revoked scope") }; fatalError("Expected schedule rejection") } catch {}
+ let pausedSchedule = LiveTransactionOutbox(fileURL: scheduleFile)
+ precondition(pausedSchedule.entries[0].requiresReview == true && pausedSchedule.entries[0].scheduleCreation == schedule)
+ do { try await pausedSchedule.replayCommands { _ in fatalError("Paused schedule retried automatically") } } catch {}
+ try pausedSchedule.retryReviewed(id: scheduleID)
+ try await pausedSchedule.replayCommands { entry in precondition(entry.id == scheduleID && entry.scheduleCreation == schedule) }
+ precondition(LiveTransactionOutbox(fileURL: scheduleFile).count == 0)
+ let invalidSchedule = ScheduleOperation(accountID: "checking", name: "Invalid", amountMinor: -1, nextDate: "2099-02-30", recurrenceUnit: "months")
+ do { try pausedSchedule.enqueueSchedule(id: UUID().uuidString, operation: invalidSchedule); fatalError("Invalid date persisted") } catch {}
+ print("PASS: exact schedule resources/cadence/limit/paused state/identity survive loss and relaunch, rejected intent pauses, explicit retry preserves original payload, acknowledgement removes it, invalid date is not saved")
 }.value
 SWIFT
 RUBY

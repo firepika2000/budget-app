@@ -113,7 +113,7 @@ enum AttachmentStagingError: LocalizedError {
     var errorDescription: String? { "Saved attachment bytes are missing or changed. The queued upload is preserved for review in Pending Sync." }
 }
 
-struct ScheduleOperation: Equatable, Sendable {
+struct ScheduleOperation: Codable, Equatable, Sendable {
     let accountID: String
     let destinationAccountID: String?
     let categoryID: String?
@@ -135,6 +135,33 @@ struct ScheduleOperation: Equatable, Sendable {
         self.accountID = accountID; self.destinationAccountID = destinationAccountID; self.categoryID = categoryID; self.payeeID = payeeID
         self.name = name; self.amountMinor = amountMinor; self.nextDate = nextDate; self.recurrenceUnit = recurrenceUnit
         self.intervalCount = intervalCount; self.endDate = endDate; self.remainingOccurrences = remainingOccurrences; self.memo = memo; self.financialClassification = financialClassification; self.isActive = isActive
+    }
+
+    var isValidPendingCreation: Bool {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"; formatter.isLenient = false
+        guard !accountID.isEmpty, !name.isEmpty, name.count <= 150, memo.count <= 500,
+              amountMinor != 0, (1...365).contains(intervalCount),
+              ["once", "days", "weeks", "months", "years"].contains(recurrenceUnit),
+              let date = formatter.date(from: nextDate), formatter.string(from: date) == nextDate else { return false }
+        if let destinationAccountID {
+            guard !destinationAccountID.isEmpty, destinationAccountID != accountID, amountMinor > 0,
+                  categoryID == nil, payeeID == nil else { return false }
+        }
+        if let financialClassification {
+            guard financialClassification == "interest_charge", amountMinor < 0 else { return false }
+        }
+        if let endDate {
+            guard recurrenceUnit != "once", let end = formatter.date(from: endDate),
+                  formatter.string(from: end) == endDate, end >= date, remainingOccurrences == nil else { return false }
+        }
+        if let remainingOccurrences {
+            guard recurrenceUnit != "once", (1...10_000).contains(remainingOccurrences) else { return false }
+        }
+        return true
     }
 }
 
@@ -250,6 +277,7 @@ final class LiveTransactionOutbox {
         var reconciliation: ReconcileAccountOperation? = nil
         var voidCommand: VoidTransactionOperation? = nil
         var attachmentUpload: AttachmentUpload? = nil
+        var scheduleCreation: ScheduleOperation? = nil
     }
 
     private let fileURL: URL
@@ -444,6 +472,7 @@ final class LiveTransactionOutbox {
                   existing.reconciliation == entry.reconciliation,
                   existing.voidCommand == entry.voidCommand,
                   existing.attachmentUpload == entry.attachmentUpload,
+                  existing.scheduleCreation == entry.scheduleCreation,
                   existing.operation == nil && existing.bulkUpdate == nil else {
                 throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
             }
@@ -465,6 +494,13 @@ final class LiveTransactionOutbox {
             throw BudgetApplicationError.invalidOperation("This account already has a saved reconciliation. Review it in Pending Sync before submitting another.")
         }
         try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, reconciliation: operation))
+    }
+
+    func enqueueSchedule(id: String, operation: ScheduleOperation) throws {
+        guard UUID(uuidString: id) != nil, operation.isValidPendingCreation else {
+            throw BudgetApplicationError.invalidOperation("Enter a valid schedule amount, date and recurrence before saving.")
+        }
+        try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, scheduleCreation: operation))
     }
 
     func enqueueVoid(_ operation: VoidTransactionOperation) throws {
@@ -613,8 +649,11 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
+                  if let schedule = entry.scheduleCreation {
+                      return entry.transactionID == nil && entry.transferID == nil && schedule.isValidPendingCreation
+                  }
                   if let upload = entry.attachmentUpload {
                       return entry.transactionID == nil && entry.transferID == nil && !upload.transactionID.isEmpty
                           && !upload.filename.isEmpty && upload.filename.count <= 255 && (1...10 * 1024 * 1024).contains(upload.byteCount)

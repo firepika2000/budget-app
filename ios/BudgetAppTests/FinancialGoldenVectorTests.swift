@@ -4,6 +4,24 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testPendingScheduleCreationPreservesExactIntentAcrossRelaunch() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("queue.json")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let identity = UUID().uuidString.lowercased()
+        let schedule = ScheduleOperation(accountID: "checking", categoryID: "food", name: "Bill", amountMinor: -9_007_199_254_740_993, nextDate: "2099-01-01", recurrenceUnit: "months", remainingOccurrences: 4, isActive: false)
+        try queue.enqueueSchedule(id: identity, operation: schedule)
+        try queue.enqueueSchedule(id: identity, operation: schedule)
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.entries.first?.id, identity)
+        XCTAssertEqual(reopened.entries.first?.scheduleCreation, schedule)
+        XCTAssertEqual(reopened.count, 1)
+        XCTAssertThrowsError(try reopened.enqueueSchedule(id: identity, operation: .init(accountID: "checking", name: "Changed", amountMinor: -1, nextDate: "2099-01-01", recurrenceUnit: "once")))
+        XCTAssertEqual(reopened.entries.first?.scheduleCreation, schedule)
+    }
+
+    @MainActor
     func testPendingAttachmentPreviewReadsRetainedBytesWithoutAcknowledgingUpload() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }

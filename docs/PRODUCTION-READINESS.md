@@ -1,5 +1,48 @@
 # Production readiness mission ledger
 
+## Native durable schedule creation (2026-10-09)
+
+Ordinary schedule creation now persists its complete typed intent and stable UUID in the shared
+Live outbox before transport. The canonical sender resolves current credentials, checks the
+server/actor destination and submits the existing creation endpoint with `X-Planning-Operation-ID`.
+Reopening preserves exact amount, resources, payee identity, memo, date, cadence, bounds and
+active state. Invalid persisted creation shapes fail closed. Rejections pause the saved intent
+for explicit review; ordered replay blocks later commands and never rebases or duplicates it.
+
+The Scheduled screen separates pending creations under Awaiting Server Confirmation and links
+to the same Pending Sync screen/store for review, retry or discard. Pending creations are not
+inserted into accepted schedules, forecast or actual activity. Creation publishes pending status
+after authoritative refresh; a saved-but-rejected intent leaves the editor once rather than
+offering an accidental second creation. The editor also guards overlapping Save tasks. Pending
+details require current planning/account access and visible referenced accounts/categories.
+
+The audit additionally proved a Demo/Live status mismatch: Live creation ignored the Active
+toggle because the server create model lacked `is_active`. The additive field now preserves
+paused creation; a backend regression proves paused schedules are listed only in management and
+produce no forecast occurrence. Active receipt digests retain the earlier implicit-active
+definition so already accepted identities remain retryable across this contract extension.
+
+Executed evidence: the production outbox host regression passes schedule persistence, duplicate
+identity, interruption/relaunch, rejection pause, explicit original-intent retry, acknowledgement
+and invalid-date refusal, alongside the prior durable-operation checks. Three focused Swift API
+tests and all 94 API client tests pass, covering stable header/payload, exact large money,
+rotated bearer credentials and legacy header omission. All 56 focused backend cases pass
+(13 schedule receipt/status/compatibility cases, the existing scheduled contract and 23
+financial golden vectors). Regular Xcode 27.0 build 27A266a passed `build-for-testing` for app
+and native test targets using preserved iPhone 17 Pro Max simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27. The first build caught a missing explicit
+store initializer at the Pending Sync destination; it was corrected before the passing build.
+`git diff --check` passed. A native exact-intent/relaunch XCTest was added but not claimed
+executed; runtime and human acceptance remain distinct from compilation.
+
+Human retest after rebuilding and updating the server through this checkpoint: open Scheduled,
+disconnect, create one recurring expense, confirm its pending row is separate from Upcoming,
+relaunch, reconnect, and verify one accepted schedule replaces it with no posted transaction.
+Pending Sync must clear. Existing tested realization/accounting workflows need not be repeated
+from zero. Server update/restart and native rebuild required; no new migration beyond 0049.
+Make Recurring, schedule edits/deletion/realization, administrative operations and broader
+offline completeness remain separate unfinished slices. TestFlight remains on hold.
+
 ## Identified schedule creation server boundary (2026-10-09)
 
 Ordinary schedule creation now accepts optional UUID header `X-Planning-Operation-ID`.
@@ -21,9 +64,10 @@ receipt, without an actual transaction. The disposable test cluster was stopped 
 No Live database or customer schedule was changed. `git diff --check` passed.
 
 Server update/restart required; no new migration beyond the existing 0049 receipt table.
-No Swift changes or native build in this checkpoint. Native schedule queuing, Make Recurring
-retry identity, and observed-edit conflict protection remain unfinished and must not be
-described as offline scheduled management yet. TestFlight remains on hold; no merge/tag/release.
+No Swift changes or native build in that server-only checkpoint. Native ordinary creation
+queuing is covered above; Make Recurring retry identity and observed-edit conflict protection
+remain unfinished. Full offline scheduled management is not yet complete. TestFlight remains
+on hold; no merge/tag/release.
 
 ## Offline pending attachment presentation (2026-10-09)
 

@@ -712,8 +712,10 @@ public struct APIClient {
     public func scheduledTransactionHistory(budgetID: String, limit: Int = 50, offset: Int = 0, token: String) async throws -> [APIScheduledTransactionRevision] {
         try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions/history", queryItems: [URLQueryItem(name: "limit", value: String(limit)), URLQueryItem(name: "offset", value: String(offset))], token: token)
     }
-    public func createScheduledTransaction(budgetID: String, schedule: APIScheduledTransactionCreate, token: String) async throws -> APIScheduledTransaction {
-        try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions", method: "POST", token: token, body: schedule)
+    public func createScheduledTransaction(budgetID: String, schedule: APIScheduledTransactionCreate, operationID: String? = nil, token: String) async throws -> APIScheduledTransaction {
+        try await send(url: baseURL.appending(path: "api/v1/budgets/\(budgetID)/scheduled-transactions"),
+            method: "POST", token: token, bodyData: JSONEncoder().encode(schedule),
+            headers: operationID.map { ["X-Planning-Operation-ID": $0] } ?? [:])
     }
     public func updateScheduledTransaction(budgetID: String, scheduleID: String, schedule: APIScheduledTransactionCreate, token: String) async throws -> APIScheduledTransaction {
         try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions/\(scheduleID)", method: "PUT", token: token, body: schedule)
@@ -1056,11 +1058,13 @@ public struct APIClient {
         url: URL,
         method: String,
         token: String?,
-        bodyData: Data?
+        bodyData: Data?,
+        headers: [String: String] = [:]
     ) async throws -> Response {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = bodyData
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if bodyData != nil {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

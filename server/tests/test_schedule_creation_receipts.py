@@ -1,10 +1,15 @@
 from uuid import uuid4
+from datetime import date
+import hashlib
+import json
 
 import pytest
 
 from app.models import ScheduledTransaction, ScheduledTransactionRevision, WorkspaceCommandReceipt
 from sqlalchemy.orm import Session
-from .conftest import auth
+from .conftest import auth, freeze_today
+from app import planning_routes
+from app.schemas import ScheduledTransactionCreate
 from .test_budgeting_api import create_budget, create_budget_structure
 from .test_delegated_access import add_child
 from .test_scheduled_transactions_contract import grant_planner
@@ -119,3 +124,34 @@ def test_failed_schedule_commit_keeps_identity_retryable_without_partial_history
         assert db.query(ScheduledTransactionRevision).count() == 0
         assert db.query(WorkspaceCommandReceipt).count() == 0
     assert client.post(path, headers=headers, json=body).status_code == 201
+
+
+def test_identified_paused_creation_preserves_status_and_stays_out_of_forecast(client, owner_token, session_factory, monkeypatch):
+    freeze_today(monkeypatch, date(2099, 1, 1), planning_routes)
+    budget, _, _, path, body, headers = setup(client, owner_token, session_factory)
+    body["is_active"] = False
+    first = client.post(path, headers=headers, json=body)
+    assert first.status_code == 201, first.text
+    assert first.json()["is_active"] is False
+    assert client.post(path, headers=headers, json=body).json() == first.json()
+    assert client.get(path, headers=auth(owner_token)).json() == []
+    assert len(client.get(path + "?include_inactive=true", headers=auth(owner_token)).json()) == 1
+    forecast = client.get(f"/api/v1/budgets/{budget['id']}/forecast?through=2099-01-31", headers=auth(owner_token))
+    assert forecast.status_code == 200, forecast.text
+    assert forecast.json()["occurrences"] == []
+    assert forecast.json()["projected_total_on_budget_minor"] == forecast.json()["actual_total_on_budget_minor"]
+
+
+def test_pre_status_field_receipt_stays_retryable_after_contract_upgrade(client, owner_token, session_factory):
+    _, _, _, path, body, headers = setup(client, owner_token, session_factory)
+    first = client.post(path, headers=headers, json=body)
+    assert first.status_code == 201
+    old_values = ScheduledTransactionCreate.model_validate(body).model_dump(mode="json", exclude={"is_active"})
+    old_digest = "v1:" + hashlib.sha256(json.dumps(old_values, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    with session_factory() as db:
+        receipt = db.query(WorkspaceCommandReceipt).one()
+        receipt.request_digest = old_digest
+        db.commit()
+    retry = client.post(path, headers=headers, json={**body, "is_active": True})
+    assert retry.status_code == 201 and retry.json()["id"] == first.json()["id"]
+    assert client.post(path, headers=headers, json={**body, "is_active": False}).status_code == 409
