@@ -2312,7 +2312,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
     func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try requireActiveMembership();
         guard actorCapabilities.contains("view_transactions") else { throw APIClientError.server(status: 403, message: "Insufficient permission") }
-        guard (1...200).contains(query.limit), query.search.count <= 150 else {
+        guard (1...200).contains(query.limit), query.search.count <= 150,
+              query.transactionIDs.count <= 500,
+              query.transactionIDs.allSatisfy({ !$0.isEmpty && $0.count <= 128 }) else {
             throw APIClientError.server(status: 422, message: "Invalid transaction search or page limit")
         }
         var rows = try transactionRows(categoryIDs: Set(demo.visibleCategories.map(\.id)))
@@ -2320,6 +2322,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         rows = rows.filter { item in
             let categoryIDs = Set(([item.categoryID].compactMap { $0 }) + item.splits.map(\.categoryID))
             return (text.isEmpty || item.payeeName.localizedCaseInsensitiveContains(text) || item.memo.localizedCaseInsensitiveContains(text) || (item.flag ?? "").localizedCaseInsensitiveContains(text) || (item.tags ?? []).contains(where: { $0.localizedCaseInsensitiveContains(text) }))
+                && (query.transactionIDs.isEmpty || query.transactionIDs.contains(item.id))
                 && (query.accountIDs.isEmpty || query.accountIDs.contains(item.accountID))
                 && (query.categoryIDs.isEmpty || !categoryIDs.isDisjoint(with: query.categoryIDs))
                 && (query.payeeIDs.isEmpty || item.payeeID.map(query.payeeIDs.contains) == true)
@@ -5349,6 +5352,13 @@ final class BudgetWorkspaceStore: ObservableObject {
         }
         let value = try await task.value
         guard authorityRevision == revision else { throw CancellationError() }
+        // Keep canonical detail/edit lookup in sync with authorized browser observations.
+        // This is server data, never an optimistic financial mutation.
+        for transaction in value.items {
+            if let index = transactions.firstIndex(where: { $0.id == transaction.id }) {
+                transactions[index] = transaction
+            } else { transactions.append(transaction) }
+        }
         return value
     }
 
@@ -13838,13 +13848,71 @@ private struct LiveReportTransactionsView: View {
     let title: String
     let transactionIDs: [String]
     var isTruncated = false
-    private var transactions: [APITransaction] { store.transactions.filter { transactionIDs.contains($0.id) } }
+    var groupName: String? = nil
+    var totalSpendingMinor: Int64? = nil
+    @State private var rows: [APITransaction] = []
+    @State private var batchIndex = 0
+    @State private var nextCursor: String?
+    @State private var loading = false
+    @State private var errorMessage: String?
+    @State private var requestID: UUID?
+    @State private var observationAuthority: Int?
+    private struct LoadKey: Equatable { let ids: [String]; let authority: Int }
+    private var ids: [String] { Array(Set(transactionIDs)).sorted() }
+    private var batches: [[String]] { TransactionIdentitySelection.batches(ids) }
+    private var canLoadMore: Bool { nextCursor != nil || batchIndex < batches.count }
     var body: some View {
         List {
+            if observationAuthority != store.authorityRevision {
+                ProgressView("Loading authorized transactions…")
+            } else {
+            if let groupName { Section("Category Group") { Label(groupName, systemImage: "folder") } }
+            if let totalSpendingMinor { Section { LabeledContent("Total", value: store.format(totalSpendingMinor)) } }
             if isTruncated { Section { Label("Showing the first 500 contributing transactions. Report totals include all authorized activity.", systemImage: "info.circle") } }
-            if transactions.isEmpty { ContentUnavailableView("No visible transactions", systemImage: "tray", description: Text("The contributing records are outside the currently hydrated authorized activity page.")) }
-            else { ForEach(transactions) { LiveTransactionLink(transaction: $0) } }
+            ForEach(rows) { LiveTransactionLink(transaction: $0) }
+            if loading { HStack { Spacer(); ProgressView("Loading transactions…"); Spacer() } }
+            if let errorMessage {
+                Section { Text(errorMessage).font(.footnote); Button("Retry") { Task { await load(reset: rows.isEmpty) } } }
+            } else if !loading && rows.isEmpty {
+                ContentUnavailableView("No visible transactions", systemImage: "tray", description: Text("No contributing records are currently available to your account."))
+            }
+            if canLoadMore && errorMessage == nil {
+                Button("Load More") { Task { await load(reset: false) } }.disabled(loading)
+                    .accessibilityIdentifier("report-contributors-load-more")
+            }
+            if !rows.isEmpty { Text("\(rows.count) contributing transactions loaded").font(.caption).foregroundStyle(.secondary) }
+            }
         }.navigationTitle(title)
+        .accessibilityIdentifier("report-contributors")
+        .task(id: LoadKey(ids: ids, authority: store.authorityRevision)) {
+            requestID = nil; rows = []; nextCursor = nil; batchIndex = 0; loading = false; errorMessage = nil
+            observationAuthority = store.authorityRevision
+            await load(reset: true)
+        }
+        .onDisappear { requestID = nil; loading = false }
+        .refreshable { await load(reset: true) }
+    }
+    private func load(reset: Bool) async {
+        guard !loading else { return }
+        if reset { batchIndex = 0; nextCursor = nil; rows = [] }
+        guard batchIndex < batches.count else { return }
+        let identity = UUID(), authority = store.authorityRevision, selectedIDs = ids
+        requestID = identity; loading = true
+        defer { if requestID == identity { loading = false } }
+        do {
+            let page = try await store.browseTransactions(.init(transactionIDs: batches[batchIndex], limit: 50, cursor: nextCursor))
+            guard !Task.isCancelled, requestID == identity, authority == store.authorityRevision, selectedIDs == ids else { return }
+            let existing = Set(rows.map(\.id))
+            rows += page.items.filter { !existing.contains($0.id) }
+            rows.sort { ($0.occurredOn, $0.createdAt ?? "", $0.id) > ($1.occurredOn, $1.createdAt ?? "", $1.id) }
+            nextCursor = page.nextCursor
+            if nextCursor == nil { batchIndex += 1 }
+            errorMessage = nil
+        } catch {
+            guard !Task.isCancelled, requestID == identity, authority == store.authorityRevision, selectedIDs == ids else { return }
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; batchIndex = 0 }
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
@@ -13859,24 +13927,9 @@ private struct LiveReportCategoryView: View {
     private var spendingMinor: Int64 { reportLoaded ? (liveRow?.spendingMinor ?? 0) : category.spendingMinor }
     private var contributingIDs: [String] { reportLoaded ? (liveRow?.transactionIDs ?? []) : category.transactionIDs }
     private var contributingIDsTruncated: Bool { reportLoaded ? (liveRow?.transactionIDsTruncated == true) : (category.transactionIDsTruncated == true) }
-    var transactions: [APITransaction] { store.transactions.filter { contributingIDs.contains($0.id) } }
     var body: some View {
-        List {
-            Section("Category Group") {
-                Label(category.categoryGroup, systemImage: "folder")
-            }
-            Section {
-                LabeledContent("Total", value: store.format(spendingMinor))
-                LabeledContent("Transactions", value: "\(transactions.count)")
-                LabeledContent("Average", value: store.format(transactions.isEmpty ? 0 : spendingMinor / Int64(transactions.count)))
-                if contributingIDsTruncated { Label("Showing the first 500 contributors; the exact total includes all authorized activity.", systemImage: "info.circle").font(.caption).foregroundStyle(.secondary) }
-            }
-            if transactions.isEmpty {
-                Section { ContentUnavailableView("No spending in this range", systemImage: "tray") }
-            } else {
-                Section("Transactions") { ForEach(transactions) { LiveTransactionLink(transaction: $0) } }
-            }
-        }.navigationTitle(displayName)
+        LiveReportTransactionsView(title: displayName, transactionIDs: contributingIDs,
+            isTruncated: contributingIDsTruncated, groupName: category.categoryGroup, totalSpendingMinor: spendingMinor)
     }
 }
 

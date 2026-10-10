@@ -1,5 +1,42 @@
 # Production readiness mission ledger
 
+## Authoritative report contributor paging (2026-10-09)
+
+Report contributor lists and Spending Breakdown category detail now retrieve the exact report
+transaction identities through the canonical authorized browser rather than intersecting them
+with the last workspace snapshot. Requests use deduplicated 100-ID batches and 50-row pages,
+with explicit Load More, retry and unavailable states. Empty selections never issue unfiltered
+requests. Rows feed the existing transaction detail/editor lookup from authorized observations;
+no transaction or financial mutation is synthesized. Current access changes hide earlier rows
+immediately and obsolete responses cannot publish into the list.
+
+Category totals remain the server/report's exact minor-unit values. The previous category average
+divided that total by a locally hydrated subset; that misleading average is removed. Existing
+upstream contributor truncation remains explicit. This improves independent drill-through, not
+the entire report scale model: ordinary Live workspace hydration still fetches its transaction
+collection and broader snapshot performance remains an open workstream.
+
+The additive server `transaction_id` filter supports at most 500 identifiers per request,
+retains all visibility predicates, composes with existing filters and keeps keyset pagination.
+Hidden, missing and other-budget identities expose no records or counts. Swift rejects a server
+that returns unselected identities instead of silently showing an unrelated ledger page.
+Demo and Local Device use the same query shape and scoped transaction selection.
+
+Executed verification: 93 backend browser, analytics and financial golden-vector tests pass.
+Four focused Swift tests pass for exact filter serialization, incompatible-server refusal,
+empty selection and stable complete batching of 1,501 identities. A native integration regression
+restores an absent detail observation through identity search while asserting unchanged summary
+and balances; native runtime execution and human acceptance remain separate from compilation.
+Regular Xcode 27.0 (27A266a), `/Applications/Xcode.app/Contents/Developer`, passes
+build-for-testing for the production app and native targets on preserved iPhone 17 Pro Max
+simulator `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27. `git diff --check` passes.
+
+Human retest after app rebuild and server update: open Spending Breakdown, select a category,
+load older contributors, open one in the shared detail/editor, save a change and return to the
+recalculated report. Verify date/filter context persists. Interrupt connectivity during loading
+and verify Retry, not an empty-success claim; restricted accounts must expose only current
+authorized records. No migration or data reset is required. TestFlight remains held.
+
 ## Bounded backup manifest validation (2026-10-09)
 
 Local restore and Dropbox publication now share a manifest reader that rejects symbolic links,

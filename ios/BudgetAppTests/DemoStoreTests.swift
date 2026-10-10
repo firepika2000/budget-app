@@ -10,6 +10,25 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testContributorIdentitySearchHydratesSharedDetailWithoutFinancialMutation() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let transaction = try XCTUnwrap(store.transactions.first)
+        let summary = store.summary
+        let balances = store.accountBalances
+        store.transactions.removeAll { $0.id == transaction.id }
+        let page = try await store.browseTransactions(.init(transactionIDs: [transaction.id, "missing"], limit: 1))
+        XCTAssertEqual(page.items.map(\.id), [transaction.id])
+        XCTAssertEqual(page.totalCount, 1)
+        XCTAssertEqual(store.transactions.first { $0.id == transaction.id }, transaction)
+        XCTAssertEqual(store.summary, summary)
+        XCTAssertEqual(store.accountBalances, balances)
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift"))
+        XCTAssertTrue(source.contains("report-contributors-load-more"))
+        XCTAssertFalse(source.contains("outside the currently hydrated authorized activity page"))
+    }
+
     func testStatementReviewSearchCombinesFocusWithoutChangingDecisions() {
         func includes(_ filter: StatementImportReviewFilter, selected: Bool = true, duplicate: Bool = false, query: String = "") -> Bool {
             filter.includes(selected: selected, duplicate: duplicate, query: query, payee: "Café Market", memo: "Receipt", date: "2026-09-15")

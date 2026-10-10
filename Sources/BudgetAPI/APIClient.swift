@@ -318,6 +318,7 @@ public struct APIClient {
 
     public func searchTransactions(budgetID: String, query: APITransactionQuery, token: String) async throws -> APITransactionPage {
         var items = [URLQueryItem(name: "sort", value: query.sort), URLQueryItem(name: "limit", value: String(query.limit))]
+        items += query.transactionIDs.map { URLQueryItem(name: "transaction_id", value: $0) }
         if !query.search.isEmpty { items.append(URLQueryItem(name: "q", value: query.search)) }
         items += query.accountIDs.map { URLQueryItem(name: "account_id", value: $0) }
         items += query.categoryIDs.map { URLQueryItem(name: "category_id", value: $0) }
@@ -336,7 +337,14 @@ public struct APIClient {
         if let value = query.isTransfer { items.append(URLQueryItem(name: "is_transfer", value: String(value))) }
         if let value = query.isScheduledRealization { items.append(URLQueryItem(name: "is_scheduled_realization", value: String(value))) }
         if let value = query.cursor { items.append(URLQueryItem(name: "cursor", value: value)) }
-        return try await send(path: "api/v1/budgets/\(budgetID)/transactions/search", queryItems: items, token: token)
+        let page: APITransactionPage = try await send(path: "api/v1/budgets/\(budgetID)/transactions/search", queryItems: items, token: token)
+        if !query.transactionIDs.isEmpty {
+            let selected = Set(query.transactionIDs)
+            guard page.items.allSatisfy({ selected.contains($0.id) }) else {
+                throw APIClientError.server(status: 502, message: "The server did not honor the transaction selection. Update the server and retry.")
+            }
+        }
+        return page
     }
 
     public func duplicateTransaction(budgetID: String, transactionID: String, occurredOn: String, expectedRevision: String? = nil, mutationOperationID: String? = nil, token: String) async throws -> APITransaction {

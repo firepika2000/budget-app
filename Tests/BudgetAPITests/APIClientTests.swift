@@ -2,6 +2,22 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testTransactionIdentitySearchRejectsServerIgnoringSelection() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            let response = Data(#"{"items":[{"id":"unselected","account_id":"a1","amount_minor":-1200,"occurred_on":"2026-09-04","payee_name":"Market","memo":"","is_cleared":false,"is_reconciled":false,"splits":[]}],"next_cursor":null,"total_count":1}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        do {
+            _ = try await client.searchTransactions(budgetID: "b1", query: .init(transactionIDs: ["selected"]), token: "current")
+            XCTFail("An old server ignoring the identity filter must not broaden drill-through")
+        } catch let error as APIClientError {
+            guard case .server(status: 502, message: _) = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+    }
+
     func testPlanReorderingPreservesOrderAndSurfacesServerFailure() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
         var calls = 0
@@ -901,6 +917,7 @@ final class APIClientTests: XCTestCase {
             XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/search")
             let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
             XCTAssertTrue(items.contains(.init(name: "q", value: "market")))
+            XCTAssertEqual(items.filter { $0.name == "transaction_id" }.compactMap(\.value), ["t1", "older"])
             XCTAssertTrue(items.contains(.init(name: "account_id", value: "a1")))
             XCTAssertTrue(items.contains(.init(name: "category_id", value: "c1")))
             XCTAssertTrue(items.contains(.init(name: "payee_id", value: "p1")))
@@ -916,7 +933,7 @@ final class APIClientTests: XCTestCase {
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
         let page = try await client.searchTransactions(
             budgetID: "b1",
-            query: .init(search: "market", accountIDs: ["a1"], categoryIDs: ["c1"], payeeIDs: ["p1"], minimumAmountMinor: -5000, lifecycleStatuses: ["voided"], cleared: true, sort: "amount_asc", limit: 50, cursor: "opaque"),
+            query: .init(transactionIDs: ["t1", "older"], search: "market", accountIDs: ["a1"], categoryIDs: ["c1"], payeeIDs: ["p1"], minimumAmountMinor: -5000, lifecycleStatuses: ["voided"], cleared: true, sort: "amount_asc", limit: 50, cursor: "opaque"),
             token: "secret"
         )
         XCTAssertEqual(page.totalCount, 2)

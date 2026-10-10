@@ -1440,6 +1440,7 @@ public struct APITransactionFieldChange: Decodable, Equatable, Sendable {
 }
 
 public struct APITransactionQuery: Equatable, Sendable {
+    public var transactionIDs: [String]
     public var search: String
     public var accountIDs: [String]
     public var categoryIDs: [String]
@@ -1461,7 +1462,8 @@ public struct APITransactionQuery: Equatable, Sendable {
     public var limit: Int
     public var cursor: String?
 
-    public init(search: String = "", accountIDs: [String] = [], categoryIDs: [String] = [], payeeIDs: [String] = [], startDate: String? = nil, endDate: String? = nil, minimumAmountMinor: Int64? = nil, maximumAmountMinor: Int64? = nil, transactionType: String? = nil, lifecycleStatuses: [String] = [], cleared: Bool? = nil, reconciled: Bool? = nil, flags: [String] = [], tags: [String] = [], actorUserIDs: [String] = [], isTransfer: Bool? = nil, isScheduledRealization: Bool? = nil, sort: String = "date_desc", limit: Int = 50, cursor: String? = nil) {
+    public init(transactionIDs: [String] = [], search: String = "", accountIDs: [String] = [], categoryIDs: [String] = [], payeeIDs: [String] = [], startDate: String? = nil, endDate: String? = nil, minimumAmountMinor: Int64? = nil, maximumAmountMinor: Int64? = nil, transactionType: String? = nil, lifecycleStatuses: [String] = [], cleared: Bool? = nil, reconciled: Bool? = nil, flags: [String] = [], tags: [String] = [], actorUserIDs: [String] = [], isTransfer: Bool? = nil, isScheduledRealization: Bool? = nil, sort: String = "date_desc", limit: Int = 50, cursor: String? = nil) {
+        self.transactionIDs = transactionIDs
         self.search = search; self.accountIDs = accountIDs; self.categoryIDs = categoryIDs; self.payeeIDs = payeeIDs
         self.startDate = startDate; self.endDate = endDate; self.minimumAmountMinor = minimumAmountMinor; self.maximumAmountMinor = maximumAmountMinor
         self.transactionType = transactionType; self.lifecycleStatuses = lifecycleStatuses; self.cleared = cleared; self.reconciled = reconciled; self.flags = flags; self.tags = tags
