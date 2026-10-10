@@ -1,5 +1,32 @@
 # Production readiness mission ledger
 
+## Real PostgreSQL checkpoint and migration 0040 portability fix (2026-10-09)
+
+A bounded three-case concurrency run used a newly initialized PostgreSQL 17.11 cluster under
+`/private/tmp/clearpocket-pg-review.KxngBJ`, private Unix socket only (no TCP listener), never the
+human Live database. The migration-built fixture initially failed at 0040: the explicit index
+`ix_scheduled_transaction_revisions_before_destination_account_id` exceeds PostgreSQL's
+63-character identifier limit. SQLite had accepted it. The historical migration now marks
+convention-derived index names with `op.f` for deterministic SQLAlchemy truncation, identical to
+ORM `index=True` names. Upgrade/downgrade use the same mapping; SQLite names remain unchanged.
+No new revision or alteration of already-stamped customer databases is introduced.
+
+After the fix, empty PostgreSQL upgrade through current head and all three selected races passed:
+legacy concurrent reconciliation creates one adjustment; identical identified reconciliation
+requests both acknowledge one history/receipt/adjustment; identical identified transfer creation
+requests both acknowledge exactly two balanced legs and one receipt, preserving Int64 values
+beyond Double precision. The existing direct reconciliation test now supplies Settings explicitly
+as required by the review-token implementation. Two migration checks passed: real PostgreSQL
+DDL compilation for all 11 index upgrade/downgrade names matching ORM identifiers, and populated
+SQLite schedule history backfill through head preserving exact money. `git diff --check` passed.
+
+This proves these specific receipt/contention paths, not every command collision, hosted replay,
+or reconciliation-versus-clearing isolation. The latter remains a required pre-outbox audit; do not
+claim safe offline reconciliation yet. The disposable cluster was stopped after the run; temporary
+test data/logs remain available locally. No Live, attachment or Simulator data was reset. No Swift
+changes/native build necessary, no merge/tag/TestFlight upload. Fresh server installations must
+include the migration fix; already-current installations do not require a new migration.
+
 ## Native reconciliation reviewed-set integration (2026-10-09)
 
 The production Live account repository now loads the dedicated reconciliation-observation endpoint

@@ -40,7 +40,9 @@ def upgrade():
     )
     indexed_fields = ("budget_id", "schedule_id", "before_account_id", "before_destination_account_id", "before_category_id", "account_id", "destination_account_id", "category_id", "actor_user_id", "created_at")
     for field in indexed_fields:
-        op.create_index(f"ix_scheduled_transaction_revisions_{field}", "scheduled_transaction_revisions", [field])
+        # Mark convention-derived names so SQLAlchemy applies the same deterministic
+        # PostgreSQL identifier truncation as the ORM's index=True definitions.
+        op.create_index(op.f(f"ix_scheduled_transaction_revisions_{field}"), "scheduled_transaction_revisions", [field])
     op.create_index("ix_schedule_revision_budget_created", "scheduled_transaction_revisions", ["budget_id", "created_at"])
 
     connection = op.get_bind()
@@ -81,5 +83,5 @@ def upgrade():
 def downgrade():
     op.drop_index("ix_schedule_revision_budget_created", table_name="scheduled_transaction_revisions")
     for field in reversed(("budget_id", "schedule_id", "before_account_id", "before_destination_account_id", "before_category_id", "account_id", "destination_account_id", "category_id", "actor_user_id", "created_at")):
-        op.drop_index(f"ix_scheduled_transaction_revisions_{field}", table_name="scheduled_transaction_revisions")
+        op.drop_index(op.f(f"ix_scheduled_transaction_revisions_{field}"), table_name="scheduled_transaction_revisions")
     op.drop_table("scheduled_transaction_revisions")

@@ -19,6 +19,7 @@ import threading
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -48,11 +49,12 @@ from app.schemas import (
     StatementImportApprovalItem,
     StatementImportApproveRequest,
     TransactionBulkUpdateRequest,
+    IdentifiedTransferCreate,
 )
 from app.import_routes import approve_statement_import
 from app.planning_routes import realize_scheduled_transaction
 from app.request_routes import decide_request
-from app.budgeting_routes import bulk_update_transactions, transfer_allocation, reconcile_account
+from app.budgeting_routes import bulk_update_transactions, transfer_allocation, reconcile_account, create_transfer
 
 from .conftest import auth, freeze_today
 from .test_advanced_ledger import add_category, record
@@ -601,7 +603,7 @@ def test_concurrent_reconciliation_creates_one_adjustment(pg):
         body = ReconcileRequest(statement_balance_minor=60000, through_date=date(2026, 9, 5),
                                 create_adjustment=True, adjustment_reason="sync",
                                 expected_cleared_balance_minor=cleared)
-        return reconcile_account(budget_id=budget["id"], account_id=account["id"], body=body, user=user, db=db)
+        return reconcile_account(budget_id=budget["id"], account_id=account["id"], body=body, user=user, db=db, settings=pg.client.app.state.settings)
 
     results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
     assert outcomes(results).count("ok") == 1, results
@@ -610,6 +612,46 @@ def test_concurrent_reconciliation_creates_one_adjustment(pg):
             Transaction.account_id == account["id"], Transaction.payee_name == "Reconciliation adjustment")).all()
         assert len(adjustments) == 1  # exactly one adjustment created
         assert adjustments[0].amount_minor == 10000
+
+
+def test_concurrent_identified_reconciliation_acknowledges_one_history_and_adjustment(pg):
+    from app.models import Reconciliation, WorkspaceCommandReceipt
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, _ = create_budget_structure(pg.client, pg.token, budget["id"])
+    record(pg.client, pg.token, budget["id"], account_id=account["id"], amount_minor=50000, is_cleared=True)
+    body = ReconcileRequest(statement_balance_minor=60000, through_date=date(2026, 9, 5),
+        create_adjustment=True, adjustment_reason="Lost acknowledgement", expected_cleared_balance_minor=50000,
+        mutation_operation_id=uuid4())
+    def call(db, user):
+        return reconcile_account(budget_id=budget["id"], account_id=account["id"], body=body,
+            user=user, db=db, settings=pg.client.app.state.settings)
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    assert results[0][1] == results[1][1]
+    with pg.factory() as db:
+        assert db.query(Reconciliation).count() == 1
+        assert db.query(WorkspaceCommandReceipt).count() == 1
+        assert db.query(Transaction).filter_by(payee_name="Reconciliation adjustment").count() == 1
+
+
+def test_concurrent_identified_transfer_creation_acknowledges_exactly_two_legs(pg):
+    from app.models import WorkspaceCommandReceipt
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, _ = create_budget_structure(pg.client, pg.token, budget["id"])
+    destination = pg.client.post(f"/api/v1/budgets/{budget['id']}/accounts", headers=auth(pg.token),
+        json={"name": "Destination", "account_type": "savings"}).json()
+    body = IdentifiedTransferCreate(source_account_id=account["id"], destination_account_id=destination["id"],
+        amount_minor=9007199254740993, occurred_on=date(2026, 9, 4), mutation_operation_id=uuid4())
+    def call(db, user):
+        return create_transfer(budget_id=budget["id"], body=body, user=user, db=db)
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    assert results[0][1].transfer_id == results[1][1].transfer_id
+    with pg.factory() as db:
+        legs = db.query(Transaction).filter_by(transfer_id=results[0][1].transfer_id).all()
+        assert len(legs) == 2 and sum(leg.amount_minor for leg in legs) == 0
+        assert sorted(leg.amount_minor for leg in legs) == [-9007199254740993, 9007199254740993]
+        assert db.query(WorkspaceCommandReceipt).count() == 1
 
 
 # ---------------------------------------------------------------------------

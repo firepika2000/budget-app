@@ -1,11 +1,38 @@
 from datetime import datetime, timezone
 import json
+import io
+import re
+from types import SimpleNamespace
 
 from alembic import command
 from alembic.script import ScriptDirectory
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import create_engine, text
+from sqlalchemy.dialects import postgresql
+from app.models import ScheduledTransactionRevision
 
 from .test_allocation_migration import migration_config
+
+
+def test_schedule_history_migration_indexes_fit_postgres_and_match_orm(monkeypatch):
+    migration = ScriptDirectory.from_config(migration_config()).get_revision("0040_schedule_revisions").module
+    buffer = io.StringIO()
+    context = MigrationContext.configure(dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buffer})
+    # Only backfill rows require a live connection. Exercise real PostgreSQL DDL
+    # compilation for both directions, with an empty historical schedule set.
+    monkeypatch.setattr(migration.op, "get_bind", lambda: SimpleNamespace(execute=lambda _: SimpleNamespace(mappings=lambda: [])))
+    with Operations.context(context):
+        migration.upgrade()
+        migration.downgrade()
+    sql = buffer.getvalue()
+    created = re.findall(r"CREATE INDEX (\w+)", sql)
+    dropped = re.findall(r"DROP INDEX (\w+)", sql)
+    assert len(created) == 11 and set(created) == set(dropped)
+    assert all(len(name) <= 63 for name in created)
+    dialect = postgresql.dialect()
+    expected = {dialect.identifier_preparer.format_index(index) for index in ScheduledTransactionRevision.__table__.indexes}
+    assert set(created) == expected
 
 
 def test_populated_schedule_is_backfilled_into_immutable_history(tmp_path, monkeypatch):
