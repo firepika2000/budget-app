@@ -1,10 +1,58 @@
 import pytest
 
-from app.models import User
+from app.models import TransactionCreationReceipt, User
 
 from .conftest import auth
 from .test_budgeting_api import add_member, create_budget, create_budget_structure
 from .test_advanced_ledger import add_category
+
+
+def test_replay_identity_binds_original_request_after_edit_and_deletion(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    path = f"/api/v1/budgets/{budget['id']}/transactions"
+    body = {"account_id": account["id"], "category_id": category["id"], "amount_minor": -100,
+            "occurred_on": "2026-01-15", "payee_name": "Original", "memo": "Original intent",
+            "client_operation_id": "9ac7a788-669d-454c-a099-a1a63c0403ea"}
+    first = client.post(path, headers=auth(owner_token), json=body)
+    assert first.status_code == 201, first.text
+    row = first.json()
+    wrong = client.post(path, headers=auth(owner_token), json={**body, "amount_minor": -200})
+    assert wrong.status_code == 409, wrong.text
+    edit = client.put(f"{path}/{row['id']}", headers=auth(owner_token), json={**body, "memo": "Edited later"})
+    assert edit.status_code == 200, edit.text
+    replay = client.post(path, headers=auth(owner_token), json=body)
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["id"] == row["id"]
+    assert replay.json()["memo"] == "Edited later"
+    assert client.delete(f"{path}/{row['id']}", headers=auth(owner_token)).status_code == 204
+    deleted_replay = client.post(path, headers=auth(owner_token), json=body)
+    assert deleted_replay.status_code == 404, deleted_replay.text
+    assert client.get(path, headers=auth(owner_token)).json() == []
+
+
+def test_legacy_unknown_receipt_requires_review_and_rejected_create_has_no_receipt(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    path = f"/api/v1/budgets/{budget['id']}/transactions"
+    body = {"account_id": account["id"], "category_id": category["id"], "amount_minor": -100,
+            "occurred_on": "2026-01-15", "payee_name": "Legacy",
+            "client_operation_id": "98886d6e-79f6-47d1-92d6-fda9b80b2790"}
+    first = client.post(path, headers=auth(owner_token), json=body)
+    assert first.status_code == 201, first.text
+    with session_factory() as db:
+        receipt = db.query(TransactionCreationReceipt).one()
+        receipt.request_digest = None
+        db.commit()
+    assert client.post(path, headers=auth(owner_token), json=body).status_code == 409
+    rejected = client.post(path, headers=auth(owner_token), json={**body, "account_id": "missing", "client_operation_id": "601a6322-9713-46df-8ad7-3cda2f01e681"})
+    assert rejected.status_code == 422
+    with session_factory() as db:
+        assert db.query(TransactionCreationReceipt).count() == 1
+        db.query(TransactionCreationReceipt).delete()
+        db.commit()
+    assert client.post(path, headers=auth(owner_token), json=body).status_code == 409
+    assert len(client.get(path, headers=auth(owner_token)).json()) == 1
 
 
 @pytest.mark.parametrize("restriction", ["account", "category", "split", "capability"])

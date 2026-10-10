@@ -741,6 +741,16 @@ class AllocationPosting(Base):
     operation: Mapped[AllocationOperation] = relationship(back_populates="postings")
 
 
+class TransactionCreationReceipt(Base):
+    __tablename__ = "transaction_creation_receipts"
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), primary_key=True)
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True)
+    operation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    # No transaction FK: deletion must not make an accepted identity reusable.
+    transaction_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    request_digest: Mapped[Optional[str]] = mapped_column(String(67), nullable=True)
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (

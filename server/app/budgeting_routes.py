@@ -50,6 +50,7 @@ from .credit import add_payment_reserve_event, add_purchase_reserve_events, ensu
 from .category_names import normalized_category_name
 from .models import (
     Account,
+    TransactionCreationReceipt,
     AccountRevision,
     AccountDebtTerms,
     AccountDebtTermsRevision,
@@ -2178,37 +2179,50 @@ def create_transaction(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Transaction:
-    if body.client_operation_id is not None:
-        existing = db.scalar(select(Transaction).where(
-            Transaction.budget_id == budget_id,
-            Transaction.created_by_user_id == user.id,
-            Transaction.client_operation_id == body.client_operation_id,
-        ))
-        if existing is not None:
-            # Replays are intentionally idempotent. Authorization is checked again so a queued
-            # operation cannot be observed after the member loses access.
-            budget = require_budget_capability(db, user, budget_id, "create_transaction")
-            if not _can_access_transaction_resources(db, user, budget, existing):
-                raise HTTPException(status_code=404, detail="Transaction not found")
-            return existing
+    digest = "v1:" + hashlib.sha256(json.dumps(
+        body.model_dump(mode="json", exclude={"client_operation_id"}),
+        sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    def replay() -> Optional[Transaction]:
+        if body.client_operation_id is None:
+            return None
+        receipt = db.get(TransactionCreationReceipt, (budget_id, user.id, body.client_operation_id))
+        if receipt is None:
+            legacy = db.scalar(select(Transaction).where(
+                Transaction.budget_id == budget_id, Transaction.created_by_user_id == user.id,
+                Transaction.client_operation_id == body.client_operation_id,
+            ))
+            if legacy is not None:
+                budget = require_budget_capability(db, user, budget_id, "create_transaction")
+                if not _can_access_transaction_resources(db, user, budget, legacy):
+                    raise HTTPException(status_code=404, detail="Transaction not found")
+                raise HTTPException(status_code=409, detail="Original request cannot be verified. Refresh and review this transaction.")
+            return None
+        budget = require_budget_capability(db, user, budget_id, "create_transaction")
+        existing = db.get(Transaction, receipt.transaction_id)
+        if existing is None or not _can_access_transaction_resources(db, user, budget, existing):
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        if receipt.request_digest is None:
+            raise HTTPException(status_code=409, detail="Original request cannot be verified. Refresh and review this transaction.")
+        if receipt.request_digest != digest:
+            raise HTTPException(status_code=409, detail="Operation identity was already used for different transaction details.")
+        return existing
+    existing = replay()
+    if existing is not None:
+        return existing
     transaction = create_transaction_in_session(budget_id, body, user=user, db=db)
+    if body.client_operation_id is not None:
+        db.add(TransactionCreationReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=body.client_operation_id, transaction_id=transaction.id, request_digest=digest))
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         if body.client_operation_id is None:
             raise
-        existing = db.scalar(select(Transaction).where(
-            Transaction.budget_id == budget_id,
-            Transaction.created_by_user_id == user.id,
-            Transaction.client_operation_id == body.client_operation_id,
-        ))
+        existing = replay()
         if existing is None:
             raise
-        # A uniqueness collision is another replay return path, not an authority bypass.
-        budget = require_budget_capability(db, user, budget_id, "create_transaction")
-        if not _can_access_transaction_resources(db, user, budget, existing):
-            raise HTTPException(status_code=404, detail="Transaction not found")
         return existing
     db.refresh(transaction)
     return transaction

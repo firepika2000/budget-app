@@ -19,6 +19,16 @@ the server returns. Completing only one additional command does not close this m
 
 #### Canonical server mutation/replay boundary
 
+Creation-specific immutable receipts now bind `(budget, actor, operation UUID)` to the original
+validated request digest and accepted transaction ID, committed with creation effects. Matching retries
+return the current authorized transaction without reposting; changed-payload reuse is 409. Receipts
+survive transaction deletion, so retries return 404 rather than creating it again. Current capability
+and whole-resource privacy checks precede acknowledgement. Migration 0048 backfills existing UUIDs
+with an UNKNOWN original digest, not a guessed digest from potentially edited data. Such legacy retries
+require explicit review (409), without another financial effect. This is not a general command receipt
+or offline-edit implementation, and receipts lost by downgrade/deletion of an entire authority are not
+promised replay durability. Real PostgreSQL overlap/lost-acknowledgement verification remains required.
+
 Preparatory server support (2026-10-09): transaction responses expose a `v1:` SHA-256
 content precondition named `revision`. Ordinary updates optionally accept `expected_revision`;
 bulk metadata updates optionally accept `expected_revisions` covering exactly the selected IDs.

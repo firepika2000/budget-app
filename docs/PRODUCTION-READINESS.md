@@ -275,6 +275,29 @@ This is an ORM hydration improvement, not a claim of constant total memory: repo
 contributing-ID collections remain accumulated, and PostgreSQL production scale remains unverified.
 No native, schema, financial mutation or customer-data change; server update/restart only.
 TestFlight remains on hold.
+
+### Immutable creation request receipts — 2026-10-09
+
+Actual HTTP regression first proved different-amount reuse of a creation UUID returned success.
+Creation now atomically stores a versioned request digest and accepted transaction identity under
+the actor/budget/UUID key. Matching original retries after later edits do not repost or revert edits;
+changed-payload reuse rejects with 409. Deletion retains the receipt and later retries return neutral
+404 instead of recreating the purchase. Current resource authorization is preserved in both normal
+and uniqueness-collision return paths. Migration 0048 reserves existing identities with unknown
+digests; legacy retries require review rather than fabricating original request evidence.
+
+51 focused backend tests passed covering creation replay/privacy, transaction bulk, financial golden
+vectors, migration graph constraints, 0017-to-head empty upgrade and populated 0047-to-0048 upgrade/
+downgrade. The populated migration preserves every transaction column, including financial values.
+A supplemental rejected-create/unknown-legacy-receipt test was added and checked separately.
+No Swift changes or rebuild. Server migration/update/restart required; no customer database was
+migrated or reset here. Real PostgreSQL concurrent overlap/lost-acknowledgement remain unverified.
+
+Broader migration audit also found seven older populated-upgrade tests failing before reaching 0048:
+0042 account-history backfill indexes owner membership by budget, but the historical fixtures have
+household owner identity and no owner membership row. Adjacent 0043 uses the same assumption. These
+pre-existing historical-upgrade gaps are NOT claimed green; they require a subsequent correction.
+TestFlight remains on hold and overall offline-edit completion remains false.
 The focused analytics, delegated privacy and report-scale suite passed 82 cases, zero failures;
 diff checks passed. No redundant native build was run for this server-only change.
 
