@@ -52,6 +52,43 @@ def test_net_worth_streams_history_with_bounded_contribution_ids(client, owner_t
     assert peak < 100  # scalar batches must not hydrate the historical transaction entities
 
 
+def test_net_worth_full_contributors_page_beyond_compact_limit(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    expected = {f"worth-page-{index:05d}" for index in range(1001)}
+    with session_factory() as session:
+        owner_id = session.scalar(select(User.id))
+        session.execute(insert(Transaction), [{
+            "id": identifier, "budget_id": budget["id"], "account_id": account["id"],
+            "amount_minor": 1, "occurred_on": date(2026, 8, 1),
+            "created_by_user_id": owner_id,
+        } for identifier in sorted(expected)])
+        session.commit()
+    url = f"/api/v1/budgets/{budget['id']}/reports/contributors"
+    params = {"kind": "net_worth", "start_date": "2026-09-01", "end_date": "2026-09-30", "limit": 200}
+    found, pages = set(), 0
+    while True:
+        response = client.get(url, headers=auth(owner_token), params=params)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        identities = [item["id"] for item in body["items"]]
+        assert len(identities) <= 200
+        assert len(identities) == len(set(identities))
+        assert found.isdisjoint(identities)
+        found.update(identities)
+        pages += 1
+        assert pages <= 6
+        if body["next_cursor"] is None:
+            break
+        params["cursor"] = body["next_cursor"]
+    assert found == expected and pages == 6
+    changed = dict(params, end_date="2026-09-29")
+    assert client.get(url, headers=auth(owner_token), params=changed).status_code == 422
+    worth = client.get(f"/api/v1/budgets/{budget['id']}/reports/net-worth", headers=auth(owner_token),
+                      params={"start_date": "2026-09-01", "end_date": "2026-09-30"})
+    assert worth.status_code == 200 and worth.json()["net_worth_minor"] == 1001
+
+
 @pytest.mark.parametrize("large_allocations", [False, True])
 def test_month_summary_bounds_orm_hydration_with_ten_thousand_split_and_direct_rows(client, owner_token, session_factory, large_allocations):
     budget = create_budget(client, owner_token, session_factory)
