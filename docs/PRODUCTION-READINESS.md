@@ -1,5 +1,33 @@
 # Production readiness mission ledger
 
+## Identified scheduled realization retries (2026-10-09)
+
+The production realization endpoint accepts an optional `X-Planning-Operation-ID`
+UUID and `expected_revision` query. Identified actions require the reviewed schedule
+revision. Under the existing budget lock, a fresh stale observation fails with 409;
+an accepted retry returns the original immutable realization result rather than posting
+the next overdue occurrence. Posting, schedule advancement, history and receipt commit
+atomically. Legacy callers remain compatible and retain one occurrence per action.
+
+Acknowledgement checks current transaction-creation authority and the original realized
+event's complete account/category resource scope, even after subsequent schedule edits,
+realization or deletion. Missing events and changed identity intent fail closed. The
+history snapshot now captures remaining occurrences before decrement, preserving the
+correct before/after audit observation without changing financial semantics.
+
+Executed evidence: 84 focused backend tests pass across realization receipts, schedule
+edit/deletion receipts, schedule contracts and financial golden vectors. Four isolated
+PostgreSQL races pass: duplicate identified requests both acknowledge one posting even
+while another occurrence is overdue; legacy expense, transfer and credit-card realization
+still serialize correctly. Tests cover exact large integer amounts, once-only/inactive
+acknowledgement, later deletion, stale observations, revoked capability/account/category,
+identity corruption and failed-commit rollback. `git diff --check` passed.
+
+This is the server contract checkpoint; native durable Enter Now queue integration remains
+next. No Swift changed, no native runtime or human acceptance is claimed, and no Live or
+Simulator data was modified. Deployment needs a server restart, not a new migration.
+TestFlight remains on hold.
+
 ## Native durable reviewed schedule deletion (2026-10-09)
 
 Confirmed schedule deletion now passes the editor's captured revision through the shared

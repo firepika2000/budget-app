@@ -374,6 +374,31 @@ def _schedule(pg, **body):
     return r.json()["id"]
 
 
+def test_concurrent_identified_realization_does_not_post_next_overdue_occurrence(pg, monkeypatch):
+    from app.models import ScheduledTransactionRevision, WorkspaceCommandReceipt
+    freeze_today(monkeypatch, date(2026, 9, 5), planning_routes)
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    collection = f"/api/v1/budgets/{budget['id']}/scheduled-transactions"
+    response = pg.client.post(collection, headers=auth(pg.token), json=dict(
+        account_id=account["id"], category_id=category["id"], name="Overdue daily",
+        amount_minor=-200, next_date="2026-09-01", recurrence_unit="days"))
+    assert response.status_code == 201, response.text
+    schedule = response.json()
+    identity = uuid4()
+    def call(db, user):
+        return realize_scheduled_transaction(budget["id"], schedule["id"], user, db,
+                                             identity, schedule["revision"])
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    assert results[0][1] == results[1][1]
+    with pg.factory() as db:
+        assert db.query(Transaction).filter_by(scheduled_transaction_id=schedule["id"]).count() == 1
+        assert db.query(ScheduledTransactionRevision).filter_by(action="realized").count() == 1
+        assert db.query(WorkspaceCommandReceipt).count() == 1
+        assert db.get(ScheduledTransaction, schedule["id"]).next_date == date(2026, 9, 2)
+
+
 def test_concurrent_realize_expense_creates_exactly_one_transaction(pg, monkeypatch):
     freeze_today(monkeypatch, date(2026, 9, 1), planning_routes)
     budget = create_budget(pg.client, pg.token, pg.factory)

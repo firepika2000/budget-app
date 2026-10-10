@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 import hashlib
 import json
-from typing import Optional
+from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -562,17 +562,40 @@ def realize_scheduled_transaction(
     schedule_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    operation_id: Annotated[Optional[UUID], Header(alias="X-Planning-Operation-ID")] = None,
+    expected_revision: Annotated[Optional[TransactionRevision], Query()] = None,
 ) -> ScheduledRealizationResponse:
     # Realization creates a real transaction, so it requires create-transaction authority *now*
     # (not whoever created the schedule) and re-checks resource scope below.
     budget = require_budget_capability(db, user, budget_id, "create_transaction")
+    if operation_id is not None and expected_revision is None:
+        raise HTTPException(status_code=422, detail="Identified realization requires an observed schedule revision")
+    identity = str(operation_id) if operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({"schedule_id": schedule_id, "expected_revision": expected_revision},
+                                               sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     lock_budget(db, budget_id)
+    if identity is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity))
+        if receipt is not None:
+            if receipt.command_kind != "schedule_realize" or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Saved realization identity belongs to different intent")
+            realized = db.get(ScheduledTransactionRevision, receipt.resource_id)
+            if (realized is None or realized.budget_id != budget_id or realized.schedule_id != schedule_id
+                    or realized.action != "realized" or not _can_access_schedule_resources(db, user, budget, realized)
+                    or not realized.before_snapshot or not realized.after_snapshot or not realized.transaction_ids):
+                raise HTTPException(status_code=404, detail="Scheduled realization not found")
+            after = realized.after_snapshot
+            return ScheduledRealizationResponse(scheduled_transaction_id=schedule_id, transaction_ids=realized.transaction_ids,
+                realized_on=realized.before_snapshot["next_date"], next_date=after["next_date"] if after["is_active"] else None,
+                is_active=after["is_active"], last_realized_on=after["last_realized_on"])
     schedule = db.scalar(select(ScheduledTransaction).where(
         ScheduledTransaction.id == schedule_id,
         ScheduledTransaction.budget_id == budget_id,
     ).with_for_update())
     if schedule is None or not _can_access_schedule_resources(db, user, budget, schedule):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduled transaction not found")
+    if expected_revision is not None and expected_revision != ScheduledTransactionResponse.model_validate(schedule).revision:
+        raise HTTPException(status_code=409, detail="This schedule changed. Refresh and review before entering its occurrence.")
     if not schedule.is_active:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Scheduled transaction is inactive")
     realized_on = schedule.next_date
@@ -625,6 +648,7 @@ def realize_scheduled_transaction(
         created_ids = [transaction.id]
 
     # Advance the schedule atomically under the row lock so the same occurrence cannot post twice.
+    before_realization = _schedule_snapshot(schedule)
     following = next_occurrence(realized_on, schedule.recurrence_unit, schedule.interval_count)
     if schedule.remaining_occurrences is not None:
         schedule.remaining_occurrences -= 1
@@ -632,14 +656,23 @@ def realize_scheduled_transaction(
             following = None
     if following is not None and schedule.end_date is not None and following > schedule.end_date:
         following = None
-    before_realization = _schedule_snapshot(schedule)
     schedule.last_realized_on = realized_on
     if following is None:
         schedule.is_active = False
     else:
         schedule.next_date = following
-    _append_schedule_revision(db, schedule, "realized", user.id, before_realization, _schedule_snapshot(schedule), created_ids)
-    db.commit()
+    realized = _append_schedule_revision(db, schedule, "realized", user.id, before_realization, _schedule_snapshot(schedule), created_ids)
+    db.flush()
+    if identity is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=identity, command_kind="schedule_realize", request_digest=digest, resource_id=realized.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if identity is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity)) is None:
+            raise
+        return realize_scheduled_transaction(budget_id, schedule_id, user, db, operation_id, expected_revision)
     return ScheduledRealizationResponse(
         scheduled_transaction_id=schedule.id,
         transaction_ids=created_ids,
