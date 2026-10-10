@@ -442,17 +442,9 @@ def export_budget_csv(
     transactions = list(db.scalars(
         select(Transaction)
         .options(selectinload(Transaction.splits))
-        .where(Transaction.budget_id == budget_id)
+        .where(*transaction_visibility_conditions(db, user, budget))
         .order_by(Transaction.occurred_on, Transaction.created_at, Transaction.id)
     ))
-    transactions = [item for item in transactions if (
-        (visible_accounts is None or item.account_id in visible_accounts)
-        and (
-            visible_categories is None
-            or item.category_id in visible_categories
-            or (bool(item.splits) and all(split.category_id in visible_categories for split in item.splits))
-        )
-    )]
     output = StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow([

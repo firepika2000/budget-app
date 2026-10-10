@@ -1,4 +1,7 @@
 from datetime import date, datetime, timezone
+import csv
+from io import StringIO
+import pytest
 
 from sqlalchemy import event, insert
 
@@ -18,7 +21,8 @@ def _search(client, token, budget_id, query=""):
     return response.json()
 
 
-def test_workspace_history_uses_browser_privacy_in_sql(client, owner_token, session_factory):
+@pytest.mark.parametrize("endpoint", ["transactions", "export.csv"])
+def test_workspace_history_uses_browser_privacy_in_sql(client, owner_token, session_factory, endpoint):
     from .test_delegated_access import add_child, configure_child
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])
@@ -35,11 +39,13 @@ def test_workspace_history_uses_browser_privacy_in_sql(client, owner_token, sess
         statements.append(statement)
     event.listen(engine, "before_cursor_execute", capture)
     try:
-        response = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(child_token))
+        response = client.get(f"/api/v1/budgets/{budget['id']}/{endpoint}", headers=auth(child_token))
     finally:
         event.remove(engine, "before_cursor_execute", capture)
     assert response.status_code == 200, response.text
-    assert [row["id"] for row in response.json()] == [visible["id"]]
+    ids = ([row["id"] for row in response.json()] if endpoint == "transactions" else
+           [row["transaction_id"] for row in csv.DictReader(StringIO(response.text.lstrip("\ufeff")))])
+    assert ids == [visible["id"]]
     assert private["id"] not in response.text and "Private history" not in response.text
     assert [row["id"] for row in _search(client, child_token, budget["id"])["items"]] == [visible["id"]]
     history_queries = [sql for sql in statements if "FROM transactions" in sql and "ORDER BY transactions.occurred_on" in sql]
