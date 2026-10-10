@@ -1320,6 +1320,7 @@ public struct APITransactionSplit: Identifiable, Codable, Equatable, Sendable {
 }
 
 public struct APITransaction: Identifiable, Codable, Equatable, Sendable {
+    public let revision: String?
     public let id: String
     public let accountID: String
     public let categoryID: String?
@@ -1351,7 +1352,7 @@ public struct APITransaction: Identifiable, Codable, Equatable, Sendable {
     public let splits: [APITransactionSplit]
 
     enum CodingKeys: String, CodingKey {
-        case id, memo, splits, flag, tags
+        case id, memo, splits, flag, tags, revision
         case financialClassification = "financial_classification"
         case accountID = "account_id"
         case categoryID = "category_id"
@@ -1508,15 +1509,17 @@ public struct APITransactionAttachment: Identifiable, Decodable, Equatable, Send
 }
 
 public struct APITransactionBulkUpdate: Encodable, Equatable, Sendable {
+    public let expectedRevisions: [String: String]?
     public let transactionIDs: [String]
     public let action: String
     public let cleared: Bool?
     public let flag: String?
     public let tags: [String]?
-    public init(transactionIDs: [String], action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String]? = nil) {
+    public init(transactionIDs: [String], action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String]? = nil, expectedRevisions: [String: String]? = nil) {
+        self.expectedRevisions = expectedRevisions
         self.transactionIDs = transactionIDs; self.action = action; self.cleared = cleared; self.flag = flag; self.tags = tags
     }
-    enum CodingKeys: String, CodingKey { case transactionIDs = "transaction_ids"; case action, cleared, flag, tags }
+    enum CodingKeys: String, CodingKey { case transactionIDs = "transaction_ids"; case action, cleared, flag, tags; case expectedRevisions = "expected_revisions" }
 }
 
 public struct APITransferCreate: Encodable, Sendable {
@@ -2550,6 +2553,7 @@ public struct APIAllowancePlanRevision: Identifiable, Codable, Equatable, Sendab
 }
 
 public struct APITransactionCreate: Encodable, Equatable, Sendable {
+    public let expectedRevision: String?
     public let accountID: String
     public let categoryID: String?
     public let payeeID: String?
@@ -2579,7 +2583,8 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         flag: String? = nil,
         tags: [String] = [],
         attachmentMetadata: [[String: String]] = [],
-        clientOperationID: String? = nil
+        clientOperationID: String? = nil,
+        expectedRevision: String? = nil
     ) {
         self.accountID = accountID
         self.categoryID = categoryID
@@ -2595,6 +2600,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         self.tags = tags
         self.attachmentMetadata = attachmentMetadata
         self.clientOperationID = clientOperationID
+        self.expectedRevision = expectedRevision
     }
 
     enum CodingKeys: String, CodingKey {
@@ -2609,6 +2615,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         case isCleared = "is_cleared"
         case attachmentMetadata = "attachment_metadata"
         case clientOperationID = "client_operation_id"
+        case expectedRevision = "expected_revision"
     }
 }
 

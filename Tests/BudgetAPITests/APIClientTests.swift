@@ -1497,6 +1497,53 @@ final class APIClientTests: XCTestCase {
         }
     }
 
+    func testObservedTransactionPreconditionsEncodeWithoutUnrelatedMetadata() throws {
+        let revision = "v1:" + String(repeating: "a", count: 64)
+        let update = APITransactionCreate(accountID: "a1", categoryID: "c1", amountMinor: Int64.min, occurredOn: "2026-09-04", payeeName: "Market", expectedRevision: revision)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(update)) as? [String: Any])
+        XCTAssertEqual(json["expected_revision"] as? String, revision)
+        XCTAssertNil(json["client_operation_id"])
+        let bulk = APITransactionBulkUpdate(transactionIDs: ["t1"], action: "set_cleared", cleared: true, expectedRevisions: ["t1": revision])
+        let bulkJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(bulk)) as? [String: Any])
+        XCTAssertEqual(bulkJSON["expected_revisions"] as? [String: String], ["t1": revision])
+        XCTAssertNil(bulkJSON["tags"])
+        XCTAssertNil(bulkJSON["flag"])
+        let legacy = APITransactionBulkUpdate(transactionIDs: ["t1"], action: "set_cleared", cleared: false)
+        let legacyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        XCTAssertNil(legacyJSON["expected_revisions"])
+        let response = Data("""
+        {"id":"t1","account_id":"a1","amount_minor":-1,"occurred_on":"2026-09-04","payee_name":"Market","memo":"","is_cleared":false,"is_reconciled":false,"splits":[],"revision":"\(revision)"}
+        """.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(APITransaction.self, from: response).revision, revision)
+    }
+
+    func testStaleObservedEditSendsOriginalRevisionAndDoesNotRetryConflict() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let revision = "v1:" + String(repeating: "b", count: 64)
+        var calls = 0
+        MockURLProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.httpMethod, "PUT")
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+            XCTAssertEqual(json["expected_revision"] as? String, revision)
+            XCTAssertEqual(json["memo"] as? String, "Unsaved draft")
+            return (HTTPURLResponse(url: request.url!, statusCode: 409, httpVersion: nil, headerFields: nil)!, Data(#"{"detail":"This transaction changed. Refresh and review before applying this edit."}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
+        let update = APITransactionCreate(accountID: "a1", categoryID: "c1", amountMinor: -100, occurredOn: "2026-09-04", payeeName: "Market", memo: "Unsaved draft", expectedRevision: revision)
+        do {
+            _ = try await client.updateTransaction(budgetID: "b1", transactionID: "t1", transaction: update, token: "current")
+            XCTFail("Stale edit accepted")
+        } catch APIClientError.server(let status, _) {
+            XCTAssertEqual(status, 409)
+        }
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(update.memo, "Unsaved draft")
+        XCTAssertEqual(update.expectedRevision, revision)
+    }
+
     func testUpdateAndDeleteTransactionUseResourcePath() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

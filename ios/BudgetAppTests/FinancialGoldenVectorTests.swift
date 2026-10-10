@@ -1322,6 +1322,10 @@ final class FinancialGoldenVectorTests: XCTestCase {
     }
 
     func testLiveAdapterTranslationsPreserveExactOperationIntent() {
+        var observed = RecordTransactionOperation(accountID: "a", categoryID: "c", amountMinor: -100, occurredOn: "2026-09-01", payeeName: "Payee", memo: "draft", isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: [])
+        observed.expectedRevision = "v1:" + String(repeating: "a", count: 64)
+        XCTAssertEqual(observed.apiValue.expectedRevision, observed.expectedRevision)
+        XCTAssertNil(observed.apiValue.clientOperationID)
         let transaction = RecordTransactionOperation(accountID: "a", categoryID: nil, amountMinor: -10_001, occurredOn: "2026-09-01", payeeName: "Payee", memo: "memo", isCleared: true, splits: [.init(categoryID: "c1", amountMinor: -7_001, memo: "one"), .init(categoryID: "c2", amountMinor: -3_000, memo: "two")], flag: "blue", tags: ["tag"], attachmentMetadata: [["name": "receipt"]]).apiValue
         XCTAssertEqual(transaction.amountMinor, -10_001)
         XCTAssertEqual(transaction.splits.map(\.amountMinor), [-7_001, -3_000])

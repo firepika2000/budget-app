@@ -31,8 +31,13 @@ Creation `client_operation_id` is now immutable through ordinary editing, includ
 and replacement values. This prevents an edit from erasing creation retry identity, but does
 not supply immutable replay receipts for subsequently edited transactions.
 
-These fields are not yet integrated into native commands or the durable outbox. No offline-edit
-completion, PostgreSQL concurrent-request proof, or lost-acknowledgement guarantee is claimed.
+Native integration now preserves the original editor observation in SwiftUI State and passes it
+through RecordTransactionOperation/application service/API DTO on ordinary transaction updates.
+Quick clearing also includes the current row observation. A conflict keeps the editor's draft open;
+it does not silently replace the observation and retry. Older servers/local projections without a
+revision retain compatible behavior. Bulk multi-selection observation capture and durable edit
+outbox integration remain outstanding. No offline-edit completion, PostgreSQL concurrent-request
+proof, or lost-acknowledgement guarantee is claimed.
 
 1. Every replayable command has an immutable UUID operation identity scoped to actor and budget,
    a versioned typed payload and a canonical payload digest. A transactional receipt is committed

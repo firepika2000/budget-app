@@ -3029,3 +3029,27 @@ No Swift or migration changes: no app rebuild/native rerun required; deploying s
 a server update/restart. No customer data was changed. Regular Xcode 27.0 (27A266a) at
 `/Applications/Xcode.app/Contents/Developer` is confirmed and replaces Beta for future native operations.
 TestFlight remains on hold; no human acceptance or real PostgreSQL concurrency proof is claimed.
+
+### Native observed transaction edits — 2026-10-09
+
+APITransaction now decodes and caches the server's optional revision. The production transaction
+editor captures that original observation in State alongside its draft and forwards it through the
+canonical operation/service/API request; a background view refresh cannot silently substitute a
+new revision for an old draft. Save conflicts retain the editor and draft and use existing error
+presentation. Quick clearing includes the current transaction revision while still omitting all
+unrelated metadata. Local/Demo and older server payloads without revisions remain compatible.
+Multi-selection bulk observation capture and durable offline edit replay are not complete yet.
+
+90 Swift API tests passed, then the additional actual PUT/409 regression passed independently:
+original revision and draft sent, exactly one request, no conflict retry. Encoding/decoding tests
+cover preconditions, exact Int64 input, absence of unrelated clearing fields and legacy omission.
+Native adapter coverage was added and compiled, not executed. Regular Xcode 27 build-for-testing
+passed against existing iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`/iOS 27.0.
+The known stalled native runtime runner was not retried or reset. `git diff --check` passes.
+Rebuild required for native integration; server must include the preceding precondition checkpoint.
+No migration or customer-data reset. TestFlight remains on hold.
+
+Remaining targeted human check (disposable transaction, two authorized devices): open its editor
+on device A, change a metadata field on device B and save, then attempt A's stale save. Expect a
+changed-transaction message with A's draft still open and B's server value preserved. Cancel and
+reopen from a refreshed observation, then save successfully. This is not yet human accepted.

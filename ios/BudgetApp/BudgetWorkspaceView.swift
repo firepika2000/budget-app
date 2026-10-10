@@ -4698,7 +4698,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     func setTransactionCleared(id: String, cleared: Bool) async throws {
         guard let transaction = transactions.first(where: { $0.id == id }) else { throw workspaceRepositoryError("Transaction not found.") }
         guard canQuickSetCleared(transaction) else { throw workspaceRepositoryError("This transaction cannot be changed through quick clearing.") }
-        try await bulkUpdateTransactions(.init(transactionIDs: [id], action: "set_cleared", cleared: cleared))
+        try await bulkUpdateTransactions(.init(transactionIDs: [id], action: "set_cleared", cleared: cleared, expectedRevisions: transaction.revision.map { [id: $0] }))
     }
 
     func createPayee(_ operation: CreatePayeeOperation) async throws { try await services().payees.create(operation); await refresh() }
@@ -14020,6 +14020,7 @@ private struct DelegatedPolicyHistoryView: View {
 }
 
 private struct LiveTransactionEditView: View {
+    @State private var observedRevision: String?
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
     let budget: APIBudget; let transaction: APITransaction; let accounts: [APIAccount]; let categories: [APICategory]; let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
@@ -14028,6 +14029,7 @@ private struct LiveTransactionEditView: View {
     @State private var isSaving = false; @State private var errorMessage: String?
     init(budget: APIBudget, transaction: APITransaction, accounts: [APIAccount], categories: [APICategory], onSaved: @escaping () async -> Void) {
         self.budget=budget; self.transaction=transaction; self.accounts=accounts; self.categories=categories; self.onSaved=onSaved
+        _observedRevision = State(initialValue: transaction.revision)
         _payee=State(initialValue:transaction.payeeName); _payeeID=State(initialValue:transaction.payeeID); _selectedPayeeName=State(initialValue:transaction.payeeID == nil ? "" : transaction.payeeName); _amount=State(initialValue:CurrencyText.editableMagnitude(transaction.amountMinor,currencyCode:budget.currencyCode)); _accountID=State(initialValue:transaction.accountID); _categoryID=State(initialValue:transaction.categoryID ?? ""); _memo=State(initialValue:transaction.memo); _financialClassification=State(initialValue:transaction.financialClassification ?? ""); _cleared=State(initialValue:transaction.isCleared); _date=State(initialValue:Self.parseDate(transaction.occurredOn)); _isInflow=State(initialValue:transaction.amountMinor > 0); _isSplit=State(initialValue:!transaction.splits.isEmpty); _splitRows=State(initialValue:transaction.splits.map { WorkspaceSplitDraft(categoryID:$0.categoryID,amount:CurrencyText.editableMagnitude($0.amountMinor,currencyCode:budget.currencyCode),memo:$0.memo,financialClassification:$0.financialClassification ?? "") }); _flag=State(initialValue:transaction.flag ?? ""); _tags=State(initialValue:(transaction.tags ?? []).joined(separator:", "))
     }
     var body: some View { NavigationStack { Form {
@@ -14040,7 +14042,7 @@ private struct LiveTransactionEditView: View {
     private var parsedSplits:[TransactionSplitOperation]?{guard isSplit else{return []};var values:[TransactionSplitOperation]=[];for row in splitRows{guard !row.categoryID.isEmpty,let value=CurrencyText.parseMagnitude(row.amount,currencyCode:budget.currencyCode,isInflow:false) else{return nil};values.append(.init(categoryID:row.categoryID,amountMinor:value,memo:row.memo,financialClassification:row.financialClassification.isEmpty ? nil:row.financialClassification))};return values}
     private var remaining:Int64?{guard let parsed,let parsedSplits else{return nil};return CurrencyText.remaining(total:parsed,portions:parsedSplits.map(\.amountMinor))}
     private var splitsValid:Bool{!isSplit || (parsedSplits?.count ?? 0)>=2 && remaining==0}
-    private func save() async { guard let parsed,let parsedSplits else{return};isSaving=true;defer{isSaving=false};do{try await workspace.updateTransaction(id:transaction.id,operation:RecordTransactionOperation(accountID:accountID,categoryID:isSplit || isInflow || categoryID.isEmpty ? nil:categoryID,amountMinor:parsed,occurredOn:BudgetWorkspaceStore.dateString(date),payeeName:payee,payeeID:payeeID,memo:memo,financialClassification:financialClassification.isEmpty || isSplit ? nil:financialClassification,isCleared:cleared,splits:parsedSplits,flag:flag.isEmpty ? nil:flag,tags:commaValues(tags),attachmentMetadata:transaction.attachmentMetadata ?? []));dismiss()}catch{errorMessage=error.localizedDescription} }
+    private func save() async { guard let parsed,let parsedSplits else{return};isSaving=true;defer{isSaving=false};do{try await workspace.updateTransaction(id:transaction.id,operation:RecordTransactionOperation(accountID:accountID,categoryID:isSplit || isInflow || categoryID.isEmpty ? nil:categoryID,amountMinor:parsed,occurredOn:BudgetWorkspaceStore.dateString(date),payeeName:payee,payeeID:payeeID,memo:memo,financialClassification:financialClassification.isEmpty || isSplit ? nil:financialClassification,isCleared:cleared,splits:parsedSplits,flag:flag.isEmpty ? nil:flag,tags:commaValues(tags),attachmentMetadata:transaction.attachmentMetadata ?? [],expectedRevision:observedRevision));dismiss()}catch{errorMessage=error.localizedDescription} }
     private var selectedAccountIsDebt:Bool{guard let type=accounts.first(where:{$0.id==accountID})?.accountType else{return false};return ["credit","loan","mortgage"].contains(type)}
     private func clearInvalidClassification(){if !selectedAccountIsDebt || isInflow {financialClassification="";for index in splitRows.indices{splitRows[index].financialClassification=""}}}
     private func commaValues(_ value:String)->[String]{value.split(separator:",").map{$0.trimmingCharacters(in:.whitespacesAndNewlines)}.filter{!$0.isEmpty}}
