@@ -3655,7 +3655,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             return
         }
         do {
-            try await transactionOutbox.replay(shouldPause: shouldPauseRejectedTransaction) { try await sendTransaction($0) }
+            try await transactionOutbox.replayCommands(shouldPause: shouldPauseRejectedTransaction) { try await sendPendingTransaction($0) }
             if transactionOutbox.count == 0 { outboxFailureMessage = nil }
         } catch {
             if isTransientConnectivityFailure(error) { throw error }
@@ -3667,6 +3667,14 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         try await credentials.prepare()
         try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
         _ = try await client.createTransaction(budgetID: budget.id, transaction: operation.apiValue, token: token)
+    }
+
+    private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        guard let transactionID = entry.transactionID else { try await sendTransaction(entry.operation); return }
+        try await credentials.prepare()
+        try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+        _ = try await client.updateTransaction(budgetID: budget.id, transactionID: transactionID,
+            transaction: entry.operation.apiValue, token: token)
     }
 
     func householdInvitations() async throws -> [APIInvitationSummary] { try await credentials.prepare(); return try await client.householdInvitations(householdID: budget.householdID, token: token) }
@@ -3700,7 +3708,8 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         var identified = operation
         if identified.clientOperationID == nil { identified.clientOperationID = UUID().uuidString.lowercased() }
         do {
-            try await transactionOutbox.submit(identified, shouldPause: shouldPauseRejectedTransaction) { try await sendTransaction($0) }
+            try transactionOutbox.enqueue(identified)
+            try await transactionOutbox.replayCommands(shouldPause: shouldPauseRejectedTransaction) { try await sendPendingTransaction($0) }
             if transactionOutbox.count == 0 { outboxFailureMessage = nil }
         } catch {
             // Persistence/legacy-review failure is not a saved transaction.
@@ -3711,7 +3720,24 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             }
         }
     }
-    func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { try await credentials.prepare(); _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: operation.apiValue, token: token) }
+    func updateTransaction(id: String, operation: RecordTransactionOperation) async throws {
+        guard operation.expectedRevision != nil else {
+            throw BudgetApplicationError.invalidOperation("Refresh this transaction before editing; its server revision is unavailable.")
+        }
+        var identified = operation
+        identified.clientOperationID = nil
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueEdit(transactionID: id, operation: identified)
+        do {
+            try await transactionOutbox.replayCommands(shouldPause: shouldPauseRejectedTransaction) { try await sendPendingTransaction($0) }
+            if transactionOutbox.count == 0 { outboxFailureMessage = nil }
+        } catch {
+            guard isTransientConnectivityFailure(error) else {
+                outboxFailureMessage = "A saved edit needs attention in Pending Sync: \(error.localizedDescription)"
+                throw error // Preserve the open editor/draft on definitive rejection.
+            }
+        }
+    }
     func deleteTransaction(id: String) async throws { try await credentials.prepare(); try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
     func duplicateTransaction(id: String, occurredOn: String) async throws { try await credentials.prepare(); _ = try await client.duplicateTransaction(budgetID: budget.id, transactionID: id, occurredOn: occurredOn, token: token) }
     func voidTransaction(id: String, reason: String) async throws { try await credentials.prepare(); _ = try await client.voidTransaction(budgetID: budget.id, transactionID: id, reason: reason, token: token) }
@@ -4656,8 +4682,9 @@ final class BudgetWorkspaceStore: ObservableObject {
     var pendingLiveTransactions: [LiveTransactionOutbox.Entry] {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
-        return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter {
-            PendingTransactionVisibility.allows($0.operation, canView: budget.can("view_transactions"),
+        return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            (entry.transactionID == nil || transactions.contains(where: { $0.id == entry.transactionID })) &&
+            PendingTransactionVisibility.allows(entry.operation, canView: budget.can("view_transactions"),
                 accountIDs: accountIDs, categoryIDs: categoryIDs)
         }
     }
@@ -4701,7 +4728,15 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws {
+        defer {
+            pendingSyncCount = (commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactionCount ?? 0
+            if let message = (commandRepository as? LiveWorkspaceCommandRepository)?.outboxFailureMessage {
+                syncStatusMessage = message
+            }
+        }
         try await services().transactions.update(id: id, operation: operation)
+        pendingSyncCount = (commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactionCount ?? 0
+        if pendingSyncCount > 0 { syncStatusMessage = "\(pendingSyncCount) changes saved on this iPhone, waiting to sync" }
         await refresh()
     }
 
@@ -6062,6 +6097,10 @@ private struct PendingLiveTransactionsView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                             Text("Saved \(entry.queuedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption2).foregroundStyle(.secondary)
+                            if entry.transactionID != nil {
+                                Text("Pending edit · posted values remain unchanged until the server accepts it")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                             if entry.requiresReview == true {
                                 Text("Needs review · automatic retry paused")
                                     .font(.caption).foregroundStyle(.secondary)

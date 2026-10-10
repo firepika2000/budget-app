@@ -7,10 +7,10 @@ claim that incomplete providers are production-ready.
 
 ### Remaining hosted offline-write milestone — required contract
 
-**Not implemented or complete:** the current durable Live outbox supports new transactions only.
-`LiveWorkspaceCommandRepository.updateTransaction`, `bulkUpdateTransactions`, transfers, allocations,
+**Not complete:** the durable Live outbox now supports creation and observed ordinary transaction
+edits. `bulkUpdateTransactions`, transfers, allocations,
 reconciliation and administrative commands still send directly through their authenticated APIs.
-The following is the next integration contract, not a claim of working offline editing. Local Device
+The following defines the complete milestone, not a claim of human-accepted offline editing. Local Device
 already owns its local writes; its storage must not be replaced by a hosted replay queue.
 
 The full requirement is to preserve usable workspace/navigation and user-entered work across loss
@@ -27,19 +27,24 @@ state; acknowledgement returns current authorized transaction data, not a stored
 New commands still enforce stale-state, reconciliation and lifecycle rules. Current capability,
 resource visibility and ownership apply before every receipt acknowledgement, even after a later
 reconciliation. Cross-target identity collisions roll back tentative work and re-enter authorization.
-This is server support only: native edit UUID persistence/outbox integration, other mutation kinds
-and real PostgreSQL overlap/lost-acknowledgement proof remain incomplete. Creation retains its separate
+Native ordinary edits now assign and persist this mutation UUID, target and observed revision before
+sending, and replay through the same ordered queue as creation. Other mutation kinds and real
+PostgreSQL overlap/lost-acknowledgement proof remain incomplete. Creation retains its separate
 legacy-compatible identity namespace; do not claim one universal receipt protocol across all commands.
 The native operation and API DTO can now carry this separate mutation identity through translation;
-the editor does not yet assign/persist it or queue updates. The creation submission path now persists
+the Live repository assigns the edit identity at submission, requiring a server observation. Creation persists
 the exact immutable operation before its first network suspension, then uses the existing ordered
 replay and atomic acknowledgement path. An uncertain send survives reopening; persistence failure
 prevents sending. Definite HTTP rejection (400/403/404/409/422) persists a review flag and surfaces
 Pending Sync review; automatic replay stops before that item and later queued changes. Explicit
 per-item retry clears the flag durably without changing the operation identity or payload, subject
 to current whole-resource visibility. Authentication failures remain session-owned, not permanently
-paused as a transaction rejection. Older queue entries decode compatibly without a review flag. Durable
-edit submission and full offline mutation coverage are not yet implemented.
+paused as a transaction rejection. Older queue entries decode compatibly without review/target fields.
+Definitive edit failure retains the open editor and draft as well as the queued intent. Pending edits
+are labeled separately and do not replace authoritative posted amounts. Their review details require
+both proposed resource visibility and the target's presence in the current authorized workspace;
+targets outside its loaded transaction window remain preserved with restricted details. Full offline
+mutation coverage and Live disconnect/relaunch/rotation acceptance remain unfinished.
 
 Creation-specific immutable receipts now bind `(budget, actor, operation UUID)` to the original
 validated request digest and accepted transaction ID, committed with creation effects. Matching retries

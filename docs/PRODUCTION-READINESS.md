@@ -1,5 +1,34 @@
 # Production readiness mission ledger
 
+## Durable ordinary transaction edits (2026-10-09)
+
+Live ordinary editing now persists a separate mutation UUID, target transaction ID, exact draft and
+captured server revision before any authenticated send. Creation and edits share insertion-order
+command replay; edits use the canonical update endpoint/current credential binding, not creation.
+Missing observations reject locally instead of silently disabling conflict protection. Definite
+rejection retains the editor/draft and persists rejection review; uncertain connectivity retains the
+queued edit. No optimistic posted amounts or ledger effects are synthesized. Pending Sync labels
+edits and restricts details if the current workspace cannot authorize the target/proposed resources.
+Older creation queue files remain decodable. Bulk/transfer/allocation/reconciliation queueing is
+still incomplete; this does not close the hosted offline-write milestone.
+
+Production host execution passed target/identity/revision persistence, timeout/reopen exact replay,
+cross-target identity-reuse rejection and missing-observation rejection, plus prior queue safeguards.
+Five backend identified-edit HTTP tests passed (one effect, later-edit preservation, stale rejection,
+reconciliation protection and revoked authority). The focused Swift API edit-identity encoding test
+passed. Regular Xcode 27 build-for-testing passed on the preserved iPhone 17 Pro Max/iOS 27
+destination. Native compilation is not executed native runtime or human acceptance.
+No new backend schema or server change; server must already include migration 0049 and command
+receipts. App rebuild required. Human disconnected-edit/relaunch/reconnect acceptance remains open.
+No human data reset, merge, tag or TestFlight publication.
+
+Remaining Live acceptance: with a disposable ordinary posted transaction loaded, disconnect from
+the server, edit its memo, save, and reopen the app. Confirm Pending Sync retains a labeled edit
+without changing authoritative posted values. Reconnect; expect one accepted edit and an empty queue,
+then confirm the memo persists after refresh. In a separate case, change the server transaction from
+another authorized device before reconnecting: expect preserved server state and paused review,
+not an overwrite. This is new offline-edit acceptance, not repetition of accepted quick clearing.
+
 ## Persisted rejection review for transaction sync (2026-10-09)
 
 Definitive creation rejections previously remained saved but were retried by every refresh. The

@@ -24,8 +24,12 @@ mutation = send_body.index("client.createTransaction(")
 abort "Canonical mutation must recheck binding after refresh" unless prepare && binding && mutation && prepare < binding && binding < mutation
 record_first = workspace.index("    func recordTransaction(_ operation:", send_last)
 record_last = workspace.index("    func updateTransaction(id:", record_first || 0)
-abort "Canonical submission must use durable-first queue" unless record_first && record_last && workspace[record_first...record_last].include?("transactionOutbox.submit(identified, shouldPause: shouldPauseRejectedTransaction)")
-abort "Pending rows bypass workspace access" unless workspace.include?('guard !workspaceAccessDenied else { return [] }') && workspace.include?('PendingTransactionVisibility.allows($0.operation, canView: budget.can("view_transactions")')
+abort "Canonical submission must use durable-first queue" unless record_first && record_last && workspace[record_first...record_last].include?("try transactionOutbox.enqueue(identified)") && workspace[record_first...record_last].include?("transactionOutbox.replayCommands(")
+edit_last = workspace.index("    func deleteTransaction(id:", record_last || 0)
+edit_body = workspace[record_last...edit_last]
+abort "Edit must persist before replay" unless edit_body.index("enqueueEdit(") && edit_body.index("replayCommands(") && edit_body.index("enqueueEdit(") < edit_body.index("replayCommands(")
+abort "Edit sender must use current endpoint binding" unless send_body.include?("client.updateTransaction(") && send_body.include?("entry.operation.apiValue")
+abort "Pending rows bypass workspace access" unless workspace.include?('guard !workspaceAccessDenied else { return [] }') && workspace.include?('PendingTransactionVisibility.allows(entry.operation, canView: budget.can("view_transactions")')
 abort "Pending restricted state appears fully synced" unless workspace.include?('store.pendingLiveTransactions.isEmpty && !store.pendingLiveDetailsRestricted') && workspace.include?('pending-sync-restricted')
 abort "Pending discard bypasses visible entry check" unless workspace.include?('guard pendingLiveTransactions.contains(where: { $0.id == id }) else')
 puts <<'SWIFT'
@@ -126,13 +130,33 @@ try await Task { @MainActor in
  try paused.retryReviewed(id: operation.clientOperationID!)
  try await paused.replay { sent in retrySends += 1; precondition(sent == (retrySends == 1 ? operation : waiting)) }
  precondition(retrySends == 2 && LiveTransactionOutbox(fileURL: file).count == 0)
+ var edit = operation
+ edit.clientOperationID = nil; edit.mutationOperationID = UUID().uuidString
+ edit.expectedRevision = "v1:" + String(repeating: "a", count: 64)
+ try paused.enqueueEdit(transactionID: "existing", operation: edit)
+ let editQueue = LiveTransactionOutbox(fileURL: file)
+ precondition(editQueue.entries.first?.transactionID == "existing" && editQueue.entries.first?.operation == edit)
+ do { try editQueue.enqueueEdit(transactionID: "other", operation: edit); fatalError("Edit identity rebound") } catch {}
+ var missingRevision = edit; missingRevision.expectedRevision = nil
+ do { try editQueue.enqueueEdit(transactionID: "existing", operation: missingRevision); fatalError("Unobserved edit queued") } catch {}
+ var editSends = 0
+ do {
+  try await editQueue.replayCommands { entry in
+   editSends += 1; precondition(entry.transactionID == "existing" && entry.operation == edit)
+   throw URLError(.timedOut)
+  }
+ } catch {}
+ try await LiveTransactionOutbox(fileURL: file).replayCommands { entry in
+  editSends += 1; precondition(entry.operation == edit)
+ }
+ precondition(editSends == 2 && LiveTransactionOutbox(fileURL: file).count == 0)
  let blockedParent = root.appendingPathComponent("blocked")
  try Data("not a directory".utf8).write(to: blockedParent)
  let unwritable = LiveTransactionOutbox(fileURL: blockedParent.appendingPathComponent("queue.json"))
  var attempted = false
  do { try await unwritable.submit(operation) { _ in attempted = true }; fatalError("Write unexpectedly succeeded") } catch {}
  precondition(!attempted && unwritable.count == 0)
- print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, persisted rejection pause, later operations blocked, explicit ordered retry, no send after persistence failure")
+ print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, persisted rejection pause, later operations blocked, explicit ordered retry, targeted observed edit survives relaunch/replay, no send after persistence failure")
 }.value
 SWIFT
 RUBY

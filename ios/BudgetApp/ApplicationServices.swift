@@ -216,6 +216,7 @@ final class LiveTransactionOutbox {
         let queuedAt: Date
         let operation: RecordTransactionOperation
         var requiresReview: Bool? = nil
+        var transactionID: String? = nil
     }
 
     private let fileURL: URL
@@ -311,19 +312,47 @@ final class LiveTransactionOutbox {
 
     func replay(shouldPause: (Error) -> Bool = { _ in false },
                 send: (RecordTransactionOperation) async throws -> Void) async throws {
+        try await replayCommands(shouldPause: shouldPause) { entry in
+            guard entry.transactionID == nil else {
+                throw BudgetApplicationError.invalidOperation("This pending edit requires the transaction command sender.")
+            }
+            try await send(entry.operation)
+        }
+    }
+
+    func replayCommands(shouldPause: (Error) -> Bool = { _ in false },
+                        send: (Entry) async throws -> Void) async throws {
         guard try beginReplay() else { return }
         defer { finishReplay() }
         for entry in entries {
             guard entry.requiresReview != true else {
                 throw BudgetApplicationError.invalidOperation("A saved transaction needs review in Profile & Settings → Pending Sync. Later changes are waiting behind it.")
             }
-            do { try await send(entry.operation) }
+            do { try await send(entry) }
             catch {
                 if shouldPause(error) { try setReview(id: entry.id, required: true) }
                 throw error
             }
             try acknowledgeReplay(id: entry.id)
         }
+    }
+
+    func enqueueEdit(transactionID: String, operation: RecordTransactionOperation) throws {
+        try requireReadableQueue()
+        guard !transactionID.isEmpty, let id = operation.mutationOperationID,
+              UUID(uuidString: id) != nil, operation.clientOperationID == nil,
+              operation.expectedRevision != nil else {
+            throw BudgetApplicationError.invalidOperation("Pending edits require a target, stable mutation identity and observed revision.")
+        }
+        if let existing = entries.first(where: { $0.id == id }) {
+            guard existing.transactionID == transactionID && existing.operation == operation else {
+                throw BudgetApplicationError.invalidOperation("A pending edit identity cannot be reused for different details.")
+            }
+            return
+        }
+        let next = entries + [Entry(id: id, queuedAt: Date(), operation: operation, transactionID: transactionID)]
+        try persist(next)
+        entries = next
     }
 
     func retryReviewed(id: String) throws {
@@ -391,7 +420,14 @@ final class LiveTransactionOutbox {
         catch let error as CocoaError where error.code == .fileReadNoSuchFile { return [] }
         let values = try JSONDecoder().decode([Entry].self, from: data)
         guard Set(values.map(\.id)).count == values.count,
-              values.allSatisfy({ UUID(uuidString: $0.id) != nil && $0.operation.clientOperationID == $0.id }) else {
+              values.allSatisfy({ entry in
+                  guard UUID(uuidString: entry.id) != nil else { return false }
+                  if let target = entry.transactionID {
+                      return !target.isEmpty && entry.operation.mutationOperationID == entry.id
+                          && entry.operation.clientOperationID == nil && entry.operation.expectedRevision != nil
+                  }
+                  return entry.operation.clientOperationID == entry.id
+              }) else {
             throw BudgetApplicationError.invalidOperation("The saved queue has invalid operation identities.")
         }
         return values
