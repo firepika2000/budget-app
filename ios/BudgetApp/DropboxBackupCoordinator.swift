@@ -205,6 +205,18 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         }
     }
 
+    /// Local custody removal is deliberately distinct from remote grant revocation.
+    /// No network or backup deletion is attempted, including when offline.
+    func disconnectLocally() async {
+        guard !isWorking else { return }
+        observationRevision = UUID()
+        isWorking = true
+        defer { isWorking = false }
+        await credential?.disconnect()
+        isConnected = false; generations = []; automaticBackupEnabled = false
+        errorMessage = nil; publicationWarning = nil
+    }
+
     func revoke() async {
         guard let credential, !isWorking else { return }
         observationRevision = UUID()

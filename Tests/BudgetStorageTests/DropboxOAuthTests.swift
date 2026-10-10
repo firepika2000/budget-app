@@ -95,6 +95,23 @@ final class DropboxOAuthTests: XCTestCase {
         XCTAssertEqual(form["grant_type"], "refresh_token")
     }
 
+    func testLocalDisconnectRequiresNoNetworkAndPreservesIndependentCredential() async throws {
+        let store = MemoryDropboxRefreshStore("dropbox-refresh")
+        let independentStore = MemoryDropboxRefreshStore("independent-provider-refresh")
+        let recorder = OAuthRequestRecorder()
+        DropboxOAuthMockURLProtocol.handler = { request in
+            recorder.append(request)
+            throw URLError(.notConnectedToInternet)
+        }
+        let credential = try makeCredential(store: store)
+        await credential.disconnect()
+        XCTAssertNil(store.value())
+        XCTAssertEqual(independentStore.value(), "independent-provider-refresh")
+        XCTAssertEqual(recorder.count(), 0)
+        let connected = await credential.isConnected()
+        XCTAssertFalse(connected)
+    }
+
     func testRejectedAccessTokenRefreshesAndDisconnectRemovesOnlyDropboxCredential() async throws {
         let store = MemoryDropboxRefreshStore("refresh-A")
         let recorder = OAuthRequestRecorder()

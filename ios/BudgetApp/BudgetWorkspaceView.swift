@@ -7415,9 +7415,11 @@ private struct LocalDeviceBackupRecoveryView: View {
             titleVisibility: .visible
         ) {
             Button("Revoke and Disconnect", role: .destructive) { Task { await dropbox.revoke() } }
+            Button("Remove Connection from This iPhone", role: .destructive) { Task { await dropbox.disconnectLocally() } }
+                .accessibilityIdentifier("disconnect-dropbox-locally")
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("ClearPocket will ask Dropbox to revoke access, then remove its device-only refresh credential. Existing encrypted generations remain in your Dropbox until you delete them.")
+            Text("Revoke and Disconnect asks Dropbox to end access, then removes this iPhone’s credential. Remove Connection works offline but does not revoke Dropbox’s remote grant; remove ClearPocket in Dropbox’s connected-app settings to end that access. Neither option deletes encrypted backups or a pending generation.")
         }
         .confirmationDialog(
             "Discard Pending Generation?",

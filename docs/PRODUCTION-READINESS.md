@@ -1,5 +1,29 @@
 # Production readiness mission ledger
 
+## Offline Dropbox connection removal (2026-10-09)
+
+Backup & Recovery now distinguishes Revoke and Disconnect from Remove Connection from This
+iPhone. The existing remote revocation path still requires Dropbox confirmation before
+removing custody. The new explicit local-only action works without transport, invalidates
+older coordinator observations, removes the device's Dropbox credential through the canonical
+OAuth disconnect lifecycle, clears visible remote generations and disables automatic backup.
+It does not delete remote encrypted backups, retained local generations or the budget.
+
+Confirmation explicitly warns that local removal does not revoke the remote Dropbox grant
+and directs the user to Dropbox connected-app settings to end remote access. It remains
+disabled during an active operation; no automatic disconnect is introduced for transient errors.
+Nine executed OAuth regressions pass, including zero-network local removal, independent
+credential preservation, late authorization/refresh invalidation and confirmed remote revocation.
+Regular Xcode 27 build-for-testing passes for the production app and native test targets on
+the preserved iPhone 17 Pro Max / iOS 27 simulator. Native runtime and real-provider
+acceptance remain separate; the compiler result is not human acceptance.
+
+Human retest on a disposable local budget with Dropbox already connected: disconnect networking,
+open Disconnect Dropbox and choose Remove Connection from This iPhone. Expect Connect Dropbox,
+automatic backup disabled and any pending encrypted generation still available. Reconnect with
+normal consent when desired. Remote backup deletion and grant revocation are not implied by
+this action. App rebuild required; no server restart/migration. TestFlight remains held.
+
 ## Plan ordering failure visibility (2026-10-09)
 
 Category and group management no longer discard reorder failures through `try?`. Each drag
