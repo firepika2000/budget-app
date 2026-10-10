@@ -1386,6 +1386,15 @@ public struct APITransaction: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+public enum APIReportContributorKind: String, Sendable { case categorySpending = "category_spending", income, spending }
+
+public struct APIReportContributorPage: Decodable, Equatable, Sendable {
+    public let items: [APITransaction]
+    public let nextCursor: String?
+    public init(items: [APITransaction], nextCursor: String?) { self.items = items; self.nextCursor = nextCursor }
+    enum CodingKeys: String, CodingKey { case items; case nextCursor = "next_cursor" }
+}
+
 public struct APITransactionPage: Decodable, Equatable, Sendable {
     public let items: [APITransaction]
     public let nextCursor: String?

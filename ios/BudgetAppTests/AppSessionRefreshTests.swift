@@ -835,6 +835,40 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertTrue(store.usesLiveCredential(current))
     }
 
+    @MainActor
+    func testFullReportContributorReadRefreshesCanonicalSessionWithoutWorkspaceReconstruction() async throws {
+        let requests = CredentialRequestRecorder()
+        let expired = Self.jwt(expiration: Date().timeIntervalSince1970 - 60)
+        let current = Self.jwt(expiration: Date().timeIntervalSince1970 + 3600)
+        let session = makeSession(access: expired, refresh: "R1") { request in
+            requests.append(path: request.url?.path ?? "", authorization: request.value(forHTTPHeaderField: "Authorization") ?? "")
+            switch request.url?.path {
+            case "/api/v1/auth/refresh":
+                return Self.json(200, "{\"access_token\":\"\(current)\",\"refresh_token\":\"R2\",\"token_type\":\"bearer\"}")
+            case "/api/v1/budgets/b1/reports/contributors":
+                return Self.json(200, #"{"items":[],"next_cursor":null}"#)
+            default: return Self.json(404, "{}")
+            }
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let urlSession = URLSession(configuration: configuration)
+        let budget = APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD")
+        let store = BudgetWorkspaceStore.production(
+            context: .live(budget: budget, serverURL: URL(string: "https://budget.example.com")!, token: expired),
+            clientFactory: { try APIClient(baseURL: $0, session: urlSession) })
+        store.bindLiveCredentialAuthority { [weak session] forceRefresh in
+            guard let session else { throw APIClientError.server(status: 401, message: "Authentication required") }
+            return try await session.currentLiveCredentials(forceRefresh: forceRefresh, caller: "test.report-contributors")
+        }
+        let page = try await store.reportContributors(query: store.reportContext.query.selectingCategory("c1"), kind: .categorySpending, cursor: nil)
+        XCTAssertTrue(page.items.isEmpty)
+        XCTAssertEqual(requests.paths, ["/api/v1/auth/refresh", "/api/v1/budgets/b1/reports/contributors"])
+        XCTAssertEqual(requests.authorizations.last, "Bearer \(current)")
+        XCTAssertFalse(requests.authorizations.contains("Bearer \(expired)"))
+        XCTAssertTrue(store.usesLiveCredential(current))
+    }
+
     // Concurrent refresh demand must collapse to exactly one network refresh, and the rotated
     // credentials (A2/R2) must be what remains — no losing caller re-submits the old token or clears
     // the newer credentials, and no user-facing error is produced.

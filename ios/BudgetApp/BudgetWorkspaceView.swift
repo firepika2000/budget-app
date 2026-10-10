@@ -379,6 +379,11 @@ struct WorkspaceReportQuery: Equatable {
     let transactionType: String; let cleared: String; let flag: String; let tag: String
     let spendingTrendDimension: String
     let includeTracking: Bool
+    func selectingCategory(_ id: String) -> Self {
+        .init(start: start, end: end, accountID: accountID, categoryID: id, categoryGroup: categoryGroup,
+              payee: payee, memberID: memberID, transactionType: transactionType, cleared: cleared,
+              flag: flag, tag: tag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTracking)
+    }
 }
 
 struct WorkspaceReportContext: Equatable {
@@ -533,6 +538,7 @@ protocol WorkspaceDataSource: AnyObject {
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot
     func coreSnapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot
     func reports(planMonth: Date, query: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports
+    func reportContributors(planMonth: Date, query: WorkspaceReportQuery, kind: APIReportContributorKind, cursor: String?) async throws -> APIReportContributorPage
     func exportReports(report: WorkspaceReportQuery) async throws -> Data
     func exportCompleteBudget() async throws -> Data
     func debtStrategyProjection(_ request: APIDebtStrategyProjectionRequest) async throws -> APIDebtStrategyProjection
@@ -542,6 +548,9 @@ protocol WorkspaceDataSource: AnyObject {
 
 extension WorkspaceDataSource {
     var actorUserID: String? { nil }
+    func reportContributors(planMonth: Date, query: WorkspaceReportQuery, kind: APIReportContributorKind, cursor: String?) async throws -> APIReportContributorPage {
+        throw workspaceRepositoryError("Update this provider to load full report contributors.")
+    }
     func exportCompleteBudget() async throws -> Data {
         throw workspaceRepositoryError("Complete budget export is unavailable from this provider.")
     }
@@ -761,6 +770,33 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             }
             return rows
         }
+    }
+
+    func reportContributors(planMonth: Date, query: WorkspaceReportQuery, kind: APIReportContributorKind, cursor: String?) async throws -> APIReportContributorPage {
+        try requireActiveMembership()
+        guard actorCapabilities.contains("view_reports"), actorCapabilities.contains("view_transactions") else {
+            throw APIClientError.server(status: 403, message: "Insufficient permission")
+        }
+        let value = try await snapshot(planMonth: planMonth, report: query)
+        let ids: Set<String>
+        switch kind {
+        case .categorySpending: ids = Set(value.spending?.categories.flatMap(\.transactionIDs) ?? [])
+        case .income: ids = Set(value.income?.incomeTransactionIDs ?? [])
+        case .spending: ids = Set(value.income?.spendingTransactionIDs ?? [])
+        }
+        let rows = value.transactions.filter { ids.contains($0.id) }.sorted {
+            ($0.occurredOn, $0.createdAt ?? "", $0.id) > ($1.occurredOn, $1.createdAt ?? "", $1.id)
+        }
+        let start: Int
+        if let cursor {
+            guard let index = rows.firstIndex(where: { $0.id == cursor }) else {
+                throw APIClientError.server(status: 422, message: "Report changed. Refresh the contributor list.")
+            }
+            start = index + 1
+        } else { start = 0 }
+        let end = min(start + 50, rows.count)
+        let page = Array(rows[start..<end])
+        return .init(items: page, nextCursor: end < rows.count ? page.last?.id : nil)
     }
 
     func snapshot(planMonth: Date, report: WorkspaceReportQuery) async throws -> WorkspaceSnapshot { try requireActiveMembership();
@@ -4261,6 +4297,19 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
     func bindCredentialAuthority(_ resolver: @escaping LiveWorkspaceCredentials.Resolver) { credentials.bind(resolver) }
     func evictAuthorizedCache() { readCache.remove(); commands.evictAttachmentObservations() }
 
+    func reportContributors(planMonth: Date, query: WorkspaceReportQuery, kind: APIReportContributorKind, cursor: String?) async throws -> APIReportContributorPage {
+        try await credentials.prepare()
+        let client = try credentials.client()
+        return try await client.reportContributors(budgetID: budget.id, kind: kind,
+            startDate: BudgetWorkspaceStore.dateString(query.start), endDate: BudgetWorkspaceStore.dateString(query.end),
+            accountIDs: query.accountID.isEmpty ? [] : [query.accountID], categoryIDs: query.categoryID.isEmpty ? [] : [query.categoryID],
+            categoryGroups: query.categoryGroup.isEmpty ? [] : [query.categoryGroup], memberIDs: query.memberID.isEmpty ? [] : [query.memberID],
+            payees: query.payee.isEmpty ? [] : [query.payee], transactionType: query.transactionType.isEmpty ? nil : query.transactionType,
+            cleared: query.cleared == "all" || query.cleared == "reconciled" ? nil : query.cleared == "cleared",
+            reconciled: query.cleared == "reconciled" ? true : nil, flags: query.flag.isEmpty ? [] : [query.flag],
+            tags: query.tag.isEmpty ? [] : [query.tag], includeTracking: query.includeTracking, cursor: cursor, token: credentials.token)
+    }
+
     func reports(planMonth: Date, query report: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
         guard !kinds.isEmpty, budget.can("view_reports") else { return WorkspaceReports() }
         let budget = self.budget
@@ -4945,6 +4994,19 @@ final class BudgetWorkspaceStore: ObservableObject {
         let value = try await dataSource.reports(planMonth: planMonth, query: query, kinds: kinds)
         guard authorityRevision == revision else { throw CancellationError() }
         return value
+    }
+
+    func reportContributors(query: WorkspaceReportQuery, kind: APIReportContributorKind, cursor: String?) async throws -> APIReportContributorPage {
+        try requireWorkspaceAccess()
+        let revision = authorityRevision
+        guard let dataSource else { throw workspaceRepositoryError("Reports are unavailable.") }
+        let page = try await dataSource.reportContributors(planMonth: planMonth, query: query, kind: kind, cursor: cursor)
+        guard !Task.isCancelled, authorityRevision == revision else { throw CancellationError() }
+        for item in page.items {
+            if let index = transactions.firstIndex(where: { $0.id == item.id }) { transactions[index] = item }
+            else { transactions.append(item) }
+        }
+        return page
     }
 
     var reportContext: WorkspaceReportContext {
@@ -13870,6 +13932,7 @@ private struct LiveReportTransactionsView: View {
     var groupName: String? = nil
     var totalSpendingMinor: Int64? = nil
     var purpose = "contributing"
+    var reportCategoryID: String? = nil
     @State private var rows: [APITransaction] = []
     @State private var batchIndex = 0
     @State private var nextCursor: String?
@@ -13877,18 +13940,19 @@ private struct LiveReportTransactionsView: View {
     @State private var errorMessage: String?
     @State private var requestID: UUID?
     @State private var observationAuthority: Int?
-    private struct LoadKey: Equatable { let ids: [String]; let authority: Int }
+    @State private var observationContext: WorkspaceReportContext?
+    private struct LoadKey: Equatable { let ids: [String]; let authority: Int; let context: WorkspaceReportContext; let categoryID: String? }
     private var ids: [String] { Array(Set(transactionIDs)).sorted() }
     private var batches: [[String]] { TransactionIdentitySelection.batches(ids) }
-    private var canLoadMore: Bool { nextCursor != nil || batchIndex < batches.count }
+    private var canLoadMore: Bool { reportCategoryID != nil ? nextCursor != nil : (nextCursor != nil || batchIndex < batches.count) }
     var body: some View {
         List {
-            if observationAuthority != store.authorityRevision {
+            if observationAuthority != store.authorityRevision || observationContext != store.reportContext {
                 ProgressView("Loading authorized transactions…")
             } else {
             if let groupName { Section("Category Group") { Label(groupName, systemImage: "folder") } }
             if let totalSpendingMinor { Section { LabeledContent("Total", value: store.format(totalSpendingMinor)) } }
-            if isTruncated { Section { Label("Showing the first 500 contributing transactions. Report totals include all authorized activity.", systemImage: "info.circle") } }
+            if isTruncated && reportCategoryID == nil { Section { Label("Showing the first 500 contributing transactions. Report totals include all authorized activity.", systemImage: "info.circle") } }
             ForEach(rows) { LiveTransactionLink(transaction: $0) }
             if loading { HStack { Spacer(); ProgressView("Loading transactions…"); Spacer() } }
             if let errorMessage {
@@ -13904,9 +13968,10 @@ private struct LiveReportTransactionsView: View {
             }
         }.navigationTitle(title)
         .accessibilityIdentifier("report-contributors")
-        .task(id: LoadKey(ids: ids, authority: store.authorityRevision)) {
+        .task(id: LoadKey(ids: ids, authority: store.authorityRevision, context: store.reportContext, categoryID: reportCategoryID)) {
             requestID = nil; rows = []; nextCursor = nil; batchIndex = 0; loading = false; errorMessage = nil
             observationAuthority = store.authorityRevision
+            observationContext = store.reportContext
             await load(reset: true)
         }
         .onDisappear { requestID = nil; loading = false }
@@ -13915,21 +13980,27 @@ private struct LiveReportTransactionsView: View {
     private func load(reset: Bool) async {
         guard !loading else { return }
         if reset { batchIndex = 0; nextCursor = nil; rows = [] }
-        guard batchIndex < batches.count else { return }
-        let identity = UUID(), authority = store.authorityRevision, selectedIDs = ids
+        guard reportCategoryID != nil || batchIndex < batches.count else { return }
+        let identity = UUID(), authority = store.authorityRevision, selectedIDs = ids, context = store.reportContext
         requestID = identity; loading = true
         defer { if requestID == identity { loading = false } }
         do {
-            let page = try await store.browseTransactions(.init(transactionIDs: batches[batchIndex], limit: 50, cursor: nextCursor))
-            guard !Task.isCancelled, requestID == identity, authority == store.authorityRevision, selectedIDs == ids else { return }
+            let page: APIReportContributorPage
+            if let reportCategoryID {
+                page = try await store.reportContributors(query: context.query.selectingCategory(reportCategoryID), kind: .categorySpending, cursor: nextCursor)
+            } else {
+                let value = try await store.browseTransactions(.init(transactionIDs: batches[batchIndex], limit: 50, cursor: nextCursor))
+                page = .init(items: value.items, nextCursor: value.nextCursor)
+            }
+            guard !Task.isCancelled, requestID == identity, authority == store.authorityRevision, selectedIDs == ids, context == store.reportContext else { return }
             let existing = Set(rows.map(\.id))
             rows += page.items.filter { !existing.contains($0.id) }
             rows.sort { ($0.occurredOn, $0.createdAt ?? "", $0.id) > ($1.occurredOn, $1.createdAt ?? "", $1.id) }
             nextCursor = page.nextCursor
-            if nextCursor == nil { batchIndex += 1 }
+            if nextCursor == nil && reportCategoryID == nil { batchIndex += 1 }
             errorMessage = nil
         } catch {
-            guard !Task.isCancelled, requestID == identity, authority == store.authorityRevision, selectedIDs == ids else { return }
+            guard !Task.isCancelled, requestID == identity, authority == store.authorityRevision, selectedIDs == ids, context == store.reportContext else { return }
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; batchIndex = 0 }
             errorMessage = error.localizedDescription
         }
@@ -13949,7 +14020,8 @@ private struct LiveReportCategoryView: View {
     private var contributingIDsTruncated: Bool { reportLoaded ? (liveRow?.transactionIDsTruncated == true) : (category.transactionIDsTruncated == true) }
     var body: some View {
         LiveReportTransactionsView(title: displayName, transactionIDs: contributingIDs,
-            isTruncated: contributingIDsTruncated, groupName: category.categoryGroup, totalSpendingMinor: spendingMinor)
+            isTruncated: contributingIDsTruncated, groupName: liveRow?.categoryGroup ?? category.categoryGroup,
+            totalSpendingMinor: spendingMinor, reportCategoryID: category.categoryID)
     }
 }
 

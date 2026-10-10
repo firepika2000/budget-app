@@ -11,6 +11,32 @@ import UniformTypeIdentifiers
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testFullCategoryContributorsUseCanonicalReportAndSharedDetail() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        await store.loadReports([.spending])
+        let category = try XCTUnwrap(store.spendingReport?.categories.first)
+        let query = store.reportContext.query.selectingCategory(category.categoryID)
+        let summary = store.summary, balances = store.accountBalances
+        let expected = Set(category.transactionIDs)
+        store.transactions.removeAll { expected.contains($0.id) }
+        var cursor: String?, found = Set<String>()
+        repeat {
+            let page = try await store.reportContributors(query: query, kind: .categorySpending, cursor: cursor)
+            XCTAssertLessThanOrEqual(page.items.count, 50)
+            XCTAssertTrue(found.isDisjoint(with: page.items.map(\.id)))
+            found.formUnion(page.items.map(\.id)); cursor = page.nextCursor
+        } while cursor != nil
+        XCTAssertEqual(found, expected)
+        XCTAssertTrue(expected.isSubset(of: Set(store.transactions.map(\.id))))
+        XCTAssertEqual(store.summary, summary); XCTAssertEqual(store.accountBalances, balances)
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift"))
+        XCTAssertTrue(source.contains("reportCategoryID: category.categoryID"))
+        XCTAssertTrue(source.contains("context.query.selectingCategory(reportCategoryID)"))
+        XCTAssertTrue(source.contains("context == store.reportContext"))
+    }
+
+    @MainActor
     func testContributorIdentitySearchHydratesSharedDetailWithoutFinancialMutation() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()

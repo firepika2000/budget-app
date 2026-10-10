@@ -2,6 +2,48 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testReportContributorsPreservesContextCursorAndCurrentCredential() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        var calls = 0
+        MockURLProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/reports/contributors")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(calls == 1 ? "A" : "B")")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            let values = Dictionary(grouping: items, by: \.name).mapValues { $0.compactMap(\.value) }
+            XCTAssertEqual(values["kind"], ["category_spending"])
+            XCTAssertEqual(values["start_date"], ["2026-09-01"])
+            XCTAssertEqual(values["end_date"], ["2026-09-30"])
+            XCTAssertEqual(values["account_id"], ["a1", "a2"])
+            XCTAssertEqual(values["category_id"], ["c1"])
+            XCTAssertEqual(values["category_group"], ["Food"])
+            XCTAssertEqual(values["member_id"], ["u1"])
+            XCTAssertEqual(values["payee"], ["Market & Cafe"])
+            XCTAssertEqual(values["transaction_type"], ["refund"])
+            XCTAssertEqual(values["cleared"], ["false"])
+            XCTAssertEqual(values["reconciled"], ["false"])
+            XCTAssertEqual(values["flag"], ["orange"])
+            XCTAssertEqual(values["tag"], ["qa"])
+            XCTAssertEqual(values["include_tracking"], ["true"])
+            XCTAssertEqual(values["limit"], ["50"])
+            XCTAssertEqual(values["cursor"], calls == 1 ? nil : ["opaque+/="])
+            XCTAssertNil(values["transaction_id"])
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data((calls == 1 ? #"{"items":[],"next_cursor":"opaque+/="}"# : #"{"items":[],"next_cursor":null}"#).utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        var cursor: String?
+        for token in ["A", "B"] {
+            let page = try await client.reportContributors(budgetID: "b1", kind: .categorySpending,
+                startDate: "2026-09-01", endDate: "2026-09-30", accountIDs: ["a1", "a2"], categoryIDs: ["c1"],
+                categoryGroups: ["Food"], memberIDs: ["u1"], payees: ["Market & Cafe"], transactionType: "refund",
+                cleared: false, reconciled: false, flags: ["orange"], tags: ["qa"], includeTracking: true, cursor: cursor, token: token)
+            cursor = page.nextCursor
+        }
+        XCTAssertEqual(calls, 2); XCTAssertNil(cursor)
+    }
+
     func testTransactionIdentitySearchRejectsServerIgnoringSelection() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
         MockURLProtocol.handler = { request in

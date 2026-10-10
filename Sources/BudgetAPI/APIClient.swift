@@ -748,6 +748,29 @@ public struct APIClient {
             headers: operationID.map { ["X-Planning-Operation-ID": $0] } ?? [:])
     }
 
+    public func reportContributors(
+        budgetID: String, kind: APIReportContributorKind, startDate: String, endDate: String,
+        accountIDs: [String] = [], categoryIDs: [String] = [], categoryGroups: [String] = [],
+        memberIDs: [String] = [], payees: [String] = [], transactionType: String? = nil,
+        cleared: Bool? = nil, reconciled: Bool? = nil, flags: [String] = [], tags: [String] = [],
+        includeTracking: Bool = false, limit: Int = 50, cursor: String? = nil, token: String
+    ) async throws -> APIReportContributorPage {
+        var query = [URLQueryItem(name: "kind", value: kind.rawValue),
+            URLQueryItem(name: "start_date", value: startDate), URLQueryItem(name: "end_date", value: endDate),
+            URLQueryItem(name: "limit", value: String(limit))]
+        for (key, values) in [("account_id", accountIDs), ("category_id", categoryIDs),
+                              ("category_group", categoryGroups), ("member_id", memberIDs),
+                              ("payee", payees), ("flag", flags), ("tag", tags)] {
+            query += values.map { URLQueryItem(name: key, value: $0) }
+        }
+        if let transactionType { query.append(URLQueryItem(name: "transaction_type", value: transactionType)) }
+        if let cleared { query.append(URLQueryItem(name: "cleared", value: String(cleared))) }
+        if let reconciled { query.append(URLQueryItem(name: "reconciled", value: String(reconciled))) }
+        if includeTracking { query.append(URLQueryItem(name: "include_tracking", value: "true")) }
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try await send(path: "api/v1/budgets/\(budgetID)/reports/contributors", queryItems: query, token: token)
+    }
+
     public func spendingReport(
         budgetID: String,
         startDate: String,

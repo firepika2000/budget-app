@@ -1,5 +1,38 @@
 # Production readiness mission ledger
 
+## Full Spending Breakdown contributor navigation (2026-10-09)
+
+Spending Breakdown category detail now reads the full canonical contributor endpoint rather than
+the compact report's first 500 identities. Live requests preserve the selected category, report
+dates, account/group/member/payee/type/state/flag/tag filters and tracking setting, with 50-row
+pages, Load More and retry. Current session credentials are prepared at request execution.
+Authoritative records hydrate the existing shared transaction detail/editor; totals remain the
+report's exact values. Changes to access or report context immediately hide obsolete rows, and
+obsolete responses cannot publish. Returning after an edit reloads the current report context.
+
+Local Device and Demo use their existing canonical report observations and authorized transaction
+records, without a second financial calculator. Their report calculation still scans local data;
+bounded rendering does not establish large-history calculation performance. Statement duplicate
+inspection keeps its exact-identity browser path. Other report contributor destinations, including
+Income vs Spending, payee trends and Net Worth, still use their compact identity selections and
+remain follow-up work; this checkpoint does not claim all report drill-through is uncapped.
+
+All 106 focused Swift API and identity-selection tests pass. The new executed API regression checks
+every report filter, opaque cursor forwarding, response decoding and changed bearer credentials.
+Native regressions cover Local/Demo canonical contributor identity, shared detail hydration without
+financial mutation, production view wiring, context guards, and a Live-shaped expired-session
+refresh before contributor retrieval. These native tests are compiled, not executed.
+Regular Xcode 27.0 (27A266a), `/Applications/Xcode.app/Contents/Developer`, passes the final
+build-for-testing for app/native targets on the preserved iPhone 17 Pro Max / iOS 27 simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`. `git diff --check` passes. No runner retry or data reset.
+
+Human retest requires an app rebuild and server update through `699aa15`, with no migration:
+open Spending Breakdown, choose a category, load additional contributors and inspect a transaction.
+For a disposable budget with more than 500 contributors, continue beyond 500; all pages must remain
+category/filter scoped. Edit a transaction through the normal editor and return to verify the
+updated total/list. Check restrictive access and Local Device as well. Human acceptance is pending;
+TestFlight publishing remains held.
+
 ## Full report contributor server paging (2026-10-09)
 
 The new `GET /api/v1/budgets/{budget_id}/reports/contributors` endpoint pages canonical
