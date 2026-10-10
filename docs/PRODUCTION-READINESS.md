@@ -1,5 +1,36 @@
 # Production readiness mission ledger
 
+## Durable reviewed transaction duplication (2026-10-09)
+
+The production transaction detail captures source revision and copy date when opening its
+confirmation. Live persists that reviewed intent and a UUID before transport, then submits
+through the canonical duplication endpoint using current credentials and destination binding.
+Lost responses retain the original request across relaunch; stale or revoked requests pause
+for explicit review rather than rebasing. Duplicate pending copies of the same source are
+refused. Legacy unreviewed Live duplication is refused; Demo and Local Device use the same
+application-service operation with their existing canonical implementation.
+
+Pending Sync exposes the retained copy date and awaiting-approval state only with current
+create/view permission and source visibility. No local transaction, balance, reserve event,
+allocation or history is synthesized before server acceptance. The sender requires the
+identified duplication server contract below; offline deletion remains a separate open gap.
+
+Executed production queue tests prove source/date/revision/identity persistence, lost-response
+reconstruction, duplicate refusal, rejection pause, original-intent retry and acknowledgement
+cleanup. The Swift API regression proves exact identified payload, current credential and
+legacy omission. Native relaunch coverage is added. Regular Xcode 27.0 (27A266a),
+`/Applications/Xcode.app/Contents/Developer`, passed `build-for-testing` for preserved iPhone
+17 Pro Max simulator `3ABD861E-D38D-4AFD-A356-959266051564` on iOS 27. Native tests are compiled,
+not runtime-executed; human acceptance is not claimed. `git diff --check` passes.
+An app rebuild and server update are required; no migration. TestFlight remains held.
+
+Human retest on a disposable ordinary transaction: disconnect, open Duplicate and confirm.
+Verify one saved request in Pending Sync and unchanged posted totals. Relaunch offline,
+reconnect, and confirm exactly one new uncleared copy with the reviewed date, original metadata
+and no copied attachments. Repeat refresh/relaunch to verify no second copy appears. On a
+separate disposable source, change the source on another device before reconnecting and verify
+the stale request pauses without creating a copy.
+
 ## Identified transaction duplication server contract (2026-10-09)
 
 Duplication accepts optional `mutation_operation_id` and `expected_revision`; an identified
@@ -19,8 +50,8 @@ stale and malformed observations, account/category/capability revocation, proven
 legacy split/card duplication and system-linked exclusions. A real isolated PostgreSQL race
 proves two identified callers produce one copy, provenance entry and receipt. No migration or
 Swift change is included. Server deployment/restart is required to expose this contract.
-Native durable duplication queuing remains the next integration gap; this server checkpoint
-does not claim offline duplication is available to customers. TestFlight remains held.
+The durable native integration is recorded above; this server checkpoint alone does not
+provide offline duplication. TestFlight remains held.
 
 ## Encrypted offline attachment previews (2026-10-09)
 

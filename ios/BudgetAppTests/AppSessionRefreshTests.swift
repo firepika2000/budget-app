@@ -1749,6 +1749,23 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testReviewedDuplicateSurvivesRelaunchWithoutPostingLocally() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("duplicate-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("queue.json")
+        let command = DuplicateTransactionOperation(transactionID: "original", occurredOn: "2026-10-09",
+            expectedRevision: "v1:" + String(repeating: "d", count: 64), mutationOperationID: UUID().uuidString.lowercased())
+        let queue = LiveTransactionOutbox(fileURL: file)
+        try queue.enqueueDuplicate(command)
+        do { try await queue.replayCommands(shouldPause: { _ in false }) { _ in throw URLError(.networkConnectionLost) }; XCTFail("Expected lost response") } catch {}
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.entries.first?.duplicateCommand, command)
+        XCTAssertNil(reopened.entries.first?.operation, "No locally synthesized ledger posting")
+        try await reopened.replayCommands { entry in XCTAssertEqual(entry.duplicateCommand, command) }
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).count, 0)
+    }
+
+    @MainActor
     func testLiveAttachmentListsSurviveReconstructionButNeverFallbackAfterDenial() async throws {
         let budget = APIBudget(id: UUID().uuidString, householdID: "h1", name: "Cache test", currencyCode: "USD", accessRevision: "a")
         let server = URL(string: "https://attachment-cache.example.com")!

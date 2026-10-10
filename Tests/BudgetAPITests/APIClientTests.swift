@@ -863,11 +863,22 @@ final class APIClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
         let session = URLSession(configuration: configuration)
+        let identity = UUID().uuidString.lowercased(), revision = "v1:" + String(repeating: "a", count: 64)
+        var calls = 0
         MockURLProtocol.handler = { request in
+            calls += 1
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/t1/duplicate")
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
             XCTAssertEqual(json["occurred_on"] as? String, "2026-09-14")
+            if calls == 1 {
+                XCTAssertNil(json["mutation_operation_id"]); XCTAssertNil(json["expected_revision"])
+            } else {
+                XCTAssertEqual(json["mutation_operation_id"] as? String, identity)
+                XCTAssertEqual(json["expected_revision"] as? String, revision)
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
+                XCTAssertEqual(Set(json.keys), ["occurred_on", "mutation_operation_id", "expected_revision"])
+            }
             let response = Data(#"{"id":"t2","budget_id":"b1","account_id":"a1","category_id":"c1","payee_id":null,"amount_minor":-1200,"occurred_on":"2026-09-14","created_at":"2026-09-14T12:00:00Z","payee_name":"Market","memo":"","is_cleared":false,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":null,"scheduled_transaction_id":null,"splits":[]}"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, response)
         }
@@ -875,6 +886,11 @@ final class APIClientTests: XCTestCase {
         let copy = try await client.duplicateTransaction(budgetID: "b1", transactionID: "t1", occurredOn: "2026-09-14", token: "secret")
         XCTAssertEqual(copy.id, "t2")
         XCTAssertFalse(copy.isCleared)
+        for _ in 0..<2 {
+            _ = try await client.duplicateTransaction(budgetID: "b1", transactionID: "t1", occurredOn: "2026-09-14",
+                expectedRevision: revision, mutationOperationID: identity, token: "rotated")
+        }
+        XCTAssertEqual(calls, 3)
     }
 
     func testVoidAndMakeRecurringUseExplicitAuditContracts() async throws {

@@ -1472,8 +1472,14 @@ public struct APITransactionQuery: Equatable, Sendable {
 
 public struct APITransactionDuplicate: Encodable, Equatable, Sendable {
     public let occurredOn: String
-    public init(occurredOn: String) { self.occurredOn = occurredOn }
-    enum CodingKeys: String, CodingKey { case occurredOn = "occurred_on" }
+    public let expectedRevision: String?
+    public let mutationOperationID: String?
+    public init(occurredOn: String, expectedRevision: String? = nil, mutationOperationID: String? = nil) {
+        self.occurredOn = occurredOn; self.expectedRevision = expectedRevision; self.mutationOperationID = mutationOperationID
+    }
+    enum CodingKeys: String, CodingKey {
+        case occurredOn = "occurred_on", expectedRevision = "expected_revision", mutationOperationID = "mutation_operation_id"
+    }
 }
 
 public struct APITransactionVoid: Codable, Equatable, Sendable {

@@ -30,6 +30,7 @@ send_first = workspace.index("    private func sendTransaction(")
 send_last = workspace.index("    func householdInvitations()", send_first || 0)
 abort "Canonical send path moved; review binding guard" unless send_first && send_last
 send_body = workspace[send_first...send_last]
+abort "Duplication bypasses reviewed durable replay" unless workspace.include?("transactionOutbox.enqueueDuplicate(identified)") && send_body.include?("entry.duplicateCommand") && send_body.include?("client.duplicateTransaction(") && workspace.include?("expectedRevision: duplicateRevision")
 prepare = send_body.index("try await credentials.prepare()")
 binding = send_body.index("try transactionOutbox.requireServer(")
 mutation = send_body.index("client.createTransaction(")
@@ -292,6 +293,29 @@ try await Task { @MainActor in
  }
  precondition(reconciliationSends == 3 && LiveTransactionOutbox(fileURL: reconciliationFile).count == 0)
  print("PASS: reviewed reconciliation exact amounts/consent/token/identity persist before send, duplicate account submissions rejected, lost acknowledgement retained, stale review paused across relaunch, explicit retry never rebases, acknowledgement clears original intent")
+ let duplicateFile = root.appendingPathComponent("duplicate.json")
+ let duplicateQueue = LiveTransactionOutbox(fileURL: duplicateFile)
+ let duplicateCommand = DuplicateTransactionOperation(transactionID: "source", occurredOn: "2026-10-09",
+     expectedRevision: "v1:" + String(repeating: "d", count: 64), mutationOperationID: UUID().uuidString.lowercased())
+ try duplicateQueue.enqueueDuplicate(duplicateCommand)
+ try duplicateQueue.enqueueDuplicate(duplicateCommand); precondition(duplicateQueue.count == 1)
+ var secondDuplicate = duplicateCommand; secondDuplicate.mutationOperationID = UUID().uuidString.lowercased()
+ do { try duplicateQueue.enqueueDuplicate(secondDuplicate); fatalError("Duplicate pending copy accepted") } catch {}
+ var duplicateSends = 0
+ do { try await duplicateQueue.replayCommands(shouldPause: { _ in false }) { entry in
+     duplicateSends += 1; precondition(entry.duplicateCommand == duplicateCommand); throw URLError(.networkConnectionLost)
+ }; fatalError("Expected response loss") } catch {}
+ let reopenedDuplicate = LiveTransactionOutbox(fileURL: duplicateFile)
+ precondition(reopenedDuplicate.entries[0].duplicateCommand == duplicateCommand)
+ do { try await reopenedDuplicate.replayCommands(shouldPause: { _ in true }) { _ in
+     duplicateSends += 1; throw BudgetApplicationError.invalidOperation("Source changed")
+ }; fatalError("Expected stale duplicate") } catch {}
+ let pausedDuplicate = LiveTransactionOutbox(fileURL: duplicateFile)
+ do { try await pausedDuplicate.replayCommands { _ in fatalError("Paused duplicate automatically sent") } } catch {}
+ try pausedDuplicate.retryReviewed(id: duplicateCommand.mutationOperationID!)
+ try await pausedDuplicate.replayCommands { entry in duplicateSends += 1; precondition(entry.duplicateCommand == duplicateCommand) }
+ precondition(duplicateSends == 3 && LiveTransactionOutbox(fileURL: duplicateFile).count == 0)
+ print("PASS: reviewed duplication date/source/revision/identity survive response loss/relaunch, duplicate refused, rejection paused, original-intent retry and acknowledgement cleanup")
  let voidFile = root.appendingPathComponent("void.json")
  let voidQueue = LiveTransactionOutbox(fileURL: voidFile)
  let voidCommand = VoidTransactionOperation(transactionID: "original", reason: "Reviewed duplicate", expectedRevision: "v1:" + String(repeating: "d", count: 64), mutationOperationID: UUID().uuidString.lowercased())

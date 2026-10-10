@@ -3751,6 +3751,14 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
                     mutationOperationID: operation.mutationOperationID), token: token)
             return
         }
+        if let operation = entry.duplicateCommand {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            _ = try await client.duplicateTransaction(budgetID: budget.id, transactionID: operation.transactionID,
+                occurredOn: operation.occurredOn, expectedRevision: operation.expectedRevision,
+                mutationOperationID: operation.mutationOperationID, token: token)
+            return
+        }
         if let operation = entry.reconciliation {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3864,7 +3872,18 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         }
     }
     func deleteTransaction(id: String) async throws { try await credentials.prepare(); try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
-    func duplicateTransaction(id: String, occurredOn: String) async throws { try await credentials.prepare(); _ = try await client.duplicateTransaction(budgetID: budget.id, transactionID: id, occurredOn: occurredOn, token: token) }
+    func duplicateTransaction(id: String, occurredOn: String) async throws {
+        throw BudgetApplicationError.invalidOperation("Reopen this transaction to review it before duplicating.")
+    }
+    func duplicateTransaction(_ operation: DuplicateTransactionOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueDuplicate(identified)
+        do { try await replaySavedPlanning() }
+        catch {
+            guard transactionOutbox.entries.contains(where: { $0.id == identified.mutationOperationID }) else { throw error }
+        }
+    }
     func voidTransaction(id: String, reason: String) async throws {
         throw BudgetApplicationError.invalidOperation("Reopen this transaction to review it before voiding.")
     }
@@ -5034,6 +5053,9 @@ final class BudgetWorkspaceStore: ObservableObject {
             if let command = entry.voidCommand {
                 return budget.can("delete_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == command.transactionID })
             }
+            if let command = entry.duplicateCommand {
+                return budget.can("create_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == command.transactionID })
+            }
             if let reconciliation = entry.reconciliation {
                 return budget.can("reconcile_account") && budget.can("view_account_balances") && accountIDs.contains(reconciliation.accountID)
             }
@@ -5159,8 +5181,10 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
 
-    func duplicateTransaction(id: String, occurredOn: String) async throws {
-        try await services().transactions.duplicate(id: id, occurredOn: occurredOn)
+    func duplicateTransaction(id: String, occurredOn: String, expectedRevision: String? = nil) async throws {
+        defer { publishPendingPlanningStatus() }
+        try await services().transactions.duplicate(DuplicateTransactionOperation(transactionID: id,
+            occurredOn: occurredOn, expectedRevision: expectedRevision))
         await refresh()
     }
 
@@ -6588,6 +6612,10 @@ private struct PendingLiveTransactionsView: View {
                                 Text(upload.filename).font(.subheadline)
                                 Text(ByteCountFormatter.string(fromByteCount: Int64(upload.byteCount), countStyle: .file)).font(.caption)
                                 Text("Saved on this iPhone · awaiting server confirmation").font(.caption).foregroundStyle(.secondary)
+                            } else if let command = entry.duplicateCommand {
+                                Text("Duplicate Transaction").font(.headline)
+                                Text("Copy dated " + command.occurredOn).font(.subheadline)
+                                Text("Awaiting server approval · balances unchanged until accepted").font(.caption).foregroundStyle(.secondary)
                             } else if let command = entry.voidCommand {
                                 Text("Void with Reversal").font(.headline)
                                 Text(store.transactions.first(where: { $0.id == command.transactionID })?.payeeName ?? "Transaction")
@@ -10550,6 +10578,8 @@ private struct LiveTransactionDetailView: View {
     @State private var editTransfer: TransferPresentation?
     @State private var confirmDelete = false
     @State private var confirmDuplicate = false
+    @State private var duplicateRevision: String?
+    @State private var duplicateDate = ""
     @State private var showVoid = false
     @State private var showRecurring = false
     @State private var isDeleting = false
@@ -10588,7 +10618,7 @@ private struct LiveTransactionDetailView: View {
                 } else if transaction.transferID == nil {
                     Menu {
                         if store.budget.can("edit_transaction") { Button("Edit", systemImage: "pencil") { showEdit = true } }
-                        if store.budget.can("create_transaction"), transaction.scheduledTransactionID == nil, !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Duplicate", systemImage: "plus.square.on.square") { confirmDuplicate = true }.accessibilityIdentifier("duplicate-transaction-action") }
+                        if store.budget.can("create_transaction"), transaction.scheduledTransactionID == nil, !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Duplicate", systemImage: "plus.square.on.square") { duplicateRevision = transaction.revision; duplicateDate = BudgetWorkspaceStore.dateString(Date()); confirmDuplicate = true }.disabled(isDeleting).accessibilityIdentifier("duplicate-transaction-action") }
                         if store.budget.can("manage_planning"), transaction.splits.isEmpty, !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Make Recurring", systemImage: "repeat") { showRecurring = true }.accessibilityIdentifier("make-recurring-action") }
                         if store.budget.can("delete_transaction"), !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Void with Reversal", systemImage: "arrow.uturn.backward.circle") { showVoid = true }.accessibilityIdentifier("void-transaction-action") }
                         if store.budget.can("delete_transaction") { Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true } }
@@ -10626,9 +10656,9 @@ private struct LiveTransactionDetailView: View {
         catch { store.errorMessage = error.localizedDescription }
     }
     private func duplicateTransaction() async {
-        guard let transaction else { return }
+        guard !isDeleting, let transaction else { return }
         isDeleting = true; defer { isDeleting = false }
-        do { try await store.duplicateTransaction(id: transaction.id, occurredOn: BudgetWorkspaceStore.dateString(Date())) }
+        do { try await store.duplicateTransaction(id: transaction.id, occurredOn: duplicateDate, expectedRevision: duplicateRevision) }
         catch { store.errorMessage = error.localizedDescription }
     }
 }

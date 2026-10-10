@@ -117,6 +117,23 @@ struct ReconcileAccountOperation: Codable, Equatable, Sendable {
     let expectedClearedBalanceMinor: Int64
 }
 
+struct DuplicateTransactionOperation: Codable, Equatable, Sendable {
+    let transactionID: String
+    let occurredOn: String
+    let expectedRevision: String?
+    var mutationOperationID: String? = nil
+    var isValidPending: Bool {
+        guard !transactionID.isEmpty, let identity = mutationOperationID, UUID(uuidString: identity) != nil,
+              let revision = expectedRevision, revision.hasPrefix("v1:"), revision.count == 67,
+              revision.dropFirst(3).allSatisfy({ "0123456789abcdef".contains($0) }) else { return false }
+        let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"; formatter.isLenient = false
+        guard let date = formatter.date(from: occurredOn) else { return false }
+        return formatter.string(from: date) == occurredOn
+    }
+}
+
 struct VoidTransactionOperation: Codable, Equatable, Sendable {
     let transactionID: String
     let reason: String
@@ -344,6 +361,7 @@ final class LiveTransactionOutbox {
         var transferID: String? = nil
         var reconciliation: ReconcileAccountOperation? = nil
         var voidCommand: VoidTransactionOperation? = nil
+        var duplicateCommand: DuplicateTransactionOperation? = nil
         var attachmentUpload: AttachmentUpload? = nil
         var scheduleCreation: ScheduleOperation? = nil
         var makeRecurring: MakeRecurringOperation? = nil
@@ -545,6 +563,7 @@ final class LiveTransactionOutbox {
                   existing.accountTransfer == entry.accountTransfer && existing.transferID == entry.transferID,
                   existing.reconciliation == entry.reconciliation,
                   existing.voidCommand == entry.voidCommand,
+                  existing.duplicateCommand == entry.duplicateCommand,
                   existing.attachmentUpload == entry.attachmentUpload,
                   existing.scheduleCreation == entry.scheduleCreation,
                   existing.makeRecurring == entry.makeRecurring && existing.transactionID == entry.transactionID,
@@ -628,6 +647,16 @@ final class LiveTransactionOutbox {
             throw BudgetApplicationError.invalidOperation("This schedule already has a saved change. Review it in Pending Sync before deleting.")
         }
         try enqueuePlanning(Entry(id: identity, queuedAt: Date(), operation: nil, scheduleID: operation.scheduleID, scheduleDeletion: operation))
+    }
+
+    func enqueueDuplicate(_ operation: DuplicateTransactionOperation) throws {
+        guard operation.isValidPending, let identity = operation.mutationOperationID else {
+            throw BudgetApplicationError.invalidOperation("Reopen this transaction to review its date and source before duplicating.")
+        }
+        guard !entries.contains(where: { $0.id != identity && $0.duplicateCommand?.transactionID == operation.transactionID }) else {
+            throw BudgetApplicationError.invalidOperation("This transaction already has a saved duplicate. Resolve it in Pending Sync first.")
+        }
+        try enqueuePlanning(Entry(id: identity, queuedAt: Date(), operation: nil, duplicateCommand: operation))
     }
 
     func enqueueVoid(_ operation: VoidTransactionOperation) throws {
@@ -776,7 +805,7 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil, entry.scheduleRealization != nil, entry.attachmentRemoval != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.duplicateCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil, entry.scheduleRealization != nil, entry.attachmentRemoval != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
                   if let removal = entry.attachmentRemoval {
                       return entry.scheduleID == nil && entry.transactionID == nil && entry.transferID == nil
@@ -814,6 +843,10 @@ final class LiveTransactionOutbox {
                           && command.mutationOperationID == entry.id && !command.transactionID.isEmpty && command.reason.count <= 500
                           && revision.hasPrefix("v1:") && revision.count == 67
                           && revision.dropFirst(3).allSatisfy({ "0123456789abcdef".contains($0) })
+                  }
+                  if let command = entry.duplicateCommand {
+                      return entry.transactionID == nil && entry.transferID == nil
+                          && command.mutationOperationID == entry.id && command.isValidPending
                   }
                   if let reconciliation = entry.reconciliation {
                       guard let revision = reconciliation.expectedReviewRevision else { return false }
@@ -1199,6 +1232,7 @@ protocol TransactionCommandRepository: AnyObject {
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws
     func deleteTransaction(id: String) async throws
     func duplicateTransaction(id: String, occurredOn: String) async throws
+    func duplicateTransaction(_ operation: DuplicateTransactionOperation) async throws
     func voidTransaction(id: String, reason: String) async throws
     func voidTransaction(_ operation: VoidTransactionOperation) async throws
     func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws
@@ -1216,6 +1250,9 @@ protocol TransactionCommandRepository: AnyObject {
 }
 
 extension TransactionCommandRepository {
+    func duplicateTransaction(_ operation: DuplicateTransactionOperation) async throws {
+        try await duplicateTransaction(id: operation.transactionID, occurredOn: operation.occurredOn)
+    }
     func detachTransactionAttachment(_ operation: DetachAttachmentOperation) async throws {
         try await detachTransactionAttachment(transactionID: operation.transactionID, attachmentID: operation.attachmentID)
     }
@@ -1401,6 +1438,10 @@ struct TransactionService {
 
     func duplicate(id: String, occurredOn: String) async throws {
         do { try await repository.duplicateTransaction(id: id, occurredOn: occurredOn) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+    func duplicate(_ operation: DuplicateTransactionOperation) async throws {
+        do { try await repository.duplicateTransaction(operation) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

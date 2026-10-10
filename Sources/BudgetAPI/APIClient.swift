@@ -339,8 +339,9 @@ public struct APIClient {
         return try await send(path: "api/v1/budgets/\(budgetID)/transactions/search", queryItems: items, token: token)
     }
 
-    public func duplicateTransaction(budgetID: String, transactionID: String, occurredOn: String, token: String) async throws -> APITransaction {
-        try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/duplicate", method: "POST", token: token, body: APITransactionDuplicate(occurredOn: occurredOn))
+    public func duplicateTransaction(budgetID: String, transactionID: String, occurredOn: String, expectedRevision: String? = nil, mutationOperationID: String? = nil, token: String) async throws -> APITransaction {
+        try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/duplicate", method: "POST", token: token,
+            body: APITransactionDuplicate(occurredOn: occurredOn, expectedRevision: expectedRevision, mutationOperationID: mutationOperationID))
     }
 
     public func voidTransaction(budgetID: String, transactionID: String, reason: String, token: String) async throws -> APITransaction {
