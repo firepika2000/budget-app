@@ -4,6 +4,24 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testPendingScheduleDeletionRetainsReviewedTargetAcrossRelaunch() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("queue.json")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let deletion = DeleteScheduleOperation(scheduleID: "existing", expectedRevision: "v1:" + String(repeating: "a", count: 64), mutationOperationID: UUID().uuidString)
+        try queue.enqueueScheduleDeletion(deletion)
+        try queue.enqueueScheduleDeletion(deletion)
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.count, 1)
+        XCTAssertEqual(reopened.entries.first?.scheduleDeletion, deletion)
+        var duplicate = deletion; duplicate.mutationOperationID = UUID().uuidString
+        XCTAssertThrowsError(try reopened.enqueueScheduleDeletion(duplicate))
+        XCTAssertThrowsError(try reopened.enqueueScheduleDeletion(.init(scheduleID: "different", expectedRevision: deletion.expectedRevision, mutationOperationID: deletion.mutationOperationID)))
+        XCTAssertThrowsError(try reopened.enqueueScheduleDeletion(.init(scheduleID: "unreviewed", expectedRevision: nil, mutationOperationID: UUID().uuidString)))
+    }
+
+    @MainActor
     func testPendingScheduleEditPreservesReviewAndExhaustedPauseAcrossRelaunch() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -1,5 +1,42 @@
 # Production readiness mission ledger
 
+## Native durable reviewed schedule deletion (2026-10-09)
+
+Confirmed schedule deletion now passes the editor's captured revision through the shared
+application service. Live saves target/revision/UUID before transport; canonical ordered
+replay resolves current credentials, verifies the server/actor/budget destination and sends
+the existing DELETE endpoint with its receipt identity and observation. Lost responses
+retain the same request; stale or revoked deletion pauses for review without rebasing.
+Pending edits/deletions for the same schedule block a second intent until accepted/discarded.
+Unobserved Live deletion is refused rather than using a freshly hydrated revision.
+
+Scheduled and Pending Sync show removal awaiting approval separately from accepted schedules.
+No local schedule is removed and accepted forecast, realized transactions and balances remain
+unchanged before acknowledgement. Current planning/account access and a visible original
+schedule govern pending detail visibility. Delete remains behind its explicit confirmation
+dialog; overlapping remove tasks are guarded. Demo/local retain their canonical repository
+delete behavior through the same application-service entry point.
+
+Executed evidence: the production Foundation regression passes target/revision/identity
+retention after interrupted deletion/relaunch, duplicate/identity rebound refusal, stale
+rejection pause, explicit original-intent retry and acknowledgement cleanup. Two focused API
+tests pass, covering current credentials, exact query/header, body-free DELETE and legacy
+omission, plus inactive management compatibility. Native persistence coverage was added;
+runtime execution is not claimed. Source-wiring checks do not prove UI interaction.
+No backend code changed in this native checkpoint.
+Regular Xcode 27.0 (27A266a), `/Applications/Xcode.app/Contents/Developer`, passed
+`build-for-testing` for app/native test targets against preserved iPhone 17 Pro Max simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27. `git diff --check` passed.
+
+Human retest after rebuilding and updating the server: disconnect, open a disposable future
+schedule and confirm Delete. Verify a separate pending removal appears while its accepted
+row/forecast remains. Relaunch offline, reconnect, and verify removal is confirmed once,
+Pending Sync clears, and any previously realized transactions remain. If another device
+changes the schedule first, the pending request must pause for review instead of deleting
+that changed plan. App rebuild and server update/restart required; no migration beyond 0049.
+Offline realization and its lost-response retry identity remain unfinished. TestFlight stays
+on hold; no merge/tag/release.
+
 ## Reviewed schedule deletion server boundary (2026-10-09)
 
 Schedule deletion accepts optional UUID header `X-Planning-Operation-ID` and query

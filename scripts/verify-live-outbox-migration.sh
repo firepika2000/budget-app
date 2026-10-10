@@ -44,6 +44,7 @@ abort "Edit sender must use current endpoint binding" unless send_body.include?(
 abort "Bulk sender missing from canonical command path" unless send_body.include?("client.bulkUpdateTransactions(") && workspace.include?("try transactionOutbox.enqueueBulk(identified)")
 abort "Schedules must persist before canonical identified replay" unless workspace.include?("try transactionOutbox.enqueueSchedule(id:") && send_body.include?("entry.scheduleCreation") && send_body.include?("schedule: schedule.apiValue, operationID: entry.id, token: token")
 abort "Schedule edits lose review or bypass durable replay" unless workspace.include?("transactionOutbox.enqueueScheduleEdit(scheduleID: id, operation: identified)") && send_body.include?("entry.scheduleEdit") && send_body.include?("schedule: edit.apiValue, token: token") && workspace.include?("_observedRevision = State(initialValue: schedule?.revision)") && workspace.include?("reviewed.expectedRevision = observedRevision")
+abort "Schedule deletion bypasses durable reviewed replay" unless workspace.include?("transactionOutbox.enqueueScheduleDeletion(identified)") && send_body.include?("entry.scheduleDeletion") && send_body.include?("expectedRevision: deletion.expectedRevision, operationID: deletion.mutationOperationID, token: token") && workspace.include?("store.deleteSchedule(id: schedule.id, expectedRevision: observedRevision)")
 abort "Schedule editor loses existing interest classification" unless workspace.include?("financialClassification: schedule?.financialClassification, isActive: isActive ?? active")
 abort "Make Recurring loses captured intent or bypasses durable replay" unless workspace.include?("transactionOutbox.enqueueMakeRecurring(transactionID: id, operation: identified)") && send_body.include?("entry.makeRecurring") && send_body.include?("expectedRevision: recurring.expectedRevision") && workspace.include?("expectedRevision: transaction.revision")
 abort "Pending schedules must remain separate from accepted forecast" unless workspace.include?('Section("Awaiting Server Confirmation")') && workspace.include?('not yet included in forecast')
@@ -430,6 +431,28 @@ try await Task { @MainActor in
  try pausedEdit.enqueueScheduleEdit(scheduleID: "exhausted", operation: exhausted)
  precondition(LiveTransactionOutbox(fileURL: editFile).entries[0].scheduleEdit == exhausted)
  print("PASS: reviewed schedule edits retain exact payload/revision/identity through loss and relaunch; stale edits pause, retry never rebases; inactive exhausted limits remain valid")
+ }
+ do {
+ let deletionFile = root.appendingPathComponent("schedule-delete.json")
+ let deletionQueue = LiveTransactionOutbox(fileURL: deletionFile)
+ let deletion = DeleteScheduleOperation(scheduleID: "existing", expectedRevision: "v1:" + String(repeating: "a", count: 64), mutationOperationID: UUID().uuidString)
+ try deletionQueue.enqueueScheduleDeletion(deletion)
+ try deletionQueue.enqueueScheduleDeletion(deletion)
+ var duplicate = deletion; duplicate.mutationOperationID = UUID().uuidString
+ do { try deletionQueue.enqueueScheduleDeletion(duplicate); fatalError("Second deletion saved") } catch {}
+ do { try deletionQueue.enqueueScheduleDeletion(.init(scheduleID: "other", expectedRevision: deletion.expectedRevision, mutationOperationID: deletion.mutationOperationID)); fatalError("Deletion identity rebound") } catch {}
+ do { try await deletionQueue.replayCommands { _ in throw URLError(.networkConnectionLost) }; fatalError("Expected lost delete acknowledgement") } catch {}
+ let reopened = LiveTransactionOutbox(fileURL: deletionFile)
+ precondition(reopened.entries[0].scheduleDeletion == deletion)
+ do { try await reopened.replayCommands(shouldPause: { _ in true }) { _ in throw BudgetApplicationError.invalidOperation("Stale deletion review") }; fatalError("Expected stale deletion") } catch {}
+ let paused = LiveTransactionOutbox(fileURL: deletionFile)
+ precondition(paused.entries[0].requiresReview == true)
+ do { try await paused.replayCommands { _ in fatalError("Paused deletion auto retried") } } catch {}
+ try paused.retryReviewed(id: deletion.mutationOperationID!)
+ try await paused.replayCommands { entry in precondition(entry.scheduleDeletion == deletion) }
+ precondition(LiveTransactionOutbox(fileURL: deletionFile).count == 0)
+ do { try paused.enqueueScheduleDeletion(.init(scheduleID: "unreviewed", expectedRevision: nil, mutationOperationID: UUID().uuidString)); fatalError("Unreviewed deletion saved") } catch {}
+ print("PASS: deletion target/revision/identity survive lost response and relaunch; stale request pauses; original-intent retry and acknowledgement cleanup; duplicate/unreviewed deletion refused")
  }
 }.value
 SWIFT

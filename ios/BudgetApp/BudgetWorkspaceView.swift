@@ -3679,6 +3679,13 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let deletion = entry.scheduleDeletion {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            try await client.deleteScheduledTransaction(budgetID: budget.id, scheduleID: deletion.scheduleID,
+                expectedRevision: deletion.expectedRevision, operationID: deletion.mutationOperationID, token: token)
+            return
+        }
         if let edit = entry.scheduleEdit, let scheduleID = entry.scheduleID {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3997,7 +4004,18 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             guard transactionOutbox.entries.contains(where: { $0.id == identified.mutationOperationID }) else { throw error }
         }
     }
-    func deleteSchedule(id: String) async throws { try await credentials.prepare(); try await client.deleteScheduledTransaction(budgetID: budget.id, scheduleID: id, token: token) }
+    func deleteSchedule(id: String) async throws {
+        throw BudgetApplicationError.invalidOperation("Reopen this schedule to review it before deleting.")
+    }
+    func deleteSchedule(_ operation: DeleteScheduleOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueScheduleDeletion(identified)
+        do { try await replaySavedPlanning() }
+        catch {
+            guard transactionOutbox.entries.contains(where: { $0.id == identified.mutationOperationID }) else { throw error }
+        }
+    }
     func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation {
         try await credentials.prepare()
         let value = try await client.realizeScheduledTransaction(budgetID: budget.id, scheduleID: id, token: token)
@@ -4873,6 +4891,10 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if let deletion = entry.scheduleDeletion {
+                return budget.can("manage_planning") && budget.can("view_accounts")
+                    && scheduledTransactions.contains(where: { $0.id == deletion.scheduleID })
+            }
             if let edit = entry.scheduleEdit {
                 return budget.can("manage_planning") && budget.can("view_accounts")
                     && scheduledTransactions.contains(where: { $0.id == entry.scheduleID })
@@ -5449,8 +5471,9 @@ final class BudgetWorkspaceStore: ObservableObject {
         try await updateSchedule(id: id, operation: operation)
     }
 
-    func deleteSchedule(id: String) async throws {
-        try await services().schedules.delete(id: id)
+    func deleteSchedule(id: String, expectedRevision: String? = nil) async throws {
+        defer { publishPendingPlanningStatus() }
+        try await services().schedules.delete(DeleteScheduleOperation(scheduleID: id, expectedRevision: expectedRevision))
         await refresh()
     }
 
@@ -6397,6 +6420,11 @@ private struct PendingLiveTransactionsView: View {
                                 Text("\(accountName(reconciliation.accountID)) · through \(reconciliation.throughDate) · \(store.format(reconciliation.statementBalanceMinor))")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text("Saved for server approval · reconciliation history and balances remain unchanged until accepted")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let deletion = entry.scheduleDeletion {
+                                Text("Delete Schedule").font(.headline)
+                                Text(store.scheduledTransactions.first(where: { $0.id == deletion.scheduleID })?.name ?? "Schedule").font(.subheadline)
+                                Text("Removal awaiting server approval · accepted forecast remains unchanged")
                                     .font(.caption).foregroundStyle(.secondary)
                             } else if let edit = entry.scheduleEdit {
                                 Text("Edit Schedule").font(.headline)
@@ -10052,7 +10080,7 @@ private struct LiveScheduledTransactionsView: View {
     private var due: [APIScheduledTransaction] { store.scheduledTransactions.filter { $0.isActive && BudgetWorkspaceStore.parseDate($0.nextDate) <= Date() }.sorted { $0.nextDate < $1.nextDate } }
     private var upcoming: [APIScheduledTransaction] { store.scheduledTransactions.filter { $0.isActive && BudgetWorkspaceStore.parseDate($0.nextDate) > Date() }.sorted { $0.nextDate < $1.nextDate } }
     private var paused: [APIScheduledTransaction] { store.scheduledTransactions.filter { !$0.isActive }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } }
-    private var pendingSchedules: [LiveTransactionOutbox.Entry] { store.pendingLiveTransactions.filter { $0.scheduleCreation != nil || $0.makeRecurring != nil || $0.scheduleEdit != nil } }
+    private var pendingSchedules: [LiveTransactionOutbox.Entry] { store.pendingLiveTransactions.filter { $0.scheduleCreation != nil || $0.makeRecurring != nil || $0.scheduleEdit != nil || $0.scheduleDeletion != nil } }
     var body: some View {
         List {
             Section { Text("Scheduled money is a forecast only. It changes no balance, category, or Available amount until you explicitly enter it.").font(.footnote).foregroundStyle(.secondary) }
@@ -10071,6 +10099,16 @@ private struct LiveScheduledTransactionsView: View {
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                             }.accessibilityIdentifier("pending-schedule-\(entry.id)")
+                        } else if let deletion = entry.scheduleDeletion {
+                            NavigationLink {
+                                PendingLiveTransactionsView(store: store)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Label("Delete \(store.scheduledTransactions.first(where: { $0.id == deletion.scheduleID })?.name ?? "Schedule")", systemImage: "icloud.and.arrow.up")
+                                    Text(entry.requiresReview == true ? "Needs review · automatic retry paused" : "Saved removal · accepted forecast remains unchanged")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.accessibilityIdentifier("pending-schedule-deletion-\(entry.id)")
                         } else if let edit = entry.scheduleEdit {
                             NavigationLink {
                                 PendingLiveTransactionsView(store: store)
@@ -10305,7 +10343,7 @@ private struct LiveScheduledTransactionEditor: View {
     }
     private func payload(isActive: Bool? = nil) -> ScheduleOperation { .init(accountID: accountID, destinationAccountID: kind == .transfer ? destinationAccountID : nil, categoryID: kind == .expense ? categoryID : nil, payeeID: kind == .transfer ? nil : payeeID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: parsed ?? 0, nextDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrenceUnit, intervalCount: recurrenceUnit == "once" ? 1 : intervalCount, endDate: usesEndDate && recurrenceUnit != "once" ? BudgetWorkspaceStore.dateString(endDate) : nil, remainingOccurrences: usesOccurrenceLimit && recurrenceUnit != "once" ? occurrenceLimit : nil, memo: memo, financialClassification: schedule?.financialClassification, isActive: isActive ?? active) }
     private func save() async { guard !saving else { return }; saving = true; defer { saving = false }; do { if let schedule { var reviewed = payload(); reviewed.expectedRevision = observedRevision; try await store.updateSchedule(id: schedule.id, operation: reviewed) } else { try await store.createSchedule(payload()) }; dismiss() } catch { self.error = error.localizedDescription } }
-    private func remove() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { try await store.deleteSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
+    private func remove() async { guard !saving, let schedule else { return }; saving = true; defer { saving = false }; do { try await store.deleteSchedule(id: schedule.id, expectedRevision: observedRevision); dismiss() } catch { self.error = error.localizedDescription } }
     private func realize() async { guard let schedule else { return }; saving = true; defer { saving = false }; do { _ = try await store.realizeSchedule(id: schedule.id); dismiss() } catch { self.error = error.localizedDescription } }
     private func skip() async { guard !saving, let schedule else { return }; saving = true; defer { saving = false }; do { try await store.skipNextScheduleOccurrence(id: schedule.id, expectedRevision: observedRevision); dismiss() } catch { self.error = error.localizedDescription } }
 }
