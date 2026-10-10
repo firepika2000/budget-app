@@ -4,6 +4,24 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testPendingRealizationPreservesReviewedIntentAcrossRelaunch() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("queue.json")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let operation = RealizeScheduleOperation(scheduleID: "due", expectedRevision: "v1:" + String(repeating: "a", count: 64), mutationOperationID: UUID().uuidString)
+        try queue.enqueueScheduleRealization(operation)
+        try queue.enqueueScheduleRealization(operation)
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.count, 1)
+        XCTAssertEqual(reopened.entries.first?.scheduleRealization, operation)
+        var duplicate = operation; duplicate.mutationOperationID = UUID().uuidString
+        XCTAssertThrowsError(try reopened.enqueueScheduleRealization(duplicate))
+        XCTAssertThrowsError(try reopened.enqueueScheduleDeletion(.init(scheduleID: "due", expectedRevision: operation.expectedRevision, mutationOperationID: UUID().uuidString)))
+        XCTAssertThrowsError(try reopened.enqueueScheduleRealization(.init(scheduleID: "unreviewed", expectedRevision: nil, mutationOperationID: UUID().uuidString)))
+    }
+
+    @MainActor
     func testPendingScheduleDeletionRetainsReviewedTargetAcrossRelaunch() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }

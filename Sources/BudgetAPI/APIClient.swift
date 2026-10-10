@@ -726,8 +726,11 @@ public struct APIClient {
         let _: EmptyResponse = try await send(url: url, method: "DELETE", token: token, bodyData: nil,
             headers: operationID.map { ["X-Planning-Operation-ID": $0] } ?? [:])
     }
-    public func realizeScheduledTransaction(budgetID: String, scheduleID: String, token: String) async throws -> APIScheduledRealization {
-        try await send(path: "api/v1/budgets/\(budgetID)/scheduled-transactions/\(scheduleID)/realize", method: "POST", token: token)
+    public func realizeScheduledTransaction(budgetID: String, scheduleID: String, expectedRevision: String? = nil, operationID: String? = nil, token: String) async throws -> APIScheduledRealization {
+        let url = baseURL.appending(path: "api/v1/budgets/\(budgetID)/scheduled-transactions/\(scheduleID)/realize")
+            .appending(queryItems: expectedRevision.map { [URLQueryItem(name: "expected_revision", value: $0)] } ?? [])
+        return try await send(url: url, method: "POST", token: token, bodyData: nil,
+            headers: operationID.map { ["X-Planning-Operation-ID": $0] } ?? [:])
     }
 
     public func spendingReport(

@@ -208,6 +208,17 @@ struct DeleteScheduleOperation: Codable, Equatable, Sendable {
     }
 }
 
+struct RealizeScheduleOperation: Codable, Equatable, Sendable {
+    let scheduleID: String
+    let expectedRevision: String?
+    var mutationOperationID: String? = nil
+
+    var isValidPending: Bool {
+        DeleteScheduleOperation(scheduleID: scheduleID, expectedRevision: expectedRevision,
+                                mutationOperationID: mutationOperationID).isValidPending
+    }
+}
+
 struct AccountBalanceObservation: Equatable, Sendable { let balanceMinor: Int64 }
 struct CategoryBalanceObservation: Equatable, Sendable {
     let assignedMinor: Int64; let activityMinor: Int64; let availableMinor: Int64
@@ -325,6 +336,7 @@ final class LiveTransactionOutbox {
         var scheduleEdit: ScheduleOperation? = nil
         var scheduleID: String? = nil
         var scheduleDeletion: DeleteScheduleOperation? = nil
+        var scheduleRealization: RealizeScheduleOperation? = nil
     }
 
     private let fileURL: URL
@@ -523,6 +535,7 @@ final class LiveTransactionOutbox {
                   existing.makeRecurring == entry.makeRecurring && existing.transactionID == entry.transactionID,
                   existing.scheduleEdit == entry.scheduleEdit && existing.scheduleID == entry.scheduleID,
                   existing.scheduleDeletion == entry.scheduleDeletion,
+                  existing.scheduleRealization == entry.scheduleRealization,
                   existing.operation == nil && existing.bulkUpdate == nil else {
                 throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
             }
@@ -568,6 +581,17 @@ final class LiveTransactionOutbox {
             throw BudgetApplicationError.invalidOperation("This schedule already has a saved edit. Review it in Pending Sync before editing again.")
         }
         try enqueuePlanning(Entry(id: identity, queuedAt: Date(), operation: nil, scheduleEdit: operation, scheduleID: scheduleID))
+    }
+
+    func enqueueScheduleRealization(_ operation: RealizeScheduleOperation) throws {
+        guard operation.isValidPending, let identity = operation.mutationOperationID else {
+            throw BudgetApplicationError.invalidOperation("Reopen this schedule to review it before entering its occurrence.")
+        }
+        guard !entries.contains(where: { $0.id != identity && $0.scheduleID == operation.scheduleID }) else {
+            throw BudgetApplicationError.invalidOperation("This schedule already has a saved change. Review it in Pending Sync first.")
+        }
+        try enqueuePlanning(Entry(id: identity, queuedAt: Date(), operation: nil,
+                                 scheduleID: operation.scheduleID, scheduleRealization: operation))
     }
 
     func enqueueScheduleDeletion(_ operation: DeleteScheduleOperation) throws {
@@ -726,8 +750,12 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil, entry.scheduleRealization != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
+                  if let realization = entry.scheduleRealization {
+                      return entry.scheduleID == realization.scheduleID && entry.transactionID == nil && entry.transferID == nil
+                          && realization.mutationOperationID == entry.id && realization.isValidPending
+                  }
                   if let deletion = entry.scheduleDeletion {
                       return entry.scheduleID == deletion.scheduleID && entry.transactionID == nil && entry.transferID == nil
                           && deletion.mutationOperationID == entry.id && deletion.isValidPending
@@ -1041,9 +1069,13 @@ protocol ScheduleCommandRepository: AnyObject {
     func deleteSchedule(id: String) async throws
     func deleteSchedule(_ operation: DeleteScheduleOperation) async throws
     func realizeSchedule(id: String) async throws -> ScheduledRealizationObservation
+    func realizeSchedule(_ operation: RealizeScheduleOperation) async throws
 }
 
 extension ScheduleCommandRepository {
+    func realizeSchedule(_ operation: RealizeScheduleOperation) async throws {
+        _ = try await realizeSchedule(id: operation.scheduleID)
+    }
     func deleteSchedule(_ operation: DeleteScheduleOperation) async throws {
         try await deleteSchedule(id: operation.scheduleID)
     }
@@ -1319,6 +1351,11 @@ struct ScheduleService {
 
     func realize(id: String) async throws -> ScheduledRealizationObservation {
         do { return try await repository.realizeSchedule(id: id) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func realize(_ operation: RealizeScheduleOperation) async throws {
+        do { try await repository.realizeSchedule(operation) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

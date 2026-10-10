@@ -2,6 +2,36 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testIdentifiedScheduleRealizationCarriesOriginalReviewAndCurrentCredential() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        let identity = UUID().uuidString.lowercased(), revision = "v1:" + String(repeating: "a", count: 64)
+        var calls = 0
+        MockURLProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/scheduled-transactions/due/realize")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
+            XCTAssertNil(request.httpBody)
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            if calls <= 2 {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "X-Planning-Operation-ID"), identity)
+                XCTAssertEqual(query, [URLQueryItem(name: "expected_revision", value: revision)])
+            } else {
+                XCTAssertNil(request.value(forHTTPHeaderField: "X-Planning-Operation-ID"))
+                XCTAssertTrue(query.isEmpty)
+            }
+            let data = Data(#"{"scheduled_transaction_id":"due","transaction_ids":["posted"],"realized_on":"2026-09-01","next_date":"2026-09-02","is_active":true,"last_realized_on":"2026-09-01"}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        for _ in 0..<2 {
+            let result = try await client.realizeScheduledTransaction(budgetID: "b1", scheduleID: "due", expectedRevision: revision, operationID: identity, token: "rotated")
+            XCTAssertEqual(result.transactionIDs, ["posted"])
+        }
+        _ = try await client.realizeScheduledTransaction(budgetID: "b1", scheduleID: "due", token: "rotated")
+        XCTAssertEqual(calls, 3)
+    }
+
     func testIdentifiedScheduleDeletionCarriesOriginalReviewAndCurrentCredential() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
         let identity = UUID().uuidString.lowercased(), revision = "v1:" + String(repeating: "a", count: 64)

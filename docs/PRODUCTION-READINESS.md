@@ -1,5 +1,41 @@
 # Production readiness mission ledger
 
+## Native durable reviewed scheduled realization (2026-10-09)
+
+The production schedule editor passes its captured revision through the shared schedule
+application service for Enter Now. Live persists schedule target, observation and UUID
+before transport. Ordered replay resolves current credentials, verifies the saved
+server/actor/budget destination and sends the identified server realization endpoint.
+Response loss retains the original request across relaunch; stale or unauthorized intent
+pauses for review without rebasing. A pending change for the same schedule blocks a second
+realization, edit or deletion. Unobserved Live realization is refused.
+
+Scheduled and Pending Sync show pending occurrences separately from accepted forecast and
+actual activity. No local posting, reserve movement or schedule advancement is synthesized;
+the server's existing financial engine realizes the occurrence, followed by authoritative
+workspace refresh. Current transaction-creation/account access and visibility of the
+original schedule govern pending detail visibility. Demo/local continue through the same
+application-service operation using their existing canonical realization engine.
+
+Executed evidence: production Foundation persistence/replay regression passes lost response,
+relaunch, duplicate refusal, stale rejection pause, original-intent retry and acknowledgement
+cleanup. The focused Swift API regression passes exact original query/header identity,
+current credential, body-free POST, returned transaction IDs and legacy omission. Native
+persistence regression was added; native runtime and human acceptance remain pending.
+Regular Xcode 27.0 (27A266a), `/Applications/Xcode.app/Contents/Developer`, passed
+`build-for-testing` for app/native targets against preserved iPhone 17 Pro Max simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27. `git diff --check` passed.
+No backend or migration changed in
+this native checkpoint; deployment requires the preceding identified-realization server
+contract. TestFlight remains on hold and Live/Simulator data remain intact.
+
+Human retest after app rebuild and server update: open an overdue schedule in a disposable
+budget, disconnect and tap Enter Now. Confirm a separate pending occurrence appears without
+local balance/activity changes. Relaunch offline, reconnect, and verify exactly one occurrence
+posts and Pending Sync clears. For a daily schedule with several overdue dates, reconnecting
+must not post the next date again. A change from another device before acceptance must pause
+the saved request for review rather than realize a newly reviewed version. No new migration.
+
 ## Identified scheduled realization retries (2026-10-09)
 
 The production realization endpoint accepts an optional `X-Planning-Operation-ID`
@@ -62,7 +98,8 @@ row/forecast remains. Relaunch offline, reconnect, and verify removal is confirm
 Pending Sync clears, and any previously realized transactions remain. If another device
 changes the schedule first, the pending request must pause for review instead of deleting
 that changed plan. App rebuild and server update/restart required; no migration beyond 0049.
-Offline realization and its lost-response retry identity remain unfinished. TestFlight stays
+Offline realization and its lost-response retry identity are implemented in the later
+identified-realization checkpoints above; human runtime acceptance remains pending. TestFlight stays
 on hold; no merge/tag/release.
 
 ## Reviewed schedule deletion server boundary (2026-10-09)
