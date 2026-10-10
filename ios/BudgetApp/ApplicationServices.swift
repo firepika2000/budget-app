@@ -91,6 +91,7 @@ struct TransferMoneyOperation: Codable, Equatable, Sendable {
 }
 
 struct ReconcileAccountOperation: Equatable, Sendable {
+    var expectedReviewRevision: String? = nil
     let accountID: String
     let statementBalanceMinor: Int64
     let throughDate: String
@@ -698,8 +699,20 @@ protocol AccountCommandRepository: AnyObject {
     func accountDebtTermsHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIAccountDebtTermsRevision]
     func reconcileAccount(_ operation: ReconcileAccountOperation) async throws
     func reconciliationClearedObservation(accountID: String, throughDate: String) async throws -> Int64
+    func reconciliationReviewObservation(accountID: String, throughDate: String) async throws -> ReconciliationReviewObservation
     func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory]
     func recentReconciliationHistory(limit: Int) async throws -> [APIReconciliationHistory]
+}
+
+struct ReconciliationReviewObservation: Equatable, Sendable {
+    let clearedBalanceMinor: Int64
+    let reviewRevision: String?
+}
+
+extension AccountCommandRepository {
+    func reconciliationReviewObservation(accountID: String, throughDate: String) async throws -> ReconciliationReviewObservation {
+        ReconciliationReviewObservation(clearedBalanceMinor: try await reconciliationClearedObservation(accountID: accountID, throughDate: throughDate), reviewRevision: nil)
+    }
 }
 
 @MainActor
@@ -811,6 +824,12 @@ struct AccountService {
     func reconciliationClearedObservation(accountID: String, throughDate: String) async throws -> Int64 {
         _ = try PlanningPeriodProjection.Day(throughDate)
         do { return try await repository.reconciliationClearedObservation(accountID: accountID, throughDate: throughDate) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func reconciliationReviewObservation(accountID: String, throughDate: String) async throws -> ReconciliationReviewObservation {
+        _ = try PlanningPeriodProjection.Day(throughDate)
+        do { return try await repository.reconciliationReviewObservation(accountID: accountID, throughDate: throughDate) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

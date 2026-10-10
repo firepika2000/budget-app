@@ -174,6 +174,17 @@ public struct APIClient {
         return observation
     }
 
+    public func reconciliationObservation(budgetID: String, accountID: String, throughDate: String, token: String) async throws -> APIReconciliationObservation {
+        let value: APIReconciliationObservation = try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/reconciliation-observation",
+            queryItems: [.init(name: "through_date", value: throughDate)], token: token)
+        guard value.accountID == accountID, value.throughDate == throughDate,
+              value.reviewRevision.hasPrefix("v1:"), value.reviewRevision.count == 67,
+              value.reviewRevision.dropFirst(3).allSatisfy({ "0123456789abcdef".contains($0) }) else {
+            throw APIClientError.server(status: 409, message: "Recheck reconciliation: the server returned a different or invalid review observation.")
+        }
+        return value
+    }
+
     public func createAccount(
         budgetID: String,
         account: APIAccountCreate,

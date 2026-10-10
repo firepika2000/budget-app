@@ -1,5 +1,37 @@
 # Production readiness mission ledger
 
+## Native reconciliation reviewed-set integration (2026-10-09)
+
+The production Live account repository now loads the dedicated reconciliation-observation endpoint
+through current credentials. The API rejects mismatched account/cutoff or malformed review tokens.
+The provider-neutral account service returns one balance/token observation; Local/Demo use the
+existing local observation through a default repository implementation, with no invented server
+token. Live overrides that implementation and refuses reconciliation without a reviewed token.
+
+The production reconciliation editor stores observed balance, cutoff and token together in State.
+Only explicit recheck/cutoff reload replaces the token; ordinary workspace refresh does not. Access
+denial clears all observations. Existing observation-generation/cancellation guards discard stale
+asynchronous replies. Save passes the captured token through the canonical service/request; stale
+server rejection preserves the statement/adjustment draft instead of automatically reviewing a
+new set or changing accounting locally. The request DTO supports optional receipt identity for
+the subsequent durable-queue work; this checkpoint does not enqueue reconciliation or claim
+offline reconciliation complete.
+
+Two executed Swift API cases cover real mocked observation-to-mutation payloads with exact Int64
+values, current bearer headers and captured token, plus wrong account/date/malformed token denial.
+Production-source guards cover the actual Live override, fail-closed mutation and editor token
+capture. They are structural checks, not executed SwiftUI runtime acceptance. The production host
+verifier and `git diff --check` passed. Regular Xcode 27.0 (27A266a) build-for-testing passed on the
+existing iPhone 17 Pro Max / iOS 27 simulator 3ABD861E-D38D-4AFD-A356-959266051564; native
+XCTest/UI runtime execution is not claimed. Server must include c392800; app rebuild and server
+update/restart required, no new migration or customer-data reset. TestFlight remains on hold.
+
+Minimal human acceptance: on a disposable Live account open Reconcile, then change a reviewed
+transaction on another device without changing the cleared total. Save must reject while retaining
+the draft. Explicitly Recheck, review and save must succeed. Verify ordinary Local Device/Demo
+reconciliation still works. No already-human-passed clearing/reconciliation lifecycle repetition
+is required beyond these new changed-set paths.
+
 ## Server-issued reconciliation reviewed-set token (2026-10-09)
 
 GET account `reconciliation-observation?through_date=...` requires current reconcile capability

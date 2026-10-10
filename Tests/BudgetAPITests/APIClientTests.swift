@@ -1647,6 +1647,47 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(methods, ["PUT", "DELETE"])
     }
 
+    func testReconciliationReviewObservationAndMutationCarryExactToken() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        let revision = "v1:" + String(repeating: "a", count: 64)
+        var requests = 0
+        MockURLProtocol.handler = { request in
+            requests += 1
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current-token")
+            let response: Data
+            if request.httpMethod == "GET" {
+                XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/accounts/a1/reconciliation-observation")
+                XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first?.value, "2026-09-04")
+                response = try JSONSerialization.data(withJSONObject: ["account_id": "a1", "through_date": "2026-09-04", "cleared_balance_minor": Int64(9007199254740993), "review_revision": revision])
+            } else {
+                let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: Any])
+                XCTAssertEqual(payload["expected_review_revision"] as? String, revision)
+                XCTAssertEqual(payload["expected_cleared_balance_minor"] as? Int64, 9007199254740993)
+                XCTAssertEqual(payload["statement_balance_minor"] as? Int64, 9007199254740993)
+                response = Data(#"{"account_id":"a1","reconciled_balance_minor":9007199254740993,"reconciled_transaction_count":1,"adjustment_transaction_id":null,"adjustment_amount_minor":0}"#.utf8)
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let observation = try await client.reconciliationObservation(budgetID: "b1", accountID: "a1", throughDate: "2026-09-04", token: "current-token")
+        _ = try await client.reconcileAccount(budgetID: "b1", accountID: "a1", request: APIReconcileRequest(statementBalanceMinor: observation.clearedBalanceMinor, throughDate: observation.throughDate, expectedClearedBalanceMinor: observation.clearedBalanceMinor, expectedReviewRevision: observation.reviewRevision), token: "current-token")
+        XCTAssertEqual(requests, 2)
+    }
+
+    func testReconciliationObservationRejectsWrongContextAndMalformedToken() async throws {
+        for field in ["account_id", "through_date", "review_revision"] {
+            let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+            MockURLProtocol.handler = { request in
+                var response: [String: Any] = ["account_id": "a1", "through_date": "2026-09-04", "cleared_balance_minor": 0, "review_revision": "v1:" + String(repeating: "a", count: 64)]
+                response[field] = "invalid"
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, try JSONSerialization.data(withJSONObject: response))
+            }
+            let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+            do { _ = try await client.reconciliationObservation(budgetID: "b1", accountID: "a1", throughDate: "2026-09-04", token: "token"); XCTFail("Accepted invalid review") }
+            catch { guard case APIClientError.server(status: 409, message: _) = error else { return XCTFail("Unexpected \(error)") } }
+        }
+    }
+
     func testLegacyTransferOmitsIdentityAndObservations() throws {
         let body = APITransferCreate(sourceAccountID: "a", destinationAccountID: "b", amountMinor: 100, occurredOn: "2026-09-04")
         let data = try JSONEncoder().encode(body)

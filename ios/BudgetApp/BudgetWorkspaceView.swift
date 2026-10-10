@@ -3817,7 +3817,19 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         }
         return observation.clearedBalanceMinor
     }
-    func reconcileAccount(_ operation: ReconcileAccountOperation) async throws { try await credentials.prepare(); _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID, request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason, expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor), token: token) }
+    func reconciliationReviewObservation(accountID: String, throughDate: String) async throws -> ReconciliationReviewObservation {
+        try await credentials.prepare()
+        let value = try await client.reconciliationObservation(budgetID: budget.id, accountID: accountID, throughDate: throughDate, token: token)
+        return ReconciliationReviewObservation(clearedBalanceMinor: value.clearedBalanceMinor, reviewRevision: value.reviewRevision)
+    }
+    func reconcileAccount(_ operation: ReconcileAccountOperation) async throws {
+        guard operation.expectedReviewRevision != nil else {
+            throw BudgetApplicationError.invalidOperation("Recheck the cleared transactions before reconciling this Live account.")
+        }
+        try await credentials.prepare()
+        _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID,
+            request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason, expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor, expectedReviewRevision: operation.expectedReviewRevision), token: token)
+    }
     func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory] { try await credentials.prepare(); return try await client.reconciliationHistory(budgetID: budget.id, accountID: accountID, limit: limit, offset: offset, token: token) }
     func recentReconciliationHistory(limit: Int) async throws -> [APIReconciliationHistory] { try await credentials.prepare(); return try await client.recentReconciliationHistory(budgetID: budget.id, limit: limit, token: token) }
     func statementImports(accountID: String, limit: Int, offset: Int) async throws -> APIStatementImportList { try await credentials.prepare(); return try await client.statementImports(budgetID: budget.id, accountID: accountID, limit: limit, offset: offset, token: token) }
@@ -4974,9 +4986,17 @@ final class BudgetWorkspaceStore: ObservableObject {
         return value
     }
 
-    func reconcile(accountID: String, statementBalance: Int64, throughDate: String, createAdjustment: Bool, reason: String, expectedClearedBalance: Int64? = nil) async throws {
+    func reconciliationReviewObservation(accountID: String, throughDate: String) async throws -> ReconciliationReviewObservation {
+        try requireWorkspaceAccess()
+        let revision = authorityRevision
+        let value = try await services().accounts.reconciliationReviewObservation(accountID: accountID, throughDate: throughDate)
+        guard revision == authorityRevision else { throw CancellationError() }
+        return value
+    }
+
+    func reconcile(accountID: String, statementBalance: Int64, throughDate: String, createAdjustment: Bool, reason: String, expectedClearedBalance: Int64? = nil, expectedReviewRevision: String? = nil) async throws {
         let cleared = try expectedClearedBalance ?? reconciliationClearedBalance(accountID: accountID, throughDate: throughDate)
-        try await services().accounts.reconcile(ReconcileAccountOperation(accountID: accountID, statementBalanceMinor: statementBalance, throughDate: throughDate, createAdjustment: createAdjustment, reason: reason, expectedClearedBalanceMinor: cleared))
+        try await services().accounts.reconcile(ReconcileAccountOperation(expectedReviewRevision: expectedReviewRevision, accountID: accountID, statementBalanceMinor: statementBalance, throughDate: throughDate, createAdjustment: createAdjustment, reason: reason, expectedClearedBalanceMinor: cleared))
         await refresh()
     }
 
@@ -10875,6 +10895,7 @@ private struct LiveReconcileView: View {
     @State private var choosingStatement = false; @State private var statementFile: StatementImportFile?; @State private var showingImportHistory = false
     @State private var observedBalance: Int64?
     @State private var observedDate: String?
+    @State private var observedReviewRevision: String?
     @State private var observationID = UUID()
     @State private var loadingObservation = false
     @State private var observationError: String?
@@ -10911,7 +10932,7 @@ private struct LiveReconcileView: View {
         }.navigationTitle("Reconcile \(account.name)").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Reconcile") { Task { await save() } }.disabled(parsed == nil || cutoffBalance == nil || loadingObservation || isSaving) } }.onAppear { statementBalance = CurrencyText.editable(currentBalance, currencyCode: budget.currencyCode) }.alert("Unable to reconcile", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
         .task(id: BudgetWorkspaceStore.dateString(throughDate)) { await loadObservation() }
         .onChange(of: workspace.workspaceAccessDenied) { _, denied in
-            if denied { observationID = UUID(); observedBalance = nil; observedDate = nil; loadingObservation = false }
+            if denied { observationID = UUID(); observedBalance = nil; observedDate = nil; observedReviewRevision = nil; loadingObservation = false }
         }
         .fileImporter(isPresented: $choosingStatement, allowedContentTypes: StatementImportFile.allowedTypes) { result in
             do { let url = try result.get(); let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }; let data = try Data(contentsOf: url, options: .mappedIfSafe); statementFile = StatementImportFile(name: url.lastPathComponent, data: data) } catch { errorMessage = error.localizedDescription }
@@ -10927,13 +10948,13 @@ private struct LiveReconcileView: View {
         guard !isSaving, !workspace.workspaceAccessDenied else { return }
         let id = UUID(), date = BudgetWorkspaceStore.dateString(throughDate)
         observationID = id
-        observedBalance = nil; observedDate = nil; observationError = nil; loadingObservation = true
+        observedBalance = nil; observedDate = nil; observedReviewRevision = nil; observationError = nil; loadingObservation = true
         defer { if observationID == id { loadingObservation = false } }
         do {
-            let value = try await workspace.reconciliationClearedObservation(accountID: account.id, throughDate: date)
+            let value = try await workspace.reconciliationReviewObservation(accountID: account.id, throughDate: date)
             guard observationID == id, !Task.isCancelled, !workspace.workspaceAccessDenied,
                   date == BudgetWorkspaceStore.dateString(throughDate) else { return }
-            observedBalance = value; observedDate = date
+            observedBalance = value.clearedBalanceMinor; observedReviewRevision = value.reviewRevision; observedDate = date
         } catch {
             guard observationID == id, !Task.isCancelled, !workspace.workspaceAccessDenied else { return }
             observationError = error.localizedDescription
@@ -10945,7 +10966,7 @@ private struct LiveReconcileView: View {
         do {
             try await workspace.reconcile(accountID: account.id, statementBalance: parsed,
                 throughDate: BudgetWorkspaceStore.dateString(throughDate), createAdjustment: createAdjustment,
-                reason: reason, expectedClearedBalance: cutoffBalance)
+                reason: reason, expectedClearedBalance: cutoffBalance, expectedReviewRevision: observedReviewRevision)
             dismiss()
         } catch { errorMessage = error.localizedDescription }
     }

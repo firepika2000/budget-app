@@ -1584,20 +1584,34 @@ public struct APITransferResponse: Decodable, Equatable, Sendable {
 }
 
 public struct APIReconcileRequest: Encodable, Sendable {
+    public let expectedReviewRevision: String?
+    public let mutationOperationID: String?
     public let statementBalanceMinor: Int64
     public let throughDate: String
     public let createAdjustment: Bool
     public let adjustmentReason: String
     public let expectedClearedBalanceMinor: Int64?
-    public init(statementBalanceMinor: Int64, throughDate: String, createAdjustment: Bool = false, adjustmentReason: String = "", expectedClearedBalanceMinor: Int64? = nil) {
+    public init(statementBalanceMinor: Int64, throughDate: String, createAdjustment: Bool = false, adjustmentReason: String = "", expectedClearedBalanceMinor: Int64? = nil, expectedReviewRevision: String? = nil, mutationOperationID: String? = nil) {
+        self.expectedReviewRevision = expectedReviewRevision; self.mutationOperationID = mutationOperationID
         self.statementBalanceMinor = statementBalanceMinor; self.throughDate = throughDate
         self.createAdjustment = createAdjustment; self.adjustmentReason = adjustmentReason
         self.expectedClearedBalanceMinor = expectedClearedBalanceMinor
     }
     enum CodingKeys: String, CodingKey {
+        case expectedReviewRevision = "expected_review_revision", mutationOperationID = "mutation_operation_id"
         case statementBalanceMinor = "statement_balance_minor", throughDate = "through_date"
         case createAdjustment = "create_adjustment", adjustmentReason = "adjustment_reason"
         case expectedClearedBalanceMinor = "expected_cleared_balance_minor"
+    }
+}
+
+public struct APIReconciliationObservation: Decodable, Equatable, Sendable {
+    public let accountID: String
+    public let throughDate: String
+    public let clearedBalanceMinor: Int64
+    public let reviewRevision: String
+    enum CodingKeys: String, CodingKey {
+        case accountID = "account_id", throughDate = "through_date", clearedBalanceMinor = "cleared_balance_minor", reviewRevision = "review_revision"
     }
 }
 
