@@ -3605,12 +3605,15 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     var budget: APIBudget
     private let credentials: LiveWorkspaceCredentials
     private let transactionOutbox: LiveTransactionOutbox
+    private let attachmentReadCache: LiveAttachmentReadCache
     private(set) var outboxFailureMessage: String?
     private var token: String { credentials.token }
     private var client: APIClient { get throws { try credentials.client() } }
     init(budget: APIBudget, credentials: LiveWorkspaceCredentials) {
         self.budget = budget
         self.credentials = credentials
+        attachmentReadCache = LiveAttachmentReadCache(budgetID: budget.id, serverURL: credentials.serverURL,
+            token: credentials.token, accessRevision: budget.accessRevision)
         transactionOutbox = LiveTransactionOutbox(
             budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token
         )
@@ -3619,6 +3622,10 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     var pendingTransactionCount: Int { transactionOutbox.count }
+    func updateAttachmentAuthority(_ revision: String?, changed: Bool) {
+        attachmentReadCache.updateAuthority(revision, changed: changed)
+    }
+    func evictAttachmentObservations() { attachmentReadCache.removeAll() }
     var pendingTransactions: [LiveTransactionOutbox.Entry] { transactionOutbox.entries }
     var pendingQueueError: String? { transactionOutbox.loadErrorMessage }
     var pendingLegacyServerReview: Bool { transactionOutbox.requiresLegacyReview }
@@ -3685,6 +3692,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             try await client.detachTransactionAttachment(budgetID: budget.id, transactionID: removal.transactionID,
                 attachmentID: removal.attachmentID, expectedSHA256: removal.expectedSHA256,
                 operationID: removal.mutationOperationID, token: token)
+            attachmentReadCache.acknowledgeRemoval(transactionID: removal.transactionID, attachmentID: removal.attachmentID)
             return
         }
         if let realization = entry.scheduleRealization {
@@ -3875,7 +3883,31 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             guard transactionOutbox.entries.contains(where: { $0.id == identified.mutationOperationID }) else { throw error }
         }
     }
-    func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await credentials.prepare(); return try await client.transactionAttachments(budgetID: budget.id, transactionID: id, token: token) }
+    func transactionAttachments(id: String) async throws -> [APITransactionAttachment] {
+        let observed = attachmentReadCache.generation
+        func requireCurrentScope() throws {
+            guard observed == attachmentReadCache.generation, budget.can("view_transactions") else { throw CancellationError() }
+            try attachmentReadCache.requireScope(liveServerStorageScope(budgetID: budget.id,
+                serverURL: credentials.serverURL, token: credentials.token))
+        }
+        do {
+            try requireCurrentScope()
+            try await credentials.prepare()
+            try requireCurrentScope()
+            let values = try await client.transactionAttachments(budgetID: budget.id, transactionID: id, token: token)
+            try requireCurrentScope()
+            try? attachmentReadCache.save(values, transactionID: id, generation: observed)
+            return values
+        } catch {
+            try requireCurrentScope()
+            if case let APIClientError.server(status, _) = error, status == 403 || status == 404 {
+                attachmentReadCache.remove(transactionID: id)
+                throw error
+            }
+            guard isTransientConnectivityFailure(error) else { throw error }
+            return try attachmentReadCache.load(transactionID: id)
+        }
+    }
     func transactionHistory(id: String, limit: Int, offset: Int) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.transactionHistory(budgetID: budget.id, transactionID: id, limit: limit, offset: offset, token: token) }
     func recentTransactionChanges(limit: Int) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.recentTransactionChanges(budgetID: budget.id, limit: limit, token: token) }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws {
@@ -4081,12 +4113,13 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
 
     func updateCredentials(serverURL: URL, token: String) { credentials.update(serverURL: serverURL, token: token) }
     func updateBudget(_ value: APIBudget, authorityChanged: Bool) {
+        commands.updateAttachmentAuthority(value.accessRevision, changed: authorityChanged)
         readCache.updateAccessRevision(value.accessRevision)
         if authorityChanged { budgetAuthorityRevision = UUID(); readCache.remove() }
         budget = value; commands.budget = value
     }
     func bindCredentialAuthority(_ resolver: @escaping LiveWorkspaceCredentials.Resolver) { credentials.bind(resolver) }
-    func evictAuthorizedCache() { readCache.remove() }
+    func evictAuthorizedCache() { readCache.remove(); commands.evictAttachmentObservations() }
 
     func reports(planMonth: Date, query report: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
         guard !kinds.isEmpty, budget.can("view_reports") else { return WorkspaceReports() }
@@ -10819,7 +10852,6 @@ private struct TransactionAttachmentsView: View {
         .alert("Attachment error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
     }
     private func load() async {
-        guard !store.isWorkingOffline else { return }
         do {
             attachments = try await store.transactionAttachments(id: transaction.id)
             error = nil
@@ -10829,6 +10861,9 @@ private struct TransactionAttachmentsView: View {
             // URLSession reports task cancellation through URLError on some OS releases.
         } catch {
             guard !Task.isCancelled else { return }
+            if case let APIClientError.server(status, _) = error, status == 401 || status == 403 || status == 404 {
+                attachments = []; pendingRemoval = nil
+            }
             self.error = error.localizedDescription
         }
     }

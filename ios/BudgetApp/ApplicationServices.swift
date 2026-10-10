@@ -973,6 +973,94 @@ final class LiveWorkspaceReadCache {
     }
 }
 
+/// Bounded, protected last-authorized metadata only. Never stores attachment bytes or
+/// substitutes for server authorization. Scope/access changes invalidate observations.
+@MainActor
+final class LiveAttachmentReadCache {
+    private struct Observation: Codable {
+        let transactionID: String
+        let accessRevision: String?
+        let savedAt: Date
+        let attachments: [APITransactionAttachment]
+    }
+    private let directory: URL
+    let storageScope: String
+    private var accessRevision: String?
+    private(set) var generation = UUID()
+
+    init(budgetID: String, serverURL: URL, token: String, accessRevision: String?) {
+        storageScope = liveServerStorageScope(budgetID: budgetID, serverURL: serverURL, token: token)
+        directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("BudgetApp/AttachmentLists/" + storageScope, isDirectory: true)
+        self.accessRevision = accessRevision
+    }
+
+    init(directory: URL, storageScope: String, accessRevision: String? = nil) {
+        self.directory = directory; self.storageScope = storageScope; self.accessRevision = accessRevision
+    }
+
+    func updateAuthority(_ revision: String?, changed: Bool) {
+        accessRevision = revision
+        if changed { removeAll() }
+    }
+
+    func requireScope(_ scope: String) throws {
+        guard scope == storageScope else {
+            throw BudgetApplicationError.invalidOperation("Attachment observations belong to another server or user. Reopen the budget.")
+        }
+    }
+
+    func save(_ attachments: [APITransactionAttachment], transactionID: String, generation observed: UUID) throws {
+        guard observed == generation, Self.valid(attachments, transactionID: transactionID) else {
+            throw BudgetApplicationError.invalidOperation("The attachment observation is stale or invalid.")
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        let observation = Observation(transactionID: transactionID, accessRevision: accessRevision,
+                                      savedAt: Date(), attachments: attachments)
+        let target = fileURL(transactionID)
+        try JSONEncoder().encode(observation).write(to: target, options: [.atomic, .completeFileProtection])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])
+            .filter { $0.pathExtension == "json" && $0.standardizedFileURL.path != target.standardizedFileURL.path }
+            .sorted { ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
+                > ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
+        for file in files.dropFirst(49) { try? FileManager.default.removeItem(at: file) }
+    }
+
+    func load(transactionID: String) throws -> [APITransactionAttachment] {
+        let value = try JSONDecoder().decode(Observation.self, from: Data(contentsOf: fileURL(transactionID)))
+        guard value.transactionID == transactionID, value.accessRevision == accessRevision,
+              Self.valid(value.attachments, transactionID: transactionID) else {
+            throw BudgetApplicationError.invalidOperation("Reconnect to load current attachment access.")
+        }
+        return value.attachments
+    }
+
+    func remove(transactionID: String) { try? FileManager.default.removeItem(at: fileURL(transactionID)) }
+    func acknowledgeRemoval(transactionID: String, attachmentID: String) {
+        guard let previous = try? load(transactionID: transactionID) else { remove(transactionID: transactionID); return }
+        do { try save(previous.filter { $0.id != attachmentID }, transactionID: transactionID, generation: generation) }
+        catch { remove(transactionID: transactionID) }
+    }
+    func removeAll() {
+        generation = UUID()
+        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
+        for file in files where file.pathExtension == "json" { try? FileManager.default.removeItem(at: file) }
+    }
+    private func fileURL(_ transactionID: String) -> URL {
+        let digest = SHA256.hash(data: Data(transactionID.utf8)).map { String(format: "%02x", $0) }.joined()
+        return directory.appendingPathComponent(digest + ".json")
+    }
+    private static func valid(_ attachments: [APITransactionAttachment], transactionID: String) -> Bool {
+        !transactionID.isEmpty && attachments.count <= 20 && Set(attachments.map(\.id)).count == attachments.count
+            && attachments.allSatisfy { $0.transactionID == transactionID && !$0.id.isEmpty && $0.detachedAt == nil
+                && !$0.filename.isEmpty && $0.filename.count <= 255 && (1...10 * 1024 * 1024).contains($0.byteCount)
+                && ["application/pdf", "image/jpeg", "image/png", "image/heic", "image/heif"].contains($0.contentType)
+                && $0.sha256.count == 64 && $0.sha256.allSatisfy { "0123456789abcdef".contains($0) } }
+    }
+}
+
 private func liveCredentialSubject(_ token: String) -> String {
     let pieces = token.split(separator: ".")
     guard pieces.count > 1 else { return "unknown-user" }

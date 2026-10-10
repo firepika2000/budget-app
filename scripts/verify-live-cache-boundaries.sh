@@ -6,6 +6,8 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 ruby - <<'RUBY' | xcrun swift -
 source = File.read("ios/BudgetApp/ApplicationServices.swift")
 puts "import Foundation\nimport CryptoKit"
+api = File.read("Sources/BudgetAPI/APIModels.swift")
+puts api[api.index("public struct APITransactionAttachment:")...api.index("public struct APITransactionBulkUpdate:")]
 %w[APIAccount APIAccountBalance APICategory APICategoryGroup APITransaction APIMonthSummary APICategoryTarget APIScheduledTransaction APIForecast].each { |name| puts "typealias #{name} = String" }
 puts <<'SWIFT'
 enum BudgetApplicationError: Error { case invalidOperation(String) }
@@ -80,6 +82,30 @@ try await MainActor.run {
  current.remove()
  rejects(current); rejects(current, month: "2026-09-01"); rejects(current, month: "2026-10-01")
  print("PASS: immediate month-switch invalidation, scope/relaunch/legacy guards, independent month observations, missing/invalid months, scope eviction across months")
+ let attachmentRoot = root.appendingPathComponent("lists")
+ let lists = LiveAttachmentReadCache(directory: attachmentRoot, storageScope: baseScope, accessRevision: "a")
+ let data = Data("{\"id\":\"receipt\",\"transaction_id\":\"posted\",\"filename\":\"receipt.pdf\",\"content_type\":\"application/pdf\",\"byte_count\":10,\"sha256\":\"\(String(repeating: "a", count: 64))\",\"created_at\":\"2026-10-09T00:00:00Z\"}".utf8)
+ let receipt = try JSONDecoder().decode(APITransactionAttachment.self, from: data)
+ try lists.save([receipt], transactionID: "posted", generation: lists.generation)
+ let relaunch = LiveAttachmentReadCache(directory: attachmentRoot, storageScope: baseScope, accessRevision: "a")
+ let saved = try relaunch.load(transactionID: "posted"); precondition(saved == [receipt])
+ lists.acknowledgeRemoval(transactionID: "posted", attachmentID: "receipt")
+ let removed = try relaunch.load(transactionID: "posted"); precondition(removed.isEmpty)
+ try lists.save([receipt], transactionID: "posted", generation: lists.generation)
+ do { try lists.requireScope("other"); fatalError("Wrong endpoint accepted") } catch {}
+ do { _ = try lists.load(transactionID: "other"); fatalError("Wrong transaction accepted") } catch {}
+ do { try lists.save([receipt], transactionID: "other", generation: lists.generation); fatalError("Cross-target metadata saved") } catch {}
+ let oldGeneration = lists.generation
+ lists.updateAuthority("b", changed: true)
+ do { _ = try relaunch.load(transactionID: "posted"); fatalError("Revoked list retained") } catch {}
+ do { try lists.save([receipt], transactionID: "posted", generation: oldGeneration); fatalError("Late pre-revocation response cached") } catch {}
+ try lists.save([], transactionID: "posted", generation: lists.generation)
+ let empty = try lists.load(transactionID: "posted"); precondition(empty.isEmpty)
+ for index in 0..<60 { try lists.save([], transactionID: "target-\(index)", generation: lists.generation) }
+ let files = try FileManager.default.contentsOfDirectory(at: attachmentRoot, includingPropertiesForKeys: nil)
+ guard files.count == 50 else { throw NSError(domain: "AttachmentCacheBound", code: files.count) }
+ let newest = try lists.load(transactionID: "target-59"); precondition(newest.isEmpty)
+ print("PASS: attachment metadata survives relaunch, excludes cross-scope/target and revoked/late observations; empty lists persist and storage stays bounded")
 }
 SWIFT
 RUBY

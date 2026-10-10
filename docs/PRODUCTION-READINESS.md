@@ -1,5 +1,38 @@
 # Production readiness mission ledger
 
+## Protected offline attachment lists (2026-10-09)
+
+Live attachment-list reads now save bounded, file-protected last-authorized metadata in a
+server/actor/budget namespace. Reopening transaction detail after a transient outage or app
+reconstruction can display a previously loaded list. Each cache holds at most 50 transaction
+lists with 20 attachments each, uses hashed target filenames, validates attachment identity,
+digest, type and size, and retains empty authoritative lists. File contents are not cached.
+
+Current view capability, destination scope and access revision remain mandatory. Known
+authority changes invalidate the observations; generation guards prevent late responses
+from restoring older access. Authentication errors and 403/404 never fall back to cache;
+denied transaction lists are evicted and stale detail/confirmation state is cleared. Accepted
+removals subtract only the acknowledged file from cached metadata, retaining the other files.
+Cached observations are display/review context, never an authorization grant: queued
+removals still use current server authorization and the reviewed immutable digest.
+
+Executed evidence: production Swift cache harness passes scope normalization, independent
+plan-month behavior, attachment-list relaunch, wrong endpoint/target refusal, revocation,
+late-response rejection, empty-list persistence and bounded 50-list retention. One focused
+attachment API regression passes. A native production-composition regression covers successful
+list load, reconstructed workspace transient fallback, denial and subsequent transient failure;
+runtime execution is not claimed. The production command-queue harness also passes.
+Regular Xcode 27.0 (27A266a), `/Applications/Xcode.app/Contents/Developer`, passed
+`build-for-testing` against preserved iPhone 17 Pro Max simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27. `git diff --check` passed.
+No backend or migration changed.
+
+Human retest after rebuilding: load a disposable transaction's attachments online, disconnect,
+relaunch and reopen that transaction. Verify its loaded filenames return, then queue an intentional
+removal using the existing confirmation and reconnect to complete once. A transaction whose list
+was never loaded still needs a connection. Offline file download/preview remains unfinished;
+staged pending uploads retain their existing protected local preview. TestFlight remains held.
+
 ## Native durable reviewed attachment removal (2026-10-09)
 
 The attachment confirmation captures the selected attachment ID, transaction ID, immutable
@@ -29,10 +62,10 @@ targets against preserved iPhone 17 Pro Max simulator
 No backend or migration changed in this checkpoint; the preceding server contract is required.
 TestFlight remains held; Live, attachments and Simulator data were not modified.
 
-Remaining limitation: server attachment lists are not yet cached for reopening transaction
-detail fully offline. Already loaded attachment metadata can be reviewed/removed after a drop;
-queued removals remain visible after relaunch through Pending Sync. This checkpoint does not
-claim general offline download/preview of previously unstaged server attachments.
+The attachment-list reopening gap identified at this checkpoint is closed by the protected
+offline attachment-list checkpoint above. General offline download/preview of previously
+unstaged server attachments remains unfinished; queued removals remain visible after relaunch
+through Pending Sync.
 
 Human retest after app rebuild and server update: open a disposable transaction and load
 its attachment list, disconnect, tap the separate Remove control and confirm. Verify the

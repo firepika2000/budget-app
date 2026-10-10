@@ -1745,6 +1745,37 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveAttachmentListsSurviveReconstructionButNeverFallbackAfterDenial() async throws {
+        let budget = APIBudget(id: UUID().uuidString, householdID: "h1", name: "Cache test", currencyCode: "USD", accessRevision: "a")
+        let server = URL(string: "https://attachment-cache.example.com")!
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        func workspace() -> BudgetWorkspaceStore {
+            BudgetWorkspaceStore.production(context: .live(budget: budget, serverURL: server, token: "A1"),
+                clientFactory: { try APIClient(baseURL: $0, session: session) })
+        }
+        let original = workspace()
+        RefreshMockURLProtocol.handler = { _ in
+            Self.json(200, "[{\"id\":\"receipt\",\"transaction_id\":\"posted\",\"filename\":\"receipt.pdf\",\"content_type\":\"application/pdf\",\"byte_count\":10,\"sha256\":\"\(String(repeating: "a", count: 64))\",\"created_at\":\"2026-10-09T00:00:00Z\"}]")
+        }
+        let accepted = try await original.transactionAttachments(id: "posted")
+        XCTAssertEqual(accepted.count, 1)
+        let reopened = workspace()
+        RefreshMockURLProtocol.handler = { _ in Self.json(503, "{\"detail\":\"Offline test\"}") }
+        let cached = try await reopened.transactionAttachments(id: "posted")
+        XCTAssertEqual(cached, accepted)
+        RefreshMockURLProtocol.handler = { _ in Self.json(403, "{\"detail\":\"Access revoked\"}") }
+        do { _ = try await reopened.transactionAttachments(id: "posted"); XCTFail("Access denial used cached metadata") }
+        catch { }
+        RefreshMockURLProtocol.handler = { _ in Self.json(503, "{\"detail\":\"Offline test\"}") }
+        do { _ = try await reopened.transactionAttachments(id: "posted"); XCTFail("Denied metadata remained available") }
+        catch { }
+        _ = reopened.updateLiveBudgetAuthority(APIBudget(id: budget.id, householdID: "h1", name: "Cache test",
+            currencyCode: "USD", accessRevision: "b"))
+    }
+
+    @MainActor
     func testLiveWorkspaceReadCacheSurvivesRelaunchWithoutInventingAuthority() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("live-cache-\(UUID().uuidString)", isDirectory: true)

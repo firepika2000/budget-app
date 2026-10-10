@@ -1507,7 +1507,7 @@ public struct APITransactionSchedule: Encodable, Equatable, Sendable {
     }
 }
 
-public struct APITransactionAttachment: Identifiable, Decodable, Equatable, Sendable {
+public struct APITransactionAttachment: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let transactionID: String
     public let filename: String
