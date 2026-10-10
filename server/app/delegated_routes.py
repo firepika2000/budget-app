@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import date
 from typing import Optional
 
@@ -5,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .access import can_access_resource, has_capability
+from .access import can_access_resource, has_capability, visible_resource_ids
 from .allocation import PostingInput, allocation_balance, append_operation, ready_to_assign_balance
 from .budgeting_routes import lock_budget, require_budget_capability, require_version
 from .clock import today
@@ -16,6 +18,33 @@ from .schemas import DelegatedBudgetPolicyResponse, DelegatedBudgetPolicyRevisio
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/delegated-budgets")
+
+
+def policy_scope_conditions(budget_id: str, visible: set[str] | None) -> list:
+    if visible is None:
+        return []
+    # Authority covers every controlled category, not just the pool or explicit rules.
+    return [
+        DelegatedBudgetPolicy.pool_category_id.in_(visible),
+        ~select(Category.id).where(
+            Category.budget_id == budget_id,
+            Category.delegated_user_id == DelegatedBudgetPolicy.user_id,
+            Category.id.not_in(visible),
+        ).exists(),
+        ~select(DelegatedCategoryRule.id).where(
+            DelegatedCategoryRule.policy_id == DelegatedBudgetPolicy.id,
+            DelegatedCategoryRule.category_id.not_in(visible),
+        ).exists(),
+    ]
+
+
+def snapshot_in_scope(snapshot: dict | None, visible: set[str] | None) -> bool:
+    if snapshot is None or visible is None:
+        return True
+    return (isinstance(snapshot, dict) and snapshot.get("pool_category_id") in visible
+            and isinstance(snapshot.get("rules", []), list)
+            and all(isinstance(rule, dict) and rule.get("category_id") in visible
+                    for rule in snapshot.get("rules", [])))
 
 
 def policy_snapshot(policy: DelegatedBudgetPolicy, rules: list[DelegatedCategoryRule]) -> dict:
@@ -64,9 +93,10 @@ def list_delegated_budgets(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    require_budget_capability(db, user, budget_id, "manage_allowances")
+    budget = require_budget_capability(db, user, budget_id, "manage_allowances")
+    visible = visible_resource_ids(db, user, budget, "category")
     policies = list(db.scalars(select(DelegatedBudgetPolicy).where(
-        DelegatedBudgetPolicy.budget_id == budget_id
+        DelegatedBudgetPolicy.budget_id == budget_id, *policy_scope_conditions(budget_id, visible)
     ).order_by(DelegatedBudgetPolicy.user_id)))
     return [serialize_policy(db, policy) for policy in policies]
 
@@ -81,6 +111,7 @@ def get_my_delegated_budget(
     policy = db.scalar(select(DelegatedBudgetPolicy).where(
         DelegatedBudgetPolicy.budget_id == budget.id,
         DelegatedBudgetPolicy.user_id == user.id,
+        *policy_scope_conditions(budget_id, visible_resource_ids(db, user, budget, "category")),
     ))
     return None if policy is None else serialize_policy(db, policy)
 
@@ -94,10 +125,12 @@ def delegated_budget_history(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    require_budget_capability(db, user, budget_id, "manage_allowances")
+    budget = require_budget_capability(db, user, budget_id, "manage_allowances")
+    visible = visible_resource_ids(db, user, budget, "category")
     policy = db.scalar(select(DelegatedBudgetPolicy).where(
         DelegatedBudgetPolicy.budget_id == budget_id,
         DelegatedBudgetPolicy.user_id == user_id,
+        *policy_scope_conditions(budget_id, visible),
     ))
     if policy is None:
         raise HTTPException(status_code=404, detail="Delegated budget not found")
@@ -108,6 +141,9 @@ def delegated_budget_history(
         DelegatedBudgetPolicyRevision.created_at.desc(),
         DelegatedBudgetPolicyRevision.id.desc(),
     ).offset(offset).limit(limit)))
+    if any(not snapshot_in_scope(snapshot, visible)
+           for item in revisions for snapshot in (item.before_snapshot, item.after_snapshot)):
+        raise HTTPException(status_code=404, detail="Delegated budget not found")
     actor_ids = {item.actor_user_id for item in revisions}
     actors = {item.id: item.display_name for item in db.scalars(select(User).where(User.id.in_(actor_ids)))} if actor_ids else {}
     return [{
@@ -132,6 +168,10 @@ def upsert_delegated_budget(
     db: Session = Depends(get_db),
 ) -> dict:
     budget = require_budget_capability(db, user, budget_id, "manage_allowances")
+    visible = visible_resource_ids(db, user, budget, "category")
+    proposed_ids = {body.pool_category_id, *(rule.category_id for rule in body.rules)}
+    if visible is not None and not proposed_ids.issubset(visible):
+        raise HTTPException(status_code=404, detail="Delegated budget not found")
     if user_id != body.user_id:
         raise HTTPException(status_code=422, detail="User path and body must match")
     membership = db.scalar(select(Membership).where(
@@ -153,6 +193,16 @@ def upsert_delegated_budget(
         Category.budget_id == budget_id,
         Category.delegated_user_id == user_id,
     )))
+    if visible is not None and not set(controlled_category_ids).issubset(visible):
+        raise HTTPException(status_code=404, detail="Delegated budget not found")
+    policy = db.scalar(select(DelegatedBudgetPolicy).where(
+        DelegatedBudgetPolicy.budget_id == budget_id,
+        DelegatedBudgetPolicy.user_id == user_id,
+    ))
+    if policy is not None and visible is not None and db.scalar(select(DelegatedBudgetPolicy.id).where(
+        DelegatedBudgetPolicy.id == policy.id, *policy_scope_conditions(budget_id, visible)
+    )) is None:
+        raise HTTPException(status_code=404, detail="Delegated budget not found")
     controlled_allocation = sum(
         allocation_balance(db, budget_id, category_id=category_id)
         for category_id in controlled_category_ids
@@ -163,10 +213,6 @@ def upsert_delegated_budget(
         raise HTTPException(status_code=409, detail="Not enough household Ready to Assign to fund this authority")
     if funding_delta < 0 and pool_allocation < -funding_delta:
         raise HTTPException(status_code=409, detail="Move money back to the delegated pool before reducing authority")
-    policy = db.scalar(select(DelegatedBudgetPolicy).where(
-        DelegatedBudgetPolicy.budget_id == budget_id,
-        DelegatedBudgetPolicy.user_id == user_id,
-    ))
     is_new = policy is None
     before_snapshot = None
     if policy is None:
