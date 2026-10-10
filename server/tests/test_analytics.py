@@ -385,7 +385,8 @@ def test_restricted_reports_cannot_leak_hidden_accounts_categories_or_members(
     assert client.get(endpoint, params=period, headers=auth(child_token)).status_code == 403
 
 
-def test_report_contributor_pages_reach_beyond_compact_cap_and_bind_context(client, owner_token, session_factory):
+@pytest.mark.parametrize("kind", ["category_spending", "spending"])
+def test_report_contributor_pages_reach_beyond_compact_cap_and_bind_context(client, owner_token, session_factory, kind):
     from sqlalchemy import insert, select
     from app.models import Transaction, User
 
@@ -405,7 +406,7 @@ def test_report_contributor_pages_reach_beyond_compact_cap_and_bind_context(clie
     assert compact['total_spending_minor'] == 601
     assert len(compact['categories'][0]['transaction_ids']) == 500
     assert compact['categories'][0]['transaction_ids_truncated'] is True
-    params = {**period, "kind": "category_spending", "limit": 200}
+    params = {**period, "kind": kind, "limit": 200}
     seen, cursor, first_cursor = [], None, None
     for _ in range(4):
         response = client.get(f"{base}/contributors", params={**params, **({"cursor": cursor} if cursor else {})}, headers=auth(owner_token))
@@ -421,6 +422,33 @@ def test_report_contributor_pages_reach_beyond_compact_cap_and_bind_context(clie
                     {"cursor": "malformed"}, {"limit": 0}, {"limit": 201}]:
         response = client.get(f"{base}/contributors", params={**params, "cursor": first_cursor, **changes}, headers=auth(owner_token))
         assert response.status_code == 422, response.text
+
+
+def test_income_contributor_pages_preserve_selected_period_beyond_cap(client, owner_token, session_factory):
+    from sqlalchemy import insert, select
+    from app.models import Transaction, User
+
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget['id'])
+    with session_factory() as session:
+        owner_id = session.scalar(select(User.id))
+        session.execute(insert(Transaction), [{"id": f"income-contributor-{index:04d}", "budget_id": budget['id'],
+            "account_id": account['id'], "amount_minor": 1, "occurred_on": date(2026, 9, 4) if index < 501 else date(2026, 8, 4),
+            "payee_name": "Paged income", "created_by_user_id": owner_id} for index in range(502)])
+        session.commit()
+    base = f"/api/v1/budgets/{budget['id']}/reports"
+    period = {"start_date": "2026-09-01", "end_date": "2026-09-30"}
+    report = client.get(f"{base}/income-spending", params=period, headers=auth(owner_token)).json()
+    assert report['income_minor'] == 501 and len(report['income_transaction_ids']) == 500
+    cursor, seen = None, []
+    for _ in range(3):
+        response = client.get(f"{base}/contributors", params={**period, "kind": "income", "limit": 200,
+            **({"cursor": cursor} if cursor else {})}, headers=auth(owner_token))
+        assert response.status_code == 200, response.text
+        page = response.json()
+        seen.extend(row['id'] for row in page['items']); cursor = page['next_cursor']
+    assert cursor is None and len(seen) == len(set(seen)) == 501
+    assert set(seen) == {f"income-contributor-{index:04d}" for index in range(501)}
 
 
 def test_report_filters_and_inclusive_custom_range(client, owner_token, session_factory):

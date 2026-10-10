@@ -384,6 +384,12 @@ struct WorkspaceReportQuery: Equatable {
               payee: payee, memberID: memberID, transactionType: transactionType, cleared: cleared,
               flag: flag, tag: tag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTracking)
     }
+    func incomeSpendingPeriod(start: Date, end: Date) -> Self {
+        // Income vs Spending intentionally does not accept category/group/type filters.
+        .init(start: start, end: end, accountID: accountID, categoryID: "", categoryGroup: "",
+              payee: payee, memberID: memberID, transactionType: "", cleared: cleared,
+              flag: flag, tag: tag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTracking)
+    }
 }
 
 struct WorkspaceReportContext: Equatable {
@@ -13788,6 +13794,14 @@ private struct IncomeSpendingTrendsView: View {
             LabeledContent("Income", value: store.format(report.incomeMinor))
             LabeledContent("Spending", value: store.format(report.spendingMinor))
             LabeledContent("Net cash flow", value: store.format(report.differenceMinor))
+            NavigationLink("View income transactions") {
+                LiveReportTransactionsView(title: "Income", transactionIDs: [], reportKind: .income,
+                    reportStart: report.startDate, reportEnd: report.endDate)
+            }
+            NavigationLink("View spending transactions") {
+                LiveReportTransactionsView(title: "Spending", transactionIDs: [], reportKind: .spending,
+                    reportStart: report.startDate, reportEnd: report.endDate)
+            }
             if let rate = report.savingsRate { LabeledContent("Savings rate", value: rate.formatted(.percent.precision(.fractionLength(0)))) }
             if let period = selectedPeriod {
                 VStack(alignment: .leading, spacing: 4) {
@@ -13795,8 +13809,14 @@ private struct IncomeSpendingTrendsView: View {
                     LabeledContent("Income", value: store.format(period.incomeMinor))
                     LabeledContent("Spending", value: store.format(period.spendingMinor))
                     LabeledContent("Net cash flow", value: store.format(period.differenceMinor))
-                    let ids = Array(Set(period.incomeTransactionIDs + period.spendingTransactionIDs)).sorted()
-                    if !ids.isEmpty { NavigationLink("View contributing transactions") { LiveReportTransactionsView(title: "Cash Flow", transactionIDs: ids, isTruncated: period.incomeTransactionIDsTruncated == true || period.spendingTransactionIDsTruncated == true) } }
+                    NavigationLink("View period income") {
+                        LiveReportTransactionsView(title: "Period Income", transactionIDs: [], reportKind: .income,
+                            reportStart: period.periodStart, reportEnd: period.periodEnd)
+                    }
+                    NavigationLink("View period spending") {
+                        LiveReportTransactionsView(title: "Period Spending", transactionIDs: [], reportKind: .spending,
+                            reportStart: period.periodStart, reportEnd: period.periodEnd)
+                    }
                 }.accessibilityIdentifier("income-spending-selected-period")
             }
         }
@@ -13933,6 +13953,9 @@ private struct LiveReportTransactionsView: View {
     var totalSpendingMinor: Int64? = nil
     var purpose = "contributing"
     var reportCategoryID: String? = nil
+    var reportKind: APIReportContributorKind? = nil
+    var reportStart: String? = nil
+    var reportEnd: String? = nil
     @State private var rows: [APITransaction] = []
     @State private var batchIndex = 0
     @State private var nextCursor: String?
@@ -13941,10 +13964,11 @@ private struct LiveReportTransactionsView: View {
     @State private var requestID: UUID?
     @State private var observationAuthority: Int?
     @State private var observationContext: WorkspaceReportContext?
-    private struct LoadKey: Equatable { let ids: [String]; let authority: Int; let context: WorkspaceReportContext; let categoryID: String? }
+    private struct LoadKey: Equatable { let ids: [String]; let authority: Int; let context: WorkspaceReportContext; let categoryID: String?; let kind: APIReportContributorKind?; let start: String?; let end: String? }
     private var ids: [String] { Array(Set(transactionIDs)).sorted() }
     private var batches: [[String]] { TransactionIdentitySelection.batches(ids) }
-    private var canLoadMore: Bool { reportCategoryID != nil ? nextCursor != nil : (nextCursor != nil || batchIndex < batches.count) }
+    private var usesFullReport: Bool { reportCategoryID != nil || reportKind != nil }
+    private var canLoadMore: Bool { usesFullReport ? nextCursor != nil : (nextCursor != nil || batchIndex < batches.count) }
     var body: some View {
         List {
             if observationAuthority != store.authorityRevision || observationContext != store.reportContext {
@@ -13952,7 +13976,7 @@ private struct LiveReportTransactionsView: View {
             } else {
             if let groupName { Section("Category Group") { Label(groupName, systemImage: "folder") } }
             if let totalSpendingMinor { Section { LabeledContent("Total", value: store.format(totalSpendingMinor)) } }
-            if isTruncated && reportCategoryID == nil { Section { Label("Showing the first 500 contributing transactions. Report totals include all authorized activity.", systemImage: "info.circle") } }
+            if isTruncated && !usesFullReport { Section { Label("Showing the first 500 contributing transactions. Report totals include all authorized activity.", systemImage: "info.circle") } }
             ForEach(rows) { LiveTransactionLink(transaction: $0) }
             if loading { HStack { Spacer(); ProgressView("Loading transactions…"); Spacer() } }
             if let errorMessage {
@@ -13968,7 +13992,8 @@ private struct LiveReportTransactionsView: View {
             }
         }.navigationTitle(title)
         .accessibilityIdentifier("report-contributors")
-        .task(id: LoadKey(ids: ids, authority: store.authorityRevision, context: store.reportContext, categoryID: reportCategoryID)) {
+        .task(id: LoadKey(ids: ids, authority: store.authorityRevision, context: store.reportContext,
+                          categoryID: reportCategoryID, kind: reportKind, start: reportStart, end: reportEnd)) {
             requestID = nil; rows = []; nextCursor = nil; batchIndex = 0; loading = false; errorMessage = nil
             observationAuthority = store.authorityRevision
             observationContext = store.reportContext
@@ -13980,7 +14005,7 @@ private struct LiveReportTransactionsView: View {
     private func load(reset: Bool) async {
         guard !loading else { return }
         if reset { batchIndex = 0; nextCursor = nil; rows = [] }
-        guard reportCategoryID != nil || batchIndex < batches.count else { return }
+        guard usesFullReport || batchIndex < batches.count else { return }
         let identity = UUID(), authority = store.authorityRevision, selectedIDs = ids, context = store.reportContext
         requestID = identity; loading = true
         defer { if requestID == identity { loading = false } }
@@ -13988,6 +14013,9 @@ private struct LiveReportTransactionsView: View {
             let page: APIReportContributorPage
             if let reportCategoryID {
                 page = try await store.reportContributors(query: context.query.selectingCategory(reportCategoryID), kind: .categorySpending, cursor: nextCursor)
+            } else if let reportKind, let reportStart, let reportEnd {
+                let query = context.query.incomeSpendingPeriod(start: BudgetWorkspaceStore.parseDate(reportStart), end: BudgetWorkspaceStore.parseDate(reportEnd))
+                page = try await store.reportContributors(query: query, kind: reportKind, cursor: nextCursor)
             } else {
                 let value = try await store.browseTransactions(.init(transactionIDs: batches[batchIndex], limit: 50, cursor: nextCursor))
                 page = .init(items: value.items, nextCursor: value.nextCursor)
@@ -13997,7 +14025,7 @@ private struct LiveReportTransactionsView: View {
             rows += page.items.filter { !existing.contains($0.id) }
             rows.sort { ($0.occurredOn, $0.createdAt ?? "", $0.id) > ($1.occurredOn, $1.createdAt ?? "", $1.id) }
             nextCursor = page.nextCursor
-            if nextCursor == nil && reportCategoryID == nil { batchIndex += 1 }
+            if nextCursor == nil && !usesFullReport { batchIndex += 1 }
             errorMessage = nil
         } catch {
             guard !Task.isCancelled, requestID == identity, authority == store.authorityRevision, selectedIDs == ids, context == store.reportContext else { return }

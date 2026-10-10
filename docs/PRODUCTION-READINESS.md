@@ -1,5 +1,31 @@
 # Production readiness mission ledger
 
+## Full Income vs Spending drill through (2026-10-09)
+
+Income vs Spending now offers separate income and spending transaction lists for the whole report
+and the selected chart period. Both use the shared full contributor endpoint, 50-row paging,
+current credentials, context/access invalidation and the production transaction detail/editor.
+Contributor queries preserve the precise selected dates and all filters supported by the parent
+Income vs Spending report. Category, group and transaction-type filters are intentionally absent
+because that parent report does not accept them; carrying them over would produce a different
+dataset from the displayed totals. Local Device/Demo use their existing report contributor records.
+
+Four focused backend regressions pass, including full 501-row income paging beyond the compact
+cap with an adjacent-month record excluded, 601-row category/spending paging, cursor binding and
+transfer/edit parity. The new native regression compares both income and spending contributors
+with the selected canonical report period, checks query semantics and unchanged financial state.
+Regular Xcode 27.0 (27A266a) passes app/native build-for-testing on preserved simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`. Native execution/human acceptance remain pending; no
+stalled runner retry or data reset. The API implementation is unchanged from the preceding
+106-test executed Swift checkpoint. `git diff --check` passes.
+
+Rebuild the app; the server must already include contributor endpoint checkpoint `699aa15`.
+No further server-code update or migration is introduced here. Human retest: open Income vs
+Spending, inspect whole-range income/spending lists, select a month, then inspect each period
+list and verify its dates. Load more on a large disposable history, edit through the shared
+editor and return to current report values. Payee/group trend and Net Worth contributor caps
+remain follow-up work. TestFlight is held; no human pass is claimed.
+
 ## Full Spending Breakdown contributor navigation (2026-10-09)
 
 Spending Breakdown category detail now reads the full canonical contributor endpoint rather than

@@ -11,6 +11,31 @@ import UniformTypeIdentifiers
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testIncomeSpendingContributorsKeepPeriodAndReportFilterSemantics() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        await store.loadReports([.income])
+        let report = try XCTUnwrap(store.incomeReport)
+        let period = try XCTUnwrap(report.periods.first)
+        let query = store.reportContext.query.selectingCategory("not-an-income-report-filter")
+            .incomeSpendingPeriod(start: BudgetWorkspaceStore.parseDate(period.periodStart), end: BudgetWorkspaceStore.parseDate(period.periodEnd))
+        XCTAssertEqual(query.categoryID, ""); XCTAssertEqual(query.categoryGroup, ""); XCTAssertEqual(query.transactionType, "")
+        XCTAssertEqual(BudgetWorkspaceStore.dateString(query.start), period.periodStart)
+        XCTAssertEqual(BudgetWorkspaceStore.dateString(query.end), period.periodEnd)
+        let summary = store.summary, balances = store.accountBalances
+        for (kind, expected) in [(APIReportContributorKind.income, period.incomeTransactionIDs), (.spending, period.spendingTransactionIDs)] {
+            var cursor: String?, found = Set<String>()
+            repeat {
+                let page = try await store.reportContributors(query: query, kind: kind, cursor: cursor)
+                XCTAssertTrue(found.isDisjoint(with: page.items.map(\.id)))
+                found.formUnion(page.items.map(\.id)); cursor = page.nextCursor
+            } while cursor != nil
+            XCTAssertEqual(found, Set(expected))
+        }
+        XCTAssertEqual(store.summary, summary); XCTAssertEqual(store.accountBalances, balances)
+    }
+
+    @MainActor
     func testFullCategoryContributorsUseCanonicalReportAndSharedDetail() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()
