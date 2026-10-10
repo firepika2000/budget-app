@@ -20,6 +20,10 @@ puts session[session.index("enum WorkspaceRouteContext:")...session.index("enum 
 workspace = File.read("ios/BudgetApp/BudgetWorkspaceView.swift")
 abort "Attachment upload must stage before replay" unless workspace.include?("try transactionOutbox.enqueueAttachment(id: operationID") && workspace.include?("operationID: entry.id, token: token") && workspace.include?("let data = try transactionOutbox.stagedAttachmentData(for: entry)")
 abort "Attachment acknowledgement must verify integrity" unless workspace.include?("accepted.sha256 == upload.sha256") && workspace.include?("accepted.byteCount == Int64(upload.byteCount)") && workspace.include?("accepted.transactionID == upload.transactionID") && workspace.include?("accepted.detachedAt == nil")
+preview_start = workspace.index("    private func openPending(")
+preview_end = workspace.index("    private func open(_ attachment:", preview_start || 0)
+abort "Pending preview must read scoped local bytes without transport or mutation" unless preview_start && preview_end && workspace[preview_start...preview_end].include?("store.pendingAttachmentBytes(id: entry.id)") && !workspace[preview_start...preview_end].include?("detach") && !workspace[preview_start...preview_end].include?("await")
+abort "Staged previews must be gated by currently visible pending entries" unless workspace.include?("guard pendingLiveTransactions.contains(where: { $0.id == id && $0.attachmentUpload != nil })")
 send_first = workspace.index("    private func sendTransaction(")
 send_last = workspace.index("    func householdInvitations()", send_first || 0)
 abort "Canonical send path moved; review binding guard" unless send_first && send_last

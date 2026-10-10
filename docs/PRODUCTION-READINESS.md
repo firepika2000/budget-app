@@ -1,5 +1,37 @@
 # Production readiness mission ledger
 
+## Offline pending attachment presentation (2026-10-09)
+
+Transaction detail now renders individual saved-upload rows, with filename, bounded file size
+and pending/review status, rather than a floating notice or misleading empty state. An offline
+empty view explains that server attachments must be loaded after connecting. Add Attachment
+counts locally pending and currently loaded accepted files toward the 20-file UI boundary;
+the server remains authoritative for final capacity and authorization.
+
+Pending-file preview reads integrity-checked staged bytes locally, through current workspace
+access, visible pending-entry scope and server/actor destination guards. It never calls upload,
+download, detach or acknowledgement. Accepted and pending previews share the existing Quick
+Look navigation; temporary preview copies now use unique private directories, complete file
+protection and mode 0600 instead of filename-shared unprotected temporary copies. Temporary
+preview copies still rely on OS temporary-directory cleanup; durable queue data is separate.
+
+Executed evidence: the production Foundation outbox regression passes, including local byte
+reads through reopen without acknowledgement, retained interrupted uploads, corruption refusal
+and the full existing durable-operation checks. Additional production-wiring assertions verify
+local preview has no asynchronous transport/removal path and requires a currently visible
+pending entry. Native regression additions cover preview retaining the queue and known workspace
+revocation refusing staged-byte access. These source assertions are not UI interaction proof,
+and the native cases are not claimed executed.
+
+Regular Xcode 27.0 (27A266a), `/Applications/Xcode.app/Contents/Developer`, passed
+`build-for-testing` for the production app and native tests using preserved iPhone 17 Pro Max
+simulator `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27. `git diff --check` passed.
+
+Human retest extends the previous offline-upload flow: after saving a receipt offline, reopen
+the transaction and tap its pending filename. Verify the preview works offline and Back returns
+to the still-pending row. Reconnect and verify exactly one accepted attachment replaces it.
+No server change or migration; native rebuild required. TestFlight remains on hold.
+
 ## Native protected attachment upload replay (2026-10-09)
 
 Photos, Camera and Files continue through the existing transaction attachment application

@@ -179,6 +179,7 @@ final class AppSessionRefreshTests: XCTestCase {
             XCTAssertFalse(store.reportsReady([.summary]))
             XCTAssertNotNil(store.errorMessage)
             XCTAssertTrue(store.workspaceAccessDenied)
+            XCTAssertThrowsError(try store.pendingAttachmentBytes(id: "forbidden"), "Known revocation blocks private staged-byte access")
             let reportCount = requests.paths.filter { $0.contains("/reports/") }.count
             await store.loadReports([.summary], retry: true)
             do { _ = try await store.transactionAttachments(id: "forbidden"); XCTFail("Known denial must block repeated service calls") } catch {}

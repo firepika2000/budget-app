@@ -3624,6 +3624,14 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     var pendingLegacyServerReview: Bool { transactionOutbox.requiresLegacyReview }
     var pendingServerAddress: String { credentials.serverURL.absoluteString }
 
+    func pendingAttachmentBytes(id: String) throws -> Data {
+        try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+        guard let entry = transactionOutbox.entries.first(where: { $0.id == id && $0.attachmentUpload != nil }) else {
+            throw BudgetApplicationError.invalidOperation("This saved upload is no longer pending. Refresh the transaction to view its accepted attachment.")
+        }
+        return try transactionOutbox.stagedAttachmentData(for: entry)
+    }
+
     func confirmLegacyPendingServer() throws {
         try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
         try transactionOutbox.confirmLegacyServer()
@@ -4966,6 +4974,14 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await authorizedObservation { try await services().transactions.attachments(id: id) } }
+    func pendingAttachmentBytes(id: String) throws -> Data {
+        try requireWorkspaceAccess()
+        guard pendingLiveTransactions.contains(where: { $0.id == id && $0.attachmentUpload != nil }),
+              let live = commandRepository as? LiveWorkspaceCommandRepository else {
+            throw BudgetApplicationError.invalidOperation("Current transaction access is required to preview a saved upload.")
+        }
+        return try live.pendingAttachmentBytes(id: id)
+    }
     func transactionHistory(id: String, limit: Int = 50, offset: Int = 0) async throws -> [APITransactionChange] { try await authorizedObservation { try await services().transactions.history(id: id, limit: limit, offset: offset) } }
     func recentTransactionChanges(limit: Int = 5) async throws -> [APITransactionChange] { try await authorizedObservation { try await services().transactions.recentChanges(limit: limit) } }
     func reconciliationHistory(accountID: String, limit: Int = 50, offset: Int = 0) async throws -> [APIReconciliationHistory] {
@@ -10472,14 +10488,53 @@ private struct TransactionAttachmentsView: View {
     private var pendingUploads: [LiveTransactionOutbox.Entry] {
         store.pendingLiveTransactions.filter { $0.attachmentUpload?.transactionID == transaction.id }
     }
-    var body: some View { Section("Attachments") { if attachments.isEmpty { Text("No attachments").foregroundStyle(.secondary) }; ForEach(attachments) { attachment in HStack(spacing: 12) { Button { Task { await open(attachment) } } label: { VStack(alignment: .leading) { Text(attachment.filename); Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file)).font(.caption).foregroundStyle(.secondary) }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityIdentifier("attachment-preview-\(attachment.id)").accessibilityLabel("Preview \(attachment.filename)"); if store.budget.can("edit_transaction") { Button { pendingRemoval = attachment } label: { Image(systemName: "trash").frame(minWidth: 44, minHeight: 44) }.buttonStyle(.borderless).foregroundStyle(.red).accessibilityIdentifier("attachment-remove-\(attachment.id)").accessibilityLabel("Remove \(attachment.filename)") } } }; if store.budget.can("edit_transaction"), transaction.status != "reversal", attachments.count < 20 { Button("Add Attachment", systemImage: "paperclip") { showingSources = true }.accessibilityIdentifier("add-attachment-action") }; Text("PDF, JPEG, PNG, or HEIC · 10 MB maximum · detached files retained 30 days").font(.caption).foregroundStyle(.secondary) }
-        .task(id: store.liveCredentialRevision) { await load() }
-        .safeAreaInset(edge: .bottom) {
-            if !pendingUploads.isEmpty {
-                Text("\(pendingUploads.count) upload(s) saved on this iPhone · review in Pending Sync")
-                    .font(.caption).foregroundStyle(.secondary).padding(8).background(.background)
+    var body: some View {
+        Section("Attachments") {
+            if attachments.isEmpty && pendingUploads.isEmpty {
+                Text(store.isWorkingOffline ? "Connect to load server attachments" : "No attachments")
+                    .foregroundStyle(.secondary)
             }
+            ForEach(attachments) { attachment in
+                HStack(spacing: 12) {
+                    Button { Task { await open(attachment) } } label: {
+                        VStack(alignment: .leading) {
+                            Text(attachment.filename)
+                            Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityIdentifier("attachment-preview-\(attachment.id)")
+                        .accessibilityLabel("Preview \(attachment.filename)")
+                    if store.budget.can("edit_transaction") {
+                        Button { pendingRemoval = attachment } label: {
+                            Image(systemName: "trash").frame(minWidth: 44, minHeight: 44)
+                        }.buttonStyle(.borderless).foregroundStyle(.red)
+                            .accessibilityIdentifier("attachment-remove-\(attachment.id)")
+                            .accessibilityLabel("Remove \(attachment.filename)")
+                    }
+                }
+            }
+            ForEach(pendingUploads) { entry in
+                if let upload = entry.attachmentUpload {
+                    Button { openPending(entry) } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label(upload.filename, systemImage: "icloud.and.arrow.up")
+                            Text(entry.requiresReview == true ? "Needs review in Pending Sync" : "Saved on this iPhone · awaiting server confirmation")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(ByteCountFormatter.string(fromByteCount: Int64(upload.byteCount), countStyle: .file))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityIdentifier("pending-attachment-preview-\(entry.id)")
+                        .accessibilityLabel("Preview saved upload \(upload.filename)")
+                }
+            }
+            if store.budget.can("edit_transaction"), transaction.status != "reversal", attachments.count + pendingUploads.count < 20 {
+                Button("Add Attachment", systemImage: "paperclip") { showingSources = true }
+                    .accessibilityIdentifier("add-attachment-action")
+            }
+            Text("PDF, JPEG, PNG, or HEIC · 10 MB maximum · detached files retained 30 days")
+                .font(.caption).foregroundStyle(.secondary)
         }
+        .task(id: store.liveCredentialRevision) { await load() }
         .onChange(of: pendingUploads.count) { oldCount, newCount in
             if oldCount > 0 && newCount == 0 { Task { await load() } }
         }
@@ -10570,7 +10625,30 @@ private struct TransactionAttachmentsView: View {
         @unknown default: error = "Camera access is unavailable. Choose an existing photo or file."
         }
     }
-    private func open(_ attachment: APITransactionAttachment) async { do { let data = try await store.downloadTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); let directory = FileManager.default.temporaryDirectory.appending(path: "BudgetAttachmentPreview", directoryHint: .isDirectory); try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true); let url = directory.appending(path: attachment.filename); try data.write(to: url, options: .atomic); previewURL = url } catch { self.error = error.localizedDescription } }
+    private func openPending(_ entry: LiveTransactionOutbox.Entry) {
+        do {
+            guard let upload = entry.attachmentUpload else { return }
+            let data = try store.pendingAttachmentBytes(id: entry.id)
+            try presentPreview(data: data, filename: upload.filename)
+        } catch { self.error = error.localizedDescription }
+    }
+    private func open(_ attachment: APITransactionAttachment) async {
+        do {
+            let data = try await store.downloadTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id)
+            try presentPreview(data: data, filename: attachment.filename)
+        } catch { self.error = error.localizedDescription }
+    }
+    private func presentPreview(data: Data, filename: String) throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("BudgetAttachmentPreview", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        let name = (filename.replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent
+        let url = directory.appendingPathComponent(name.isEmpty ? "attachment" : name)
+        try data.write(to: url, options: [.atomic, .completeFileProtection])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        previewURL = url
+    }
     private func removalMessage(for attachment: APITransactionAttachment) -> String {
         attachment.filename + " will be detached and retained for 30 days before permanent deletion."
     }

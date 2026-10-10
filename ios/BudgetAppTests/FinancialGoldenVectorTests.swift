@@ -4,6 +4,22 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testPendingAttachmentPreviewReadsRetainedBytesWithoutAcknowledgingUpload() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("queue.json")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let identity = UUID().uuidString.lowercased()
+        let bytes = Data("%PDF-receipt".utf8)
+        try queue.enqueueAttachment(id: identity, transactionID: "transaction", filename: "receipt.pdf", contentType: "application/pdf", data: bytes)
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        let entry = try XCTUnwrap(reopened.entries.first)
+        XCTAssertEqual(try reopened.stagedAttachmentData(for: entry), bytes)
+        XCTAssertEqual(reopened.count, 1, "Preview is not an upload acknowledgement or discard")
+        XCTAssertEqual(try LiveTransactionOutbox(fileURL: file).stagedAttachmentData(for: entry), bytes)
+    }
+
+    @MainActor
     func testDemoReconciliationUsesCurrentCapabilityAndAccountScopeWithoutPartialLocks() async throws {
         let source = DemoWorkspaceDataSource()
         let checking = try XCTUnwrap(source.demo.accounts.first { $0.id == "checking" })
