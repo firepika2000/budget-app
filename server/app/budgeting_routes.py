@@ -2291,6 +2291,7 @@ def create_transaction_in_session(
     """
     body = body.model_copy(deep=True)
     budget = require_budget_capability(db, user, budget_id, "create_transaction")
+    lock_budget(db, budget_id)
     if body.occurred_on > today():
         raise HTTPException(status_code=422, detail="Future transactions belong in the planning layer")
     account = db.scalar(select(Account).where(Account.id == body.account_id).with_for_update())
@@ -2482,6 +2483,7 @@ def void_transaction(
     db: Session = Depends(get_db),
 ) -> Transaction:
     budget = require_budget_capability(db, user, budget_id, "delete_transaction")
+    lock_budget(db, budget_id)
     original = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.id == transaction_id, Transaction.budget_id == budget_id,
     ).with_for_update())
@@ -2719,6 +2721,7 @@ def update_transaction(
 ) -> Transaction:
     original_body = body.model_copy(deep=True)
     budget = require_budget_capability(db, user, budget_id, "edit_transaction")
+    lock_budget(db, budget_id)
     transaction = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.id == transaction_id,
         Transaction.budget_id == budget_id,
@@ -2828,6 +2831,7 @@ def delete_transaction(
     db: Session = Depends(get_db),
 ) -> None:
     budget = require_budget_capability(db, user, budget_id, "delete_transaction")
+    lock_budget(db, budget_id)
     transaction = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(Transaction.id == transaction_id))
     if (transaction is None or transaction.budget_id != budget_id or transaction.transfer_id is not None
             or not _can_access_transaction_resources(db, user, budget, transaction)):
@@ -2857,6 +2861,7 @@ def create_transfer(
     db: Session = Depends(get_db),
 ) -> TransferResponse:
     budget = require_budget_capability(db, user, budget_id, "create_transaction")
+    lock_budget(db, budget_id)
     if body.occurred_on > today():
         raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
     locked_accounts = list(db.scalars(select(Account).where(Account.id.in_([
@@ -2982,6 +2987,7 @@ def update_transfer(
     db: Session = Depends(get_db),
 ) -> TransferResponse:
     budget = require_budget_capability(db, user, budget_id, "edit_transaction")
+    lock_budget(db, budget_id)
     if body.occurred_on > today():
         raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
     legs = _locked_transfer_legs(db, budget_id, transfer_id)
@@ -3063,6 +3069,7 @@ def delete_transfer(
     db: Session = Depends(get_db),
 ) -> None:
     budget = require_budget_capability(db, user, budget_id, "delete_transaction")
+    lock_budget(db, budget_id)
     legs = _locked_transfer_legs(db, budget_id, transfer_id)
     _authorize_transfer_legs(db, user, budget, legs, "delete")
     for leg in legs:

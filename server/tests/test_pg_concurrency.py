@@ -280,6 +280,11 @@ def test_concurrent_target_snoozes_are_idempotent_and_money_neutral(pg):
                               route_attempt(pg.factory, pg.owner_id, attempt)])) == ["ok", "ok"]
     with pg.factory() as db:
         assert db.scalar(text("SELECT COUNT(*) FROM category_target_snoozes")) == 1
+    after = pg.client.get(f"{root}/months/2026-09-01", headers=auth(pg.token)).json()
+    assert after["allocation_version"] == before["allocation_version"]
+    assert after["ready_to_assign_minor"] == before["ready_to_assign_minor"]
+    assert after["categories"][0]["available_minor"] == before["categories"][0]["available_minor"]
+    assert after["categories"][0]["is_target_snoozed"] is True
 
 
 def test_concurrent_statement_import_approval_posts_exactly_once(pg):
@@ -327,11 +332,6 @@ def test_concurrent_statement_import_approval_posts_exactly_once(pg):
         assert (transaction.amount_minor, transaction.category_id, transaction.is_cleared) == (
             -1234, category["id"], True,
         )
-    after = pg.client.get(f"{root}/months/2026-09-01", headers=auth(pg.token)).json()
-    assert after["allocation_version"] == before["allocation_version"]
-    assert after["ready_to_assign_minor"] == before["ready_to_assign_minor"]
-    assert after["categories"][0]["available_minor"] == before["categories"][0]["available_minor"]
-    assert after["categories"][0]["is_target_snoozed"] is True
 
 
 def test_concurrent_bulk_tag_additions_serialize_without_lost_update(pg):
@@ -655,7 +655,8 @@ def test_concurrent_identified_transfer_creation_acknowledges_exactly_two_legs(p
         assert db.query(WorkspaceCommandReceipt).count() == 1
 
 
-def test_quick_unclear_cannot_slip_between_reconciliation_review_and_commit(pg, monkeypatch):
+@pytest.mark.parametrize("operation", ["bulk", "edit", "delete", "void"])
+def test_quick_unclear_cannot_slip_between_reconciliation_review_and_commit(pg, monkeypatch, operation):
     from app import budgeting_routes
     budget = create_budget(pg.client, pg.token, pg.factory)
     account, _ = create_budget_structure(pg.client, pg.token, budget["id"])
@@ -687,8 +688,20 @@ def test_quick_unclear_cannot_slip_between_reconciliation_review_and_commit(pg, 
                 results["bulk_pid"] = db.scalar(text("SELECT pg_backend_pid()"))
                 bulk_started.set()
                 try:
-                    bulk_update_transactions(budget_id=budget["id"], body=TransactionBulkUpdateRequest(
-                        transaction_ids=[transaction["id"]], action="set_cleared", cleared=False), user=user, db=db)
+                    if operation == "bulk":
+                        bulk_update_transactions(budget_id=budget["id"], body=TransactionBulkUpdateRequest(
+                            transaction_ids=[transaction["id"]], action="set_cleared", cleared=False), user=user, db=db)
+                    elif operation == "edit":
+                        from app.schemas import TransactionUpdate
+                        budgeting_routes.update_transaction(budget_id=budget["id"], transaction_id=transaction["id"],
+                            body=TransactionUpdate(account_id=account["id"], amount_minor=200,
+                                occurred_on=date(2026, 9, 5), payee="Changed", is_cleared=True), user=user, db=db)
+                    elif operation == "delete":
+                        budgeting_routes.delete_transaction(budget_id=budget["id"], transaction_id=transaction["id"], user=user, db=db)
+                    else:
+                        from app.schemas import TransactionVoidRequest
+                        budgeting_routes.void_transaction(budget_id=budget["id"], transaction_id=transaction["id"],
+                            body=TransactionVoidRequest(reason="Concurrent void"), user=user, db=db)
                     results["bulk"] = 200
                 except HTTPException as error:
                     db.rollback()
@@ -713,7 +726,7 @@ def test_quick_unclear_cannot_slip_between_reconciliation_review_and_commit(pg, 
                 blocked = True
                 break
             bulk_finished.wait(0.01)
-        assert blocked and not bulk_finished.is_set(), "Quick Unclear did not wait on the reconciliation budget lock"
+        assert blocked and not bulk_finished.is_set(), f"{operation} did not wait on the reconciliation budget lock"
     finally:
         release.set()
         for thread in threads:

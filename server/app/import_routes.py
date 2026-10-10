@@ -27,6 +27,7 @@ from .schemas import (
     TransactionCreate,
 )
 from .budgeting_routes import create_transaction_in_session, require_budget_capability, void_transaction_in_session
+from .allocation import lock_budget
 from .import_staging import claim_staged_batch_for_approval
 
 
@@ -249,6 +250,7 @@ def approve_statement_import(
         raise HTTPException(status_code=422, detail="Review every imported row before approval")
     # Claim before any financial write. A rollback restores review state if any
     # canonical transaction fails validation or authorization.
+    lock_budget(db, budget_id)
     batch = claim_staged_batch_for_approval(
         db, user=user, budget_id=budget_id, batch_id=batch_id,
         expected_version=body.expected_version,
@@ -285,6 +287,7 @@ def undo_statement_import(
     user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ) -> dict:
     budget = require_budget_capability(db, user, budget_id, "delete_transaction")
+    lock_budget(db, budget_id)
     visible = get_staged_batch(db, user=user, budget_id=budget_id, batch_id=batch_id)
     if visible.account_id != account_id:
         raise HTTPException(status_code=404, detail="Import batch not found")

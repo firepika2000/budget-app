@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .access import can_access_resource, visible_resource_ids
 from .budgeting_routes import require_budget_capability
+from .allocation import lock_budget
 from .clock import today
 from .credit import add_payment_reserve_event, add_purchase_reserve_events
 from .database import get_db
@@ -473,6 +474,7 @@ def realize_scheduled_transaction(
     # Realization creates a real transaction, so it requires create-transaction authority *now*
     # (not whoever created the schedule) and re-checks resource scope below.
     budget = require_budget_capability(db, user, budget_id, "create_transaction")
+    lock_budget(db, budget_id)
     schedule = db.scalar(select(ScheduledTransaction).where(
         ScheduledTransaction.id == schedule_id,
         ScheduledTransaction.budget_id == budget_id,

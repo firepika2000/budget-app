@@ -1,5 +1,30 @@
 # Production readiness mission ledger
 
+## Financial writer lock-order checkpoint (2026-10-09)
+
+Ordinary transaction creation/edit/delete/void, transfer creation/edit/delete,
+scheduled realization, and statement approval/undo now acquire the same budget lock
+before their account, transaction, schedule or import-claim locks. This serializes
+financial writes with reconciliation's review-to-commit critical section within one
+budget. Existing accounting rules and permission checks remain unchanged; statement
+approval still requires its existing view/create permissions, not reconciliation authority.
+
+The event-coordinated PostgreSQL regression now covers bulk clearing, edit, delete and
+void: each backend demonstrably waits on the budget lock, then receives 409 after
+reconciliation commits, retaining the cleared/reconciled transaction. Twelve focused
+PostgreSQL cases passed, including transfer/reconciliation receipt races, scheduled
+expense/transfer/card realization, import approval, bulk tags and target snoozes.
+An existing misplaced target-snooze assertion block was restored to its own test;
+it previously referenced undefined variables in the import concurrency test.
+Another 110 focused backend cases passed, including financial golden vectors.
+These checks do not constitute proof of every possible cross-route contention pair.
+
+Private disposable PostgreSQL was stopped after verification. No Live or Simulator
+data was touched. No Swift changes or native rebuild required. Server update/restart
+required; no new migration. TestFlight publication remains on hold. Regular Xcode
+27.0 (27A266a), `/Applications/Xcode.app/Contents/Developer`, replaces Beta for future
+native verification. Offline reconciliation remains outside the native outbox.
+
 ## Proven Quick Unclear / reconciliation race correction (2026-10-09)
 
 An event-coordinated real PostgreSQL regression reproduced Quick Unclear committing after
