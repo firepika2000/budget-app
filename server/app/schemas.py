@@ -1276,6 +1276,18 @@ class IdentifiedTransferCreate(TransferCreate):
     mutation_operation_id: Optional[UUID] = None
 
 
+class TransferUpdate(IdentifiedTransferCreate):
+    expected_revisions: Optional[dict[str, TransactionRevision]] = None
+
+    @model_validator(mode="after")
+    def require_observed_legs(self) -> "TransferUpdate":
+        if self.expected_revisions is not None and len(self.expected_revisions) != 2:
+            raise ValueError("expected revisions must contain both transfer legs")
+        if self.mutation_operation_id is not None and self.expected_revisions is None:
+            raise ValueError("identified transfer edits require both observed revisions")
+        return self
+
+
 class TransferResponse(BaseModel):
     transfer_id: str
     source: TransactionResponse

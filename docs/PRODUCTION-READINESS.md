@@ -1,5 +1,28 @@
 # Production readiness mission ledger
 
+## Observed account-transfer edit contract (2026-10-09)
+
+PUT transfers accepts optional `expected_revisions` keyed by both actual leg IDs. Identified
+edits additionally require `mutation_operation_id` and both observations. A changed revision on
+either leg returns 409 before mutation; malformed/missing observations return 422. Legacy
+unidentified callers remain compatible. New edits retain reconciled-transfer protections and
+the existing balanced transfer/credit-card reserve calculation, with no local accounting path.
+
+Accepted edits persist the actor/budget-scoped receipt with both legs, reserve effects and actual
+change audits in one commit. Identical retries acknowledge current authorized state before stale
+or reconciliation guards, never reapply an edit. Identity reuse for another payload/target/kind
+returns 409. Current capability, ownership and both account scopes are checked before any receipt
+acknowledgement. Collision rollback re-enters those checks; real concurrent PostgreSQL proof
+remains outstanding.
+
+Actual HTTP regressions cover either-leg conflicts, missing/incorrect two-leg observations,
+exact Int64 amounts, accepted retry after later reconciliation/metadata, changed-payload/new-ID
+rejection and account/capability revocation. The focused edit/creation/ledger/credit/golden suite
+passed 67 cases; final edit coverage includes nine cases. This is a server contract checkpoint,
+not completed native offline transfers. Native transfer editors still need captured observations
+and durable queue integration. Server restart required; no new migration or Swift build,
+no changes to human Live/Simulator data. TestFlight remains on hold.
+
 ## Identified account-transfer creation receipts (2026-10-09)
 
 POST transfers now accepts an optional `mutation_operation_id`. An actor/budget-scoped receipt

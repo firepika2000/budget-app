@@ -137,6 +137,7 @@ from .schemas import (
     TransactionUpdate,
     TransferCreate,
     IdentifiedTransferCreate,
+    TransferUpdate,
     TransferResponse,
 )
 from .models import ScheduledTransaction
@@ -2956,12 +2957,12 @@ def _locked_transfer_legs(db: Session, budget_id: str, transfer_id: str, *, lock
     return legs
 
 
-def _authorize_transfer_legs(db: Session, user: User, budget: Budget, legs: list[Transaction], action: str) -> None:
+def _authorize_transfer_legs(db: Session, user: User, budget: Budget, legs: list[Transaction], action: str, *, acknowledgement: bool = False) -> None:
     if any(not can_access_resource(db, user, budget, "account", leg.account_id) for leg in legs):
         raise HTTPException(status_code=404, detail="Transfer not found")
     if any(leg.created_by_user_id != user.id for leg in legs) and not has_capability(db, user, budget, "manage_budget_structure"):
         raise HTTPException(status_code=403, detail=f"You may only {action} your own transfers")
-    if any(leg.is_reconciled for leg in legs):
+    if not acknowledgement and any(leg.is_reconciled for leg in legs):
         consequence = "modified" if action == "edit" else "deleted"
         raise HTTPException(status_code=409, detail=f"Reconciled transfers cannot be {consequence}")
 
@@ -2970,7 +2971,7 @@ def _authorize_transfer_legs(db: Session, user: User, budget: Budget, legs: list
 def update_transfer(
     budget_id: str,
     transfer_id: str,
-    body: TransferCreate,
+    body: TransferUpdate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TransferResponse:
@@ -2978,7 +2979,26 @@ def update_transfer(
     if body.occurred_on > today():
         raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
     legs = _locked_transfer_legs(db, budget_id, transfer_id)
+    _authorize_transfer_legs(db, user, budget, legs, "edit", acknowledgement=True)
+    operation_id = str(body.mutation_operation_id) if body.mutation_operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "kind": "transfer_update", "transfer_id": transfer_id,
+        "body": body.model_dump(mode="json", exclude={"mutation_operation_id"}),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if operation_id is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id))
+        if receipt is not None:
+            if receipt.command_kind != "transfer_update" or receipt.resource_id != transfer_id or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+            return TransferResponse(transfer_id=transfer_id,
+                source=TransactionResponse.model_validate(next(leg for leg in legs if leg.amount_minor < 0)),
+                destination=TransactionResponse.model_validate(next(leg for leg in legs if leg.amount_minor > 0)))
     _authorize_transfer_legs(db, user, budget, legs, "edit")
+    if body.expected_revisions is not None:
+        if set(body.expected_revisions) != {leg.id for leg in legs}:
+            raise HTTPException(status_code=422, detail="Expected revisions must identify both transfer legs")
+        if any(body.expected_revisions[leg.id] != TransactionResponse.model_validate(leg).revision for leg in legs):
+            raise HTTPException(status_code=409, detail="This transfer changed. Refresh and review before applying this edit.")
     accounts = list(db.scalars(select(Account).where(Account.id.in_([
         body.source_account_id, body.destination_account_id
     ])).order_by(Account.id).with_for_update()))
@@ -3015,7 +3035,17 @@ def update_transfer(
         after = transaction_snapshot(leg)
         if before[leg.id] != after:
             record_transaction_change(db, leg, user, "updated", before=before[leg.id], after=after)
-    db.commit(); db.refresh(source_leg); db.refresh(destination_leg)
+    if operation_id is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=operation_id, command_kind="transfer_update", resource_id=transfer_id, request_digest=digest))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if operation_id is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) is None:
+            raise
+        return update_transfer(budget_id, transfer_id, body, user, db)
+    db.refresh(source_leg); db.refresh(destination_leg)
     return TransferResponse(transfer_id=transfer_id, source=TransactionResponse.model_validate(source_leg), destination=TransactionResponse.model_validate(destination_leg))
 
 
