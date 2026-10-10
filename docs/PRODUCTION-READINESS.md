@@ -1,5 +1,36 @@
 # Production readiness mission ledger
 
+## Identified attachment upload server boundary (2026-10-09)
+
+The attachment audit found uncertain uploads could be retried as a new upload, consuming
+another encrypted object and attachment slot. The existing upload endpoint now optionally
+accepts UUID header `X-Attachment-Operation-ID`; actor/budget receipts bind the validated
+canonical target, sanitized filename, normalized MIME, byte count and content SHA-256.
+The budget lock serializes attachment publication/count checks. Receipt, metadata and audit
+commit together, with rollback deleting tentative encrypted storage. Accepted retry checks
+current edit permission, ownership and whole-transaction scope before returning the existing
+attachment. It verifies decrypted bytes/size/hash before acknowledging: missing/corrupt stored
+content returns 500, never a false success. Changed intent/target/kind returns 409. Detached
+accepted uploads return 404 without recreating data or undoing the 30-day tombstone.
+
+Also corrected a proven new-audit identity defect: attachment IDs were generated on insertion,
+but the audit JSON was captured earlier and therefore recorded `attachment_id: null`. Allocate
+the stable attachment ID before capturing the event. Existing immutable audit history is not
+rewritten. No new encryption/storage path or accounting semantics were introduced.
+
+Fifty-two focused backend tests passed (14 new upload receipt tests plus attachment lifecycle,
+privacy and financial golden vectors). Coverage includes exact-one encrypted object/audit,
+correct audit identity, content/name/target/kind collisions, acknowledgement at the 20-file
+limit, detached non-resurrection, revoked account/category/capability/ownership, missing/corrupt
+storage refusal and failed-commit cleanup. One real isolated PostgreSQL concurrent-upload race
+passed: both retries returned one ID with one encrypted object, receipt and audit event.
+Disposable PostgreSQL was stopped afterward; no Live/Simulator data touched.
+`git diff --check` passed. No Swift changes/native rebuild or full-backend-suite claim.
+
+Server update/restart required. Existing migration 0049 receipt table is required; no new
+migration. Native protected file staging, integrity-bound upload replay and user-visible Pending
+Sync remain the next incomplete slice. TestFlight remains on hold; no merge/tag/release.
+
 ## Native durable observed Void with Reversal (2026-10-09)
 
 The shared void editor now captures its displayed transaction revision in state rather than

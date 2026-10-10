@@ -9,7 +9,7 @@ import hashlib
 import hmac
 from io import StringIO
 from typing import Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
@@ -20,6 +20,7 @@ from .clock import today
 from sqlalchemy import String, and_, cast, delete, false, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.exc import IntegrityError
+from cryptography.exceptions import InvalidTag
 
 from .access import (
     can_access_resource,
@@ -2641,26 +2642,53 @@ def attach_transaction_file(
     content: bytes = Body(..., media_type="application/octet-stream"),
     filename: str = Header(..., alias="X-Attachment-Filename"),
     content_type: str = Header(..., alias="X-Attachment-Content-Type"),
+    operation_id: Optional[UUID] = Header(default=None, alias="X-Attachment-Operation-ID"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TransactionAttachment:
     budget = require_budget_capability(db, user, budget_id, "edit_transaction")
+    lock_budget(db, budget_id)
     transaction = _attachment_transaction(db, user, budget, transaction_id)
     if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
         raise HTTPException(status_code=403, detail="You may only attach files to your own transactions")
     if transaction.status == "reversal":
         raise HTTPException(status_code=409, detail="Attach supporting documents to the original transaction")
-    count = db.scalar(select(func.count()).select_from(TransactionAttachment).where(
-        TransactionAttachment.transaction_id == transaction_id, TransactionAttachment.detached_at.is_(None),
-    )) or 0
-    if count >= 20:
-        raise HTTPException(status_code=422, detail="A transaction may have at most 20 attachments")
     normalized_type = content_type.split(";", 1)[0].strip().lower()
     try:
         validate_content(content, normalized_type)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    operation_id = str(operation_id) if operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "kind": "attachment_upload", "transaction_id": transaction_id,
+        "filename": safe_filename(filename), "content_type": normalized_type,
+        "byte_count": len(content), "sha256": hashlib.sha256(content).hexdigest(),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if operation_id is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id))
+        if receipt is not None:
+            if receipt.command_kind != "attachment_upload" or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+            attachment = db.scalar(select(TransactionAttachment).where(
+                TransactionAttachment.id == receipt.resource_id, TransactionAttachment.budget_id == budget_id,
+                TransactionAttachment.transaction_id == transaction_id, TransactionAttachment.detached_at.is_(None),
+            ))
+            if attachment is None:
+                raise HTTPException(status_code=404, detail="Attachment no longer available; accepted upload will not be recreated")
+            try:
+                stored_content = _attachment_store(request).read(attachment.storage_key)
+            except (FileNotFoundError, ValueError, InvalidTag):
+                raise HTTPException(status_code=500, detail="Accepted attachment storage is unavailable") from None
+            if len(stored_content) != attachment.byte_count or hashlib.sha256(stored_content).hexdigest() != attachment.sha256:
+                raise HTTPException(status_code=500, detail="Accepted attachment integrity check failed")
+            return attachment
+    count = db.scalar(select(func.count()).select_from(TransactionAttachment).where(
+        TransactionAttachment.transaction_id == transaction_id, TransactionAttachment.detached_at.is_(None),
+    )) or 0
+    if count >= 20:
+        raise HTTPException(status_code=422, detail="A transaction may have at most 20 attachments")
     attachment = TransactionAttachment(
+        id=str(uuid4()),
         budget_id=budget_id, transaction_id=transaction_id, filename=safe_filename(filename),
         content_type=normalized_type, byte_count=len(content), sha256=hashlib.sha256(content).hexdigest(),
         storage_key=str(uuid4()), created_by_user_id=user.id,
@@ -2668,11 +2696,19 @@ def attach_transaction_file(
     storage = _attachment_store(request)
     storage.write(attachment.storage_key, content)
     db.add(attachment)
+    if operation_id is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=operation_id, command_kind="attachment_upload", resource_id=attachment.id,
+            request_digest=digest))
     record_transaction_change(db, transaction, user, "attachment_added", after=json.dumps({"attachment_id": attachment.id, "filename": attachment.filename, "sha256": attachment.sha256}, sort_keys=True))
     try:
         db.commit()
-    except Exception:
+    except Exception as error:
+        db.rollback()
         storage.delete(attachment.storage_key)
+        if isinstance(error, IntegrityError) and operation_id is not None and db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) is not None:
+            return attach_transaction_file(request=request, budget_id=budget_id, transaction_id=transaction_id,
+                content=content, filename=filename, content_type=content_type, operation_id=UUID(operation_id), user=user, db=db)
         raise
     db.refresh(attachment)
     return attachment

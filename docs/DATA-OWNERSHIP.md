@@ -43,6 +43,19 @@ the server returns. Completing only one additional command does not close this m
 
 #### Canonical server mutation/replay boundary
 
+Attachment upload now accepts optional UUID header `X-Attachment-Operation-ID`. The server
+binds the actor/budget identity to canonical target, sanitized filename, normalized MIME type,
+byte count and SHA-256. Receipt, metadata and audit publish together; a failed database commit
+rolls back and removes the tentative encrypted object. Accepted retries authenticate and check
+current ownership/resource scope before acknowledgement, then verify the existing encrypted
+object's plaintext size/hash. They consume neither a second object nor another attachment slot.
+Changed bytes/name/target or a reused command kind conflicts; detached/purged accepted files
+return 404 rather than being resurrected. Missing/corrupt server storage returns 500, so a future
+durable phone upload must retain its staged copy instead of acknowledging data loss.
+The existing 10 MB validation, 20-file limit, encryption and 30-day detach tombstones remain.
+Unidentified legacy upload behavior remains available. Protected native byte staging and upload
+queue integration are **still unfinished**; a server receipt alone does not make attachments offline.
+
 Void-with-reversal now optionally accepts `mutation_operation_id` and requires an observed
 `expected_revision` for identified commands. The exact reason, observation and original target
 are bound to an actor/budget receipt in the same commit as the canonical reversal, reserve

@@ -762,6 +762,30 @@ def test_concurrent_identified_void_acknowledges_one_reversal(pg):
         assert db.query(WorkspaceCommandReceipt).count() == 1
 
 
+def test_concurrent_identified_attachment_upload_acknowledges_one_encrypted_object(pg):
+    import hashlib
+    from app.budgeting_routes import attach_transaction_file
+    from app.models import TransactionAttachment, TransactionChange, WorkspaceCommandReceipt
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    original = record(pg.client, pg.token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-100)
+    content, identity = b"%PDF-1.7\nConcurrent receipt", uuid4()
+    request = SimpleNamespace(app=pg.client.app)
+    def call(db, user):
+        return attach_transaction_file(request=request, budget_id=budget["id"], transaction_id=original["id"],
+            content=content, filename="receipt.pdf", content_type="application/pdf", operation_id=identity, user=user, db=db).id
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    assert results[0][1] == results[1][1]
+    with pg.factory() as db:
+        attachment = db.query(TransactionAttachment).one()
+        assert attachment.sha256 == hashlib.sha256(content).hexdigest()
+        assert db.query(WorkspaceCommandReceipt).count() == 1
+        assert db.query(TransactionChange).filter_by(action="attachment_added").count() == 1
+    objects = list(Path(pg.client.app.state.settings.attachment_storage_path).iterdir())
+    assert len(objects) == 1 and content not in objects[0].read_bytes()
+
+
 # ---------------------------------------------------------------------------
 # 6. Authorization is not bypassed under contention
 # ---------------------------------------------------------------------------
