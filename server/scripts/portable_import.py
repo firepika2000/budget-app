@@ -75,6 +75,18 @@ SECTION_TABLE_ORDER = (
     ("request_actions", "request_actions"),
     ("import_batches", "import_batches"),
     ("household_access_events", "household_access_events"),
+    # Preserve decision history and accepted command identities after their domain parents.
+    ("budget_structure_revisions", "budget_structure_revisions"),
+    ("account_debt_terms_revisions", "account_debt_terms_revisions"),
+    ("target_revisions", "category_target_revisions"),
+    ("scheduled_transaction_revisions", "scheduled_transaction_revisions"),
+    ("payee_revisions", "payee_revisions"),
+    ("allowance_plan_revisions", "allowance_plan_revisions"),
+    ("reconciliations", "reconciliations"),
+    ("debt_payoff_plans", "debt_payoff_plans"),
+    ("debt_payoff_plan_revisions", "debt_payoff_plan_revisions"),
+    ("transaction_creation_receipts", "transaction_creation_receipts"),
+    ("workspace_command_receipts", "workspace_command_receipts"),
 )
 
 

@@ -123,6 +123,7 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
     transaction = client.post(f"{root}/transactions", headers=auth(owner_token), json={
         "account_id": account["id"], "category_id": category["id"],
         "amount_minor": -12_345, "occurred_on": "2026-09-27", "payee_name": "Market",
+        "client_operation_id": "de88e677-f171-45eb-8901-4cba956efda8",
     })
     assert transaction.status_code == 201
     attachment_content = b"\x89PNG\r\n\x1a\nportable import receipt"
@@ -135,9 +136,14 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
         content=attachment_content,
     )
     assert attachment.status_code == 201
+    assignment_body = {"month": "2026-09-01", "assigned_minor": 20_000,
+                       "mutation_operation_id": "9b3d4468-e8b2-4631-bebd-0d3f94e40c10",
+                       "expected_allocation_version": client.get(
+                           f"{root}/months/2026-09-01", headers=auth(owner_token)
+                       ).json()["allocation_version"]}
     assignment = client.put(
         f"{root}/categories/{category['id']}/assignment", headers=auth(owner_token),
-        json={"month": "2026-09-01", "assigned_minor": 20_000},
+        json=assignment_body,
     )
     assert assignment.status_code == 200
     exported = client.get(f"{root}/export.json", headers=auth(owner_token))
@@ -159,6 +165,11 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
         ).fetchone() == (-12_345,)
         assert database.execute("SELECT COALESCE(SUM(amount_minor),0) FROM allocation_postings").fetchone() == (0,)
         assert database.execute("PRAGMA foreign_key_check").fetchall() == []
+        for section, table in SECTION_TABLE_ORDER:
+            value = payload.get(section, [])
+            expected_count = len(value) if isinstance(value, list) else int(value is not None)
+            assert database.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone() == (expected_count,), section
+        assert database.execute("SELECT transaction_id FROM transaction_creation_receipts").fetchone() == (transaction.json()["id"],)
 
     with pytest.raises(PortableImportError, match="new empty authority"):
         import_payload(
@@ -185,6 +196,25 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
         })
         assert login.status_code == 200, login.text
         token = login.json()["access_token"]
+        replay = imported_client.post(f"{root}/transactions", headers=auth(token), json={
+            "account_id": account["id"], "category_id": category["id"],
+            "amount_minor": -12_345, "occurred_on": "2026-09-27", "payee_name": "Market",
+            "client_operation_id": "de88e677-f171-45eb-8901-4cba956efda8",
+        })
+        assert replay.status_code == 201, replay.text
+        assert replay.json()["id"] == transaction.json()["id"]
+        assignment_replay = imported_client.put(
+            f"{root}/categories/{category['id']}/assignment", headers=auth(token), json=assignment_body
+        )
+        assert assignment_replay.status_code == 200, assignment_replay.text
+        restored_export = imported_client.get(f"{root}/export.json", headers=auth(token))
+        assert restored_export.status_code == 200, restored_export.text
+        for section in ("transaction_creation_receipts", "workspace_command_receipts",
+                        "account_revisions", "budget_structure_revisions", "payee_revisions",
+                        "allocation_operations", "allocation_postings"):
+            original = sorted(payload[section], key=lambda row: json.dumps(row, sort_keys=True))
+            restored = sorted(restored_export.json()[section], key=lambda row: json.dumps(row, sort_keys=True))
+            assert restored == original, section
         budgets = imported_client.get("/api/v1/budgets", headers=auth(token))
         assert budgets.status_code == 200
         assert [item["id"] for item in budgets.json()] == [budget["id"]]

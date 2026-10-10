@@ -62,8 +62,10 @@ from .models import (
     Transaction,
     TransactionAttachment,
     TransactionChange,
+    TransactionCreationReceipt,
     TransactionSplit,
     User,
+    WorkspaceCommandReceipt,
 )
 from .portable_data import FORMAT_NAME, FORMAT_VERSION, section_manifest
 from .local_device_export import build_local_device_projection, unsupported_allocation_operation_count
@@ -405,6 +407,12 @@ def export_budget_json(
             (PayeeRevision.budget_id.is_(None) | (PayeeRevision.budget_id == budget_id)),
         ))],
         "transactions": [row_data(item) for item in transactions],
+        "transaction_creation_receipts": [row_data(item) for item in db.scalars(select(TransactionCreationReceipt).where(
+            TransactionCreationReceipt.budget_id == budget_id
+        ))],
+        "workspace_command_receipts": [row_data(item) for item in db.scalars(select(WorkspaceCommandReceipt).where(
+            WorkspaceCommandReceipt.budget_id == budget_id
+        ))],
         "transaction_splits": [row_data(item) for item in db.scalars(select(TransactionSplit).where(
             TransactionSplit.transaction_id.in_(transaction_ids)
         ))] if transaction_ids else [],
