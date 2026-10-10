@@ -1,5 +1,32 @@
 # Production readiness mission ledger
 
+## Reviewed schedule deletion server boundary (2026-10-09)
+
+Schedule deletion accepts optional UUID header `X-Planning-Operation-ID` and query
+`expected_revision`. Identified deletion requires the observed schedule revision. Budget
+locking serializes review, deletion history and receipt publication with edits/realization.
+Changed metadata, pause state or realization returns 409 before deletion. Legacy requests
+retain their existing behavior, including 404 for already missing schedules.
+
+Accepted retries return 204 without another history row. The receipt references retained
+deletion history rather than a vanished schedule, allowing current capability and whole
+account/destination/category scope checks before acknowledgement. Changed intent/kind fails
+409; missing or inaccessible history fails 404. Schedule removal, append-only deletion
+history and receipt commit atomically. Realized transactions and financial observations
+remain untouched; deletion only removes future planning metadata.
+
+Executed evidence: 72 focused tests passed, including 14 deletion cases, the reviewed edit
+suite, scheduled contract and financial golden vectors. Coverage includes lost-response
+retry, stale metadata/pause/realization, identity/target/history mismatch, malformed UUID,
+missing observation, capability/account/category revocation after deletion and failed-commit
+rollback. A real isolated PostgreSQL race passed: simultaneous retries acknowledged one
+deletion/history/receipt with no actual transaction. The temporary cluster was stopped.
+`git diff --check` passed; no Live data changed.
+
+Server update/restart required; no new migration beyond 0049. No Swift change or native
+verification in this server-only checkpoint. Native reviewed deletion queuing remains the
+next unfinished slice. TestFlight remains on hold; no merge/tag/release.
+
 ## Native durable reviewed schedule editing (2026-10-09)
 
 Live schedule editing now persists complete edited metadata, schedule ID, captured server

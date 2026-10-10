@@ -45,6 +45,7 @@ from .schemas import (
     ScheduledTransactionResponse,
     ScheduledTransactionRevisionResponse,
     ScheduledTransactionUpdate,
+    TransactionRevision,
 )
 
 
@@ -65,8 +66,8 @@ def _schedule_snapshot(schedule: ScheduledTransaction) -> dict:
 
 
 def _append_schedule_revision(db: Session, schedule: ScheduledTransaction, action: str, actor_id: str,
-                              before: Optional[dict], after: Optional[dict], transaction_ids: Optional[list[str]] = None) -> None:
-    db.add(ScheduledTransactionRevision(
+                              before: Optional[dict], after: Optional[dict], transaction_ids: Optional[list[str]] = None) -> ScheduledTransactionRevision:
+    revision = ScheduledTransactionRevision(
         budget_id=schedule.budget_id, schedule_id=schedule.id, account_id=schedule.account_id,
         destination_account_id=schedule.destination_account_id, category_id=schedule.category_id,
         before_account_id=before.get("account_id") if before else None,
@@ -74,7 +75,9 @@ def _append_schedule_revision(db: Session, schedule: ScheduledTransaction, actio
         before_category_id=before.get("category_id") if before else None,
         action=action, actor_user_id=actor_id, before_snapshot=before, after_snapshot=after,
         transaction_ids=transaction_ids,
-    ))
+    )
+    db.add(revision)
+    return revision
 
 
 def _target_snapshot(target: CategoryTarget) -> dict:
@@ -472,20 +475,50 @@ def delete_scheduled_transaction(
     schedule_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    operation_id: Optional[UUID] = Header(default=None, alias="X-Planning-Operation-ID"),
+    expected_revision: Optional[TransactionRevision] = Query(default=None),
 ) -> None:
     budget = require_budget_capability(db, user, budget_id, "manage_planning")
+    if operation_id is not None and expected_revision is None:
+        raise HTTPException(status_code=422, detail="Identified schedule deletion requires an observed revision")
+    identity = str(operation_id) if operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({"schedule_id": schedule_id, "expected_revision": expected_revision},
+                                               sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    lock_budget(db, budget_id)
+    if identity is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity))
+        if receipt is not None:
+            if receipt.command_kind != "schedule_delete" or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Saved schedule deletion identity belongs to different intent")
+            # Deletion history retains the resource scope after the schedule is gone.
+            deleted = db.get(ScheduledTransactionRevision, receipt.resource_id)
+            if (deleted is None or deleted.budget_id != budget_id or deleted.schedule_id != schedule_id
+                    or deleted.action != "deleted" or not _can_access_schedule_resources(db, user, budget, deleted)):
+                raise HTTPException(status_code=404, detail="Scheduled transaction not found")
+            return
     schedule = db.scalar(select(ScheduledTransaction).where(
         ScheduledTransaction.id == schedule_id,
         ScheduledTransaction.budget_id == budget_id,
     ))
     if schedule is None or not _can_access_schedule_resources(db, user, budget, schedule):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduled transaction not found")
+    if expected_revision is not None and expected_revision != ScheduledTransactionResponse.model_validate(schedule).revision:
+        raise HTTPException(status_code=409, detail="This schedule changed. Refresh and review before deleting.")
     # Deleting a schedule removes only the future plan. Actual transactions already realized from it
     # are preserved; their `scheduled_transaction_id` lineage remains for audit.
-    _append_schedule_revision(db, schedule, "deleted", user.id, _schedule_snapshot(schedule), None)
+    deleted = _append_schedule_revision(db, schedule, "deleted", user.id, _schedule_snapshot(schedule), None)
     db.flush()
     db.delete(schedule)
-    db.commit()
+    if identity is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=identity, command_kind="schedule_delete", request_digest=digest, resource_id=deleted.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if identity is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity)) is None:
+            raise
+        return delete_scheduled_transaction(budget_id, schedule_id, user, db, operation_id, expected_revision)
 
 
 @router.get("/scheduled-transactions/history", response_model=list[ScheduledTransactionRevisionResponse])

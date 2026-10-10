@@ -808,6 +808,27 @@ def test_concurrent_reviewed_schedule_edits_never_overwrite_each_other(pg, same_
         assert db.query(ScheduledTransaction).one().amount_minor == -1234
 
 
+def test_concurrent_identified_schedule_deletion_acknowledges_one_history(pg):
+    from app.models import ScheduledTransactionRevision, WorkspaceCommandReceipt
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    created = pg.client.post(f"/api/v1/budgets/{budget['id']}/scheduled-transactions", headers=auth(pg.token), json={
+        "account_id": account["id"], "category_id": category["id"], "name": "Delete reviewed bill",
+        "amount_minor": -1234, "next_date": "2099-01-01", "recurrence_unit": "months"})
+    assert created.status_code == 201, created.text
+    schedule, identity = created.json(), uuid4()
+    def call(db, user):
+        planning_routes.delete_scheduled_transaction(budget["id"], schedule["id"], user, db, identity, schedule["revision"])
+        return "acknowledged"
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    with pg.factory() as db:
+        assert db.query(ScheduledTransaction).count() == 0
+        deleted = db.query(ScheduledTransactionRevision).filter_by(action="deleted").one()
+        assert db.query(WorkspaceCommandReceipt).one().resource_id == deleted.id
+        assert db.query(Transaction).count() == 0
+
+
 def test_concurrent_identified_make_recurring_creates_one_template(pg):
     from app.budgeting_routes import create_schedule_from_transaction
     from app.models import TransactionChange, WorkspaceCommandReceipt
