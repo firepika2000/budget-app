@@ -1,5 +1,22 @@
 # Production readiness mission ledger
 
+## Plan ordering failure visibility (2026-10-09)
+
+Category and group management no longer discard reorder failures through `try?`. Each drag
+sets its in-flight guard before starting the task, prevents overlapping drag submissions,
+disables management controls during saving and shows a saving indicator. Failures display
+the canonical error in a dedicated category/group-order alert. No optimistic persistent order
+or automatic mutation retry is introduced; successful saves retain authoritative refresh.
+Offline structure reordering remains outside the durable transaction queue.
+
+One executed Swift API regression covers both exact ordered-ID payloads and propagated server
+error messages. The existing backend atomic/authorized reorder regression passes.
+Regular Xcode 27 build-for-testing passes for the production app/native test targets on the
+preserved iPhone 17 Pro Max / iOS 27 simulator; native runtime/human interaction remains unverified.
+No backend, financial model, migration or data change is required. Human retest: disconnect the server,
+drag a category/group in Edit mode and confirm visible failure; reconnect, drag again and
+verify the authoritative order persists after reload. App rebuild required; TestFlight held.
+
 ## Payee search failure and overlapping request recovery (2026-10-09)
 
 Payee management previously swallowed search errors, presenting an empty collection as no

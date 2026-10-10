@@ -9075,10 +9075,66 @@ private struct LiveGroupManagementView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var editing: APICategoryGroup?
     @State private var showGroupCreation = false
+    @State private var reordering = false
+    @State private var reorderError: String?
     private var activeGroups: [APICategoryGroup] { store.groups.filter { !$0.isArchived }.sorted { $0.sortOrder < $1.sortOrder } }
     private var archivedGroups: [APICategoryGroup] { store.groups.filter(\.isArchived).sorted { $0.sortOrder < $1.sortOrder } }
-    var body: some View { NavigationStack { List { Section("Active") { ForEach(activeGroups) { group in Button { editing=group } label: { HStack { VStack(alignment:.leading){Text(group.name);Text("Visible").font(.caption).foregroundStyle(.secondary)};Spacer();Image(systemName:"chevron.right").font(.caption).foregroundStyle(.tertiary) } } }.onMove(perform: moveGroups) }; if !archivedGroups.isEmpty { Section("Hidden") { ForEach(archivedGroups) { group in Button { editing=group } label: { HStack { Text(group.name); Spacer(); Image(systemName:"archivebox.fill").foregroundStyle(.secondary) } } } } } }.navigationTitle("Category Groups").toolbar { ToolbarItem(placement:.cancellationAction){Button("Add Group",systemImage:"plus"){showGroupCreation=true}.accessibilityIdentifier("manage-groups-add-action")};ToolbarItem{EditButton()};ToolbarItem(placement:.confirmationAction){Button("Done"){dismiss()}} }.sheet(item:$editing){LiveGroupEditor(group:$0)}.sheet(isPresented:$showGroupCreation){GroupCreationView()} } }
-    private func moveGroups(from source: IndexSet, to destination: Int) { var reordered=activeGroups; reordered.move(fromOffsets:source,toOffset:destination); Task { try? await store.reorderCategoryGroups(reordered.map(\.id)) } }
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Active") {
+                    ForEach(activeGroups) { group in
+                        Button { editing = group } label: {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(group.name)
+                                    Text("Visible").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                            }
+                        }
+                    }.onMove(perform: moveGroups)
+                }
+                if !archivedGroups.isEmpty {
+                    Section("Hidden") {
+                        ForEach(archivedGroups) { group in
+                            Button { editing = group } label: {
+                                HStack { Text(group.name); Spacer(); Image(systemName: "archivebox.fill").foregroundStyle(.secondary) }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Category Groups")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Add Group", systemImage: "plus") { showGroupCreation = true }
+                        .accessibilityIdentifier("manage-groups-add-action")
+                }
+                ToolbarItem { EditButton() }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+            .disabled(reordering)
+            .overlay { if reordering { ProgressView("Saving order…") } }
+            .alert("Unable to save group order", isPresented: Binding(get: { reorderError != nil }, set: { if !$0 { reorderError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(reorderError ?? "Try again when the server is reachable. Your previous order remains authoritative.") }
+            .sheet(item: $editing) { LiveGroupEditor(group: $0) }
+            .sheet(isPresented: $showGroupCreation) { GroupCreationView() }
+        }
+    }
+    private func moveGroups(from source: IndexSet, to destination: Int) {
+        guard !reordering else { return }
+        var reordered = activeGroups
+        reordered.move(fromOffsets: source, toOffset: destination)
+        reordering = true
+        Task {
+            defer { reordering = false }
+            do { try await store.reorderCategoryGroups(reordered.map(\.id)) }
+            catch { reorderError = error.localizedDescription }
+        }
+    }
 }
 
 private struct LiveCategoryManagementView: View {
@@ -9086,6 +9142,8 @@ private struct LiveCategoryManagementView: View {
     @EnvironmentObject private var session: AppSession
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
+    @State private var reordering = false
+    @State private var reorderError: String?
 
     private var visibleCategories: [APICategory] {
         store.categories.filter { category in
@@ -9123,10 +9181,15 @@ private struct LiveCategoryManagementView: View {
                                 .accessibilityIdentifier("manage-category-\(category.id)")
                             }
                             .onMove { source, destination in
-                                guard search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                                guard !reordering, search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                                 var reordered = categories
                                 reordered.move(fromOffsets: source, toOffset: destination)
-                                Task { try? await store.reorderCategories(groupID: group.id, orderedIDs: reordered.map(\.id)) }
+                                reordering = true
+                                Task {
+                                    defer { reordering = false }
+                                    do { try await store.reorderCategories(groupID: group.id, orderedIDs: reordered.map(\.id)) }
+                                    catch { reorderError = error.localizedDescription }
+                                }
                             }
                         }
                     }
@@ -9138,7 +9201,12 @@ private struct LiveCategoryManagementView: View {
             .searchable(text: $search, prompt: "Search categories")
             .navigationTitle("Categories")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem { EditButton().disabled(!search.isEmpty) }; ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem { EditButton().disabled(!search.isEmpty || reordering) }; ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(reordering) } }
+            .disabled(reordering)
+            .overlay { if reordering { ProgressView("Saving order…") } }
+            .alert("Unable to save category order", isPresented: Binding(get: { reorderError != nil }, set: { if !$0 { reorderError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(reorderError ?? "Try again when the server is reachable. Your previous order remains authoritative.") }
         }
         .accessibilityIdentifier("category-management-screen")
     }

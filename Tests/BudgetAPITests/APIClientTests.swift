@@ -2,6 +2,26 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testPlanReorderingPreservesOrderAndSurfacesServerFailure() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        var calls = 0
+        MockURLProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.httpMethod, "PUT")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: [String]])
+            XCTAssertEqual(json, ["ordered_ids": ["second", "first"]])
+            XCTAssertEqual(request.url?.path, calls == 1 ? "/api/v1/budgets/b1/category-group-order" : "/api/v1/budgets/b1/category-order/g1")
+            return (HTTPURLResponse(url: request.url!, statusCode: 422, httpVersion: nil, headerFields: nil)!, Data(#"{"detail":"Review the complete current order before saving"}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        do { _ = try await client.reorderCategoryGroups(budgetID: "b1", orderedIDs: ["second", "first"], token: "current"); XCTFail("Group failure swallowed") }
+        catch { XCTAssertEqual(error as? APIClientError, .server(status: 422, message: "Review the complete current order before saving")) }
+        do { _ = try await client.reorderCategories(budgetID: "b1", groupID: "g1", orderedIDs: ["second", "first"], token: "current"); XCTFail("Category failure swallowed") }
+        catch { XCTAssertEqual(error as? APIClientError, .server(status: 422, message: "Review the complete current order before saving")) }
+        XCTAssertEqual(calls, 2)
+    }
+
     func testIdentifiedTransferDeletionPreservesBothReviewsAndRotatedCredential() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
         let identity = UUID().uuidString.lowercased()
