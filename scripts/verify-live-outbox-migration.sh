@@ -166,13 +166,33 @@ try await Task { @MainActor in
  precondition(bulkSends == 2 && LiveTransactionOutbox(fileURL: file).count == 0)
  let unobserved = APITransactionBulkUpdate(transactionIDs: ["existing"], action: "set_cleared", cleared: false, mutationOperationID: UUID().uuidString)
  do { try paused.enqueueBulk(unobserved); fatalError("Unobserved bulk queued") } catch {}
+ let shared = root.appendingPathComponent("shared.json")
+ let staleOwner = LiveTransactionOutbox(fileURL: shared)
+ let currentOwner = LiveTransactionOutbox(fileURL: shared)
+ try currentOwner.enqueue(operation)
+ let authoritativeBytes = try Data(contentsOf: shared)
+ do { try staleOwner.enqueue(second); fatalError("Stale owner replaced saved queue") } catch {}
+ var staleSends = 0
+ do { try await staleOwner.replay { _ in staleSends += 1 }; fatalError("Stale owner replayed") } catch {}
+ let afterStaleAttempt = try Data(contentsOf: shared)
+ precondition(staleSends == 0 && afterStaleAttempt == authoritativeBytes)
+ do { try await currentOwner.replayCommands { _ in
+  // Another owner appends while the first owner's authenticated sender is suspended.
+  let otherOwner = LiveTransactionOutbox(fileURL: shared)
+  try otherOwner.enqueue(second)
+ }; fatalError("Stale acknowledgement erased new intent") } catch {}
+ let surviving = LiveTransactionOutbox(fileURL: shared)
+ precondition(surviving.entries.map(\.operation) == [operation, second])
+ var survivingOrder: [RecordTransactionOperation] = []
+ try await surviving.replay { sent in survivingOrder.append(sent) }
+ precondition(survivingOrder == [operation, second] && LiveTransactionOutbox(fileURL: shared).count == 0)
  let blockedParent = root.appendingPathComponent("blocked")
  try Data("not a directory".utf8).write(to: blockedParent)
  let unwritable = LiveTransactionOutbox(fileURL: blockedParent.appendingPathComponent("queue.json"))
  var attempted = false
  do { try await unwritable.submit(operation) { _ in attempted = true }; fatalError("Write unexpectedly succeeded") } catch {}
  precondition(!attempted && unwritable.count == 0)
- print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, persisted rejection pause, later operations blocked, explicit ordered retry, targeted observed edit survives relaunch/replay, no send after persistence failure")
+ print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, persisted rejection pause, later operations blocked, explicit ordered retry, targeted edits/bulk survive relaunch, stale owners cannot overwrite/replay/ack newer intent, no send after persistence failure")
 }.value
 SWIFT
 RUBY

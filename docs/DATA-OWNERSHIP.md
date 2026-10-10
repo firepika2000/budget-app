@@ -7,6 +7,14 @@ claim that incomplete providers are production-ready.
 
 ### Remaining hosted offline-write milestone — required contract
 
+Queue writes and replay-start now compare the file's current decoded entries with the owner's last
+successful persisted snapshot. All in-process owners execute compare/atomic replacement synchronously
+on MainActor, so a reopened workspace cannot have its newer intent overwritten by an older object.
+A stale sender acknowledgement fails without deleting newer entries; reopen/replay acknowledges the
+original accepted UUID through server receipts. This is not a cross-process lock or proof of server
+PostgreSQL concurrency. Conflicts preserve saved files and require reopening instead of guessing how
+to merge drafts or claiming that an in-flight request did not reach the server.
+
 **Not complete:** the durable Live outbox now supports creation and observed ordinary transaction
 edits and observed bulk metadata/clearing actions. Transfers, allocations,
 reconciliation and administrative commands still send directly through their authenticated APIs.

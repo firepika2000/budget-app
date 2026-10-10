@@ -1,5 +1,24 @@
 # Production readiness mission ledger
 
+## Preserve newer queues across workspace ownership changes (2026-10-09)
+
+Persistence audit reproduced the risk of multiple outbox instances: a stale owner's array could
+atomically overwrite newer saved entries because atomic replacement alone does not prevent lost
+updates. Each owner now retains its successfully persisted snapshot. Replay-start and every write
+compare that snapshot against current decoded disk entries; mismatches fail before replacement.
+Compare/replace is synchronous on MainActor across in-process owners. A stale in-flight sender cannot
+acknowledge by removing another workspace's newer intent. The error directs reopening and explicitly
+warns that a request may already have reached the server; server receipts remain the once-effect
+boundary. No automatic merge, financial synthesis or external-process locking is implied.
+
+Production host checks passed stale append rejection with byte-identical file preservation, no stale
+replay sends, concurrent-owner append during sender execution, rejected stale acknowledgement with
+both intents retained, and ordered replay after reopening. Prior legacy adoption, creation/edit/bulk,
+exact money, scoped privacy and persisted-rejection checks also passed. A matching native XCTest
+was added; regular Xcode 27 build-for-testing passed on the preserved iPhone 17 Pro Max/iOS 27
+destination. Native runtime/human acceptance remains unclaimed.
+No server, schema, data or simulator change. Rebuild required. TestFlight remains held.
+
 ## Durable native bulk and quick-clearing commands (2026-10-09)
 
 The Live bulk repository now assigns an immutable mutation UUID and persists the typed exact bulk

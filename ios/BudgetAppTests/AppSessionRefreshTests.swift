@@ -1683,6 +1683,33 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testStaleOutboxOwnerCannotOverwriteOrAcknowledgeNewerQueue() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-owners-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("queue.json")
+        let stale = LiveTransactionOutbox(fileURL: file)
+        let current = LiveTransactionOutbox(fileURL: file)
+        let first = RecordTransactionOperation(accountID: "a", categoryID: "c", amountMinor: -1,
+            occurredOn: "2026-10-09", payeeName: "First", memo: "", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: [], clientOperationID: UUID().uuidString)
+        var second = first; second.clientOperationID = UUID().uuidString
+        try current.enqueue(first)
+        let bytes = try Data(contentsOf: file)
+        XCTAssertThrowsError(try stale.enqueue(second))
+        XCTAssertThrowsError(try stale.beginReplay())
+        XCTAssertEqual(try Data(contentsOf: file), bytes)
+        do {
+            try await current.replay { _ in try LiveTransactionOutbox(fileURL: file).enqueue(second) }
+            XCTFail("Stale acknowledgement must not erase another owner's saved changes")
+        } catch {}
+        XCTAssertFalse(current.isReplaying)
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.entries.map(\.operation), [first, second])
+        try await reopened.replay { _ in }
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).count, 0)
+    }
+
+    @MainActor
     func testOutboxSubmissionIsDurableBeforeFirstSendAndRetainsUncertainIntent() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-submit-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

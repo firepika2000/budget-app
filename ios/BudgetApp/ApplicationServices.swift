@@ -221,6 +221,7 @@ final class LiveTransactionOutbox {
     }
 
     private let fileURL: URL
+    private var persistedSnapshot: [Entry] = []
     private(set) var entries: [Entry] = []
     private(set) var loadErrorMessage: String?
     private(set) var isReplaying = false
@@ -246,7 +247,7 @@ final class LiveTransactionOutbox {
         try? FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        do { entries = try Self.readEntries(from: fileURL) }
+        do { entries = try Self.readEntries(from: fileURL); persistedSnapshot = entries }
         catch { entries = []; loadErrorMessage = "Pending changes could not be read. The saved queue has been preserved; do not delete app data. \(error.localizedDescription)" }
     }
 
@@ -262,6 +263,7 @@ final class LiveTransactionOutbox {
         do {
             if FileManager.default.fileExists(atPath: fileURL.path) {
                 entries = try Self.readEntries(from: fileURL)
+                persistedSnapshot = entries
                 return
             }
             if let bindingFileURL, FileManager.default.fileExists(atPath: bindingFileURL.path) {
@@ -411,6 +413,7 @@ final class LiveTransactionOutbox {
     func beginReplay() throws -> Bool {
         try requireReadableQueue()
         guard !isReplaying else { return false }
+        try requireCurrentSnapshot()
         isReplaying = true
         return true
     }
@@ -461,9 +464,19 @@ final class LiveTransactionOutbox {
     }
 
     private func persist(_ next: [Entry]) throws {
+        // All owners write synchronously on MainActor: compare and atomic replace cannot
+        // interleave with another in-process owner. Never overwrite a newer queue snapshot.
+        try requireCurrentSnapshot()
         let data = try JSONEncoder().encode(next)
         try data.write(to: fileURL, options: [.atomic, .completeFileProtection])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        persistedSnapshot = next
+    }
+
+    private func requireCurrentSnapshot() throws {
+        guard try Self.readEntries(from: fileURL) == persistedSnapshot else {
+            throw BudgetApplicationError.invalidOperation("Pending changes were updated by another workspace. Reopen this budget to review the current saved queue. Saved changes are preserved; an in-flight request may already have reached the server.")
+        }
     }
 }
 
