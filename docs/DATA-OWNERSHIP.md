@@ -1,9 +1,80 @@
 # Data ownership, local operation, and backup destinations
 
-Updated 2026-09-30. This document tracks the v0.14 data-ownership implementation. It does not
+Updated 2026-10-09. This document tracks the v0.14 data-ownership implementation. It does not
 claim that incomplete providers are production-ready.
 
 ## Authority and destination are separate
+
+### Remaining hosted offline-write milestone — required contract
+
+**Not implemented or complete:** the current durable Live outbox supports new transactions only.
+`LiveWorkspaceCommandRepository.updateTransaction`, `bulkUpdateTransactions`, transfers, allocations,
+reconciliation and administrative commands still send directly through their authenticated APIs.
+The following is the next integration contract, not a claim of working offline editing. Local Device
+already owns its local writes; its storage must not be replaced by a hosted replay queue.
+
+The full requirement is to preserve usable workspace/navigation and user-entered work across loss
+of connectivity, persist edits before reporting them saved, and synchronize in the background when
+the server returns. Completing only one additional command does not close this milestone.
+
+#### Canonical server mutation/replay boundary
+
+1. Every replayable command has an immutable UUID operation identity scoped to actor and budget,
+   a versioned typed payload and a canonical payload digest. A transactional receipt is committed
+   with the existing application-service effects, never before or in a separate transaction.
+2. Retrying an identical accepted command returns its acknowledgement without applying it again.
+   Reusing an identity with different content is a conflict. This must be tested with overlapping
+   PostgreSQL requests and a deliberately lost acknowledgement, not just sequential mock calls.
+3. Existing capability, ownership and whole-resource authorization remain mandatory. Receipt reads
+   must not expose former resources after revocation. Neither a saved credential nor a queued
+   command grants authority; successful token rotation uses the canonical current credential.
+4. Updates carry an authoritative observed revision/precondition. New edits cannot overwrite a
+   concurrent edit merely because an endpoint previously accepted last-write-wins PUT. Reconciled,
+   voided and system-linked protections still apply before mutation. Conflict responses preserve
+   the original local command and expose only currently authorized observations.
+5. Planning uses its existing allocation-version checks. Reconciliation retains its exact displayed
+   cutoff/cleared observation and explicit adjustment consent; replay must not refresh the expected
+   value silently. Transfer legs, card reserve events and audit attribution remain atomic through
+   existing canonical operations. No separate client accounting or replay-only mutation engine.
+
+#### Durable client lifecycle and recovery
+
+Persist command and observed context atomically before publishing pending state. Keep one queue
+owner/replay claim, ordered dependent commands, endpoint/user/budget binding and explicit legacy
+destination adoption. Corrupt queues, failed writes, refresh failures and lost acknowledgements
+must preserve original bytes/identities; no optimistic deletion, automatic queue reset or infinite
+retry loop. Independent safe work may progress, but an unresolved dependency must not be skipped.
+
+Distinguish pending local intent from accepted authoritative observations. Editing while offline
+must not quietly relabel pending amounts as server-posted, reconciled or spendable money. Existing
+exact minor-unit domain rules still validate input. Keep drafts/edit context and navigation intact
+while reads reconnect in the background; show a quiet status and actionable Pending Sync review.
+
+Review must distinguish retryable connectivity, current authorization denial, validation failure,
+and stale-observation conflict. Offer explicit resolution against fresh authorized data without
+discarding the user's copy. Cancel/discard cannot recall an in-flight command. Whole-resource scope
+checks apply to pending details, including every split and both transfer accounts. Attachment bytes
+need protected durable staging and integrity validation before queue support is claimed; a pending
+filename alone is not an offline upload implementation.
+
+#### Implementation sequence and completion evidence
+
+- Establish receipt/precondition APIs and populated migrations first, with exact duplicate/conflict,
+  current-auth and financial-observation tests. Do not connect a UI queue to an unsafe endpoint.
+- Integrate ordinary transaction edits and canonical bulk metadata/clearing into the shared service,
+  durable outbox and Pending Sync UI, then planning/transfer commands and explicit reconciliation
+  drafts/replay. Administrative changes cannot activate new local authority before server approval.
+- Add protected attachment staging and preserved draft/recovery behavior. Include server switching,
+  account/category revocation, relaunch and backup/recovery of unacknowledged work.
+- Prove the real Live-shaped sequence: hydrate → disconnect → edit → persist/relaunch → reconnect
+  → current-token replay → one canonical mutation → authoritative refresh. Also prove conflict
+  resolution, denial, partial connectivity and accepted-but-unacknowledged retries without changing
+  amounts, allocations, reserves, reconciliation history or privacy beyond the intended command.
+
+Use focused contract/service/persistence tests for each batch and one consolidated human acceptance
+flow after integration; do not repeatedly chase the unavailable native test runner. Native compile
+evidence remains distinct from runtime. No customer database/Simulator reset or TestFlight publication
+is authorized by this milestone. The general roadmap goal remains active.
 
 ### Offline transaction queue durability (2026-10-09)
 
