@@ -8,6 +8,8 @@ s = File.read("ios/BudgetApp/ApplicationServices.swift")
 puts "import Foundation\nimport CryptoKit"
 puts 'enum BudgetApplicationError: Error { case invalidOperation(String) }'
 puts s[s.index("struct TransactionSplitOperation:")...s.index("struct MakeRecurringOperation:")]
+api = File.read("Sources/BudgetAPI/APIModels.swift")
+puts api[api.index("public struct APITransactionBulkUpdate:")...api.index("/// Captures observations at selection time")]
 puts s[s.index("@MainActor\nfinal class LiveTransactionOutbox")...s.index("struct LiveWorkspaceCachePayload:")]
 puts s[s.index("private func liveCredentialSubject")...s.index("func isTransientConnectivityFailure")]
 session = File.read("ios/BudgetApp/AppSession.swift")
@@ -28,8 +30,9 @@ abort "Canonical submission must use durable-first queue" unless record_first &&
 edit_last = workspace.index("    func deleteTransaction(id:", record_last || 0)
 edit_body = workspace[record_last...edit_last]
 abort "Edit must persist before replay" unless edit_body.index("enqueueEdit(") && edit_body.index("replayCommands(") && edit_body.index("enqueueEdit(") < edit_body.index("replayCommands(")
-abort "Edit sender must use current endpoint binding" unless send_body.include?("client.updateTransaction(") && send_body.include?("entry.operation.apiValue")
-abort "Pending rows bypass workspace access" unless workspace.include?('guard !workspaceAccessDenied else { return [] }') && workspace.include?('PendingTransactionVisibility.allows(entry.operation, canView: budget.can("view_transactions")')
+abort "Edit sender must use current endpoint binding" unless send_body.include?("client.updateTransaction(") && send_body.include?("operation.apiValue")
+abort "Bulk sender missing from canonical command path" unless send_body.include?("client.bulkUpdateTransactions(") && workspace.include?("try transactionOutbox.enqueueBulk(identified)")
+abort "Pending rows bypass workspace access" unless workspace.include?('guard !workspaceAccessDenied else { return [] }') && workspace.include?('PendingTransactionVisibility.allows(operation, canView: budget.can("view_transactions")')
 abort "Pending restricted state appears fully synced" unless workspace.include?('store.pendingLiveTransactions.isEmpty && !store.pendingLiveDetailsRestricted') && workspace.include?('pending-sync-restricted')
 abort "Pending discard bypasses visible entry check" unless workspace.include?('guard pendingLiveTransactions.contains(where: { $0.id == id }) else')
 puts <<'SWIFT'
@@ -150,6 +153,19 @@ try await Task { @MainActor in
   editSends += 1; precondition(entry.operation == edit)
  }
  precondition(editSends == 2 && LiveTransactionOutbox(fileURL: file).count == 0)
+ let bulk = APITransactionBulkUpdate(transactionIDs: ["existing", "second"], action: "set_cleared", cleared: true,
+  expectedRevisions: ["existing": edit.expectedRevision!, "second": edit.expectedRevision!], mutationOperationID: UUID().uuidString)
+ try LiveTransactionOutbox(fileURL: file).enqueueBulk(bulk)
+ let reopenedBulk = LiveTransactionOutbox(fileURL: file)
+ precondition(reopenedBulk.entries.first?.bulkUpdate == bulk && reopenedBulk.entries.first?.operation == nil)
+ let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(bulk)) as! [String: Any]
+ precondition(encoded["tags"] == nil && encoded["flag"] == nil && encoded["mutation_operation_id"] as? String == bulk.mutationOperationID)
+ var bulkSends = 0
+ do { try await reopenedBulk.replayCommands { entry in bulkSends += 1; precondition(entry.bulkUpdate == bulk); throw URLError(.timedOut) } } catch {}
+ try await LiveTransactionOutbox(fileURL: file).replayCommands { entry in bulkSends += 1; precondition(entry.bulkUpdate == bulk) }
+ precondition(bulkSends == 2 && LiveTransactionOutbox(fileURL: file).count == 0)
+ let unobserved = APITransactionBulkUpdate(transactionIDs: ["existing"], action: "set_cleared", cleared: false, mutationOperationID: UUID().uuidString)
+ do { try paused.enqueueBulk(unobserved); fatalError("Unobserved bulk queued") } catch {}
  let blockedParent = root.appendingPathComponent("blocked")
  try Data("not a directory".utf8).write(to: blockedParent)
  let unwritable = LiveTransactionOutbox(fileURL: blockedParent.appendingPathComponent("queue.json"))

@@ -1508,18 +1508,20 @@ public struct APITransactionAttachment: Identifiable, Decodable, Equatable, Send
     }
 }
 
-public struct APITransactionBulkUpdate: Encodable, Equatable, Sendable {
+public struct APITransactionBulkUpdate: Codable, Equatable, Sendable {
+    public var mutationOperationID: String?
     public let expectedRevisions: [String: String]?
     public let transactionIDs: [String]
     public let action: String
     public let cleared: Bool?
     public let flag: String?
     public let tags: [String]?
-    public init(transactionIDs: [String], action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String]? = nil, expectedRevisions: [String: String]? = nil) {
+    public init(transactionIDs: [String], action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String]? = nil, expectedRevisions: [String: String]? = nil, mutationOperationID: String? = nil) {
+        self.mutationOperationID = mutationOperationID
         self.expectedRevisions = expectedRevisions
         self.transactionIDs = transactionIDs; self.action = action; self.cleared = cleared; self.flag = flag; self.tags = tags
     }
-    enum CodingKeys: String, CodingKey { case transactionIDs = "transaction_ids"; case action, cleared, flag, tags; case expectedRevisions = "expected_revisions" }
+    enum CodingKeys: String, CodingKey { case transactionIDs = "transaction_ids"; case action, cleared, flag, tags; case expectedRevisions = "expected_revisions"; case mutationOperationID = "mutation_operation_id" }
 }
 
 /// Captures observations at selection time, not from a later refreshed page.

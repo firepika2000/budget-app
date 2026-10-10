@@ -1532,8 +1532,8 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertEqual(first.count, 1)
 
         let reopened = LiveTransactionOutbox(fileURL: file)
-        XCTAssertEqual(reopened.entries.first?.operation.amountMinor, -12_345)
-        XCTAssertEqual(reopened.entries.first?.operation.clientOperationID, id)
+        XCTAssertEqual(reopened.entries.first?.operation?.amountMinor, -12_345)
+        XCTAssertEqual(reopened.entries.first?.operation?.clientOperationID, id)
         let secondID = "9ad90c5c-ae8f-4dbc-9a87-10323c0b9376"
         let second = RecordTransactionOperation(
             accountID: "savings", categoryID: "goals", amountMinor: -500,
@@ -1546,7 +1546,7 @@ final class AppSessionRefreshTests: XCTestCase {
         let afterDiscard = LiveTransactionOutbox(fileURL: file)
         XCTAssertEqual(afterDiscard.count, 1)
         XCTAssertEqual(afterDiscard.entries.first?.id, secondID)
-        XCTAssertEqual(afterDiscard.entries.first?.operation.amountMinor, -500)
+        XCTAssertEqual(afterDiscard.entries.first?.operation?.amountMinor, -500)
     }
 
     @MainActor

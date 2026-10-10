@@ -3670,11 +3670,18 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
-        guard let transactionID = entry.transactionID else { try await sendTransaction(entry.operation); return }
+        if let bulk = entry.bulkUpdate {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            _ = try await client.bulkUpdateTransactions(budgetID: budget.id, update: bulk, token: token)
+            return
+        }
+        guard let operation = entry.operation else { throw BudgetApplicationError.invalidOperation("Pending command payload is unavailable.") }
+        guard let transactionID = entry.transactionID else { try await sendTransaction(operation); return }
         try await credentials.prepare()
         try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
         _ = try await client.updateTransaction(budgetID: budget.id, transactionID: transactionID,
-            transaction: entry.operation.apiValue, token: token)
+            transaction: operation.apiValue, token: token)
     }
 
     func householdInvitations() async throws -> [APIInvitationSummary] { try await credentials.prepare(); return try await client.householdInvitations(householdID: budget.householdID, token: token) }
@@ -3748,7 +3755,20 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await credentials.prepare(); _ = try await client.uploadTransactionAttachment(budgetID: budget.id, transactionID: id, filename: filename, contentType: contentType, data: data, token: token) }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await credentials.prepare(); return try await client.downloadTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await credentials.prepare(); try await client.detachTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
-    func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws { try await credentials.prepare(); _ = try await client.bulkUpdateTransactions(budgetID: budget.id, update: update, token: token) }
+    func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
+        var identified = update
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueBulk(identified)
+        do {
+            try await transactionOutbox.replayCommands(shouldPause: shouldPauseRejectedTransaction) { try await sendPendingTransaction($0) }
+            if transactionOutbox.count == 0 { outboxFailureMessage = nil }
+        } catch {
+            guard isTransientConnectivityFailure(error) else {
+                outboxFailureMessage = "A saved bulk action needs attention in Pending Sync: \(error.localizedDescription)"
+                throw error
+            }
+        }
+    }
     func transferMoney(_ operation: TransferMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.createTransfer(budgetID: budget.id, transfer: operation.apiValue, token: token) }
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: operation.apiValue, token: token) }
     func deleteTransfer(id: String) async throws { try await credentials.prepare(); try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
@@ -4683,8 +4703,12 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
-            (entry.transactionID == nil || transactions.contains(where: { $0.id == entry.transactionID })) &&
-            PendingTransactionVisibility.allows(entry.operation, canView: budget.can("view_transactions"),
+            if let bulk = entry.bulkUpdate {
+                return budget.can("view_transactions") && Set(bulk.transactionIDs).isSubset(of: Set(transactions.map(\.id)))
+            }
+            guard let operation = entry.operation else { return false }
+            return (entry.transactionID == nil || transactions.contains(where: { $0.id == entry.transactionID })) &&
+            PendingTransactionVisibility.allows(operation, canView: budget.can("view_transactions"),
                 accountIDs: accountIDs, categoryIDs: categoryIDs)
         }
     }
@@ -4819,7 +4843,13 @@ final class BudgetWorkspaceStore: ObservableObject {
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await services().transactions.detachAttachment(transactionID: transactionID, attachmentID: attachmentID); await refresh() }
 
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
+        defer {
+            pendingSyncCount = (commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactionCount ?? 0
+            if let message = (commandRepository as? LiveWorkspaceCommandRepository)?.outboxFailureMessage { syncStatusMessage = message }
+        }
         try await services().transactions.bulkUpdate(update)
+        pendingSyncCount = (commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactionCount ?? 0
+        if pendingSyncCount > 0 { syncStatusMessage = "\(pendingSyncCount) changes saved on this iPhone, waiting to sync" }
         await refresh()
     }
 
@@ -6087,14 +6117,21 @@ private struct PendingLiveTransactionsView: View {
                 } else {
                     ForEach(store.pendingLiveTransactions) { entry in
                         VStack(alignment: .leading, spacing: 5) {
+                            if let operation = entry.operation {
                             HStack {
-                                Text(entry.operation.payeeName.isEmpty ? "Transaction" : entry.operation.payeeName)
+                                Text(operation.payeeName.isEmpty ? "Transaction" : operation.payeeName)
                                     .font(.headline)
                                 Spacer()
-                                Text(store.format(entry.operation.amountMinor)).monospacedDigit()
+                                Text(store.format(operation.amountMinor)).monospacedDigit()
                             }
-                            Text("\(entry.operation.occurredOn) · \(accountName(entry.operation.accountID))")
+                            Text("\(operation.occurredOn) · \(accountName(operation.accountID))")
                                 .font(.caption).foregroundStyle(.secondary)
+                            } else if let bulk = entry.bulkUpdate {
+                                Text(bulk.action == "set_cleared" ? (bulk.cleared == true ? "Clear Transactions" : "Unclear Transactions") : "Update Transaction Metadata")
+                                    .font(.headline)
+                                Text("\(bulk.transactionIDs.count) selected transactions · pending server approval")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                             Text("Saved \(entry.queuedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption2).foregroundStyle(.secondary)
                             if entry.transactionID != nil {

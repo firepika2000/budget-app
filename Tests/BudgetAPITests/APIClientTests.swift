@@ -1521,6 +1521,20 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(APITransaction.self, from: response).revision, revision)
     }
 
+    func testIdentifiedBulkRoundTripPreservesPatchLikeClearingPayload() throws {
+        let identity = UUID().uuidString
+        let value = APITransactionBulkUpdate(transactionIDs: ["t1"], action: "set_cleared", cleared: true,
+            expectedRevisions: ["t1": "v1:" + String(repeating: "a", count: 64)], mutationOperationID: identity)
+        let data = try JSONEncoder().encode(value)
+        XCTAssertEqual(try JSONDecoder().decode(APITransactionBulkUpdate.self, from: data), value)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["mutation_operation_id"] as? String, identity)
+        XCTAssertNil(json["tags"])
+        XCTAssertNil(json["flag"])
+        XCTAssertNil(json["memo"])
+        XCTAssertNil(json["client_operation_id"])
+    }
+
     func testIdentifiedEditEncodesSeparateMutationIdentityWithoutCreationIdentity() throws {
         let identity = UUID().uuidString.lowercased()
         let update = APITransactionCreate(accountID: "a", categoryID: "c", amountMinor: -1234,

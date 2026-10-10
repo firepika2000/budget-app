@@ -1,5 +1,34 @@
 # Production readiness mission ledger
 
+## Durable native bulk and quick-clearing commands (2026-10-09)
+
+The Live bulk repository now assigns an immutable mutation UUID and persists the typed exact bulk
+request plus complete selection-time revision map before any send. Account-register/Activity quick
+Clear/Unclear and all four Activity bulk actions use this shared canonical path. Creation, ordinary
+edits and bulk commands share insertion-order replay; a paused rejection blocks later commands.
+Typed bulk entries carry no made-up transaction amounts or categories. Unknown/missing observations
+reject locally, rather than permitting unguarded offline overwrite. The sender resolves current
+credentials and endpoint scope before the canonical bulk API call. No offline flags/tags/clearing
+are applied to authoritative posted rows. Pending Sync labels the action/count and requires every
+target in the current authorized workspace window before revealing details or permitting local
+retry/discard; out-of-window/restricted intents remain intact. Definite rejection retains selection
+and the review entry; pending counts update even on thrown rejection. Older creation/edit queues
+remain readable by the new app; older app versions do not understand new bulk entries (downgrade
+replay is not promised). Transfers, allocations, reconciliation and attachments are not queue-enabled.
+
+Production host checks passed persisted typed bulk payload, omitted unrelated fields, timeout/reopen
+exact replay and missing-observation rejection, plus prior creation/edit/privacy/review checks.
+Three Swift API tests passed including actual bulk HTTP encoding, action-specific omissions and
+identified payload Codable round-trip. Regular Xcode 27 build-for-testing passed on the preserved
+iPhone 17 Pro Max/iOS 27 destination; no executed native runtime or human acceptance claim.
+No backend changes this checkpoint. Server must include `66c380e` identified bulk receipt support and
+migration 0049; update/restart if it does not. App rebuild required. TestFlight remains on hold.
+
+Remaining new acceptance: disconnect a loaded Live workspace, Clear one disposable eligible row,
+confirm it remains posted/uncleared with a saved pending action, relaunch, reconnect, and confirm a
+single authoritative Clear with unchanged working balance. A separately changed/reconciled target
+must pause rather than overwrite. This does not require repeating already accepted online clearing.
+
 ## Identified bulk-command acknowledgements (2026-10-09)
 
 Audit found that bulk metadata/clearing updates had content preconditions but no immutable accepted

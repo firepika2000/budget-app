@@ -8,7 +8,7 @@ claim that incomplete providers are production-ready.
 ### Remaining hosted offline-write milestone — required contract
 
 **Not complete:** the durable Live outbox now supports creation and observed ordinary transaction
-edits. `bulkUpdateTransactions`, transfers, allocations,
+edits and observed bulk metadata/clearing actions. Transfers, allocations,
 reconciliation and administrative commands still send directly through their authenticated APIs.
 The following defines the complete milestone, not a claim of human-accepted offline editing. Local Device
 already owns its local writes; its storage must not be replaced by a hosted replay queue.
@@ -36,8 +36,12 @@ the complete captured revision map. Exact validated command bodies (including se
 are digest-bound and committed with every batch effect; no-op acceptance also records a receipt.
 Current capability, ownership and whole-resource visibility precede acknowledgement for every
 selected transaction. Acknowledgement returns current rows without reapplying the old action, even
-after later reconciliation. New commands retain all lifecycle/stale/atomicity checks. Bulk native
-identity assignment/durable queue integration and real PostgreSQL overlap proof remain outstanding.
+after later reconciliation. New commands retain all lifecycle/stale/atomicity checks. Native bulk
+commands now persist mutation identity and every captured revision before sending through the same
+ordered queue. Typed bulk entries contain no synthetic transaction draft. Pending clearing/metadata
+does not masquerade as accepted posted state. Review details require every selected target in the
+current authorized workspace window; otherwise the complete intent stays preserved with restricted
+details. Live offline bulk acceptance and real PostgreSQL overlap proof remain outstanding.
 The native operation and API DTO can now carry this separate mutation identity through translation;
 the Live repository assigns the edit identity at submission, requiring a server observation. Creation persists
 the exact immutable operation before its first network suspension, then uses the existing ordered

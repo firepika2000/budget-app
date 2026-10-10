@@ -214,9 +214,10 @@ final class LiveTransactionOutbox {
     struct Entry: Codable, Equatable, Identifiable {
         let id: String
         let queuedAt: Date
-        let operation: RecordTransactionOperation
+        let operation: RecordTransactionOperation?
         var requiresReview: Bool? = nil
         var transactionID: String? = nil
+        var bulkUpdate: APITransactionBulkUpdate? = nil
     }
 
     private let fileURL: URL
@@ -313,10 +314,10 @@ final class LiveTransactionOutbox {
     func replay(shouldPause: (Error) -> Bool = { _ in false },
                 send: (RecordTransactionOperation) async throws -> Void) async throws {
         try await replayCommands(shouldPause: shouldPause) { entry in
-            guard entry.transactionID == nil else {
+            guard entry.transactionID == nil, let operation = entry.operation else {
                 throw BudgetApplicationError.invalidOperation("This pending edit requires the transaction command sender.")
             }
-            try await send(entry.operation)
+            try await send(operation)
         }
     }
 
@@ -351,6 +352,25 @@ final class LiveTransactionOutbox {
             return
         }
         let next = entries + [Entry(id: id, queuedAt: Date(), operation: operation, transactionID: transactionID)]
+        try persist(next)
+        entries = next
+    }
+
+    func enqueueBulk(_ update: APITransactionBulkUpdate) throws {
+        try requireReadableQueue()
+        guard let id = update.mutationOperationID, UUID(uuidString: id) != nil,
+              !update.transactionIDs.isEmpty, update.transactionIDs.count <= 200,
+              Set(update.transactionIDs).count == update.transactionIDs.count,
+              let revisions = update.expectedRevisions, Set(revisions.keys) == Set(update.transactionIDs) else {
+            throw BudgetApplicationError.invalidOperation("Pending bulk actions require stable identity and observations for every selected transaction.")
+        }
+        if let existing = entries.first(where: { $0.id == id }) {
+            guard existing.bulkUpdate == update else {
+                throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
+            }
+            return
+        }
+        let next = entries + [Entry(id: id, queuedAt: Date(), operation: nil, bulkUpdate: update)]
         try persist(next)
         entries = next
     }
@@ -422,11 +442,18 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  if let target = entry.transactionID {
-                      return !target.isEmpty && entry.operation.mutationOperationID == entry.id
-                          && entry.operation.clientOperationID == nil && entry.operation.expectedRevision != nil
+                  if let bulk = entry.bulkUpdate {
+                      return entry.operation == nil && entry.transactionID == nil
+                          && bulk.mutationOperationID == entry.id && !bulk.transactionIDs.isEmpty
+                          && bulk.transactionIDs.count <= 200 && Set(bulk.transactionIDs).count == bulk.transactionIDs.count
+                          && bulk.expectedRevisions.map { Set($0.keys) == Set(bulk.transactionIDs) } == true
                   }
-                  return entry.operation.clientOperationID == entry.id
+                  guard let operation = entry.operation else { return false }
+                  if let target = entry.transactionID {
+                      return !target.isEmpty && operation.mutationOperationID == entry.id
+                          && operation.clientOperationID == nil && operation.expectedRevision != nil
+                  }
+                  return operation.clientOperationID == entry.id
               }) else {
             throw BudgetApplicationError.invalidOperation("The saved queue has invalid operation identities.")
         }
