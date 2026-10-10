@@ -4560,6 +4560,22 @@ final class DemoStoreTests: XCTestCase {
         window.rootViewController = nil
         return signal
     }
+    func testLocalDelimitedStatementParserRejectsAmbiguousMappingAndHeaders() throws {
+        let mapping = APIStatementImportMapping(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd")
+        for header in ["Date,Amount,Amount,Payee", "Date,Amount, Amount ,Payee", "Date,Amount,,Payee"] {
+            XCTAssertThrowsError(try LocalDelimitedStatementParser.parse(data: Data("\(header)\n2026-09-04,-1.00,-9.00,Market\n".utf8), mapping: mapping))
+        }
+        let data = Data("Date,Amount,Payee\n2026-09-04,-1.00,Market\n".utf8)
+        for invalid in [
+            APIStatementImportMapping(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount", payeeColumn: "Payee", memoColumn: "Missing", dateOrder: "ymd"),
+            APIStatementImportMapping(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount", payeeColumn: "Payee", memoColumn: "Payee", dateOrder: "ymd"),
+            APIStatementImportMapping(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount", payeeColumn: "Payee", debitColumn: "Amount", creditColumn: "Payee", dateOrder: "ymd")
+        ] {
+            XCTAssertThrowsError(try LocalDelimitedStatementParser.parse(data: data, mapping: invalid))
+        }
+        XCTAssertEqual(try LocalDelimitedStatementParser.parse(data: data, mapping: mapping).first?.amountMinor, -100)
+    }
+
     func testLocalDelimitedStatementParserRejectsOverlongMetadataWithoutTruncation() throws {
         let mapping = APIStatementImportMapping(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount", payeeColumn: "Payee", memoColumn: "Memo", dateOrder: "ymd")
         for (payee, memo) in [(String(repeating: "p", count: 151), ""), ("Market", String(repeating: "m", count: 501)),

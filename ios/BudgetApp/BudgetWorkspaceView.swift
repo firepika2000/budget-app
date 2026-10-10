@@ -11842,10 +11842,18 @@ enum LocalDelimitedStatementParser {
         guard !text.contains("\0") else { throw workspaceRepositoryError("The statement must use UTF-8 or BOM-marked UTF-16 text.") }
         let rows = try records(text, delimiter: delimiter)
         guard let header = rows.first, rows.count > 1 else { throw workspaceRepositoryError("The statement does not contain transaction rows.") }
-        let names = header.enumerated().reduce(into: [String: Int]()) { result, item in
-            let key = item.element.replacingOccurrences(of: "\u{feff}", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !key.isEmpty { result[key] = item.offset }
+        let normalizedHeader = header.map { $0.replacingOccurrences(of: "\u{feff}", with: "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard header.count <= 100, normalizedHeader.allSatisfy({ !$0.isEmpty && $0.unicodeScalars.count <= 4096 }),
+              Set(normalizedHeader).count == header.count else {
+            throw workspaceRepositoryError("The statement requires unique, nonempty column names and at most 100 columns.")
         }
+        let selectedNames = [mapping.dateColumn, mapping.payeeColumn, mapping.amountColumn, mapping.debitColumn, mapping.creditColumn, mapping.memoColumn].compactMap { $0 }
+        guard Set(selectedNames).count == selectedNames.count, selectedNames.allSatisfy({ normalizedHeader.contains($0) }),
+              (mapping.amountColumn != nil && mapping.debitColumn == nil && mapping.creditColumn == nil)
+                || (mapping.amountColumn == nil && mapping.debitColumn != nil && mapping.creditColumn != nil) else {
+            throw workspaceRepositoryError("Map distinct existing columns and choose either a signed amount or separate debit and credit columns.")
+        }
+        let names = Dictionary(uniqueKeysWithValues: normalizedHeader.enumerated().map { ($0.element, $0.offset) })
         guard let dateName = mapping.dateColumn, let dateIndex = names[dateName],
               let payeeName = mapping.payeeColumn, let payeeIndex = names[payeeName] else { throw workspaceRepositoryError("Map the date and payee columns.") }
         let amountIndex = mapping.amountColumn.flatMap { names[$0] }
@@ -11857,6 +11865,9 @@ enum LocalDelimitedStatementParser {
         for (offset, row) in rows.dropFirst().enumerated() {
             let sourceRow = offset + 2
             guard row.count == header.count else { throw workspaceRepositoryError("Statement row \(sourceRow) has a different number of columns.") }
+            guard row.allSatisfy({ $0.unicodeScalars.count <= 4096 }) else {
+                throw workspaceRepositoryError("Statement row \(sourceRow) exceeds the field length limit.")
+            }
             let date = try dateString(row[dateIndex], order: mapping.dateOrder, row: sourceRow)
             let amount: Int64
             if let amountIndex { amount = try minorUnits(row[amountIndex], currency: mapping.currencyCode, numberFormat: mapping.numberFormat, row: sourceRow) }
