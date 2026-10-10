@@ -4400,7 +4400,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let client = try credentials.client()
         let month = BudgetWorkspaceStore.dateString(planMonth).prefix(7) + "-01"
         async let loadedAccounts = client.accounts(budgetID: budget.id, token: token)
-        async let loadedTransactions = client.transactions(budgetID: budget.id, token: token)
+        async let loadedTransactions = client.transactionHistory(budgetID: budget.id, credential: { await self.token })
         async let loadedCategories = client.categories(budgetID: budget.id, token: token)
         async let loadedGroups = client.categoryGroups(budgetID: budget.id, token: token)
         async let loadedSummary = client.monthSummary(budgetID: budget.id, month: String(month), token: token)

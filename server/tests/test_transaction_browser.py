@@ -291,6 +291,22 @@ def test_transaction_browser_pages_in_sql_without_hydrating_the_budget(
         row["amount_minor"] for row in first["items"] + second["items"]
     )
 
+    # Workspace hydration uses the unfiltered date cursor, not a capped prefix.
+    history_ids = []
+    cursor = None
+    while True:
+        response = client.get(f"/api/v1/budgets/{budget['id']}/transactions/search",
+                              headers=auth(owner_token),
+                              params={"limit": 200, "sort": "date_desc", **({"cursor": cursor} if cursor else {})})
+        assert response.status_code == 200, response.text
+        page = response.json()
+        assert len(page["items"]) <= 200 and page["total_count"] == 3_000
+        history_ids.extend(row["id"] for row in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert len(history_ids) == len(set(history_ids)) == 3_000
+
 
 def test_transaction_browser_tag_filter_matches_complete_tags_only(
     client, owner_token, session_factory

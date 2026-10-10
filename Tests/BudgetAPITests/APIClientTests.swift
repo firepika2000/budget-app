@@ -2,6 +2,43 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testCompleteTransactionHistoryUsesBoundedPagesWithoutDroppingRows() async throws {
+        actor RotatingCredential {
+            var reads = 0
+            func current() -> String { reads += 1; return reads == 1 ? "A" : "B" }
+        }
+        let credentials = RotatingCredential()
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        var calls = 0
+        MockURLProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/search")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), calls == 1 ? "Bearer A" : "Bearer B")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(items.first { $0.name == "limit" }?.value, "200")
+            XCTAssertEqual(items.first { $0.name == "cursor" }?.value, calls == 1 ? nil : "next")
+            XCTAssertFalse(items.contains { $0.name == "lifecycle_status" }, "Include posted, voided and reversal history")
+            let row = #"{"id":"tNUMBER","account_id":"a1","amount_minor":-100,"occurred_on":"2026-09-04","payee_name":"Market","memo":"","is_cleared":false,"is_reconciled":false,"splits":[]}"#.replacingOccurrences(of: "NUMBER", with: String(calls))
+            let payload = "{\"items\":[\(row)],\"next_cursor\":\(calls == 1 ? "\"next\"" : "null"),\"total_count\":2}"
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        let rows = try await client.transactionHistory(budgetID: "b1", credential: { await credentials.current() })
+        XCTAssertEqual(rows.map(\.id), ["t1", "t2"])
+        XCTAssertEqual(calls, 2)
+    }
+
+    func testCompleteTransactionHistoryRejectsIncompleteFinalPage() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        MockURLProtocol.handler = { request in
+            (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+             Data(#"{"items":[],"next_cursor":null,"total_count":1}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        do { _ = try await client.transactionHistory(budgetID: "b1", credential: { "current" }); XCTFail("Partial history published") }
+        catch let APIClientError.server(status, _) { XCTAssertEqual(status, 409) }
+    }
+
     func testBalancePageIsBoundedAndUsesCurrentCredential() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
         var calls = 0

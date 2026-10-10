@@ -329,6 +329,38 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/transactions", token: token)
     }
 
+    /// Complete authorized history, published by callers only after all bounded pages succeed.
+    public func transactionHistory(budgetID: String, credential: @Sendable () async throws -> String) async throws -> [APITransaction] {
+        var rows: [APITransaction] = []
+        var ids = Set<String>(), cursors = Set<String>()
+        var cursor: String?, expectedCount: Int?
+        while true {
+            try Task.checkCancellation()
+            let page = try await searchTransactions(budgetID: budgetID,
+                query: APITransactionQuery(limit: 200, cursor: cursor), token: try await credential())
+            if expectedCount == nil { expectedCount = page.totalCount }
+            guard page.items.count <= 200, page.totalCount >= 0, page.totalCount == expectedCount,
+                  page.items.allSatisfy({ ids.insert($0.id).inserted }) else {
+                throw APIClientError.server(status: 409, message: "Transaction history changed while loading. Refresh again.")
+            }
+            rows.append(contentsOf: page.items)
+            guard rows.count <= page.totalCount else {
+                throw APIClientError.server(status: 502, message: "The server returned invalid transaction history.")
+            }
+            guard let next = page.nextCursor else {
+                guard rows.count == page.totalCount else {
+                    throw APIClientError.server(status: 409, message: "Transaction history changed while loading. Refresh again.")
+                }
+                return rows
+            }
+            guard !next.isEmpty, !page.items.isEmpty, rows.count < page.totalCount,
+                  cursors.insert(next).inserted else {
+                throw APIClientError.server(status: 502, message: "The server returned invalid transaction history pagination.")
+            }
+            cursor = next
+        }
+    }
+
     public func searchTransactions(budgetID: String, query: APITransactionQuery, token: String) async throws -> APITransactionPage {
         var items = [URLQueryItem(name: "sort", value: query.sort), URLQueryItem(name: "limit", value: String(query.limit))]
         items += query.transactionIDs.map { URLQueryItem(name: "transaction_id", value: $0) }

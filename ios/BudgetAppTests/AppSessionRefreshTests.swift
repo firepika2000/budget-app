@@ -131,6 +131,9 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     private static func workspaceResponse(_ path: String) -> (Int, Data) {
+        if path.hasSuffix("/transactions/search") {
+            return json(200, #"{"items":[],"next_cursor":null,"total_count":0}"#)
+        }
         if path.contains("/months/") {
             return json(200, #"{"month":"2026-09-01","currency_code":"USD","ready_to_assign_minor":42,"total_assigned_minor":0,"total_overspent_minor":0,"allocation_version":0,"categories":[]}"#)
         }
