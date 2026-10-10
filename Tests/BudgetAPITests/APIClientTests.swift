@@ -1630,15 +1630,30 @@ final class APIClientTests: XCTestCase {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transfers/xfer1"); methods.append(request.httpMethod ?? "")
             if request.httpMethod == "DELETE" { return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data()) }
+            let payload = try JSONDecoder().decode(APITransferCreate.self, from: requestBody(request))
+            XCTAssertEqual(payload.mutationOperationID, "11111111-1111-4111-8111-111111111111")
+            XCTAssertEqual(payload.expectedRevisions, ["out": "v1:" + String(repeating: "a", count: 64), "in": "v1:" + String(repeating: "b", count: 64)])
+            XCTAssertEqual(payload.amountMinor, 9_007_199_254_740_993)
             let response = Data(#"{"transfer_id":"xfer1","source":{"id":"out","budget_id":"b1","account_id":"a1","category_id":null,"amount_minor":-2000,"occurred_on":"2026-09-04","payee_name":"Transfer","memo":"fixed","is_cleared":false,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":"xfer1","splits":[]},"destination":{"id":"in","budget_id":"b1","account_id":"a2","category_id":null,"amount_minor":2000,"occurred_on":"2026-09-04","payee_name":"Transfer","memo":"fixed","is_cleared":false,"is_reconciled":false,"created_by_user_id":"u1","transfer_id":"xfer1","splits":[]}}"#.utf8)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, response)
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
-        let body = APITransferCreate(sourceAccountID: "a1", destinationAccountID: "a2", amountMinor: 2_000, occurredOn: "2026-09-04", memo: "fixed")
+        let body = APITransferCreate(sourceAccountID: "a1", destinationAccountID: "a2", amountMinor: 9_007_199_254_740_993, occurredOn: "2026-09-04", memo: "fixed",
+            mutationOperationID: "11111111-1111-4111-8111-111111111111",
+            expectedRevisions: ["out": "v1:" + String(repeating: "a", count: 64), "in": "v1:" + String(repeating: "b", count: 64)])
         let updated = try await client.updateTransfer(budgetID: "b1", transferID: "xfer1", transfer: body, token: "secret")
         XCTAssertEqual(updated.transferID, "xfer1")
         try await client.deleteTransfer(budgetID: "b1", transferID: "xfer1", token: "secret")
         XCTAssertEqual(methods, ["PUT", "DELETE"])
+    }
+
+    func testLegacyTransferOmitsIdentityAndObservations() throws {
+        let body = APITransferCreate(sourceAccountID: "a", destinationAccountID: "b", amountMinor: 100, occurredOn: "2026-09-04")
+        let data = try JSONEncoder().encode(body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(json["mutation_operation_id"])
+        XCTAssertNil(json["expected_revisions"])
+        XCTAssertEqual(try JSONDecoder().decode(APITransferCreate.self, from: data), body)
     }
 
     func testScheduledHistoryUsesBoundedAttributedExactContract() async throws {

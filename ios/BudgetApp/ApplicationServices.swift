@@ -79,7 +79,9 @@ struct MakeRecurringOperation: Equatable, Sendable {
 struct CreatePayeeOperation: Equatable, Sendable { let displayName: String; let defaultCategoryID: String? }
 struct UpdatePayeeOperation: Equatable, Sendable { let payeeID: String; let displayName: String; let isArchived: Bool; let defaultCategoryID: String? }
 
-struct TransferMoneyOperation: Equatable, Sendable {
+struct TransferMoneyOperation: Codable, Equatable, Sendable {
+    var mutationOperationID: String? = nil
+    var expectedRevisions: [String: String]? = nil
     let sourceAccountID: String
     let destinationAccountID: String
     let amountMinor: Int64
@@ -207,10 +209,10 @@ enum HistoryObservationPolicy {
 
 // MARK: - Durable Live transaction outbox
 
-/// Persists simple transaction creates while a shared Budget Server is unreachable. Entries carry
+/// Persists identified transaction, planning and transfer commands while a shared server is unreachable. Entries carry
 /// a server-enforced idempotency identity, so an uncertain response can be replayed without posting
-/// money twice. Allocation, reconciliation, transfer, and authority mutations deliberately do not
-/// use this queue because they require current server state and conflict validation.
+/// money twice. Observed edits retain conflict preconditions; reconciliation and authority
+/// mutations deliberately remain outside this queue.
 @MainActor
 final class LiveTransactionOutbox {
     struct Entry: Codable, Equatable, Identifiable {
@@ -222,6 +224,8 @@ final class LiveTransactionOutbox {
         var bulkUpdate: APITransactionBulkUpdate? = nil
         var assignment: AssignMoneyOperation? = nil
         var moneyMove: MoveMoneyOperation? = nil
+        var accountTransfer: TransferMoneyOperation? = nil
+        var transferID: String? = nil
     }
 
     private let fileURL: URL
@@ -398,10 +402,21 @@ final class LiveTransactionOutbox {
         try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, moneyMove: move))
     }
 
+    func enqueueTransfer(_ transfer: TransferMoneyOperation, id transferID: String? = nil) throws {
+        guard let id = transfer.mutationOperationID, UUID(uuidString: id) != nil,
+              !transfer.sourceAccountID.isEmpty, !transfer.destinationAccountID.isEmpty,
+              transfer.sourceAccountID != transfer.destinationAccountID, transfer.amountMinor > 0,
+              transferID == nil || (transferID?.isEmpty == false && transfer.expectedRevisions?.count == 2) else {
+            throw BudgetApplicationError.invalidOperation("Pending transfers require stable identity, two accounts and both observed revisions when editing.")
+        }
+        try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, accountTransfer: transfer, transferID: transferID))
+    }
+
     private func enqueuePlanning(_ entry: Entry) throws {
         try requireReadableQueue()
         if let existing = entries.first(where: { $0.id == entry.id }) {
             guard existing.assignment == entry.assignment && existing.moneyMove == entry.moneyMove,
+                  existing.accountTransfer == entry.accountTransfer && existing.transferID == entry.transferID,
                   existing.operation == nil && existing.bulkUpdate == nil else {
                 throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
             }
@@ -480,8 +495,15 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
+                  if let transfer = entry.accountTransfer {
+                      return entry.transactionID == nil && transfer.mutationOperationID == entry.id
+                          && !transfer.sourceAccountID.isEmpty && !transfer.destinationAccountID.isEmpty
+                          && transfer.sourceAccountID != transfer.destinationAccountID && transfer.amountMinor > 0
+                          && (entry.transferID == nil || (entry.transferID?.isEmpty == false && transfer.expectedRevisions?.count == 2))
+                  }
+                  guard entry.transferID == nil else { return false }
                   if let assignment = entry.assignment {
                       return entry.transactionID == nil && assignment.mutationOperationID == entry.id
                           && !assignment.categoryID.isEmpty && assignment.expectedVersion >= 0
@@ -1071,7 +1093,7 @@ extension RecordTransactionOperation {
 
 extension TransferMoneyOperation {
     var apiValue: APITransferCreate {
-        APITransferCreate(sourceAccountID: sourceAccountID, destinationAccountID: destinationAccountID, amountMinor: amountMinor, occurredOn: occurredOn, memo: memo, isCleared: isCleared)
+        APITransferCreate(sourceAccountID: sourceAccountID, destinationAccountID: destinationAccountID, amountMinor: amountMinor, occurredOn: occurredOn, memo: memo, isCleared: isCleared, mutationOperationID: mutationOperationID, expectedRevisions: expectedRevisions)
     }
 }
 

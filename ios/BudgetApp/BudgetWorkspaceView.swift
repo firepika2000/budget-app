@@ -3670,6 +3670,16 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let transfer = entry.accountTransfer {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            if let id = entry.transferID {
+                _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: transfer.apiValue, token: token)
+            } else {
+                _ = try await client.createTransfer(budgetID: budget.id, transfer: transfer.apiValue, token: token)
+            }
+            return
+        }
         if let assignment = entry.assignment {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3786,8 +3796,18 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             }
         }
     }
-    func transferMoney(_ operation: TransferMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.createTransfer(budgetID: budget.id, transfer: operation.apiValue, token: token) }
-    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.updateTransfer(budgetID: budget.id, transferID: id, transfer: operation.apiValue, token: token) }
+    func transferMoney(_ operation: TransferMoneyOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueTransfer(identified)
+        try await replaySavedPlanning()
+    }
+    func updateTransfer(id: String, operation: TransferMoneyOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueTransfer(identified, id: id)
+        try await replaySavedPlanning()
+    }
     func deleteTransfer(id: String) async throws { try await credentials.prepare(); try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
     func reconciliationClearedObservation(accountID: String, throughDate: String) async throws -> Int64 {
         try await credentials.prepare()
@@ -3828,7 +3848,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             if transactionOutbox.count == 0 { outboxFailureMessage = nil }
         } catch {
             guard isTransientConnectivityFailure(error) else {
-                outboxFailureMessage = "A saved plan change needs attention in Pending Sync: \(error.localizedDescription)"
+                outboxFailureMessage = "A saved change needs attention in Pending Sync: \(error.localizedDescription)"
                 throw error
             }
         }
@@ -4742,6 +4762,11 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if let transfer = entry.accountTransfer {
+                return budget.can("view_transactions") && accountIDs.contains(transfer.sourceAccountID)
+                    && accountIDs.contains(transfer.destinationAccountID)
+                    && (entry.transferID == nil || transactions.filter { $0.transferID == entry.transferID }.count == 2)
+            }
             if let assignment = entry.assignment {
                 return budget.can("view_categories") && categoryIDs.contains(assignment.categoryID)
             }
@@ -4925,11 +4950,13 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func createTransfer(_ operation: TransferMoneyOperation) async throws {
+        defer { publishPendingPlanningStatus() }
         try await services().transactions.transfer(operation)
         await refresh()
     }
 
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws {
+        defer { publishPendingPlanningStatus() }
         try await services().transactions.updateTransfer(id: id, operation: operation)
         await refresh()
     }
@@ -6192,6 +6219,12 @@ private struct PendingLiveTransactionsView: View {
                             } else if let move = entry.moneyMove {
                                 Text("Move Money").font(.headline)
                                 Text("\(store.categories.first(where: { $0.id == move.sourceCategoryID })?.name ?? "Category") → \(store.categories.first(where: { $0.id == move.destinationCategoryID })?.name ?? "Category") · \(store.format(move.amountMinor))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let transfer = entry.accountTransfer {
+                                Text(entry.transferID == nil ? "Transfer" : "Edit Transfer").font(.headline)
+                                Text("\(store.accounts.first(where: { $0.id == transfer.sourceAccountID })?.name ?? "Account") → \(store.accounts.first(where: { $0.id == transfer.destinationAccountID })?.name ?? "Account") · \(store.format(transfer.amountMinor))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Text("Posted balances remain unchanged until server approval")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Text("Saved \(entry.queuedAt.formatted(date: .abbreviated, time: .shortened))")
@@ -10151,7 +10184,8 @@ private struct LiveTransactionDetailView: View {
         let source = transaction.amountMinor < 0 ? transaction : counterpart
         let destination = transaction.amountMinor > 0 ? transaction : counterpart
         guard source.amountMinor < 0, destination.amountMinor > 0 else { return nil }
-        return TransferPresentation(transferID: transferID, sourceID: source.accountID, destinationID: destination.accountID, amount: CurrencyText.editable(-source.amountMinor, currencyCode: store.budget.currencyCode), memo: source.memo, date: BudgetWorkspaceStore.parseDate(source.occurredOn), cleared: source.isCleared && destination.isCleared)
+        return TransferPresentation(transferID: transferID, sourceID: source.accountID, destinationID: destination.accountID, amount: CurrencyText.editable(-source.amountMinor, currencyCode: store.budget.currencyCode), memo: source.memo, date: BudgetWorkspaceStore.parseDate(source.occurredOn), cleared: source.isCleared && destination.isCleared,
+            expectedRevisions: source.revision.flatMap { sourceRevision in destination.revision.map { [source.id: sourceRevision, destination.id: $0] } })
     }
     private func deleteTransaction() async {
         guard let transaction else { return }
@@ -10714,8 +10748,10 @@ private struct TransferPresentation: Identifiable {
     let memo: String
     let date: Date
     let cleared: Bool
+    let expectedRevisions: [String: String]?
 
-    init(transferID: String? = nil, sourceID: String = "", destinationID: String = "", amount: String = "", memo: String = "", date: Date = Date(), cleared: Bool = false) {
+    init(transferID: String? = nil, sourceID: String = "", destinationID: String = "", amount: String = "", memo: String = "", date: Date = Date(), cleared: Bool = false, expectedRevisions: [String: String]? = nil) {
+        self.expectedRevisions = expectedRevisions
         self.transferID = transferID; self.sourceID = sourceID; self.destinationID = destinationID; self.amount = amount; self.memo = memo; self.date = date; self.cleared = cleared
     }
 }
@@ -10740,6 +10776,7 @@ private struct LiveTransferView: View {
     @State private var memo = ""
     @State private var date = Date()
     @State private var cleared = false
+    @State private var expectedRevisions: [String: String]?
     @State private var isSaving = false; @State private var errorMessage: String?
     @FocusState private var memoFocused: Bool
 #if DEBUG
@@ -10749,6 +10786,7 @@ private struct LiveTransferView: View {
     init(presentation: TransferPresentation, budget: APIBudget, accounts: [APIAccount], onSaved: @escaping () async -> Void) {
         self.presentation = presentation; self.budget = budget; self.accounts = accounts; self.onSaved = onSaved
         _sourceID = State(initialValue: presentation.sourceID)
+        _expectedRevisions = State(initialValue: presentation.expectedRevisions)
         _destinationID = State(initialValue: presentation.destinationID); _amount = State(initialValue: presentation.amount); _memo = State(initialValue: presentation.memo); _date = State(initialValue: presentation.date); _cleared = State(initialValue: presentation.cleared)
 #if DEBUG
         _lifetime = StateObject(wrappedValue: TransferEditorLifetime(id: presentation.id))
@@ -10809,7 +10847,7 @@ private struct LiveTransferView: View {
 #endif
     }
     private func accountName(_ id: String) -> String { openAccounts.first(where: { $0.id == id })?.name ?? "Select account" }
-    private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { let operation = TransferMoneyOperation(sourceAccountID: sourceID, destinationAccountID: destinationID, amountMinor: parsed, occurredOn: BudgetWorkspaceStore.dateString(date), memo: memo, isCleared: cleared); if let transferID = presentation.transferID { try await workspace.updateTransfer(id: transferID, operation: operation) } else { try await workspace.createTransfer(operation) }; dismiss() } catch { errorMessage = error.localizedDescription } }
+    private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { let operation = TransferMoneyOperation(expectedRevisions: expectedRevisions, sourceAccountID: sourceID, destinationAccountID: destinationID, amountMinor: parsed, occurredOn: BudgetWorkspaceStore.dateString(date), memo: memo, isCleared: cleared); if let transferID = presentation.transferID { try await workspace.updateTransfer(id: transferID, operation: operation) } else { try await workspace.createTransfer(operation) }; dismiss() } catch { errorMessage = error.localizedDescription } }
 }
 
 private struct LiveCategoryEditView: View {

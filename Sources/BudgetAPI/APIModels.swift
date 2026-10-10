@@ -1553,7 +1553,9 @@ public struct APITransactionSelection: Sendable {
     }
 }
 
-public struct APITransferCreate: Encodable, Sendable {
+public struct APITransferCreate: Codable, Equatable, Sendable {
+    public let mutationOperationID: String?
+    public let expectedRevisions: [String: String]?
     public let sourceAccountID: String
     public let destinationAccountID: String
     public let amountMinor: Int64
@@ -1561,12 +1563,14 @@ public struct APITransferCreate: Encodable, Sendable {
     public let memo: String
     public let isCleared: Bool
 
-    public init(sourceAccountID: String, destinationAccountID: String, amountMinor: Int64, occurredOn: String, memo: String = "", isCleared: Bool = false) {
+    public init(sourceAccountID: String, destinationAccountID: String, amountMinor: Int64, occurredOn: String, memo: String = "", isCleared: Bool = false, mutationOperationID: String? = nil, expectedRevisions: [String: String]? = nil) {
+        self.mutationOperationID = mutationOperationID; self.expectedRevisions = expectedRevisions
         self.sourceAccountID = sourceAccountID; self.destinationAccountID = destinationAccountID
         self.amountMinor = amountMinor; self.occurredOn = occurredOn; self.memo = memo; self.isCleared = isCleared
     }
 
     enum CodingKeys: String, CodingKey {
+        case mutationOperationID = "mutation_operation_id", expectedRevisions = "expected_revisions"
         case sourceAccountID = "source_account_id", destinationAccountID = "destination_account_id"
         case amountMinor = "amount_minor", occurredOn = "occurred_on", memo, isCleared = "is_cleared"
     }

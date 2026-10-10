@@ -9,6 +9,7 @@ puts "import Foundation\nimport CryptoKit"
 puts 'enum BudgetApplicationError: Error { case invalidOperation(String) }'
 puts s[s.index("struct AssignMoneyOperation:")...s.index("struct TransactionSplitOperation:")]
 puts s[s.index("struct TransactionSplitOperation:")...s.index("struct MakeRecurringOperation:")]
+puts s[s.index("struct TransferMoneyOperation:")...s.index("struct ReconcileAccountOperation:")]
 api = File.read("Sources/BudgetAPI/APIModels.swift")
 puts api[api.index("public struct APITransactionBulkUpdate:")...api.index("/// Captures observations at selection time")]
 puts s[s.index("@MainActor\nfinal class LiveTransactionOutbox")...s.index("struct LiveWorkspaceCachePayload:")]
@@ -34,6 +35,8 @@ abort "Edit must persist before replay" unless edit_body.index("enqueueEdit(") &
 abort "Edit sender must use current endpoint binding" unless send_body.include?("client.updateTransaction(") && send_body.include?("operation.apiValue")
 abort "Bulk sender missing from canonical command path" unless send_body.include?("client.bulkUpdateTransactions(") && workspace.include?("try transactionOutbox.enqueueBulk(identified)")
 abort "Planning commands bypass durable canonical sender" unless send_body.include?("client.updateAssignment(") && send_body.include?("client.transferAllocation(") && workspace.include?("try transactionOutbox.enqueueAssignment(identified)") && workspace.include?("try transactionOutbox.enqueueMoneyMove(identified)")
+abort "Transfers bypass durable canonical sender" unless send_body.include?("client.createTransfer(") && send_body.include?("client.updateTransfer(") && workspace.include?("try transactionOutbox.enqueueTransfer(identified)") && workspace.include?("try transactionOutbox.enqueueTransfer(identified, id: id)")
+abort "Transfer editor loses observed versions" unless workspace.include?("_expectedRevisions = State(initialValue: presentation.expectedRevisions)") && workspace.include?("TransferMoneyOperation(expectedRevisions: expectedRevisions")
 abort "Pending rows bypass workspace access" unless workspace.include?('guard !workspaceAccessDenied else { return [] }') && workspace.include?('PendingTransactionVisibility.allows(operation, canView: budget.can("view_transactions")')
 abort "Pending restricted state appears fully synced" unless workspace.include?('store.pendingLiveTransactions.isEmpty && !store.pendingLiveDetailsRestricted') && workspace.include?('pending-sync-restricted')
 abort "Pending discard bypasses visible entry check" unless workspace.include?('guard pendingLiveTransactions.contains(where: { $0.id == id }) else')
@@ -214,7 +217,23 @@ try await Task { @MainActor in
  var attempted = false
  do { try await unwritable.submit(operation) { _ in attempted = true }; fatalError("Write unexpectedly succeeded") } catch {}
  precondition(!attempted && unwritable.count == 0)
- print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, persisted rejection pause, later operations blocked, explicit ordered retry, targeted edits/bulk survive relaunch, stale owners cannot overwrite/replay/ack newer intent, no send after persistence failure")
+ let transferFile = root.appendingPathComponent("transfers.json")
+ let transferQueue = LiveTransactionOutbox(fileURL: transferFile)
+ let transfer = TransferMoneyOperation(mutationOperationID: UUID().uuidString.lowercased(), sourceAccountID: "cash", destinationAccountID: "card", amountMinor: 9_007_199_254_740_993, occurredOn: "2026-09-04", memo: "Exact transfer", isCleared: false)
+ try transferQueue.enqueueTransfer(transfer)
+ let transferEdit = TransferMoneyOperation(mutationOperationID: UUID().uuidString.lowercased(), expectedRevisions: ["source-leg": "v1:" + String(repeating: "a", count: 64), "destination-leg": "v1:" + String(repeating: "b", count: 64)], sourceAccountID: "cash", destinationAccountID: "card", amountMinor: 200, occurredOn: "2026-09-04", memo: "Observed edit", isCleared: true)
+ try transferQueue.enqueueTransfer(transferEdit, id: "logical-transfer")
+ let reopenedTransfers = LiveTransactionOutbox(fileURL: transferFile)
+ precondition(reopenedTransfers.entries[0].accountTransfer == transfer && reopenedTransfers.entries[1].accountTransfer == transferEdit)
+ precondition(reopenedTransfers.entries[1].transferID == "logical-transfer")
+ var transferSends = 0
+ do { try await reopenedTransfers.replayCommands(shouldPause: { _ in true }) { entry in
+     transferSends += 1
+     if entry.transferID != nil { throw BudgetApplicationError.invalidOperation("Stale transfer") }
+ }; fatalError("Expected stale edit") } catch {}
+ precondition(transferSends == 2 && reopenedTransfers.count == 1 && reopenedTransfers.entries[0].requiresReview == true)
+ precondition(reopenedTransfers.entries[0].accountTransfer?.expectedRevisions == transferEdit.expectedRevisions)
+ print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, persisted rejection pause, later operations blocked, explicit ordered retry, targeted edits/bulk/transfers survive relaunch, stale transfer versions never rebased, stale owners cannot overwrite/replay/ack newer intent, no send after persistence failure")
 }.value
 SWIFT
 RUBY

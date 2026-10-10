@@ -16,8 +16,8 @@ PostgreSQL concurrency. Conflicts preserve saved files and require reopening ins
 to merge drafts or claiming that an in-flight request did not reach the server.
 
 **Not complete:** the durable Live outbox now supports creation and observed ordinary transaction
-edits, observed bulk metadata/clearing actions, Assign and category Move Money. Account transfers,
-reconciliation and administrative commands still send directly through their authenticated APIs.
+edits, observed bulk metadata/clearing actions, Assign, category Move Money and account-transfer
+creation/observed edits. Reconciliation and administrative commands still send directly through their authenticated APIs.
 The following defines the complete milestone, not a claim of human-accepted offline editing. Local Device
 already owns its local writes; its storage must not be replaced by a hosted replay queue.
 

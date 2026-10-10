@@ -1,5 +1,39 @@
 # Production readiness mission ledger
 
+## Durable native account transfers and observed edits (2026-10-09)
+
+Live transfer creation/editing now persists an exact typed transfer command with mutation UUID
+before its first authenticated send. Edits capture both leg revisions at editor opening in stable
+SwiftUI state, not at refresh/save time. The ordered production outbox resolves the current
+credential and endpoint binding before calling the existing transfer API. Connectivity failures
+retain intent; definitive rejection pauses automatic replay without replacing either observation.
+Pending Sync shows source/destination and exact amount only when both accounts and, for edits,
+both currently visible posted legs are authorized. Pending transfers never synthesize posted
+balance, category activity, income/spending, liability or reserve changes locally. Local/Demo
+continue using their existing application-service implementation; missing Live observations
+fail before enqueue rather than submitting an unguarded edit.
+
+Executed host checks use the actual production outbox and typed transfer operation: persist and
+reopen exact Int64 creation/edit payloads, preserve logical transfer target and both observations,
+acknowledge ordered creation then pause a stale edit without rebasing. Source guards verify
+canonical create/update sender wiring, binding checks and editor observation capture. Two Swift
+API tests passed with actual mocked HTTP encoding for identified edits and legacy omission/roundtrip.
+The host production verifier passed. Regular Xcode 27.0 (27A266a) build-for-testing passed on
+existing iPhone 17 Pro Max / iOS 27 simulator 3ABD861E-D38D-4AFD-A356-959266051564.
+`git diff --check` passed. Native compile verification is separate from runtime acceptance; no claim of executed
+UI tests or real PostgreSQL concurrent lost-response proof is made. Required server contracts are
+34e75d7 / 8246895 with existing migration 0049. App rebuild and server update/restart required;
+no new migration, customer-data reset, merge/tag or TestFlight upload.
+
+Minimal remaining human transfer acceptance on a disposable Live budget:
+1. Disconnect the server, save one cash-to-cash transfer, confirm Pending Sync and unchanged
+   posted balances; relaunch, reconnect, verify exactly one pair of legs and matching balances.
+2. Separately open an existing transfer, disconnect and save an edit. Change that transfer on
+   another device before reconnecting: verify rejection preserves newer posted values and the
+   original pending intent. Discard/recreate after review; never silently rebase.
+3. Verify a permitted funded credit-card payment through the same flow and its one canonical
+   reserve effect. Reconciled transfers remain non-editable. Human acceptance is outstanding.
+
 ## Observed account-transfer edit contract (2026-10-09)
 
 PUT transfers accepts optional `expected_revisions` keyed by both actual leg IDs. Identified
