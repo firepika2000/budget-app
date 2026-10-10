@@ -40,6 +40,8 @@ abort "Transfer editor loses observed versions" unless workspace.include?("_expe
 abort "Live reconciliation bypasses reviewed-set observation" unless workspace.include?("client.reconciliationObservation(") && workspace.include?("guard operation.expectedReviewRevision != nil else") && workspace.include?("expectedReviewRevision: operation.expectedReviewRevision")
 abort "Live reconciliation bypasses durable canonical replay" unless workspace.include?("transactionOutbox.enqueueReconciliation(identified)") && send_body.include?("entry.reconciliation") && send_body.include?("mutationOperationID: operation.mutationOperationID")
 abort "Pending reconciliation exposes unscoped account details" unless workspace.include?('budget.can("reconcile_account") && budget.can("view_account_balances") && accountIDs.contains(reconciliation.accountID)')
+abort "Void bypasses durable observed replay" unless workspace.include?("transactionOutbox.enqueueVoid(identified)") && send_body.include?("entry.voidCommand") && send_body.include?("client.voidTransaction(") && workspace.include?("expectedRevision: observedRevision")
+abort "Pending void exposes an unavailable transaction" unless workspace.include?('budget.can("delete_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == command.transactionID })')
 abort "Reconciliation editor loses captured review token" unless workspace.include?("@State private var observedReviewRevision: String?") && workspace.include?("observedReviewRevision = value.reviewRevision") && workspace.include?("expectedReviewRevision: observedReviewRevision")
 abort "Pending rows bypass workspace access" unless workspace.include?('guard !workspaceAccessDenied else { return [] }') && workspace.include?('PendingTransactionVisibility.allows(operation, canView: budget.can("view_transactions")')
 abort "Pending restricted state appears fully synced" unless workspace.include?('store.pendingLiveTransactions.isEmpty && !store.pendingLiveDetailsRestricted') && workspace.include?('pending-sync-restricted')
@@ -274,6 +276,35 @@ try await Task { @MainActor in
  }
  precondition(reconciliationSends == 3 && LiveTransactionOutbox(fileURL: reconciliationFile).count == 0)
  print("PASS: reviewed reconciliation exact amounts/consent/token/identity persist before send, duplicate account submissions rejected, lost acknowledgement retained, stale review paused across relaunch, explicit retry never rebases, acknowledgement clears original intent")
+ let voidFile = root.appendingPathComponent("void.json")
+ let voidQueue = LiveTransactionOutbox(fileURL: voidFile)
+ let voidCommand = VoidTransactionOperation(transactionID: "original", reason: "Reviewed duplicate", expectedRevision: "v1:" + String(repeating: "d", count: 64), mutationOperationID: UUID().uuidString.lowercased())
+ try voidQueue.enqueueVoid(voidCommand)
+ try voidQueue.enqueueVoid(voidCommand)
+ precondition(voidQueue.count == 1)
+ var duplicateVoid = voidCommand
+ duplicateVoid.mutationOperationID = UUID().uuidString.lowercased()
+ do { try voidQueue.enqueueVoid(duplicateVoid); fatalError("Duplicate pending void accepted") } catch {}
+ let reopenedVoid = LiveTransactionOutbox(fileURL: voidFile)
+ var voidSends = 0
+ do { try await reopenedVoid.replayCommands(shouldPause: { _ in false }) { entry in
+     voidSends += 1; precondition(entry.voidCommand == voidCommand)
+     throw URLError(.networkConnectionLost)
+ }; fatalError("Expected lost void acknowledgement") } catch {}
+ let retainedVoid = LiveTransactionOutbox(fileURL: voidFile)
+ precondition(retainedVoid.entries[0].voidCommand == voidCommand && retainedVoid.entries[0].requiresReview != true)
+ do { try await retainedVoid.replayCommands(shouldPause: { _ in true }) { _ in
+     voidSends += 1; throw BudgetApplicationError.invalidOperation("Transaction changed")
+ }; fatalError("Expected stale void") } catch {}
+ let pausedVoid = LiveTransactionOutbox(fileURL: voidFile)
+ precondition(pausedVoid.entries[0].requiresReview == true)
+ do { try await pausedVoid.replayCommands { _ in fatalError("Paused void sent automatically") } } catch {}
+ try pausedVoid.retryReviewed(id: voidCommand.mutationOperationID!)
+ try await pausedVoid.replayCommands { entry in
+     voidSends += 1; precondition(entry.voidCommand == voidCommand)
+ }
+ precondition(voidSends == 3 && LiveTransactionOutbox(fileURL: voidFile).count == 0)
+ print("PASS: void target/reason/revision/identity survive lost response and relaunch, duplicate pending void rejected, stale rejection pauses, explicit retry preserves original intent, acknowledgement removes saved command")
  print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, persisted rejection pause, later operations blocked, explicit ordered retry, targeted edits/bulk/transfers survive relaunch, stale transfer versions never rebased, stale owners cannot overwrite/replay/ack newer intent, no send after persistence failure")
 }.value
 SWIFT

@@ -779,6 +779,36 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(schedule.id, "s1")
     }
 
+    func testIdentifiedVoidCarriesOriginalObservationAndIdentityAfterCredentialRotation() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        let revision = "v1:" + String(repeating: "b", count: 64)
+        let operationID = UUID().uuidString.lowercased()
+        let intent = APITransactionVoid(reason: "Reviewed reason", expectedRevision: revision, mutationOperationID: operationID)
+        XCTAssertEqual(try JSONDecoder().decode(APITransactionVoid.self, from: JSONEncoder().encode(intent)), intent)
+        var requests = 0
+        MockURLProtocol.handler = { request in
+            requests += 1
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/t1/void")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer token-\(requests)")
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: Any])
+            XCTAssertEqual(payload["reason"] as? String, intent.reason)
+            XCTAssertEqual(payload["expected_revision"] as? String, revision)
+            XCTAssertEqual(payload["mutation_operation_id"] as? String, operationID)
+            XCTAssertEqual(payload.count, 3)
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!,
+                    Data(#"{"id":"r1","account_id":"a1","category_id":null,"amount_minor":1200,"occurred_on":"2026-09-14","payee_name":"Reversal","memo":"","is_cleared":false,"is_reconciled":false,"status":"reversal","reversal_of_transaction_id":"t1","splits":[]}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        for index in 1...2 {
+            let result = try await client.voidTransaction(budgetID: "b1", transactionID: "t1", request: intent, token: "token-\(index)")
+            XCTAssertEqual(result.id, "r1")
+        }
+        XCTAssertEqual(requests, 2)
+        let legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(APITransactionVoid(reason: "Legacy"))) as? [String: Any])
+        XCTAssertEqual(Set(legacy.keys), ["reason"])
+    }
+
     func testAttachmentUploadUsesManagedBinaryContract() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

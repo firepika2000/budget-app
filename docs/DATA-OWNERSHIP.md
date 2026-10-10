@@ -17,7 +17,7 @@ to merge drafts or claiming that an in-flight request did not reach the server.
 
 **Not complete:** the durable Live outbox now supports creation and observed ordinary transaction
 edits, observed bulk metadata/clearing actions, Assign, category Move Money and account-transfer
-creation/observed edits and reconciliation against a captured server-reviewed transaction set.
+creation/observed edits, observed Void with Reversal, and reconciliation against a captured server-reviewed transaction set.
 Administrative commands still send directly through their authenticated APIs.
 The following defines the complete milestone, not a claim of human-accepted offline editing. Local Device
 already owns its local writes; its storage must not be replaced by a hosted replay queue.
@@ -50,8 +50,15 @@ effects and two audit decisions. Accepted retries return the existing authorized
 they cannot create another reversal or change later reconciliation state. Changed intent/target
 or reused command kinds conflict. Current delete capability, ownership and both original/reversal
 resource scope are rechecked before acknowledgement. Unidentified legacy callers retain existing
-one-way behavior. Native void still sends directly and is **not yet offline queue-enabled**;
-the safe server contract is the prerequisite, not completion of the user-facing offline flow.
+one-way behavior. Native void now captures the displayed transaction revision in editor state
+and persists target, reason, revision and mutation UUID before sending through the shared outbox.
+Replay uses the canonical void API with current credentials/destination binding. An uncertain
+response retains the original intent across relaunch; stale/denied requests pause without a local
+reversal. Pending Sync exposes the reason/target only with current delete/view permission and
+whole-transaction visibility, and rejects a second pending void for that target. The obsolete
+unobserved Live repository entry point fails before transport; Local Device/Demo use their existing
+canonical service implementation via the provider-neutral operation default. Human offline
+void/relaunch acceptance remains pending.
 
 Assign and category Move Money now optionally accept `mutation_operation_id` with a required
 `expected_allocation_version`. The existing 0049 receipt table binds the exact validated request

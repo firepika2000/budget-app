@@ -101,6 +101,13 @@ struct ReconcileAccountOperation: Codable, Equatable, Sendable {
     let expectedClearedBalanceMinor: Int64
 }
 
+struct VoidTransactionOperation: Codable, Equatable, Sendable {
+    let transactionID: String
+    let reason: String
+    let expectedRevision: String?
+    var mutationOperationID: String? = nil
+}
+
 struct ScheduleOperation: Equatable, Sendable {
     let accountID: String
     let destinationAccountID: String?
@@ -229,6 +236,7 @@ final class LiveTransactionOutbox {
         var accountTransfer: TransferMoneyOperation? = nil
         var transferID: String? = nil
         var reconciliation: ReconcileAccountOperation? = nil
+        var voidCommand: VoidTransactionOperation? = nil
     }
 
     private let fileURL: URL
@@ -421,6 +429,7 @@ final class LiveTransactionOutbox {
             guard existing.assignment == entry.assignment && existing.moneyMove == entry.moneyMove,
                   existing.accountTransfer == entry.accountTransfer && existing.transferID == entry.transferID,
                   existing.reconciliation == entry.reconciliation,
+                  existing.voidCommand == entry.voidCommand,
                   existing.operation == nil && existing.bulkUpdate == nil else {
                 throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
             }
@@ -442,6 +451,19 @@ final class LiveTransactionOutbox {
             throw BudgetApplicationError.invalidOperation("This account already has a saved reconciliation. Review it in Pending Sync before submitting another.")
         }
         try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, reconciliation: operation))
+    }
+
+    func enqueueVoid(_ operation: VoidTransactionOperation) throws {
+        guard let id = operation.mutationOperationID, UUID(uuidString: id) != nil,
+              !operation.transactionID.isEmpty, operation.reason.count <= 500,
+              let revision = operation.expectedRevision, revision.hasPrefix("v1:"), revision.count == 67,
+              revision.dropFirst(3).allSatisfy({ "0123456789abcdef".contains($0) }) else {
+            throw BudgetApplicationError.invalidOperation("Saved voids require a target, stable identity, reviewed revision and a reason of at most 500 characters.")
+        }
+        guard !entries.contains(where: { $0.id != id && $0.voidCommand?.transactionID == operation.transactionID }) else {
+            throw BudgetApplicationError.invalidOperation("This transaction already has a saved void. Resolve it in Pending Sync before submitting another.")
+        }
+        try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, voidCommand: operation))
     }
 
     func retryReviewed(id: String) throws {
@@ -512,8 +534,15 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
+                  if let command = entry.voidCommand {
+                      guard let revision = command.expectedRevision else { return false }
+                      return entry.transactionID == nil && entry.transferID == nil
+                          && command.mutationOperationID == entry.id && !command.transactionID.isEmpty && command.reason.count <= 500
+                          && revision.hasPrefix("v1:") && revision.count == 67
+                          && revision.dropFirst(3).allSatisfy({ "0123456789abcdef".contains($0) })
+                  }
                   if let reconciliation = entry.reconciliation {
                       guard let revision = reconciliation.expectedReviewRevision else { return false }
                       return entry.transactionID == nil && entry.transferID == nil
@@ -754,6 +783,7 @@ protocol TransactionCommandRepository: AnyObject {
     func deleteTransaction(id: String) async throws
     func duplicateTransaction(id: String, occurredOn: String) async throws
     func voidTransaction(id: String, reason: String) async throws
+    func voidTransaction(_ operation: VoidTransactionOperation) async throws
     func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment]
     func transactionHistory(id: String, limit: Int, offset: Int) async throws -> [APITransactionChange]
@@ -765,6 +795,12 @@ protocol TransactionCommandRepository: AnyObject {
     func transferMoney(_ operation: TransferMoneyOperation) async throws
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws
     func deleteTransfer(id: String) async throws
+}
+
+extension TransactionCommandRepository {
+    func voidTransaction(_ operation: VoidTransactionOperation) async throws {
+        try await voidTransaction(id: operation.transactionID, reason: operation.reason)
+    }
 }
 
 @MainActor
@@ -938,6 +974,11 @@ struct TransactionService {
 
     func void(id: String, reason: String) async throws {
         do { try await repository.voidTransaction(id: id, reason: reason) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func void(_ operation: VoidTransactionOperation) async throws {
+        do { try await repository.voidTransaction(operation) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

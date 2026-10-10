@@ -1470,9 +1470,16 @@ public struct APITransactionDuplicate: Encodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case occurredOn = "occurred_on" }
 }
 
-public struct APITransactionVoid: Encodable, Equatable, Sendable {
+public struct APITransactionVoid: Codable, Equatable, Sendable {
     public let reason: String
-    public init(reason: String = "") { self.reason = reason }
+    public let expectedRevision: String?
+    public let mutationOperationID: String?
+    public init(reason: String = "", expectedRevision: String? = nil, mutationOperationID: String? = nil) {
+        self.reason = reason; self.expectedRevision = expectedRevision; self.mutationOperationID = mutationOperationID
+    }
+    enum CodingKeys: String, CodingKey {
+        case reason, expectedRevision = "expected_revision", mutationOperationID = "mutation_operation_id"
+    }
 }
 
 public struct APITransactionSchedule: Encodable, Equatable, Sendable {

@@ -344,7 +344,11 @@ public struct APIClient {
     }
 
     public func voidTransaction(budgetID: String, transactionID: String, reason: String, token: String) async throws -> APITransaction {
-        try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/void", method: "POST", token: token, body: APITransactionVoid(reason: reason))
+        try await voidTransaction(budgetID: budgetID, transactionID: transactionID, request: APITransactionVoid(reason: reason), token: token)
+    }
+
+    public func voidTransaction(budgetID: String, transactionID: String, request: APITransactionVoid, token: String) async throws -> APITransaction {
+        try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/void", method: "POST", token: token, body: request)
     }
 
     public func createScheduleFromTransaction(budgetID: String, transactionID: String, request: APITransactionSchedule, token: String) async throws -> APIScheduledTransaction {

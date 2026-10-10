@@ -1,5 +1,41 @@
 # Production readiness mission ledger
 
+## Native durable observed Void with Reversal (2026-10-09)
+
+The shared void editor now captures its displayed transaction revision in state rather than
+renewing it during background refresh. A typed provider-neutral operation routes through the
+existing transaction application service. Live persists target/reason/revision/mutation UUID
+before the first send, resolves current credentials and rechecks destination binding on replay,
+then calls the canonical identified void endpoint. Local Device/Demo default to their existing
+immediate canonical implementation. Unobserved legacy Live calls fail before network transport.
+Only one pending void per transaction is accepted. Uncertain responses retain intent across
+relaunch; stale/denied results pause ordered replay without automatic rebasing. Pending Sync
+shows authorized target/reason and clearly distinguishes intent from an accepted reversal.
+Current delete/view capabilities and whole-transaction visibility gate pending details.
+No local reversal, reserve calculation or optimistic financial mutation was introduced.
+
+Production-code host regressions passed for persist/reopen, unchanged target/reason/token/UUID,
+lost acknowledgement retention, duplicate submission rejection, stale pause across relaunch,
+no automatic paused send, explicit original-intent retry and acknowledgement removal. Two Swift
+API tests passed: identified transport with rotated credentials/Codable round-trip and legacy
+void/Make Recurring compatibility. Regular Xcode 27.0 (27A266a) production/native-test
+build-for-testing passed on preserved iPhone 17 Pro Max/iOS 27 destination
+`3ABD861E-D38D-4AFD-A356-959266051564`. No executed native XCTest/XCUITest or human runtime
+acceptance is claimed. `git diff --check` passed. The preceding server checkpoint supplies
+twelve HTTP regressions and real concurrent-void/reconciliation contention proof.
+
+Minimal new human acceptance: open an ordinary posted transaction online and enter a void reason;
+disconnect before confirmation, then confirm and verify Pending Sync holds it while the original
+remains posted and balances remain unchanged. Relaunch, reconnect and verify one reversal plus
+one original void decision, with the entered reason preserved. In a second test change the
+reviewed transaction on another device before reconnect; verify rejection pauses the saved void
+without effects. Resolve/discard it explicitly and start a new review. Existing accepted ordinary
+void and Quick Clear workflows need not be repeated wholesale.
+
+Rebuild required; server must include `16961aa` identified-void contract. No new migration,
+Live/Simulator data reset, merge/tag or TestFlight upload. Draft persistence and protected offline
+attachment bytes remain separate open milestones; this does not claim complete hosted offline use.
+
 ## Identified void/reversal server contract (2026-10-09)
 
 The offline audit found native Void with Reversal still calls an unidentified one-way endpoint.

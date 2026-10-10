@@ -3670,6 +3670,14 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let operation = entry.voidCommand {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            _ = try await client.voidTransaction(budgetID: budget.id, transactionID: operation.transactionID,
+                request: APITransactionVoid(reason: operation.reason, expectedRevision: operation.expectedRevision,
+                    mutationOperationID: operation.mutationOperationID), token: token)
+            return
+        }
         if let operation = entry.reconciliation {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3784,7 +3792,15 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
     func deleteTransaction(id: String) async throws { try await credentials.prepare(); try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
     func duplicateTransaction(id: String, occurredOn: String) async throws { try await credentials.prepare(); _ = try await client.duplicateTransaction(budgetID: budget.id, transactionID: id, occurredOn: occurredOn, token: token) }
-    func voidTransaction(id: String, reason: String) async throws { try await credentials.prepare(); _ = try await client.voidTransaction(budgetID: budget.id, transactionID: id, reason: reason, token: token) }
+    func voidTransaction(id: String, reason: String) async throws {
+        throw BudgetApplicationError.invalidOperation("Reopen this transaction to review it before voiding.")
+    }
+    func voidTransaction(_ operation: VoidTransactionOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueVoid(identified)
+        try await replaySavedPlanning()
+    }
     func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws { try await credentials.prepare(); _ = try await client.createScheduleFromTransaction(budgetID: budget.id, transactionID: id, request: .init(recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, nextDate: operation.nextDate), token: token) }
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await credentials.prepare(); return try await client.transactionAttachments(budgetID: budget.id, transactionID: id, token: token) }
     func transactionHistory(id: String, limit: Int, offset: Int) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.transactionHistory(budgetID: budget.id, transactionID: id, limit: limit, offset: offset, token: token) }
@@ -4785,6 +4801,9 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if let command = entry.voidCommand {
+                return budget.can("delete_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == command.transactionID })
+            }
             if let reconciliation = entry.reconciliation {
                 return budget.can("reconcile_account") && budget.can("view_account_balances") && accountIDs.contains(reconciliation.accountID)
             }
@@ -4915,8 +4934,9 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
 
-    func voidTransaction(id: String, reason: String) async throws {
-        try await services().transactions.void(id: id, reason: reason)
+    func voidTransaction(id: String, reason: String, expectedRevision: String? = nil) async throws {
+        defer { publishPendingPlanningStatus() }
+        try await services().transactions.void(VoidTransactionOperation(transactionID: id, reason: reason, expectedRevision: expectedRevision))
         await refresh()
     }
 
@@ -6266,6 +6286,13 @@ private struct PendingLiveTransactionsView: View {
                                 Text("\(accountName(reconciliation.accountID)) · through \(reconciliation.throughDate) · \(store.format(reconciliation.statementBalanceMinor))")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text("Saved for server approval · reconciliation history and balances remain unchanged until accepted")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let command = entry.voidCommand {
+                                Text("Void with Reversal").font(.headline)
+                                Text(store.transactions.first(where: { $0.id == command.transactionID })?.payeeName ?? "Transaction")
+                                    .font(.subheadline)
+                                if !command.reason.isEmpty { Text(command.reason).font(.caption).foregroundStyle(.secondary) }
+                                Text("Pending server approval · no local reversal or balance change")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Text("Saved \(entry.queuedAt.formatted(date: .abbreviated, time: .shortened))")
@@ -10371,8 +10398,13 @@ private struct TransactionVoidView: View {
     @State private var reason = ""
     @State private var saving = false
     @State private var error: String?
+    @State private var observedRevision: String?
+    init(transaction: APITransaction) {
+        self.transaction = transaction
+        _observedRevision = State(initialValue: transaction.revision)
+    }
     var body: some View { NavigationStack { Form { Section { Text("The original posting remains visible and a current-dated reversal exactly compensates it. This cannot be undone.").foregroundStyle(.secondary); TextField("Reason (optional)", text: $reason, axis: .vertical).accessibilityIdentifier("void-reason") } }.navigationTitle("Void Transaction").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Void & Reverse", role: .destructive) { Task { await save() } }.disabled(saving).accessibilityIdentifier("confirm-void-action") } }.alert("Unable to void", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") } } }
-    private func save() async { saving = true; defer { saving = false }; do { try await store.voidTransaction(id: transaction.id, reason: reason); dismiss() } catch { self.error = error.localizedDescription } }
+    private func save() async { guard !saving else { return }; saving = true; defer { saving = false }; do { try await store.voidTransaction(id: transaction.id, reason: reason, expectedRevision: observedRevision); dismiss() } catch { self.error = error.localizedDescription } }
 }
 
 private struct MakeRecurringView: View {
