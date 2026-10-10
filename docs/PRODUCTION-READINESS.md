@@ -1,5 +1,32 @@
 # Production readiness mission ledger
 
+## Payee search failure and overlapping request recovery (2026-10-09)
+
+Payee management previously swallowed search errors, presenting an empty collection as no
+saved payees. Its initial task and appearance callback could also issue overlapping first-page
+requests. Both management and the shared selector now use a reusable request-identity tracker
+that checks query, current authority revision and exact request identity before publishing
+results, errors or loading completion. Changed queries clear old results/cursors before the
+debounced bounded search; authority changes restart that observation. Disappearance invalidates
+in-flight completions. Management no longer duplicates its initial load through onAppear.
+
+Both views display inline failure and Retry Search, retaining prior pages on a pagination failure.
+An error does not render the no-payees empty state. Existing first-class identity selection,
+20-row server pages, alias/archive behavior and canonical authorization remain unchanged.
+Two executed production-tracker tests cover repeated queries, obsolete completions, changed
+queries/authority and invalidation. Human interaction acceptance remains pending.
+Regular Xcode 27 build-for-testing passes for the production application and native test
+targets on the preserved iPhone 17 Pro Max / iOS 27 destination; this is compilation, not
+runtime acceptance. All eight focused Dropbox destination tests also pass with deterministic
+transports, including interrupted publication, bounded upload, exact encrypted restore download,
+selected-generation deletion and retention failure recovery. Real-provider consent and recovery
+acceptance remain separate; no customer Dropbox account was accessed or changed.
+
+Human retest: interrupt server access while opening Payees or the Activity payee selector;
+expect an error and retry, not a claim that no payees exist. Restore access and retry. Search
+quickly between two names and verify the rows correspond to the latest query. App rebuild
+required; no server restart, migration or user-data reset. TestFlight remains held.
+
 ## Durable reviewed transfer deletion (2026-10-09)
 
 Transfer detail captures both leg revisions when opening Delete confirmation. Live persists
