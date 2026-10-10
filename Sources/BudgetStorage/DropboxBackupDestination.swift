@@ -219,6 +219,10 @@ public actor DropboxBackupDestination {
         let manifest: LocalDeviceBackupManifest
         do { manifest = try JSONDecoder().decode(LocalDeviceBackupManifest.self, from: manifestData) }
         catch { throw DropboxBackupDestinationError.invalidPackage("The Dropbox generation manifest is invalid.") }
+        guard manifest.format == LocalDeviceBackupManifest.format,
+              manifest.version == LocalDeviceBackupManifest.version else {
+            throw DropboxBackupDestinationError.invalidPackage("The Dropbox generation uses an unsupported backup format or version.")
+        }
         guard Set(manifest.files.map(\.payloadName)).count == manifest.files.count,
               manifest.files.allSatisfy({ Self.safeName($0.payloadName) }) else {
             throw DropboxBackupDestinationError.invalidPackage("The Dropbox generation manifest has duplicate or unsafe payload names.")

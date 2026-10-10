@@ -2,6 +2,62 @@ import XCTest
 @testable import BudgetStorage
 
 final class DropboxBackupDestinationTests: XCTestCase {
+    func testInvalidAdvertisedManifestSizeRejectsBeforeAnyDownloadOrStaging() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-manifest-size-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = "/Backups/Invalid.clearpocketbackup/manifest.json"
+        let sizes: [Int64?] = [nil, 0, -1, Int64(BackupManifestIO.maximumBytes) + 1]
+        for (index, size) in sizes.enumerated() {
+            let transport = FakeDropboxBackupTransport()
+            await transport.seedFile(path, data: Data("{}".utf8))
+            await transport.overrideListedEntry(.init(path: path, name: "manifest.json", isFolder: false, size: size))
+            let destination = try DropboxBackupDestination(transport: transport)
+            let output = root.appendingPathComponent("Rejected-\(index).clearpocketbackup")
+            do {
+                try await destination.download(remotePath: "/Backups/Invalid.clearpocketbackup", destinationURL: output)
+                XCTFail("Invalid manifest metadata must fail before fetching")
+            } catch let error as DropboxBackupDestinationError {
+                guard case .invalidPackage = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            let downloads = await transport.downloadedPaths()
+            XCTAssertTrue(downloads.isEmpty)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+        }
+    }
+
+    func testUnsupportedManifestRejectsBeforePayloadDownloadAndCleansStaging() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-manifest-version-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let package = try makePackage(root: root, name: "Generation.clearpocketbackup", payloads: [Data("ciphertext".utf8)])
+        let original = try Data(contentsOf: package.appendingPathComponent("manifest.json"))
+        for field in ["format", "version"] {
+            let transport = FakeDropboxBackupTransport()
+            let destination = try DropboxBackupDestination(transport: transport)
+            let published = try await destination.publish(packageURL: package)
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: original) as? [String: Any])
+            if field == "format" { json[field] = "unsupported.backup" }
+            else { json[field] = LocalDeviceBackupManifest.version + 1 }
+            let manifestPath = published.remotePath + "/manifest.json"
+            await transport.seedFile(manifestPath, data: try JSONSerialization.data(withJSONObject: json))
+            let output = root.appendingPathComponent("Rejected-\(field).clearpocketbackup")
+            do {
+                try await destination.download(remotePath: published.remotePath, destinationURL: output)
+                XCTFail("Unsupported manifest must not fetch payloads")
+            } catch let error as DropboxBackupDestinationError {
+                guard case .invalidPackage = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            let downloads = await transport.downloadedPaths()
+            XCTAssertEqual(downloads, [manifestPath])
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [package.lastPathComponent])
+            let remotePaths = await transport.paths()
+            XCTAssertTrue(remotePaths.contains(published.remotePath + "/payload/000000.cpenc"), "Rejection must not remove remote backups")
+        }
+    }
+
     func testLostMoveResponseAndExplicitRetryRecoverOnlyIdenticalGeneration() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-retry-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -231,6 +287,8 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     private let failListing: Bool
     private let loseMoveResponse: Bool
     private var corruptDownloads: Set<String> = []
+    private var listedOverrides: [String: DropboxBackupEntry] = [:]
+    private var downloads: [String] = []
 
     init(pageSize: Int = 100, corruptUploadMetadata: Bool = false, failListing: Bool = false, loseMoveResponse: Bool = false) {
         self.pageSize = pageSize; self.corruptUploadMetadata = corruptUploadMetadata
@@ -240,6 +298,8 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
 
     func seedFolder(_ path: String) { folders.insert(path) }
     func seedFile(_ path: String, data: Data) { files[path] = data }
+    func overrideListedEntry(_ entry: DropboxBackupEntry) { listedOverrides[entry.path] = entry }
+    func downloadedPaths() -> [String] { downloads }
     func paths() -> Set<String> { folders.union(files.keys) }
     func listCalls() -> Int { calls }
     func uploadSessionCount() -> Int { sessionStarts }
@@ -293,7 +353,7 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
         } + files.map { value, data in
             .init(path: value, name: (value as NSString).lastPathComponent, isFolder: false,
                   size: Int64(data.count), contentHash: DropboxBackupDestination.contentHash(data))
-        }).filter { entry in
+        }).map { listedOverrides[$0.path] ?? $0 }.filter { entry in
             guard entry.path.hasPrefix(path + "/") else { return false }
             return recursive || !entry.path.dropFirst(path.count + 1).contains("/")
         }.sorted { $0.path < $1.path }
@@ -303,6 +363,7 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     }
 
     func download(path: String) throws -> (DropboxBackupMetadata, Data) {
+        downloads.append(path)
         guard var data = files[path] else { throw TestError.missing }
         let metadata = metadata(path, data)
         if corruptDownloads.contains(path), !data.isEmpty { data[0] ^= 0xff }
