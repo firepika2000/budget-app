@@ -1,5 +1,28 @@
 # Production readiness mission ledger
 
+## Searchable focused statement review (2026-10-09)
+
+Statement review previously required scrolling every recognized row without a way to find a payee,
+memo or date or isolate potential duplicates. The shared Live/Local Device/Demo production flow
+now provides native search plus All, Selected, Skipped and Duplicates focus modes. Search is
+case/diacritic-aware, whitespace-trimmed and limited to existing authorized staged observations.
+It never creates payees, changes choices or approves rows. The view computes its filtered set once
+per render and shows matching/total counts, clear whole-batch posting wording and a reset action
+for no matches. Search appears only after staging, not in format/column setup.
+
+Posting still submits every staged candidate with its retained post/skip/category decision, including
+rows hidden by the current search. Current resource/authority boundaries and staging limits remain
+unchanged. This is UI navigation over the existing bounded 10,000-row payload, not server pagination
+or durable draft-decision storage; neither is implied by the new controls.
+
+Nine direct host Swift checks executed the actual production predicate, covering focus combinations,
+accent/case/whitespace, memo/date and no-match behavior. Native tests add equivalent predicate cases
+and a production-source assertion that filtered rendering still uses complete-batch approval.
+Final regular Xcode 27.0 build-for-testing passed on the preserved iPhone 17 Pro Max destination;
+native cases compiled, not executed. Diff checks passed.
+Native runtime and human visual acceptance remain unverified. App rebuild required; no server
+restart, migration, Simulator reset or customer-data change. TestFlight remains held.
+
 ## Bounded transaction-list editor attribution (2026-10-09)
 
 The transaction response helper described itself as bounded but hydrated every edit-history entity

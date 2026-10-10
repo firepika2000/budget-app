@@ -11317,6 +11317,25 @@ enum StatementOCRStaging {
     }
 }
 
+enum StatementImportReviewFilter: String, CaseIterable {
+    case all = "All", selected = "Selected", skipped = "Skipped", duplicates = "Duplicates"
+    func includes(selected: Bool, duplicate: Bool, query: String, payee: String, memo: String, date: String) -> Bool {
+        let matchesStatus = self == .all || (self == .selected && selected)
+            || (self == .skipped && !selected) || (self == .duplicates && duplicate)
+        let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return matchesStatus && (search.isEmpty || [payee, memo, date].contains { $0.localizedStandardContains(search) })
+    }
+}
+
+private struct StatementImportSearchModifier: ViewModifier {
+    let enabled: Bool
+    @Binding var text: String
+    func body(content: Content) -> some View {
+        if enabled { content.searchable(text: $text, prompt: "Find payee, memo or date") }
+        else { content }
+    }
+}
+
 private struct StatementImportFlowView: View {
     @ObservedObject var workspace: BudgetWorkspaceStore
     let budget: APIBudget; let account: APIAccount; let file: StatementImportFile?
@@ -11331,6 +11350,8 @@ private struct StatementImportFlowView: View {
     @State private var confirmingCancel = false
     @State private var confirmingUndo = false
     @State private var accessChanged = false
+    @State private var reviewSearch = ""
+    @State private var reviewFilter: StatementImportReviewFilter = .all
     private var canUseCurrentAccess: Bool {
         !accessChanged && workspace.historyResourceVisible(.account(account.id))
             && workspace.budget.can("reconcile_account")
@@ -11363,13 +11384,14 @@ private struct StatementImportFlowView: View {
             } else { editorContent }
         }
         .onChange(of: workspace.authorityRevision) { _, _ in
-            accessChanged = true; staged = nil; postRows = []; categoryByRow = [:]
+            accessChanged = true; staged = nil; postRows = []; categoryByRow = [:]; reviewSearch = ""
             confirmingCancel = false; confirmingUndo = false; errorMessage = nil
         }
     }
     private var editorContent: some View { NavigationStack { Form {
         if let staged { review(staged) } else { setup }
     }.navigationTitle(staged == nil ? "Import Statement" : "Review Import").navigationBarTitleDisplayMode(.inline)
+        .modifier(StatementImportSearchModifier(enabled: staged != nil, text: $reviewSearch))
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button(staged == nil || !reviewable ? "Close" : "Cancel Import") { if staged == nil || !reviewable { dismiss() } else { confirmingCancel = true } }.disabled(isWorking) }; ToolbarItem(placement: .confirmationAction) { if let staged, reviewable { Button("Post Selected") { Task { await approve(staged) } }.disabled(isWorking) } else if staged == nil { Button("Preview") { Task { await stage() } }.disabled(!mappingReady || isWorking) } } }
         .alert("Statement import failed", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
         .confirmationDialog("Cancel Statement Import?", isPresented: $confirmingCancel, titleVisibility: .visible) {
@@ -11413,6 +11435,7 @@ private struct StatementImportFlowView: View {
         }
     }
     @ViewBuilder private func review(_ batch: APIStatementImport) -> some View {
+        let visibleRows = visibleCandidates(batch)
         Section { LabeledContent("Recognized", value: "\(batch.candidateCount) transactions"); Text("Possible duplicates start skipped. Review the category and choice for every row.").font(.footnote).foregroundStyle(.secondary) }
         if budget.can("delete_transaction"), batch.status == "approved", batch.candidates.contains(where: { $0.postedTransactionID != nil }), batch.candidates.allSatisfy({ $0.reversalTransactionID == nil }) {
             Section("Corrections") {
@@ -11421,7 +11444,18 @@ private struct StatementImportFlowView: View {
                 Text("Undo uses normal void-and-reversal accounting. It is all-or-nothing and cannot alter reconciled history.").font(.footnote).foregroundStyle(.secondary)
             }
         }
-        ForEach(batch.candidates) { row in
+        Section("Review focus") {
+            Picker("Show", selection: $reviewFilter) {
+                ForEach(StatementImportReviewFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }.accessibilityIdentifier("statement-review-filter")
+            Text("Showing \(visibleRows.count) of \(batch.candidateCount). Filtering does not change your choices; Post Selected applies to the entire review.")
+                .font(.footnote).foregroundStyle(.secondary)
+            if visibleRows.isEmpty {
+                Text("No rows match this view.")
+                Button("Show All Rows") { reviewSearch = ""; reviewFilter = .all }
+            }
+        }
+        ForEach(visibleRows) { row in
             Section {
                 Toggle(isOn: Binding(get: { postRows.contains(row.sourceRow) || row.approvalAction == "post" }, set: { enabled in
                     if enabled { postRows.insert(row.sourceRow) } else { postRows.remove(row.sourceRow) }
@@ -11449,6 +11483,13 @@ private struct StatementImportFlowView: View {
                     Label(action == "post" ? "Posted" : "Skipped", systemImage: action == "post" ? "checkmark.circle" : "forward.end.circle").font(.footnote).foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+    private func visibleCandidates(_ batch: APIStatementImport) -> [APIStatementImportCandidate] {
+        batch.candidates.filter { row in
+            reviewFilter.includes(selected: postRows.contains(row.sourceRow) || row.approvalAction == "post",
+                duplicate: !row.exactTransactionIDs.isEmpty || !row.possibleTransactionIDs.isEmpty || row.duplicateSourceRow != nil,
+                query: reviewSearch, payee: row.payee, memo: row.memo, date: row.occurredOn)
         }
     }
     private var mappingReady: Bool {

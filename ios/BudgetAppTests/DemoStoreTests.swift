@@ -10,6 +10,32 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testStatementReviewSearchCombinesFocusWithoutChangingDecisions() {
+        func includes(_ filter: StatementImportReviewFilter, selected: Bool = true, duplicate: Bool = false, query: String = "") -> Bool {
+            filter.includes(selected: selected, duplicate: duplicate, query: query, payee: "Café Market", memo: "Receipt", date: "2026-09-15")
+        }
+        XCTAssertTrue(includes(.all, query: " cafe "))
+        XCTAssertTrue(includes(.all, query: "2026-09"))
+        XCTAssertTrue(includes(.selected, query: "receipt"))
+        XCTAssertFalse(includes(.selected, selected: false))
+        XCTAssertTrue(includes(.skipped, selected: false))
+        XCTAssertFalse(includes(.skipped))
+        XCTAssertTrue(includes(.duplicates, duplicate: true))
+        XCTAssertFalse(includes(.duplicates, duplicate: false))
+        XCTAssertFalse(includes(.all, query: "not present"))
+    }
+    func testStatementReviewPostingRetainsWholeBatchWhenRowsAreFiltered() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct StatementImportFlowView:"))
+        let end = try XCTUnwrap(source.range(of: "private struct ReportLoadModifier:", range: start.upperBound..<source.endIndex))
+        let flow = source[start.lowerBound..<end.lowerBound]
+        XCTAssertTrue(flow.contains("let visibleRows = visibleCandidates(batch)"))
+        XCTAssertTrue(flow.contains("ForEach(visibleRows)"))
+        XCTAssertTrue(flow.contains("let items = batch.candidates.map"))
+        XCTAssertFalse(flow.contains("let items = visibleCandidates(batch).map"))
+        XCTAssertTrue(flow.contains("StatementImportSearchModifier(enabled: staged != nil"))
+    }
     @MainActor
     func testMetadataOnlyCardEditDoesNotReclassifyFundedPurchaseAfterLaterSpending() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
