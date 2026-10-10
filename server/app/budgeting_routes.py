@@ -991,6 +991,42 @@ def debt_payoff_plan_history(budget_id: str, limit: int = Query(50, ge=1, le=100
         "created_at": row.created_at} for row in rows]
 
 
+def account_balance_observations(db: Session, budget: Budget, accounts: list[Account],
+                                 through_date: Optional[date]) -> list[AccountBalanceResponse]:
+    """Use the same exact ledger sums for individual and paged observations."""
+    totals = {}
+    if accounts:
+        conditions = [Transaction.account_id.in_([account.id for account in accounts])]
+        if through_date is not None:
+            conditions.append(Transaction.occurred_on <= through_date)
+        for account_id, is_cleared, amount in db.execute(select(
+            Transaction.account_id, Transaction.is_cleared, func.sum(Transaction.amount_minor)
+        ).where(*conditions).group_by(Transaction.account_id, Transaction.is_cleared)):
+            totals[account_id, is_cleared] = int(amount or 0)
+    return [AccountBalanceResponse(
+        account_id=account.id, currency_code=budget.currency_code,
+        cleared_balance_minor=totals.get((account.id, True), 0),
+        uncleared_balance_minor=totals.get((account.id, False), 0),
+        working_balance_minor=totals.get((account.id, True), 0) + totals.get((account.id, False), 0),
+        reconciled_balance_minor=account.reconciled_balance_minor, through_date=through_date,
+    ) for account in accounts]
+
+
+@router.get("/account-balances", response_model=list[AccountBalanceResponse])
+def list_account_balances(
+    budget_id: str, limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0), through_date: Optional[date] = Query(default=None),
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> list[AccountBalanceResponse]:
+    budget = require_budget_capability(db, user, budget_id, "view_account_balances")
+    query = select(Account).where(Account.budget_id == budget_id)
+    visible = visible_resource_ids(db, user, budget, "account")
+    if visible is not None:
+        query = query.where(Account.id.in_(visible))
+    accounts = list(db.scalars(query.order_by(Account.id).offset(offset).limit(limit)))
+    return account_balance_observations(db, budget, accounts, through_date)
+
+
 @router.get("/accounts/{account_id}/balance", response_model=AccountBalanceResponse)
 def account_balance(
     budget_id: str,
@@ -1005,24 +1041,7 @@ def account_balance(
         db, user, budget, "account", account_id
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
-    conditions = [Transaction.account_id == account_id]
-    if through_date is not None:
-        conditions.append(Transaction.occurred_on <= through_date)
-    cleared = int(db.scalar(select(
-        func.coalesce(func.sum(Transaction.amount_minor), 0)
-    ).where(*conditions, Transaction.is_cleared.is_(True))) or 0)
-    uncleared = int(db.scalar(select(
-        func.coalesce(func.sum(Transaction.amount_minor), 0)
-    ).where(*conditions, Transaction.is_cleared.is_(False))) or 0)
-    return AccountBalanceResponse(
-        account_id=account.id,
-        currency_code=budget.currency_code,
-        cleared_balance_minor=cleared,
-        uncleared_balance_minor=uncleared,
-        working_balance_minor=cleared + uncleared,
-        reconciled_balance_minor=account.reconciled_balance_minor,
-        through_date=through_date,
-    )
+    return account_balance_observations(db, budget, [account], through_date)[0]
 
 
 @router.get("/category-groups", response_model=list[CategoryGroupResponse])
