@@ -62,6 +62,13 @@ def test_spending_report_is_explainable_and_split_aware(client, owner_token, ses
     assert by_id[groceries["id"]]["spending_minor"] == 8000
     assert income["id"] not in report.text
     assert report.json()["total_spending_minor"] == 15182
+    endpoint = f"/api/v1/budgets/{budget['id']}/reports/contributors"
+    period = {"start_date": "2026-09-01", "end_date": "2026-09-30"}
+    for kind, expected in [("category_spending", {direct['id'], split['id']}),
+                           ("spending", {direct['id'], split['id']}), ("income", {income['id']})]:
+        response = client.get(endpoint, params={**period, "kind": kind}, headers=auth(owner_token))
+        assert response.status_code == 200, response.text
+        assert {row['id'] for row in response.json()['items']} == expected
 
 
 def test_spending_filters_clip_split_portions_in_breakdown_and_all_trend_dimensions(client, owner_token, session_factory):
@@ -90,6 +97,9 @@ def test_spending_filters_clip_split_portions_in_breakdown_and_all_trend_dimensi
         body = response.json()
         assert body["total_spending_minor"] == expected
         assert {row["category_id"] for row in body["categories"]} == category_ids
+        contributors = client.get(f"{base}/contributors", params={**filters, "kind": "category_spending"}, headers=auth(owner_token))
+        assert contributors.status_code == 200, contributors.text
+        assert {row['id'] for row in contributors.json()['items']} == ({purchase['id'], refund['id']} if expected else set())
         for dimension in ["category", "group", "payee"]:
             response = client.get(f"{base}/spending-trends?{period}", params={**filters, "dimension": dimension}, headers=auth(owner_token))
             assert response.status_code == 200, response.text
@@ -137,6 +147,14 @@ def test_income_spending_excludes_transfers_and_recalculates_after_edit(client, 
     after = client.get(url, headers=auth(owner_token)).json()
     assert after["spending_minor"] == 50000
     assert after["difference_minor"] == 50000
+    for kind, key in [("income", "income_transaction_ids"), ("spending", "spending_transaction_ids"),
+                      ("category_spending", "spending_transaction_ids")]:
+        response = client.get(f"/api/v1/budgets/{budget['id']}/reports/contributors",
+            params={"start_date": "2026-09-01", "end_date": "2026-09-30", "kind": kind}, headers=auth(owner_token))
+        assert response.status_code == 200, response.text
+        assert {row['id'] for row in response.json()['items']} == set(after[key])
+        if kind != "income":
+            assert response.json()['items'][0]['amount_minor'] == -50000
 
 
 def test_income_spending_monthly_trends_are_exact_split_refund_and_range_aware(
@@ -352,6 +370,57 @@ def test_restricted_reports_cannot_leak_hidden_accounts_categories_or_members(
         f"{url}&category_id={groceries['id']}", headers=auth(child_token)
     )
     assert forbidden.status_code == 404
+    endpoint = f"/api/v1/budgets/{budget['id']}/reports/contributors"
+    period = {"start_date": "2026-09-01", "end_date": "2026-09-30", "kind": "category_spending"}
+    contributors = client.get(endpoint, params=period, headers=auth(child_token))
+    assert contributors.status_code == 200, contributors.text
+    assert [row['id'] for row in contributors.json()['items']] == [own['id']]
+    assert 'Private Grocer' not in contributors.text and 'Secret Salary' not in contributors.text
+    assert client.get(endpoint, params={**period, "category_id": groceries['id']}, headers=auth(child_token)).status_code == 404
+    revoked = client.put(f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token), json={
+        "capabilities": ["view_budget", "view_reports"], "restrict_accounts": True,
+        "account_ids": [checking['id']], "restrict_categories": True, "category_ids": [child_category['id']],
+    })
+    assert revoked.status_code == 200, revoked.text
+    assert client.get(endpoint, params=period, headers=auth(child_token)).status_code == 403
+
+
+def test_report_contributor_pages_reach_beyond_compact_cap_and_bind_context(client, owner_token, session_factory):
+    from sqlalchemy import insert, select
+    from app.models import Transaction, User
+
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget['id'])
+    identifiers = {f"contributor-{index:04d}" for index in range(601)}
+    with session_factory() as session:
+        owner_id = session.scalar(select(User.id))
+        session.execute(insert(Transaction), [{"id": identifier, "budget_id": budget['id'],
+            "account_id": account['id'], "category_id": category['id'], "amount_minor": -1,
+            "occurred_on": date(2026, 9, 4), "payee_name": "Paged observation", "created_by_user_id": owner_id}
+            for identifier in sorted(identifiers)])
+        session.commit()
+    base = f"/api/v1/budgets/{budget['id']}/reports"
+    period = {"start_date": "2026-09-01", "end_date": "2026-09-30"}
+    compact = client.get(f"{base}/spending", params=period, headers=auth(owner_token)).json()
+    assert compact['total_spending_minor'] == 601
+    assert len(compact['categories'][0]['transaction_ids']) == 500
+    assert compact['categories'][0]['transaction_ids_truncated'] is True
+    params = {**period, "kind": "category_spending", "limit": 200}
+    seen, cursor, first_cursor = [], None, None
+    for _ in range(4):
+        response = client.get(f"{base}/contributors", params={**params, **({"cursor": cursor} if cursor else {})}, headers=auth(owner_token))
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert len(body['items']) <= 200
+        seen.extend(row['id'] for row in body['items'])
+        cursor = body['next_cursor']
+        first_cursor = first_cursor or cursor
+    assert cursor is None
+    assert len(seen) == len(set(seen)) == 601 and set(seen) == identifiers
+    for changes in [{"kind": "income"}, {"end_date": "2026-09-29"}, {"payee": "Other"},
+                    {"cursor": "malformed"}, {"limit": 0}, {"limit": 201}]:
+        response = client.get(f"{base}/contributors", params={**params, "cursor": first_cursor, **changes}, headers=auth(owner_token))
+        assert response.status_code == 422, response.text
 
 
 def test_report_filters_and_inclusive_custom_range(client, owner_token, session_factory):
@@ -376,6 +445,14 @@ def test_report_filters_and_inclusive_custom_range(client, owner_token, session_
     # Inclusive single-day custom range.
     single, total = ids(f"{base}?start_date=2026-09-03&end_date=2026-09-03")
     assert single == {groceries["id"]} and total == 5000
+    endpoint = f"/api/v1/budgets/{budget['id']}/reports/contributors"
+    for filters in [{"start_date": "2026-09-03", "end_date": "2026-09-03"},
+                    {"payee": "COSTCO"}, {"cleared": "true"}, {"reconciled": "true"},
+                    {"flag": "ORANGE"}, {"tag": "qa"}, {"account_id": checking['id'], "category_id": groceries['id']}]:
+        response = client.get(endpoint, params={"start_date": "2026-09-01", "end_date": "2026-09-30",
+            "kind": "category_spending", **filters}, headers=auth(owner_token))
+        assert response.status_code == 200, response.text
+        assert [row['id'] for row in response.json()['items']] == [grocery_transaction['id']]
     # End date is inclusive: 09-04 excludes the 09-05 dining, 09-05 includes it.
     assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-04")[0] == {groceries["id"]}
     assert ids(f"{base}?start_date=2026-09-01&end_date=2026-09-05")[0] == {groceries["id"], dining["id"]}

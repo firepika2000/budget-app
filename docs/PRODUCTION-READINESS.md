@@ -1,5 +1,29 @@
 # Production readiness mission ledger
 
+## Full report contributor server paging (2026-10-09)
+
+The new `GET /api/v1/budgets/{budget_id}/reports/contributors` endpoint pages canonical
+category-spending, income and spending contributors independently of the compact report's
+500-identity cap. It accepts the existing report filters, returns at most 200 authoritative
+transaction records per request, and uses descending date, creation time and identity keysets.
+Cursors are bound to the budget, user, report kind and filter context. Each request rechecks
+report and transaction-view authorization; records use the shared transaction serializer.
+
+Category totals and contributor selection share the same nonzero split/direct portion helper.
+Refunds remain contributors that reduce spending, transfers remain excluded, and income/spending
+retain the existing on-budget-account rule. No money calculation, posting or migration changes.
+
+The focused analytics, financial golden-vector and transaction-browser run passes 94 tests.
+Additional focused permission-revocation and filter checks pass after their final edits.
+Coverage reaches all 601 contributors without duplicates while the compact report remains capped
+at 500; it checks cursor/context rejection, bounds, split/refund and group clipping, transfer
+exclusion, edited authoritative amounts, date/payee/state/metadata filters and restricted visibility.
+`git diff --check` passes. This server-only checkpoint requires a server update, not a migration.
+
+Native integration remains the next checkpoint: the current app still requests the compact
+report identity prefix. Net Worth contributor expansion and broader Live snapshot performance
+remain separate gaps. No native runtime or human acceptance is claimed here; TestFlight is held.
+
 ## Statement duplicate inspection (2026-10-09)
 
 Statement review now offers Review Exact Matches and Review Possible Matches for the existing

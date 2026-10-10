@@ -1020,6 +1020,11 @@ class TransactionPageResponse(BaseModel):
     total_count: int
 
 
+class ReportContributorPageResponse(BaseModel):
+    items: list[TransactionResponse]
+    next_cursor: Optional[str] = None
+
+
 class TransactionFieldChangeResponse(BaseModel):
     field: str
     value_kind: Literal["text", "money_minor", "date", "state", "list", "restricted"]

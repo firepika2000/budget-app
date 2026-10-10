@@ -3,17 +3,20 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable
 import csv
-from datetime import date, timedelta
+import base64
+import hashlib
+import json
+from datetime import date, datetime, timedelta
 import io
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, selectinload
 from starlette.responses import Response
 
 from .access import has_capability, is_household_owner, visible_resource_ids
-from .budgeting_routes import account_working_balances, month_summary, require_budget_capability, transaction_visibility_conditions
+from .budgeting_routes import account_working_balances, month_summary, require_budget_capability, transaction_visibility_conditions, transaction_response_rows
 from .calendar_dates import month_periods
 from .cash_rollover_repository import cash_rollover_effects
 from .clock import today as current_date
@@ -22,7 +25,7 @@ from .database import get_db
 from .dependencies import get_current_user
 from .models import Account, AccountDebtTerms, AllocationOperation, AllocationPosting, Category, CategoryGroup, CreditCardReserveEvent, Membership, Transaction, TransactionSplit, User
 from .planning_routes import forecast
-from .schemas import DebtCostResponse, DebtReportResponse, IncomeSpendingReportResponse, InsightsSummaryResponse, NetWorthReportResponse, PlanPerformanceReportResponse, ResilienceReportResponse, SpendingReportResponse, SpendingTrendsReportResponse
+from .schemas import DebtCostResponse, DebtReportResponse, IncomeSpendingReportResponse, InsightsSummaryResponse, NetWorthReportResponse, PlanPerformanceReportResponse, ResilienceReportResponse, SpendingReportResponse, SpendingTrendsReportResponse, ReportContributorPageResponse
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}/reports")
@@ -144,6 +147,7 @@ def report_transactions(
     tags: list[str],
     include_tracking: bool,
     stream: bool = False,
+    after: Optional[tuple[date, datetime, str]] = None,
 ) -> tuple[object, Iterable[Transaction]]:
     _validate_report_range(start_date, end_date)
     budget = require_budget_capability(db, user, budget_id, "view_reports")
@@ -172,6 +176,13 @@ def report_transactions(
         Transaction.occurred_on >= start_date,
         Transaction.occurred_on <= end_date,
     )
+    if after is not None:
+        occurred, created, identifier = after
+        query = query.where(or_(
+            Transaction.occurred_on < occurred,
+            and_(Transaction.occurred_on == occurred, Transaction.created_at < created),
+            and_(Transaction.occurred_on == occurred, Transaction.created_at == created, Transaction.id < identifier),
+        ))
     if account_ids:
         query = query.where(Transaction.account_id.in_(account_ids))
     if member_ids:
@@ -237,6 +248,75 @@ def _selected_spending_categories(categories, groups, category_ids, category_gro
     )}
 
 
+def _spending_portions(transaction: Transaction, selected_categories: set[str]):
+    """Canonical nonzero category portions used by totals and contributor selection."""
+    if transaction.transfer_id is not None or transaction.amount_minor == 0:
+        return []
+    portions = (
+        [(transaction.category_id, transaction.amount_minor)] if transaction.category_id is not None
+        else [(split.category_id, split.amount_minor) for split in transaction.splits]
+    )
+    return [(category, amount) for category, amount in portions if category in selected_categories and amount != 0]
+
+
+@router.get("/contributors", response_model=ReportContributorPageResponse)
+def report_contributors(
+    budget_id: str, start_date: date, end_date: date,
+    kind: str = Query(pattern="^(category_spending|income|spending)$"),
+    account_id: list[str] = Query(default=[]), category_id: list[str] = Query(default=[]),
+    category_group: list[str] = Query(default=[]), member_id: list[str] = Query(default=[]),
+    payee: list[str] = Query(default=[]),
+    transaction_type: Optional[str] = Query(default=None, pattern="^(income|spending|refund|transfer|interest_charge)$"),
+    cleared: Optional[bool] = None, reconciled: Optional[bool] = None,
+    flag: list[str] = Query(default=[]), tag: list[str] = Query(default=[]),
+    include_tracking: bool = False, limit: int = Query(default=50, ge=1, le=200),
+    cursor: Optional[str] = Query(default=None, max_length=512),
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> dict:
+    require_budget_capability(db, user, budget_id, "view_transactions")
+    context = [budget_id, user.id, kind, start_date.isoformat(), end_date.isoformat(),
+               sorted(account_id), sorted(category_id), sorted(category_group), sorted(member_id),
+               sorted(payee), transaction_type, cleared, reconciled, sorted(flag), sorted(tag), include_tracking]
+    fingerprint = hashlib.sha256(json.dumps(context, separators=(",", ":")).encode()).hexdigest()
+    after = None
+    if cursor is not None:
+        try:
+            payload = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+            if payload["context"] != fingerprint or not isinstance(payload["id"], str) or not 1 <= len(payload["id"]) <= 128:
+                raise ValueError()
+            after = (date.fromisoformat(payload["date"]), datetime.fromisoformat(payload["created"]), payload["id"])
+        except (ValueError, TypeError, KeyError, UnicodeError) as error:
+            raise HTTPException(status_code=422, detail="Invalid report contributor cursor") from error
+    _, transactions = report_transactions(db, user, budget_id, start_date, end_date,
+        account_id, category_id, category_group, member_id, payee, transaction_type,
+        cleared, reconciled, flag, tag, include_tracking, stream=True, after=after)
+    categories = {item.id: item for item in db.scalars(select(Category).where(Category.budget_id == budget_id))}
+    groups = {item.id: item.name for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))}
+    selected = _selected_spending_categories(categories, groups, category_id, category_group)
+    on_budget = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id, Account.is_on_budget.is_(True))))
+    rows = []
+    for item in transactions:
+        if kind == "category_spending":
+            contributes = bool(_spending_portions(item, selected))
+        elif item.transfer_id is not None or item.account_id not in on_budget:
+            contributes = False
+        else:
+            values = _income_spending_values([item])
+            contributes = bool(values[2] if kind == "income" else values[3])
+        if contributes:
+            rows.append(item)
+            if len(rows) > limit:
+                break
+    page = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit:
+        last = page[-1]
+        payload = {"context": fingerprint, "id": last.id,
+                   "date": last.occurred_on.isoformat(), "created": last.created_at.isoformat()}
+        next_cursor = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
+    return {"items": transaction_response_rows(db, page), "next_cursor": next_cursor}
+
+
 @router.get("/spending", response_model=SpendingReportResponse, response_model_exclude_defaults=True)
 def spending_report(
     budget_id: str,
@@ -267,15 +347,7 @@ def spending_report(
     totals: dict[str, int] = defaultdict(int)
     transaction_ids: dict[str, _ReportTransactionIDs] = defaultdict(_ReportTransactionIDs)
     for transaction in transactions:
-        if transaction.transfer_id is not None or transaction.amount_minor == 0:
-            continue
-        portions = (
-            [(transaction.category_id, transaction.amount_minor)] if transaction.category_id is not None
-            else [(split.category_id, split.amount_minor) for split in transaction.splits]
-        )
-        for category, amount in portions:
-            if category not in selected_categories or amount == 0:
-                continue
+        for category, amount in _spending_portions(transaction, selected_categories):
             # Negative categorized amounts are spending; positive categorized amounts are
             # refunds/reversals that reduce spending. A positive amount must never become income.
             totals[category] -= amount
