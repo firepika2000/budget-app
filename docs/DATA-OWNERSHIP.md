@@ -31,6 +31,13 @@ Native ordinary edits now assign and persist this mutation UUID, target and obse
 sending, and replay through the same ordered queue as creation. Other mutation kinds and real
 PostgreSQL overlap/lost-acknowledgement proof remain incomplete. Creation retains its separate
 legacy-compatible identity namespace; do not claim one universal receipt protocol across all commands.
+The same receipt table now supports optional identified bulk metadata/clearing commands, requiring
+the complete captured revision map. Exact validated command bodies (including selected IDs/order)
+are digest-bound and committed with every batch effect; no-op acceptance also records a receipt.
+Current capability, ownership and whole-resource visibility precede acknowledgement for every
+selected transaction. Acknowledgement returns current rows without reapplying the old action, even
+after later reconciliation. New commands retain all lifecycle/stale/atomicity checks. Bulk native
+identity assignment/durable queue integration and real PostgreSQL overlap proof remain outstanding.
 The native operation and API DTO can now carry this separate mutation identity through translation;
 the Live repository assigns the edit identity at submission, requiring a server observation. Creation persists
 the exact immutable operation before its first network suspension, then uses the existing ordered

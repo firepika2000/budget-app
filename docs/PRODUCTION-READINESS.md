@@ -1,5 +1,26 @@
 # Production readiness mission ledger
 
+## Identified bulk-command acknowledgements (2026-10-09)
+
+Audit found that bulk metadata/clearing updates had content preconditions but no immutable accepted
+command receipt. Optional `mutation_operation_id` now requires a complete `expected_revisions` map.
+The existing 0049 receipt table binds the actor/budget UUID to command kind, first target and a digest
+of the full validated request (all selected IDs/order, action, values and observations). Receipt and
+batch effects share one commit, including accepted no-ops. Identical retries acknowledge current
+authorized rows without reapplying actions or reverting later values; changed/cross-kind reuse is
+409. Current capability, per-row ownership and whole-resource scope are checked before receipt reads.
+Later reconciliation does not invalidate acknowledgement of an accepted command, but still prevents
+new mutations. Rows are locked in ID order. Receipt collisions roll back tentative batch effects
+and re-enter the guarded acknowledgement path. Ordinary legacy requests remain compatible.
+
+Nine new HTTP regressions cover all four actions, immutable retries, later-state/reconciliation,
+identity reuse, revoked account/category/capability, missing observations and no-op receipts with
+cross-kind reuse. Focused bulk/edit/card/financial-golden suites passed; `git diff --check` passed. Real concurrent
+PostgreSQL overlap/lost-response proof remains outstanding; SQLite tests are not that proof.
+No Swift changes or native rerun required. Server update/restart required; no new migration beyond
+0049. Native bulk identity/durable queue integration remains unfinished. No data reset, merge, tag
+or TestFlight publication.
+
 ## Durable ordinary transaction edits (2026-10-09)
 
 Live ordinary editing now persists a separate mutation UUID, target transaction ID, exact draft and

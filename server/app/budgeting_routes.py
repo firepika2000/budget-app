@@ -2305,23 +2305,35 @@ def bulk_update_transactions(
     budget = require_budget_capability(db, user, budget_id, "edit_transaction")
     transactions = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.budget_id == budget_id, Transaction.id.in_(body.transaction_ids),
-    ).with_for_update()))
+    ).order_by(Transaction.id).with_for_update()))
     if len(transactions) != len(body.transaction_ids):
         raise HTTPException(status_code=404, detail="One or more transactions were not found")
     for transaction in transactions:
         if not _can_access_transaction_resources(db, user, budget, transaction):
             raise HTTPException(status_code=404, detail="One or more transactions were not found")
+        if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
+            raise HTTPException(status_code=403, detail="You may only edit your own transactions")
+    by_id = {transaction.id: transaction for transaction in transactions}
+    ordered = [by_id[transaction_id] for transaction_id in body.transaction_ids]
+    operation_id = str(body.mutation_operation_id) if body.mutation_operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "kind": "transaction_bulk", "body": body.model_dump(mode="json", exclude={"mutation_operation_id"}),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if operation_id is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id))
+        if receipt is not None:
+            if receipt.command_kind != "transaction_bulk" or receipt.resource_id != body.transaction_ids[0] or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+            # Acknowledge only after current capability, ownership and whole-resource checks.
+            return ordered
+    for transaction in ordered:
         if transaction.status != "posted":
             raise HTTPException(status_code=409, detail="Voided and reversal transactions are immutable")
         if transaction.is_reconciled:
             raise HTTPException(status_code=409, detail="Reconciled transactions cannot be changed in bulk")
-        if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
-            raise HTTPException(status_code=403, detail="You may only edit your own transactions")
         if transaction.transfer_id is not None or transaction.scheduled_transaction_id is not None or transaction.payee_name in {"Starting Balance", "Reconciliation adjustment"}:
             raise HTTPException(status_code=409, detail="System-linked transactions must be changed through their specialized workflow")
 
-    by_id = {transaction.id: transaction for transaction in transactions}
-    ordered = [by_id[transaction_id] for transaction_id in body.transaction_ids]
     if body.expected_revisions is not None and any(
         body.expected_revisions[transaction.id] != TransactionResponse.model_validate(transaction).revision
         for transaction in ordered
@@ -2348,7 +2360,17 @@ def bulk_update_transactions(
         after = transaction_snapshot(transaction)
         if before != after:
             record_transaction_change(db, transaction, user, "bulk_updated", before=before, after=after)
-    db.commit()
+    if operation_id is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=operation_id, command_kind="transaction_bulk", resource_id=body.transaction_ids[0],
+            request_digest=digest))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if operation_id is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) is None:
+            raise
+        return bulk_update_transactions(budget_id, body, user, db)
     for transaction in ordered:
         db.refresh(transaction)
     return ordered

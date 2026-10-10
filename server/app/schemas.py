@@ -877,6 +877,7 @@ class TransactionAttachmentResponse(BaseModel):
 
 
 class TransactionBulkUpdateRequest(BaseModel):
+    mutation_operation_id: Optional[UUID] = None
     expected_revisions: Optional[dict[str, TransactionRevision]] = Field(default=None, max_length=200)
     transaction_ids: list[str] = Field(min_length=1, max_length=200)
     action: Literal["set_cleared", "set_flag", "add_tags", "remove_tags"]
@@ -908,6 +909,8 @@ class TransactionBulkUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_action_value(self) -> "TransactionBulkUpdateRequest":
+        if self.mutation_operation_id is not None and self.expected_revisions is None:
+            raise ValueError("identified bulk commands require expected_revisions")
         if self.expected_revisions is not None and set(self.expected_revisions) != set(self.transaction_ids):
             raise ValueError("expected_revisions must cover exactly the selected transactions")
         if self.action == "set_cleared" and self.cleared is None:
