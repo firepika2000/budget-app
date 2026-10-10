@@ -760,7 +760,13 @@ final class AppSessionRefreshTests: XCTestCase {
         let requests = CredentialRequestRecorder()
         RefreshMockURLProtocol.handler = { request in
             requests.append(path: "\(request.httpMethod ?? "GET") \(request.url?.path ?? "")", authorization: request.value(forHTTPHeaderField: "Authorization") ?? "")
-            if request.httpMethod == "DELETE" { return Self.json(204, "") }
+            if request.httpMethod == "DELETE" {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer A2")
+                XCTAssertNotNil(UUID(uuidString: request.value(forHTTPHeaderField: "X-Attachment-Operation-ID") ?? ""))
+                XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems,
+                    [URLQueryItem(name: "expected_sha256", value: String(repeating: "a", count: 64))])
+                return Self.json(204, "")
+            }
             return (200, Data([0xFF, 0xD8, 0xFF, 0xD9]))
         }
         let configuration = URLSessionConfiguration.ephemeral
@@ -776,7 +782,10 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertFalse(data.isEmpty)
         XCTAssertEqual(requests.paths.filter { $0.hasPrefix("DELETE ") }.count, 0, "preview/download must never detach")
 
-        try await store.detachTransactionAttachment(transactionID: "t1", attachmentID: "att1")
+        store.updateLiveCredentials(serverURL: URL(string: "https://budget.example.com")!, token: "A2")
+        let attachment = try JSONDecoder().decode(APITransactionAttachment.self, from: Data(
+            "{\"id\":\"att1\",\"transaction_id\":\"t1\",\"filename\":\"receipt.jpg\",\"content_type\":\"image/jpeg\",\"byte_count\":4,\"sha256\":\"\(String(repeating: "a", count: 64))\",\"created_at\":\"2026-10-09T00:00:00Z\"}".utf8))
+        try await store.detachTransactionAttachment(transactionID: "t1", attachment: attachment)
         XCTAssertEqual(requests.paths.filter { $0 == "DELETE /api/v1/budgets/b1/transactions/t1/attachments/att1" }.count, 1)
     }
 

@@ -46,6 +46,7 @@ abort "Schedules must persist before canonical identified replay" unless workspa
 abort "Schedule edits lose review or bypass durable replay" unless workspace.include?("transactionOutbox.enqueueScheduleEdit(scheduleID: id, operation: identified)") && send_body.include?("entry.scheduleEdit") && send_body.include?("schedule: edit.apiValue, token: token") && workspace.include?("_observedRevision = State(initialValue: schedule?.revision)") && workspace.include?("reviewed.expectedRevision = observedRevision")
 abort "Schedule deletion bypasses durable reviewed replay" unless workspace.include?("transactionOutbox.enqueueScheduleDeletion(identified)") && send_body.include?("entry.scheduleDeletion") && send_body.include?("expectedRevision: deletion.expectedRevision, operationID: deletion.mutationOperationID, token: token") && workspace.include?("store.deleteSchedule(id: schedule.id, expectedRevision: observedRevision)")
 abort "Realization bypasses durable reviewed replay" unless workspace.include?("transactionOutbox.enqueueScheduleRealization(identified)") && send_body.include?("entry.scheduleRealization") && send_body.include?("expectedRevision: realization.expectedRevision, operationID: realization.mutationOperationID, token: token") && workspace.include?("store.realizeReviewedSchedule(id: schedule.id, expectedRevision: observedRevision)")
+abort "Attachment removal bypasses reviewed durable replay" unless workspace.include?("transactionOutbox.enqueueAttachmentRemoval(identified)") && send_body.include?("entry.attachmentRemoval") && send_body.include?("expectedSHA256: removal.expectedSHA256") && workspace.include?("store.detachTransactionAttachment(transactionID: transaction.id, attachment: attachment)")
 abort "Schedule editor loses existing interest classification" unless workspace.include?("financialClassification: schedule?.financialClassification, isActive: isActive ?? active")
 abort "Make Recurring loses captured intent or bypasses durable replay" unless workspace.include?("transactionOutbox.enqueueMakeRecurring(transactionID: id, operation: identified)") && send_body.include?("entry.makeRecurring") && send_body.include?("expectedRevision: recurring.expectedRevision") && workspace.include?("expectedRevision: transaction.revision")
 abort "Pending schedules must remain separate from accepted forecast" unless workspace.include?('Section("Awaiting Server Confirmation")') && workspace.include?('not yet included in forecast')
@@ -475,6 +476,27 @@ try await Task { @MainActor in
  precondition(LiveTransactionOutbox(fileURL: file).count == 0)
  do { try paused.enqueueScheduleRealization(.init(scheduleID: "unreviewed", expectedRevision: nil, mutationOperationID: UUID().uuidString)); fatalError("Unreviewed realization saved") } catch {}
  print("PASS: reviewed realization survives response loss/relaunch; duplicate refused; stale request pauses; original-intent retry and acknowledgement cleanup")
+ }
+ do {
+ let file = root.appendingPathComponent("attachment-remove.json")
+ let queue = LiveTransactionOutbox(fileURL: file)
+ let operation = DetachAttachmentOperation(transactionID: "posted", attachmentID: "receipt", expectedSHA256: String(repeating: "a", count: 64), filename: "receipt.pdf", mutationOperationID: UUID().uuidString)
+ try queue.enqueueAttachmentRemoval(operation)
+ try queue.enqueueAttachmentRemoval(operation)
+ var duplicate = operation; duplicate.mutationOperationID = UUID().uuidString
+ do { try queue.enqueueAttachmentRemoval(duplicate); fatalError("Second removal queued") } catch {}
+ do { try await queue.replayCommands { _ in throw URLError(.networkConnectionLost) }; fatalError("Expected lost acknowledgement") } catch {}
+ let reopened = LiveTransactionOutbox(fileURL: file)
+ precondition(reopened.entries[0].attachmentRemoval == operation)
+ do { try await reopened.replayCommands(shouldPause: { _ in true }) { _ in throw BudgetApplicationError.invalidOperation("Permission revoked") }; fatalError("Expected rejected removal") } catch {}
+ let paused = LiveTransactionOutbox(fileURL: file)
+ precondition(paused.entries[0].requiresReview == true)
+ do { try await paused.replayCommands { _ in fatalError("Rejected removal auto retried") } } catch {}
+ try paused.retryReviewed(id: operation.mutationOperationID!)
+ try await paused.replayCommands { entry in precondition(entry.attachmentRemoval == operation) }
+ precondition(LiveTransactionOutbox(fileURL: file).count == 0)
+ do { try paused.enqueueAttachmentRemoval(.init(transactionID: "posted", attachmentID: "receipt", expectedSHA256: "bad", filename: "receipt.pdf", mutationOperationID: UUID().uuidString)); fatalError("Unreviewed file saved") } catch {}
+ print("PASS: exact attachment removal target/digest/identity survives response loss/relaunch; duplicate refused; rejection pauses; original-intent retry and cleanup")
  }
 }.value
 SWIFT

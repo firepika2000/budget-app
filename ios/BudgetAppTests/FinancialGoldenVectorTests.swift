@@ -4,6 +4,23 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testPendingAttachmentRemovalRetainsReviewedIdentityAcrossRelaunch() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("queue.json")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let operation = DetachAttachmentOperation(transactionID: "posted", attachmentID: "receipt", expectedSHA256: String(repeating: "a", count: 64), filename: "receipt.pdf", mutationOperationID: UUID().uuidString)
+        try queue.enqueueAttachmentRemoval(operation)
+        try queue.enqueueAttachmentRemoval(operation)
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.count, 1)
+        XCTAssertEqual(reopened.entries.first?.attachmentRemoval, operation)
+        var duplicate = operation; duplicate.mutationOperationID = UUID().uuidString
+        XCTAssertThrowsError(try reopened.enqueueAttachmentRemoval(duplicate))
+        XCTAssertThrowsError(try reopened.enqueueAttachmentRemoval(.init(transactionID: "posted", attachmentID: "receipt", expectedSHA256: "bad", filename: "receipt.pdf", mutationOperationID: UUID().uuidString)))
+    }
+
+    @MainActor
     func testPendingRealizationPreservesReviewedIntentAcrossRelaunch() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }

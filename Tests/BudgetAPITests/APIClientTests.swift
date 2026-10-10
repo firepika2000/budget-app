@@ -2,6 +2,34 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testIdentifiedAttachmentRemovalPreservesDigestAndCurrentCredential() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        let identity = UUID().uuidString.lowercased(), digest = String(repeating: "a", count: 64)
+        var calls = 0
+        MockURLProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.httpMethod, "DELETE")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/t1/attachments/a1")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
+            XCTAssertNil(request.httpBody)
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            if calls <= 2 {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "X-Attachment-Operation-ID"), identity)
+                XCTAssertEqual(query, [URLQueryItem(name: "expected_sha256", value: digest)])
+            } else {
+                XCTAssertNil(request.value(forHTTPHeaderField: "X-Attachment-Operation-ID"))
+                XCTAssertTrue(query.isEmpty)
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        for _ in 0..<2 {
+            try await client.detachTransactionAttachment(budgetID: "b1", transactionID: "t1", attachmentID: "a1", expectedSHA256: digest, operationID: identity, token: "rotated")
+        }
+        try await client.detachTransactionAttachment(budgetID: "b1", transactionID: "t1", attachmentID: "a1", token: "rotated")
+        XCTAssertEqual(calls, 3)
+    }
+
     func testIdentifiedScheduleRealizationCarriesOriginalReviewAndCurrentCredential() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
         let identity = UUID().uuidString.lowercased(), revision = "v1:" + String(repeating: "a", count: 64)

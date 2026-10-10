@@ -398,8 +398,11 @@ public struct APIClient {
         return body
     }
 
-    public func detachTransactionAttachment(budgetID: String, transactionID: String, attachmentID: String, token: String) async throws {
-        let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/attachments/\(attachmentID)", method: "DELETE", token: token)
+    public func detachTransactionAttachment(budgetID: String, transactionID: String, attachmentID: String, expectedSHA256: String? = nil, operationID: String? = nil, token: String) async throws {
+        let url = baseURL.appending(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/attachments/\(attachmentID)")
+            .appending(queryItems: expectedSHA256.map { [URLQueryItem(name: "expected_sha256", value: $0)] } ?? [])
+        let _: EmptyResponse = try await send(url: url, method: "DELETE", token: token, bodyData: nil,
+            headers: operationID.map { ["X-Attachment-Operation-ID": $0] } ?? [:])
     }
 
     public func bulkUpdateTransactions(budgetID: String, update: APITransactionBulkUpdate, token: String) async throws -> [APITransaction] {

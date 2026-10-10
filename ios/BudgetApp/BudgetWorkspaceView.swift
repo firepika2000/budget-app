@@ -3679,6 +3679,14 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let removal = entry.attachmentRemoval {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            try await client.detachTransactionAttachment(budgetID: budget.id, transactionID: removal.transactionID,
+                attachmentID: removal.attachmentID, expectedSHA256: removal.expectedSHA256,
+                operationID: removal.mutationOperationID, token: token)
+            return
+        }
         if let realization = entry.scheduleRealization {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3876,7 +3884,18 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         try await replaySavedPlanning()
     }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await credentials.prepare(); return try await client.downloadTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
-    func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await credentials.prepare(); try await client.detachTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
+    func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws {
+        throw BudgetApplicationError.invalidOperation("Reopen the attachment to review it before removing.")
+    }
+    func detachTransactionAttachment(_ operation: DetachAttachmentOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueAttachmentRemoval(identified)
+        do { try await replaySavedPlanning() }
+        catch {
+            guard transactionOutbox.entries.contains(where: { $0.id == identified.mutationOperationID }) else { throw error }
+        }
+    }
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
         var identified = update
         if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
@@ -4905,6 +4924,10 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if let removal = entry.attachmentRemoval {
+                return budget.can("edit_transaction") && budget.can("view_transactions")
+                    && transactions.contains(where: { $0.id == removal.transactionID })
+            }
             if let realization = entry.scheduleRealization {
                 return budget.can("create_transaction") && budget.can("view_accounts")
                     && scheduledTransactions.contains(where: { $0.id == realization.scheduleID })
@@ -5102,6 +5125,12 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await authorizedObservation { try await services().transactions.downloadAttachment(transactionID: transactionID, attachmentID: attachmentID) } }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await services().transactions.detachAttachment(transactionID: transactionID, attachmentID: attachmentID); await refresh() }
+    func detachTransactionAttachment(transactionID: String, attachment: APITransactionAttachment) async throws {
+        defer { publishPendingPlanningStatus() }
+        try await services().transactions.detachAttachment(DetachAttachmentOperation(transactionID: transactionID,
+            attachmentID: attachment.id, expectedSHA256: attachment.sha256, filename: attachment.filename))
+        await refresh()
+    }
 
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
         defer {
@@ -6444,6 +6473,11 @@ private struct PendingLiveTransactionsView: View {
                                 Text("\(accountName(reconciliation.accountID)) · through \(reconciliation.throughDate) · \(store.format(reconciliation.statementBalanceMinor))")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text("Saved for server approval · reconciliation history and balances remain unchanged until accepted")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let removal = entry.attachmentRemoval {
+                                Text("Remove Attachment").font(.headline)
+                                Text(removal.filename).font(.subheadline)
+                                Text("Awaiting server approval · the existing file remains until accepted")
                                     .font(.caption).foregroundStyle(.secondary)
                             } else if let realization = entry.scheduleRealization {
                                 Text("Enter Scheduled Occurrence").font(.headline)
@@ -10693,10 +10727,14 @@ private struct TransactionAttachmentsView: View {
     @State private var showingCamera = false
     @State private var pendingSource: PendingSource?
     @State private var pendingRemoval: APITransactionAttachment?
+    @State private var removing = false
     @State private var previewURL: URL?
     @State private var error: String?
     private var pendingUploads: [LiveTransactionOutbox.Entry] {
         store.pendingLiveTransactions.filter { $0.attachmentUpload?.transactionID == transaction.id }
+    }
+    private var pendingRemovals: [LiveTransactionOutbox.Entry] {
+        store.pendingLiveTransactions.filter { $0.attachmentRemoval?.transactionID == transaction.id }
     }
     var body: some View {
         Section("Attachments") {
@@ -10720,7 +10758,15 @@ private struct TransactionAttachmentsView: View {
                         }.buttonStyle(.borderless).foregroundStyle(.red)
                             .accessibilityIdentifier("attachment-remove-\(attachment.id)")
                             .accessibilityLabel("Remove \(attachment.filename)")
+                            .disabled(removing || pendingRemovals.contains(where: { $0.attachmentRemoval?.attachmentID == attachment.id }))
                     }
+                }
+            }
+            ForEach(pendingRemovals) { entry in
+                if let removal = entry.attachmentRemoval {
+                    Label(removal.filename + " · removal awaiting server approval", systemImage: "icloud.and.arrow.up")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("pending-attachment-removal-\(entry.id)")
                 }
             }
             ForEach(pendingUploads) { entry in
@@ -10862,7 +10908,11 @@ private struct TransactionAttachmentsView: View {
     private func removalMessage(for attachment: APITransactionAttachment) -> String {
         attachment.filename + " will be detached and retained for 30 days before permanent deletion."
     }
-    private func detach(_ attachment: APITransactionAttachment) async { do { try await store.detachTransactionAttachment(transactionID: transaction.id, attachmentID: attachment.id); await load() } catch { self.error = error.localizedDescription } }
+    private func detach(_ attachment: APITransactionAttachment) async {
+        guard !removing else { return }; removing = true; defer { removing = false }
+        do { try await store.detachTransactionAttachment(transactionID: transaction.id, attachment: attachment); await load() }
+        catch { self.error = error.localizedDescription }
+    }
 }
 
 private struct AttachmentPreviewScreen: View {

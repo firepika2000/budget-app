@@ -219,6 +219,20 @@ struct RealizeScheduleOperation: Codable, Equatable, Sendable {
     }
 }
 
+struct DetachAttachmentOperation: Codable, Equatable, Sendable {
+    let transactionID: String
+    let attachmentID: String
+    let expectedSHA256: String
+    let filename: String
+    var mutationOperationID: String? = nil
+
+    var isValidPending: Bool {
+        !transactionID.isEmpty && !attachmentID.isEmpty && !filename.isEmpty && filename.count <= 255
+            && expectedSHA256.count == 64 && expectedSHA256.allSatisfy { "0123456789abcdef".contains($0) }
+            && mutationOperationID.flatMap(UUID.init(uuidString:)) != nil
+    }
+}
+
 struct AccountBalanceObservation: Equatable, Sendable { let balanceMinor: Int64 }
 struct CategoryBalanceObservation: Equatable, Sendable {
     let assignedMinor: Int64; let activityMinor: Int64; let availableMinor: Int64
@@ -337,6 +351,7 @@ final class LiveTransactionOutbox {
         var scheduleID: String? = nil
         var scheduleDeletion: DeleteScheduleOperation? = nil
         var scheduleRealization: RealizeScheduleOperation? = nil
+        var attachmentRemoval: DetachAttachmentOperation? = nil
     }
 
     private let fileURL: URL
@@ -536,6 +551,7 @@ final class LiveTransactionOutbox {
                   existing.scheduleEdit == entry.scheduleEdit && existing.scheduleID == entry.scheduleID,
                   existing.scheduleDeletion == entry.scheduleDeletion,
                   existing.scheduleRealization == entry.scheduleRealization,
+                  existing.attachmentRemoval == entry.attachmentRemoval,
                   existing.operation == nil && existing.bulkUpdate == nil else {
                 throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
             }
@@ -581,6 +597,16 @@ final class LiveTransactionOutbox {
             throw BudgetApplicationError.invalidOperation("This schedule already has a saved edit. Review it in Pending Sync before editing again.")
         }
         try enqueuePlanning(Entry(id: identity, queuedAt: Date(), operation: nil, scheduleEdit: operation, scheduleID: scheduleID))
+    }
+
+    func enqueueAttachmentRemoval(_ operation: DetachAttachmentOperation) throws {
+        guard operation.isValidPending, let identity = operation.mutationOperationID else {
+            throw BudgetApplicationError.invalidOperation("Reopen the attachment to review it before removing.")
+        }
+        guard !entries.contains(where: { $0.id != identity && $0.attachmentRemoval?.attachmentID == operation.attachmentID }) else {
+            throw BudgetApplicationError.invalidOperation("This attachment already has a saved removal. Review it in Pending Sync.")
+        }
+        try enqueuePlanning(Entry(id: identity, queuedAt: Date(), operation: nil, attachmentRemoval: operation))
     }
 
     func enqueueScheduleRealization(_ operation: RealizeScheduleOperation) throws {
@@ -750,8 +776,12 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil, entry.scheduleRealization != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil, entry.scheduleRealization != nil, entry.attachmentRemoval != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
+                  if let removal = entry.attachmentRemoval {
+                      return entry.scheduleID == nil && entry.transactionID == nil && entry.transferID == nil
+                          && removal.mutationOperationID == entry.id && removal.isValidPending
+                  }
                   if let realization = entry.scheduleRealization {
                       return entry.scheduleID == realization.scheduleID && entry.transactionID == nil && entry.transferID == nil
                           && realization.mutationOperationID == entry.id && realization.isValidPending
@@ -1033,6 +1063,7 @@ protocol TransactionCommandRepository: AnyObject {
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws
+    func detachTransactionAttachment(_ operation: DetachAttachmentOperation) async throws
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws
     func transferMoney(_ operation: TransferMoneyOperation) async throws
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws
@@ -1040,6 +1071,9 @@ protocol TransactionCommandRepository: AnyObject {
 }
 
 extension TransactionCommandRepository {
+    func detachTransactionAttachment(_ operation: DetachAttachmentOperation) async throws {
+        try await detachTransactionAttachment(transactionID: operation.transactionID, attachmentID: operation.attachmentID)
+    }
     func voidTransaction(_ operation: VoidTransactionOperation) async throws {
         try await voidTransaction(id: operation.transactionID, reason: operation.reason)
     }
@@ -1272,6 +1306,11 @@ struct TransactionService {
 
     func detachAttachment(transactionID: String, attachmentID: String) async throws {
         do { try await repository.detachTransactionAttachment(transactionID: transactionID, attachmentID: attachmentID) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+
+    func detachAttachment(_ operation: DetachAttachmentOperation) async throws {
+        do { try await repository.detachTransactionAttachment(operation) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

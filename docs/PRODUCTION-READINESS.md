@@ -1,5 +1,45 @@
 # Production readiness mission ledger
 
+## Native durable reviewed attachment removal (2026-10-09)
+
+The attachment confirmation captures the selected attachment ID, transaction ID, immutable
+SHA256 and filename through the shared transaction application service. Live saves that
+intent and a UUID before transport. Ordered replay resolves current credentials, verifies
+the server/actor/budget destination and uses the identified removal endpoint. A lost response
+retains the original removal across relaunch; stale or revoked intent pauses for review.
+Duplicate pending removal of the same attachment is refused. Unreviewed Live removal is refused.
+
+Pending Sync and transaction attachment detail show removal awaiting server approval. The
+accepted attachment remains visible until server acceptance; no local tombstone, byte deletion,
+financial mutation or synthetic audit is performed. Pending removal details require current
+edit/view authority and visibility of the original transaction. Confirmation, separate preview
+and remove targets, encrypted storage and the 30-day server tombstone remain unchanged.
+Demo/local delegate the same application-service operation to their existing canonical removal.
+
+Executed evidence: production Foundation queue regression passes original target/digest/identity
+retention across response loss/relaunch, duplicate refusal, rejection pause, original-intent
+retry and acknowledgement cleanup. One focused Swift API test passes current credentials,
+exact digest query/identity header, body-free DELETE and legacy omission. Native persistence
+coverage is added; the production-composition preview/removal test now asserts rotated
+credentials, reviewed digest, stable identity and exactly one removal request. These native
+tests are compiled, not runtime-executed. Regular Xcode 27.0 (27A266a),
+`/Applications/Xcode.app/Contents/Developer`, passed `build-for-testing` for app/native
+targets against preserved iPhone 17 Pro Max simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27. `git diff --check` passed.
+No backend or migration changed in this checkpoint; the preceding server contract is required.
+TestFlight remains held; Live, attachments and Simulator data were not modified.
+
+Remaining limitation: server attachment lists are not yet cached for reopening transaction
+detail fully offline. Already loaded attachment metadata can be reviewed/removed after a drop;
+queued removals remain visible after relaunch through Pending Sync. This checkpoint does not
+claim general offline download/preview of previously unstaged server attachments.
+
+Human retest after app rebuild and server update: open a disposable transaction and load
+its attachment list, disconnect, tap the separate Remove control and confirm. Verify the
+existing file remains alongside a pending-removal notice; cancel must save nothing. Relaunch
+offline and inspect Pending Sync, reconnect, then confirm removal clears once with one history
+event and no financial change. Preview must still never remove a file. No new migration.
+
 ## Identified attachment removal server contract (2026-10-09)
 
 Attachment removal accepts optional `X-Attachment-Operation-ID` UUID and `expected_sha256`
