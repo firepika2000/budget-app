@@ -319,6 +319,29 @@ and 0017-to-current-head. `git diff --check` passes. SQLite verification only: n
 upgrade is claimed. No Swift changes or rebuild. Server distribution must include the corrected
 migration files; normal startup upgrades through 0048 when needed. No customer database was touched.
 TestFlight remains on hold; durable offline editing/replay work continues.
+
+### Identified ordinary transaction edit receipts — 2026-10-09
+
+Optional `mutation_operation_id` UUIDs require an observed revision. Migration 0049 adds immutable
+actor/budget command receipts containing kind, target identity and original validated request digest,
+committed atomically with canonical edit effects. A same-command retry acknowledges current authorized
+state without another audit event or financial effect, rather than failing against its own stale
+observation. Later edits remain intact. A later reconciliation may be acknowledged but cannot be
+mutated: a fresh command is still rejected. Different-payload UUID reuse rejects with 409. Rejected
+stale/observation-less commands create no receipt. Authorization, ownership and current whole-resource
+visibility precede acknowledgement. Tentative cross-resource uniqueness collisions roll back before
+re-entering the same guarded acknowledgement path with the original, pre-payee-resolution request.
+
+First focused batch: 59 tests passed covering edit receipts, bulk, credit cards and financial golden
+vectors. Final batch: 27 tests passed covering expanded edit receipts (actual amount edit, exact retry,
+later edit preservation, reconciliation acknowledgement vs immutable new edits, capability/account/
+category revocation), creation replay, migration graph/populated upgrade/downgrade and receipt migration.
+These batches overlap and are not a combined unique-test count. `git diff --check` passes. Server
+migration/update/restart required; no Swift change or rebuild. No customer database was modified.
+
+This checkpoint does NOT integrate native durable edit UUIDs/outbox replay, implement other command
+receipts, prove real PostgreSQL concurrent requests, or complete offline editing. Native and provider
+acceptance gates remain. TestFlight stays on hold; no merge or release tag.
 The focused analytics, delegated privacy and report-scale suite passed 82 cases, zero failures;
 diff checks passed. No redundant native build was run for this server-only change.
 

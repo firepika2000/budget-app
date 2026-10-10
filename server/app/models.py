@@ -741,6 +741,16 @@ class AllocationPosting(Base):
     operation: Mapped[AllocationOperation] = relationship(back_populates="postings")
 
 
+class WorkspaceCommandReceipt(Base):
+    __tablename__ = "workspace_command_receipts"
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), primary_key=True)
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True)
+    operation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    command_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(67), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(36), nullable=False)
+
+
 class TransactionCreationReceipt(Base):
     __tablename__ = "transaction_creation_receipts"
     budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id", ondelete="CASCADE"), primary_key=True)

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from alembic import command
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 
 from .test_allocation_migration import migration_config
@@ -27,7 +28,7 @@ def test_populated_creation_receipt_upgrade_preserves_finances_and_unknown_origi
     with engine.connect() as connection:
         assert connection.execute(text("SELECT * FROM transactions")).mappings().all() == before
         assert connection.execute(text("SELECT budget_id,actor_user_id,operation_id,transaction_id,request_digest FROM transaction_creation_receipts")).one() == ("b", "u", "existing-operation", "t", None)
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0048_creation_receipts"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ScriptDirectory.from_config(config).get_current_head()
     command.downgrade(config, "0047_payoff_plan_history")
     with engine.connect() as connection:
         assert connection.execute(text("SELECT * FROM transactions")).mappings().all() == before

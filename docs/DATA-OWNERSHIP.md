@@ -19,6 +19,18 @@ the server returns. Completing only one additional command does not close this m
 
 #### Canonical server mutation/replay boundary
 
+Identified ordinary transaction updates now optionally accept `mutation_operation_id` (UUID) and
+require `expected_revision`. Migration 0049 adds actor/budget-scoped command receipts binding command
+kind, target transaction and exact validated original payload digest. Receipt and normal ledger/audit
+effects share one commit. Matching retries acknowledge without rerunning effects or overwriting later
+state; acknowledgement returns current authorized transaction data, not a stored private snapshot.
+New commands still enforce stale-state, reconciliation and lifecycle rules. Current capability,
+resource visibility and ownership apply before every receipt acknowledgement, even after a later
+reconciliation. Cross-target identity collisions roll back tentative work and re-enter authorization.
+This is server support only: native edit UUID persistence/outbox integration, other mutation kinds
+and real PostgreSQL overlap/lost-acknowledgement proof remain incomplete. Creation retains its separate
+legacy-compatible identity namespace; do not claim one universal receipt protocol across all commands.
+
 Creation-specific immutable receipts now bind `(budget, actor, operation UUID)` to the original
 validated request digest and accepted transaction ID, committed with creation effects. Matching retries
 return the current authorized transaction without reposting; changed-payload reuse is 409. Receipts

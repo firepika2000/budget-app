@@ -2,6 +2,7 @@ from datetime import date, datetime
 from typing import Annotated, Literal, Optional
 import hashlib
 import json
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
@@ -840,6 +841,13 @@ class TransactionCreate(BaseModel):
 
 class TransactionUpdate(TransactionCreate):
     expected_revision: Optional[TransactionRevision] = None
+    mutation_operation_id: Optional[UUID] = None
+
+    @model_validator(mode="after")
+    def require_replay_observation(self) -> "TransactionUpdate":
+        if self.mutation_operation_id is not None and self.expected_revision is None:
+            raise ValueError("expected_revision is required for an identified edit")
+        return self
 
 
 class TransactionDuplicateRequest(BaseModel):

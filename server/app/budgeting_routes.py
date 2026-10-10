@@ -51,6 +51,7 @@ from .category_names import normalized_category_name
 from .models import (
     Account,
     TransactionCreationReceipt,
+    WorkspaceCommandReceipt,
     AccountRevision,
     AccountDebtTerms,
     AccountDebtTermsRevision,
@@ -2639,6 +2640,7 @@ def update_transaction(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Transaction:
+    original_body = body.model_copy(deep=True)
     budget = require_budget_capability(db, user, budget_id, "edit_transaction")
     transaction = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.id == transaction_id,
@@ -2646,12 +2648,25 @@ def update_transaction(
     ).with_for_update())
     if transaction is None or transaction.transfer_id is not None or not _can_access_transaction_resources(db, user, budget, transaction):
         raise HTTPException(status_code=404, detail="Transaction not found")
+    if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
+        raise HTTPException(status_code=403, detail="You may only edit your own transactions")
+    operation_id = str(body.mutation_operation_id) if body.mutation_operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "kind": "transaction_update", "transaction_id": transaction_id,
+        "body": body.model_dump(mode="json", exclude={"mutation_operation_id", "client_operation_id"}),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if operation_id is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id))
+        if receipt is not None:
+            if receipt.command_kind != "transaction_update" or receipt.resource_id != transaction_id or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+            # Acknowledgement only: current authorization applies, but a later reconciliation
+            # or lifecycle change must not turn an accepted retry into another mutation.
+            return transaction
     if transaction.status != "posted":
         raise HTTPException(status_code=409, detail="Voided and reversal transactions are immutable")
     if transaction.is_reconciled:
         raise HTTPException(status_code=409, detail="Reconciled transactions cannot be edited")
-    if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
-        raise HTTPException(status_code=403, detail="You may only edit your own transactions")
     before_snapshot = transaction_snapshot(transaction)
     if body.expected_revision is not None and body.expected_revision != TransactionResponse.model_validate(transaction).revision:
         raise HTTPException(status_code=409, detail="This transaction changed. Refresh and review before applying this edit.")
@@ -2692,7 +2707,7 @@ def update_transaction(
     if financial_changed:
         db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.source_transaction_id == transaction.id))
     # Creation retry identity is immutable, including when an edit omits it.
-    values = body.model_dump(exclude={"splits", "expected_revision", "client_operation_id"})
+    values = body.model_dump(exclude={"splits", "expected_revision", "client_operation_id", "mutation_operation_id"})
     for key, value in values.items():
         setattr(transaction, key, value)
     if financial_changed:
@@ -2711,7 +2726,19 @@ def update_transaction(
     after_snapshot = transaction_snapshot(transaction)
     if before_snapshot != after_snapshot:
         record_transaction_change(db, transaction, user, "updated", before=before_snapshot, after=after_snapshot)
-    db.commit()
+    if operation_id is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=operation_id, command_kind="transaction_update", resource_id=transaction_id,
+            request_digest=digest))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if operation_id is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) is None:
+            raise
+        # Cross-resource UUID collision rolls back all tentative effects. Re-enter the same
+        # guarded acknowledgement path with fresh authoritative resource state.
+        return update_transaction(budget_id, transaction_id, original_body, user, db)
     db.refresh(transaction)
     return transaction
 
