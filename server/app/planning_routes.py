@@ -413,15 +413,30 @@ def update_scheduled_transaction(
     db: Session = Depends(get_db),
 ) -> ScheduledTransaction:
     budget = require_budget_capability(db, user, budget_id, "manage_planning")
+    lock_budget(db, budget_id)
     schedule = db.scalar(select(ScheduledTransaction).where(
         ScheduledTransaction.id == schedule_id,
         ScheduledTransaction.budget_id == budget_id,
     ).with_for_update())
     if schedule is None or not _can_access_schedule_resources(db, user, budget, schedule):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduled transaction not found")
-    # Editing a schedule is planning metadata only; it never touches actuals. Last-writer-wins.
+    identity = str(body.mutation_operation_id) if body.mutation_operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "schedule_id": schedule_id,
+        "request": body.model_dump(mode="json", exclude={"mutation_operation_id"}),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if identity is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity))
+        if receipt is not None:
+            if receipt.command_kind != "schedule_edit" or receipt.request_digest != digest or receipt.resource_id != schedule_id:
+                raise HTTPException(status_code=409, detail="Saved schedule edit identity belongs to different intent")
+            # The accepted edit is acknowledged, not reapplied over later edits/realization.
+            return schedule
+    if body.expected_revision is not None and body.expected_revision != ScheduledTransactionResponse.model_validate(schedule).revision:
+        raise HTTPException(status_code=409, detail="This schedule changed. Refresh and review before editing.")
+    # Editing planning metadata never touches actuals. Legacy unobserved edits remain compatible.
     _resolve_schedule_resources(db, user, budget, body)
-    values = body.model_dump()
+    values = body.model_dump(exclude={"expected_revision", "mutation_operation_id"})
     if body.destination_account_id is None:
         try:
             values["payee_id"], values["name"] = resolve_payee(
@@ -437,7 +452,16 @@ def update_scheduled_transaction(
     if after != before:
         action = "paused" if before["is_active"] and not after["is_active"] else "resumed" if not before["is_active"] and after["is_active"] else "updated"
         _append_schedule_revision(db, schedule, action, user.id, before, after)
-    db.commit()
+    if identity is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=identity, command_kind="schedule_edit", request_digest=digest, resource_id=schedule.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if identity is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity)) is None:
+            raise
+        return update_scheduled_transaction(budget_id, schedule_id, body, user, db)
     db.refresh(schedule)
     return schedule
 

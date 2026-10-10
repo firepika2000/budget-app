@@ -1,5 +1,33 @@
 # Production readiness mission ledger
 
+## Reviewed schedule edit server boundary (2026-10-09)
+
+Authorized schedule responses now expose an opaque content revision covering the complete
+schedule, including pause state, next occurrence, limits and last realization. Updates accept
+optional observed revision and mutation UUID; identified edits require the observation.
+Budget locking precedes schedule row locking so review, receipt lookup, metadata/history
+updates and receipt publication serialize with financial realization. Stale unaccepted edits
+return 409 instead of overwriting newer planning state. Legacy unobserved updates remain
+compatible. Command metadata is excluded from model mutation.
+
+Accepted retries return the current authorized schedule without resetting later pause/edit
+or realization. Changed identity intent/kind returns 409; deleted or inaccessible schedules
+remain 404. Capability and resource scope are checked before acknowledgement. Schedule,
+history and receipt commit atomically, with no actual transaction or financial mutation.
+
+Executed evidence: 81 focused backend tests passed before adding two realization cases;
+the complete 15-case edit regression then passed, including both realization cases. Coverage
+includes exact large money, lost-response retry, later pause preservation, stale metadata/
+dates/limits, identity collision, deleted non-resurrection, missing observation, capability/
+account/category revocation and failed-publication rollback. Two real isolated PostgreSQL
+races passed: same intent acknowledged once, and competing observed edits yielded one winner
+and one conflict, with one edit history/receipt and no posted transaction. The temporary
+cluster was stopped. `git diff --check` passed; no Live data was changed.
+
+Server update/restart required; no new migration beyond 0049. No Swift changes or native
+verification needed for this server-only checkpoint. Native captured edit observations and
+durable schedule-edit queuing remain the next unfinished slice. TestFlight remains on hold.
+
 ## Native durable Make Recurring (2026-10-09)
 
 The production transaction editor captures its displayed source revision when saving

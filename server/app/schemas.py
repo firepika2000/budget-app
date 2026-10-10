@@ -617,11 +617,15 @@ class ScheduledTransactionCreate(BaseModel):
 
 
 class ScheduledTransactionUpdate(ScheduledTransactionCreate):
+    expected_revision: Optional[TransactionRevision] = None
+    mutation_operation_id: Optional[UUID] = None
     remaining_occurrences: Optional[int] = Field(default=None, ge=0, le=10_000)
     is_active: bool = True
 
     @model_validator(mode="after")
     def validate_completed_occurrence_limit(self) -> "ScheduledTransactionUpdate":
+        if self.mutation_operation_id is not None and self.expected_revision is None:
+            raise ValueError("identified schedule edits require an observed revision")
         if self.remaining_occurrences == 0 and self.is_active:
             raise ValueError("an exhausted occurrence limit must be inactive")
         return self
@@ -647,6 +651,12 @@ class ScheduledTransactionResponse(BaseModel):
     financial_classification: Optional[str] = None
     is_active: bool
     last_realized_on: Optional[date] = None
+
+    @computed_field
+    @property
+    def revision(self) -> str:
+        payload = self.model_dump(mode="json", exclude={"revision"})
+        return "v1:" + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 class ScheduledTransactionRevisionResponse(BaseModel):

@@ -782,6 +782,32 @@ def test_concurrent_identified_schedule_creation_returns_one_schedule_and_histor
         assert db.query(Transaction).count() == 0
 
 
+@pytest.mark.parametrize("same_intent", [True, False])
+def test_concurrent_reviewed_schedule_edits_never_overwrite_each_other(pg, same_intent):
+    from app.models import ScheduledTransactionRevision, WorkspaceCommandReceipt
+    from app.schemas import ScheduledTransactionUpdate
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    values = dict(account_id=account["id"], category_id=category["id"], name="Reviewed bill",
+                  amount_minor=-1234, next_date="2099-01-01", recurrence_unit="months")
+    created = pg.client.post(f"/api/v1/budgets/{budget['id']}/scheduled-transactions", headers=auth(pg.token), json=values)
+    assert created.status_code == 201, created.text
+    schedule = created.json()
+    first = ScheduledTransactionUpdate(**values, memo="First", expected_revision=schedule["revision"], mutation_operation_id=uuid4())
+    second = first if same_intent else ScheduledTransactionUpdate(**values, memo="Second", expected_revision=schedule["revision"], mutation_operation_id=uuid4())
+    def attempt(body):
+        def call(db, user):
+            return planning_routes.update_scheduled_transaction(budget["id"], schedule["id"], body, user, db).id
+        return route_attempt(pg.factory, pg.owner_id, call)
+    results = run_race([attempt(first), attempt(second)])
+    assert sorted(outcomes(results)) == (["ok", "ok"] if same_intent else ["conflict", "ok"]), results
+    with pg.factory() as db:
+        assert db.query(ScheduledTransactionRevision).filter_by(action="updated").count() == 1
+        assert db.query(WorkspaceCommandReceipt).count() == 1
+        assert db.query(Transaction).count() == 0
+        assert db.query(ScheduledTransaction).one().amount_minor == -1234
+
+
 def test_concurrent_identified_make_recurring_creates_one_template(pg):
     from app.budgeting_routes import create_schedule_from_transaction
     from app.models import TransactionChange, WorkspaceCommandReceipt
