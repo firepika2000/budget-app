@@ -681,6 +681,25 @@ def test_concurrent_identified_reconciliation_acknowledges_one_history_and_adjus
         assert db.query(Transaction).filter_by(payee_name="Reconciliation adjustment").count() == 1
 
 
+def test_concurrent_identified_transfer_deletion_acknowledges_exactly_one_pair(pg):
+    from app.budgeting_routes import delete_transfer
+    from app.schemas import TransferDelete
+    from app.models import WorkspaceCommandReceipt, TransactionChange
+    from .test_transfer_delete_receipts import setup_transfer
+    _, transfer, payload = setup_transfer(pg.client, pg.token, pg.factory)
+    body = TransferDelete(**payload)
+    with pg.factory() as db:
+        budget_id = db.get(Transaction, transfer["source"]["id"]).budget_id
+    def call(db, user):
+        return delete_transfer(budget_id=budget_id, transfer_id=transfer["transfer_id"], body=body, user=user, db=db)
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    with pg.factory() as db:
+        assert db.query(Transaction).filter_by(transfer_id=transfer["transfer_id"]).count() == 0
+        assert db.query(TransactionChange).filter_by(action="deleted").count() == 2
+        assert db.query(WorkspaceCommandReceipt).filter_by(command_kind="transfer_delete").count() == 1
+
+
 def test_concurrent_identified_transfer_creation_acknowledges_exactly_two_legs(pg):
     from app.models import WorkspaceCommandReceipt
     budget = create_budget(pg.client, pg.token, pg.factory)

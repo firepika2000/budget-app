@@ -1,5 +1,25 @@
 # Production readiness mission ledger
 
+## Reviewed transfer deletion server contract (2026-10-09)
+
+Transfer deletion accepts an optional body containing a stable `mutation_operation_id` and
+`expected_revisions` for exactly both legs. Legacy body-free deletion remains compatible.
+Fresh identified deletion rejects changed legs and retains existing ownership, account scope
+and reconciliation protections. Both deletions, reserve-event removal, private authority
+evidence and the receipt commit under the existing budget lock. Exact retries acknowledge
+the accepted pair without deleting anything else; changed identities or missing historical
+evidence fail closed. Current permissions and original ownership/account scope are rechecked
+even after both legs are gone. No accounting definition or migration changes.
+
+Focused API tests cover accepted retries, large exact amounts, stale and malformed reviews,
+reconciliation, revoked permissions/account scope/management authority, and missing provenance.
+Transfer creation and ledger suite: 26 passed. Deletion, transaction history/provenance and
+financial golden-vector suite: 36 passed, with overlapping deletion coverage between suites.
+An isolated PostgreSQL race passes: simultaneous retries produce exactly two deletion history
+entries and one receipt, with both callers acknowledged and neither transfer leg remaining.
+Native durable transfer deletion remains to integrate; current app transfer deletion is
+online-only. Server update/restart is required; TestFlight remains held.
+
 ## Durable reviewed ordinary transaction deletion (2026-10-09)
 
 Ordinary transaction detail captures the source revision when opening Delete confirmation.

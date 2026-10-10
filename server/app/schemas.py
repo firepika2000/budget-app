@@ -1323,6 +1323,11 @@ class TransferUpdate(IdentifiedTransferCreate):
         return self
 
 
+class TransferDelete(BaseModel):
+    mutation_operation_id: UUID
+    expected_revisions: dict[str, TransactionRevision] = Field(min_length=2, max_length=2)
+
+
 class TransferResponse(BaseModel):
     transfer_id: str
     source: TransactionResponse

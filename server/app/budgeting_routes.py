@@ -141,6 +141,7 @@ from .schemas import (
     TransferCreate,
     IdentifiedTransferCreate,
     TransferUpdate,
+    TransferDelete,
     TransferResponse,
     ReconciliationObservationResponse,
 )
@@ -3258,16 +3259,46 @@ def delete_transfer(
     transfer_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    body: Annotated[Optional[TransferDelete], Body()] = None,
 ) -> None:
     budget = require_budget_capability(db, user, budget_id, "delete_transaction")
     lock_budget(db, budget_id)
+    identity = str(body.mutation_operation_id) if body is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({"kind": "transfer_delete", "transfer_id": transfer_id,
+        "expected_revisions": body.expected_revisions if body else None}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if identity is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity))
+        if receipt is not None:
+            if receipt.command_kind != "transfer_delete" or receipt.resource_id != transfer_id or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+            for leg_id, revision in body.expected_revisions.items():
+                history = db.scalar(select(TransactionChange).where(TransactionChange.budget_id == budget_id,
+                    TransactionChange.transaction_id == leg_id, TransactionChange.actor_user_id == user.id,
+                    TransactionChange.action == "deleted").order_by(TransactionChange.created_at.desc(), TransactionChange.id.desc()))
+                snapshot = json.loads(history.before_json) if history and history.before_json else None
+                if not snapshot or snapshot.get("deleted_transfer_id") != transfer_id or snapshot.get("deleted_revision") != revision or not snapshot.get("created_by_user_id"):
+                    raise HTTPException(status_code=409, detail="Original transfer deletion authority cannot be verified.")
+                if not can_access_resource(db, user, budget, "account", snapshot["account_id"]):
+                    raise HTTPException(status_code=404, detail="Transfer not found")
+                if snapshot["created_by_user_id"] != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
+                    raise HTTPException(status_code=403, detail="You may only delete your own transfers")
+            return
     legs = _locked_transfer_legs(db, budget_id, transfer_id)
     _authorize_transfer_legs(db, user, budget, legs, "delete")
+    if body is not None and (set(body.expected_revisions) != {leg.id for leg in legs}
+            or any(body.expected_revisions[leg.id] != TransactionResponse.model_validate(leg).revision for leg in legs)):
+        raise HTTPException(status_code=409, detail="This transfer changed. Refresh and review before deleting it.")
     for leg in legs:
-        record_transaction_change(db, leg, user, "deleted", before=transaction_snapshot(leg))
+        snapshot = json.loads(transaction_snapshot(leg))
+        snapshot.update(created_by_user_id=leg.created_by_user_id, deleted_transfer_id=transfer_id,
+                        deleted_revision=TransactionResponse.model_validate(leg).revision)
+        record_transaction_change(db, leg, user, "deleted", before=json.dumps(snapshot, sort_keys=True))
     db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.transfer_id == transfer_id))
     for leg in legs:
         db.delete(leg)
+    if identity is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=identity, command_kind="transfer_delete", resource_id=transfer_id, request_digest=digest))
     db.commit()
 
 
