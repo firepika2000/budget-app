@@ -146,6 +146,38 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
         json=assignment_body,
     )
     assert assignment.status_code == 200
+    # Populate the newly mapped histories, including deleted identities and exact money
+    # beyond Double precision. These are recovery fixtures, not accounting commands.
+    from datetime import date
+    from app.models import (AccountDebtTermsRevision, AllowancePlanRevision,
+                            CategoryTargetRevision, DebtPayoffPlan, DebtPayoffPlanRevision,
+                            Household, Reconciliation, ScheduledTransactionRevision)
+    with session_factory() as db:
+        actor = db.get(Household, budget["household_id"]).owner_user_id
+        exact = 9_007_199_254_740_993
+        snapshot = {"amount_minor": exact, "note": "Retained recovery observation"}
+        db.add_all([
+            AccountDebtTermsRevision(budget_id=budget["id"], account_id=account["id"],
+                actor_user_id=actor, action="deleted", before_snapshot=snapshot, after_snapshot=None),
+            CategoryTargetRevision(budget_id=budget["id"], category_id=category["id"],
+                target_id="deleted-target", actor_user_id=actor, action="deleted",
+                before_snapshot=snapshot, after_snapshot=None, affected_month=date(2026, 9, 1)),
+            ScheduledTransactionRevision(budget_id=budget["id"], schedule_id="deleted-schedule",
+                account_id=account["id"], category_id=category["id"], actor_user_id=actor,
+                action="deleted", before_snapshot=snapshot, after_snapshot=None,
+                transaction_ids=[transaction.json()["id"]]),
+            AllowancePlanRevision(budget_id=budget["id"], plan_id="historical-plan",
+                actor_user_id=actor, action="paused", before_snapshot=snapshot,
+                after_snapshot={**snapshot, "is_active": False}),
+            DebtPayoffPlan(budget_id=budget["id"], user_id=actor,
+                extra_payment_minor=exact, account_ids=[account["id"]]),
+            DebtPayoffPlanRevision(budget_id=budget["id"], user_id=actor, action="deleted",
+                before_snapshot=snapshot, after_snapshot=None),
+            Reconciliation(budget_id=budget["id"], account_id=account["id"], actor_user_id=actor,
+                statement_date=date(2026, 9, 27), statement_balance_minor=exact,
+                cleared_balance_before_minor=-exact, reconciled_transaction_count=0),
+        ])
+        db.commit()
     exported = client.get(f"{root}/export.json", headers=auth(owner_token))
     assert exported.status_code == 200
     payload = exported.json()
@@ -211,6 +243,9 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
         assert restored_export.status_code == 200, restored_export.text
         for section in ("transaction_creation_receipts", "workspace_command_receipts",
                         "account_revisions", "budget_structure_revisions", "payee_revisions",
+                        "account_debt_terms_revisions", "target_revisions",
+                        "scheduled_transaction_revisions", "allowance_plan_revisions",
+                        "debt_payoff_plans", "debt_payoff_plan_revisions", "reconciliations",
                         "allocation_operations", "allocation_postings"):
             original = sorted(payload[section], key=lambda row: json.dumps(row, sort_keys=True))
             restored = sorted(restored_export.json()[section], key=lambda row: json.dumps(row, sort_keys=True))
