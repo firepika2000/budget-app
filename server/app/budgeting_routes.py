@@ -3133,6 +3133,26 @@ def reconcile_account(
         db, user, budget, "account", account_id
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    operation_id = str(body.mutation_operation_id) if body.mutation_operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "kind": "account_reconcile", "account_id": account_id,
+        "body": body.model_dump(mode="json", exclude={"mutation_operation_id"}),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if operation_id is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id))
+        if receipt is not None:
+            if receipt.command_kind != "account_reconcile" or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+            accepted = db.get(Reconciliation, receipt.resource_id)
+            if accepted is None or accepted.budget_id != budget_id or accepted.account_id != account_id:
+                raise HTTPException(status_code=404, detail="Reconciliation not found")
+            # This response describes the accepted history record, not a replacement
+            # observation of the account's current state. Never run reconciliation again.
+            return ReconcileResponse(account_id=account_id,
+                reconciled_balance_minor=accepted.statement_balance_minor,
+                reconciled_transaction_count=accepted.reconciled_transaction_count,
+                adjustment_transaction_id=accepted.adjustment_transaction_id,
+                adjustment_amount_minor=accepted.statement_balance_minor - accepted.cleared_balance_before_minor)
     transactions = list(db.scalars(select(Transaction).where(
         Transaction.account_id == account_id,
         Transaction.occurred_on <= body.through_date,
@@ -3185,7 +3205,7 @@ def reconcile_account(
                                       after=transaction_snapshot(transaction))
     account.reconciled_balance_minor = body.statement_balance_minor
     account.reconciled_at = datetime.now(timezone.utc)
-    db.add(Reconciliation(
+    reconciliation = Reconciliation(
         budget_id=budget.id,
         account_id=account.id,
         actor_user_id=user.id,
@@ -3194,8 +3214,19 @@ def reconcile_account(
         cleared_balance_before_minor=cleared_balance,
         reconciled_transaction_count=newly_reconciled,
         adjustment_transaction_id=adjustment_transaction.id if adjustment_transaction else None,
-    ))
-    db.commit()
+    )
+    db.add(reconciliation)
+    if operation_id is not None:
+        db.flush()
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=operation_id, command_kind="account_reconcile", resource_id=reconciliation.id, request_digest=digest))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if operation_id is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) is None:
+            raise
+        return reconcile_account(budget_id, account_id, body, user, db)
     return ReconcileResponse(
         account_id=account.id,
         reconciled_balance_minor=body.statement_balance_minor,

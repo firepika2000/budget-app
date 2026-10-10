@@ -1,5 +1,28 @@
 # Production readiness mission ledger
 
+## Identified reconciliation acknowledgement (2026-10-09)
+
+Reconciliation now optionally accepts `mutation_operation_id`, requiring the existing observed
+cleared-balance precondition when identified. The canonical route binds account/request/actor/
+budget to the immutable reconciliation history ID. Receipt, adjustment if any, reconciled flags,
+actual audits and account reconciliation observation commit together. A matching retry returns
+the accepted history result without repeating reconciliation, creating another adjustment,
+changing a later reconciled balance/timestamp or adding another history row. Different identity
+reuse returns 409. Current reconcile capability and account visibility are checked before
+receipt acknowledgement. Legacy callers retain the existing contract and financial calculation.
+
+Five actual HTTP cases cover matched and adjusted reconciliation, lost-ack-shaped retries after
+later reconciliation, unchanged account timestamp/history/audits, missing/stale observation,
+different-payload identity reuse and account/capability revocation. Focused ledger, credit-card
+and financial golden suites passed with these tests: 60 cases total. `git diff --check` passed.
+Real overlapping PostgreSQL proof is not
+claimed. Reconciliation remains outside the native outbox: a cleared-balance-only observation
+does not identify the full reviewed transaction set (offsetting concurrent changes can preserve
+that total). A stronger reviewed-set precondition is required before claiming safe offline
+reconciliation; receipts alone do not finish this milestone. No Swift changes, app rebuild or
+new migration required. Server update/restart required. Human data remains untouched and
+TestFlight remains on hold.
+
 ## Durable native account transfers and observed edits (2026-10-09)
 
 Live transfer creation/editing now persists an exact typed transfer command with mutation UUID

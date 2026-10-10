@@ -1295,11 +1295,18 @@ class TransferResponse(BaseModel):
 
 
 class ReconcileRequest(BaseModel):
+    mutation_operation_id: Optional[UUID] = None
     statement_balance_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
     through_date: date
     create_adjustment: bool = False
     adjustment_reason: str = Field(default="", max_length=500)
     expected_cleared_balance_minor: Optional[int] = Field(default=None, ge=MIN_INT64, le=MAX_INT64)
+
+    @model_validator(mode="after")
+    def require_observed_balance(self) -> "ReconcileRequest":
+        if self.mutation_operation_id is not None and self.expected_cleared_balance_minor is None:
+            raise ValueError("identified reconciliation requires an observed cleared balance")
+        return self
 
 
 class ReconcileResponse(BaseModel):
