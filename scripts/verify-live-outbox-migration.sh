@@ -9,7 +9,7 @@ puts "import Foundation\nimport CryptoKit"
 puts 'enum BudgetApplicationError: Error { case invalidOperation(String) }'
 puts s[s.index("struct AssignMoneyOperation:")...s.index("struct TransactionSplitOperation:")]
 puts s[s.index("struct TransactionSplitOperation:")...s.index("struct MakeRecurringOperation:")]
-puts s[s.index("struct TransferMoneyOperation:")...s.index("struct ReconcileAccountOperation:")]
+puts s[s.index("struct TransferMoneyOperation:")...s.index("struct ScheduleOperation:")]
 api = File.read("Sources/BudgetAPI/APIModels.swift")
 puts api[api.index("public struct APITransactionBulkUpdate:")...api.index("/// Captures observations at selection time")]
 puts s[s.index("@MainActor\nfinal class LiveTransactionOutbox")...s.index("struct LiveWorkspaceCachePayload:")]
@@ -38,6 +38,8 @@ abort "Planning commands bypass durable canonical sender" unless send_body.inclu
 abort "Transfers bypass durable canonical sender" unless send_body.include?("client.createTransfer(") && send_body.include?("client.updateTransfer(") && workspace.include?("try transactionOutbox.enqueueTransfer(identified)") && workspace.include?("try transactionOutbox.enqueueTransfer(identified, id: id)")
 abort "Transfer editor loses observed versions" unless workspace.include?("_expectedRevisions = State(initialValue: presentation.expectedRevisions)") && workspace.include?("TransferMoneyOperation(expectedRevisions: expectedRevisions")
 abort "Live reconciliation bypasses reviewed-set observation" unless workspace.include?("client.reconciliationObservation(") && workspace.include?("guard operation.expectedReviewRevision != nil else") && workspace.include?("expectedReviewRevision: operation.expectedReviewRevision")
+abort "Live reconciliation bypasses durable canonical replay" unless workspace.include?("transactionOutbox.enqueueReconciliation(identified)") && send_body.include?("entry.reconciliation") && send_body.include?("mutationOperationID: operation.mutationOperationID")
+abort "Pending reconciliation exposes unscoped account details" unless workspace.include?('budget.can("reconcile_account") && budget.can("view_account_balances") && accountIDs.contains(reconciliation.accountID)')
 abort "Reconciliation editor loses captured review token" unless workspace.include?("@State private var observedReviewRevision: String?") && workspace.include?("observedReviewRevision = value.reviewRevision") && workspace.include?("expectedReviewRevision: observedReviewRevision")
 abort "Pending rows bypass workspace access" unless workspace.include?('guard !workspaceAccessDenied else { return [] }') && workspace.include?('PendingTransactionVisibility.allows(operation, canView: budget.can("view_transactions")')
 abort "Pending restricted state appears fully synced" unless workspace.include?('store.pendingLiveTransactions.isEmpty && !store.pendingLiveDetailsRestricted') && workspace.include?('pending-sync-restricted')
@@ -235,6 +237,43 @@ try await Task { @MainActor in
  }; fatalError("Expected stale edit") } catch {}
  precondition(transferSends == 2 && reopenedTransfers.count == 1 && reopenedTransfers.entries[0].requiresReview == true)
  precondition(reopenedTransfers.entries[0].accountTransfer?.expectedRevisions == transferEdit.expectedRevisions)
+ let reconciliationFile = root.appendingPathComponent("reconciliation.json")
+ let reconciliationQueue = LiveTransactionOutbox(fileURL: reconciliationFile)
+ let reconciliation = ReconcileAccountOperation(mutationOperationID: UUID().uuidString.lowercased(), expectedReviewRevision: "v1:" + String(repeating: "c", count: 64), accountID: "cash", statementBalanceMinor: 9_007_199_254_740_993, throughDate: "2026-09-04", createAdjustment: true, reason: "Reviewed correction", expectedClearedBalanceMinor: 9_007_199_254_740_990)
+ try reconciliationQueue.enqueueReconciliation(reconciliation)
+ var unreviewed = reconciliation
+ unreviewed.expectedReviewRevision = nil
+ do { try reconciliationQueue.enqueueReconciliation(unreviewed); fatalError("Unreviewed reconciliation was saved") } catch {}
+ try reconciliationQueue.enqueueReconciliation(reconciliation)
+ precondition(reconciliationQueue.count == 1)
+ var duplicateReconciliation = reconciliation
+ duplicateReconciliation.mutationOperationID = UUID().uuidString.lowercased()
+ do { try reconciliationQueue.enqueueReconciliation(duplicateReconciliation); fatalError("Duplicate pending account reconciliation accepted") } catch {}
+ let reopenedReconciliation = LiveTransactionOutbox(fileURL: reconciliationFile)
+ precondition(reopenedReconciliation.entries[0].reconciliation == reconciliation)
+ var reconciliationSends = 0
+ do { try await reopenedReconciliation.replayCommands(shouldPause: { _ in false }) { entry in
+     reconciliationSends += 1
+     precondition(entry.reconciliation == reconciliation)
+     throw URLError(.networkConnectionLost)
+ }; fatalError("Expected lost acknowledgement") } catch {}
+ let retryReconciliation = LiveTransactionOutbox(fileURL: reconciliationFile)
+ precondition(retryReconciliation.count == 1 && retryReconciliation.entries[0].requiresReview != true)
+ do { try await retryReconciliation.replayCommands(shouldPause: { _ in true }) { entry in
+     reconciliationSends += 1
+     precondition(entry.reconciliation?.expectedReviewRevision == reconciliation.expectedReviewRevision)
+     throw BudgetApplicationError.invalidOperation("Reviewed transactions changed")
+ }; fatalError("Expected stale review") } catch {}
+ let pausedReconciliation = LiveTransactionOutbox(fileURL: reconciliationFile)
+ precondition(pausedReconciliation.entries[0].requiresReview == true)
+ do { try await pausedReconciliation.replayCommands { _ in fatalError("Paused reconciliation sent automatically") } } catch {}
+ try pausedReconciliation.retryReviewed(id: reconciliation.mutationOperationID!)
+ try await pausedReconciliation.replayCommands { entry in
+     reconciliationSends += 1
+     precondition(entry.reconciliation == reconciliation)
+ }
+ precondition(reconciliationSends == 3 && LiveTransactionOutbox(fileURL: reconciliationFile).count == 0)
+ print("PASS: reviewed reconciliation exact amounts/consent/token/identity persist before send, duplicate account submissions rejected, lost acknowledgement retained, stale review paused across relaunch, explicit retry never rebases, acknowledgement clears original intent")
  print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, persisted rejection pause, later operations blocked, explicit ordered retry, targeted edits/bulk/transfers survive relaunch, stale transfer versions never rebased, stale owners cannot overwrite/replay/ack newer intent, no send after persistence failure")
 }.value
 SWIFT

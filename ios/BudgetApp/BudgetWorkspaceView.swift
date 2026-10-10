@@ -3670,6 +3670,16 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let operation = entry.reconciliation {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID,
+                request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate,
+                    createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason,
+                    expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor,
+                    expectedReviewRevision: operation.expectedReviewRevision, mutationOperationID: operation.mutationOperationID), token: token)
+            return
+        }
         if let transfer = entry.accountTransfer {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3826,9 +3836,10 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         guard operation.expectedReviewRevision != nil else {
             throw BudgetApplicationError.invalidOperation("Recheck the cleared transactions before reconciling this Live account.")
         }
-        try await credentials.prepare()
-        _ = try await client.reconcileAccount(budgetID: budget.id, accountID: operation.accountID,
-            request: APIReconcileRequest(statementBalanceMinor: operation.statementBalanceMinor, throughDate: operation.throughDate, createAdjustment: operation.createAdjustment, adjustmentReason: operation.reason, expectedClearedBalanceMinor: operation.expectedClearedBalanceMinor, expectedReviewRevision: operation.expectedReviewRevision), token: token)
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueReconciliation(identified)
+        try await replaySavedPlanning()
     }
     func reconciliationHistory(accountID: String, limit: Int, offset: Int) async throws -> [APIReconciliationHistory] { try await credentials.prepare(); return try await client.reconciliationHistory(budgetID: budget.id, accountID: accountID, limit: limit, offset: offset, token: token) }
     func recentReconciliationHistory(limit: Int) async throws -> [APIReconciliationHistory] { try await credentials.prepare(); return try await client.recentReconciliationHistory(budgetID: budget.id, limit: limit, token: token) }
@@ -4774,6 +4785,9 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if let reconciliation = entry.reconciliation {
+                return budget.can("reconcile_account") && budget.can("view_account_balances") && accountIDs.contains(reconciliation.accountID)
+            }
             if let transfer = entry.accountTransfer {
                 return budget.can("view_transactions") && accountIDs.contains(transfer.sourceAccountID)
                     && accountIDs.contains(transfer.destinationAccountID)
@@ -4995,6 +5009,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func reconcile(accountID: String, statementBalance: Int64, throughDate: String, createAdjustment: Bool, reason: String, expectedClearedBalance: Int64? = nil, expectedReviewRevision: String? = nil) async throws {
+        defer { publishPendingPlanningStatus() }
         let cleared = try expectedClearedBalance ?? reconciliationClearedBalance(accountID: accountID, throughDate: throughDate)
         try await services().accounts.reconcile(ReconcileAccountOperation(expectedReviewRevision: expectedReviewRevision, accountID: accountID, statementBalanceMinor: statementBalance, throughDate: throughDate, createAdjustment: createAdjustment, reason: reason, expectedClearedBalanceMinor: cleared))
         await refresh()
@@ -6245,6 +6260,12 @@ private struct PendingLiveTransactionsView: View {
                                 Text("\(store.accounts.first(where: { $0.id == transfer.sourceAccountID })?.name ?? "Account") → \(store.accounts.first(where: { $0.id == transfer.destinationAccountID })?.name ?? "Account") · \(store.format(transfer.amountMinor))")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text("Posted balances remain unchanged until server approval")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let reconciliation = entry.reconciliation {
+                                Text("Reconcile Account").font(.headline)
+                                Text("\(accountName(reconciliation.accountID)) · through \(reconciliation.throughDate) · \(store.format(reconciliation.statementBalanceMinor))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Text("Saved for server approval · reconciliation history and balances remain unchanged until accepted")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Text("Saved \(entry.queuedAt.formatted(date: .abbreviated, time: .shortened))")

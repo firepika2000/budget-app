@@ -90,7 +90,8 @@ struct TransferMoneyOperation: Codable, Equatable, Sendable {
     let isCleared: Bool
 }
 
-struct ReconcileAccountOperation: Equatable, Sendable {
+struct ReconcileAccountOperation: Codable, Equatable, Sendable {
+    var mutationOperationID: String? = nil
     var expectedReviewRevision: String? = nil
     let accountID: String
     let statementBalanceMinor: Int64
@@ -212,8 +213,8 @@ enum HistoryObservationPolicy {
 
 /// Persists identified transaction, planning and transfer commands while a shared server is unreachable. Entries carry
 /// a server-enforced idempotency identity, so an uncertain response can be replayed without posting
-/// money twice. Observed edits retain conflict preconditions; reconciliation and authority
-/// mutations deliberately remain outside this queue.
+/// money twice. Observed edits and reconciliation retain conflict preconditions;
+/// authority mutations deliberately remain outside this queue.
 @MainActor
 final class LiveTransactionOutbox {
     struct Entry: Codable, Equatable, Identifiable {
@@ -227,6 +228,7 @@ final class LiveTransactionOutbox {
         var moneyMove: MoveMoneyOperation? = nil
         var accountTransfer: TransferMoneyOperation? = nil
         var transferID: String? = nil
+        var reconciliation: ReconcileAccountOperation? = nil
     }
 
     private let fileURL: URL
@@ -418,6 +420,7 @@ final class LiveTransactionOutbox {
         if let existing = entries.first(where: { $0.id == entry.id }) {
             guard existing.assignment == entry.assignment && existing.moneyMove == entry.moneyMove,
                   existing.accountTransfer == entry.accountTransfer && existing.transferID == entry.transferID,
+                  existing.reconciliation == entry.reconciliation,
                   existing.operation == nil && existing.bulkUpdate == nil else {
                 throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
             }
@@ -426,6 +429,19 @@ final class LiveTransactionOutbox {
         let next = entries + [entry]
         try persist(next)
         entries = next
+    }
+
+    func enqueueReconciliation(_ operation: ReconcileAccountOperation) throws {
+        guard let id = operation.mutationOperationID, UUID(uuidString: id) != nil,
+              !operation.accountID.isEmpty, let revision = operation.expectedReviewRevision,
+              revision.hasPrefix("v1:"), revision.count == 67,
+              revision.dropFirst(3).allSatisfy({ "0123456789abcdef".contains($0) }) else {
+            throw BudgetApplicationError.invalidOperation("Saved reconciliation requires a stable identity and the server-reviewed transaction set.")
+        }
+        guard !entries.contains(where: { $0.id != id && $0.reconciliation?.accountID == operation.accountID }) else {
+            throw BudgetApplicationError.invalidOperation("This account already has a saved reconciliation. Review it in Pending Sync before submitting another.")
+        }
+        try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, reconciliation: operation))
     }
 
     func retryReviewed(id: String) throws {
@@ -496,8 +512,15 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
+                  if let reconciliation = entry.reconciliation {
+                      guard let revision = reconciliation.expectedReviewRevision else { return false }
+                      return entry.transactionID == nil && entry.transferID == nil
+                          && reconciliation.mutationOperationID == entry.id && !reconciliation.accountID.isEmpty
+                          && revision.hasPrefix("v1:") && revision.count == 67
+                          && revision.dropFirst(3).allSatisfy({ "0123456789abcdef".contains($0) })
+                  }
                   if let transfer = entry.accountTransfer {
                       return entry.transactionID == nil && transfer.mutationOperationID == entry.id
                           && !transfer.sourceAccountID.isEmpty && !transfer.destinationAccountID.isEmpty

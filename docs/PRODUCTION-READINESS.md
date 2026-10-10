@@ -1,5 +1,41 @@
 # Production readiness mission ledger
 
+## Durable reviewed reconciliation — native checkpoint (2026-10-09)
+
+Live reconciliation now uses the existing actor/server/budget-bound protected outbox and
+canonical account application service, not a second accounting implementation. It persists
+exact Int64 statement/observed balances, cutoff, adjustment consent/reason, the captured
+server-reviewed transaction token and stable mutation UUID before network suspension.
+Current credential preparation and destination binding run on each replay. Transient failures
+retain intent; definitive rejection pauses ordered replay. Retry never refreshes the captured
+token or changes consent. Pending Sync shows the account/cutoff/statement and explicitly states
+that balances/history remain unchanged until accepted. Current reconciliation/balance capability
+and account scope control visibility. Duplicate pending reconciliations for one account are
+rejected. Local Device and Demo retain their existing immediate canonical behavior.
+
+The production-code host verifier exercises persistence/reopen, exact large amounts, duplicate
+submission rejection, lost acknowledgement retention, stale-review pause, no automatic retry
+while paused, explicit retry retaining the original token, and acknowledgement removal. Three
+Swift API regressions passed, including exact reviewed token and mutation UUID transport. Twelve
+backend observation/receipt cases passed, covering stale-set denial, current authorization and
+accepted acknowledgement without duplicate history/adjustments. Regular Xcode 27.0 (27A266a)
+production/native-test build-for-testing passed for preserved iPhone 17 Pro Max/iOS 27 simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`. Compilation is not executed native XCTest, XCUITest,
+or human runtime acceptance. The production-code host verifier executes the real persistence
+and replay implementation without touching Simulator/Live data. `git diff --check` passed.
+
+Minimal remaining human flow: open Live reconciliation online and capture the cleared review;
+disable connectivity, submit the reviewed statement, and verify Pending Sync retains it without
+changing R/history/balances. Relaunch, reconnect and verify exactly one reconciliation (and at
+most one explicitly consented adjustment) is accepted. For a stale case, change a contributing
+transaction on another device before reconnect; verify the saved intent pauses with no effects
+and the original draft/token is not silently replaced. Resolve/discard it explicitly before
+starting a fresh review. No repeat of already accepted ordinary Quick Clear is required.
+
+Rebuild required. Existing server receipt/review contracts and migrations are prerequisites;
+this checkpoint introduces no server code or migration. TestFlight remains on hold. The broader
+offline milestone remains open, including administrative commands and unfinished draft coverage.
+
 ## Financial writer lock-order checkpoint (2026-10-09)
 
 Ordinary transaction creation/edit/delete/void, transfer creation/edit/delete,

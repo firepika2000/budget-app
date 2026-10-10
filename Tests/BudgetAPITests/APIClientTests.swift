@@ -1650,6 +1650,7 @@ final class APIClientTests: XCTestCase {
     func testReconciliationReviewObservationAndMutationCarryExactToken() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
         let revision = "v1:" + String(repeating: "a", count: 64)
+        let operationID = UUID().uuidString.lowercased()
         var requests = 0
         MockURLProtocol.handler = { request in
             requests += 1
@@ -1662,6 +1663,7 @@ final class APIClientTests: XCTestCase {
             } else {
                 let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: Any])
                 XCTAssertEqual(payload["expected_review_revision"] as? String, revision)
+                XCTAssertEqual(payload["mutation_operation_id"] as? String, operationID)
                 XCTAssertEqual(payload["expected_cleared_balance_minor"] as? Int64, 9007199254740993)
                 XCTAssertEqual(payload["statement_balance_minor"] as? Int64, 9007199254740993)
                 response = Data(#"{"account_id":"a1","reconciled_balance_minor":9007199254740993,"reconciled_transaction_count":1,"adjustment_transaction_id":null,"adjustment_amount_minor":0}"#.utf8)
@@ -1670,7 +1672,7 @@ final class APIClientTests: XCTestCase {
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
         let observation = try await client.reconciliationObservation(budgetID: "b1", accountID: "a1", throughDate: "2026-09-04", token: "current-token")
-        _ = try await client.reconcileAccount(budgetID: "b1", accountID: "a1", request: APIReconcileRequest(statementBalanceMinor: observation.clearedBalanceMinor, throughDate: observation.throughDate, expectedClearedBalanceMinor: observation.clearedBalanceMinor, expectedReviewRevision: observation.reviewRevision), token: "current-token")
+        _ = try await client.reconcileAccount(budgetID: "b1", accountID: "a1", request: APIReconcileRequest(statementBalanceMinor: observation.clearedBalanceMinor, throughDate: observation.throughDate, expectedClearedBalanceMinor: observation.clearedBalanceMinor, expectedReviewRevision: observation.reviewRevision, mutationOperationID: operationID), token: "current-token")
         XCTAssertEqual(requests, 2)
     }
 

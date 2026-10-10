@@ -17,9 +17,25 @@ to merge drafts or claiming that an in-flight request did not reach the server.
 
 **Not complete:** the durable Live outbox now supports creation and observed ordinary transaction
 edits, observed bulk metadata/clearing actions, Assign, category Move Money and account-transfer
-creation/observed edits. Reconciliation and administrative commands still send directly through their authenticated APIs.
+creation/observed edits and reconciliation against a captured server-reviewed transaction set.
+Administrative commands still send directly through their authenticated APIs.
 The following defines the complete milestone, not a claim of human-accepted offline editing. Local Device
 already owns its local writes; its storage must not be replaced by a hosted replay queue.
+
+Live reconciliation now persists its exact statement balance, cutoff, adjustment consent/reason,
+cleared-balance observation, opaque reviewed-set token and mutation UUID before sending. An
+interrupted response retains that identity across relaunch; canonical server receipts acknowledge
+an accepted retry without another adjustment or history entry. Replay resolves current credentials
+and validates the server/actor destination. Changed reviewed data or revoked authority pauses the
+saved command without silently acquiring a replacement token. Pending Sync permits explicit retry
+of the original intent or local discard and hides account details without current reconciliation/
+balance access. A second pending reconciliation for the same account is rejected until the first
+is resolved. Pending intent never marks transactions reconciled or changes balances locally.
+
+This supports connection loss after the server review was captured, not a new reconciliation
+without any server-reviewed observation. New observation loading still requires connectivity.
+Local Device/Demo continue through their existing account service and are not queued. Human
+offline/relaunch acceptance remains pending; no claim of complete hosted offline support follows.
 
 The full requirement is to preserve usable workspace/navigation and user-entered work across loss
 of connectivity, persist edits before reporting them saved, and synchronize in the background when
