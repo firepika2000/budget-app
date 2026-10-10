@@ -1296,6 +1296,7 @@ class TransferResponse(BaseModel):
 
 class ReconcileRequest(BaseModel):
     mutation_operation_id: Optional[UUID] = None
+    expected_review_revision: Optional[TransactionRevision] = None
     statement_balance_minor: int = Field(ge=MIN_INT64, le=MAX_INT64)
     through_date: date
     create_adjustment: bool = False
@@ -1315,6 +1316,13 @@ class ReconcileResponse(BaseModel):
     reconciled_transaction_count: int
     adjustment_transaction_id: Optional[str] = None
     adjustment_amount_minor: int = 0
+
+
+class ReconciliationObservationResponse(BaseModel):
+    account_id: str
+    through_date: date
+    cleared_balance_minor: int
+    review_revision: TransactionRevision
 
 
 class ReconciliationHistoryResponse(BaseModel):

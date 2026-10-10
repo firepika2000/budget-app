@@ -6,6 +6,7 @@ import binascii
 import json
 from datetime import date, datetime, timezone, timedelta
 import hashlib
+import hmac
 from io import StringIO
 from typing import Optional
 from uuid import uuid4
@@ -45,7 +46,8 @@ from .debt_projection import (
     required_extra_payment_for_target,
 )
 from .debt_terms_history import debt_terms_snapshot
-from .dependencies import get_current_user
+from .dependencies import get_current_user, get_settings
+from .config import Settings
 from .credit import add_payment_reserve_event, add_purchase_reserve_events, ensure_credit_payment_category
 from .category_names import normalized_category_name
 from .models import (
@@ -139,6 +141,7 @@ from .schemas import (
     IdentifiedTransferCreate,
     TransferUpdate,
     TransferResponse,
+    ReconciliationObservationResponse,
 )
 from .models import ScheduledTransaction
 from .planning import next_occurrence
@@ -3119,6 +3122,39 @@ def recent_reconciliation_history(
             | {"actor_display_name": actor_names.get(row.actor_user_id)} for row in rows]
 
 
+def _reconciliation_review(account: Account, through_date: date, transactions, actor_id: str, secret: str) -> tuple[int, str]:
+    # Ordered streaming rows keep the observation bounded in memory. The account/date
+    # context prevents another account or cutoff from reusing a reviewed-set token.
+    digest = hmac.new(secret.encode(), json.dumps({"actor": actor_id, "budget": account.budget_id, "account": account.id,
+        "through_date": through_date.isoformat(), "reconciled_balance": account.reconciled_balance_minor,
+        "reconciled_at": account.reconciled_at.isoformat() if account.reconciled_at else None},
+        sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256)
+    balance = 0
+    for transaction in transactions:
+        balance += transaction.amount_minor
+        digest.update(json.dumps([transaction.id, TransactionResponse.model_validate(transaction).revision],
+                                 separators=(",", ":")).encode())
+    return balance, "v1:" + digest.hexdigest()
+
+
+@router.get("/accounts/{account_id}/reconciliation-observation", response_model=ReconciliationObservationResponse)
+def reconciliation_observation(
+    budget_id: str, account_id: str, through_date: date,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ReconciliationObservationResponse:
+    budget = require_budget_capability(db, user, budget_id, "reconcile_account")
+    account = db.get(Account, account_id)
+    if account is None or account.budget_id != budget_id or not can_access_resource(db, user, budget, "account", account_id):
+        raise HTTPException(status_code=404, detail="Account not found")
+    transactions = db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
+        Transaction.account_id == account_id, Transaction.occurred_on <= through_date,
+        Transaction.is_cleared.is_(True)).order_by(Transaction.id).execution_options(yield_per=500))
+    balance, revision = _reconciliation_review(account, through_date, transactions, user.id, settings.jwt_secret)
+    return ReconciliationObservationResponse(account_id=account_id, through_date=through_date,
+        cleared_balance_minor=balance, review_revision=revision)
+
+
 @router.post("/accounts/{account_id}/reconcile", response_model=ReconcileResponse)
 def reconcile_account(
     budget_id: str,
@@ -3126,6 +3162,7 @@ def reconcile_account(
     body: ReconcileRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> ReconcileResponse:
     budget = require_budget_capability(db, user, budget_id, "reconcile_account")
     account = db.scalar(select(Account).where(Account.id == account_id).with_for_update())
@@ -3153,12 +3190,14 @@ def reconcile_account(
                 reconciled_transaction_count=accepted.reconciled_transaction_count,
                 adjustment_transaction_id=accepted.adjustment_transaction_id,
                 adjustment_amount_minor=accepted.statement_balance_minor - accepted.cleared_balance_before_minor)
-    transactions = list(db.scalars(select(Transaction).where(
+    transactions = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.account_id == account_id,
         Transaction.occurred_on <= body.through_date,
         Transaction.is_cleared.is_(True),
-    )))
-    cleared_balance = sum(transaction.amount_minor for transaction in transactions)
+    ).order_by(Transaction.id)))
+    cleared_balance, review_revision = _reconciliation_review(account, body.through_date, transactions, user.id, settings.jwt_secret)
+    if body.expected_review_revision is not None and body.expected_review_revision != review_revision:
+        raise HTTPException(status_code=409, detail="Reviewed reconciliation transactions changed. Refresh and review before reconciling.")
     if body.expected_cleared_balance_minor is not None and body.expected_cleared_balance_minor != cleared_balance:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -3226,7 +3265,7 @@ def reconcile_account(
         db.rollback()
         if operation_id is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) is None:
             raise
-        return reconcile_account(budget_id, account_id, body, user, db)
+        return reconcile_account(budget_id, account_id, body, user, db, settings)
     return ReconcileResponse(
         account_id=account.id,
         reconciled_balance_minor=body.statement_balance_minor,

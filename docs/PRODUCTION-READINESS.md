@@ -1,5 +1,26 @@
 # Production readiness mission ledger
 
+## Server-issued reconciliation reviewed-set token (2026-10-09)
+
+GET account `reconciliation-observation?through_date=...` requires current reconcile capability
+and account scope. It returns exact cleared balance plus an opaque HMAC review revision bound
+to actor, budget, account, cutoff, last reconciliation observation and the ordered cleared
+transaction IDs/revisions. Observation streams batches of 500 with split preloading instead of
+materializing a complete historical transaction list. No transaction details/counts are returned.
+The optional `expected_review_revision` on reconciliation rejects changed reviewed state before
+any mutation, even where the cleared balance remains identical. Legacy balance-only clients stay
+compatible; identified receipts still acknowledge previously accepted work before stale guards.
+
+Seven HTTP cases exercise offsetting additions, same-balance cleared-set replacement, metadata
+changes, cutoff changes, exact Int64 acceptance, receipt retry after reconciliation, actor binding,
+and capability/account revocation. All 51 focused observation/receipt/ledger/financial-golden
+cases passed; `git diff --check` passed. These are inter-request mutation checks, not proof of isolation
+against every overlapping PostgreSQL writer. Content revisions are not monotonic ABA counters.
+Native reconciliation must adopt the new observation/expected token; it is not in the outbox yet.
+Reviewed-set checks and receipts are necessary but not sufficient to claim the entire hosted
+offline-write milestone complete. No migration, native build or human-data modification required.
+Server update/restart required; TestFlight remains on hold.
+
 ## Identified reconciliation acknowledgement (2026-10-09)
 
 Reconciliation now optionally accepts `mutation_operation_id`, requiring the existing observed
