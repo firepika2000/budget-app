@@ -447,6 +447,17 @@ public struct APIClient {
     }
 
     public func categoryTarget(budgetID: String, categoryID: String, token: String) async throws -> APICategoryTarget? { try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/target", token: token) }
+    public func categoryTargetsPage(budgetID: String, limit: Int = 200, offset: Int = 0, token: String) async throws -> [APICategoryTarget] {
+        guard (1...200).contains(limit), offset >= 0 else {
+            throw APIClientError.server(status: 422, message: "Invalid target page bounds.")
+        }
+        let items: [APICategoryTarget] = try await send(path: "api/v1/budgets/\(budgetID)/category-targets",
+            queryItems: [URLQueryItem(name: "limit", value: String(limit)), URLQueryItem(name: "offset", value: String(offset))], token: token)
+        guard items.count <= limit else {
+            throw APIClientError.server(status: 502, message: "Server returned an oversized target page.")
+        }
+        return items
+    }
     public func categoryTargetHistory(budgetID: String, categoryID: String, limit: Int = 50, offset: Int = 0, token: String) async throws -> [APICategoryTargetRevision] {
         try await send(path: "api/v1/budgets/\(budgetID)/categories/\(categoryID)/target/history", queryItems: [URLQueryItem(name: "limit", value: String(limit)), URLQueryItem(name: "offset", value: String(offset))], token: token)
     }

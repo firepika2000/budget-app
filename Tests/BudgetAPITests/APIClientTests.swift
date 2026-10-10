@@ -2,6 +2,25 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testCategoryTargetPageUsesBoundedAuthenticatedListing() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        var calls = 0
+        MockURLProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/category-targets")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(items.first { $0.name == "limit" }?.value, "200")
+            XCTAssertEqual(items.first { $0.name == "offset" }?.value, "200")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("[]".utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        let page = try await client.categoryTargetsPage(budgetID: "b1", offset: 200, token: "current")
+        XCTAssertTrue(page.isEmpty)
+        do { _ = try await client.categoryTargetsPage(budgetID: "b1", limit: 201, token: "current"); XCTFail("Unbounded page sent") } catch {}
+        XCTAssertEqual(calls, 1)
+    }
+
     func testReportContributorsPreservesContextCursorAndCurrentCredential() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
         var calls = 0
