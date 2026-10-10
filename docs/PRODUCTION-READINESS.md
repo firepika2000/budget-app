@@ -1,5 +1,27 @@
 # Production readiness mission ledger
 
+## Identified account-transfer creation receipts (2026-10-09)
+
+POST transfers now accepts an optional `mutation_operation_id`. An actor/budget-scoped receipt
+binds the validated original request to its transfer identity and commits with both account legs
+and any canonical credit-card reserve event. Exact retries acknowledge the currently authorized
+existing transfer without recreating either leg, reverting later metadata, or repeating reserve
+effects. Different payload reuse returns 409; a deleted accepted transfer returns 404 rather than
+being recreated. Current create capability and both original/current account scopes are checked
+before acknowledgement. Legacy callers retain existing behavior.
+
+Five actual HTTP cases cover exact Int64 values beyond Double precision, cash and credit-to-cash
+reserve retries, later reconciliation/metadata, changed-payload rejection, deleted transfers, and
+account/capability revocation. Existing ledger, credit-card and financial-golden tests are included
+in the focused checkpoint verification: 60 tests passed, followed by five receipt cases passing
+again after removing the acknowledgement's unnecessary leg lock. `git diff --check` passed.
+A real overlapping PostgreSQL/lost-response race remains
+unverified; the collision path rolls back and re-enters current authorization checks. This does
+not yet provide observed transfer-edit preconditions or durable native transfer queueing, so the
+hosted offline milestone remains incomplete. No Swift changes or native testing are required for
+this server-only checkpoint. Server restart required; no new migration beyond existing 0049,
+no customer database changes, no simulator reset. TestFlight remains on hold.
+
 ## Durable native Assign and category Move Money (2026-10-09)
 
 Live planning commands now assign a mutation UUID and persist typed exact intent plus observed

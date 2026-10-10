@@ -136,6 +136,7 @@ from .schemas import (
     TransactionResponse,
     TransactionUpdate,
     TransferCreate,
+    IdentifiedTransferCreate,
     TransferResponse,
 )
 from .models import ScheduledTransaction
@@ -2844,7 +2845,7 @@ def delete_transaction(
 @router.post("/transfers", response_model=TransferResponse, status_code=status.HTTP_201_CREATED)
 def create_transfer(
     budget_id: str,
-    body: TransferCreate,
+    body: IdentifiedTransferCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TransferResponse:
@@ -2864,6 +2865,24 @@ def create_transfer(
         raise HTTPException(status_code=422, detail="Invalid transfer account")
     if any(not can_access_resource(db, user, budget, "account", account.id) for account in (source, destination)):
         raise HTTPException(status_code=422, detail="Invalid transfer account")
+    operation_id = str(body.mutation_operation_id) if body.mutation_operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "kind": "transfer_create",
+        "body": body.model_dump(mode="json", exclude={"mutation_operation_id"}),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if operation_id is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id))
+        if receipt is not None:
+            if receipt.command_kind != "transfer_create" or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+            # Acknowledgement is read-only. Do not lock legs after locking accounts:
+            # transfer edits acquire legs first, so reversing that order can deadlock.
+            legs = _locked_transfer_legs(db, budget_id, receipt.resource_id, lock=False)
+            if any(not can_access_resource(db, user, budget, "account", leg.account_id) for leg in legs):
+                raise HTTPException(status_code=404, detail="Transfer not found")
+            return TransferResponse(transfer_id=receipt.resource_id,
+                source=TransactionResponse.model_validate(next(leg for leg in legs if leg.amount_minor < 0)),
+                destination=TransactionResponse.model_validate(next(leg for leg in legs if leg.amount_minor > 0)))
     transfer_id = str(uuid4())
     common = {
         "budget_id": budget_id,
@@ -2907,7 +2926,16 @@ def create_transfer(
             actor=user,
             kind="payment_reversal",
         )
-    db.commit()
+    if operation_id is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=operation_id, command_kind="transfer_create", resource_id=transfer_id, request_digest=digest))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if operation_id is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) is None:
+            raise
+        return create_transfer(budget_id, body, user, db)
     db.refresh(source_transaction)
     db.refresh(destination_transaction)
     return TransferResponse(
@@ -2917,11 +2945,12 @@ def create_transfer(
     )
 
 
-def _locked_transfer_legs(db: Session, budget_id: str, transfer_id: str) -> list[Transaction]:
-    legs = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
+def _locked_transfer_legs(db: Session, budget_id: str, transfer_id: str, *, lock: bool = True) -> list[Transaction]:
+    query = select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.budget_id == budget_id,
         Transaction.transfer_id == transfer_id,
-    ).order_by(Transaction.id).with_for_update()))
+    ).order_by(Transaction.id)
+    legs = list(db.scalars(query.with_for_update() if lock else query))
     if len(legs) != 2 or sum(leg.amount_minor for leg in legs) != 0:
         raise HTTPException(status_code=404, detail="Transfer not found")
     return legs

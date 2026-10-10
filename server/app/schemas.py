@@ -1272,6 +1272,10 @@ class TransferCreate(BaseModel):
         return self
 
 
+class IdentifiedTransferCreate(TransferCreate):
+    mutation_operation_id: Optional[UUID] = None
+
+
 class TransferResponse(BaseModel):
     transfer_id: str
     source: TransactionResponse
