@@ -4563,6 +4563,7 @@ final class DemoStoreTests: XCTestCase {
     func testLocalDelimitedStatementParserRejectsAmbiguousMappingAndHeaders() throws {
         let mapping = APIStatementImportMapping(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd")
         for header in ["Date,Amount,Amount,Payee", "Date,Amount, Amount ,Payee", "Date,Amount,,Payee"] {
+            XCTAssertTrue(LocalDelimitedStatementParser.headers(data: Data("\(header)\n".utf8), delimiter: ",").isEmpty)
             XCTAssertThrowsError(try LocalDelimitedStatementParser.parse(data: Data("\(header)\n2026-09-04,-1.00,-9.00,Market\n".utf8), mapping: mapping))
         }
         let data = Data("Date,Amount,Payee\n2026-09-04,-1.00,Market\n".utf8)

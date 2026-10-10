@@ -11842,9 +11842,7 @@ enum LocalDelimitedStatementParser {
         guard !text.contains("\0") else { throw workspaceRepositoryError("The statement must use UTF-8 or BOM-marked UTF-16 text.") }
         let rows = try records(text, delimiter: delimiter)
         guard let header = rows.first, rows.count > 1 else { throw workspaceRepositoryError("The statement does not contain transaction rows.") }
-        let normalizedHeader = header.map { $0.replacingOccurrences(of: "\u{feff}", with: "").trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard header.count <= 100, normalizedHeader.allSatisfy({ !$0.isEmpty && $0.unicodeScalars.count <= 4096 }),
-              Set(normalizedHeader).count == header.count else {
+        guard let normalizedHeader = validatedHeaders(header) else {
             throw workspaceRepositoryError("The statement requires unique, nonempty column names and at most 100 columns.")
         }
         let selectedNames = [mapping.dateColumn, mapping.payeeColumn, mapping.amountColumn, mapping.debitColumn, mapping.creditColumn, mapping.memoColumn].compactMap { $0 }
@@ -11893,10 +11891,17 @@ enum LocalDelimitedStatementParser {
     static func headers(data: Data, delimiter: Character) -> [String] {
         guard data.count <= 10 * 1024 * 1024, let text = decodedText(data), !text.contains("\0"),
               let first = try? records(text, delimiter: delimiter).first else { return [] }
-        return first.map {
+        return validatedHeaders(first) ?? []
+    }
+    private static func validatedHeaders(_ header: [String]) -> [String]? {
+        let names = header.map {
             $0.replacingOccurrences(of: "\u{feff}", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty }
+        }
+        guard !names.isEmpty, names.count <= 100,
+              names.allSatisfy({ !$0.isEmpty && $0.unicodeScalars.count <= 4096 }),
+              Set(names).count == names.count else { return nil }
+        return names
     }
 
     private static func decodedText(_ data: Data) -> String? {
@@ -12481,6 +12486,11 @@ private struct StatementImportFlowView: View {
                 Picker("Money columns", selection: $csvAmountLayout) { Text("One signed amount").tag("amount"); Text("Separate debit and credit").tag("debit-credit") }
             }
             Section("CSV columns") {
+                if headers.isEmpty {
+                    Label("No valid columns", systemImage: "exclamationmark.triangle")
+                    Text("Check the separator. The file needs unique, nonempty column names and at most 100 columns.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
                 Picker("Date", selection: $dateColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }
                 if csvAmountLayout == "amount" {
                     Picker("Amount", selection: $amountColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }
@@ -12491,6 +12501,7 @@ private struct StatementImportFlowView: View {
                 Picker("Payee", selection: $payeeColumn) { ForEach(headers, id: \.self) { Text($0).tag($0) } }
                 Picker("Memo", selection: $memoColumn) { Text("None").tag(""); ForEach(headers, id: \.self) { Text($0).tag($0) } }
                 Text(csvAmountLayout == "amount" ? "Expenses must be negative and deposits positive." : "Debit values become outflows; credit values become inflows.").font(.footnote).foregroundStyle(.secondary)
+                }
             }
         }
         if ["qif", "pdf"].contains(file.sourceFormat) { Section("Date format") { Picker("Order", selection: $dateOrder) { Text("Month / Day / Year").tag("mdy"); Text("Day / Month / Year").tag("dmy") } } }
@@ -12580,7 +12591,9 @@ private struct StatementImportFlowView: View {
         guard let file, file.sourceFormat == "csv" else { return file != nil }
         let moneyColumns = csvAmountLayout == "amount" ? [amountColumn] : [debitColumn, creditColumn]
         let required = [dateColumn, payeeColumn] + moneyColumns
-        return required.allSatisfy { !$0.isEmpty } && Set(required).count == required.count
+        let selected = required + (memoColumn.isEmpty ? [] : [memoColumn])
+        return required.allSatisfy { !$0.isEmpty } && Set(selected).count == selected.count
+            && selected.allSatisfy { headers.contains($0) }
     }
     private func configureDefaults(reset: Bool = false) {
         guard file?.sourceFormat == "csv", !headers.isEmpty else { return }
