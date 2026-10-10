@@ -1,5 +1,27 @@
 # Production readiness mission ledger
 
+## Identified transaction duplication server contract (2026-10-09)
+
+Duplication accepts optional `mutation_operation_id` and `expected_revision`; an identified
+request requires the observed source revision. The budget lock serializes concurrent callers.
+Creation, canonical financial events, duplication provenance and the accepted-command receipt
+commit together. A provenance failure now rolls back the copy instead of leaving a posted
+transaction without its duplication observation.
+
+An exact retry returns the accepted copy without another posting or history entry, even after
+the source or copy later changes. Current create permission and whole-resource visibility for
+both transactions remain required. Changed identity payloads, stale new intents, hidden resources
+and revoked permissions fail without mutation. Legacy online requests retain their existing
+contract; attachments remain excluded and the copy remains initially uncleared.
+
+Focused tests cover exact large minor units, payee identity and metadata, source/copy changes,
+stale and malformed observations, account/category/capability revocation, provenance rollback,
+legacy split/card duplication and system-linked exclusions. A real isolated PostgreSQL race
+proves two identified callers produce one copy, provenance entry and receipt. No migration or
+Swift change is included. Server deployment/restart is required to expose this contract.
+Native durable duplication queuing remains the next integration gap; this server checkpoint
+does not claim offline duplication is available to customers. TestFlight remains held.
+
 ## Encrypted offline attachment previews (2026-10-09)
 
 Previously downloaded Live files can reopen during a transient outage. The repository first

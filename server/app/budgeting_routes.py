@@ -2442,14 +2442,33 @@ def duplicate_transaction(
     db: Session = Depends(get_db),
 ) -> Transaction:
     budget = require_budget_capability(db, user, budget_id, "create_transaction")
+    lock_budget(db, budget_id)
     original = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.id == transaction_id, Transaction.budget_id == budget_id,
     ))
     if original is None or not _can_access_transaction_resources(db, user, budget, original):
         raise HTTPException(status_code=404, detail="Transaction not found")
+    operation_id = str(body.mutation_operation_id) if body.mutation_operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "kind": "transaction_duplicate", "transaction_id": transaction_id,
+        "body": body.model_dump(mode="json", exclude={"mutation_operation_id"}),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if operation_id is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id))
+        if receipt is not None:
+            if receipt.command_kind != "transaction_duplicate" or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+            duplicate = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
+                Transaction.id == receipt.resource_id, Transaction.budget_id == budget_id,
+            ))
+            if duplicate is None or not _can_access_transaction_resources(db, user, budget, duplicate):
+                raise HTTPException(status_code=404, detail="Duplicate transaction not found")
+            return duplicate
+    if body.expected_revision is not None and body.expected_revision != TransactionResponse.model_validate(original).revision:
+        raise HTTPException(status_code=409, detail="This transaction changed. Refresh and review before duplicating it.")
     if original.status != "posted" or original.transfer_id is not None or original.scheduled_transaction_id is not None or original.payee_name in {"Starting Balance", "Reconciliation adjustment"}:
         raise HTTPException(status_code=409, detail="This system-linked transaction must be recreated through its specialized workflow")
-    duplicate = create_transaction(
+    duplicate = create_transaction_in_session(
         budget_id,
         TransactionCreate(
             account_id=original.account_id,
@@ -2466,11 +2485,23 @@ def duplicate_transaction(
             attachment_metadata=[],
             splits=[{"category_id": split.category_id, "amount_minor": split.amount_minor, "memo": split.memo, "financial_classification": split.financial_classification} for split in original.splits],
         ),
-        user,
-        db,
+        user=user,
+        db=db,
     )
     record_transaction_change(db, duplicate, user, "duplicated", before=transaction_snapshot(original), after=transaction_snapshot(duplicate))
-    db.commit()
+    if operation_id is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=operation_id, command_kind="transaction_duplicate",
+            resource_id=duplicate.id, request_digest=digest))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if operation_id is None:
+            raise
+        if db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) is None:
+            raise
+        return duplicate_transaction(budget_id, transaction_id, body, user, db)
     db.refresh(duplicate)
     return duplicate
 

@@ -873,6 +873,14 @@ class TransactionUpdate(TransactionCreate):
 
 class TransactionDuplicateRequest(BaseModel):
     occurred_on: date
+    expected_revision: Optional[TransactionRevision] = None
+    mutation_operation_id: Optional[UUID] = None
+
+    @model_validator(mode="after")
+    def require_duplicate_observation(self) -> "TransactionDuplicateRequest":
+        if self.mutation_operation_id is not None and self.expected_revision is None:
+            raise ValueError("expected_revision is required for an identified duplicate")
+        return self
 
 
 class TransactionVoidRequest(BaseModel):

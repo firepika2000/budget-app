@@ -786,6 +786,27 @@ def test_quick_unclear_cannot_slip_between_reconciliation_review_and_commit(pg, 
         assert row.is_cleared and row.is_reconciled
 
 
+def test_concurrent_identified_duplicate_posts_one_copy_and_provenance(pg):
+    from app.budgeting_routes import duplicate_transaction
+    from app.schemas import TransactionDuplicateRequest
+    from app.models import TransactionChange, WorkspaceCommandReceipt
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    original = record(pg.client, pg.token, budget["id"], account_id=account["id"], category_id=category["id"],
+                      amount_minor=-9007199254740993, payee_name="Reviewed duplicate")
+    body = TransactionDuplicateRequest(occurred_on=date(2026, 9, 5), expected_revision=original["revision"], mutation_operation_id=uuid4())
+    def call(db, user):
+        return duplicate_transaction(budget_id=budget["id"], transaction_id=original["id"], body=body, user=user, db=db).id
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    assert results[0][1] == results[1][1]
+    with pg.factory() as db:
+        assert db.query(Transaction).filter_by(budget_id=budget["id"]).count() == 2
+        assert db.get(Transaction, results[0][1]).amount_minor == -9007199254740993
+        assert db.query(TransactionChange).filter_by(transaction_id=results[0][1], action="duplicated").count() == 1
+        assert db.query(WorkspaceCommandReceipt).filter_by(command_kind="transaction_duplicate").count() == 1
+
+
 def test_concurrent_identified_void_acknowledges_one_reversal(pg):
     from app.budgeting_routes import void_transaction
     from app.schemas import TransactionVoidRequest
