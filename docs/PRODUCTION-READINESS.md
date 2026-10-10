@@ -1,5 +1,28 @@
 # Production readiness mission ledger
 
+## Identified transaction deletion server contract (2026-10-09)
+
+Ordinary deletion accepts an optional UUID `X-Transaction-Operation-ID` header and observed
+`expected_revision` query. Identified deletion requires the revision. The existing budget lock
+keeps deletion, reserve-event removal, immutable provenance and command receipt atomic.
+An exact retry acknowledges the accepted deletion without another mutation, using retained
+deletion evidence rather than treating an arbitrary missing transaction as success.
+
+Retry still requires current delete permission, original ownership or budget-management
+authority, and the original complete account/category scope. Category-restricted users cannot
+acknowledge uncategorized deleted rows. Missing historical authority evidence fails closed.
+Changed payload identities and stale fresh intents are rejected. Reconciled, voided, reversal,
+transfer-linked and retained-attachment protections remain unchanged. Legacy requests remain
+backward compatible. Original ownership is added to the private deletion snapshot; public
+history still summarizes deletion by action without exposing raw snapshot IDs.
+
+Focused tests cover retry identity, exact large minor units, other-transaction preservation,
+missing/malformed/stale observations, revoked account/category/capability scope, restricted
+uncategorized rows, lost audit evidence and lifecycle protections. History, provenance and
+golden-vector regressions pass. A real isolated PostgreSQL race proves one deletion, audit entry
+and receipt for simultaneous callers. No Swift or migration change; server deployment/restart
+is required. Native durable deletion remains the next integration gap. TestFlight remains held.
+
 ## Durable reviewed transaction duplication (2026-10-09)
 
 The production transaction detail captures source revision and copy date when opening its

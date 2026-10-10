@@ -2987,9 +2987,35 @@ def delete_transaction(
     transaction_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    operation_id: Annotated[Optional[UUID], Header(alias="X-Transaction-Operation-ID")] = None,
+    expected_revision: Annotated[Optional[str], Query(pattern=r"^v1:[0-9a-f]{64}$")] = None,
 ) -> None:
     budget = require_budget_capability(db, user, budget_id, "delete_transaction")
     lock_budget(db, budget_id)
+    identity = str(operation_id) if operation_id is not None else None
+    if identity is not None and expected_revision is None:
+        raise HTTPException(status_code=422, detail="expected_revision is required for an identified deletion")
+    digest = "v1:" + hashlib.sha256(json.dumps({"kind": "transaction_delete", "transaction_id": transaction_id,
+        "expected_revision": expected_revision}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if identity is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity))
+        if receipt is not None:
+            if receipt.command_kind != "transaction_delete" or receipt.resource_id != transaction_id or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+            history = db.scalar(select(TransactionChange).where(TransactionChange.budget_id == budget_id,
+                TransactionChange.transaction_id == transaction_id, TransactionChange.actor_user_id == user.id,
+                TransactionChange.action == "deleted").order_by(TransactionChange.created_at.desc(), TransactionChange.id.desc()))
+            snapshot = json.loads(history.before_json) if history is not None and history.before_json else None
+            if not snapshot or not snapshot.get("created_by_user_id"):
+                raise HTTPException(status_code=409, detail="Original deletion authority cannot be verified.")
+            categories = ([snapshot["category_id"]] if snapshot.get("category_id") else []) + [item["category_id"] for item in snapshot.get("splits", [])]
+            visible_categories = visible_resource_ids(db, user, budget, "category")
+            if not can_access_resource(db, user, budget, "account", snapshot["account_id"]) or (
+                    visible_categories is not None and (not categories or any(category_id not in visible_categories for category_id in categories))):
+                raise HTTPException(status_code=404, detail="Transaction not found")
+            if snapshot["created_by_user_id"] != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
+                raise HTTPException(status_code=403, detail="You may only delete your own transactions")
+            return
     transaction = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(Transaction.id == transaction_id))
     if (transaction is None or transaction.budget_id != budget_id or transaction.transfer_id is not None
             or not _can_access_transaction_resources(db, user, budget, transaction)):
@@ -3000,14 +3026,21 @@ def delete_transaction(
         raise HTTPException(status_code=409, detail="Reconciled transactions cannot be deleted")
     if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
         raise HTTPException(status_code=403, detail="You may only delete your own transactions")
+    if expected_revision is not None and expected_revision != TransactionResponse.model_validate(transaction).revision:
+        raise HTTPException(status_code=409, detail="This transaction changed. Refresh and review before deleting it.")
     attachment_count = db.scalar(select(func.count()).select_from(TransactionAttachment).where(
         TransactionAttachment.transaction_id == transaction.id,
     )) or 0
     if attachment_count:
         raise HTTPException(status_code=409, detail="Transactions with retained attachment history cannot be deleted; use Void with Reversal")
-    record_transaction_change(db, transaction, user, "deleted", before=transaction_snapshot(transaction))
+    before = json.loads(transaction_snapshot(transaction))
+    before["created_by_user_id"] = transaction.created_by_user_id
+    record_transaction_change(db, transaction, user, "deleted", before=json.dumps(before, sort_keys=True, separators=(",", ":")))
     db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.source_transaction_id == transaction.id))
     db.delete(transaction)
+    if identity is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id, operation_id=identity,
+            command_kind="transaction_delete", resource_id=transaction_id, request_digest=digest))
     db.commit()
 
 

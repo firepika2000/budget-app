@@ -786,6 +786,26 @@ def test_quick_unclear_cannot_slip_between_reconciliation_review_and_commit(pg, 
         assert row.is_cleared and row.is_reconciled
 
 
+def test_concurrent_identified_delete_removes_once_and_acknowledges_both(pg):
+    from app.budgeting_routes import delete_transaction
+    from app.models import TransactionChange, WorkspaceCommandReceipt
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    original = record(pg.client, pg.token, budget["id"], account_id=account["id"], category_id=category["id"],
+                      amount_minor=-9007199254740993, payee_name="Reviewed deletion")
+    identity = uuid4()
+    def call(db, user):
+        delete_transaction(budget_id=budget["id"], transaction_id=original["id"], user=user, db=db,
+                           operation_id=identity, expected_revision=original["revision"])
+        return original["id"]
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    with pg.factory() as db:
+        assert db.get(Transaction, original["id"]) is None
+        assert db.query(TransactionChange).filter_by(transaction_id=original["id"], action="deleted").count() == 1
+        assert db.query(WorkspaceCommandReceipt).filter_by(command_kind="transaction_delete").count() == 1
+
+
 def test_concurrent_identified_duplicate_posts_one_copy_and_provenance(pg):
     from app.budgeting_routes import duplicate_transaction
     from app.schemas import TransactionDuplicateRequest
