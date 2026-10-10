@@ -1038,15 +1038,48 @@ final class LiveAttachmentReadCache {
     }
 
     func remove(transactionID: String) { try? FileManager.default.removeItem(at: fileURL(transactionID)) }
+    func saveBytes(_ data: Data, attachment: APITransactionAttachment, keyData: Data, generation observed: UUID) throws {
+        guard observed == generation, keyData.count == 32,
+              try load(transactionID: attachment.transactionID).contains(attachment),
+              data.count == attachment.byteCount, Self.digest(data) == attachment.sha256 else {
+            throw BudgetApplicationError.invalidOperation("Attachment integrity or access changed. Reconnect before opening it.")
+        }
+        let sealed = try AES.GCM.seal(data, using: SymmetricKey(data: keyData))
+        guard let combined = sealed.combined else { throw BudgetApplicationError.invalidOperation("Unable to protect attachment preview.") }
+        let target = bytesURL(attachment)
+        try combined.write(to: target, options: [.atomic, .completeFileProtection])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])
+            .filter { $0.pathExtension == "enc" && $0.standardizedFileURL.path != target.standardizedFileURL.path }
+            .sorted { ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
+                > ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
+        for file in files.dropFirst(9) { try? FileManager.default.removeItem(at: file) }
+    }
+    func loadBytes(attachment: APITransactionAttachment, keyData: Data) throws -> Data {
+        guard keyData.count == 32, try load(transactionID: attachment.transactionID).contains(attachment) else {
+            throw BudgetApplicationError.invalidOperation("Reconnect to verify attachment access.")
+        }
+        let sealed = try AES.GCM.SealedBox(combined: Data(contentsOf: bytesURL(attachment)))
+        let data = try AES.GCM.open(sealed, using: SymmetricKey(data: keyData))
+        guard data.count == attachment.byteCount, Self.digest(data) == attachment.sha256 else {
+            throw BudgetApplicationError.invalidOperation("Attachment integrity verification failed.")
+        }
+        return data
+    }
+    private static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    private func bytesURL(_ attachment: APITransactionAttachment) -> URL {
+        directory.appendingPathComponent(Self.digest(Data((attachment.transactionID + ":" + attachment.id + ":" + attachment.sha256).utf8)) + ".enc")
+    }
     func acknowledgeRemoval(transactionID: String, attachmentID: String) {
         guard let previous = try? load(transactionID: transactionID) else { remove(transactionID: transactionID); return }
+        for attachment in previous where attachment.id == attachmentID { try? FileManager.default.removeItem(at: bytesURL(attachment)) }
         do { try save(previous.filter { $0.id != attachmentID }, transactionID: transactionID, generation: generation) }
         catch { remove(transactionID: transactionID) }
     }
     func removeAll() {
         generation = UUID()
         guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
-        for file in files where file.pathExtension == "json" { try? FileManager.default.removeItem(at: file) }
+        for file in files where file.pathExtension == "json" || file.pathExtension == "enc" { try? FileManager.default.removeItem(at: file) }
     }
     private func fileURL(_ transactionID: String) -> URL {
         let digest = SHA256.hash(data: Data(transactionID.utf8)).map { String(format: "%02x", $0) }.joined()

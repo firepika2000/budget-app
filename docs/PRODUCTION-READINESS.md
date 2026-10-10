@@ -1,12 +1,43 @@
 # Production readiness mission ledger
 
+## Encrypted offline attachment previews (2026-10-09)
+
+Previously downloaded Live files can reopen during a transient outage. The repository first
+resolves the current attachment list, checks server/actor/budget scope and access generation,
+and verifies downloaded size and SHA256 against that list. Cached bytes use AES GCM and a
+separate device-only Keychain key per namespace, never the Local Device authority key.
+Only ten files are retained, each subject to the existing 10 MB limit. Quick Look continues
+using its protected temporary preview and existing dismissal cleanup.
+
+Offline fallback requires matching authorized list metadata and authenticated ciphertext.
+Authentication, permission and missing-resource responses never use cached bytes. Authority
+eviction invalidates late responses and removes cached metadata and ciphertext. Accepted
+removal removes the matching cached copy; no financial, server attachment or tombstone semantics
+change. Files never opened online still require connectivity, and a cache write/keychain failure
+does not prevent an otherwise valid online preview.
+
+Executed production cache checks cover encrypted reconstruction, wrong keys, wrong digests,
+tampering, ten-file retention, authority eviction and accepted-removal cleanup. The production
+mutation-queue harness passes. The existing native preview/removal regression now uses a real
+list response and matching image digest. Regular Xcode 27.0 (27A266a),
+`/Applications/Xcode.app/Contents/Developer`, passed `build-for-testing` on preserved simulator
+`3ABD861E-D38D-4AFD-A356-959266051564` (iPhone 17 Pro Max, iOS 27), including the corrected test.
+`git diff --check` passes. Native tests are compiled, not runtime-executed; no human pass is
+claimed. No server restart or migration is required. TestFlight remains held.
+
+Human retest after rebuild: open a disposable attachment online, return, disconnect, relaunch,
+reopen its transaction and tap its filename. The previously opened file should preview without
+removal. A never-opened file should request connectivity. Reconnect and confirm the separate
+Remove action still removes only the selected file.
+
 ## Protected offline attachment lists (2026-10-09)
 
 Live attachment-list reads now save bounded, file-protected last-authorized metadata in a
 server/actor/budget namespace. Reopening transaction detail after a transient outage or app
 reconstruction can display a previously loaded list. Each cache holds at most 50 transaction
 lists with 20 attachments each, uses hashed target filenames, validates attachment identity,
-digest, type and size, and retains empty authoritative lists. File contents are not cached.
+digest, type and size, and retains empty authoritative lists. Previously downloaded file contents
+are protected by the encrypted-preview checkpoint above.
 
 Current view capability, destination scope and access revision remain mandatory. Known
 authority changes invalidate the observations; generation guards prevent late responses
@@ -30,7 +61,7 @@ No backend or migration changed.
 Human retest after rebuilding: load a disposable transaction's attachments online, disconnect,
 relaunch and reopen that transaction. Verify its loaded filenames return, then queue an intentional
 removal using the existing confirmation and reconnect to complete once. A transaction whose list
-was never loaded still needs a connection. Offline file download/preview remains unfinished;
+was never loaded still needs a connection. Previously opened files now support encrypted offline preview;
 staged pending uploads retain their existing protected local preview. TestFlight remains held.
 
 ## Native durable reviewed attachment removal (2026-10-09)
@@ -63,8 +94,8 @@ No backend or migration changed in this checkpoint; the preceding server contrac
 TestFlight remains held; Live, attachments and Simulator data were not modified.
 
 The attachment-list reopening gap identified at this checkpoint is closed by the protected
-offline attachment-list checkpoint above. General offline download/preview of previously
-unstaged server attachments remains unfinished; queued removals remain visible after relaunch
+offline attachment-list checkpoint above. Previously opened files now support encrypted offline
+preview; never-downloaded files require connectivity. Queued removals remain visible after relaunch
 through Pending Sync.
 
 Human retest after app rebuild and server update: open a disposable transaction and load

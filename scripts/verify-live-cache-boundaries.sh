@@ -108,7 +108,36 @@ try await MainActor.run {
  print("PASS: duplicate, oversized, empty, detached, unsupported and corrupted attachment observations are refused")
  let relaunch = LiveAttachmentReadCache(directory: attachmentRoot, storageScope: baseScope, accessRevision: "a")
  let saved = try relaunch.load(transactionID: "posted"); precondition(saved == [receipt])
+ let preview = Data("private receipt contents".utf8)
+ let previewKey = Data(repeating: 7, count: 32)
+ var previewJSON = receiptJSON
+ previewJSON["byte_count"] = preview.count
+ previewJSON["sha256"] = SHA256.hash(data: preview).map { String(format: "%02x", $0) }.joined()
+ let previewAttachment = try JSONDecoder().decode(APITransactionAttachment.self, from: JSONSerialization.data(withJSONObject: previewJSON))
+ try lists.save([previewAttachment], transactionID: "posted", generation: lists.generation)
+ try lists.saveBytes(preview, attachment: previewAttachment, keyData: previewKey, generation: lists.generation)
+ let cachedPreview = try relaunch.loadBytes(attachment: previewAttachment, keyData: previewKey)
+ precondition(cachedPreview == preview)
+ let encryptedFile = try FileManager.default.contentsOfDirectory(at: attachmentRoot, includingPropertiesForKeys: nil).first { $0.pathExtension == "enc" }!
+ let ciphertext = try Data(contentsOf: encryptedFile); precondition(ciphertext.range(of: preview) == nil)
+ do { _ = try lists.loadBytes(attachment: previewAttachment, keyData: Data(repeating: 8, count: 32)); fatalError("Wrong preview key accepted") } catch {}
+ do { try lists.saveBytes(Data("wrong".utf8), attachment: previewAttachment, keyData: previewKey, generation: lists.generation); fatalError("Wrong preview digest accepted") } catch {}
+ var tampered = ciphertext; tampered[tampered.count - 1] ^= 1
+ try tampered.write(to: encryptedFile, options: .atomic)
+ do { _ = try lists.loadBytes(attachment: previewAttachment, keyData: previewKey); fatalError("Tampered preview accepted") } catch {}
+ try ciphertext.write(to: encryptedFile, options: .atomic)
  lists.acknowledgeRemoval(transactionID: "posted", attachmentID: "receipt")
+ precondition(!FileManager.default.fileExists(atPath: encryptedFile.path))
+ do { _ = try lists.loadBytes(attachment: previewAttachment, keyData: previewKey); fatalError("Removed preview opened") } catch {}
+ print("PASS: encrypted previews survive relaunch, reject wrong keys/digests/tampering, and disappear after accepted removal")
+ for index in 0..<12 {
+     var itemJSON = previewJSON; itemJSON["id"] = "file-\(index)"; itemJSON["transaction_id"] = "preview-\(index)"
+     let item = try JSONDecoder().decode(APITransactionAttachment.self, from: JSONSerialization.data(withJSONObject: itemJSON))
+     try lists.save([item], transactionID: item.transactionID, generation: lists.generation)
+     try lists.saveBytes(preview, attachment: item, keyData: previewKey, generation: lists.generation)
+ }
+ let boundedPreviews = try FileManager.default.contentsOfDirectory(at: attachmentRoot, includingPropertiesForKeys: nil).filter { $0.pathExtension == "enc" }
+ precondition(boundedPreviews.count == 10)
  let removed = try relaunch.load(transactionID: "posted"); precondition(removed.isEmpty)
  try lists.save([receipt], transactionID: "posted", generation: lists.generation)
  do { try lists.requireScope("other"); fatalError("Wrong endpoint accepted") } catch {}
@@ -116,6 +145,8 @@ try await MainActor.run {
  do { try lists.save([receipt], transactionID: "other", generation: lists.generation); fatalError("Cross-target metadata saved") } catch {}
  let oldGeneration = lists.generation
  lists.updateAuthority("b", changed: true)
+ let revokedPreviews = try FileManager.default.contentsOfDirectory(at: attachmentRoot, includingPropertiesForKeys: nil).filter { $0.pathExtension == "enc" }
+ precondition(revokedPreviews.isEmpty)
  do { _ = try relaunch.load(transactionID: "posted"); fatalError("Revoked list retained") } catch {}
  do { try lists.save([receipt], transactionID: "posted", generation: oldGeneration); fatalError("Late pre-revocation response cached") } catch {}
  try lists.save([], transactionID: "posted", generation: lists.generation)

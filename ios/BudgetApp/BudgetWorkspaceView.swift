@@ -3915,7 +3915,49 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         try transactionOutbox.enqueueAttachment(id: operationID, transactionID: id, filename: filename, contentType: contentType, data: data)
         try await replaySavedPlanning()
     }
-    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await credentials.prepare(); return try await client.downloadTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
+    func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data {
+        let observed = attachmentReadCache.generation
+        func requireCurrentScope() throws {
+            guard observed == attachmentReadCache.generation, budget.can("view_transactions") else { throw CancellationError() }
+            try attachmentReadCache.requireScope(liveServerStorageScope(budgetID: budget.id,
+                serverURL: credentials.serverURL, token: credentials.token))
+        }
+        func previewKey(create: Bool) throws -> Data {
+            let store = KeychainStore()
+            let account = "live-attachment-preview-v1-" + attachmentReadCache.storageScope
+            if let key = store.readData(account: account), key.count == 32 { return key }
+            guard create else { throw BudgetApplicationError.invalidOperation("Open this attachment online once before using its offline preview.") }
+            let key = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+            try store.saveData(key, account: account)
+            return key
+        }
+        try requireCurrentScope()
+        let attachments = try await self.transactionAttachments(id: transactionID)
+        guard let attachment = attachments.first(where: { $0.id == attachmentID }) else {
+            throw BudgetApplicationError.invalidOperation("This attachment is no longer available.")
+        }
+        do {
+            try await credentials.prepare(); try requireCurrentScope()
+            let data = try await client.downloadTransactionAttachment(budgetID: budget.id,
+                transactionID: transactionID, attachmentID: attachmentID, token: token)
+            try requireCurrentScope()
+            guard data.count == attachment.byteCount,
+                  SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == attachment.sha256 else {
+                throw BudgetApplicationError.invalidOperation("Attachment integrity verification failed.")
+            }
+            if let key = try? previewKey(create: true) {
+                try? attachmentReadCache.saveBytes(data, attachment: attachment, keyData: key, generation: observed)
+            }
+            return data
+        } catch {
+            try requireCurrentScope()
+            if case let APIClientError.server(status, _) = error, status == 403 || status == 404 {
+                attachmentReadCache.remove(transactionID: transactionID)
+            }
+            guard isTransientConnectivityFailure(error) else { throw error }
+            return try attachmentReadCache.loadBytes(attachment: attachment, keyData: previewKey(create: false))
+        }
+    }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws {
         throw BudgetApplicationError.invalidOperation("Reopen the attachment to review it before removing.")
     }
