@@ -1,5 +1,25 @@
 # Production readiness mission ledger
 
+## Bounded transaction-list editor attribution (2026-10-09)
+
+The transaction response helper described itself as bounded but hydrated every edit-history entity
+and its snapshots for each displayed transaction, then discarded all except the latest. An actual
+HTTP list regression with 10,000 edits on one transaction reproduced 10,000 ORM history loads.
+
+The helper now ranks eligible editor observations in SQL by existing timestamp/ID ordering and
+returns only transaction ID, actor ID and timestamp for the latest row per displayed transaction.
+No historical before/after snapshot is selected or hydrated. Existing action eligibility, returned
+transaction order, creator attribution and current authorized-transaction scope remain unchanged.
+Database work still depends on history size; this bounds returned data/application hydration rather
+than claiming constant-time queries or fixing whole-workspace transaction hydration.
+
+Verification: 40 focused provenance/browser/history/bulk/delegated-access tests passed. The enhanced
+scale regression also passed independently and instruments the real HTTP request: exactly one
+scalar attribution row returned, zero history entities hydrated, correct editor/time, and a newer
+non-editor observation excluded. Diff checks passed. No Swift changes or native test rerun; no
+migration, app rebuild, history rewrite or customer-data change. Server update/restart required.
+This is a focused performance checkpoint, not release-wide acceptance. TestFlight remains held.
+
 ## Transfer metadata preserves original payment observations (2026-10-09)
 
 Following the card-purchase correction, an actual HTTP regression proved unchanged and metadata-only

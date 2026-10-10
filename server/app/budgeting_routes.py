@@ -310,15 +310,23 @@ def transaction_response_rows(db: Session, transactions: list[Transaction]) -> l
     if not transactions:
         return []
     ids = [item.id for item in transactions]
-    changes = list(db.scalars(select(TransactionChange).where(
+    ranked_changes = select(
+        TransactionChange.transaction_id,
+        TransactionChange.actor_user_id,
+        TransactionChange.created_at,
+        func.row_number().over(
+            partition_by=TransactionChange.transaction_id,
+            order_by=(TransactionChange.created_at.desc(), TransactionChange.id.desc()),
+        ).label("position"),
+    ).where(
         TransactionChange.transaction_id.in_(ids),
         TransactionChange.action.in_((
             "updated", "bulk_updated", "voided", "attachment_added", "attachment_detached",
         )),
-    ).order_by(TransactionChange.created_at.desc(), TransactionChange.id.desc())))
-    latest = {}
-    for change in changes:
-        latest.setdefault(change.transaction_id, change)
+    ).subquery()
+    latest = {row.transaction_id: row for row in db.execute(select(
+        ranked_changes.c.transaction_id, ranked_changes.c.actor_user_id, ranked_changes.c.created_at,
+    ).where(ranked_changes.c.position == 1))}
     user_ids = {item.created_by_user_id for item in transactions}
     user_ids.update(change.actor_user_id for change in latest.values())
     names = {item.id: item.display_name for item in db.scalars(select(User).where(User.id.in_(user_ids)))}
