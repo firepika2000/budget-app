@@ -3640,6 +3640,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func shouldPauseRejectedTransaction(_ error: Error) -> Bool {
+        if error is AttachmentStagingError { return true }
         guard case let APIClientError.server(status, _) = error else { return false }
         // Authentication and uncertain transport failures remain owned by the session/retry lifecycle.
         return [400, 403, 404, 409, 422].contains(status)
@@ -3670,6 +3671,18 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let upload = entry.attachmentUpload {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            let data = try transactionOutbox.stagedAttachmentData(for: entry)
+            let accepted = try await client.uploadTransactionAttachment(budgetID: budget.id, transactionID: upload.transactionID,
+                filename: upload.filename, contentType: upload.contentType, data: data, operationID: entry.id, token: token)
+            guard accepted.transactionID == upload.transactionID, accepted.byteCount == Int64(upload.byteCount),
+                  accepted.sha256 == upload.sha256, accepted.contentType == upload.contentType, accepted.detachedAt == nil else {
+                throw AttachmentStagingError.invalid
+            }
+            return
+        }
         if let operation = entry.voidCommand {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3805,7 +3818,11 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await credentials.prepare(); return try await client.transactionAttachments(budgetID: budget.id, transactionID: id, token: token) }
     func transactionHistory(id: String, limit: Int, offset: Int) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.transactionHistory(budgetID: budget.id, transactionID: id, limit: limit, offset: offset, token: token) }
     func recentTransactionChanges(limit: Int) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.recentTransactionChanges(budgetID: budget.id, limit: limit, token: token) }
-    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await credentials.prepare(); _ = try await client.uploadTransactionAttachment(budgetID: budget.id, transactionID: id, filename: filename, contentType: contentType, data: data, token: token) }
+    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws {
+        let operationID = UUID().uuidString.lowercased()
+        try transactionOutbox.enqueueAttachment(id: operationID, transactionID: id, filename: filename, contentType: contentType, data: data)
+        try await replaySavedPlanning()
+    }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await credentials.prepare(); return try await client.downloadTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await credentials.prepare(); try await client.detachTransactionAttachment(budgetID: budget.id, transactionID: transactionID, attachmentID: attachmentID, token: token) }
     func bulkUpdateTransactions(_ update: APITransactionBulkUpdate) async throws {
@@ -4801,6 +4818,9 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if let upload = entry.attachmentUpload {
+                return budget.can("edit_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == upload.transactionID })
+            }
             if let command = entry.voidCommand {
                 return budget.can("delete_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == command.transactionID })
             }
@@ -4954,7 +4974,11 @@ final class BudgetWorkspaceStore: ObservableObject {
     func recentReconciliationHistory(limit: Int = 5) async throws -> [APIReconciliationHistory] {
         try await authorizedObservation { try await services().accounts.recentReconciliationHistory(limit: limit) }
     }
-    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try await services().transactions.uploadAttachment(id: id, filename: filename, contentType: contentType, data: data); await refresh() }
+    func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws {
+        defer { publishPendingPlanningStatus() }
+        try await services().transactions.uploadAttachment(id: id, filename: filename, contentType: contentType, data: data)
+        await refresh()
+    }
     func downloadTransactionAttachment(transactionID: String, attachmentID: String) async throws -> Data { try await authorizedObservation { try await services().transactions.downloadAttachment(transactionID: transactionID, attachmentID: attachmentID) } }
     func detachTransactionAttachment(transactionID: String, attachmentID: String) async throws { try await services().transactions.detachAttachment(transactionID: transactionID, attachmentID: attachmentID); await refresh() }
 
@@ -6287,6 +6311,11 @@ private struct PendingLiveTransactionsView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text("Saved for server approval · reconciliation history and balances remain unchanged until accepted")
                                     .font(.caption).foregroundStyle(.secondary)
+                            } else if let upload = entry.attachmentUpload {
+                                Text("Upload Attachment").font(.headline)
+                                Text(upload.filename).font(.subheadline)
+                                Text(ByteCountFormatter.string(fromByteCount: Int64(upload.byteCount), countStyle: .file)).font(.caption)
+                                Text("Saved on this iPhone · awaiting server confirmation").font(.caption).foregroundStyle(.secondary)
                             } else if let command = entry.voidCommand {
                                 Text("Void with Reversal").font(.headline)
                                 Text(store.transactions.first(where: { $0.id == command.transactionID })?.payeeName ?? "Transaction")
@@ -10440,8 +10469,20 @@ private struct TransactionAttachmentsView: View {
     @State private var pendingRemoval: APITransactionAttachment?
     @State private var previewURL: URL?
     @State private var error: String?
+    private var pendingUploads: [LiveTransactionOutbox.Entry] {
+        store.pendingLiveTransactions.filter { $0.attachmentUpload?.transactionID == transaction.id }
+    }
     var body: some View { Section("Attachments") { if attachments.isEmpty { Text("No attachments").foregroundStyle(.secondary) }; ForEach(attachments) { attachment in HStack(spacing: 12) { Button { Task { await open(attachment) } } label: { VStack(alignment: .leading) { Text(attachment.filename); Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file)).font(.caption).foregroundStyle(.secondary) }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityIdentifier("attachment-preview-\(attachment.id)").accessibilityLabel("Preview \(attachment.filename)"); if store.budget.can("edit_transaction") { Button { pendingRemoval = attachment } label: { Image(systemName: "trash").frame(minWidth: 44, minHeight: 44) }.buttonStyle(.borderless).foregroundStyle(.red).accessibilityIdentifier("attachment-remove-\(attachment.id)").accessibilityLabel("Remove \(attachment.filename)") } } }; if store.budget.can("edit_transaction"), transaction.status != "reversal", attachments.count < 20 { Button("Add Attachment", systemImage: "paperclip") { showingSources = true }.accessibilityIdentifier("add-attachment-action") }; Text("PDF, JPEG, PNG, or HEIC · 10 MB maximum · detached files retained 30 days").font(.caption).foregroundStyle(.secondary) }
         .task(id: store.liveCredentialRevision) { await load() }
+        .safeAreaInset(edge: .bottom) {
+            if !pendingUploads.isEmpty {
+                Text("\(pendingUploads.count) upload(s) saved on this iPhone · review in Pending Sync")
+                    .font(.caption).foregroundStyle(.secondary).padding(8).background(.background)
+            }
+        }
+        .onChange(of: pendingUploads.count) { oldCount, newCount in
+            if oldCount > 0 && newCount == 0 { Task { await load() } }
+        }
         .confirmationDialog("Add Attachment", isPresented: $showingSources, titleVisibility: .visible) {
             Button("Take Photo", systemImage: "camera") { queue(.camera) }.accessibilityIdentifier("attachment-take-photo")
             Button("Choose Photo", systemImage: "photo.on.rectangle") { queue(.photos) }.accessibilityIdentifier("attachment-choose-photo")
@@ -10467,6 +10508,7 @@ private struct TransactionAttachmentsView: View {
         .alert("Attachment error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
     }
     private func load() async {
+        guard !store.isWorkingOffline else { return }
         do {
             attachments = try await store.transactionAttachments(id: transaction.id)
             error = nil
@@ -10497,7 +10539,7 @@ private struct TransactionAttachmentsView: View {
     private func upload(data: Data, filename: String, contentType: String) async throws {
         guard data.count <= 10 * 1024 * 1024 else { throw workspaceRepositoryError("Attachments must be 10 MB or smaller.") }
         try await store.uploadTransactionAttachment(id: transaction.id, filename: filename, contentType: contentType, data: data)
-        await load()
+        if pendingUploads.isEmpty { await load() }
     }
     private func queue(_ source: PendingSource) {
         pendingSource = source

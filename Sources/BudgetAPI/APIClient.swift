@@ -375,13 +375,14 @@ public struct APIClient {
         )
     }
 
-    public func uploadTransactionAttachment(budgetID: String, transactionID: String, filename: String, contentType: String, data: Data, token: String) async throws -> APITransactionAttachment {
+    public func uploadTransactionAttachment(budgetID: String, transactionID: String, filename: String, contentType: String, data: Data, operationID: String? = nil, token: String) async throws -> APITransactionAttachment {
         var request = URLRequest(url: baseURL.appending(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)/attachments"))
         request.httpMethod = "POST"; request.httpBody = data
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(filename, forHTTPHeaderField: "X-Attachment-Filename")
         request.setValue(contentType, forHTTPHeaderField: "X-Attachment-Content-Type")
+        if let operationID { request.setValue(operationID, forHTTPHeaderField: "X-Attachment-Operation-ID") }
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (body, response) = try await session.data(for: request)
         try validate(response: response, data: body)

@@ -17,7 +17,8 @@ to merge drafts or claiming that an in-flight request did not reach the server.
 
 **Not complete:** the durable Live outbox now supports creation and observed ordinary transaction
 edits, observed bulk metadata/clearing actions, Assign, category Move Money and account-transfer
-creation/observed edits, observed Void with Reversal, and reconciliation against a captured server-reviewed transaction set.
+creation/observed edits, observed Void with Reversal, reconciliation against a captured server-reviewed transaction set,
+and integrity-bound attachment uploads with protected staged bytes.
 Administrative commands still send directly through their authenticated APIs.
 The following defines the complete milestone, not a claim of human-accepted offline editing. Local Device
 already owns its local writes; its storage must not be replaced by a hosted replay queue.

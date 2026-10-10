@@ -18,6 +18,8 @@ session = File.read("ios/BudgetApp/AppSession.swift")
 puts 'struct APIBudget: Equatable { let id: String }'
 puts session[session.index("enum WorkspaceRouteContext:")...session.index("enum ApplicationRoute:")]
 workspace = File.read("ios/BudgetApp/BudgetWorkspaceView.swift")
+abort "Attachment upload must stage before replay" unless workspace.include?("try transactionOutbox.enqueueAttachment(id: operationID") && workspace.include?("operationID: entry.id, token: token") && workspace.include?("let data = try transactionOutbox.stagedAttachmentData(for: entry)")
+abort "Attachment acknowledgement must verify integrity" unless workspace.include?("accepted.sha256 == upload.sha256") && workspace.include?("accepted.byteCount == Int64(upload.byteCount)") && workspace.include?("accepted.transactionID == upload.transactionID") && workspace.include?("accepted.detachedAt == nil")
 send_first = workspace.index("    private func sendTransaction(")
 send_last = workspace.index("    func householdInvitations()", send_first || 0)
 abort "Canonical send path moved; review binding guard" unless send_first && send_last
@@ -306,6 +308,48 @@ try await Task { @MainActor in
  precondition(voidSends == 3 && LiveTransactionOutbox(fileURL: voidFile).count == 0)
  print("PASS: void target/reason/revision/identity survive lost response and relaunch, duplicate pending void rejected, stale rejection pauses, explicit retry preserves original intent, acknowledgement removes saved command")
  print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, persisted rejection pause, later operations blocked, explicit ordered retry, targeted edits/bulk/transfers survive relaunch, stale transfer versions never rebased, stale owners cannot overwrite/replay/ack newer intent, no send after persistence failure")
+ let uploadFile = root.appendingPathComponent("upload.json")
+ let uploadQueue = LiveTransactionOutbox(fileURL: uploadFile)
+ let uploadID = UUID().uuidString.lowercased()
+ let bytes = Data("%PDF-staged-receipt".utf8)
+ try uploadQueue.enqueueAttachment(id: uploadID, transactionID: "original", filename: "receipt.pdf", contentType: "application/pdf", data: bytes)
+ try uploadQueue.enqueueAttachment(id: uploadID, transactionID: "original", filename: "receipt.pdf", contentType: "application/pdf", data: bytes)
+ precondition(uploadQueue.count == 1)
+ do { try uploadQueue.enqueueAttachment(id: uploadID, transactionID: "different", filename: "receipt.pdf", contentType: "application/pdf", data: bytes); fatalError("Upload identity reused for different target") } catch {}
+ let persistedUploadJSON = try Data(contentsOf: uploadFile)
+ precondition(persistedUploadJSON.count < 4096)
+ let stagedURL = uploadFile.appendingPathExtension("attachments").appendingPathComponent(uploadID)
+ let uploadPermissions = try FileManager.default.attributesOfItem(atPath: stagedURL.path)[.posixPermissions] as? NSNumber
+ precondition(uploadPermissions?.intValue == 0o600)
+ let reopenedUpload = LiveTransactionOutbox(fileURL: uploadFile)
+ let reopenedBytes = try reopenedUpload.stagedAttachmentData(for: reopenedUpload.entries[0])
+ precondition(reopenedBytes == bytes)
+ do { try await reopenedUpload.replayCommands { _ in throw URLError(.networkConnectionLost) }; fatalError("Expected interrupted upload") } catch {}
+ let retainedUpload = LiveTransactionOutbox(fileURL: uploadFile)
+ precondition(retainedUpload.entries[0].id == uploadID)
+ try await retainedUpload.replayCommands { entry in
+     precondition(entry.id == uploadID)
+     let retryBytes = try retainedUpload.stagedAttachmentData(for: entry)
+     precondition(retryBytes == bytes)
+ }
+ precondition(LiveTransactionOutbox(fileURL: uploadFile).count == 0 && !FileManager.default.fileExists(atPath: stagedURL.path))
+ let corruptQueue = LiveTransactionOutbox(fileURL: root.appendingPathComponent("corrupt-upload.json"))
+ let corruptID = UUID().uuidString.lowercased()
+ try corruptQueue.enqueueAttachment(id: corruptID, transactionID: "original", filename: "receipt.pdf", contentType: "application/pdf", data: bytes)
+ let corruptURL = root.appendingPathComponent("corrupt-upload.json").appendingPathExtension("attachments").appendingPathComponent(corruptID)
+ try Data(repeating: 0, count: bytes.count).write(to: corruptURL)
+ do { try await corruptQueue.replayCommands(shouldPause: { $0 is AttachmentStagingError }) { entry in
+     _ = try corruptQueue.stagedAttachmentData(for: entry)
+     fatalError("Corrupt bytes reached transport")
+ }; fatalError("Expected corrupt-byte refusal") } catch {}
+ precondition(corruptQueue.entries[0].requiresReview == true && FileManager.default.fileExists(atPath: corruptURL.path))
+ do { try corruptQueue.enqueueAttachment(id: UUID().uuidString, transactionID: "original", filename: "bad.pdf", contentType: "application/pdf", data: Data("not a PDF".utf8)); fatalError("Invalid signature accepted") } catch {}
+ do { try corruptQueue.enqueueAttachment(id: UUID().uuidString, transactionID: "original", filename: "large.pdf", contentType: "application/pdf", data: bytes + Data(repeating: 0, count: 10 * 1024 * 1024)); fatalError("Oversized file accepted") } catch {}
+ let boundedQueue = LiveTransactionOutbox(fileURL: root.appendingPathComponent("bounded-upload.json"))
+ for _ in 0..<20 { try boundedQueue.enqueueAttachment(id: UUID().uuidString, transactionID: "original", filename: "receipt.pdf", contentType: "application/pdf", data: bytes) }
+ do { try boundedQueue.enqueueAttachment(id: UUID().uuidString, transactionID: "original", filename: "receipt.pdf", contentType: "application/pdf", data: bytes); fatalError("Twenty-first pending upload accepted") } catch {}
+ precondition(boundedQueue.count == 20)
+ print("PASS: protected upload bytes and identity survive interrupted transport/relaunch; verified acknowledgement removes bytes; corrupt bytes pause without transport or deletion; invalid signature rejected")
 }.value
 SWIFT
 RUBY

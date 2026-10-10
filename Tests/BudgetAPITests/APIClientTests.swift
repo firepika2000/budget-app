@@ -818,12 +818,35 @@ final class APIClientTests: XCTestCase {
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Attachment-Filename"), "receipt.pdf")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Attachment-Content-Type"), "application/pdf")
+            XCTAssertNil(request.value(forHTTPHeaderField: "X-Attachment-Operation-ID"))
             XCTAssertEqual(try requestBody(request), Data("%PDF-test".utf8))
             return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data(#"{"id":"at1","transaction_id":"t1","filename":"receipt.pdf","content_type":"application/pdf","byte_count":9,"sha256":"hash","created_at":"2026-09-14T12:00:00Z","detached_at":null}"#.utf8))
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
         let result = try await client.uploadTransactionAttachment(budgetID: "b1", transactionID: "t1", filename: "receipt.pdf", contentType: "application/pdf", data: Data("%PDF-test".utf8), token: "secret")
         XCTAssertEqual(result.id, "at1")
+    }
+
+    func testIdentifiedAttachmentRetryPreservesBytesAndUsesRotatedCredential() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let identity = UUID().uuidString.lowercased()
+        let bytes = Data("%PDF-test".utf8)
+        var requests = 0
+        MockURLProtocol.handler = { request in
+            requests += 1
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/t1/attachments")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Attachment-Operation-ID"), identity)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), requests == 1 ? "Bearer old" : "Bearer current")
+            XCTAssertEqual(try requestBody(request), bytes)
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data(#"{"id":"at1","transaction_id":"t1","filename":"receipt.pdf","content_type":"application/pdf","byte_count":9,"sha256":"hash","created_at":"2026-09-14T12:00:00Z","detached_at":null}"#.utf8))
+        }
+        for token in ["old", "current"] {
+            _ = try await client.uploadTransactionAttachment(budgetID: "b1", transactionID: "t1", filename: "receipt.pdf", contentType: "application/pdf", data: bytes, operationID: identity, token: token)
+        }
+        XCTAssertEqual(requests, 2)
     }
 
     func testBulkTransactionUpdateUsesAtomicTypedContract() async throws {

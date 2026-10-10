@@ -108,6 +108,11 @@ struct VoidTransactionOperation: Codable, Equatable, Sendable {
     var mutationOperationID: String? = nil
 }
 
+enum AttachmentStagingError: LocalizedError {
+    case invalid
+    var errorDescription: String? { "Saved attachment bytes are missing or changed. The queued upload is preserved for review in Pending Sync." }
+}
+
 struct ScheduleOperation: Equatable, Sendable {
     let accountID: String
     let destinationAccountID: String?
@@ -224,6 +229,13 @@ enum HistoryObservationPolicy {
 /// authority mutations deliberately remain outside this queue.
 @MainActor
 final class LiveTransactionOutbox {
+    struct AttachmentUpload: Codable, Equatable {
+        let transactionID: String
+        let filename: String
+        let contentType: String
+        let byteCount: Int
+        let sha256: String
+    }
     struct Entry: Codable, Equatable, Identifiable {
         let id: String
         let queuedAt: Date
@@ -237,6 +249,7 @@ final class LiveTransactionOutbox {
         var transferID: String? = nil
         var reconciliation: ReconcileAccountOperation? = nil
         var voidCommand: VoidTransactionOperation? = nil
+        var attachmentUpload: AttachmentUpload? = nil
     }
 
     private let fileURL: URL
@@ -430,6 +443,7 @@ final class LiveTransactionOutbox {
                   existing.accountTransfer == entry.accountTransfer && existing.transferID == entry.transferID,
                   existing.reconciliation == entry.reconciliation,
                   existing.voidCommand == entry.voidCommand,
+                  existing.attachmentUpload == entry.attachmentUpload,
                   existing.operation == nil && existing.bulkUpdate == nil else {
                 throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
             }
@@ -464,6 +478,69 @@ final class LiveTransactionOutbox {
             throw BudgetApplicationError.invalidOperation("This transaction already has a saved void. Resolve it in Pending Sync before submitting another.")
         }
         try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, voidCommand: operation))
+    }
+
+    func enqueueAttachment(id: String, transactionID: String, filename: String, contentType: String, data: Data) throws {
+        try requireReadableQueue()
+        try requireCurrentSnapshot()
+        let type = contentType.split(separator: ";", maxSplits: 1).first.map(String.init)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let prefix = Array(data.prefix(12))
+        let validSignature: Bool
+        switch type {
+        case "application/pdf": validSignature = data.starts(with: Data("%PDF-".utf8))
+        case "image/jpeg": validSignature = data.starts(with: [0xff, 0xd8, 0xff])
+        case "image/png": validSignature = data.starts(with: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+        case "image/heic", "image/heif": validSignature = prefix.count == 12 && String(bytes: prefix[4..<8], encoding: .ascii) == "ftyp" && ["heic", "heix", "hevc", "hevx", "mif1", "msf1"].contains(String(bytes: prefix[8..<12], encoding: .ascii) ?? "")
+        default: validSignature = false
+        }
+        guard UUID(uuidString: id) != nil, !transactionID.isEmpty, !data.isEmpty,
+              data.count <= 10 * 1024 * 1024, validSignature else {
+            throw BudgetApplicationError.invalidOperation("Choose a valid PDF, JPEG, PNG or HEIC file, 10 MB or smaller.")
+        }
+        let name = (filename.replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent
+            .unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.map(String.init).joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload = AttachmentUpload(transactionID: transactionID, filename: name.isEmpty ? "attachment" : String(name.prefix(255)),
+                                       contentType: type, byteCount: data.count, sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
+        let entry = Entry(id: id, queuedAt: Date(), operation: nil, attachmentUpload: payload)
+        if let existing = entries.first(where: { $0.id == id }) {
+            guard existing.attachmentUpload == payload else { throw BudgetApplicationError.invalidOperation("A saved upload identity cannot be reused for another file.") }
+            _ = try stagedAttachmentData(for: existing)
+            return
+        }
+        guard entries.filter({ $0.attachmentUpload?.transactionID == transactionID }).count < 20 else {
+            throw BudgetApplicationError.invalidOperation("This transaction already has 20 pending uploads. Let them synchronize before adding more.")
+        }
+        let destination = attachmentStagingURL(id: id)
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: destination.deletingLastPathComponent().path)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            _ = try stagedAttachmentData(for: entry) // Never overwrite a retained publication with different bytes.
+        } else {
+            try data.write(to: destination, options: [.atomic, .completeFileProtection])
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
+        }
+        // Publish metadata only after bytes are durably protected. Failed publication retains
+        // the staged object; never delete bytes when an atomic write's outcome is uncertain.
+        try enqueuePlanning(entry)
+    }
+
+    private func attachmentStagingURL(id: String) -> URL {
+        fileURL.appendingPathExtension("attachments").appendingPathComponent(id)
+    }
+
+    func stagedAttachmentData(for entry: Entry) throws -> Data {
+        guard UUID(uuidString: entry.id) != nil, let payload = entry.attachmentUpload else { throw AttachmentStagingError.invalid }
+        let url = attachmentStagingURL(id: entry.id)
+        let data: Data
+        do {
+            guard try url.resourceValues(forKeys: [.fileSizeKey]).fileSize == payload.byteCount else { throw AttachmentStagingError.invalid }
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile { throw AttachmentStagingError.invalid }
+        guard data.count == payload.byteCount, SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == payload.sha256 else {
+            throw AttachmentStagingError.invalid
+        }
+        return data
     }
 
     func retryReviewed(id: String) throws {
@@ -516,9 +593,11 @@ final class LiveTransactionOutbox {
 
     private func removePersisted(id: String) throws {
         try requireReadableQueue()
+        let staged = entries.first(where: { $0.id == id })?.attachmentUpload != nil
         let next = entries.filter { $0.id != id }
         try persist(next)
         entries = next
+        if staged { try? FileManager.default.removeItem(at: attachmentStagingURL(id: id)) }
     }
 
     private func requireReadableQueue() throws {
@@ -534,8 +613,14 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
+                  if let upload = entry.attachmentUpload {
+                      return entry.transactionID == nil && entry.transferID == nil && !upload.transactionID.isEmpty
+                          && !upload.filename.isEmpty && upload.filename.count <= 255 && (1...10 * 1024 * 1024).contains(upload.byteCount)
+                          && ["application/pdf", "image/jpeg", "image/png", "image/heic", "image/heif"].contains(upload.contentType)
+                          && upload.sha256.count == 64 && upload.sha256.allSatisfy({ "0123456789abcdef".contains($0) })
+                  }
                   if let command = entry.voidCommand {
                       guard let revision = command.expectedRevision else { return false }
                       return entry.transactionID == nil && entry.transferID == nil

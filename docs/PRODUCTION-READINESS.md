@@ -1,5 +1,43 @@
 # Production readiness mission ledger
 
+## Native protected attachment upload replay (2026-10-09)
+
+Photos, Camera and Files continue through the existing transaction attachment application
+service. Live now stages validated bytes before publishing a queue entry, using atomic
+complete-file-protection writes, directory mode 0700 and file mode 0600. Metadata binds the
+transaction, sanitized filename, MIME, byte count, SHA-256 and stable upload UUID. Replay
+resolves current credentials and verifies the destination and staged integrity before sending
+the existing upload endpoint. Returned transaction, MIME, size, hash and active status must
+match before acknowledgement removes queue metadata and then staged bytes.
+
+Pending Sync exposes uploads only with current edit/view permission and visible target
+transactions. Interrupted uploads retain bytes and identity; rejected or damaged uploads
+remain for review rather than recreating files or synthesizing accepted attachment metadata.
+Transaction detail shows a saved-upload notice and reloads accepted metadata when the pending
+upload count clears. Ordinary offline opening skips the remote attachment-list request.
+
+Executed checks: production outbox host regression (relaunch, lost response, protected-file
+permissions, exact retry bytes, acknowledgement cleanup, corruption pause and invalid signature);
+two Swift API tests (legacy header omission and stable identity/binary body with rotated token).
+Regular Xcode 27.0 build 27A266a `build-for-testing` passed for the production app and native
+test targets on preserved iPhone 17 Pro Max simulator
+`3ABD861E-D38D-4AFD-A356-959266051564` (iOS 27). `git diff --check` passed.
+These checks do not claim executed native XCTest, human or Simulator UI runtime acceptance.
+
+Limits: staged bytes are protected by iOS file protection, not a second application encryption
+format. Server encryption remains unchanged. Failed queue publication or best-effort cleanup
+can retain protected orphan files; automatic orphan recovery/pruning is not implemented.
+Previously downloaded attachment content is not a general offline cache. Administrative
+commands and other unfinished offline work remain outside this checkpoint.
+
+Human retest on an updated server containing the identified-upload receipt support: open an
+authorized posted transaction, disconnect networking, select one small valid receipt, verify
+the saved-upload notice and Pending Sync entry, relaunch without deleting data, reconnect,
+and verify exactly one readable attachment appears and the pending entry clears. A separate
+revoked-permission test should retain the pending bytes for review without publishing the file.
+Rebuild required; server receipt support through c6c6746 required. No new migration beyond
+existing 0049. TestFlight remains on hold; no merge/tag/release.
+
 ## Identified attachment upload server boundary (2026-10-09)
 
 The attachment audit found uncertain uploads could be retried as a new upload, consuming
@@ -28,8 +66,8 @@ Disposable PostgreSQL was stopped afterward; no Live/Simulator data touched.
 `git diff --check` passed. No Swift changes/native rebuild or full-backend-suite claim.
 
 Server update/restart required. Existing migration 0049 receipt table is required; no new
-migration. Native protected file staging, integrity-bound upload replay and user-visible Pending
-Sync remain the next incomplete slice. TestFlight remains on hold; no merge/tag/release.
+migration. Native protected staging and upload replay are implemented in the checkpoint above;
+human offline acceptance remains pending. TestFlight remains on hold; no merge/tag/release.
 
 ## Native durable observed Void with Reversal (2026-10-09)
 
