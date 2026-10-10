@@ -377,8 +377,19 @@ struct WorkspaceReportQuery: Equatable {
     let start: Date; let end: Date; let accountID: String; let categoryID: String
     let categoryGroup: String; let payee: String; let memberID: String
     let transactionType: String; let cleared: String; let flag: String; let tag: String
-    let spendingTrendDimension: String
+    var spendingTrendDimension: String
     let includeTracking: Bool
+    var contributorDimension: String? = nil
+    var contributorDimensionID: String? = nil
+    var contributorStart: String? = nil
+    var contributorEnd: String? = nil
+    func selectingTrend(dimension: String, id: String, start: String, end: String) -> Self {
+        var value = self
+        value.spendingTrendDimension = dimension
+        value.contributorDimension = dimension; value.contributorDimensionID = id
+        value.contributorStart = start; value.contributorEnd = end
+        return value
+    }
     func selectingCategory(_ id: String) -> Self {
         .init(start: start, end: end, accountID: accountID, categoryID: id, categoryGroup: categoryGroup,
               payee: payee, memberID: memberID, transactionType: transactionType, cleared: cleared,
@@ -786,11 +797,16 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         let value = try await snapshot(planMonth: planMonth, report: query)
         let ids: Set<String>
         switch kind {
+        case .categorySpending where query.contributorDimension != nil:
+            ids = Set(value.spendingTrends?.series.first { $0.dimensionID == query.contributorDimensionID }?.transactionIDs ?? [])
         case .categorySpending: ids = Set(value.spending?.categories.flatMap(\.transactionIDs) ?? [])
         case .income: ids = Set(value.income?.incomeTransactionIDs ?? [])
         case .spending: ids = Set(value.income?.spendingTransactionIDs ?? [])
         }
-        let rows = value.transactions.filter { ids.contains($0.id) }.sorted {
+        let rows = value.transactions.filter {
+            ids.contains($0.id) && (query.contributorStart == nil || $0.occurredOn >= query.contributorStart!)
+                && (query.contributorEnd == nil || $0.occurredOn <= query.contributorEnd!)
+        }.sorted {
             ($0.occurredOn, $0.createdAt ?? "", $0.id) > ($1.occurredOn, $1.createdAt ?? "", $1.id)
         }
         let start: Int
@@ -4307,13 +4323,14 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         try await credentials.prepare()
         let client = try credentials.client()
         return try await client.reportContributors(budgetID: budget.id, kind: kind,
-            startDate: BudgetWorkspaceStore.dateString(query.start), endDate: BudgetWorkspaceStore.dateString(query.end),
+            startDate: query.contributorStart ?? BudgetWorkspaceStore.dateString(query.start), endDate: query.contributorEnd ?? BudgetWorkspaceStore.dateString(query.end),
             accountIDs: query.accountID.isEmpty ? [] : [query.accountID], categoryIDs: query.categoryID.isEmpty ? [] : [query.categoryID],
             categoryGroups: query.categoryGroup.isEmpty ? [] : [query.categoryGroup], memberIDs: query.memberID.isEmpty ? [] : [query.memberID],
             payees: query.payee.isEmpty ? [] : [query.payee], transactionType: query.transactionType.isEmpty ? nil : query.transactionType,
             cleared: query.cleared == "all" || query.cleared == "reconciled" ? nil : query.cleared == "cleared",
             reconciled: query.cleared == "reconciled" ? true : nil, flags: query.flag.isEmpty ? [] : [query.flag],
-            tags: query.tag.isEmpty ? [] : [query.tag], includeTracking: query.includeTracking, cursor: cursor, token: credentials.token)
+            tags: query.tag.isEmpty ? [] : [query.tag], includeTracking: query.includeTracking, cursor: cursor,
+            dimension: query.contributorDimension, dimensionID: query.contributorDimensionID, token: credentials.token)
     }
 
     func reports(planMonth: Date, query report: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceReports {
@@ -13269,6 +13286,7 @@ struct SpendingTrendChange: Identifiable, Equatable {
     let id: String
     let name: String
     let latestPeriodStart: String
+    let latestPeriodEnd: String
     let latestMinor: Int64
     let priorAverageMinor: Int64
     let increaseMinor: Int64
@@ -13291,7 +13309,7 @@ struct SpendingTrendChange: Identifiable, Equatable {
             guard !difference.overflow, difference.partialValue > 0 else { return nil }
             return Self(
                 id: series.dimensionID, name: series.dimensionName,
-                latestPeriodStart: latest.periodStart, latestMinor: latest.spendingMinor,
+                latestPeriodStart: latest.periodStart, latestPeriodEnd: latest.periodEnd, latestMinor: latest.spendingMinor,
                 priorAverageMinor: average, increaseMinor: difference.partialValue,
                 transactionIDs: latest.transactionIDs,
                 transactionIDsTruncated: latest.transactionIDsTruncated == true
@@ -13331,7 +13349,9 @@ private struct SpendingTrendsView: View {
                                 LiveReportTransactionsView(
                                     title: "\(change.name) · \(change.latestPeriodStart)",
                                     transactionIDs: change.transactionIDs,
-                                    isTruncated: change.transactionIDsTruncated
+                                    isTruncated: change.transactionIDsTruncated,
+                                    reportStart: change.latestPeriodStart, reportEnd: change.latestPeriodEnd,
+                                    reportDimension: report.dimension, reportDimensionID: change.id
                                 )
                             } label: {
                                 VStack(alignment: .leading, spacing: 3) {
@@ -13374,16 +13394,12 @@ private struct SpendingTrendsView: View {
 
     @ViewBuilder private func destination(for series: APISpendingTrendSeries) -> some View {
         let months = max(series.points.count, 1)
-        if report.dimension == "category", let category = store.spendingReport?.categories.first(where: { $0.categoryID == series.dimensionID }) {
-            NavigationLink { LiveReportCategoryView(category: category) } label: { trendLabel(series, months: months) }
-                .accessibilityIdentifier("spending-trend-category-\(series.dimensionID)")
-        } else if report.dimension == "group" {
-            NavigationLink { LiveReportGroupView(group: series.dimensionName) } label: { trendLabel(series, months: months) }
-                .accessibilityIdentifier("spending-trend-group-\(series.dimensionID)")
-        } else {
-            NavigationLink { LiveReportTransactionsView(title: series.dimensionName, transactionIDs: series.transactionIDs, isTruncated: series.transactionIDsTruncated == true) } label: { trendLabel(series, months: months) }
-                .accessibilityIdentifier("spending-trend-payee-\(series.dimensionID)")
-        }
+        NavigationLink {
+            LiveReportTransactionsView(title: series.dimensionName, transactionIDs: series.transactionIDs,
+                isTruncated: series.transactionIDsTruncated == true, reportStart: report.startDate, reportEnd: report.endDate,
+                reportDimension: report.dimension, reportDimensionID: series.dimensionID)
+        } label: { trendLabel(series, months: months) }
+            .accessibilityIdentifier("spending-trend-\(report.dimension)-\(series.dimensionID)")
     }
 
     private func trendLabel(_ series: APISpendingTrendSeries, months: Int) -> some View {
@@ -13956,6 +13972,8 @@ private struct LiveReportTransactionsView: View {
     var reportKind: APIReportContributorKind? = nil
     var reportStart: String? = nil
     var reportEnd: String? = nil
+    var reportDimension: String? = nil
+    var reportDimensionID: String? = nil
     @State private var rows: [APITransaction] = []
     @State private var batchIndex = 0
     @State private var nextCursor: String?
@@ -13964,10 +13982,10 @@ private struct LiveReportTransactionsView: View {
     @State private var requestID: UUID?
     @State private var observationAuthority: Int?
     @State private var observationContext: WorkspaceReportContext?
-    private struct LoadKey: Equatable { let ids: [String]; let authority: Int; let context: WorkspaceReportContext; let categoryID: String?; let kind: APIReportContributorKind?; let start: String?; let end: String? }
+    private struct LoadKey: Equatable { let ids: [String]; let authority: Int; let context: WorkspaceReportContext; let categoryID: String?; let kind: APIReportContributorKind?; let start: String?; let end: String?; let dimension: String?; let dimensionID: String? }
     private var ids: [String] { Array(Set(transactionIDs)).sorted() }
     private var batches: [[String]] { TransactionIdentitySelection.batches(ids) }
-    private var usesFullReport: Bool { reportCategoryID != nil || reportKind != nil }
+    private var usesFullReport: Bool { reportCategoryID != nil || reportKind != nil || reportDimension != nil }
     private var canLoadMore: Bool { usesFullReport ? nextCursor != nil : (nextCursor != nil || batchIndex < batches.count) }
     var body: some View {
         List {
@@ -13993,7 +14011,8 @@ private struct LiveReportTransactionsView: View {
         }.navigationTitle(title)
         .accessibilityIdentifier("report-contributors")
         .task(id: LoadKey(ids: ids, authority: store.authorityRevision, context: store.reportContext,
-                          categoryID: reportCategoryID, kind: reportKind, start: reportStart, end: reportEnd)) {
+                          categoryID: reportCategoryID, kind: reportKind, start: reportStart, end: reportEnd,
+                          dimension: reportDimension, dimensionID: reportDimensionID)) {
             requestID = nil; rows = []; nextCursor = nil; batchIndex = 0; loading = false; errorMessage = nil
             observationAuthority = store.authorityRevision
             observationContext = store.reportContext
@@ -14013,6 +14032,9 @@ private struct LiveReportTransactionsView: View {
             let page: APIReportContributorPage
             if let reportCategoryID {
                 page = try await store.reportContributors(query: context.query.selectingCategory(reportCategoryID), kind: .categorySpending, cursor: nextCursor)
+            } else if let reportDimension, let reportDimensionID, let reportStart, let reportEnd {
+                let query = context.query.selectingTrend(dimension: reportDimension, id: reportDimensionID, start: reportStart, end: reportEnd)
+                page = try await store.reportContributors(query: query, kind: .categorySpending, cursor: nextCursor)
             } else if let reportKind, let reportStart, let reportEnd {
                 let query = context.query.incomeSpendingPeriod(start: BudgetWorkspaceStore.parseDate(reportStart), end: BudgetWorkspaceStore.parseDate(reportEnd))
                 page = try await store.reportContributors(query: query, kind: reportKind, cursor: nextCursor)

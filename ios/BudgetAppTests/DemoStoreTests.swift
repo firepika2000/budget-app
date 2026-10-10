@@ -11,6 +11,40 @@ import UniformTypeIdentifiers
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testTrendContributorsPreserveCanonicalDimensionAndSelectedPeriod() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let summary = store.summary, balances = store.accountBalances
+        for dimension in ["category", "group", "payee"] {
+            store.spendingTrendDimension = dimension
+            await store.loadReports([.spendingTrends])
+            let report = try XCTUnwrap(store.spendingTrendsReport)
+            for series in report.series {
+                for point in series.points {
+                    let context = store.reportContext.query
+                    let query = context.selectingTrend(dimension: dimension, id: series.dimensionID,
+                        start: point.periodStart, end: point.periodEnd)
+                    XCTAssertEqual(query.start, context.start); XCTAssertEqual(query.end, context.end)
+                    XCTAssertEqual(query.contributorStart, point.periodStart)
+                    XCTAssertEqual(query.contributorEnd, point.periodEnd)
+                    var cursor: String?, found = Set<String>()
+                    repeat {
+                        let page = try await store.reportContributors(query: query, kind: .categorySpending, cursor: cursor)
+                        XCTAssertTrue(found.isDisjoint(with: page.items.map(\.id)))
+                        XCTAssertTrue(page.items.allSatisfy { $0.occurredOn >= point.periodStart && $0.occurredOn <= point.periodEnd })
+                        found.formUnion(page.items.map(\.id)); cursor = page.nextCursor
+                    } while cursor != nil
+                    XCTAssertEqual(found, Set(point.transactionIDs))
+                }
+            }
+        }
+        XCTAssertEqual(store.summary, summary); XCTAssertEqual(store.accountBalances, balances)
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift"))
+        XCTAssertTrue(source.contains("reportDimensionID: change.id"))
+        XCTAssertTrue(source.contains("reportEnd: change.latestPeriodEnd"))
+    }
+
+    @MainActor
     func testIncomeSpendingContributorsKeepPeriodAndReportFilterSemantics() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()
@@ -789,6 +823,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(changes.first?.latestMinor, 12_000)
         XCTAssertEqual(changes.first?.increaseMinor, 6_000)
         XCTAssertEqual(changes.first?.transactionIDs, ["g3"])
+        XCTAssertEqual(changes.first?.latestPeriodEnd, "2026-09-30")
         XCTAssertTrue(changes.first?.transactionIDsTruncated == true)
     }
 
@@ -2511,7 +2546,7 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("Task.sleep(for: .seconds(12))"))
         XCTAssertTrue(contents.contains("prepare-report-csv"))
         XCTAssertTrue(contents.contains("share-report-csv"))
-        XCTAssertTrue(contents.contains("spending-trend-payee-"))
+        XCTAssertTrue(contents.contains(#"spending-trend-\(report.dimension)-\(series.dimensionID)"#))
         XCTAssertTrue(contents.contains("debt-account-"))
         XCTAssertTrue(contents.contains("plan-performance-category-"))
         XCTAssertTrue(contents.contains("category-target-history"))

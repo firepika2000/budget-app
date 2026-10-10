@@ -791,6 +791,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         let payeeTrend = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'spending-trend-payee-'")).firstMatch
         XCTAssertTrue(payeeTrend.waitForExistence(timeout: 5))
         payeeTrend.tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "report-contributors").firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.navigationBars.element.waitForExistence(timeout: 5))
         app.navigationBars.buttons["Insights"].tap()
         XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))

@@ -753,7 +753,8 @@ public struct APIClient {
         accountIDs: [String] = [], categoryIDs: [String] = [], categoryGroups: [String] = [],
         memberIDs: [String] = [], payees: [String] = [], transactionType: String? = nil,
         cleared: Bool? = nil, reconciled: Bool? = nil, flags: [String] = [], tags: [String] = [],
-        includeTracking: Bool = false, limit: Int = 50, cursor: String? = nil, token: String
+        includeTracking: Bool = false, limit: Int = 50, cursor: String? = nil,
+        dimension: String? = nil, dimensionID: String? = nil, token: String
     ) async throws -> APIReportContributorPage {
         var query = [URLQueryItem(name: "kind", value: kind.rawValue),
             URLQueryItem(name: "start_date", value: startDate), URLQueryItem(name: "end_date", value: endDate),
@@ -768,6 +769,8 @@ public struct APIClient {
         if let reconciled { query.append(URLQueryItem(name: "reconciled", value: String(reconciled))) }
         if includeTracking { query.append(URLQueryItem(name: "include_tracking", value: "true")) }
         if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        if let dimension { query.append(URLQueryItem(name: "dimension", value: dimension)) }
+        if let dimensionID { query.append(URLQueryItem(name: "dimension_id", value: dimensionID)) }
         return try await send(path: "api/v1/budgets/\(budgetID)/reports/contributors", queryItems: query, token: token)
     }
 

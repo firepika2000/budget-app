@@ -27,6 +27,8 @@ final class APIClientTests: XCTestCase {
             XCTAssertEqual(values["tag"], ["qa"])
             XCTAssertEqual(values["include_tracking"], ["true"])
             XCTAssertEqual(values["limit"], ["50"])
+            XCTAssertEqual(values["dimension"], ["payee"])
+            XCTAssertEqual(values["dimension_id"], ["payee:no payee"])
             XCTAssertEqual(values["cursor"], calls == 1 ? nil : ["opaque+/="])
             XCTAssertNil(values["transaction_id"])
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
@@ -38,7 +40,8 @@ final class APIClientTests: XCTestCase {
             let page = try await client.reportContributors(budgetID: "b1", kind: .categorySpending,
                 startDate: "2026-09-01", endDate: "2026-09-30", accountIDs: ["a1", "a2"], categoryIDs: ["c1"],
                 categoryGroups: ["Food"], memberIDs: ["u1"], payees: ["Market & Cafe"], transactionType: "refund",
-                cleared: false, reconciled: false, flags: ["orange"], tags: ["qa"], includeTracking: true, cursor: cursor, token: token)
+                cleared: false, reconciled: false, flags: ["orange"], tags: ["qa"], includeTracking: true, cursor: cursor,
+                dimension: "payee", dimensionID: "payee:no payee", token: token)
             cursor = page.nextCursor
         }
         XCTAssertEqual(calls, 2); XCTAssertNil(cursor)

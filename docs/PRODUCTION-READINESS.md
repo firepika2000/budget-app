@@ -1,5 +1,36 @@
 # Production readiness mission ledger
 
+## Full spending trend navigation (2026-10-10)
+
+All category, group and payee Spending Trends rows now open the shared full contributor list
+using the authoritative trend dimension identity rather than a capped identity prefix or a
+different Spending Breakdown aggregation. Recent increases use the same path scoped to the
+latest period's exact start and end. Existing date/account/category/group/member/payee/type/
+state/metadata/tracking filters are preserved. Selection uses the server's canonical identity,
+not the display name as an ordinary payee filter. Current credentials, bounded pages, Load More,
+retry, stale-context guards and the shared transaction editor remain in use.
+
+Local Device/Demo reuse their existing full-range trend contributor observations and then select
+the requested period's authorized records. Keeping the original report range prevents a
+refund-only negative period from disappearing merely because that period is not itself a
+positive ranked series. No new financial calculator or optimistic mutation is introduced.
+The Local report calculation still scans local history; this is not a history-performance claim.
+
+All 106 focused Swift API/identity-selection tests pass, including exact dimension/identity
+serialization, cursor forwarding and changed credentials. New native coverage compares every
+local trend dimension/period's contributor identities and verifies unchanged financial state.
+Recent-increase period-end and source-wiring assertions are covered; the production UI regression
+now requires the contributor-list destination after tapping a payee trend. Native/UI coverage is
+compiled only, not executed or human accepted. Regular Xcode 27.0 (27A266a) passes app/native
+build-for-testing on preserved iPhone 17 Pro Max / iOS 27 simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`. No stalled runner retry or data reset.
+
+Rebuild the app and update the server through `8c17944`; no migration. Human retest: inspect
+category/group/payee trends and a Recent increases row, verify identity and selected dates,
+page beyond 500 on disposable large history, then edit through the normal editor and return.
+Include a refund-only period and No payee where present. Net Worth contributor expansion remains
+open. TestFlight is held; no human pass or overall roadmap closure is claimed.
+
 ## Canonical spending trend contributor identities (2026-10-10)
 
 Full spending contributor paging now accepts an optional paired `dimension` and `dimension_id`
