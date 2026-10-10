@@ -9563,6 +9563,7 @@ private struct BudgetStructureHistoryView: View {
     @State private var rows: [APIBudgetStructureRevision] = []
     @State private var loading = false; @State private var loadingOlder = false
     @State private var canLoadOlder = false; @State private var errorMessage: String?
+    @State private var retryIntent: HistoryRetryIntent = .refresh
     private let pageSize = 50
 
     var body: some View {
@@ -9601,7 +9602,7 @@ private struct BudgetStructureHistoryView: View {
         .task { await load(reset: true) }
         .refreshable { await load(reset: true) }
         .alert("History unavailable", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
-            Button("Try Again") { Task { await load(reset: true) } }; Button("Cancel", role: .cancel) {}
+            Button("Try Again") { Task { await load(reset: retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)) } }; Button("Cancel", role: .cancel) {}
         } message: { Text(errorMessage ?? "Unknown error") }
     }
 
@@ -9617,6 +9618,7 @@ private struct BudgetStructureHistoryView: View {
             if reset { rows = next } else { rows.append(contentsOf: next) }
             canLoadOlder = next.count == pageSize
         } catch {
+            retryIntent = reset ? .refresh : .older
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
             errorMessage = error.localizedDescription
         }
@@ -9642,6 +9644,7 @@ private struct PayeeHistoryView: View {
     @State private var rows: [APIPayeeRevision] = []
     @State private var loading = false; @State private var loadingOlder = false
     @State private var canLoadOlder = false; @State private var errorMessage: String?
+    @State private var retryIntent: HistoryRetryIntent = .refresh
     private let pageSize = 50
 
     var body: some View {
@@ -9677,7 +9680,7 @@ private struct PayeeHistoryView: View {
         .task { await load(reset: true) }
         .refreshable { await load(reset: true) }
         .alert("History unavailable", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
-            Button("Try Again") { Task { await load(reset: true) } }; Button("Cancel", role: .cancel) {}
+            Button("Try Again") { Task { await load(reset: retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)) } }; Button("Cancel", role: .cancel) {}
         } message: { Text(errorMessage ?? "Unknown error") }
     }
 
@@ -9691,6 +9694,7 @@ private struct PayeeHistoryView: View {
             if reset { rows = next } else { rows.append(contentsOf: next) }
             canLoadOlder = next.count == pageSize
         } catch {
+            retryIntent = reset ? .refresh : .older
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
             errorMessage = error.localizedDescription
         }
@@ -9738,6 +9742,7 @@ private struct TargetHistoryView: View {
     @State private var loadingOlder = false
     @State private var canLoadOlder = false
     @State private var errorMessage: String?
+    @State private var retryIntent: HistoryRetryIntent = .refresh
     private let pageSize = 50
 
     var body: some View {
@@ -9785,16 +9790,17 @@ private struct TargetHistoryView: View {
                         if loadingOlder { HStack { ProgressView(); Text("Loading older history…") } }
                         else { Text("Load Older History") }
                     }
-                    .disabled(loadingOlder)
+                    .disabled(loading || loadingOlder)
                     .accessibilityIdentifier("target-history-load-older")
                 }
             }
             if let errorMessage {
                 Section {
                     Text(errorMessage).foregroundStyle(.secondary)
-                    Button(rows.isEmpty ? "Retry" : "Retry Older History") {
-                        Task { if rows.isEmpty { await load() } else { await loadOlder() } }
+                    Button(retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty) ? "Retry" : "Retry Older History") {
+                        Task { if retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty) { await load() } else { await loadOlder() } }
                     }
+                    .disabled(loading || loadingOlder)
                 }
             }
         }
@@ -9805,25 +9811,27 @@ private struct TargetHistoryView: View {
     }
 
     private func load() async {
-        guard !loading else { return }
+        guard !loading, !loadingOlder else { return }
         loading = true; defer { loading = false }
         do {
             let page = try await store.targetHistory(categoryID: categoryID, limit: pageSize, offset: 0)
             rows = page; canLoadOlder = page.count == pageSize; errorMessage = nil
         } catch {
+            retryIntent = .refresh
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
             errorMessage = error.localizedDescription
         }
     }
 
     private func loadOlder() async {
-        guard !loadingOlder else { return }
+        guard !loading, !loadingOlder else { return }
         loadingOlder = true; defer { loadingOlder = false }
         do {
             let page = try await store.targetHistory(categoryID: categoryID, limit: pageSize, offset: rows.count)
             rows += page.filter { item in !rows.contains(where: { $0.id == item.id }) }
             canLoadOlder = page.count == pageSize; errorMessage = nil
         } catch {
+            retryIntent = .older
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
             errorMessage = error.localizedDescription
         }

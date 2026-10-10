@@ -347,6 +347,24 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(load.contains("if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; batchIndex = 0 }"))
     }
 
+    func testHistoryRetryPreservesFailedRequestIntentAndRestartsAfterEviction() throws {
+        XCTAssertTrue(HistoryRetryIntent.refresh.shouldReset(hasLoadedRows: true))
+        XCTAssertTrue(HistoryRetryIntent.refresh.shouldReset(hasLoadedRows: false))
+        XCTAssertFalse(HistoryRetryIntent.older.shouldReset(hasLoadedRows: true))
+        XCTAssertTrue(HistoryRetryIntent.older.shouldReset(hasLoadedRows: false))
+        let sourceURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: sourceURL)
+        for name in ["BudgetStructureHistoryView", "PayeeHistoryView", "TargetHistoryView"] {
+            let start = try XCTUnwrap(source.range(of: "private struct \(name): View"))
+            let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
+            let view = source[start.lowerBound..<end]
+            XCTAssertTrue(view.contains("retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)"), name)
+            XCTAssertTrue(view.contains("guard !loading, !loadingOlder else { return }"), name)
+            XCTAssertTrue(view.contains("HistoryObservationPolicy.mustDiscard(after: error)"), name)
+        }
+    }
+
     func testHistoryDiscardsDefinitiveDenialsButRetainsTemporaryFailures() {
         for status in [401, 403, 404] {
             // Classification follows the HTTP contract, not English wording.

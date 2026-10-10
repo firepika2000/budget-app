@@ -358,6 +358,15 @@ enum HistoryObservationPolicy {
     }
 }
 
+/// Retry the failed page, unless a scope denial has already discarded its parent rows.
+enum HistoryRetryIntent {
+    case refresh, older
+
+    func shouldReset(hasLoadedRows: Bool) -> Bool {
+        self == .refresh || !hasLoadedRows
+    }
+}
+
 // MARK: - Durable Live transaction outbox
 
 /// Persists identified transaction, planning and transfer commands while a shared server is unreachable. Entries carry
