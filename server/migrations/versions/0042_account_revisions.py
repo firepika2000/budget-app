@@ -35,7 +35,7 @@ def upgrade():
         "payment_category_id", "created_at",
     )])
     budgets = sa.table("budgets", sa.column("id"), sa.column("household_id"))
-    memberships = sa.table("memberships", sa.column("household_id"), sa.column("user_id"), sa.column("role"))
+    households = sa.table("households", sa.column("id"), sa.column("owner_user_id"))
     revisions = sa.table(
         "account_revisions",
         sa.column("id", sa.String), sa.column("budget_id", sa.String),
@@ -44,12 +44,11 @@ def upgrade():
         sa.column("after_snapshot", sa.JSON), sa.column("created_at"),
     )
     owner_by_budget = {
-        row["budget_id"]: row["user_id"]
+        row["budget_id"]: row["owner_user_id"]
         for row in connection.execute(sa.select(
-            budgets.c.id.label("budget_id"), memberships.c.user_id,
+            budgets.c.id.label("budget_id"), households.c.owner_user_id,
         ).select_from(budgets.join(
-            memberships,
-            sa.and_(memberships.c.household_id == budgets.c.household_id, memberships.c.role == "owner"),
+            households, households.c.id == budgets.c.household_id,
         ))).mappings()
     }
     for row in connection.execute(sa.select(accounts)).mappings():

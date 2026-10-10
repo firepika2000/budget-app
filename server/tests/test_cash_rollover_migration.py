@@ -70,6 +70,22 @@ def test_populated_0028_policy_history_upgrade_preserves_rows_and_financial_obse
                 for name in tables
             }
         command.downgrade(config, "0028_target_snoozes")
+        # Compare the schema that actually exists at the historical boundary. New history
+        # tables/columns are intentionally removed by downgrade and backfilled on upgrade;
+        # their generated IDs are not old-schema financial observations.
+        old_tables = set(inspect(engine).get_table_names())
+        old_columns = {
+            name: [column["name"] for column in inspect(engine).get_columns(name)]
+            for name in tables if name in old_tables
+        }
+        before = {
+            name: sorted([
+                tuple(row[before_columns[name].index(column)] for column in columns)
+                for row in before[name]
+            ], key=repr)
+            for name, columns in old_columns.items()
+        }
+        before_columns = old_columns
         for revision in ("head", "0028_target_snoozes", "head"):
             (command.upgrade if revision == "head" else command.downgrade)(config, revision)
             with engine.connect() as connection:

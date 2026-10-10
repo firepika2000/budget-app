@@ -298,6 +298,27 @@ Broader migration audit also found seven older populated-upgrade tests failing b
 household owner identity and no owner membership row. Adjacent 0043 uses the same assumption. These
 pre-existing historical-upgrade gaps are NOT claimed green; they require a subsequent correction.
 TestFlight remains on hold and overall offline-edit completion remains false.
+
+### Historical owner attribution and migration closure — 2026-10-09
+
+The preceding seven populated-upgrade failures are now corrected. Migrations 0042 and 0043 resolve
+backfill attribution through budgets → households.owner_user_id, the stored canonical owner, rather
+than relying on a separately mutable/missing membership role row. They do not grant membership,
+change account/category data, or alter finances. Two new populated 0041-to-head tests verify missing
+owner membership and a conflicting membership-role owner: both use the canonical household owner
+and preserve account rows and memberships exactly. Already-stamped installations are not rewritten.
+
+The cash-rollover migration test also incorrectly compared current-schema history IDs after explicitly
+downgrading through the migrations that remove those tables. Its comparison now projects the initial
+rows onto every surviving historical table/column; all old-schema rows and independent financial API
+observations remain exact. New history IDs after backfill are not mistaken for old ledger mutations.
+
+All 21 tests in allocation migrations, creation-receipt migration and cash-rollover migration pass,
+including populated legacy upgrades/downgrades, unchanged financial observations, graph validation
+and 0017-to-current-head. `git diff --check` passes. SQLite verification only: no PostgreSQL/hardware
+upgrade is claimed. No Swift changes or rebuild. Server distribution must include the corrected
+migration files; normal startup upgrades through 0048 when needed. No customer database was touched.
+TestFlight remains on hold; durable offline editing/replay work continues.
 The focused analytics, delegated privacy and report-scale suite passed 82 cases, zero failures;
 diff checks passed. No redundant native build was run for this server-only change.
 

@@ -40,7 +40,7 @@ def upgrade():
         sa.column("created_at"),
     ])
     budgets = sa.table("budgets", sa.column("id"), sa.column("household_id"), sa.column("created_at"))
-    memberships = sa.table("memberships", sa.column("household_id"), sa.column("user_id"), sa.column("role"))
+    households = sa.table("households", sa.column("id"), sa.column("owner_user_id"))
     groups = sa.table("category_groups", sa.column("id"), sa.column("budget_id"), sa.column("name"),
                       sa.column("sort_order"), sa.column("is_archived"))
     categories = sa.table(
@@ -50,12 +50,11 @@ def upgrade():
     )
     budget_rows = list(connection.execute(sa.select(budgets)).mappings())
     owner_by_budget = {
-        row["budget_id"]: row["user_id"]
+        row["budget_id"]: row["owner_user_id"]
         for row in connection.execute(sa.select(
-            budgets.c.id.label("budget_id"), memberships.c.user_id,
+            budgets.c.id.label("budget_id"), households.c.owner_user_id,
         ).select_from(budgets.join(
-            memberships, sa.and_(memberships.c.household_id == budgets.c.household_id,
-                                 memberships.c.role == "owner"),
+            households, households.c.id == budgets.c.household_id,
         ))).mappings()
     }
     created_by_budget = {row["id"]: row["created_at"] for row in budget_rows}

@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
+import pytest
 
 from alembic import command
 from alembic.config import Config
@@ -9,6 +10,33 @@ from sqlalchemy import create_engine, text
 
 def migration_config() -> Config:
     return Config(str(Path(__file__).parents[1] / "alembic.ini"))
+
+
+@pytest.mark.parametrize("conflicting_membership", [False, True])
+def test_history_backfills_use_canonical_household_owner_without_changing_membership(tmp_path, monkeypatch, conflicting_membership):
+    url = f"sqlite:///{tmp_path / 'owner-history.db'}"
+    monkeypatch.setenv("BUDGET_APP_DATABASE_URL", url)
+    monkeypatch.setenv("BUDGET_APP_JWT_SECRET", "owner-history-secret-longer-than-32-characters")
+    config = migration_config()
+    command.upgrade(config, "0041_delegated_policy_revs")
+    engine = create_engine(url)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id,email,display_name,password_hash,created_at) VALUES ('owner','owner@test.example','Owner','hash',:now),('other','other@test.example','Other','hash',:now)"), {"now": now})
+        connection.execute(text("INSERT INTO households (id,name,owner_user_id,created_at) VALUES ('h','Home','owner',:now)"), {"now": now})
+        connection.execute(text("INSERT INTO budgets (id,household_id,name,currency_code,allocation_version,created_at) VALUES ('b','h','Budget','USD',0,:now)"), {"now": now})
+        connection.execute(text("INSERT INTO accounts (id,budget_id,name,account_type,is_on_budget,is_closed,created_at) VALUES ('a','b','Checking','checking',1,0,:now)"), {"now": now})
+        connection.execute(text("INSERT INTO category_groups (id,budget_id,name,sort_order,is_archived) VALUES ('g','b','Needs',0,0)"))
+        if conflicting_membership:
+            connection.execute(text("INSERT INTO memberships (id,household_id,user_id,role,is_active,authorization_version) VALUES ('m','h','other','owner',1,1)"))
+        accounts = connection.execute(text("SELECT * FROM accounts")).mappings().all()
+        memberships = connection.execute(text("SELECT * FROM memberships")).mappings().all()
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT actor_user_id FROM account_revisions WHERE account_id='a'")).scalar_one() == "owner"
+        assert connection.execute(text("SELECT actor_user_id FROM budget_structure_revisions WHERE resource_id='g'")).scalar_one() == "owner"
+        assert connection.execute(text("SELECT * FROM accounts")).mappings().all() == accounts
+        assert connection.execute(text("SELECT * FROM memberships")).mappings().all() == memberships
 
 
 def test_migration_graph_fits_version_table_and_has_one_valid_head():
