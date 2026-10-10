@@ -115,6 +115,12 @@ try await MainActor.run {
  previewJSON["sha256"] = SHA256.hash(data: preview).map { String(format: "%02x", $0) }.joined()
  let previewAttachment = try JSONDecoder().decode(APITransactionAttachment.self, from: JSONSerialization.data(withJSONObject: previewJSON))
  try lists.save([previewAttachment], transactionID: "posted", generation: lists.generation)
+ do {
+     _ = try lists.loadBytes(attachment: previewAttachment, keyData: previewKey)
+     fatalError("Never-downloaded file opened offline")
+ } catch BudgetApplicationError.invalidOperation(let message) {
+     precondition(message.contains("not available offline") && message.contains("open it once"))
+ }
  try lists.saveBytes(preview, attachment: previewAttachment, keyData: previewKey, generation: lists.generation)
  let cachedPreview = try relaunch.loadBytes(attachment: previewAttachment, keyData: previewKey)
  precondition(cachedPreview == preview)

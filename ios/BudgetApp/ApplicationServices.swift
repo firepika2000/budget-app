@@ -1073,8 +1073,17 @@ final class LiveAttachmentReadCache {
         guard keyData.count == 32, try load(transactionID: attachment.transactionID).contains(attachment) else {
             throw BudgetApplicationError.invalidOperation("Reconnect to verify attachment access.")
         }
-        let sealed = try AES.GCM.SealedBox(combined: Data(contentsOf: bytesURL(attachment)))
-        let data = try AES.GCM.open(sealed, using: SymmetricKey(data: keyData))
+        let target = bytesURL(attachment)
+        guard FileManager.default.fileExists(atPath: target.path) else {
+            throw BudgetApplicationError.invalidOperation("This file is not available offline. Connect and open it once to keep a protected preview on this device.")
+        }
+        let data: Data
+        do {
+            let sealed = try AES.GCM.SealedBox(combined: Data(contentsOf: target))
+            data = try AES.GCM.open(sealed, using: SymmetricKey(data: keyData))
+        } catch {
+            throw BudgetApplicationError.invalidOperation("The protected preview could not be verified. Reconnect to download a fresh copy.")
+        }
         guard data.count == attachment.byteCount, Self.digest(data) == attachment.sha256 else {
             throw BudgetApplicationError.invalidOperation("Attachment integrity verification failed.")
         }
