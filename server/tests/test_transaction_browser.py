@@ -18,6 +18,37 @@ def _search(client, token, budget_id, query=""):
     return response.json()
 
 
+def test_workspace_history_uses_browser_privacy_in_sql(client, owner_token, session_factory):
+    from .test_delegated_access import add_child, configure_child
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    hidden = add_category(client, owner_token, budget["id"], "Private", "Private category")
+    visible = record(client, owner_token, budget["id"], account_id=account["id"],
+                     category_id=category["id"], amount_minor=-100)
+    private = record(client, owner_token, budget["id"], account_id=account["id"],
+                     category_id=hidden["id"], amount_minor=-200, payee_name="Private history")
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, account["id"], category["id"])
+    statements = []
+    engine = session_factory.kw["bind"]
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        response = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(child_token))
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert response.status_code == 200, response.text
+    assert [row["id"] for row in response.json()] == [visible["id"]]
+    assert private["id"] not in response.text and "Private history" not in response.text
+    assert [row["id"] for row in _search(client, child_token, budget["id"])["items"]] == [visible["id"]]
+    history_queries = [sql for sql in statements if "FROM transactions" in sql and "ORDER BY transactions.occurred_on" in sql]
+    assert len(history_queries) == 1
+    assert "transactions.account_id IN" in history_queries[0]
+    assert "transactions.category_id IN" in history_queries[0]
+    assert "EXISTS" in history_queries[0]
+
+
 def test_identity_selection_is_bounded_and_cannot_cross_budget(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     other = create_budget(client, owner_token, session_factory, name="Other")

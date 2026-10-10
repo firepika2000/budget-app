@@ -1813,21 +1813,10 @@ def transaction_visibility_conditions(db: Session, user: User, budget: Budget) -
 
 
 def _visible_transactions(db: Session, user: User, budget: Budget) -> list[Transaction]:
-    transactions = list(db.scalars(select(Transaction).options(
+    return list(db.scalars(select(Transaction).options(
         selectinload(Transaction.splits)
-    ).where(
-        Transaction.budget_id == budget.id
-    ).order_by(Transaction.occurred_on.desc(), Transaction.created_at.desc())))
-    visible_accounts = visible_resource_ids(db, user, budget, "account")
-    visible_categories = visible_resource_ids(db, user, budget, "category")
-    return [item for item in transactions if (
-        (visible_accounts is None or item.account_id in visible_accounts)
-        and (
-            visible_categories is None
-            or item.category_id in visible_categories
-            or (bool(item.splits) and all(split.category_id in visible_categories for split in item.splits))
-        )
-    )]
+    ).where(*transaction_visibility_conditions(db, user, budget))
+      .order_by(Transaction.occurred_on.desc(), Transaction.created_at.desc(), Transaction.id.desc())))
 
 
 def _can_access_transaction_resources(
