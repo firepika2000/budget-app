@@ -1526,6 +1526,55 @@ def test_net_worth_rejects_hidden_account_filter_and_never_aggregates_it(
     assert client.get(f"{summary_url}&account_id={hidden['id']}", headers=auth(child_token)).status_code == 404
 
 
+def test_net_worth_contributors_preserve_balance_but_hide_private_details(client, owner_token, session_factory):
+    from .test_delegated_access import add_child, configure_child
+
+    budget = create_budget(client, owner_token, session_factory)
+    account, hidden = create_budget_structure(client, owner_token, budget["id"])
+    visible = add_category(client, owner_token, budget["id"], "Delegated", "Allowance")
+    income = record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=10000)
+    private = record(client, owner_token, budget["id"], account_id=account["id"], category_id=hidden["id"], amount_minor=-4500)
+    public = record(client, owner_token, budget["id"], account_id=account["id"], category_id=visible["id"], amount_minor=-2500)
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, account["id"], visible["id"])
+    access = {"capabilities": ["view_budget", "view_account_balances", "view_transactions", "view_reports"],
+              "restrict_accounts": True, "account_ids": [account["id"]],
+              "restrict_categories": True, "category_ids": [visible["id"]]}
+    assert client.put(f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token), json=access).status_code == 200
+    base = f"/api/v1/budgets/{budget['id']}/reports"
+    period = "start_date=2026-09-01&end_date=2026-09-30"
+    report = client.get(f"{base}/net-worth?{period}&include_transaction_ids=true", headers=auth(child_token))
+    assert report.status_code == 200, report.text
+    assert report.json()["net_worth_minor"] == 3000
+    assert public["id"] in report.text
+    assert private["id"] not in report.text and income["id"] not in report.text
+    page = client.get(f"{base}/contributors?{period}&kind=net_worth", headers=auth(child_token))
+    assert page.status_code == 200, page.text
+    assert [item["id"] for item in page.json()["items"]] == [public["id"]]
+    assert client.get(f"{base}/contributors?{period}&kind=net_worth&category_id={hidden['id']}", headers=auth(child_token)).status_code == 422
+    access["capabilities"].remove("view_transactions")
+    assert client.put(f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token), json=access).status_code == 200
+    assert client.get(f"{base}/net-worth?{period}", headers=auth(child_token)).status_code == 200
+    assert client.get(f"{base}/net-worth?{period}&include_transaction_ids=true", headers=auth(child_token)).status_code == 403
+    assert client.get(f"{base}/contributors?{period}&kind=net_worth", headers=auth(child_token)).status_code == 403
+
+
+def test_net_worth_contributors_include_history_before_display_range(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    old = record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=100, occurred_on="2026-08-01")
+    current = record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=200)
+    record(client, owner_token, budget["id"], account_id=account["id"], amount_minor=300, occurred_on="2026-10-01")
+    url = f"/api/v1/budgets/{budget['id']}/reports/contributors?kind=net_worth&start_date=2026-09-01&end_date=2026-09-30&limit=1"
+    first = client.get(url, headers=auth(owner_token))
+    assert first.status_code == 200, first.text
+    assert [item["id"] for item in first.json()["items"]] == [current["id"]]
+    second = client.get(f"{url}&cursor={first.json()['next_cursor']}", headers=auth(owner_token))
+    assert second.status_code == 200, second.text
+    assert [item["id"] for item in second.json()["items"]] == [old["id"]]
+    assert second.json()["next_cursor"] is None
+
+
 def test_reports_reject_cross_budget_resource_filters(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     create_budget_structure(client, owner_token, budget["id"])

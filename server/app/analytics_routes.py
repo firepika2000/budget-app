@@ -11,7 +11,7 @@ import io
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, case, literal, or_, select
 from sqlalchemy.orm import Session, selectinload
 from starlette.responses import Response
 
@@ -129,6 +129,15 @@ class _IncomeSpendingAccumulator:
             self.spending_ids.append(identifier)
 
 
+def _after_report_cursor(query, after):
+    if after is None:
+        return query
+    occurred, created, identifier = after
+    return query.where(or_(Transaction.occurred_on < occurred,
+        and_(Transaction.occurred_on == occurred, Transaction.created_at < created),
+        and_(Transaction.occurred_on == occurred, Transaction.created_at == created, Transaction.id < identifier)))
+
+
 def report_transactions(
     db: Session,
     user: User,
@@ -176,13 +185,7 @@ def report_transactions(
         Transaction.occurred_on >= start_date,
         Transaction.occurred_on <= end_date,
     )
-    if after is not None:
-        occurred, created, identifier = after
-        query = query.where(or_(
-            Transaction.occurred_on < occurred,
-            and_(Transaction.occurred_on == occurred, Transaction.created_at < created),
-            and_(Transaction.occurred_on == occurred, Transaction.created_at == created, Transaction.id < identifier),
-        ))
+    query = _after_report_cursor(query, after)
     if account_ids:
         query = query.where(Transaction.account_id.in_(account_ids))
     if member_ids:
@@ -273,7 +276,7 @@ def _spending_dimension(transaction, category, groups, dimension):
 @router.get("/contributors", response_model=ReportContributorPageResponse)
 def report_contributors(
     budget_id: str, start_date: date, end_date: date,
-    kind: str = Query(pattern="^(category_spending|income|spending)$"),
+    kind: str = Query(pattern="^(category_spending|income|spending|net_worth)$"),
     account_id: list[str] = Query(default=[]), category_id: list[str] = Query(default=[]),
     category_group: list[str] = Query(default=[]), member_id: list[str] = Query(default=[]),
     payee: list[str] = Query(default=[]),
@@ -303,16 +306,29 @@ def report_contributors(
             after = (date.fromisoformat(payload["date"]), datetime.fromisoformat(payload["created"]), payload["id"])
         except (ValueError, TypeError, KeyError, UnicodeError) as error:
             raise HTTPException(status_code=422, detail="Invalid report contributor cursor") from error
-    _, transactions = report_transactions(db, user, budget_id, start_date, end_date,
-        account_id, category_id, category_group, member_id, payee, transaction_type,
-        cleared, reconciled, flag, tag, include_tracking, stream=True, after=after)
+    if kind == "net_worth":
+        _validate_report_range(start_date, end_date)
+        if category_id or category_group or member_id or payee or transaction_type is not None or cleared is not None or reconciled is not None or flag or tag:
+            raise HTTPException(status_code=422, detail="Net worth contributors support only account and tracking filters")
+        budget, accounts = _net_worth_accounts(db, user, budget_id, account_id, include_tracking)
+        query = select(Transaction).options(selectinload(Transaction.splits)).where(
+            *transaction_visibility_conditions(db, user, budget), Transaction.account_id.in_([item.id for item in accounts]),
+            Transaction.occurred_on <= end_date)
+        transactions = db.scalars(_after_report_cursor(query, after).order_by(
+            Transaction.occurred_on.desc(), Transaction.created_at.desc(), Transaction.id.desc()).limit(limit + 1))
+    else:
+        _, transactions = report_transactions(db, user, budget_id, start_date, end_date,
+            account_id, category_id, category_group, member_id, payee, transaction_type,
+            cleared, reconciled, flag, tag, include_tracking, stream=True, after=after)
     categories = {item.id: item for item in db.scalars(select(Category).where(Category.budget_id == budget_id))}
     groups = {item.id: item.name for item in db.scalars(select(CategoryGroup).where(CategoryGroup.budget_id == budget_id))}
     selected = _selected_spending_categories(categories, groups, category_id, category_group)
     on_budget = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id, Account.is_on_budget.is_(True))))
     rows = []
     for item in transactions:
-        if kind == "category_spending":
+        if kind == "net_worth":
+            contributes = True
+        elif kind == "category_spending":
             portions = _spending_portions(item, selected)
             contributes = any(dimension is None or _spending_dimension(item, categories[category], groups, dimension)[0] == dimension_id
                               for category, _ in portions)
@@ -533,6 +549,23 @@ def spending_trends_report(
     }
 
 
+def _net_worth_accounts(db, user, budget_id, account_id, include_tracking):
+    budget = require_budget_capability(db, user, budget_id, "view_reports")
+    require_budget_capability(db, user, budget_id, "view_account_balances")
+    visible = visible_resource_ids(db, user, budget, "account")
+    existing = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id)))
+    if any(identifier not in existing or (visible is not None and identifier not in visible) for identifier in account_id):
+        raise HTTPException(status_code=404, detail="Report resource not found")
+    query = select(Account).where(Account.budget_id == budget_id)
+    if account_id:
+        query = query.where(Account.id.in_(account_id))
+    if visible is not None:
+        query = query.where(Account.id.in_(visible))
+    if not include_tracking:
+        query = query.where(Account.is_on_budget.is_(True))
+    return budget, list(db.scalars(query.order_by(Account.name, Account.id)))
+
+
 @router.get("/net-worth", response_model=NetWorthReportResponse, response_model_exclude_defaults=True)
 def net_worth_report(
     budget_id: str,
@@ -545,25 +578,14 @@ def net_worth_report(
     db: Session = Depends(get_db),
 ) -> dict:
     _validate_report_range(start_date, end_date)
-    budget = require_budget_capability(db, user, budget_id, "view_reports")
-    require_budget_capability(db, user, budget_id, "view_account_balances")
-    visible_accounts = visible_resource_ids(db, user, budget, "account")
-    budget_account_ids = set(db.scalars(select(Account.id).where(Account.budget_id == budget_id)))
-    if any(value not in budget_account_ids for value in account_id):
-        raise HTTPException(status_code=404, detail="Report resource not found")
-    if visible_accounts is not None and any(value not in visible_accounts for value in account_id):
-        raise HTTPException(status_code=404, detail="Report resource not found")
-    accounts_query = select(Account).where(Account.budget_id == budget_id)
-    if account_id:
-        accounts_query = accounts_query.where(Account.id.in_(account_id))
-    if visible_accounts is not None:
-        accounts_query = accounts_query.where(Account.id.in_(visible_accounts))
-    if not include_tracking:
-        accounts_query = accounts_query.where(Account.is_on_budget.is_(True))
-    accounts = list(db.scalars(accounts_query.order_by(Account.name, Account.id)))
+    budget, accounts = _net_worth_accounts(db, user, budget_id, account_id, include_tracking)
+    if include_transaction_ids:
+        require_budget_capability(db, user, budget_id, "view_transactions")
     account_ids = [item.id for item in accounts]
     transactions = iter(db.execute(
-        select(Transaction.id, Transaction.account_id, Transaction.amount_minor, Transaction.occurred_on).where(
+        select(Transaction.id, Transaction.account_id, Transaction.amount_minor, Transaction.occurred_on,
+               (case((and_(*transaction_visibility_conditions(db, user, budget)), True), else_=False)
+                if include_transaction_ids else literal(False)).label("detail_visible")).where(
             Transaction.account_id.in_(account_ids),
             Transaction.occurred_on <= end_date,
         ).order_by(Transaction.occurred_on, Transaction.created_at, Transaction.id)
@@ -582,7 +604,7 @@ def net_worth_report(
     for as_of in observation_dates:
         while transaction is not None and transaction.occurred_on <= as_of:
             balances[transaction.account_id] += transaction.amount_minor
-            if include_transaction_ids:
+            if include_transaction_ids and transaction.detail_visible:
                 contributing_ids.append(transaction.id)
                 account_contributions[transaction.account_id].append(transaction.id)
             transaction = next(transactions, None)
