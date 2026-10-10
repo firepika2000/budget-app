@@ -1,5 +1,36 @@
 # Production readiness mission ledger
 
+## Metadata-only transaction edits preserve payment money (2026-10-09)
+
+Actual production HTTP reproduction proved that an unchanged resave or metadata-only edit to the
+first of two same-day card purchases deleted its original $100 funded-purchase reserve and
+recomputed it as $0 against the later spending. This changed payment Available without an amount,
+account, category or date change. Both unchanged and changed-metadata cases failed before the fix.
+
+Hosted updates now rebuild reserve events only when account, category, signed amount, date,
+financial classification or split financial attribution changes. Memo, payee, tags, flag, clearing,
+attachment metadata and split-memo edits preserve the original reserve observation. Unchanged
+saves append no transaction decision; real metadata changes remain attributed. Split metadata
+updates preserve existing split identities. Authorization, target-resource validation and reconciled
+immutability still precede mutation; financial edits retain their existing recomputation path.
+Local Device/Demo likewise updates metadata and checked cleared totals without reversing/reposting
+the purchase or replacing its original creator and transaction identity.
+
+Verification: 69 focused backend credit-card, transaction history, bulk, advanced ledger, provenance
+and golden-vector cases passed. Four new HTTP cases cover direct/split purchases with unchanged
+or edited memo/tags/flag/clearing; reserve identities, attribution, monthly observations and split
+identities remain intact. An existing advanced-ledger exact-response assertion was brought up to
+date with the previously introduced optional `through_date: null` balance contract. Regular Xcode
+27.0 build-for-testing passed using the preserved iPhone 17 Pro Max destination. The new native
+Local/Demo equivalent compiled but was not executed; no runtime or human acceptance is claimed.
+Diff checks passed. This focused run is not a full backend/native-suite claim.
+
+App rebuild and server update/restart required; no migration, historical reserve rewrite or data
+reset. Previously affected customer observations are not silently repaired. Optional human retest
+on disposable records: fund $100, make two $100 card purchases on the same day, edit the first
+purchase's memo/tag, and confirm payment Available stays $100 while history records the metadata
+change. Saving unchanged should add no history. TestFlight remains held.
+
 ## Truthful bulk metadata history and tag capacity (2026-10-09)
 
 Actual HTTP regressions reproduced two canonical bulk-operation defects: unchanged clearing,

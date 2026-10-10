@@ -238,6 +238,7 @@ def test_account_balance_separates_cleared_uncleared_and_working(
         "uncleared_balance_minor": -1250,
         "working_balance_minor": 48750,
         "reconciled_balance_minor": None,
+        "through_date": None,
     }
 
 

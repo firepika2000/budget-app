@@ -953,6 +953,34 @@ final class DemoStore: ObservableObject {
     func updateCanonicalTransaction(id: String, operation: RecordTransactionOperation) -> Bool {
         guard let index = transactions.firstIndex(where: { $0.id == id }), !transactions[index].reconciled else { return fail(.transactionNotFound) }
         let old = transactions[index]
+        let amounts = operation.categoryID.map { [$0: operation.amountMinor] }
+            ?? Dictionary(operation.splits.map { ($0.categoryID, $0.amountMinor) }, uniquingKeysWith: { first, _ in first })
+        let classifications = Dictionary(operation.splits.compactMap { split in
+            split.financialClassification.map { (split.categoryID, $0) }
+        }, uniquingKeysWith: { first, _ in first })
+        let metadataOnly = old.accountID == operation.accountID && old.amount == operation.amountMinor
+            && BudgetWorkspaceStore.dateString(old.date) == operation.occurredOn
+            && canonicalCategoryAmounts(for: old) == amounts
+            && old.financialClassification == operation.financialClassification
+            && old.splitFinancialClassifications == classifications
+        if metadataOnly {
+            guard Set(operation.splits.map(\.categoryID)).count == operation.splits.count,
+                  let accountIndex = accounts.firstIndex(where: { $0.id == old.accountID }) else { return fail(.invalidAmount) }
+            if old.cleared != operation.isCleared {
+                let result = operation.isCleared ? accounts[accountIndex].cleared.addingReportingOverflow(old.amount)
+                    : accounts[accountIndex].cleared.subtractingReportingOverflow(old.amount)
+                guard !result.overflow else { return fail(.invalidAmount) }
+                accounts[accountIndex].cleared = result.partialValue
+            }
+            transactions[index].payee = operation.payeeName
+            transactions[index].memo = operation.memo
+            transactions[index].cleared = operation.isCleared
+            transactions[index].flag = operation.flag
+            transactions[index].tags = operation.tags
+            transactions[index].attachmentName = operation.attachmentMetadata.first?["name"]
+            errorMessage = nil
+            return true
+        }
         let before = checkpoint()
         do { try reverseCanonicalTransaction(old) }
         catch { restore(before); return failMessage(error.localizedDescription) }

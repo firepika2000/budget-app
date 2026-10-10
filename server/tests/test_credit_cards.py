@@ -1,4 +1,5 @@
 from app.models import CreditCardReserveEvent, TransactionChange
+import pytest
 
 from .conftest import auth
 from .test_advanced_ledger import add_category, record
@@ -31,6 +32,38 @@ def account_balance(client, owner_token, budget_id, account_id):
         headers=auth(owner_token),
     ).json()
     return sum(item["amount_minor"] for item in transactions if item["account_id"] == account_id)
+
+
+@pytest.mark.parametrize("split", [False, True])
+@pytest.mark.parametrize("metadata", [{}, {"memo": "Receipt saved", "tags": ["reviewed"], "flag": "orange", "is_cleared": True}])
+def test_metadata_only_card_edit_preserves_original_purchase_reserve(client, owner_token, session_factory, metadata, split):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    card = create_credit_card(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], checking["id"], amount=50000)
+    assert client.put(f"/api/v1/budgets/{budget['id']}/categories/{category['id']}/assignment", headers=auth(owner_token), json={"month": "2026-09-01", "assigned_minor": 10000}).status_code == 200
+    attribution = {"splits": [{"category_id": category["id"], "amount_minor": -10000, "memo": "Original"}]} if split else {"category_id": category["id"]}
+    first = record(client, owner_token, budget["id"], account_id=card["id"], amount_minor=-10000, occurred_on="2026-09-01", **attribution)
+    record(client, owner_token, budget["id"], account_id=card["id"], category_id=category["id"], amount_minor=-10000, occurred_on="2026-09-01")
+    before = category_rows(client, owner_token, budget["id"])[0]
+    with session_factory() as db:
+        events = [(e.id, e.amount_minor, e.actor_user_id) for e in db.query(CreditCardReserveEvent).filter_by(source_transaction_id=first["id"]).all()]
+        changes = db.query(TransactionChange).filter_by(transaction_id=first["id"]).count()
+    assert sum(e[1] for e in events) == 10000
+    body = {key: first[key] for key in ["account_id", "category_id", "amount_minor", "occurred_on", "payee_name", "payee_id", "memo", "is_cleared", "flag", "tags"]}
+    body.update(metadata)
+    if split:
+        body["splits"] = [{"category_id": category["id"], "amount_minor": -10000, "memo": "Updated" if metadata else "Original"}]
+        split_ids = [s["id"] for s in first["splits"]]
+    response = client.put(f"/api/v1/budgets/{budget['id']}/transactions/{first['id']}", headers=auth(owner_token), json=body)
+    assert response.status_code == 200, response.text
+    if split:
+        assert [s["id"] for s in response.json()["splits"]] == split_ids
+        assert response.json()["splits"][0]["memo"] == ("Updated" if metadata else "Original")
+    assert category_rows(client, owner_token, budget["id"])[0] == before
+    with session_factory() as db:
+        assert [(e.id, e.amount_minor, e.actor_user_id) for e in db.query(CreditCardReserveEvent).filter_by(source_transaction_id=first["id"]).all()] == events
+        assert db.query(TransactionChange).filter_by(transaction_id=first["id"]).count() == changes + bool(metadata)
 
 
 def test_cash_purchase_reports_cash_overspending_only(client, owner_token, session_factory):

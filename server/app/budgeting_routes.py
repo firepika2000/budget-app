@@ -2644,18 +2644,37 @@ def update_transaction(
         )
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid payee") from None
-    db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.source_transaction_id == transaction.id))
+    # Metadata-only saves must retain the original funded/unfunded observation. Re-evaluating
+    # a purchase against later postings (including same-day purchases) can move payment money.
+    financial_changed = any(
+        getattr(transaction, key) != getattr(body, key)
+        for key in ("account_id", "category_id", "amount_minor", "occurred_on", "financial_classification")
+    ) or sorted(
+        (split.category_id, split.amount_minor, split.financial_classification or "") for split in transaction.splits
+    ) != sorted(
+        (split.category_id, split.amount_minor, split.financial_classification or "") for split in body.splits
+    )
+    if financial_changed:
+        db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.source_transaction_id == transaction.id))
     values = body.model_dump(exclude={"splits"})
     for key, value in values.items():
         setattr(transaction, key, value)
-    transaction.splits = [TransactionSplit(**split.model_dump()) for split in body.splits]
+    if financial_changed:
+        transaction.splits = [TransactionSplit(**split.model_dump()) for split in body.splits]
+    else:
+        split_memos = {split.category_id: split.memo for split in body.splits}
+        for split in transaction.splits:
+            split.memo = split_memos[split.category_id]
     db.flush()
     category_amounts = (
         [(categories_by_id[body.category_id], body.amount_minor)]
         if body.category_id is not None else [(categories_by_id[split.category_id], split.amount_minor) for split in body.splits]
     )
-    add_purchase_reserve_events(db, account=account, transaction=transaction, category_amounts=category_amounts, actor=user)
-    record_transaction_change(db, transaction, user, "updated", before=before_snapshot, after=transaction_snapshot(transaction))
+    if financial_changed:
+        add_purchase_reserve_events(db, account=account, transaction=transaction, category_amounts=category_amounts, actor=user)
+    after_snapshot = transaction_snapshot(transaction)
+    if before_snapshot != after_snapshot:
+        record_transaction_change(db, transaction, user, "updated", before=before_snapshot, after=after_snapshot)
     db.commit()
     db.refresh(transaction)
     return transaction

@@ -11,6 +11,29 @@ import UniformTypeIdentifiers
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testMetadataOnlyCardEditDoesNotReclassifyFundedPurchaseAfterLaterSpending() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        XCTAssertTrue(source.demo.createAccount(name: "Cash", type: "checking", isOnBudget: true, startingBalance: 50000))
+        XCTAssertTrue(source.demo.createAccount(name: "Card", type: "credit", isOnBudget: true))
+        XCTAssertTrue(source.demo.createCategory(name: "Needs", group: "Plan"))
+        let category = source.demo.categories[0].id, card = source.demo.accounts[1].id
+        try await source.assignMoney(.init(categoryID: category, month: "2026-09-01", assignedMinor: 10000, expectedVersion: 0))
+        let operation = RecordTransactionOperation(accountID: card, categoryID: category, amountMinor: -10000, occurredOn: "2026-09-01", payeeName: "Market", memo: "", isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: [])
+        try await source.recordTransaction(operation)
+        let id = try XCTUnwrap(source.demo.transactions.first?.id)
+        try await source.recordTransaction(operation)
+        let before = source.demo.accounts[1]
+        XCTAssertEqual(before.paymentReserved, 10000)
+        try await source.updateTransaction(id: id, operation: operation)
+        XCTAssertEqual(source.demo.accounts[1].paymentReserved, before.paymentReserved)
+        try await source.updateTransaction(id: id, operation: .init(accountID: card, categoryID: category, amountMinor: -10000, occurredOn: "2026-09-01", payeeName: "Market", memo: "Receipt saved", isCleared: true, splits: [], flag: "orange", tags: ["reviewed"], attachmentMetadata: []))
+        let after = source.demo.accounts[1]
+        XCTAssertEqual(after.paymentReserved, before.paymentReserved)
+        XCTAssertEqual(after.balance, before.balance)
+        XCTAssertEqual(after.cleared, before.cleared - 10000)
+        XCTAssertEqual(source.demo.transactions.first { $0.id == id }?.memo, "Receipt saved")
+    }
+    @MainActor
     func testBulkTagsRejectOverflowAtomicallyAndPreserveOrderedNormalizedTags() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
         XCTAssertTrue(source.demo.createAccount(name: "Cash", type: "checking", isOnBudget: true))
