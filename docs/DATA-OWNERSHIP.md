@@ -34,8 +34,11 @@ The native operation and API DTO can now carry this separate mutation identity t
 the editor does not yet assign/persist it or queue updates. The creation submission path now persists
 the exact immutable operation before its first network suspension, then uses the existing ordered
 replay and atomic acknowledgement path. An uncertain send survives reopening; persistence failure
-prevents sending. Definite rejection retains the intent and surfaces Pending Sync review, but a
-persisted blocked/review state preventing subsequent automatic retries remains incomplete. Durable
+prevents sending. Definite HTTP rejection (400/403/404/409/422) persists a review flag and surfaces
+Pending Sync review; automatic replay stops before that item and later queued changes. Explicit
+per-item retry clears the flag durably without changing the operation identity or payload, subject
+to current whole-resource visibility. Authentication failures remain session-owned, not permanently
+paused as a transaction rejection. Older queue entries decode compatibly without a review flag. Durable
 edit submission and full offline mutation coverage are not yet implemented.
 
 Creation-specific immutable receipts now bind `(budget, actor, operation UUID)` to the original

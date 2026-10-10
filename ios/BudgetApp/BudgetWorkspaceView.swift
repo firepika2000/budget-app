@@ -3635,6 +3635,16 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         if transactionOutbox.count == 0 { outboxFailureMessage = nil }
     }
 
+    func retryReviewedTransaction(id: String) throws {
+        try transactionOutbox.retryReviewed(id: id)
+    }
+
+    private func shouldPauseRejectedTransaction(_ error: Error) -> Bool {
+        guard case let APIClientError.server(status, _) = error else { return false }
+        // Authentication and uncertain transport failures remain owned by the session/retry lifecycle.
+        return [400, 403, 404, 409, 422].contains(status)
+    }
+
     /// Replays in insertion order and stops at the first failure. A rejected operation remains
     /// visible as pending for explicit user attention; a connectivity failure quietly retries on
     /// the next foreground/background refresh.
@@ -3645,7 +3655,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             return
         }
         do {
-            try await transactionOutbox.replay { try await sendTransaction($0) }
+            try await transactionOutbox.replay(shouldPause: shouldPauseRejectedTransaction) { try await sendTransaction($0) }
             if transactionOutbox.count == 0 { outboxFailureMessage = nil }
         } catch {
             if isTransientConnectivityFailure(error) { throw error }
@@ -3690,7 +3700,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         var identified = operation
         if identified.clientOperationID == nil { identified.clientOperationID = UUID().uuidString.lowercased() }
         do {
-            try await transactionOutbox.submit(identified) { try await sendTransaction($0) }
+            try await transactionOutbox.submit(identified, shouldPause: shouldPauseRejectedTransaction) { try await sendTransaction($0) }
             if transactionOutbox.count == 0 { outboxFailureMessage = nil }
         } catch {
             // Persistence/legacy-review failure is not a saved transaction.
@@ -4679,6 +4689,15 @@ final class BudgetWorkspaceStore: ObservableObject {
         syncStatusMessage = live.outboxFailureMessage
             ?? (pendingSyncCount == 0 ? nil : "\(pendingSyncCount) change\(pendingSyncCount == 1 ? "" : "s") waiting to sync")
         if pendingSyncCount == 0 { isWorkingOffline = false }
+    }
+
+    func retryReviewedLiveTransaction(id: String) async throws {
+        try requireWorkspaceAccess()
+        guard pendingLiveTransactions.contains(where: { $0.id == id }) else {
+            throw BudgetApplicationError.invalidOperation("This pending transaction is not available under current access. Its saved copy is preserved.")
+        }
+        try (commandRepository as? LiveWorkspaceCommandRepository)?.retryReviewedTransaction(id: id)
+        await refresh()
     }
 
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws {
@@ -6043,6 +6062,18 @@ private struct PendingLiveTransactionsView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                             Text("Saved \(entry.queuedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption2).foregroundStyle(.secondary)
+                            if entry.requiresReview == true {
+                                Text("Needs review · automatic retry paused")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Button("Retry This Transaction", systemImage: "arrow.clockwise") {
+                                    Task {
+                                        do { try await store.retryReviewedLiveTransaction(id: entry.id) }
+                                        catch { store.errorMessage = error.localizedDescription }
+                                    }
+                                }
+                                .disabled(store.isBackgroundSyncing || store.isLoading || store.pendingLegacyServerReview)
+                                .accessibilityIdentifier("retry-reviewed-transaction-\(entry.id)")
+                            }
                             Button("Discard Pending Transaction", role: .destructive) { pendingDiscard = entry }
                                 .disabled(store.isBackgroundSyncing || store.isLoading || store.pendingLegacyServerReview)
                                 .accessibilityIdentifier("discard-pending-transaction-\(entry.id)")

@@ -1,5 +1,23 @@
 # Production readiness mission ledger
 
+## Persisted rejection review for transaction sync (2026-10-09)
+
+Definitive creation rejections previously remained saved but were retried by every refresh. The
+queue now atomically persists an optional review flag for HTTP 400/403/404/409/422, without storing
+server error text or changing the immutable transaction payload/identity. Automatic replay stops
+before a paused item and preserves ordering of later changes. Pending Sync shows the paused state
+and a separate explicit per-item retry, guarded by existing current whole-resource visibility.
+Retry durably clears the flag; subsequent requests still use current credentials and server authority.
+401/session failures, transport failures and retryable server failures do not become permanent
+transaction rejection flags. Older queues decode without the optional flag; no data migration/reset.
+
+Production host checks passed for pause persistence after reopening, zero sends on automatic retry,
+later-operation blocking, and explicit exact-payload retry in insertion order. Existing scope,
+legacy adoption, uncertain-send durability and failed-write checks also passed. Regular Xcode 27
+build-for-testing passed on the preserved iPhone 17 Pro Max/iOS 27 destination; native runtime
+acceptance is not claimed. Backend unchanged; no server restart required.
+App rebuild required. TestFlight remains on hold. Durable edit/bulk submission remains unfinished.
+
 ## Import review excludes impossible amount matches (2026-10-09)
 
 Statement review loaded every authorized posting in the date span before applying the matching

@@ -24,7 +24,7 @@ mutation = send_body.index("client.createTransaction(")
 abort "Canonical mutation must recheck binding after refresh" unless prepare && binding && mutation && prepare < binding && binding < mutation
 record_first = workspace.index("    func recordTransaction(_ operation:", send_last)
 record_last = workspace.index("    func updateTransaction(id:", record_first || 0)
-abort "Canonical submission must use durable-first queue" unless record_first && record_last && workspace[record_first...record_last].include?("transactionOutbox.submit(identified)")
+abort "Canonical submission must use durable-first queue" unless record_first && record_last && workspace[record_first...record_last].include?("transactionOutbox.submit(identified, shouldPause: shouldPauseRejectedTransaction)")
 abort "Pending rows bypass workspace access" unless workspace.include?('guard !workspaceAccessDenied else { return [] }') && workspace.include?('PendingTransactionVisibility.allows($0.operation, canView: budget.can("view_transactions")')
 abort "Pending restricted state appears fully synced" unless workspace.include?('store.pendingLiveTransactions.isEmpty && !store.pendingLiveDetailsRestricted') && workspace.include?('pending-sync-restricted')
 abort "Pending discard bypasses visible entry check" unless workspace.include?('guard pendingLiveTransactions.contains(where: { $0.id == id }) else')
@@ -112,17 +112,27 @@ try await Task { @MainActor in
  precondition(order == [operation.clientOperationID!, second.clientOperationID!])
  precondition(LiveTransactionOutbox(fileURL: file).count == 0)
  do {
-  try await reopened.submit(operation) { _ in throw BudgetApplicationError.invalidOperation("Server rejection") }
+  try await reopened.submit(operation, shouldPause: { _ in true }) { _ in throw BudgetApplicationError.invalidOperation("Server rejection") }
   fatalError("Expected review state")
  } catch {}
  precondition(LiveTransactionOutbox(fileURL: file).entries.first?.operation == operation)
+ let paused = LiveTransactionOutbox(fileURL: file)
+ precondition(paused.entries.first?.requiresReview == true)
+ var waiting = operation; waiting.clientOperationID = UUID().uuidString
+ try paused.enqueue(waiting)
+ var retrySends = 0
+ do { try await paused.replay { _ in retrySends += 1 }; fatalError("Paused queue replayed") } catch {}
+ precondition(retrySends == 0 && LiveTransactionOutbox(fileURL: file).count == 2)
+ try paused.retryReviewed(id: operation.clientOperationID!)
+ try await paused.replay { sent in retrySends += 1; precondition(sent == (retrySends == 1 ? operation : waiting)) }
+ precondition(retrySends == 2 && LiveTransactionOutbox(fileURL: file).count == 0)
  let blockedParent = root.appendingPathComponent("blocked")
  try Data("not a directory".utf8).write(to: blockedParent)
  let unwritable = LiveTransactionOutbox(fileURL: blockedParent.appendingPathComponent("queue.json"))
  var attempted = false
  do { try await unwritable.submit(operation) { _ in attempted = true }; fatalError("Write unexpectedly succeeded") } catch {}
  precondition(!attempted && unwritable.count == 0)
- print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, retained rejection, no send after persistence failure")
+ print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, persisted rejection pause, later operations blocked, explicit ordered retry, no send after persistence failure")
 }.value
 SWIFT
 RUBY

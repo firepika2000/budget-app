@@ -215,6 +215,7 @@ final class LiveTransactionOutbox {
         let id: String
         let queuedAt: Date
         let operation: RecordTransactionOperation
+        var requiresReview: Bool? = nil
     }
 
     private let fileURL: URL
@@ -301,19 +302,42 @@ final class LiveTransactionOutbox {
     var count: Int { entries.count }
 
     func submit(_ operation: RecordTransactionOperation,
+                shouldPause: (Error) -> Bool = { _ in false },
                 send: (RecordTransactionOperation) async throws -> Void) async throws {
         // Publish the immutable identity before the first network suspension point.
         try enqueue(operation)
-        try await replay(send: send)
+        try await replay(shouldPause: shouldPause, send: send)
     }
 
-    func replay(send: (RecordTransactionOperation) async throws -> Void) async throws {
+    func replay(shouldPause: (Error) -> Bool = { _ in false },
+                send: (RecordTransactionOperation) async throws -> Void) async throws {
         guard try beginReplay() else { return }
         defer { finishReplay() }
         for entry in entries {
-            try await send(entry.operation)
+            guard entry.requiresReview != true else {
+                throw BudgetApplicationError.invalidOperation("A saved transaction needs review in Profile & Settings → Pending Sync. Later changes are waiting behind it.")
+            }
+            do { try await send(entry.operation) }
+            catch {
+                if shouldPause(error) { try setReview(id: entry.id, required: true) }
+                throw error
+            }
             try acknowledgeReplay(id: entry.id)
         }
+    }
+
+    func retryReviewed(id: String) throws {
+        guard !isReplaying else { throw BudgetApplicationError.invalidOperation("Wait for synchronization to finish before retrying.") }
+        try setReview(id: id, required: false)
+    }
+
+    private func setReview(id: String, required: Bool) throws {
+        try requireReadableQueue()
+        var next = entries
+        guard let index = next.firstIndex(where: { $0.id == id }) else { return }
+        next[index].requiresReview = required
+        try persist(next)
+        entries = next
     }
 
     func enqueue(_ operation: RecordTransactionOperation) throws {
