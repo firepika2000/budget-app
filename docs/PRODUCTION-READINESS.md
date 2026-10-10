@@ -1,5 +1,34 @@
 # Production readiness mission ledger
 
+## Durable native Assign and category Move Money (2026-10-09)
+
+Live planning commands now assign a mutation UUID and persist typed exact intent plus observed
+allocation version before any authenticated request. Assignment/move share the ordered creation,
+edit and bulk queue; each uses its canonical server route with current credential/endpoint binding.
+Pending plan intent does not become authoritative Available, RTA or account money. Subsequent
+commands keep the captured version: an earlier accepted plan change may make a later item stale,
+which must pause rather than silently rebase. Definite rejection keeps the editing flow/draft and
+review entry, while connectivity failure retains the pending change. All queue payloads are
+exclusive typed commands; malformed/mixed disk payloads fail closed. Current category scope guards
+planning review and retry/discard. Pending Sync labels plan changes and uses generalized lifecycle
+wording instead of calling every queued item a transaction. Local Device/Demo behavior is unchanged.
+
+Actual production host execution passed exact Int64 assignment and move persistence, reopening,
+ordered acknowledgement and retained stale-version review without rebasing, plus prior queue checks.
+Two Swift API tests passed including actual assignment/move HTTP payload identities, captured
+versions and exact amounts beyond Double precision, plus the legacy move contract. Regular Xcode 27
+build-for-testing passed on the preserved iPhone 17 Pro Max/iOS 27 destination; no executed native
+runtime/human acceptance claim. Backend unchanged in this checkpoint;
+server must include `f450303` allocation receipts and migration 0049. App rebuild required; update/
+restart server if behind that checkpoint. No data reset, merge, tag or TestFlight publication.
+
+Remaining new acceptance: on a disposable loaded Live budget, disconnect, save one assignment,
+confirm a pending plan change with unchanged authoritative Available/RTA, relaunch and reconnect.
+Expect one allocation effect. Repeat for one category move. In a separate case, another authorized
+device changes the plan before reconnect; expect paused review preserving the newer plan. Review
+can retry the same immutable intent or discard it and let the user recreate after reviewing fresh
+state; it does not currently edit/rebase a queued conflicting plan command.
+
 ## Identified Assign and category Move Money receipts (2026-10-09)
 
 Both canonical allocation routes now optionally accept a mutation UUID, requiring the observed

@@ -16,7 +16,7 @@ PostgreSQL concurrency. Conflicts preserve saved files and require reopening ins
 to merge drafts or claiming that an in-flight request did not reach the server.
 
 **Not complete:** the durable Live outbox now supports creation and observed ordinary transaction
-edits and observed bulk metadata/clearing actions. Transfers, allocations,
+edits, observed bulk metadata/clearing actions, Assign and category Move Money. Account transfers,
 reconciliation and administrative commands still send directly through their authenticated APIs.
 The following defines the complete milestone, not a claim of human-accepted offline editing. Local Device
 already owns its local writes; its storage must not be replaced by a hosted replay queue.
@@ -35,7 +35,11 @@ not the old requested total; an accepted move retry returns its original immutab
 the current allocation version. Neither appends postings or consumes RTA again. Current capability,
 category scope and delegated ownership/reallocation authority apply before acknowledgement. New
 commands still check plan versions, real funds and delegated category rules. Native assignment/move
-identity/outbox integration and real PostgreSQL concurrency proof remain unfinished.
+commands now persist typed exact intent, mutation identity and observed version before sending.
+No pending assignment/move changes authoritative Available/RTA locally. Later queued changes retain
+their original versions; if an earlier accepted change makes one stale, it pauses for review rather
+than silently rebasing. Current category scope guards review details and explicit retry/discard.
+Live offline acceptance and real PostgreSQL concurrency proof remain unfinished.
 
 Identified ordinary transaction updates now optionally accept `mutation_operation_id` (UUID) and
 require `expected_revision`. Migration 0049 adds actor/budget-scoped command receipts binding command

@@ -3659,7 +3659,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             if transactionOutbox.count == 0 { outboxFailureMessage = nil }
         } catch {
             if isTransientConnectivityFailure(error) { throw error }
-            outboxFailureMessage = "A saved transaction needs attention: \(error.localizedDescription)"
+            outboxFailureMessage = "A saved change needs attention: \(error.localizedDescription)"
         }
     }
 
@@ -3670,6 +3670,23 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let assignment = entry.assignment {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            _ = try await client.updateAssignment(budgetID: budget.id, categoryID: assignment.categoryID,
+                month: assignment.month, assignedMinor: assignment.assignedMinor,
+                expectedAllocationVersion: assignment.expectedVersion, mutationOperationID: assignment.mutationOperationID, token: token)
+            return
+        }
+        if let move = entry.moneyMove {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            _ = try await client.transferAllocation(budgetID: budget.id, transfer: APIAllocationTransferCreate(
+                sourceCategoryID: move.sourceCategoryID, destinationCategoryID: move.destinationCategoryID,
+                amountMinor: move.amountMinor, occurredOn: move.occurredOn, note: move.note,
+                expectedAllocationVersion: move.expectedVersion, mutationOperationID: move.mutationOperationID), token: token)
+            return
+        }
         if let bulk = entry.bulkUpdate {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3789,11 +3806,33 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.approveStatementImport(budgetID: budget.id, accountID: accountID, batchID: batchID, approval: approval, token: token) }
     func cancelStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.cancelStatementImport(budgetID: budget.id, accountID: accountID, batchID: batchID, expectedVersion: expectedVersion, token: token) }
     func undoStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try await credentials.prepare(); return try await client.undoStatementImport(budgetID: budget.id, accountID: accountID, batchID: batchID, expectedVersion: expectedVersion, token: token) }
-    func assignMoney(_ operation: AssignMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.updateAssignment(budgetID: budget.id, categoryID: operation.categoryID, month: operation.month, assignedMinor: operation.assignedMinor, expectedAllocationVersion: operation.expectedVersion, token: token) }
+    func assignMoney(_ operation: AssignMoneyOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueAssignment(identified)
+        try await replaySavedPlanning()
+    }
     func cashRolloverPolicy() async throws -> APICashRolloverPolicyObservation { try await credentials.prepare(); return try await client.cashRolloverPolicy(budgetID: budget.id, token: token) }
     func selectCashRolloverPolicy(_ selection: APICashRolloverPolicySelection) async throws -> APICashRolloverPolicyObservation { try await credentials.prepare(); return try await client.selectCashRolloverPolicy(budgetID: budget.id, selection: selection, token: token) }
     func cashRolloverPolicyHistory(beforeVersion: Int?) async throws -> APICashRolloverPolicyHistory { try await credentials.prepare(); return try await client.cashRolloverPolicyHistory(budgetID: budget.id, beforeVersion: beforeVersion, token: token) }
-    func moveMoney(_ operation: MoveMoneyOperation) async throws { try await credentials.prepare(); _ = try await client.transferAllocation(budgetID: budget.id, transfer: APIAllocationTransferCreate(sourceCategoryID: operation.sourceCategoryID, destinationCategoryID: operation.destinationCategoryID, amountMinor: operation.amountMinor, occurredOn: operation.occurredOn, note: operation.note, expectedAllocationVersion: operation.expectedVersion), token: token) }
+    func moveMoney(_ operation: MoveMoneyOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueMoneyMove(identified)
+        try await replaySavedPlanning()
+    }
+
+    private func replaySavedPlanning() async throws {
+        do {
+            try await transactionOutbox.replayCommands(shouldPause: shouldPauseRejectedTransaction) { try await sendPendingTransaction($0) }
+            if transactionOutbox.count == 0 { outboxFailureMessage = nil }
+        } catch {
+            guard isTransientConnectivityFailure(error) else {
+                outboxFailureMessage = "A saved plan change needs attention in Pending Sync: \(error.localizedDescription)"
+                throw error
+            }
+        }
+    }
     func createCategory(groupID: String, groupName: String, newGroupName: String, name: String, delegatedUserID: String?) async throws { try await credentials.prepare(); var targetGroupID = groupID; if !newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { targetGroupID = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: newGroupName), token: token).id }; _ = try await client.createCategory(budgetID: budget.id, category: APICategoryCreate(groupID: targetGroupID, name: name, delegatedUserID: delegatedUserID), token: token) }
     func createGroup(name: String) async throws { try await credentials.prepare(); _ = try await client.createCategoryGroup(budgetID: budget.id, group: APICategoryGroupCreate(name: name), token: token) }
     func createAccount(_ operation: CreateAccountOperation) async throws { try await credentials.prepare(); _ = try await client.createAccount(budgetID: budget.id, account: APIAccountCreate(name: operation.name, accountType: operation.kind, isOnBudget: operation.isOnBudget, startingBalanceMinor: operation.openingBalanceMinor), token: token) }
@@ -4703,6 +4742,12 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if let assignment = entry.assignment {
+                return budget.can("view_categories") && categoryIDs.contains(assignment.categoryID)
+            }
+            if let move = entry.moneyMove {
+                return budget.can("view_categories") && categoryIDs.contains(move.sourceCategoryID) && categoryIDs.contains(move.destinationCategoryID)
+            }
             if let bulk = entry.bulkUpdate {
                 return budget.can("view_transactions") && Set(bulk.transactionIDs).isSubset(of: Set(transactions.map(\.id)))
             }
@@ -4976,13 +5021,22 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func updateAssignment(categoryID: String, month: String, assignedMinor: Int64, expectedVersion: Int) async throws {
+        defer { publishPendingPlanningStatus() }
         try await services().planning.assign(AssignMoneyOperation(categoryID: categoryID, month: month, assignedMinor: assignedMinor, expectedVersion: expectedVersion))
         await refresh()
     }
 
     func moveAllocation(_ operation: MoveMoneyOperation) async throws {
+        defer { publishPendingPlanningStatus() }
         try await services().planning.move(operation)
         await refresh()
+    }
+
+    private func publishPendingPlanningStatus() {
+        guard let live = commandRepository as? LiveWorkspaceCommandRepository else { return }
+        pendingSyncCount = live.pendingTransactionCount
+        if let message = live.outboxFailureMessage { syncStatusMessage = message }
+        else if pendingSyncCount > 0 { syncStatusMessage = "\(pendingSyncCount) changes saved on this iPhone, waiting to sync" }
     }
 
     func createCategory(groupID: String, newGroupName: String, name: String, delegatedUserID: String?) async throws {
@@ -6131,6 +6185,14 @@ private struct PendingLiveTransactionsView: View {
                                     .font(.headline)
                                 Text("\(bulk.transactionIDs.count) selected transactions · pending server approval")
                                     .font(.caption).foregroundStyle(.secondary)
+                            } else if let assignment = entry.assignment {
+                                Text("Assign Money").font(.headline)
+                                Text("\(assignment.month) · \(store.categories.first(where: { $0.id == assignment.categoryID })?.name ?? "Category") · \(store.format(assignment.assignedMinor))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let move = entry.moneyMove {
+                                Text("Move Money").font(.headline)
+                                Text("\(store.categories.first(where: { $0.id == move.sourceCategoryID })?.name ?? "Category") → \(store.categories.first(where: { $0.id == move.destinationCategoryID })?.name ?? "Category") · \(store.format(move.amountMinor))")
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                             Text("Saved \(entry.queuedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption2).foregroundStyle(.secondary)
@@ -6141,7 +6203,7 @@ private struct PendingLiveTransactionsView: View {
                             if entry.requiresReview == true {
                                 Text("Needs review · automatic retry paused")
                                     .font(.caption).foregroundStyle(.secondary)
-                                Button("Retry This Transaction", systemImage: "arrow.clockwise") {
+                                Button("Retry This Change", systemImage: "arrow.clockwise") {
                                     Task {
                                         do { try await store.retryReviewedLiveTransaction(id: entry.id) }
                                         catch { store.errorMessage = error.localizedDescription }
@@ -6150,7 +6212,7 @@ private struct PendingLiveTransactionsView: View {
                                 .disabled(store.isBackgroundSyncing || store.isLoading || store.pendingLegacyServerReview)
                                 .accessibilityIdentifier("retry-reviewed-transaction-\(entry.id)")
                             }
-                            Button("Discard Pending Transaction", role: .destructive) { pendingDiscard = entry }
+                            Button("Discard Pending Change", role: .destructive) { pendingDiscard = entry }
                                 .disabled(store.isBackgroundSyncing || store.isLoading || store.pendingLegacyServerReview)
                                 .accessibilityIdentifier("discard-pending-transaction-\(entry.id)")
                         }
@@ -6158,14 +6220,14 @@ private struct PendingLiveTransactionsView: View {
                     }
                     if store.pendingLiveDetailsRestricted {
                         ContentUnavailableView("Pending Details Unavailable", systemImage: "lock.icloud",
-                            description: Text("Saved transactions are preserved. Their details require current account and category access. Reconnect to verify access; server authorization still applies before anything posts."))
+                            description: Text("Saved changes are preserved. Their details require current resource access. Reconnect to verify access; server authorization still applies before anything posts."))
                             .accessibilityIdentifier("pending-sync-restricted")
                     }
                 }
             } header: {
-                Text("Pending transactions")
+                Text("Pending changes")
             } footer: {
-                Text("Retry first. Discard only if the server rejected an item you no longer want to post. Discarding removes only the local queued copy; it never deletes a server transaction.")
+                Text("Retry first. Discard only if the server rejected a change you no longer want. Discarding removes only the local queued copy; it never undoes an accepted server change.")
             }
             if !store.pendingLiveTransactions.isEmpty || store.pendingLiveDetailsRestricted {
                 Section {
@@ -6187,7 +6249,7 @@ private struct PendingLiveTransactionsView: View {
         } message: {
             Text("Assign these transactions to \(store.budget.name) at \(store.pendingServerAddress). This preserves the originals and does not send them immediately.")
         }
-        .confirmationDialog("Discard Pending Transaction?", isPresented: Binding(
+        .confirmationDialog("Discard Pending Change?", isPresented: Binding(
             get: { pendingDiscard != nil },
             set: { if !$0 { pendingDiscard = nil } }
         )) {
@@ -6196,7 +6258,7 @@ private struct PendingLiveTransactionsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the transaction waiting on this iPhone. It does not change any transaction already accepted by the server.")
+            Text("This removes the local change waiting on this iPhone. It does not undo anything already accepted by the server.")
         }
         .alert("Unable to update pending changes", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) {}

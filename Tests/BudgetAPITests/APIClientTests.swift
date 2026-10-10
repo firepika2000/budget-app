@@ -1062,6 +1062,36 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(operation.postings.reduce(0) { $0 + $1.amountMinor }, 0)
     }
 
+    func testIdentifiedPlanningRequestsCarryExactIdentityAndObservedVersion() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let assignmentID = UUID().uuidString, moveID = UUID().uuidString
+        var requests = 0
+        MockURLProtocol.handler = { request in
+            requests += 1
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+            XCTAssertEqual(json["expected_allocation_version"] as? Int, 7)
+            XCTAssertNil(json["client_operation_id"])
+            if request.httpMethod == "PUT" {
+                XCTAssertEqual(json["mutation_operation_id"] as? String, assignmentID)
+                XCTAssertEqual(json["assigned_minor"] as? Int64, 9007199254740993)
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data(#"{"budget_id":"b1","category_id":"c1","month":"2026-10-01","assigned_minor":9007199254740993,"allocation_version":8}"#.utf8))
+            }
+            XCTAssertEqual(json["mutation_operation_id"] as? String, moveID)
+            XCTAssertEqual(json["amount_minor"] as? Int64, 123)
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!,
+                Data(#"{"id":"op1","budget_id":"b1","occurred_on":"2026-10-09","kind":"category_transfer","actor_user_id":"u1","note":"","source":"manual","allocation_version":8,"postings":[]}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        _ = try await client.updateAssignment(budgetID: "b1", categoryID: "c1", month: "2026-10-01",
+            assignedMinor: 9007199254740993, expectedAllocationVersion: 7, mutationOperationID: assignmentID, token: "current")
+        _ = try await client.transferAllocation(budgetID: "b1", transfer: .init(sourceCategoryID: "c1",
+            destinationCategoryID: "c2", amountMinor: 123, occurredOn: "2026-10-09",
+            expectedAllocationVersion: 7, mutationOperationID: moveID), token: "current")
+        XCTAssertEqual(requests, 2)
+    }
+
     func testFundingRequestUsesDelegatedCategoryAndExactMinorUnits() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

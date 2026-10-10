@@ -26,20 +26,22 @@ struct UpdateAccountMetadataOperation: Equatable, Sendable {
     let isClosed: Bool
 }
 
-struct AssignMoneyOperation: Equatable, Sendable {
+struct AssignMoneyOperation: Codable, Equatable, Sendable {
     let categoryID: String
     let month: String
     let assignedMinor: Int64
     let expectedVersion: Int
+    var mutationOperationID: String? = nil
 }
 
-struct MoveMoneyOperation: Equatable, Sendable {
+struct MoveMoneyOperation: Codable, Equatable, Sendable {
     let sourceCategoryID: String
     let destinationCategoryID: String
     let amountMinor: Int64
     let occurredOn: String
     let note: String
     let expectedVersion: Int
+    var mutationOperationID: String? = nil
 }
 
 struct TransactionSplitOperation: Codable, Equatable, Sendable {
@@ -218,6 +220,8 @@ final class LiveTransactionOutbox {
         var requiresReview: Bool? = nil
         var transactionID: String? = nil
         var bulkUpdate: APITransactionBulkUpdate? = nil
+        var assignment: AssignMoneyOperation? = nil
+        var moneyMove: MoveMoneyOperation? = nil
     }
 
     private let fileURL: URL
@@ -377,6 +381,37 @@ final class LiveTransactionOutbox {
         entries = next
     }
 
+    func enqueueAssignment(_ assignment: AssignMoneyOperation) throws {
+        guard let id = assignment.mutationOperationID, UUID(uuidString: id) != nil,
+              !assignment.categoryID.isEmpty, assignment.expectedVersion >= 0 else {
+            throw BudgetApplicationError.invalidOperation("Pending assignments require stable identity and an observed plan version.")
+        }
+        try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, assignment: assignment))
+    }
+
+    func enqueueMoneyMove(_ move: MoveMoneyOperation) throws {
+        guard let id = move.mutationOperationID, UUID(uuidString: id) != nil, move.expectedVersion >= 0,
+              !move.sourceCategoryID.isEmpty, !move.destinationCategoryID.isEmpty,
+              move.sourceCategoryID != move.destinationCategoryID, move.amountMinor > 0 else {
+            throw BudgetApplicationError.invalidOperation("Pending moves require two categories, a positive amount, stable identity and an observed plan version.")
+        }
+        try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, moneyMove: move))
+    }
+
+    private func enqueuePlanning(_ entry: Entry) throws {
+        try requireReadableQueue()
+        if let existing = entries.first(where: { $0.id == entry.id }) {
+            guard existing.assignment == entry.assignment && existing.moneyMove == entry.moneyMove,
+                  existing.operation == nil && existing.bulkUpdate == nil else {
+                throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
+            }
+            return
+        }
+        let next = entries + [entry]
+        try persist(next)
+        entries = next
+    }
+
     func retryReviewed(id: String) throws {
         guard !isReplaying else { throw BudgetApplicationError.invalidOperation("Wait for synchronization to finish before retrying.") }
         try setReview(id: id, required: false)
@@ -445,6 +480,17 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil].filter { $0 }.count
+                  guard payloadCount == 1 else { return false }
+                  if let assignment = entry.assignment {
+                      return entry.transactionID == nil && assignment.mutationOperationID == entry.id
+                          && !assignment.categoryID.isEmpty && assignment.expectedVersion >= 0
+                  }
+                  if let move = entry.moneyMove {
+                      return entry.transactionID == nil && move.mutationOperationID == entry.id && move.expectedVersion >= 0
+                          && !move.sourceCategoryID.isEmpty && !move.destinationCategoryID.isEmpty
+                          && move.sourceCategoryID != move.destinationCategoryID && move.amountMinor > 0
+                  }
                   if let bulk = entry.bulkUpdate {
                       return entry.operation == nil && entry.transactionID == nil
                           && bulk.mutationOperationID == entry.id && !bulk.transactionIDs.isEmpty

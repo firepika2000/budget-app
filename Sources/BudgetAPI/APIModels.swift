@@ -2740,11 +2740,13 @@ struct APIAssignmentUpdate: Encodable {
     let month: String
     let assignedMinor: Int64
     let expectedAllocationVersion: Int
+    var mutationOperationID: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case month
         case assignedMinor = "assigned_minor"
         case expectedAllocationVersion = "expected_allocation_version"
+        case mutationOperationID = "mutation_operation_id"
     }
 }
 
@@ -2771,6 +2773,7 @@ public struct APIAllocationTransferCreate: Encodable, Sendable {
     public let occurredOn: String
     public let note: String
     public let expectedAllocationVersion: Int
+    public let mutationOperationID: String?
 
     public init(
         sourceCategoryID: String,
@@ -2778,7 +2781,8 @@ public struct APIAllocationTransferCreate: Encodable, Sendable {
         amountMinor: Int64,
         occurredOn: String,
         note: String = "",
-        expectedAllocationVersion: Int
+        expectedAllocationVersion: Int,
+        mutationOperationID: String? = nil
     ) {
         self.sourceCategoryID = sourceCategoryID
         self.destinationCategoryID = destinationCategoryID
@@ -2786,6 +2790,7 @@ public struct APIAllocationTransferCreate: Encodable, Sendable {
         self.occurredOn = occurredOn
         self.note = note
         self.expectedAllocationVersion = expectedAllocationVersion
+        self.mutationOperationID = mutationOperationID
     }
 
     enum CodingKeys: String, CodingKey {
@@ -2795,6 +2800,7 @@ public struct APIAllocationTransferCreate: Encodable, Sendable {
         case amountMinor = "amount_minor"
         case occurredOn = "occurred_on"
         case expectedAllocationVersion = "expected_allocation_version"
+        case mutationOperationID = "mutation_operation_id"
     }
 }
 

@@ -596,6 +596,7 @@ public struct APIClient {
         month: String,
         assignedMinor: Int64,
         expectedAllocationVersion: Int,
+        mutationOperationID: String? = nil,
         token: String
     ) async throws -> APIAssignment {
         try await send(
@@ -605,7 +606,8 @@ public struct APIClient {
             body: APIAssignmentUpdate(
                 month: month,
                 assignedMinor: assignedMinor,
-                expectedAllocationVersion: expectedAllocationVersion
+                expectedAllocationVersion: expectedAllocationVersion,
+                mutationOperationID: mutationOperationID
             )
         )
     }

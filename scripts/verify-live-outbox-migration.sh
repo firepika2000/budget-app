@@ -7,6 +7,7 @@ ruby - <<'RUBY' | xcrun swift -
 s = File.read("ios/BudgetApp/ApplicationServices.swift")
 puts "import Foundation\nimport CryptoKit"
 puts 'enum BudgetApplicationError: Error { case invalidOperation(String) }'
+puts s[s.index("struct AssignMoneyOperation:")...s.index("struct TransactionSplitOperation:")]
 puts s[s.index("struct TransactionSplitOperation:")...s.index("struct MakeRecurringOperation:")]
 api = File.read("Sources/BudgetAPI/APIModels.swift")
 puts api[api.index("public struct APITransactionBulkUpdate:")...api.index("/// Captures observations at selection time")]
@@ -32,6 +33,7 @@ edit_body = workspace[record_last...edit_last]
 abort "Edit must persist before replay" unless edit_body.index("enqueueEdit(") && edit_body.index("replayCommands(") && edit_body.index("enqueueEdit(") < edit_body.index("replayCommands(")
 abort "Edit sender must use current endpoint binding" unless send_body.include?("client.updateTransaction(") && send_body.include?("operation.apiValue")
 abort "Bulk sender missing from canonical command path" unless send_body.include?("client.bulkUpdateTransactions(") && workspace.include?("try transactionOutbox.enqueueBulk(identified)")
+abort "Planning commands bypass durable canonical sender" unless send_body.include?("client.updateAssignment(") && send_body.include?("client.transferAllocation(") && workspace.include?("try transactionOutbox.enqueueAssignment(identified)") && workspace.include?("try transactionOutbox.enqueueMoneyMove(identified)")
 abort "Pending rows bypass workspace access" unless workspace.include?('guard !workspaceAccessDenied else { return [] }') && workspace.include?('PendingTransactionVisibility.allows(operation, canView: budget.can("view_transactions")')
 abort "Pending restricted state appears fully synced" unless workspace.include?('store.pendingLiveTransactions.isEmpty && !store.pendingLiveDetailsRestricted') && workspace.include?('pending-sync-restricted')
 abort "Pending discard bypasses visible entry check" unless workspace.include?('guard pendingLiveTransactions.contains(where: { $0.id == id }) else')
@@ -186,6 +188,26 @@ try await Task { @MainActor in
  var survivingOrder: [RecordTransactionOperation] = []
  try await surviving.replay { sent in survivingOrder.append(sent) }
  precondition(survivingOrder == [operation, second] && LiveTransactionOutbox(fileURL: shared).count == 0)
+ let planningFile = root.appendingPathComponent("planning.json")
+ let planningQueue = LiveTransactionOutbox(fileURL: planningFile)
+ let assignment = AssignMoneyOperation(categoryID: "food", month: "2026-10-01", assignedMinor: 9007199254740993,
+  expectedVersion: 7, mutationOperationID: UUID().uuidString)
+ let move = MoveMoneyOperation(sourceCategoryID: "food", destinationCategoryID: "travel", amountMinor: 123,
+  occurredOn: "2026-10-09", note: "Exact intent", expectedVersion: 7, mutationOperationID: UUID().uuidString)
+ try planningQueue.enqueueAssignment(assignment); try planningQueue.enqueueMoneyMove(move)
+ let reopenedPlanning = LiveTransactionOutbox(fileURL: planningFile)
+ precondition(reopenedPlanning.entries[0].assignment == assignment && reopenedPlanning.entries[1].moneyMove == move)
+ var planSends = 0
+ do { try await reopenedPlanning.replayCommands(shouldPause: { _ in true }) { entry in
+  planSends += 1
+  if let pendingMove = entry.moneyMove {
+   precondition(pendingMove.expectedVersion == 7 && pendingMove == move)
+   throw BudgetApplicationError.invalidOperation("Plan changed after preceding assignment")
+  }
+  precondition(entry.assignment == assignment)
+ }; fatalError("Stale plan was silently rebased") } catch {}
+ let retainedPlan = LiveTransactionOutbox(fileURL: planningFile)
+ precondition(planSends == 2 && retainedPlan.count == 1 && retainedPlan.entries[0].requiresReview == true && retainedPlan.entries[0].moneyMove == move)
  let blockedParent = root.appendingPathComponent("blocked")
  try Data("not a directory".utf8).write(to: blockedParent)
  let unwritable = LiveTransactionOutbox(fileURL: blockedParent.appendingPathComponent("queue.json"))
