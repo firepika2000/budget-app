@@ -3073,3 +3073,20 @@ on hold. No customer data, simulator reset, migration or additional server chang
 Regular Xcode 27 build-for-testing passed for the production composition and native test targets
 against the preserved iPhone simulator; this confirms compilation, not executed runtime acceptance.
 `git diff --check` passes. App rebuild required to use the captured bulk observations.
+
+### Creation replay resource-authorization correction — 2026-10-09
+
+Actual HTTP regressions reproduced an authorization leak: create with an operation UUID while
+authorized, revoke account/category access (including only one split category), then retry the UUID.
+The previous route returned 201 and exposed the now-hidden transaction, despite current resource
+restrictions. Revoking create capability already returned 403. Both the ordinary existing-identity
+return and post-IntegrityError collision return now recheck current create capability and canonical
+whole-transaction resource visibility, returning neutral 404 for hidden resources. No replay applies
+new ledger effects. Four HTTP cases verify denial and unchanged authoritative owner transaction data.
+
+55 focused backend tests passed across creation idempotency, transaction browser/bulk and financial
+golden vectors. The collision-return guard was code-audited; no real concurrent PostgreSQL race was
+executed in this checkpoint. `git diff --check` passed. Server update/restart required; no migration,
+Swift changes, app rebuild, simulator reset or customer-data changes. This does not supply immutable
+command receipts or reject same-UUID/different-payload reuse; those replay-contract gaps remain.
+TestFlight remains on hold.

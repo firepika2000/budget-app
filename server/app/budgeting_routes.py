@@ -2187,7 +2187,9 @@ def create_transaction(
         if existing is not None:
             # Replays are intentionally idempotent. Authorization is checked again so a queued
             # operation cannot be observed after the member loses access.
-            require_budget_capability(db, user, budget_id, "create_transaction")
+            budget = require_budget_capability(db, user, budget_id, "create_transaction")
+            if not _can_access_transaction_resources(db, user, budget, existing):
+                raise HTTPException(status_code=404, detail="Transaction not found")
             return existing
     transaction = create_transaction_in_session(budget_id, body, user=user, db=db)
     try:
@@ -2203,6 +2205,10 @@ def create_transaction(
         ))
         if existing is None:
             raise
+        # A uniqueness collision is another replay return path, not an authority bypass.
+        budget = require_budget_capability(db, user, budget_id, "create_transaction")
+        if not _can_access_transaction_resources(db, user, budget, existing):
+            raise HTTPException(status_code=404, detail="Transaction not found")
         return existing
     db.refresh(transaction)
     return transaction

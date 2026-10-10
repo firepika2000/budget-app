@@ -1,5 +1,51 @@
+import pytest
+
+from app.models import User
+
 from .conftest import auth
-from .test_budgeting_api import create_budget, create_budget_structure
+from .test_budgeting_api import add_member, create_budget, create_budget_structure
+from .test_advanced_ledger import add_category
+
+
+@pytest.mark.parametrize("restriction", ["account", "category", "split", "capability"])
+def test_creation_replay_rechecks_current_resource_authority(client, owner_token, session_factory, restriction):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    second_category = add_category(client, owner_token, budget["id"], "Other", "Second")
+    token = add_member(session_factory, client, "contribute", budget["id"])
+    with session_factory() as db:
+        member_id = db.query(User).filter_by(email="contribute@example.com").one().id
+    assert client.put(f"/api/v1/budgets/{budget['id']}/access/{member_id}", headers=auth(owner_token), json={
+        "capabilities": ["create_transaction", "view_budget", "view_transactions"],
+        "restrict_accounts": False, "account_ids": [], "restrict_categories": False, "category_ids": [],
+    }).status_code == 200
+    body = {
+        "account_id": account["id"], "category_id": category["id"],
+        "amount_minor": -100, "occurred_on": "2026-01-15", "payee_name": "Private replay",
+        "memo": "Do not expose after revocation",
+        "client_operation_id": "702f5be7-71ef-4f44-8c1a-91356b71c403",
+    }
+    if restriction == "split":
+        body["category_id"] = None
+        body["splits"] = [{"category_id": category["id"], "amount_minor": -50}, {"category_id": second_category["id"], "amount_minor": -50}]
+    path = f"/api/v1/budgets/{budget['id']}/transactions"
+    first = client.post(path, headers=auth(token), json=body)
+    assert first.status_code == 201, first.text
+    before = client.get(path, headers=auth(owner_token)).json()
+    access = {
+        "capabilities": ["create_transaction", "view_budget", "view_transactions"],
+        "restrict_accounts": restriction == "account", "account_ids": [],
+        "restrict_categories": restriction in {"category", "split"},
+        "category_ids": [category["id"]] if restriction == "split" else [],
+    }
+    if restriction == "capability":
+        access["capabilities"].remove("create_transaction")
+    changed = client.put(f"/api/v1/budgets/{budget['id']}/access/{member_id}", headers=auth(owner_token), json=access)
+    assert changed.status_code == 200, changed.text
+    replay = client.post(path, headers=auth(token), json=body)
+    assert replay.status_code == (403 if restriction == "capability" else 404), replay.text
+    assert "Private replay" not in replay.text
+    assert client.get(path, headers=auth(owner_token)).json() == before
 
 
 def test_offline_transaction_replay_creates_exactly_one_financial_observation(
